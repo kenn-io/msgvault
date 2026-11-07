@@ -1134,3 +1134,34 @@ func TestGetPersonByAliasUsesCanonicalRelationshipTemperature(t *testing.T) {
 		assert.Equal(canonical.PeakRelationshipYear, alias.PeakRelationshipYear)
 	}
 }
+
+func TestGetPersonExcludesCallRecipients(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.com", "imap")
+	person := b.AddParticipant("peer@example.com", "example.com", "Peer")
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	email := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: at})
+	b.AddTo(email, person, "Peer")
+	for i, role := range []string{"call_joined", "call_invited", "call_unknown"} {
+		call := b.AddMessage(MessageOpt{SourceID: source, MessageType: "call_record", SentAt: at.Add(time.Duration(i+1) * time.Hour)})
+		b.AddRecipient(call, person, role, "Peer")
+	}
+	engine := b.BuildEngine()
+	got, err := engine.GetPerson(t.Context(), person, Context{SourceIDs: []int64{source}}, nil)
+	require.NoError(err)
+	require.NotNil(got)
+	assert.Equal(int64(1), got.ActivityCount)
+	assert.Equal(at, got.LastAt)
+	for _, scope := range []Context{{}, {SourceIDs: []int64{source}}} {
+		result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
+			Explore: ExploreRequest{Context: scope}, Page: PageSpec{Limit: 25},
+		})
+		require.NoError(err)
+		require.Len(result.Rows, 1)
+		assert.Equal(person, result.Rows[0].ID)
+		assert.Equal(int64(1), result.Rows[0].ActivityCount)
+		assert.Equal(at, result.Rows[0].LastAt)
+	}
+}

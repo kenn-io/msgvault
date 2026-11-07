@@ -1515,6 +1515,150 @@ func (c CalendarWriteReceipt) Validate() error {
 	return errors
 }
 
+type CallEvidenceResponse struct {
+	Items []CallObservationView `json:"items" validate:"required"`
+}
+
+func (c CallEvidenceResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CallImportRequest struct {
+	Account  string           `json:"account" validate:"required"`
+	Bindings map[string]int64 `json:"bindings,omitempty"`
+	Format   string           `json:"format" validate:"required"`
+	Record   jsontext.Value   `json:"record"`
+}
+
+func (c CallImportRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(c.Format, "required"); err != nil {
+		errors = errors.Append("Format", err)
+	}
+	if v, ok := any(c.Record).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Record", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CallImportResponse struct {
+	MessageID int64 `json:"message_id"`
+	SourceID  int64 `json:"source_id"`
+}
+
+type CallObservationView struct {
+	Account            string            `json:"account" validate:"required"`
+	Direction          string            `json:"direction" validate:"required"`
+	DurationSeconds    *float64          `json:"duration_seconds" validate:"omitempty"`
+	EndedAt            *time.Time        `json:"ended_at,omitempty"`
+	MessageID          int64             `json:"message_id"`
+	OccurredAt         time.Time         `json:"occurred_at" validate:"required"`
+	Outcome            string            `json:"outcome" validate:"required"`
+	OwnerParticipation string            `json:"owner_participation" validate:"required"`
+	Participants       []CallParticipant `json:"participants" validate:"required"`
+	Provider           string            `json:"provider" validate:"required"`
+	RecordID           string            `json:"record_id" validate:"required"`
+	SourceID           int64             `json:"source_id"`
+	Version            int64             `json:"version"`
+}
+
+func (c CallObservationView) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Account, "required"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(c.Direction, "required"); err != nil {
+		errors = errors.Append("Direction", err)
+	}
+	if v, ok := any(c.DurationSeconds).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DurationSeconds", err)
+		}
+	}
+	if err := typesValidator.Var(c.OccurredAt, "required"); err != nil {
+		errors = errors.Append("OccurredAt", err)
+	}
+	if err := typesValidator.Var(c.Outcome, "required"); err != nil {
+		errors = errors.Append("Outcome", err)
+	}
+	if err := typesValidator.Var(c.OwnerParticipation, "required"); err != nil {
+		errors = errors.Append("OwnerParticipation", err)
+	}
+	if err := typesValidator.Var(c.Participants, "required"); err != nil {
+		errors = errors.Append("Participants", err)
+	}
+	for i, item := range c.Participants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if err := typesValidator.Var(c.RecordID, "required"); err != nil {
+		errors = errors.Append("RecordID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CallParticipant struct {
+	ParticipantID int64  `json:"participant_id"`
+	Participation string `json:"participation" validate:"required"`
+}
+
+func (c CallParticipant) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CallSummaryResponse struct {
+	Items []PersonCallSummary `json:"items" validate:"required"`
+}
+
+func (c CallSummaryResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CancelDeletionResponse struct {
 	ID     string `json:"id" validate:"required"`
 	Status string `json:"status" validate:"required"`
@@ -11164,6 +11308,16 @@ func (p PersonBriefVersionsResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type PersonCallSummary struct {
+	Answered         int64 `json:"answered"`
+	Cancelled        int64 `json:"cancelled"`
+	Declined         int64 `json:"declined"`
+	ExampleMessageID int64 `json:"example_message_id"`
+	Missed           int64 `json:"missed"`
+	PersonID         int64 `json:"person_id"`
+	Unknown          int64 `json:"unknown"`
 }
 
 type PersonCategory struct {

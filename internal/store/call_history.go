@@ -1,0 +1,70 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json/v2"
+	"fmt"
+
+	"go.kenn.io/msgvault/internal/callhistory"
+)
+
+// PutCallObservationContext replaces one validated source observation atomically.
+// It never resolves a person by name or infers participants from a chat roster.
+func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o callhistory.Observation) (int64, error) {
+	// Source locking serializes absent-row creation as well as later updates.
+	// The identity lock held by persistence also orders participant merges.
+	before := func(ctx context.Context, tx *loggedTx) error {
+		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, sourceID); err != nil {
+			return err
+		}
+		for _, p := range o.Participants {
+			var exists bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants WHERE id = ?)`, p.ID).Scan(&exists); err != nil {
+				return fmt.Errorf("check call participant: %w", err)
+			}
+			if !exists {
+				return fmt.Errorf("%w: participant does not exist", callhistory.ErrInvalid)
+			}
+		}
+		return nil
+	}
+	metadata, err := json.Marshal(o.Evidence)
+	if err != nil {
+		return 0, fmt.Errorf("encode call evidence: %w", err)
+	}
+	sets := []RecipientSet{{Type: "call_joined"}, {Type: "call_invited"}, {Type: "call_unknown"}}
+	for _, p := range o.Participants {
+		for i := range sets {
+			if sets[i].Type == "call_"+p.Participation {
+				sets[i].ParticipantIDs = append(sets[i].ParticipantIDs, p.ID)
+			}
+		}
+	}
+	text := "Call " + o.Direction
+	if o.DurationSeconds != nil {
+		text += fmt.Sprintf(", %g seconds", *o.DurationSeconds)
+	}
+	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}},
+		before, nil, func([]int64) *MessagePersistData {
+			return &MessagePersistData{
+				Message: &Message{
+					SourceID: sourceID, SourceMessageID: o.RecordID, MessageType: callhistory.MessageType, IsFromMe: o.Direction == "outgoing",
+					SentAt:  sql.NullTime{Time: o.OccurredAt.UTC(), Valid: true},
+					Subject: sql.NullString{String: text, Valid: true},
+				},
+				Conversation: &ConversationPersistData{
+					SourceConversationID: o.RecordID, ConversationType: "call_history", Title: text,
+				},
+				FTS:      &FTSDoc{Subject: text},
+				Metadata: &sql.NullString{String: string(metadata), Valid: true},
+				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
+				PreserveLabels: true,
+			}
+		}, nil, s.refreshCallConversationStatsWith)
+}
+
+// Imported calls keep their conversation's denormalized stats current.
+func (s *Store) refreshCallConversationStatsWith(ctx context.Context, tx *loggedTx, _ *MessagePersistData, id int64) error {
+	return s.recomputeConversationStatsWith(boundQuerier{ctx: ctx, q: tx}, "id = (SELECT conversation_id FROM messages WHERE id = ?)", id)
+}
