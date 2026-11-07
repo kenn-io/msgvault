@@ -161,9 +161,10 @@ func TestRecordingHydratesEveryTranscriptPageAndNotes(t *testing.T) {
 	for _, tc := range []struct {
 		name, start string
 		present     bool
+		want        float64
 	}{
-		{"missing", "", false}, {"null", `,"start_time":null`, false},
-		{"zero", `,"start_time":0`, true}, {"positive", `,"start_time":0.25`, true},
+		{"missing", "", false, 0}, {"null", `,"start_time":null`, false, 0},
+		{"zero", `,"start_time":0`, true, 0}, {"positive", `,"start_time":0.25`, true, 0.25},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -185,6 +186,10 @@ func TestRecordingHydratesEveryTranscriptPageAndNotes(t *testing.T) {
 			rec, err := s.Recording(t.Context(), "file-1")
 			require.NoError(err)
 			require.Len(rec.Segments, 2)
+			if tc.present {
+				require.NotNil(rec.Segments[0].StartSeconds)
+				assert.InDelta(tc.want, *rec.Segments[0].StartSeconds, 0)
+			}
 			assert.Equal("Second page", rec.Segments[1].Text)
 			assert.Equal("Alex Example", rec.Segments[1].Speaker)
 			require.NotNil(rec.Segments[1].StartSeconds)

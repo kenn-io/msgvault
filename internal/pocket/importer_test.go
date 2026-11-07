@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -176,7 +177,7 @@ func TestPocketImportPreservesUnavailableAndClearsAuthoritativeEmpty(t *testing.
 	src.records[0] = testRecording(t, `{"id":"rec-a","duration":60,"transcript":{"segments":[]},"transcript_error":"processing failed","summarizations":{"a":{"processingStatus":"processing","v2":{"summary":{"markdown":""},"actionItems":{"actionItems":[]}}}}}`)
 	_, err = imp.Import(t.Context(), archiveOptions())
 	requirements.NoError(err)
-	_, content := archivedContent(t, st, first.SourceID, "rec-a")
+	id, content := archivedContent(t, st, first.SourceID, "rec-a")
 	assertions.Equal("Roadmap decision", content.Summary.Text)
 	requirements.Len(content.Transcript.Segments, 1)
 	requirements.NotNil(content.Transcript.Segments[0].EndOffsetSeconds)
@@ -185,6 +186,64 @@ func TestPocketImportPreservesUnavailableAndClearsAuthoritativeEmpty(t *testing.
 		result, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: content}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
 		requirements.NoError(err)
 		assertions.Contains(result.Content, "Decide roadmap")
+	}
+	legacySnapshot, err := makeSnapshot(first.SourceID, src.account, testRecording(t, recordingFixture), content)
+	requirements.NoError(err)
+	var legacy evidence
+	requirements.NoError(json.Unmarshal(legacySnapshot.Raw, &legacy))
+	legacy.Version, legacy.Content.Transcript.Segments[0].EndOffsetSeconds = 1, nil
+	legacySnapshot.Raw, err = json.Marshal(legacy, json.Deterministic(true))
+	requirements.NoError(err)
+	_, err = meetingarchive.New(st).Upsert(t.Context(), legacySnapshot, meetingarchive.UpsertOptions{})
+	requirements.NoError(err)
+	beforeRaw, err := st.GetMessageRaw(id)
+	requirements.NoError(err)
+	beforeMetadata, err := st.GetMessageMetadataContext(t.Context(), id)
+	requirements.NoError(err)
+	beforeExports := map[meetingcontent.Format]string{}
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := st.GetMeetingContextContext(t.Context(), store.MeetingQueryScope{MessageIDs: new([]int64{id})}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		requirements.NoError(err)
+		assertions.Contains(result.Content, "Decide roadmap")
+		interval := "00:00:01,250 --> 00:00:03,000"
+		if format == meetingcontent.FormatVTT {
+			interval = "00:00:01.250 --> 00:00:03.000"
+		}
+		assertions.Contains(result.Content, interval)
+		beforeExports[format] = result.Content
+	}
+	afterRaw, err := st.GetMessageRaw(id)
+	requirements.NoError(err)
+	assertions.Equal(beforeRaw, afterRaw)
+	afterMetadata, err := st.GetMessageMetadataContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(beforeMetadata, afterMetadata)
+	_, err = imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	raw, err := st.GetMessageRaw(id)
+	requirements.NoError(err)
+	requirements.NoError(json.Unmarshal(raw, &legacy))
+	assertions.Equal(2, legacy.Version)
+	requirements.NotNil(legacy.Content.Transcript.Segments[0].EndOffsetSeconds)
+	assertions.InDelta(3.0, *legacy.Content.Transcript.Segments[0].EndOffsetSeconds, 0)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := st.GetMeetingContextContext(t.Context(), store.MeetingQueryScope{MessageIDs: new([]int64{id})}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		requirements.NoError(err)
+		assertions.Equal(beforeExports[format], result.Content)
+	}
+	// Pending raw cannot recover ends absent from its preserved canonical transcript.
+	legacy.Version, legacy.Content.Transcript.Segments[0].EndOffsetSeconds = 1, nil
+	legacySnapshot.Raw, err = json.Marshal(legacy, json.Deterministic(true))
+	requirements.NoError(err)
+	_, err = meetingarchive.New(st).Upsert(t.Context(), legacySnapshot, meetingarchive.UpsertOptions{})
+	requirements.NoError(err)
+	_, err = imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	_, missing := archivedContent(t, st, first.SourceID, "rec-a")
+	assertions.Nil(missing.Transcript.Segments[0].EndOffsetSeconds)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		_, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: missing}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		requirements.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
 	}
 	requirements.Len(content.Actions, 1)
 	src.records[0] = testRecording(t, `{"id":"rec-a","transcript":{"segments":[]},"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"New summary"}}}}}`)
@@ -533,12 +592,28 @@ func TestPocketEvidenceRejectsUnknownVersion(t *testing.T) {
 
 	var stored evidence
 	requirements.NoError(json.Unmarshal(snapshot.Raw, &stored))
-	stored.Version = 2
+	assertions.Equal(2, stored.Version)
+	stored.Version = 3
 	futureVersion, err := json.Marshal(stored, json.Deterministic(true))
 	requirements.NoError(err)
 	future := meetingcontent.Decode("pocket_json", futureVersion, nil)
 	assertions.Equal(meetingcontent.StateUnavailable, future.Summary.State)
 	assertions.Equal("invalid_raw", future.Summary.Reason)
+	complete := testRecording(t, recordingFixture)
+	imp, st, src := testArchive(t, complete)
+	first, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	id, _ := archivedContent(t, st, first.SourceID, "rec-a")
+	snapshot, err = makeSnapshot(first.SourceID, src.account, complete, content)
+	requirements.NoError(err)
+	snapshot.Raw = futureVersion
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	requirements.NoError(err)
+	_, err = imp.Import(t.Context(), archiveOptions())
+	requirements.ErrorContains(err, "invalid archived Pocket evidence")
+	after, err := st.GetMessageRaw(id)
+	requirements.NoError(err)
+	assertions.Equal(futureVersion, after)
 }
 
 func TestPocketImportCancellationAndStateRepair(t *testing.T) {

@@ -38,7 +38,7 @@ func buildSnapshot(ctx context.Context, st *store.Store, sourceID int64, account
 			return meetingarchive.Snapshot{}, e
 		}
 		var previous evidence
-		if len(raw) > maxEvidenceBytes || json.Unmarshal(raw, &previous) != nil || previous.Version != 1 {
+		if len(raw) > maxEvidenceBytes || json.Unmarshal(raw, &previous) != nil || (previous.Version != 1 && previous.Version != 2) {
 			return meetingarchive.Snapshot{}, errors.New("invalid archived Pocket evidence")
 		}
 		decoded := meetingcontent.Decode("pocket_json", raw, nil)
@@ -70,7 +70,7 @@ func buildSnapshot(ctx context.Context, st *store.Store, sourceID int64, account
 			content.Summary = previous.Content.Summary
 		}
 		if content.Transcript.State == meetingcontent.StateUnavailable {
-			content.Transcript = previous.Content.Transcript
+			content.Transcript = decoded.Transcript
 			content.SourceParticipants = previous.Content.SourceParticipants
 		}
 		if content.ActionCoverage == meetingcontent.CoverageUnavailable {
@@ -121,7 +121,7 @@ func makeSnapshot(sourceID int64, account Account, rec Recording, content meetin
 	if title == "" {
 		title = "Pocket recording"
 	}
-	raw, err := json.Marshal(evidence{Version: 1, Recording: rec.Raw, Content: content, Title: title, StartedAt: rec.StartedAt, RecordedAt: rec.RecordedAt, Owner: rec.Owner}, json.Deterministic(true))
+	raw, err := json.Marshal(evidence{Version: 2, Recording: rec.Raw, Content: content, Title: title, StartedAt: rec.StartedAt, RecordedAt: rec.RecordedAt, Owner: rec.Owner}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}

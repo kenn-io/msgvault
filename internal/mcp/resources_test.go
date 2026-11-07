@@ -775,9 +775,11 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 	}
 	assert, require := assert.New(t), require.New(t)
 	oldDaemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/health", r.URL.Path)
+		assert.Equal("/api/v1/meetings/context", r.URL.Path)
+		assert.Equal(http.MethodPost, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": "3.46.0"}))
+		w.WriteHeader(http.StatusBadRequest)
+		assert.NoError(json.NewEncoder(w).Encode(map[string]string{"error": "invalid_meeting_format", "message": "format must be json or markdown"}))
 	}))
 	t.Cleanup(oldDaemon.Close)
 	oldClient, err := daemonclient.New(daemonclient.Config{URL: oldDaemon.URL, AllowInsecure: true, HTTPClient: oldDaemon.Client()})

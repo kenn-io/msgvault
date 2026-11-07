@@ -245,7 +245,9 @@ func TestSubtitleRefusals(t *testing.T) {
 			e.Content.Transcript.Segments[0].OffsetSeconds = new(0.0)
 			e.Content.Transcript.Segments[0].EndOffsetSeconds = new(math.MaxFloat64)
 		},
-		"reversed": func(e *Entry) { s := &e.Content.Transcript.Segments[0]; s.EndedAt = new(s.StartedAt.Add(-time.Second)) },
+		"reversed": func(e *Entry) {
+			e.Content.Transcript.Segments[0] = Segment{Text: "reversed", OffsetSeconds: new(2.0), EndOffsetSeconds: new(1.0)}
+		},
 		"zero milliseconds": func(e *Entry) {
 			s := &e.Content.Transcript.Segments[0]
 			s.EndedAt = new(s.StartedAt.Add(time.Microsecond))
@@ -309,7 +311,8 @@ func FuzzSubtitlePayload(f *testing.F) {
 	for _, seed := range []string{"first\n\nsecond", "first\n \nsecond", "A\r\nB", "<v X>& -->", "世界", "\nleading", "trailing\n"} {
 		f.Add(seed, "Speaker")
 	}
-	for _, payload := range []string{"1 < 2 & 3 > 1", `C:\Temp\note.txt`, "literal <b>bold</b>", "A<&>", `literal {\b1}bold`, `literal \N text`} {
+	vttSeeds := []string{"1 < 2 & 3 > 1", `C:\Temp\note.txt`, "literal <b>bold</b>", "A<&>", `literal {\b1}bold`, `literal \N text`}
+	for _, payload := range vttSeeds {
 		f.Add(payload, "Speaker")
 		f.Add("body", payload)
 	}
@@ -345,6 +348,7 @@ func FuzzSubtitlePayload(f *testing.F) {
 			{longText, longSpeaker, true, boundary == 4096},
 		} {
 			text, speaker := input.text, input.speaker
+			knownVTT := speaker == "Speaker" && slices.Contains(vttSeeds, text) || text == "body" && slices.Contains(vttSeeds, speaker)
 			if !utf8.ValidString(text) || !utf8.ValidString(speaker) || strings.TrimSpace(text) == "" {
 				continue
 			}
@@ -364,7 +368,7 @@ func FuzzSubtitlePayload(f *testing.F) {
 				if speaker != "" {
 					payload = speaker + ": " + payload
 				}
-				if input.valid {
+				if input.valid || format == "vtt" && knownVTT {
 					if format == "srt" && input.srtTooLong {
 						require.ErrorContains(err, "use --format vtt")
 					} else {

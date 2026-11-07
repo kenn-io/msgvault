@@ -44,7 +44,7 @@ func TestPocketContent(t *testing.T) {
 		{"missing end", `"start":1.25`, false, false},
 		{"null end", `"start":1.25,"end":null`, false, false},
 		{"zero interval", `"start":0,"end":0`, false, false},
-		{"legacy missing normalized end", `"start":1.25,"end":3`, false, true},
+		{"legacy missing normalized end", `"start":1.25,"end":3`, true, true},
 	} {
 		rec, err := DecodeRecording([]byte(strings.Replace(recordingFixture, `"start":1.25,"end":3`, test.bounds, 1)))
 		requirements.NoError(err)

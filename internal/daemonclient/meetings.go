@@ -27,21 +27,16 @@ func (c *Client) GetMeetingContext(
 	ctx context.Context,
 	body generated.GetMeetingContextBody,
 ) (*meetingcontent.PacketResult, error) {
-	if body.Format != nil && (*body.Format == "srt" || *body.Format == "vtt") {
-		supported, err := c.SupportsAPISchemaVersion(ctx, "3.47.0")
-		if err != nil {
-			return nil, fmt.Errorf("check meeting subtitle capability: %w", err)
-		}
-		if !supported {
-			return nil, meetingSubtitlesUnsupportedError{}
-		}
-	}
 	response, err := APIResponse(c,
 		func(client *apiclient.Client) (*generated.GetMeetingContextResp, error) {
 			return client.GetMeetingContextWithResponse(ctx,
 				&generated.GetMeetingContextRequestOptions{Body: &body})
 		})
 	if err != nil {
+		var apiError *APIError
+		if body.Format != nil && (*body.Format == "srt" || *body.Format == "vtt") && errors.As(err, &apiError) && apiError.Code == "invalid_meeting_format" {
+			return nil, meetingSubtitlesUnsupportedError{}
+		}
 		return nil, err
 	}
 	if response.JSON200 == nil {
