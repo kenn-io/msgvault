@@ -20,18 +20,20 @@ func (s *Store) migrateContextEnrichment(ctx context.Context) (err error) {
 			return err
 		})
 	}
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
+	// Fresh schema DDL is uncommitted here, so inspect it through the active
+	// setup snapshot instead of the dedicated connection used for the rebuild.
 	var definition string
-	if err := conn.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='person_enrichment_profiles'`).Scan(&definition); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='person_enrichment_profiles'`).Scan(&definition); err != nil {
 		return err
 	}
 	if strings.Contains(definition, "'context'") {
 		return nil
 	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
 		return err
 	}
