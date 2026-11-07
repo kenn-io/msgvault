@@ -401,7 +401,7 @@
   <PageHeader title="Sources">
     {#snippet actions()}
       <Button size="sm" label="Sync history" onclick={onOpenOperations} />
-      {#if loading || contactsLoading || statusError || contactsError || sources.length > 0 || contacts.length > 0}
+      {#if statusError || contactsError || sources.length > 0 || contacts.length > 0}
         <Button size="sm" tone="info" surface="solid" label="Add source" onclick={openAddSource} />
       {/if}
     {/snippet}

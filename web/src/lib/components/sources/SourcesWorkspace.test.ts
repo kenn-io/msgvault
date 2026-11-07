@@ -524,7 +524,18 @@ describe('SourcesWorkspace', () => {
 
   it.each(['header', 'empty state'])('opens %s source setup without duplicate actions', async entry => {
     const onOpenOperations = vi.fn();
-    render(SourcesWorkspace, { client: createCaptureClient(api(entry === 'header' ? [source()] : []), []), onOpenOperations });
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const fetchFn = api(entry === 'header' ? [source()] : []);
+    render(SourcesWorkspace, { client: createCaptureClient(async (...args) => { await pending; return fetchFn(...args); }, []), onOpenOperations });
+    try {
+      if (entry === 'empty state') {
+        await screen.findByText('Loading…');
+        expect(screen.queryByRole('button', { name: 'Add source' })).toBeNull();
+      }
+    } finally {
+      release();
+    }
     if (entry === 'header') await screen.findByRole('table', { name: 'Sources' });
     else {
       await screen.findByText('No sources yet');
