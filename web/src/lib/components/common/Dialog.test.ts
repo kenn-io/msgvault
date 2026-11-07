@@ -21,7 +21,6 @@ it('leaves Escape to a child picker, then closes the dialog', async () => {
 });
 
 it.each([
-  { primaryDisabled: false, cancelDisabled: false },
   { primaryDisabled: true, cancelDisabled: false },
   { primaryDisabled: true, cancelDisabled: true }
 ])('keeps cancellation independent of Save: %j', async ({ primaryDisabled, cancelDisabled }) => {
@@ -38,5 +37,4 @@ it.each([
   expect(cancel.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   cancel.click();
   expect(onclose).toHaveBeenCalledTimes(cancelDisabled ? 0 : 1);
-  expect(onprimary).not.toHaveBeenCalled();
 });

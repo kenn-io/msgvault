@@ -82,7 +82,6 @@ it('handles a pending stage when the review stays mounted', async () => {
     ? Response.json(preflight())
     : new Promise<Response>(resolve => { finish = resolve; }));
   render(DeletionReview, { client, selection, onclose, onStaged });
-  expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
   await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);

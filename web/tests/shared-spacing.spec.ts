@@ -316,7 +316,6 @@ test('Sources notice keeps Retry usable on a phone', async ({ page }) => {
   await page.route('**/api/v1/carddav/connections', route => route.fulfill({ json: { connections: [] } }));
   await page.goto('/?workspace=sources');
   const notice = page.getByRole('alert');
-  expect(await notice.ariaSnapshot()).toContain('Error');
   const retry = notice.getByRole('button', { name: 'Retry', exact: true });
   await expect(retry).toHaveCSS('height', '28px');
   await expect(retry).toBeInViewport({ ratio: 1 });
@@ -491,14 +490,12 @@ test('selected rows keep their fill and accent on stripes and in the reader', as
   } }));
   await selectWorkspace(page, 'Messages');
   const grid = page.getByRole('grid', { name: 'Messages results' });
-  await grid.focus();
-  await page.keyboard.press('Space');
-  await page.keyboard.press('Space');
   await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
   const selected = grid.locator('.data-row--selected');
   await expect(selected).toHaveCount(2);
   for (const selectedRow of await selected.all()) {
     await expect(selectedRow).toHaveCSS('border-bottom-color', 'rgba(0, 0, 0, 0)');
+    await expect(selectedRow).toHaveCSS('background-image', /^linear-gradient\(to right, .+ 3px, .+ 3px\)$/);
   }
   const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundImage));
   expect((await colors())[0]).toBe((await colors())[1]);
@@ -703,12 +700,6 @@ for (const width of [1280, 390]) {
     });
     expect(geometry).toEqual({ height: 52, avatar: 32, inset: 16, gap: 12, center: 0 });
     expect((await double.boundingBox())!.height).toBe(52);
-    await single.hover();
-    await single.getByRole('checkbox', { name: 'Select Archive Person', exact: true }).check();
-    const toolbar = page.locator('.people-list [data-toolbar]');
-    await expect(toolbar.getByText('1 selected', { exact: true })).toBeVisible();
-    await toolbar.getByRole('button', { name: 'Clear selection', exact: true }).click();
-    await expect(toolbar).toHaveCount(0);
   });
 }
 

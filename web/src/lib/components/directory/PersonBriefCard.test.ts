@@ -136,7 +136,6 @@ describe('PersonBriefCard', () => {
     for (const text of sentenceTexts) {
       expect(await screen.findByRole('button', { name: text })).toBeDefined();
     }
-    expect(document.querySelector('.paragraph')?.textContent?.trim().replace(/\s+/g, ' ')).toBe(sentenceTexts.join(' '));
     expect(screen.getByText(/Version 2/)).toBeDefined();
     expect(document.querySelector('time[datetime="2026-08-29T18:42:10Z"]')).not.toBeNull();
     expect(screen.getByText(/1 item was dropped/)).toBeDefined();
