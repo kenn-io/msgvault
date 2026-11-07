@@ -75,3 +75,29 @@ func TestParseThreadingHeaders(t *testing.T) {
 	assert.Equal(t, "parent@example.test", parent)
 	assert.Equal(t, []string{"root@example.test", "parent@example.test"}, refs)
 }
+
+func TestReplyParentID(t *testing.T) {
+	for _, tc := range []struct{ name, input, want string }{
+		{"empty", "", ""},
+		{"bracketed", "<parent@example.test>", "parent@example.test"},
+		{"bare", "parent@example.test", "parent@example.test"},
+		{"padded", "  <parent@example.test>\t", "parent@example.test"},
+		{"list uses first", "<first@example.test> <second@example.test>", "first@example.test"},
+		{"trailing comment", "<parent@example.test> (Sender's message of Mon)", "parent@example.test"},
+		{"leading text", "Sender's message <parent@example.test>", "parent@example.test"},
+		{"skips empty entry", "<> <parent@example.test>", "parent@example.test"},
+		{"skips malformed entry", "< bad@example.test> <parent@example.test>", "parent@example.test"},
+		{"unterminated", "<parent@example.test", ""},
+		{"NUL", "<par\x00ent@example.test>", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ReplyParentID(tc.input))
+		})
+	}
+}
+
+func TestReplyParentFromHeaders(t *testing.T) {
+	raw := []byte("Message-ID: <child@example.test>\r\nIn-Reply-To: <first@example.test>\r\n\t<second@example.test>\r\n\r\nIn-Reply-To: <body@example.test>\r\n")
+	assert.Equal(t, "first@example.test", ReplyParentFromHeaders(raw))
+	assert.Empty(t, ReplyParentFromHeaders([]byte("Subject: no parent\r\n\r\nIn-Reply-To: <body@example.test>\r\n")))
+}

@@ -280,7 +280,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		}
 	}
 
-	if err := st.RecordEmailHeadersContext(ctx, sourceID, messageID, "", parsed.InReplyTo); err != nil {
+	if err := st.RecordEmailHeadersContext(ctx, sourceID, messageID, "", mime.ReplyParentID(parsed.InReplyTo)); err != nil {
 		return fmt.Errorf("record email reply header: %w", err)
 	}
 

@@ -222,6 +222,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 	if err = st.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		return sum, err
 	}
+	rederive.LinkEmailReplies(ctx, log, st, src)
 	cp := checkpoint()
 	// Complete through the source so last_sync_at moves. The cursors live in
 	// the run's checkpoint, so the source cursor stays unchanged.

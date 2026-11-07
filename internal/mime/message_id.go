@@ -78,3 +78,38 @@ func ParseThreadingHeaders(raw []byte) (messageID, inReplyTo string, references 
 	inReplyTo = NormalizeMessageID(firstHeader(headers, "in-reply-to"))
 	return messageID, inReplyTo, parseReferences(firstHeader(headers, "references"))
 }
+
+// ReplyParentID returns the canonical parent Message-ID named by an
+// In-Reply-To value. A single bare or bracketed ID is normalized as is. A
+// msg-id list (several parents, or an ID followed by a comment such as
+// "<id> (message of ...)") yields its first bracketed ID, the same entry IMAP
+// conversation threading uses. A value containing NUL names no parent.
+func ReplyParentID(inReplyTo string) string {
+	if strings.ContainsRune(inReplyTo, 0) {
+		return ""
+	}
+	if id := NormalizeMessageID(inReplyTo); id != "" {
+		return id
+	}
+	rest := inReplyTo
+	for {
+		open := strings.IndexByte(rest, '<')
+		if open < 0 {
+			return ""
+		}
+		end := strings.IndexByte(rest[open+1:], '>')
+		if end < 0 {
+			return ""
+		}
+		if id := NormalizeMessageID(rest[open : open+end+2]); id != "" {
+			return id
+		}
+		rest = rest[open+end+2:]
+	}
+}
+
+// ReplyParentFromHeaders reads the parent Message-ID from the top-level
+// In-Reply-To header without decoding bodies or attachments.
+func ReplyParentFromHeaders(raw []byte) string {
+	return ReplyParentID(firstHeader(tokenizeHeaders(raw), "in-reply-to"))
+}
