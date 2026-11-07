@@ -1067,6 +1067,24 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		checks.Equal("failed", state)
 		checks.Equal(1, f.api.Count(http.MethodGet, path), "expired events must stop fetching profiles")
 	})
+	t.Run("forbidden profile allows other members", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newInboxFixture(t)
+		other := "U00000000000000000000000000000003"
+		firstPath := "/v2/bot/group/" + testGroup + "/member/" + testUser
+		otherPath := "/v2/bot/group/" + testGroup + "/member/" + other
+		f.api.Enqueue(http.MethodGet, firstPath, lineapi.Response{Status: http.StatusForbidden})
+		f.enqueue(t, Event{Type: "memberJoined", WebhookEventID: "members-joined", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: other}}}}, time.Time{})
+		f.run(t)
+		var name sql.NullString
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
+		checks.Equal("Example User", name.String)
+		checks.Equal(1, f.api.Count(http.MethodGet, otherPath))
+		var state string
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='members-joined'`).Scan(&state))
+		checks.Equal("retry", state)
+	})
 	t.Run("missing profile allows other members", func(t *testing.T) {
 		must := require.New(t)
 		checks := assert.New(t)

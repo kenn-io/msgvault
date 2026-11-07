@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -559,12 +560,19 @@ func (p *Processor) membership(ctx context.Context, e Event) (func(context.Conte
 
 // Every member transition commits before the first optional provider request.
 func (p *Processor) enrichMembership(ctx context.Context, e Event, users []string) error {
+	var firstErr error
 	for _, userID := range users {
-		if userID != p.botID {
-			if _, err := p.profile(ctx, e.Source, userID); err != nil {
+		if userID == p.botID {
+			continue
+		}
+		if _, err := p.profile(ctx, e.Source, userID); err != nil {
+			if apiErr, ok := errors.AsType[*APIError](err); ctx.Err() != nil || !ok || apiErr.StatusCode >= http.StatusInternalServerError || apiErr.StatusCode == http.StatusTooManyRequests {
 				return err
+			}
+			if firstErr == nil {
+				firstErr = err
 			}
 		}
 	}
-	return nil
+	return firstErr
 }
