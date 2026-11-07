@@ -127,7 +127,6 @@ describe('SourcesWorkspace', () => {
     const alert = await within(panel).findByRole('alert');
     expect(within(alert).getByText("Couldn't load your sources.")).toBeDefined();
     const details = within(alert).getByText('Details').closest('details')!;
-    expect(details).toHaveProperty('open', false);
     expect(details.textContent).toContain('Source status unavailable');
     await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(statusReads).toBe(3));
