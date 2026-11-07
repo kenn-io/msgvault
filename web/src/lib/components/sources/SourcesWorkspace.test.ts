@@ -83,7 +83,7 @@ describe('SourcesWorkspace', () => {
     await screen.findByText('New messages only.');
     expect(screen.queryByText(`${pending} pending ·`) !== null).toBe(showCounts);
     if (showCounts) expect(screen.getByText(`${failed} failed`)).toBeDefined();
-    expect(screen.queryByText(`${invalid_signatures} invalid signatures since daemon start`) !== null).toBe(invalid_signatures > 0);
+    expect(screen.queryByText(`${invalid_signatures} rejected requests since restart`) !== null).toBe(invalid_signatures > 0);
     expect(screen.getByRole('button', { name: 'Process inbox Example OA' })).toBeDefined();
     expect(screen.queryByText('Check configuration and restart') !== null).toBe(!active);
   });
