@@ -52,8 +52,8 @@ const (
 	beeperMediaPhaseBlocked         = "blocked"
 
 	beeperMediaProcessingProfile = "supplied-transcript"
-	beeperMediaRetryDelay        = 5 * time.Minute
-	beeperMediaPollDelay         = time.Minute
+	BeeperMediaRetryDelay        = 5 * time.Minute
+	BeeperMediaPollDelay         = time.Minute
 )
 
 const attachmentHashedBytes = `(length(COALESCE(a.content_hash, '')) = 64
@@ -1138,7 +1138,7 @@ func (s *Store) FinishBeeperMediaOperation(
 		return false, errors.New("beeper media error code is too long")
 	}
 	now := time.Now().UTC()
-	retryAt := s.timestampValue(now.Add(beeperMediaRetryDelay))
+	retryAt := s.timestampValue(now.Add(BeeperMediaRetryDelay))
 	var applied bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
@@ -1235,7 +1235,7 @@ func (s *Store) FinishBeeperMediaOperation(
 			}
 
 		case BeeperMediaOperationStatus:
-			phase, next := beeperMediaPhaseObserving, s.timestampValue(now.Add(beeperMediaPollDelay))
+			phase, next := beeperMediaPhaseObserving, s.timestampValue(now.Add(BeeperMediaPollDelay))
 			switch {
 			case result.Retry:
 				next = retryAt

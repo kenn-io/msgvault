@@ -4372,3 +4372,17 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
 CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
  FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();
+
+-- Processing requests belong to the mirrored file and Docbank profile fingerprint.
+CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
+ destination_key TEXT NOT NULL,
+ content_hash TEXT NOT NULL,
+ fingerprint TEXT NOT NULL,
+ outcome TEXT NOT NULL,
+ job_id TEXT NOT NULL,
+ next_action_at TIMESTAMPTZ,
+ PRIMARY KEY (destination_key, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
+ ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
+ WHERE next_action_at IS NOT NULL;

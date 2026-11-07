@@ -4778,3 +4778,17 @@ CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
 AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
+
+-- Processing requests belong to the mirrored file and Docbank profile fingerprint.
+CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
+ destination_key TEXT NOT NULL,
+ content_hash TEXT NOT NULL,
+ fingerprint TEXT NOT NULL,
+ outcome TEXT NOT NULL,
+ job_id TEXT NOT NULL,
+ next_action_at DATETIME,
+ PRIMARY KEY (destination_key, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
+ ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
+ WHERE next_action_at IS NOT NULL;
