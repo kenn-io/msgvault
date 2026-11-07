@@ -1713,6 +1713,9 @@ func cliRunCommandAllowed(args []string) bool {
 	if IsCLIRunDraftLifecycle(args) {
 		return len(args) >= 2
 	}
+	if args[0] == "youtube" {
+		return len(args) >= 2 && args[1] == "reply"
+	}
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}
@@ -1770,6 +1773,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-calendar",
 		"add-circleback",
 		"add-chatwoot",
+		"add-youtube",
 		"add-plaud",
 		"add-twenty",
 		"add-pocket",
@@ -1833,6 +1837,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-calendar",
 		"sync-circleback",
 		"sync-chatwoot",
+		"sync-youtube",
 		"sync-plaud",
 		"sync-twenty",
 		"sync-pocket",

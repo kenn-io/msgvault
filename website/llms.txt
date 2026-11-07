@@ -53,6 +53,8 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
 - [Inline](https://msgvault.io/docs/usage/inline.md): all accessible chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters and a complete-catalog prerequisite
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
+- [YouTube comments](https://msgvault.io/docs/usage/youtube.md): owned channel videos, comments, replies, and resumable polling
+- [YouTube replies](https://msgvault.io/docs/usage/youtube-reply.md): preview, confirm, archive, and recover public comment replies
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)

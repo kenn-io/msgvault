@@ -1578,6 +1578,32 @@ the source message has since been deleted. See
 
 ---
 
+## youtube reply
+
+Preview and confirm a public reply to an archived YouTube comment. A nested
+target posts to its top-level parent. The daemon rechecks channel ownership and
+current parent eligibility before sending and stores the accepted comment.
+
+```bash
+msgvault youtube reply 123 --body "Example reply" --dry-run
+msgvault youtube reply 123 --body "Example reply" --confirm TOKEN
+```
+
+| Flag | Description |
+|---|---|
+| `--body` | Exact public reply text, required in every mode |
+| `--dry-run` | Return a confirmation receipt without contacting YouTube |
+| `--confirm` | Use the token from the matching preview; never repeats an uncertain send |
+| `--resolve-comment` | With `--confirm`, reconcile an uncertain receipt against an explicit provider comment ID without posting |
+
+Accepted receipts retry local archival only. A definite rejection can receive a
+fresh confirmation after its cause is corrected. Uncertain outcomes remain
+blocked until explicit matching provider evidence resolves them. Owner access
+is required. See [YouTube replies](usage/youtube-reply.md) for receipt states
+and recovery.
+
+---
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
@@ -5001,6 +5027,10 @@ preview or apply them.
 ## remove-account
 
 Remove an account or source and all its archived data from the selected msgvault archive. Deletes messages, labels, sync state, credentials no longer shared by another source, and attachment files unique to this source. This is irreversible but does not touch the remote provider.
+
+Removing a YouTube source redacts reply text, confirmation tokens and provider
+responses in its receipts. An opaque operation fingerprint and non-sendable
+tombstone remain to prevent the same reply from being sent again after reimport.
 
 ```bash
 msgvault remove-account [account] [flags]

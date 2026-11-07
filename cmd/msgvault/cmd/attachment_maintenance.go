@@ -489,6 +489,7 @@ func attachmentProducingCommand(args []string) bool {
 		"import-whatsapp",
 		"sync-beeper",
 		"sync-chatwoot",
+		"sync-youtube",
 		"sync-discord",
 		"sync-inline",
 		"sync-slack",

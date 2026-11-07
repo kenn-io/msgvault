@@ -524,16 +524,18 @@ func (s *Store) MessageExistsBatchContext(ctx context.Context, sourceID int64, s
 // StoredMessage is the stored output of one message, for importers that
 // compare a freshly derived message before rewriting it.
 type StoredMessage struct {
-	ID             int64
-	ConversationID int64
-	SenderID       sql.NullInt64
-	SourceIsFromMe sql.NullBool
-	Subject        sql.NullString
-	MessageType    string
-	SentAt         sql.NullTime
-	InternalDate   sql.NullTime
-	Snippet        sql.NullString
-	SizeEstimate   int64
+	ID               int64
+	ConversationID   int64
+	SenderID         sql.NullInt64
+	SourceIsFromMe   sql.NullBool
+	Subject          sql.NullString
+	MessageType      string
+	SentAt           sql.NullTime
+	ReceivedAt       sql.NullTime
+	InternalDate     sql.NullTime
+	ReplyToMessageID sql.NullInt64
+	Snippet          sql.NullString
+	SizeEstimate     int64
 	// Raw is nil when the message has no readable raw payload in the requested
 	// format.
 	Raw []byte
@@ -570,7 +572,8 @@ func (s *Store) StoredMessagesContext(
 	err := queryInChunksContext(ctx, s.db, sourceMessageIDs, []any{rawFormat, sourceID}, `
 		SELECT m.source_message_id, m.id, m.conversation_id, m.sender_id,
 		       m.source_is_from_me, m.subject, COALESCE(m.message_type, ''), m.sent_at,
-		       m.internal_date, m.snippet, COALESCE(m.size_estimate, 0),
+		       m.received_at, m.internal_date, m.reply_to_message_id, m.snippet,
+		       COALESCE(m.size_estimate, 0),
 		       r.raw_data, r.compression
 		FROM messages m
 		LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = ?
@@ -583,7 +586,8 @@ func (s *Store) StoredMessagesContext(
 			if err := rows.Scan(
 				&sourceMessageID, &stored.ID, &stored.ConversationID, &stored.SenderID,
 				&stored.SourceIsFromMe, &stored.Subject, &stored.MessageType, &stored.SentAt,
-				&stored.InternalDate, &stored.Snippet, &stored.SizeEstimate,
+				&stored.ReceivedAt, &stored.InternalDate, &stored.ReplyToMessageID,
+				&stored.Snippet, &stored.SizeEstimate,
 				&raw, &compression,
 			); err != nil {
 				return err
