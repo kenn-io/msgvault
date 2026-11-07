@@ -480,7 +480,7 @@ func (r *run) chatsHoldingThread(ctx context.Context, thread sigThread, archived
 			claimed[key] = true
 		}
 	}
-	messages, err := fetchMessages(ctx, r.db, r.schema, thread.ID, 0, r.opts.BatchSize)
+	messages, err := fetchMessages(ctx, r.db, r.schema, thread.ID, 0, -1)
 	if err != nil {
 		return nil, fmt.Errorf("read messages of Signal chat: %w", err)
 	}

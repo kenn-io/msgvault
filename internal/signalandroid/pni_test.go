@@ -1,6 +1,7 @@
 package signalandroid
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -244,4 +245,35 @@ func TestReimportPhoneOnlyChatGainsACIAndChangesNumber(t *testing.T) {
 	assert.Equal(int64(7), summary.MessagesUpdated)
 	assert.Equal(before, importedMessages(t, st))
 	assert.Equal(4, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+}
+
+func TestReimportRenumberedChatMatchesIncomingAfterFirstBatch(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	signalfixture.WritePNIOnly(t, dir, signalfixture.Current)
+	changeFixture(t, dir, `UPDATE recipient SET pni = NULL WHERE _id = 7`,
+		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+		 VALUES (601, 1700000410000, 1700000410001, 14, 7, 1, `+ms(signalfixture.TypeIncoming)+`, 'hello owner')`)
+	st, attachments := testutil.NewTestStore(t), t.TempDir()
+	first := runImport(t, st, dir, attachments)
+	require.Equal(int64(2), first.MessagesAdded)
+	before := importedMessages(t, st)
+	var chatID int64
+	require.NoError(st.DB().QueryRow(`SELECT id FROM conversations`).Scan(&chatID))
+
+	changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006', e164 = '+12025550107' WHERE _id = 7`)
+	opts := DefaultOptions()
+	opts.Phone = signalfixture.OwnPhone
+	opts.AttachmentFilesDir = dir
+	opts.AttachmentsDir = attachments
+	// Row 600 is outgoing; only the next batch contains the incoming match.
+	opts.BatchSize = 1
+	summary, err := NewImporter(st, nil).Import(t.Context(), filepath.Join(dir, "database.sqlite"), opts)
+	require.NoError(err)
+
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(int64(2), summary.MessagesUpdated)
+	assert.Equal(before, importedMessages(t, st))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE conversation_id = ?`, chatID))
 }
