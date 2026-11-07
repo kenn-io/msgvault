@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
-func TestLocalEmbeddingsActivationKeepsBuilderStorage(t *testing.T) {
+func TestLocalEmbeddingsActivationResolvesRelativeBuilderStorage(t *testing.T) {
 	require := require.New(t)
 	f := newLocalActivationFixture(t, "")
 	content, err := os.ReadFile(f.cfg.ConfigFilePath())

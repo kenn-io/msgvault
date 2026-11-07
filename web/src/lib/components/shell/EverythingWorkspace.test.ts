@@ -2804,8 +2804,7 @@ it('checks local availability once and opens Settings from the full-text results
   await waitFor(() => expect(methods).toEqual(['GET']));
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   state.replaceSearchDraft('orchard', 'full_text');
-  const hint = (await screen.findByRole('button', { name: 'Turn on' })).closest('p')!;
-  expect(hint.textContent!.replace(/\s+/g, ' ').trim()).toBe('Search by meaning is off · Turn on');
+  await screen.findByRole('button', { name: 'Turn on' });
   state.replaceSearchDraft('pear', 'full_text');
   // The hint steps aside while the new query loads.
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull());

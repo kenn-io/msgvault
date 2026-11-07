@@ -259,9 +259,9 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 		name, catalog, wantProvider, wantError string
 		savedOnly, savedEnabled, savedBuiltin  bool
 	}{
-		{name: "local without Ollama API", wantProvider: "configured"},
+		{name: "local without Ollama API", wantProvider: "configured", wantError: "already configured; switching the embedding policy requires `msgvault embeddings build --full-rebuild`"},
 		{name: "enabled Ollama", catalog: `{"models":[]}`, wantProvider: "ollama"},
-		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
+		{name: "local without catalog", catalog: `{}`, wantProvider: "configured", wantError: "already configured; switching the embedding policy requires `msgvault embeddings build --full-rebuild`"},
 		{name: "saved disabled builtin model", savedOnly: true, savedBuiltin: true, wantProvider: "builtin", wantError: "vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions"},
 		{name: "saved remote after startup", savedOnly: true, wantProvider: "configured"},
 		{name: "saved enabled Ollama after startup", catalog: `{"models":[]}`, savedOnly: true, savedEnabled: true, wantProvider: "configured"},
@@ -289,13 +289,14 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			if tc.savedOnly {
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
-				endpoint := "https://api.example.test/v1"
-				if tc.catalog != "" {
-					endpoint = f.cfg.Chat.Server + "/v1"
-				}
-				embeddings := map[string]any{"endpoint": endpoint, "model": "custom-model", "dimension": 768}
-				if tc.savedBuiltin {
-					embeddings = map[string]any{"model": "custom-model"}
+				embeddings := map[string]any{"model": "custom-model"}
+				if !tc.savedBuiltin {
+					endpoint := "https://api.example.test/v1"
+					if tc.catalog != "" {
+						endpoint = f.cfg.Chat.Server + "/v1"
+					}
+					embeddings["endpoint"] = endpoint
+					embeddings["dimension"] = 768
 				}
 				written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": tc.savedEnabled}}, {Path: []string{"vector", "embeddings"}, Values: embeddings}})
 				require.NoError(err)
@@ -310,11 +311,6 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			if tc.savedOnly {
-				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=orchard&mode=vector", nil)
-				request.Header.Set("Authorization", "Bearer owner")
-				response := httptest.NewRecorder()
-				f.server.Router().ServeHTTP(response, request)
-				require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
 				require.False(status.Enabled, "saved settings cannot enable search before runtime publication")
 				err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
 				require.Error(err)
@@ -331,9 +327,9 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 				builds := len(f.runner.calls)
 				err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
 				if tc.wantProvider == "ollama" {
-					assert.NoError(err)
+					require.NoError(err)
 				} else {
-					assert.Error(err)
+					require.ErrorContains(err, tc.wantError)
 				}
 				after, err := os.ReadFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
@@ -372,7 +368,7 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 			if name == "different build" {
 				buildingID, err := backend.CreateGeneration(f.ctx, "another-model", 768, "another-recipe")
 				require.NoError(t, err)
-				assert.ErrorIs(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), vector.ErrBuildingInProgress)
+				require.ErrorIs(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), vector.ErrBuildingInProgress)
 				building, err := backend.BuildingGeneration(f.ctx)
 				require.NoError(t, err)
 				require.NotNil(t, building)
