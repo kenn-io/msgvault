@@ -34,20 +34,21 @@ func TestPersonProtocolRejectsMalformedAndPreservesStatuses(t *testing.T) {
 		{"conflict", 409, `{}`, 409},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
 			client, err := NewClient(server.URL, nil)
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = client.ResolveExternalPerson(t.Context(), "archive", "u")
 			if tc.wantStatus == 0 {
-				require.ErrorIs(t, err, ErrInvalidReceipt)
+				require.ErrorIs(err, ErrInvalidReceipt)
 			} else {
 				var remote *HTTPError
-				require.ErrorAs(t, err, &remote)
-				require.Equal(t, tc.wantStatus, remote.Status)
+				require.ErrorAs(err, &remote)
+				require.Equal(tc.wantStatus, remote.Status)
 			}
 		})
 	}

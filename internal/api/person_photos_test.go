@@ -27,20 +27,21 @@ func TestPersonPhotosDisabled(t *testing.T) {
 }
 
 func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('canonical', 'Example') RETURNING id`).Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('canonical', 'Example') RETURNING id`).Scan(&id))
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_uid_aliases (retired_uid, surviving_person_id, reason) VALUES ('retired', ?, 'merge')`), id)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{ConnectionName: "test", BaseURL: "https://contacts.example.test/dav", Username: "example", PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/", Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example.test/books/one/", DisplayName: "Example"}}})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_resources (address_book_id, href, remote_uid, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'mapped', 'remote', ?)`), books[0].ID, "https://contacts.example.test/books/one/person.vcf", "carddav-uid", `"one"`, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:carddav-uid\r\nFN:Example\r\nEND:VCARD\r\n"), "remote", "local", id)
-	require.NoError(t, err)
+	require.NoError(err)
 	archive, err := st.ArchiveUIDContext(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	conflict := false
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, archive, r.URL.Query().Get("archive_id"))
+		require.Equal(archive, r.URL.Query().Get("archive_id"))
 		if !conflict {
 			http.NotFound(w, r)
 			return
@@ -54,7 +55,7 @@ func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
 	}))
 	defer remote.Close()
 	client, err := docbankmedia.NewClient(remote.URL, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.Integrations.Docbank.Enabled = true
 	cfg.Integrations.Docbank.AttachmentUploadConsent = true
@@ -67,36 +68,37 @@ func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
 		return response
 	}
 	response := get("retired")
-	require.Equal(t, http.StatusOK, response.Code)
-	require.Contains(t, response.Body.String(), `"uid":"canonical"`)
-	require.Contains(t, response.Body.String(), `"link_state":"unlinked"`)
+	require.Equal(http.StatusOK, response.Code)
+	require.Contains(response.Body.String(), `"uid":"canonical"`)
+	require.Contains(response.Body.String(), `"link_state":"unlinked"`)
 	response = get("carddav-uid")
-	require.Equal(t, http.StatusOK, response.Code)
-	require.Contains(t, response.Body.String(), `"uid":"canonical"`)
+	require.Equal(http.StatusOK, response.Code)
+	require.Contains(response.Body.String(), `"uid":"canonical"`)
 	conflict = true
-	require.Equal(t, http.StatusConflict, get("retired").Code)
+	require.Equal(http.StatusConflict, get("retired").Code)
 }
 
 func TestPersonPhotosOnlyLiveConfirmedImages(t *testing.T) {
+	require := require.New(t)
 	f := storetest.New(t)
 	_, err := f.Store.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('person', 'Example')`)
-	require.NoError(t, err)
+	require.NoError(err)
 	const version = "00000000-0000-4000-8000-000000000001"
 	hash := strings.Repeat("a", 64)
 	for _, name := range []string{"live", "deleted"} {
 		mid := f.CreateMessage(name)
 		if name == "live" {
-			require.NoError(t, f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "nonimage", Filename: "copy.pdf", MIMEType: "application/pdf", ContentHash: hash, StoragePath: "aa/" + hash, State: "stored"}))
+			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "nonimage", Filename: "copy.pdf", MIMEType: "application/pdf", ContentHash: hash, StoragePath: "aa/" + hash, State: "stored"}))
 		}
-		require.NoError(t, f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "image", Filename: name + ".jpg", MIMEType: "image/jpeg", ContentHash: hash, StoragePath: "aa/" + hash, State: "stored"}))
+		require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "image", Filename: name + ".jpg", MIMEType: "image/jpeg", ContentHash: hash, StoragePath: "aa/" + hash, State: "stored"}))
 		if name == "deleted" {
 			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), mid)
-			require.NoError(t, err)
+			require.NoError(err)
 		}
 	}
-	require.NoError(t, f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "image/jpeg"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: version}, ""))
+	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "image/jpeg"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: version}, ""))
 	archive, err := f.Store.ArchiveUIDContext(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	withdrawDuringRead := false
 	pageReads := 0
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +115,7 @@ func TestPersonPhotosOnlyLiveConfirmedImages(t *testing.T) {
 	}))
 	defer remote.Close()
 	client, err := docbankmedia.NewClient(remote.URL, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.Integrations.Docbank.Enabled = true
 	cfg.Integrations.Docbank.AttachmentUploadConsent = true
@@ -121,40 +123,41 @@ func TestPersonPhotosOnlyLiveConfirmedImages(t *testing.T) {
 	server.docbankAttachments = &DocbankAttachmentReader{Client: client, Store: f.Store, Destination: "attachments"}
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person", nil))
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result PersonPhotosResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
-	require.Len(t, result.Photos, 1)
-	require.Equal(t, "a", result.Photos[0].AssertionID)
-	require.Len(t, result.Photos[0].Occurrences, 1)
-	require.Equal(t, "live.jpg", result.Photos[0].Occurrences[0].Filename)
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(result.Photos, 1)
+	require.Equal("a", result.Photos[0].AssertionID)
+	require.Len(result.Photos[0].Occurrences, 1)
+	require.Equal("live.jpg", result.Photos[0].Occurrences[0].Filename)
 	withdrawDuringRead = true
 	pageReads = 0
 	response = httptest.NewRecorder()
 	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person", nil))
-	require.Equal(t, http.StatusConflict, response.Code)
+	require.Equal(http.StatusConflict, response.Code)
 }
 
 func TestPersonPhotoLinkRevisionAndRetiredUID(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('current', 'Example') RETURNING id`).Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('current', 'Example') RETURNING id`).Scan(&id))
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_uid_aliases (retired_uid, surviving_person_id, reason) VALUES ('old', ?, 'merge')`), id)
-	require.NoError(t, err)
+	require.NoError(err)
 	archive, err := st.ArchiveUIDContext(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	stale := false
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			http.NotFound(w, r)
 			return
 		}
-		require.Equal(t, `"7"`, r.Header.Get("If-Match"))
+		require.Equal(`"7"`, r.Header.Get("If-Match"))
 		var identity docbankmedia.ExternalPersonIdentity
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&identity))
-		require.Equal(t, archive, identity.ArchiveID)
-		require.Equal(t, "old", identity.UID)
-		require.Equal(t, "unlinked", identity.UIDState)
+		require.NoError(json.NewDecoder(r.Body).Decode(&identity))
+		require.Equal(archive, identity.ArchiveID)
+		require.Equal("old", identity.UID)
+		require.Equal("unlinked", identity.UIDState)
 		if stale {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
@@ -164,7 +167,7 @@ func TestPersonPhotoLinkRevisionAndRetiredUID(t *testing.T) {
 	}))
 	defer remote.Close()
 	client, err := docbankmedia.NewClient(remote.URL, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.Integrations.Docbank.Enabled = true
 	cfg.Integrations.Docbank.AttachmentUploadConsent = true
@@ -180,9 +183,9 @@ func TestPersonPhotoLinkRevisionAndRetiredUID(t *testing.T) {
 	}
 	body := `{"uid":"current","person_id":"p","revision":7,"state":"unlinked","linked_uid":"old"}`
 	result := put(body)
-	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
-	require.Contains(t, result.Body.String(), `"revision":8`)
+	require.Equal(http.StatusOK, result.Code, result.Body.String())
+	require.Contains(result.Body.String(), `"revision":8`)
 	stale = true
-	require.Equal(t, http.StatusPreconditionFailed, put(body).Code)
-	require.Equal(t, http.StatusBadRequest, put(`{"uid":"current","person_id":"p","revision":7,"state":"unlinked","linked_uid":"elsewhere"}`).Code)
+	require.Equal(http.StatusPreconditionFailed, put(body).Code)
+	require.Equal(http.StatusBadRequest, put(`{"uid":"current","person_id":"p","revision":7,"state":"unlinked","linked_uid":"elsewhere"}`).Code)
 }
