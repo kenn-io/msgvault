@@ -247,7 +247,10 @@ describe('ExploreAPI routing', () => {
     expect(requests[0]!.signal.aborted).toBe(true);
   });
 
-  it('uses a non-interactive full rebuild and accepts only a completed NDJSON stream', async () => {
+  it.each([
+    ['stale', ['embeddings', 'build', '--full-rebuild', '--yes']],
+    ['incomplete', ['embeddings', 'build', '--yes']]
+  ] as const)('uses a non-interactive build for %s and accepts only a completed NDJSON stream', async (status, args) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -259,11 +262,11 @@ describe('ExploreAPI routing', () => {
     });
     const api = createExploreAPI(createAPIClient(fetchFn));
 
-    await api.runCoverageAction('build_index', 'stale');
+    await api.runCoverageAction('build_index', status);
 
     expect(requests).toHaveLength(1);
     await expect(requests[0]!.json()).resolves.toEqual({
-      args: ['embeddings', 'build', '--full-rebuild', '--yes']
+      args
     });
   });
 

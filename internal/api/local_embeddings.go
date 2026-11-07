@@ -61,14 +61,7 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !running && progress.Error != "" && status.Enabled {
-		_, backend, cfg := s.vectorComponents()
-		if coverage, _, coverageErr := s.loadEmbeddingStatus(r.Context(), 0); backend != nil && coverageErr == nil && coverage.Pending == 0 {
-			if _, err := vector.ResolveActiveForFingerprint(r.Context(), backend, cfg.GenerationFingerprint()); err == nil {
-				progress.Error = ""
-			}
-		}
-	}
+	progress.Error = s.localSetupError(r.Context())
 	if running || progress.Error != "" {
 		status.Error = progress.Error
 	}
@@ -82,6 +75,28 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		status.Host = (&url.URL{Host: r.Host}).Hostname()
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) localSetupError(ctx context.Context) string {
+	s.importMu.Lock()
+	progress := s.localSetup
+	s.importMu.Unlock()
+	if !progress.Running && progress.Error != "" {
+		_, backend, cfg := s.vectorComponents()
+		if backend != nil && cfg.Enabled {
+			if coverage, _, err := s.loadEmbeddingStatus(ctx, 0); err == nil && coverage.Pending == 0 {
+				if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.GenerationFingerprint()); err == nil {
+					s.importMu.Lock()
+					if s.localSetup == progress {
+						s.localSetup.Error = ""
+					}
+					progress = s.localSetup
+					s.importMu.Unlock()
+				}
+			}
+		}
+	}
+	return progress.Error
 }
 
 func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Request) {

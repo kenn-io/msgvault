@@ -281,7 +281,7 @@
   }
   function startFeature(action: Extract<OverviewAction, { kind: 'start' }>): void {
     void build(action.id, async () => {
-      if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', 'initializing');
+      if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', coverage?.status ?? 'initializing');
       const result = await runOperationAction(action.id, client);
       if (result.outcome !== 'succeeded') throw new Error(result.message);
     });

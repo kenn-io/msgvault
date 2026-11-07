@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/providercredentials"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -625,12 +626,18 @@ func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
 func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) {
 	for _, existingIndex := range []bool{false, true} {
 		t.Run(fmt.Sprintf("existing_index=%t", existingIndex), func(t *testing.T) {
-			require := require.New(t)
+			assert, require := assert.New(t), require.New(t)
 			model := ""
 			if existingIndex {
 				model = "nomic-embed-text"
 			}
 			f := newLocalActivationFixture(t, model)
+			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+			require.NoError(err)
+			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": "", "run_after_sync": false}}})
+			require.NoError(err)
+			f.cfg.Vector.Embed.Schedule.Cron = ""
+			f.cfg.Vector.Embed.Schedule.RunAfterSync = false
 			if existingIndex {
 				f.useBuiltin(t)
 				f.runner.beforeBuild = nil
@@ -671,22 +678,50 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 			require.True(status.Enabled, "the provider is published before the first index is built")
 			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
 			require.NoError(err)
-			if existingIndex {
+			readEmbeddingStatus := func() vector.EmbeddingStatus {
 				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/status", nil)
 				request.Header.Set("Authorization", "Bearer owner")
 				request.RemoteAddr = "127.0.0.1:1234"
 				response := httptest.NewRecorder()
 				f.server.Router().ServeHTTP(response, request)
-				require.Equal(http.StatusOK, response.Code, response.Body.String())
+				assert.Equal(http.StatusOK, response.Code, response.Body.String())
 				var coverage vector.EmbeddingStatus
+				assert.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
+				return coverage
+			}
+			readCoverage := func() api.SearchCoverageResponse {
+				// Analytics exports only messages with a sent time.
+				_, err := f.store.DB().ExecContext(f.ctx, "UPDATE messages SET sent_at = ? WHERE sent_at IS NULL", time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+				require.NoError(err)
+				_, err = buildCache(f.ctx, f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+				require.NoError(err)
+				engine, err := query.NewDuckDBEngine(f.ctx, f.cfg.AnalyticsDir(), "", nil)
+				require.NoError(err)
+				defer func() { require.NoError(engine.Close()) }()
+				f.server.SetAnalyticsEngine(engine, api.AnalyticsModeDuckDB)
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/coverage", strings.NewReader(`{}`))
+				request.Header.Set("Authorization", "Bearer owner")
+				request.Header.Set("Content-Type", "application/json")
+				request.RemoteAddr = "127.0.0.1:1234"
+				response := httptest.NewRecorder()
+				f.server.Router().ServeHTTP(response, request)
+				require.Equal(http.StatusOK, response.Code, response.Body.String())
+				var coverage api.SearchCoverageResponse
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
+				return coverage
+			}
+			if existingIndex {
+				coverage := readEmbeddingStatus()
 				require.Equal(int64(2), coverage.Eligible)
 				require.Equal(int64(1), coverage.Current)
 				require.Equal(int64(1), coverage.Pending)
+				assert.Contains(readCoverage().Actions, api.SearchCoverageActionBuildIndex, "a failed reactivation needs recovery with scheduling disabled")
 			} else {
 				require.NotNil(building)
 			}
 			require.NotEmpty(status.Error, "an enabled provider does not mean its first index build succeeded")
+			_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "blank", "", "")
+			require.NoError(err)
 			f.onEmbedding = nil
 			f.runner.beforeBuild = nil // Recovery uses the shared builder after setup releases its gate.
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
@@ -696,6 +731,19 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 				require.Equal(building.ID, active.ID)
 			}
 			require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
+			readStatus()
+			require.Empty(status.Error, "successful recovery resolves the setup failure")
+			indexCoverage := readCoverage()
+			require.Greater(indexCoverage.EligibleCount, indexCoverage.EmbeddedCount, "the blank message is skipped rather than indexed")
+			require.Zero(readEmbeddingStatus().Pending, "skipped messages are complete for the worker")
+			assert.NotContains(indexCoverage.Actions, api.SearchCoverageActionBuildIndex, "a skipped message must not cause a rebuild loop")
+			_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "new-import", "New orchard", "A newly imported orchard message.")
+			require.NoError(err)
+			require.Eventually(func() bool {
+				return readEmbeddingStatus().Pending == 1
+			}, 20*time.Second, 100*time.Millisecond)
+			readStatus()
+			assert.Empty(status.Error, "a resolved setup failure must stay cleared after a later import")
 		})
 	}
 }
