@@ -178,6 +178,14 @@ these tools do not complete tasks or infer new ones.
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
+### Tools available for your archive
+
+MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
+
+Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
+
+The complete default stdio `tools/list` response, including output schemas, measures 173,598 bytes for an mbox-only archive and 226,314 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, rounded up from the measured sizes plus 10%. Optional write flags are off in both measurements.
+
 ### Claude Desktop Configuration
 
 Add the following to your Claude Desktop config file:
@@ -472,6 +480,8 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
 }
 ```
 
+On SQLite, an empty first page for an incomplete `from:` name or address can include `hints`, for example `{"code":"sender_name_requires_address","message":"…","retry_with":{"query":"from:alex@example.com"}}`. Retry with that query and keep the other tool arguments, including `account`, `limit`, and `offset`. The legacy `search_messages` metadata mode returns the same hints.
+
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
 cap it at 50. `search_message_bodies`, `semantic_search_messages`, `list_messages`, and `search_by_domains` use this
@@ -653,17 +663,21 @@ All `group_by` values return a JSON array of objects with these fields:
 | `AttachmentCount` | Number of attachments |
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
-Embedded MCP servers register vector tools from the backends supplied by their
-caller. Daemon-backed MCP reads one authenticated health response during
-startup and enables the full text search schema only when the response reports
-`text_enabled: true` with API schema `2.28.0` or newer. It registers
+The native daemon MCP listener always registers semantic search, similar-message search, and embedding status tools. Before text search is enabled, these tools return the daemon's unavailable response. Turning on search by meaning enables them without restarting MCP.
+
+Other embedded MCP servers register vector tools from the backends supplied by their
+caller. Standalone daemon-backed MCP reads one authenticated health response during
+startup. It registers the full semantic and similar-message tools when the daemon
+advertises `enableLocalEmbeddings`, even while text search is disabled. Turning on
+search by meaning makes these tools usable without restarting MCP. Otherwise, it
+requires `text_enabled: true` with API schema `2.28.0` or newer. It registers
 `search_visual_attachments` only when `visual_enabled: true`, the same lane
 fields are available, and the daemon serves the visual route from schema
-`2.4.0` or newer. Disabled or unknown lanes omit their optional searchers. The
+`2.4.0` or newer. Without local activation support, disabled or unknown text lanes omit their optional searchers. The
 reduced `semantic_search_messages` entry remains as discovery guidance and
 returns `vector_not_enabled` until text search is configured.
 
-A successful authenticated health response with API schema `3.21.0` or newer also registers `get_embeddings_status`.
+Standalone daemon-backed MCP also registers `get_embeddings_status` when the daemon advertises `enableLocalEmbeddings`, or when authenticated health reports a vector lane and API schema `3.21.0` or newer.
 
 Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
 semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,

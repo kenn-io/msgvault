@@ -2902,5 +2902,14 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
-	return &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}, nil
+	result := &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}
+	if limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
+		result.Hints = e.matchSenderName(ctx, q, func(ctx context.Context, scoped *search.Query) ([]string, []any, string) {
+			return e.buildFilteredMetadataSearchQueryParts(ctx, scoped, filter)
+		})
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }

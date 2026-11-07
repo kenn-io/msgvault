@@ -513,7 +513,7 @@ func (d *SQLiteDialect) FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.
 // FTSAvailable probes for FTS5 by querying the virtual table.
 // Checking sqlite_master alone is insufficient: a binary built without FTS5
 // support will fail with "no such module: fts5" even if the table exists.
-func (d *SQLiteDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {
+func (d *SQLiteDialect) FTSAvailable(ctx context.Context, db SQLReader) (bool, error) {
 	var probe int
 	err := db.QueryRowContext(ctx, "SELECT 1 FROM messages_fts LIMIT 1").Scan(&probe)
 	if err != nil && ctx.Err() != nil {

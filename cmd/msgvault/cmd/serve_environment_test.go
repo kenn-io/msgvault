@@ -104,14 +104,18 @@ func TestRunServeRejectedContenderKeepsRunningDaemonKey(t *testing.T) { //nolint
 	require.NoError(err)
 	require.NoError(initial.Close())
 
-	contender, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0"), APIPort: new(0)})
-	require.NoError(err)
-	contenderCommand := &cobra.Command{Use: "serve"}
-	contenderCommand.SetContext(testInvocationContext(t.Context(), contender, invocationOptions{}))
-	err = runServe(contenderCommand, nil)
-	require.ErrorAs(err, &daemonOwnerLockHeldError{})
-	_, err = os.Stat(contender.ServerKeyFilePath())
-	require.ErrorIs(err, os.ErrNotExist, "a rejected contender must not create a new daemon credential")
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	for _, contenderPort := range []int{0, port} {
+		contender, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0"), APIPort: new(contenderPort)})
+		require.NoError(err)
+		contenderCommand := &cobra.Command{Use: "serve"}
+		contenderCommand.SetContext(testInvocationContext(t.Context(), contender, invocationOptions{}))
+		err = runServe(contenderCommand, nil)
+		require.ErrorAs(err, &daemonOwnerLockHeldError{})
+		assert.Contains(t, err.Error(), url)
+		_, err = os.Stat(contender.ServerKeyFilePath())
+		require.ErrorIs(err, os.ErrNotExist, "a rejected contender must not create a new daemon credential")
+	}
 
 	fresh, err := config.Load(path, home)
 	require.NoError(err)

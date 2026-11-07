@@ -681,6 +681,7 @@ type cliDeleteDedupedExecuteResponse struct {
 
 type cliSearchResponse struct {
 	HasMore          bool                   `json:"has_more,omitzero"`
+	Hints            []query.SearchHint     `json:"hints,omitempty"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
@@ -1433,7 +1434,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
-	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
+	if err := runner.RunCLICommand(s.withPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
@@ -1590,7 +1591,7 @@ func (s *Server) handleCLIEmbeddingsPlan(w http.ResponseWriter, r *http.Request)
 	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
-	resp, err := planner.PlanCLIEmbeddings(r.Context(), req)
+	resp, err := planner.PlanCLIEmbeddings(s.withPublishedVectorConfig(r.Context()), req)
 	if err != nil {
 		writeAPIHTTPError(w, newAPIHTTPError(http.StatusBadRequest, "embeddings_plan_failed", err.Error()))
 		return
@@ -2521,6 +2522,14 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp.Results = results
+	if len(results) == 0 && offset == 0 {
+		if matcher, ok := s.queryEngineForContext(r.Context()).(query.SenderNameMatcher); ok {
+			resp.Hints = matcher.MatchSenderName(r.Context(), parsed)
+			if s.writeIfContextError(w, r.Context().Err()) {
+				return
+			}
+		}
+	}
 	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {

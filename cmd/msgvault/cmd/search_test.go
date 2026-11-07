@@ -1120,6 +1120,38 @@ func TestSearchCmd_JSONEmptyResultsEmitEmptyArray(t *testing.T) {
 	assert.Empty(results)
 }
 
+func TestSearchCmd_EmptyResultsPrintHintsToStderr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/cli/search", r.URL.Path)
+		assert.Equal(t, "from:alex", r.URL.Query().Get("q"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[],"hints":[{"code":"sender_name_requires_address","message":"try from:alex@example.com","retry_with":{"query":"from:alex@example.com"}}]}`))
+	}))
+	defer srv.Close()
+	for _, tc := range []struct {
+		name, stdout string
+		args         []string
+	}{
+		{"text", "No messages found.\n", []string{"search", "from:alex"}},
+		{"json", "[]\n", []string{"search", "from:alex", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetSearchFlags()
+			cfg := &config.Config{Remote: config.RemoteConfig{URL: srv.URL, AllowInsecure: true}}
+			root := newTestRootCmd()
+			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			root.AddCommand(searchCmd)
+			root.SetArgs(tc.args)
+			doneOut, doneErr := captureStdout(t), captureStderr(t)
+			err := root.Execute()
+			stdout, stderr := doneOut(), doneErr()
+			require.NoError(t, err)
+			assert.Equal(t, tc.stdout, stdout)
+			assert.Contains(t, stderr, "Hint: try from:alex@example.com\n")
+		})
+	}
+}
+
 func TestOutputSearchResultsJSONIncludesBrowserURL(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	done := captureStdout(t)

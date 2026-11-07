@@ -459,7 +459,7 @@ func runConfiguredPlaudSync(ctx context.Context, st *store.Store, src config.Pla
 		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, err)
 	}
 	defer func() { _ = session.Close() }()
-	sum, err := plaud.NewImporter(st, session).Import(ctx, plaud.ImportOptions{Identifier: src.Identifier, AccountEmail: email})
+	sum, err := plaud.NewImporter(st, session).Import(ctx, plaud.ImportOptions{Identifier: src.Identifier, AccountEmail: email, Limit: src.Limit})
 	return finishScheduledPlaudImport(ctx, src.Identifier, sum, err, rebuildCacheAfterScheduledSync)
 }
 func finishScheduledPlaudImport(ctx context.Context, identifier string, sum *plaud.ImportSummary, importErr error, refresh func(context.Context, string) error) error {
