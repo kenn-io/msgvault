@@ -136,10 +136,10 @@ func TestRetryBackoffOutlastsRateLimitWindow(t *testing.T) {
 func TestRateLimitSlowdownStopsAtFloor(t *testing.T) {
 	s := &Session{limiter: rate.NewLimiter(0.3, 2)}
 	s.slowDown()
-	assert.Equal(t, minCallRate, s.limiter.Limit())
+	assert.InDelta(t, float64(minCallRate), float64(s.limiter.Limit()), 1e-9)
 	assert.Equal(t, 1, s.limiter.Burst())
 	s.slowDown()
-	assert.Equal(t, minCallRate, s.limiter.Limit())
+	assert.InDelta(t, float64(minCallRate), float64(s.limiter.Limit()), 1e-9)
 }
 
 func TestToolErrorsPreserveProviderMessage(t *testing.T) {
