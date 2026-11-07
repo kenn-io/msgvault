@@ -25,7 +25,10 @@ Examples:
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if !cmd.Flags().Changed("write") {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), agentguide.ManagedBlock())
-			return err
+			if err != nil {
+				return fmt.Errorf("print agent instructions: %w", err)
+			}
+			return nil
 		}
 		path, _ := cmd.Flags().GetString("write")
 		if path == "" {
@@ -40,7 +43,10 @@ Examples:
 			status = "Updated"
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", status, path)
-		return err
+		if err != nil {
+			return fmt.Errorf("print instruction file status: %w", err)
+		}
+		return nil
 	},
 }
 

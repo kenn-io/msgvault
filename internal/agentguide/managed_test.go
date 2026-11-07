@@ -22,13 +22,15 @@ func TestManagedBlock(t *testing.T) {
 func TestUpsertManagedBlock(t *testing.T) {
 	for _, content := range []string{"", "# Project", "# Project\n", "# Project\n\n", "# Project\r\n"} {
 		t.Run(strings.ReplaceAll(content, "\n", "LF"), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			updated, err := UpsertManagedBlock(content)
-			require.NoError(t, err)
-			assert.True(t, strings.HasPrefix(updated, content), "preserve every pre-existing byte")
-			assert.Contains(t, updated, ManagedBlock())
+			require.NoError(err)
+			assert.True(strings.HasPrefix(updated, content), "preserve every pre-existing byte")
+			assert.Contains(updated, ManagedBlock())
 			repeated, err := UpsertManagedBlock(updated)
-			require.NoError(t, err)
-			assert.Equal(t, updated, repeated)
+			require.NoError(err)
+			assert.Equal(updated, repeated)
 		})
 	}
 	for _, newline := range []string{"\n", "\r\n"} {
@@ -77,50 +79,54 @@ func FuzzManagedBlockPreservesOutside(f *testing.F) {
 }
 
 func TestWriteInstructions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "AGENTS.md")
 	changed, err := WriteInstructions(path)
-	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NoError(err)
+	assert.True(changed)
 	content, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, ManagedBlock()+"\n", string(content))
+	require.NoError(err)
+	assert.Equal(ManagedBlock()+"\n", string(content))
 
 	initial := "# Project\r\n\r\n" + BlockBegin + "\r\nstale\r\n" + BlockEnd + "\r\nKeep this."
-	require.NoError(t, os.WriteFile(path, []byte(initial), 0o600))
-	require.NoError(t, os.Chmod(path, 0o640))
+	require.NoError(os.WriteFile(path, []byte(initial), 0o600))
+	require.NoError(os.Chmod(path, 0o640))
 	changed, err = WriteInstructions(path)
-	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NoError(err)
+	assert.True(changed)
 	content, err = os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, "# Project\r\n\r\n"+ManagedBlock()+"\r\nKeep this.", string(content))
+	require.NoError(err)
+	assert.Equal("# Project\r\n\r\n"+ManagedBlock()+"\r\nKeep this.", string(content))
 	info, err := os.Stat(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	if runtime.GOOS != "windows" {
-		assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
+		assert.Equal(os.FileMode(0o640), info.Mode().Perm())
 	}
 	oldTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, os.Chtimes(path, oldTime, oldTime))
+	require.NoError(os.Chtimes(path, oldTime, oldTime))
 	changed, err = WriteInstructions(path)
-	require.NoError(t, err)
-	assert.False(t, changed)
+	require.NoError(err)
+	assert.False(changed)
 	info, err = os.Stat(path)
-	require.NoError(t, err)
-	assert.True(t, oldTime.Equal(info.ModTime()), "an idempotent update must not rewrite the file")
+	require.NoError(err)
+	assert.True(oldTime.Equal(info.ModTime()), "an idempotent update must not rewrite the file")
 	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	assert.Len(t, entries, 1, "temporary replacement files must be removed")
+	require.NoError(err)
+	assert.Len(entries, 1, "temporary replacement files must be removed")
 }
 
 func TestWriteInstructionsRejectsUnsafeTargets(t *testing.T) {
 	for _, kind := range []string{"symlink", "dangling symlink", "directory", "read-only", "malformed", "missing parent"} {
 		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			dir := t.TempDir()
 			path := filepath.Join(dir, "AGENTS.md")
 			original := "Keep exactly this."
 			target := filepath.Join(dir, "target.md")
-			require.NoError(t, os.WriteFile(target, []byte(original), 0o600))
+			require.NoError(os.WriteFile(target, []byte(original), 0o600))
 			switch kind {
 			case "symlink", "dangling symlink":
 				if kind == "dangling symlink" {
@@ -130,29 +136,29 @@ func TestWriteInstructionsRejectsUnsafeTargets(t *testing.T) {
 					t.Skipf("symlink creation unavailable: %v", err)
 				}
 			case "directory":
-				require.NoError(t, os.Mkdir(path, 0o700))
+				require.NoError(os.Mkdir(path, 0o700))
 			case "read-only":
 				if runtime.GOOS == "windows" {
 					t.Skip("POSIX file mode check")
 				}
-				require.NoError(t, os.WriteFile(path, []byte(original), 0o400))
+				require.NoError(os.WriteFile(path, []byte(original), 0o400))
 			case "malformed":
 				original = BlockBegin
-				require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+				require.NoError(os.WriteFile(path, []byte(original), 0o600))
 			case "missing parent":
 				path = filepath.Join(dir, "missing", "AGENTS.md")
 			}
 			changed, err := WriteInstructions(path)
-			require.Error(t, err)
-			assert.False(t, changed)
+			require.Error(err)
+			assert.False(changed)
 			if kind == "malformed" || kind == "read-only" {
 				content, err := os.ReadFile(path)
-				require.NoError(t, err)
-				assert.Equal(t, original, string(content))
+				require.NoError(err)
+				assert.Equal(original, string(content))
 			}
 			content, err := os.ReadFile(filepath.Join(dir, "target.md"))
-			require.NoError(t, err)
-			assert.Equal(t, "Keep exactly this.", string(content))
+			require.NoError(err)
+			assert.Equal("Keep exactly this.", string(content))
 		})
 	}
 }

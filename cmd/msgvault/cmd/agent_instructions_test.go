@@ -14,18 +14,20 @@ import (
 func TestAgentInstructionsOffline(t *testing.T) {
 	for _, kind := range []string{"print", "write", "native quickstart", "conflicting quickstart flags"} {
 		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			if helpTestSubprocess(t) {
 				return
 			}
 			dir := t.TempDir()
 			invalidConfig := filepath.Join(dir, "invalid.toml")
-			require.NoError(t, os.WriteFile(invalidConfig, []byte("invalid = ["), 0o600))
+			require.NoError(os.WriteFile(invalidConfig, []byte("invalid = ["), 0o600))
 			path := filepath.Join(dir, "AGENTS.md")
 			args := []string{"--config", invalidConfig, "agent-instructions"}
 			want := agentguide.ManagedBlock() + "\n"
 			switch kind {
 			case "write":
-				require.NoError(t, os.WriteFile(path, []byte("# Existing project\n"), 0o600))
+				require.NoError(os.WriteFile(path, []byte("# Existing project\n"), 0o600))
 				args = append(args, "--write", path)
 				want = "Updated " + path + "\n"
 			case "native quickstart", "conflicting quickstart flags":
@@ -41,19 +43,19 @@ func TestAgentInstructionsOffline(t *testing.T) {
 			rootCmd.SetArgs(args)
 			err := executeRootContext(t.Context(), rootCmd)
 			if kind == "conflicting quickstart flags" {
-				require.ErrorContains(t, err, "mcp")
+				require.ErrorContains(err, "mcp")
 			} else {
-				require.NoError(t, err)
-				assert.Equal(t, want, output.String())
+				require.NoError(err)
+				assert.Equal(want, output.String())
 			}
 			if kind == "write" {
 				content, err := os.ReadFile(path)
-				require.NoError(t, err)
-				assert.Equal(t, "# Existing project\n\n"+agentguide.ManagedBlock()+"\n", string(content))
+				require.NoError(err)
+				assert.Equal("# Existing project\n\n"+agentguide.ManagedBlock()+"\n", string(content))
 			}
 			entries, err := os.ReadDir(os.Getenv("MSGVAULT_HOME"))
-			require.NoError(t, err)
-			assert.Empty(t, entries, "instruction generation must not initialize config or an archive")
+			require.NoError(err)
+			assert.Empty(entries, "instruction generation must not initialize config or an archive")
 		})
 	}
 }

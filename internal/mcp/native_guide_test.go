@@ -64,22 +64,24 @@ func exerciseNativeQuickstart(t *testing.T, session *sdkmcp.ClientSession, markd
 		}
 		require.NoError(t, json.Unmarshal([]byte(example[1]), &call))
 		t.Run(call.Tool, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			schema, available := schemas[call.Tool]
-			require.True(t, available, "published example must use an available native tool")
-			require.NoError(t, schema.Validate(call.Arguments), "published literal example must match its real schema")
+			require.True(available, "published example must use an available native tool")
+			require.NoError(schema.Validate(call.Arguments), "published literal example must match its real schema")
 			// The guide instructs callers to replace synthetic IDs with their own
 			// search result. Keep every other published argument unchanged.
 			if _, hasID := call.Arguments["id"]; hasID {
 				call.Arguments["id"] = id
 			}
 			arguments, err := json.Marshal(call.Arguments)
-			require.NoError(t, err)
+			require.NoError(err)
 			t.Logf("schema validated %s; wire arguments %s", call.Tool, arguments)
 			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: call.Tool, Arguments: call.Arguments})
-			require.NoError(t, err)
-			require.False(t, result.IsError, "%s", task5SDKResultText(result))
+			require.NoError(err)
+			require.False(result.IsError, "%s", task5SDKResultText(result))
 			encoded, err := json.Marshal(result.StructuredContent)
-			require.NoError(t, err)
+			require.NoError(err)
 			switch call.Tool {
 			case ToolSearchMetadata, ToolSearchMessageBodies, ToolListThread:
 				var page struct {
@@ -90,13 +92,13 @@ func exerciseNativeQuickstart(t *testing.T, session *sdkmcp.ClientSession, markd
 						ID int64 `json:"id"`
 					} `json:"messages"`
 				}
-				require.NoError(t, json.Unmarshal(encoded, &page))
+				require.NoError(json.Unmarshal(encoded, &page))
 				if call.Tool == ToolListThread {
-					require.Len(t, page.Messages, 1)
-					assert.Equal(t, id, page.Messages[0].ID)
+					require.Len(page.Messages, 1)
+					assert.Equal(id, page.Messages[0].ID)
 				} else {
-					require.Len(t, page.Data, 1, "%s", encoded)
-					assert.Equal(t, id, page.Data[0].ID)
+					require.Len(page.Data, 1, "%s", encoded)
+					assert.Equal(id, page.Data[0].ID)
 				}
 			case ToolGetMessage:
 				var body struct {
@@ -107,26 +109,26 @@ func exerciseNativeQuickstart(t *testing.T, session *sdkmcp.ClientSession, markd
 				var complete strings.Builder
 				offset := 0
 				for {
-					require.NoError(t, json.Unmarshal(encoded, &body))
+					require.NoError(json.Unmarshal(encoded, &body))
 					complete.WriteString(body.Text)
 					offset += body.Returned
 					if !body.HasMore {
 						break
 					}
-					require.Positive(t, body.Returned, "a continued page must advance")
-					require.Less(t, offset, len(nativeGuideFixtureBody))
+					require.Positive(body.Returned, "a continued page must advance")
+					require.Less(offset, len(nativeGuideFixtureBody))
 					call.Arguments["offset"] = offset
 					result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: call.Tool, Arguments: call.Arguments})
-					require.NoError(t, err)
-					require.False(t, result.IsError)
+					require.NoError(err)
+					require.False(result.IsError)
 					encoded, err = json.Marshal(result.StructuredContent)
-					require.NoError(t, err)
+					require.NoError(err)
 				}
-				assert.Equal(t, nativeGuideFixtureBody, complete.String())
+				assert.Equal(nativeGuideFixtureBody, complete.String())
 			case ToolAggregate:
-				assert.Contains(t, string(encoded), "sender@example.com")
+				assert.Contains(string(encoded), "sender@example.com")
 			case ToolGetStats:
-				assert.Contains(t, string(encoded), storetest.OwnerAddress)
+				assert.Contains(string(encoded), storetest.OwnerAddress)
 			}
 		})
 	}
