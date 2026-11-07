@@ -93,7 +93,7 @@ func TestLineChannelsDrainWithoutCancelingSlowMedia(t *testing.T) {
 		must.NoError(err)
 		checks.Equal(attachmentpolicy.StateStored, refs["line:1"].State, "the first bounded download must finish before the pass budget")
 		var count int
-		must.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='text-b'"), b.ID).Scan(&count))
+		must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='text-b'"), b.ID).Scan(&count))
 		checks.Equal(1, count, "the second channel must drain while the first still has pending media")
 	})
 }

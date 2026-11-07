@@ -59,7 +59,7 @@ func TestGroupSummaryPermanentErrorPreservesArchivedMessage(t *testing.T) {
 				checks.Equal("archived text", f.archived(t, strconv.Itoa(i+1)).body)
 			}
 			var state string
-			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 			want := "retry"
 			if permanent {
 				want = "processed"
@@ -91,7 +91,7 @@ func newInboxFixture(t *testing.T) *inboxFixture {
 	f := &inboxFixture{st: testutil.NewTestStore(t), api: fake, now: time.Now().UTC().Truncate(time.Second), attachments: t.TempDir()}
 	f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
 	var err error
-	f.source, err = Register(context.Background(), f.st, f.client, testChannel)
+	f.source, err = Register(t.Context(), f.st, f.client, testChannel)
 	require.NoError(t, err)
 	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 	return f
@@ -116,14 +116,14 @@ func (f *inboxFixture) enqueue(t *testing.T, e Event, received time.Time) {
 	if received.IsZero() {
 		received = f.now
 	}
-	require.NoError(t, f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: target, EventTimestamp: e.Timestamp, RawJSON: string(clean), ReceivedAt: received}}))
+	require.NoError(t, f.st.EnqueueLineEventsContext(t.Context(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: target, EventTimestamp: e.Timestamp, RawJSON: string(clean), ReceivedAt: received}}))
 }
 func (f *inboxFixture) message(id, text string, stamp int64) Event {
 	return Event{Type: "message", Timestamp: stamp, WebhookEventID: "event-" + id, Source: Source{Type: "group", GroupID: testGroup, UserID: testUser}, Message: &Message{Type: "text", ID: id, Text: text}}
 }
 func (f *inboxFixture) run(t *testing.T) {
 	t.Helper()
-	require.NoError(t, f.processor.Process(context.Background()))
+	require.NoError(t, f.processor.Process(t.Context()))
 }
 
 type archivedMessageState struct {
@@ -139,9 +139,9 @@ func (f *inboxFixture) archived(t *testing.T, key string) archivedMessageState {
 	var id int64
 	var edited bool
 	var deleted, sent sql.NullTime
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT id,is_edited,deleted_from_source_at,sent_at FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, key).Scan(&id, &edited, &deleted, &sent))
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT id,is_edited,deleted_from_source_at,sent_at FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, key).Scan(&id, &edited, &deleted, &sent))
 	var body sql.NullString
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id=?`), id).Scan(&body))
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id=?`), id).Scan(&body))
 	return archivedMessageState{id: id, body: body.String, edited: edited, deleted: deleted.Valid, sent: sent.Time}
 }
 
@@ -167,7 +167,7 @@ func TestProcessorMessageTypes(t *testing.T) {
 			checks.False(deleted)
 			checks.Equal(e.Timestamp, sent.UnixMilli())
 			var mine bool
-			require.NoError(t, f.st.DB().QueryRow(`SELECT is_from_me FROM messages`).Scan(&mine))
+			require.NoError(t, f.st.DB().QueryRowContext(t.Context(), `SELECT is_from_me FROM messages`).Scan(&mine))
 			checks.False(mine)
 		})
 	}
@@ -185,7 +185,7 @@ func TestProcessorQuoteResolvesWhenParentArrives(t *testing.T) {
 	parentID := f.archived(t, "1").id
 	childID := f.archived(t, "2").id
 	var reply sql.NullInt64
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), childID).Scan(&reply))
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), childID).Scan(&reply))
 	assert.Equal(t, parentID, reply.Int64)
 }
 
@@ -196,7 +196,7 @@ func TestProcessorInterruptedPassSettlesCompletedConversations(t *testing.T) {
 	f := newInboxFixture(t)
 	groupY := "C00000000000000000000000000000002"
 	userY := "U00000000000000000000000000000003"
-	ctx, cancel := context.WithCancel(jobctx.WithProgress(context.Background()))
+	ctx, cancel := context.WithCancel(jobctx.WithProgress(t.Context()))
 	defer cancel()
 	var interrupted atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,25 +225,25 @@ func TestProcessorInterruptedPassSettlesCompletedConversations(t *testing.T) {
 	must.ErrorIs(f.processor.Process(ctx), context.Canceled)
 	checks.True(jobctx.HasProgress(ctx), "committed text must trigger cache refresh even when enrichment is canceled")
 	checks.Equal("child", f.archived(t, "repair-child").body)
-	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending, "an interrupted pass settles and finishes the events it completed")
 
 	var parentID, childID, conversationID int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id,conversation_id FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, "repair-parent").Scan(&parentID, &conversationID))
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, "repair-child").Scan(&childID))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT id,conversation_id FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, "repair-parent").Scan(&parentID, &conversationID))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), f.source.ID, "repair-child").Scan(&childID))
 	var reply sql.NullInt64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), childID).Scan(&reply))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), childID).Scan(&reply))
 	checks.True(reply.Valid)
 	checks.Equal(parentID, reply.Int64)
 	var messageCount int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), conversationID).Scan(&messageCount))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), conversationID).Scan(&messageCount))
 	checks.Equal(int64(2), messageCount)
 
 	f.now = f.now.Add(time.Minute)
 	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 	f.run(t)
-	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err = f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	must.NoError(err)
 	checks.Zero(status.Pending)
 }
@@ -255,8 +255,8 @@ func TestProcessorRejectsSourceBoundToAnotherChannel(t *testing.T) {
 	f := newInboxFixture(t)
 	f.enqueue(t, f.message("wrong-channel", "synthetic", f.now.UnixMilli()), time.Time{})
 	p := NewProcessor(f.st, f.client, f.source.ID, "2000000002", f.attachments, WithProcessorClock(func() time.Time { return f.now }))
-	must.Error(p.Process(context.Background()))
-	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	must.Error(p.Process(t.Context()))
+	status, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending)
 	count, err := f.st.CountMessagesForSource(f.source.ID)
@@ -272,14 +272,14 @@ func TestProcessorEditMarkerFailureRollsBackBody(t *testing.T) {
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 	if f.st.IsPostgreSQL() {
-		_, err := f.st.DB().Exec(`CREATE FUNCTION fail_line_edit_marker() RETURNS trigger LANGUAGE plpgsql AS $$
+		_, err := f.st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_line_edit_marker() RETURNS trigger LANGUAGE plpgsql AS $$
  BEGIN RAISE EXCEPTION 'synthetic edit marker failure'; END $$`)
 		must.NoError(err)
-		_, err = f.st.DB().Exec(`CREATE TRIGGER fail_line_edit_marker BEFORE UPDATE ON messages FOR EACH ROW
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_line_edit_marker BEFORE UPDATE ON messages FOR EACH ROW
  WHEN (NEW.is_edited AND NOT OLD.is_edited) EXECUTE FUNCTION fail_line_edit_marker()`)
 		must.NoError(err)
 	} else {
-		_, err := f.st.DB().Exec(`CREATE TRIGGER fail_line_edit_marker BEFORE UPDATE ON messages
+		_, err := f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_line_edit_marker BEFORE UPDATE ON messages
  WHEN NEW.is_edited AND NOT OLD.is_edited BEGIN SELECT RAISE(ABORT,'synthetic edit marker failure'); END`)
 		must.NoError(err)
 	}
@@ -301,7 +301,7 @@ func TestProcessorLatestEditWins(t *testing.T) {
 	latestCounts := func() (int64, int64) {
 		t.Helper()
 		var added, updated sql.NullInt64
-		require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
+		require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
 		return added.Int64, updated.Int64
 	}
 	base := f.message("1", "original", f.now.UnixMilli())
@@ -380,38 +380,38 @@ func TestProcessorInterruptedEditPassCommitsBeforeFinalizationFailure(t *testing
 	edit.Message = &Message{ID: "1", Type: "text", Text: "edited"}
 	f.enqueue(t, edit, time.Time{})
 	if f.st.IsPostgreSQL() {
-		_, err := f.st.DB().Exec(`CREATE FUNCTION fail_line_finalize() RETURNS trigger LANGUAGE plpgsql AS $$
+		_, err := f.st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_line_finalize() RETURNS trigger LANGUAGE plpgsql AS $$
  BEGIN RAISE EXCEPTION 'synthetic finalization failure'; END $$`)
 		must.NoError(err)
-		_, err = f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations FOR EACH ROW EXECUTE FUNCTION fail_line_finalize()`)
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations FOR EACH ROW EXECUTE FUNCTION fail_line_finalize()`)
 		must.NoError(err)
 	} else {
-		_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
+		_, err := f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
 		must.NoError(err)
 	}
-	must.Error(f.processor.Process(context.Background()))
+	must.Error(f.processor.Process(t.Context()))
 	checks.Equal("edited", f.archived(t, "1").body, "the edit commits before finalization fails")
-	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending)
 	if f.st.IsPostgreSQL() {
-		_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails ON conversations`)
+		_, err = f.st.DB().ExecContext(t.Context(), `DROP TRIGGER line_finalize_fails ON conversations`)
 	} else {
-		_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
+		_, err = f.st.DB().ExecContext(t.Context(), `DROP TRIGGER line_finalize_fails`)
 	}
 	must.NoError(err)
 	if f.st.IsPostgreSQL() {
-		_, err = f.st.DB().Exec(`CREATE FUNCTION reject_line_message_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE FUNCTION reject_line_message_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
  BEGIN RAISE EXCEPTION 'completed edit must not rewrite messages'; END $$`)
 		must.NoError(err)
-		_, err = f.st.DB().Exec(`CREATE TRIGGER reject_line_message_rewrite BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION reject_line_message_rewrite()`)
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_line_message_rewrite BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION reject_line_message_rewrite()`)
 		must.NoError(err)
 	} else {
-		_, err = f.st.DB().Exec(`CREATE TRIGGER reject_line_message_rewrite BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT,'completed edit must not rewrite messages'); END`)
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_line_message_rewrite BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT,'completed edit must not rewrite messages'); END`)
 		must.NoError(err)
 	}
 	f.run(t)
-	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err = f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	must.NoError(err)
 	checks.Zero(status.Pending)
 	checks.Equal("edited", f.archived(t, "1").body)
@@ -432,13 +432,13 @@ func TestProcessorUnsendUpdatesSyncCounters(t *testing.T) {
 	checks.True(f.archived(t, "1").deleted)
 	checks.True(jobctx.HasProgress(ctx), "committed unsends must schedule a cache refresh")
 	var added, updated int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
 	checks.Zero(added)
 	checks.Equal(int64(1), updated, "unsends must invalidate already exported messages")
 	f.now = f.now.Add(time.Minute)
 	f.run(t)
 	checks.True(f.archived(t, "1").deleted)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
 	checks.Zero(added)
 	checks.Zero(updated, "reconciling an unchanged unsend must preserve the cache update watermark")
 }
@@ -452,7 +452,7 @@ func TestProcessorUnsendBeforeMessage(t *testing.T) {
 	unsend := Event{Type: "unsend", WebhookEventID: "unsend", Timestamp: stamp + 2, Source: base.Source, Unsend: &Unsend{MessageID: "1"}}
 	f.enqueue(t, unsend, f.now.Add(-25*time.Hour))
 	f.run(t)
-	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	require.NoError(t, err)
 	checks.Zero(status.Failed, "an expired unsend awaiting its original remains retained evidence")
 	f.enqueue(t, base, time.Time{})
@@ -461,7 +461,7 @@ func TestProcessorUnsendBeforeMessage(t *testing.T) {
 	body, deleted := archived.body, archived.deleted
 	checks.Equal("retained unsent text", body)
 	checks.True(deleted)
-	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err = f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	require.NoError(t, err)
 	checks.Zero(status.Failed)
 	base.WebhookEventID = "late-original"
@@ -484,7 +484,7 @@ func TestProcessorLateOriginalReconcilesExpiredRetryInSamePass(t *testing.T) {
 	f.enqueue(t, edit, f.now.Add(-time.Hour))
 	f.run(t)
 
-	due, err := f.st.DueLineEventsContext(context.Background(), f.source.ID, f.now.Add(time.Hour), 10)
+	due, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now.Add(time.Hour), 10)
 	require.NoError(t, err)
 	require.Len(t, due, 1)
 	checks.Equal("retry", due[0].State)
@@ -497,7 +497,7 @@ func TestProcessorLateOriginalReconcilesExpiredRetryInSamePass(t *testing.T) {
 	checks.Equal("edited before original", archived.body)
 	checks.True(archived.edited)
 	var state string
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, edit.WebhookEventID).Scan(&state))
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, edit.WebhookEventID).Scan(&state))
 	checks.Equal("processed", state)
 }
 
@@ -547,7 +547,7 @@ func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T
 	f := newInboxFixture(t)
 	profile, err := json.Marshal(Profile{UserID: testUser, DisplayName: "Original Name"})
 	must.NoError(err)
-	must.NoError(f.st.CacheLineProfileContext(context.Background(), f.source.ID, testUser, string(profile), f.now))
+	must.NoError(f.st.CacheLineProfileContext(t.Context(), f.source.ID, testUser, string(profile), f.now))
 	base := f.message("1", "original searchable text", f.now.UnixMilli())
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
@@ -575,7 +575,7 @@ func TestProcessorIdlePassSkipsSyncRunAndScopesTouchedStats(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newInboxFixture(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	otherConversationID, err := f.st.EnsureConversationWithTypeContext(ctx, f.source.ID, "group:C00000000000000000000000000000009", "group_chat", "")
 	must.NoError(err)
 	for index := range 99 {
@@ -584,30 +584,30 @@ func TestProcessorIdlePassSkipsSyncRunAndScopesTouchedStats(t *testing.T) {
 	}
 	must.NoError(f.st.RecomputeConversationStatsForConversationContext(ctx, otherConversationID))
 	if f.st.IsPostgreSQL() {
-		_, err = f.st.DB().Exec(fmt.Sprintf(`CREATE FUNCTION reject_untouched_line_stats() RETURNS trigger LANGUAGE plpgsql AS $$
+		_, err = f.st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION reject_untouched_line_stats() RETURNS trigger LANGUAGE plpgsql AS $$
  BEGIN IF OLD.id = %d THEN RAISE EXCEPTION 'recomputed untouched conversation'; END IF; RETURN NEW; END; $$`, otherConversationID))
 		must.NoError(err)
-		_, err = f.st.DB().Exec(`CREATE TRIGGER untouched_line_stats BEFORE UPDATE OF message_count ON conversations FOR EACH ROW EXECUTE FUNCTION reject_untouched_line_stats()`)
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER untouched_line_stats BEFORE UPDATE OF message_count ON conversations FOR EACH ROW EXECUTE FUNCTION reject_untouched_line_stats()`)
 	} else {
-		_, err = f.st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER untouched_line_stats BEFORE UPDATE OF message_count ON conversations WHEN OLD.id=%d BEGIN SELECT RAISE(ABORT,'recomputed untouched conversation'); END`, otherConversationID))
+		_, err = f.st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER untouched_line_stats BEFORE UPDATE OF message_count ON conversations WHEN OLD.id=%d BEGIN SELECT RAISE(ABORT,'recomputed untouched conversation'); END`, otherConversationID))
 	}
 	must.NoError(err)
 	var runsBefore, runsAfter int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsBefore))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsBefore))
 	f.run(t)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsAfter))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsAfter))
 	checks.Equal(runsBefore, runsAfter)
 	var otherCount int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), otherConversationID).Scan(&otherCount))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), otherConversationID).Scan(&otherCount))
 	checks.Equal(99, otherCount)
 
 	f.enqueue(t, f.message("1", "first due message", f.now.UnixMilli()), time.Time{})
 	f.run(t)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsAfter))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id=?`), f.source.ID).Scan(&runsAfter))
 	checks.Equal(runsBefore+1, runsAfter)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+testGroup).Scan(&otherCount))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+testGroup).Scan(&otherCount))
 	checks.Equal(1, otherCount)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), otherConversationID).Scan(&otherCount))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), otherConversationID).Scan(&otherCount))
 	checks.Equal(99, otherCount)
 }
 
@@ -618,7 +618,7 @@ func TestProcessorRefreshesRenamedGroupTitle(t *testing.T) {
 	title := func() string {
 		t.Helper()
 		var value string
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT title FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+testGroup).Scan(&value))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT title FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+testGroup).Scan(&value))
 		return value
 	}
 	f.enqueue(t, f.message("1", "before rename", f.now.UnixMilli()), time.Time{})
@@ -632,7 +632,7 @@ func TestProcessorRefreshesRenamedGroupTitle(t *testing.T) {
 	f.run(t)
 	checks.Equal("Renamed Group", title())
 	var updated int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Equal(int64(1), updated, "a title change affects exported conversations")
 }
 
@@ -648,20 +648,20 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 	f.run(t)
 	body := f.archived(t, "1").body
 	checks.Equal("text survives enrichment failure", body)
-	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err := f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending)
 	f.now = f.now.Add(time.Minute)
 	f.run(t)
 	var updated int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Zero(updated, "an unchanged retry must preserve the cache update watermark")
 	f.now = f.now.Add(time.Hour)
 	f.run(t)
-	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
+	status, err = f.st.LineInboxStatusContext(t.Context(), f.source.ID)
 	must.NoError(err)
 	checks.Zero(status.Pending)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Equal(int64(1), updated)
 	archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 	must.NoError(err)
@@ -686,10 +686,10 @@ func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
 	f.run(t)
 	checks.Equal("text to purge", f.archived(t, message.Message.ID).body)
 	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
 	must.Equal("retry", state)
 	var retryAt time.Time
-	must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&retryAt))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&retryAt))
 
 	edit := f.message(message.Message.ID, "edited text to purge", message.Timestamp+1)
 	edit.Type = "messageEdited"
@@ -708,7 +708,7 @@ func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
 	f.run(t)
 	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
 	must.ErrorIs(err, sql.ErrNoRows)
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
 	checks.Equal("ignored", state)
 	// Scrubbed edits and unsends must remain harmless when reconciled.
 	must.NoError(f.processor.reconcileMutations(ctx, message.Message.ID))
@@ -718,7 +718,7 @@ func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
 	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
 	must.ErrorIs(err, sql.ErrNoRows)
 	var rows int
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows))
 	checks.Equal(1, rows)
 }
 
@@ -751,10 +751,10 @@ func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
 				archived := f.archived(t, "1")
 				checks.Equal("text survives a missing profile", archived.body)
 				var state string
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&state))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&state))
 				checks.Equal("processed", state)
 				var name sql.NullString
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`), archived.id).Scan(&name))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`), archived.id).Scan(&name))
 				checks.Equal(wantName, name.String)
 				raw, at, err := f.st.LineProfileContext(t.Context(), f.source.ID, testUser)
 				if cached {
@@ -770,7 +770,7 @@ func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
 				f.enqueue(t, message, time.Time{})
 				f.run(t)
 				checks.Equal(2, f.api.Count(http.MethodGet, source.path), "the next event fetches a fresh profile")
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`), f.archived(t, "2").id).Scan(&name))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`), f.archived(t, "2").id).Scan(&name))
 				checks.Equal("Example User", name.String)
 			})
 		}
@@ -786,9 +786,9 @@ func TestProcessorFriendshipEventsAreIgnored(t *testing.T) {
 	}
 	f.run(t)
 	var conversations, participants, ignored int
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversations))
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants`).Scan(&participants))
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM line_webhook_events WHERE state='ignored'`).Scan(&ignored))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversations`).Scan(&conversations))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversation_participants`).Scan(&participants))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM line_webhook_events WHERE state='ignored'`).Scan(&ignored))
 	checks.Zero(conversations)
 	checks.Zero(participants)
 	checks.Equal(2, ignored)
@@ -815,11 +815,11 @@ func TestProcessorCanceledMembershipPreservesSyncProgress(t *testing.T) {
 	f.enqueue(t, Event{Type: "memberJoined", WebhookEventID: "join-canceled", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: "U00000000000000000000000000000003"}}}}, time.Time{})
 	must.ErrorIs(processor.Process(ctx), context.Canceled)
 	var members int
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&members))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&members))
 	checks.Equal(2, members, "membership commits before profile enrichment")
 	checks.True(jobctx.HasProgress(ctx), "committed memberships must schedule a cache refresh despite cancellation")
 	var updated int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Equal(int64(2), updated, "each committed membership must invalidate cached participants")
 }
 
@@ -836,17 +836,17 @@ func TestProcessorMembershipEventsProjectTransitions(t *testing.T) {
 		f.enqueue(t, e, time.Time{})
 		f.run(t)
 		var updated int64
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 		checks.Equal(int64(1), updated, "a membership transition must invalidate cached participants")
 		if e.Type == "memberJoined" {
 			f.now = f.now.Add(time.Minute)
 			f.run(t)
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 			checks.Zero(updated, "an unchanged membership retry must preserve the cache update watermark")
 		}
 	}
 	var joined, left sql.NullTime
-	must.NoError(f.st.DB().QueryRow(`SELECT joined_at,left_at FROM conversation_participants`).Scan(&joined, &left))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT joined_at,left_at FROM conversation_participants`).Scan(&joined, &left))
 	must.True(joined.Valid)
 	must.True(left.Valid)
 	checks.Equal(stamp, joined.Time.UnixMilli())
@@ -868,7 +868,7 @@ func TestProcessorMembershipClocksSurviveParticipantMerge(t *testing.T) {
 				must := require.New(t)
 				checks := assert.New(t)
 				f := newInboxFixture(t)
-				ctx := context.Background()
+				ctx := t.Context()
 				stamp := f.now.UnixMilli()
 				departedUser := testUser
 				if chat.messageOnly {
@@ -911,18 +911,18 @@ func TestProcessorMembershipClocksSurviveParticipantMerge(t *testing.T) {
 				}
 				must.NoError(f.st.MergeParticipantsContext(ctx, absorbed, survivor))
 				var conversationID int64
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, chat.conversationKey).Scan(&conversationID))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, chat.conversationKey).Scan(&conversationID))
 				leftAt := func() sql.NullTime {
 					t.Helper()
 					var left sql.NullTime
-					must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conversationID, survivor).Scan(&left))
+					must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conversationID, survivor).Scan(&left))
 					return left
 				}
 				checkMergedMembership := func() {
 					t.Helper()
 					checks.False(leftAt().Valid, "one active linked LINE identity keeps the merged participant active")
 					var routes int
-					must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id=?`), conversationID).Scan(&routes))
+					must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id=?`), conversationID).Scan(&routes))
 					checks.Equal(1, routes, "merged LINE identities project to one conversation membership")
 				}
 				checkMergedMembership()
@@ -983,13 +983,13 @@ func TestProcessorExistingChatRecordsOwner(t *testing.T) {
 			if source.Type == "user" {
 				messageID := f.archived(t, message.Message.ID).id
 				var senderID int64
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT sender_id FROM messages WHERE id=?`), messageID).Scan(&senderID))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT sender_id FROM messages WHERE id=?`), messageID).Scan(&senderID))
 				checks.Positive(senderID)
 				var kind string
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT c.conversation_type FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE m.id=?`), messageID).Scan(&kind))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT c.conversation_type FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE m.id=?`), messageID).Scan(&kind))
 				checks.Equal("direct_chat", kind)
 				var clocks int
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
 				checks.Zero(clocks, "direct chats do not infer group membership")
 			}
 		})
@@ -1010,31 +1010,31 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 			if f.st.IsPostgreSQL() {
 				t.Skip("SQLite triggers inject storage failures; ordinary processor contracts run on both backends")
 			}
-			_, err := f.st.DB().Exec(tc.trigger)
+			_, err := f.st.DB().ExecContext(t.Context(), tc.trigger)
 			must.NoError(err)
 			message := f.message(tc.messageID, tc.text, f.now.UnixMilli())
 			f.enqueue(t, message, f.now.Add(-25*time.Hour))
-			must.ErrorContains(f.processor.Process(context.Background()), tc.failure)
+			must.ErrorContains(f.processor.Process(t.Context()), tc.failure)
 			var messages, members int
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id=?`), f.source.ID).Scan(&messages))
-			must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants`).Scan(&members))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id=?`), f.source.ID).Scan(&messages))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversation_participants`).Scan(&members))
 			checks.Zero(messages, "message and inferred clock commit together")
 			checks.Zero(members, "a failed clock write cannot expose a clockless active membership")
 			var raw string
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&raw))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT raw_json FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&raw))
 			checks.Contains(raw, message.Message.Text, "the durable inbox retains text when message persistence rolls back")
 			var state string
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&state))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT state FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&state))
 			checks.Equal("pending", state, "archive write failures never become expiring provider retries")
 			checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser))
-			_, err = f.st.DB().Exec(`DROP TRIGGER line_write_fails`)
+			_, err = f.st.DB().ExecContext(t.Context(), `DROP TRIGGER line_write_fails`)
 			must.NoError(err)
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT next_attempt_at FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&f.now))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT next_attempt_at FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&f.now))
 			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 			f.run(t)
 			checks.Equal(message.Message.Text, f.archived(t, message.Message.ID).body)
 			var clocks int
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
 			checks.Equal(1, clocks, "recovery persists text and its per-identity membership evidence together")
 		})
 	}
@@ -1051,16 +1051,16 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		f.enqueue(t, e, time.Time{})
 		f.run(t)
 		var count int
-		must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&count))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&count))
 		checks.Equal(2, count)
 		checks.Equal(1, f.api.Count(http.MethodGet, path))
 		checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/U00000000000000000000000000000003"))
 		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='join-many'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='join-many'`).Scan(&state))
 		checks.Equal("retry", state)
 		f.now = f.now.Add(25 * time.Hour)
 		f.run(t)
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='join-many'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='join-many'`).Scan(&state))
 		checks.Equal("failed", state)
 		checks.Equal(1, f.api.Count(http.MethodGet, path), "expired events must stop fetching profiles")
 	})
@@ -1075,11 +1075,11 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		f.enqueue(t, Event{Type: "memberJoined", WebhookEventID: "members-joined", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: other}}}}, time.Time{})
 		f.run(t)
 		var name sql.NullString
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
 		checks.Equal("Example User", name.String)
 		checks.Equal(1, f.api.Count(http.MethodGet, otherPath))
 		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='members-joined'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='members-joined'`).Scan(&state))
 		checks.Equal("retry", state)
 	})
 	t.Run("missing profile allows other members", func(t *testing.T) {
@@ -1097,7 +1097,7 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		checks.Zero(status.Pending)
 		checks.Zero(status.Failed)
 		var name sql.NullString
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
 		checks.Equal("Example User", name.String)
 		checks.Equal(1, f.api.Count(http.MethodGet, otherPath))
 	})
@@ -1120,7 +1120,7 @@ func TestProcessorProfileCacheSurvivesRestartAndExpires(t *testing.T) {
 	f.enqueue(t, f.message("3", "refresh", f.now.UnixMilli()), time.Time{})
 	f.run(t)
 	checks.Equal(2, f.api.Count(http.MethodGet, path))
-	raw, _, err := f.st.LineProfileContext(context.Background(), f.source.ID, testUser)
+	raw, _, err := f.st.LineProfileContext(t.Context(), f.source.ID, testUser)
 	require.NoError(t, err)
 	checks.JSONEq(`{"userId":"`+testUser+`","displayName":"Example User"}`, raw)
 }
@@ -1132,7 +1132,7 @@ func TestProcessorAnonymousIdentityIsChannelScoped(t *testing.T) {
 	f := newInboxFixture(t)
 	otherClient := NewClient("2000000002", "synthetic-secret", WithBaseURLs(f.client.apiURL, f.client.dataURL))
 	f.api.Enqueue(http.MethodGet, "/v2/bot/info", lineapi.Response{Status: http.StatusOK, Body: `{"userId":"U00000000000000000000000000000004","basicId":"@other","displayName":"Other Bot"}`})
-	other, err := Register(context.Background(), f.st, otherClient, "2000000002")
+	other, err := Register(t.Context(), f.st, otherClient, "2000000002")
 	must.NoError(err)
 	e := f.message("1", "anonymous", f.now.UnixMilli())
 	e.Source.UserID = ""
@@ -1140,14 +1140,14 @@ func TestProcessorAnonymousIdentityIsChannelScoped(t *testing.T) {
 	f.run(t)
 	raw, err := json.Marshal(e)
 	must.NoError(err)
-	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), other.ID, other.Identifier, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: e.Message.ID, EventTimestamp: e.Timestamp, RawJSON: string(raw), ReceivedAt: f.now}}))
-	must.NoError(NewProcessor(f.st, otherClient, other.ID, "2000000002", f.attachments, WithProcessorClock(func() time.Time { return f.now })).Process(context.Background()))
+	must.NoError(f.st.EnqueueLineEventsContext(t.Context(), other.ID, other.Identifier, []store.LineWebhookEvent{{WebhookEventID: e.WebhookEventID, EventType: e.Type, TargetMessageID: e.Message.ID, EventTimestamp: e.Timestamp, RawJSON: string(raw), ReceivedAt: f.now}}))
+	must.NoError(NewProcessor(f.st, otherClient, other.ID, "2000000002", f.attachments, WithProcessorClock(func() time.Time { return f.now })).Process(t.Context()))
 	var a, b int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT sender_id FROM messages WHERE source_id=?`), f.source.ID).Scan(&a))
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT sender_id FROM messages WHERE source_id=?`), other.ID).Scan(&b))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT sender_id FROM messages WHERE source_id=?`), f.source.ID).Scan(&a))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT sender_id FROM messages WHERE source_id=?`), other.ID).Scan(&b))
 	checks.NotEqual(a, b)
 	var classified int
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='line_anonymous' AND service_id IS NOT NULL`).Scan(&classified))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='line_anonymous' AND service_id IS NOT NULL`).Scan(&classified))
 	checks.Zero(classified)
 }
 
@@ -1164,7 +1164,7 @@ func TestProcessorDirectIdentityGapRetainsEvidence(t *testing.T) {
 	must.NoError(err)
 	checks.Zero(count)
 	var state, raw string
-	must.NoError(f.st.DB().QueryRow(`SELECT state,raw_json FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state, &raw))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state,raw_json FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state, &raw))
 	checks.Equal("failed", state)
 	checks.Contains(raw, "synthetic unidentifiable")
 }
@@ -1176,10 +1176,10 @@ func TestProcessorUnknownEventPayloadShapeIsIgnored(t *testing.T) {
 	f := newInboxFixture(t)
 	before := len(f.api.Requests())
 	raw := `{"type":"futureEvent","timestamp":1,"webhookEventId":"future-shape","source":23,"message":"opaque future payload"}`
-	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "future-shape", EventType: "futureEvent", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
+	must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "future-shape", EventType: "futureEvent", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
 	f.run(t)
 	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='future-shape'`).Scan(&state))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='future-shape'`).Scan(&state))
 	checks.Equal("ignored", state)
 	checks.Len(f.api.Requests(), before)
 }
@@ -1190,11 +1190,11 @@ func TestProcessorUnknownMessagePayloadRetainsEvidence(t *testing.T) {
 
 	f := newInboxFixture(t)
 	raw := `{"type":"message","timestamp":1,"webhookEventId":"future-message","source":{"type":"group","groupId":"` + testGroup + `","userId":"` + testUser + `"},"message":{"id":"future-1","type":"future","text":{"new":"shape"},"fileSize":[1,2]}}`
-	must.NoError(f.st.EnqueueLineEventsContext(context.Background(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "future-message", EventType: "message", TargetMessageID: "future-1", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
+	must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.source.ID, f.source.Identifier, []store.LineWebhookEvent{{WebhookEventID: "future-message", EventType: "message", TargetMessageID: "future-1", EventTimestamp: 1, RawJSON: raw, ReceivedAt: f.now}}))
 	f.run(t)
 	body := f.archived(t, "future-1").body
 	checks.Equal("[LINE future]", body)
-	metadata, err := f.st.LineMessageContext(context.Background(), f.source.ID, "future-1")
+	metadata, err := f.st.LineMessageContext(t.Context(), f.source.ID, "future-1")
 	must.NoError(err)
 	var native map[string]json.RawMessage
 	must.NoError(json.Unmarshal([]byte(metadata.Metadata.String), &native))
@@ -1220,9 +1220,9 @@ func TestProcessorProfileRefreshUpdatesObservedPresentation(t *testing.T) {
 				checks.Equal(int64(1), count)
 			}
 			var pid int64
-			must.NoError(f.st.DB().QueryRow(`SELECT sender_id FROM messages WHERE source_message_id='1'`).Scan(&pid))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE source_message_id='1'`).Scan(&pid))
 			if curated {
-				_, err := f.st.DB().Exec(f.st.Rebind(`UPDATE participants SET display_name='Chosen label' WHERE id=?`), pid)
+				_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE participants SET display_name='Chosen label' WHERE id=?`), pid)
 				must.NoError(err)
 			}
 			f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 200, Body: `{"userId":"` + testUser + `","displayName":"Updated user"}`})
@@ -1230,14 +1230,14 @@ func TestProcessorProfileRefreshUpdatesObservedPresentation(t *testing.T) {
 			f.enqueue(t, f.message("2", "refreshed", f.now.UnixMilli()), time.Time{})
 			f.run(t)
 			var name string
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 			want := "Updated user"
 			if curated {
 				want = "Chosen label"
 			}
 			checks.Equal(want, name)
 			if !curated {
-				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT mr.display_name FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.source_id=? AND m.source_message_id=? AND mr.recipient_type='from'`), f.source.ID, "2").Scan(&name))
+				must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT mr.display_name FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.source_id=? AND m.source_message_id=? AND mr.recipient_type='from'`), f.source.ID, "2").Scan(&name))
 				checks.Equal("Updated user", name)
 			}
 		})
@@ -1250,7 +1250,7 @@ func TestProcessorCombinedRetryAfterUsesLatestDeadline(t *testing.T) {
 	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: 429, Header: http.Header{"Retry-After": []string{"30"}}})
 	f.enqueue(t, f.message("1", "rate limited enrichments", f.now.UnixMilli()), time.Time{})
 	f.run(t)
-	due, err := f.st.DueLineEventsContext(context.Background(), f.source.ID, f.now.Add(time.Minute), 10)
+	due, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now.Add(time.Minute), 10)
 	require.NoError(t, err)
 	assert.Empty(t, due)
 }
@@ -1268,7 +1268,7 @@ func TestProcessorExpiredRetryDoesNotCallProviderAfterRetryHorizon(t *testing.T)
 	f.run(t)
 	checks.Equal(1, f.api.Count(http.MethodGet, path))
 	var state string
-	require.NoError(t, f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 	checks.Equal("failed", state)
 }
 
@@ -1308,10 +1308,10 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	}
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	var archived int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id LIKE 'batch-%'"), f.source.ID).Scan(&archived))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id LIKE 'batch-%'"), f.source.ID).Scan(&archived))
 	checks.Equal(501, archived)
 	var laterMessages int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='later'"), f.source.ID).Scan(&laterMessages))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id=? AND source_message_id='later'"), f.source.ID).Scan(&laterMessages))
 	checks.Zero(laterMessages)
 	due, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
 	must.NoError(err)
@@ -1353,7 +1353,7 @@ func TestProcessorArchivesLaterTextBeforeEarlierMediaCompletes(t *testing.T) {
 		require.FailNow(t, "processor did not reach media fetch")
 	}
 	var count int
-	require.NoError(t, f.st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id='2'").Scan(&count))
 	assert.Equal(t, 1, count, "the text in an acknowledged batch must be available while earlier optional media is downloading")
 }
 

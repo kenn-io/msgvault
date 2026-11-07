@@ -553,7 +553,7 @@ func TestLinePurgeAppliesChannelPolicy(t *testing.T) {
 	checks := assert.New(t)
 	f := newPurgeMediaFixture(t, "line")
 	var identifier string
-	must.NoError(f.store.DB().QueryRow("SELECT identifier FROM sources LIMIT 1").Scan(&identifier))
+	must.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT identifier FROM sources LIMIT 1").Scan(&identifier))
 	f.config.Line = []config.LineSource{{ChannelID: identifier, SecretEnv: "EXAMPLE_LINE_SECRET", Media: new(false)}}
 	command := newPurgeExcludedMediaLocalCmd(f.deps())
 	command.SetOut(&bytes.Buffer{})

@@ -151,7 +151,7 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	checks.Contains(output, "pending: 0")
 	checks.Contains(output, "failed: 0")
 	var archived int
-	must.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE source_id=?", source.ID).Scan(&archived))
+	must.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_id=?", source.ID).Scan(&archived))
 	checks.Equal(1, archived)
 	_, err = executeLineCommand(t, loaded, newSyncLineCmd(), "--channel-id", "999")
 	must.ErrorContains(err, "not configured")

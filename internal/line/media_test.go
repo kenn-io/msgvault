@@ -1,7 +1,6 @@
 package line
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -25,9 +24,9 @@ import (
 
 func (f *inboxFixture) media(t *testing.T) store.AttachmentRef {
 	t.Helper()
-	row, err := f.st.LineMessageContext(context.Background(), f.source.ID, "1")
+	row, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 	require.NoError(t, err)
-	refs, err := f.st.MessageProviderAttachments(context.Background(), row.ID, "line:")
+	refs, err := f.st.MessageProviderAttachments(t.Context(), row.ID, "line:")
 	require.NoError(t, err)
 	require.Len(t, refs, 1)
 	return refs["line:1"]
@@ -52,7 +51,7 @@ func TestMediaPolicyChangeRecoversRetryingEvent(t *testing.T) {
 	checks.Equal(attachmentpolicy.SkipAccountPolicy, f.media(t).SkipReason)
 	checks.NotZero(f.archived(t, "1").id)
 	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 	must.Equal("retry", state)
 	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	f.now = f.now.Add(time.Hour)
@@ -60,7 +59,7 @@ func TestMediaPolicyChangeRecoversRetryingEvent(t *testing.T) {
 	f.run(t)
 	checks.Equal(attachmentpolicy.StateStored, f.media(t).State)
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 	checks.Equal("processed", state)
 }
 
@@ -88,8 +87,8 @@ func TestMediaConversationPreview(t *testing.T) {
 			f.run(t)
 			checks.Equal(tc.body, f.archived(t, "1").body)
 			var snippet, preview sql.NullString
-			must.NoError(f.st.DB().QueryRow(`SELECT snippet FROM messages WHERE source_message_id='1'`).Scan(&snippet))
-			must.NoError(f.st.DB().QueryRow(`SELECT last_message_preview FROM conversations`).Scan(&preview))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE source_message_id='1'`).Scan(&snippet))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT last_message_preview FROM conversations`).Scan(&preview))
 			checks.Equal(sql.NullString{String: tc.body, Valid: true}, snippet)
 			checks.Equal(sql.NullString{String: tc.body, Valid: true}, preview)
 		})
@@ -114,11 +113,11 @@ func TestMediaTranscodingRetry(t *testing.T) {
 	f.now = f.now.Add(time.Minute)
 	f.run(t)
 	var updated int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Zero(updated, "media preparation must preserve the cache update watermark")
 	f.now = f.now.Add(time.Hour)
 	f.run(t)
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Equal(int64(1), updated)
 	stored := f.media(t)
 	checks.Equal(attachmentpolicy.StateStored, stored.State)
@@ -140,7 +139,7 @@ func TestMediaFailureAtRetryHorizon(t *testing.T) {
 		f.now = f.now.Add(25 * time.Hour)
 		f.run(t)
 		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 		checks.Equal("failed", state)
 		checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
 		checks.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
@@ -153,7 +152,7 @@ func TestMediaFailureAtRetryHorizon(t *testing.T) {
 		f.enqueue(t, f.fileEvent(), f.now.Add(-retryHorizon))
 		f.run(t)
 		var state string
-		require.NoError(t, f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+		require.NoError(t, f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 		assert.Equal("failed", state)
 		assert.Equal(attachmentpolicy.StateFailed, f.media(t).State)
 		assert.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
@@ -169,7 +168,7 @@ func TestMediaFailureAtRetryHorizon(t *testing.T) {
 		f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusAccepted}, lineapi.Response{Status: http.StatusAccepted})
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/v2/bot/message/1/content" && f.api.Count(http.MethodGet, r.URL.Path) == 0 {
-				_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
+				_, err := f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
 				checks.NoError(err)
 			}
 			f.api.ServeHTTP(w, r)
@@ -178,22 +177,22 @@ func TestMediaFailureAtRetryHorizon(t *testing.T) {
 		f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
 		f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 		f.enqueue(t, f.fileEvent(), f.now.Add(-retryHorizon))
-		must.Error(f.processor.Process(context.Background()))
+		must.Error(f.processor.Process(t.Context()))
 		eventState := func() string {
 			t.Helper()
 			var state string
-			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+			must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 			return state
 		}
 		checks.Equal("pending", eventState(), "a failed event with a committed message waits for its conversation")
 
-		_, err := f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
+		_, err := f.st.DB().ExecContext(t.Context(), `DROP TRIGGER line_finalize_fails`)
 		must.NoError(err)
 		f.run(t)
 		checks.Equal("failed", eventState())
 		checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
 		var messageCount int64
-		must.NoError(f.st.DB().QueryRow(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`, f.source.ID, "group:"+testGroup).Scan(&messageCount))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`, f.source.ID, "group:"+testGroup).Scan(&messageCount))
 		checks.Equal(int64(1), messageCount)
 	})
 }
@@ -212,7 +211,7 @@ func TestMediaLocalStorageFailureKeepsInboxWorkPending(t *testing.T) {
 	eventState := func() string {
 		t.Helper()
 		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 		return state
 	}
 	f.enqueue(t, f.fileEvent(), time.Time{})
@@ -226,7 +225,7 @@ func TestMediaLocalStorageFailureKeepsInboxWorkPending(t *testing.T) {
 	must.NoError(os.WriteFile(blocked, []byte("not a directory"), 0o600))
 	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
 
-	must.Error(f.processor.Process(context.Background()))
+	must.Error(f.processor.Process(t.Context()))
 	checks.Equal("pending", eventState(), "a local write failure returns a retried event to unbounded pending work")
 	checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
 
@@ -260,7 +259,7 @@ func TestMediaDroppedDownloadStillRetries(t *testing.T) {
 	f.run(t)
 
 	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 	checks.Equal("retry", state, "a download dropped by LINE retries until the horizon")
 	checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
 }
@@ -287,7 +286,7 @@ func TestMediaExternalProvider(t *testing.T) {
 	f.enqueue(t, e, time.Time{})
 	f.run(t)
 	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
-	row, err := f.st.LineMessageContext(context.Background(), f.source.ID, "1")
+	row, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 	must.NoError(err)
 	checks.Contains(row.Metadata.String, "https://media.example.com/external")
 }
@@ -441,7 +440,7 @@ func TestMediaReplayDoesNotDuplicateAttachment(t *testing.T) {
 	f.run(t)
 	again := f.media(t)
 	var count int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=?`), f.archived(t, "1").id).Scan(&count))
+	must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=?`), f.archived(t, "1").id).Scan(&count))
 	checks.Equal(1, count)
 	checks.Equal(first.ContentHash, again.ContentHash)
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
@@ -489,19 +488,19 @@ func TestMediaLocalFailureDoesNotStarveLaterBatch(t *testing.T) {
 		text.Source.GroupID = "C00000000000000000000000000000002"
 		f.enqueue(t, text, time.Time{})
 
-		must.Error(f.processor.Process(context.Background()))
+		must.Error(f.processor.Process(t.Context()))
 		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
 		checks.Equal("pending", state)
 		checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
 		checks.Equal("text in another chat", f.archived(t, "2").body)
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-2'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='event-2'`).Scan(&state))
 		checks.Equal("processed", state)
 		var messageCount int64
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+text.Source.GroupID).Scan(&messageCount))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+text.Source.GroupID).Scan(&messageCount))
 		checks.Equal(int64(1), messageCount)
 		var runStatus, runError string
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT status,error_message FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&runStatus, &runError))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT status,error_message FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&runStatus, &runError))
 		checks.Equal("failed", runStatus)
 		checks.NotEmpty(runError)
 	})
@@ -526,14 +525,14 @@ func TestMediaLocalFailureDoesNotStarveLaterBatch(t *testing.T) {
 		}
 		checks.Equal("later text", f.archived(t, "later-text").body)
 		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
 		checks.Equal("pending", state)
 		f.now = f.now.Add(retryHorizon + time.Hour)
 		must.Error(f.processor.Process(t.Context()))
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
 		checks.Equal("pending", state)
 		var next time.Time
-		must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&next))
+		must.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&next))
 		checks.True(next.After(f.now))
 	})
 }
