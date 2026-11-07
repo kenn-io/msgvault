@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Card } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { MeetingRef } from '../../api/generated/models';
@@ -48,7 +48,7 @@
   <div class="meeting-dialog">
     <MeetingActionFilters compact {controller} />
     {#if controller.metrics}
-      <details><summary>Meeting metrics</summary><MeetingMetrics metrics={controller.metrics} /></details>
+      <Disclosure variant="plain">{#snippet summary()}Meeting metrics{/snippet}<MeetingMetrics metrics={controller.metrics} /></Disclosure>
     {/if}
     {#if controller.actionsError}
       <p role="alert">{controller.actionsError.message}</p>
@@ -108,8 +108,8 @@
 
 <style>
   .meeting-dialog { display: grid; gap: var(--space-4); }
-  .meeting-dialog details, .meeting-dialog p { font-size: var(--font-size-sm); }
-  .meeting-dialog summary { cursor: pointer; margin-bottom: var(--space-3); }
+  .meeting-dialog :global(.kit-disclosure), .meeting-dialog p { font-size: var(--font-size-sm); }
+  .meeting-dialog :global(.kit-disclosure__summary) { cursor: pointer; margin-bottom: var(--space-3); }
   :global(.meeting-panel-card) { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
   .meeting-panel, .overview-section, .actions-section { min-width: 0; }
   .meeting-panel { display: grid; }

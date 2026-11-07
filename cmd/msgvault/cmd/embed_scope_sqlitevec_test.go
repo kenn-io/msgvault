@@ -38,24 +38,11 @@ func fakeEmbeddingsServer(t *testing.T, embedded *int, dimensions ...int) *httpt
 			return
 		}
 		*embedded += len(req.Input)
-		type item struct {
-			Embedding []float32 `json:"embedding"`
-			Index     int       `json:"index"`
+		dimension := 4
+		if len(dimensions) > 0 {
+			dimension = dimensions[0]
 		}
-		payload := struct {
-			Data  []item `json:"data"`
-			Model string `json:"model"`
-		}{Model: "test-model"}
-		for i := range req.Input {
-			values := []float32{1, 0, 0, 0}
-			if len(dimensions) > 0 {
-				values = make([]float32, dimensions[0])
-				values[0] = 1
-			}
-			payload.Data = append(payload.Data, item{Embedding: values, Index: i})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(payload)
+		_ = writeFakeEmbeddingResponse(w, len(req.Input), dimension)
 	}))
 	t.Cleanup(srv.Close)
 	return srv

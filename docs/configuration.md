@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: "2026-11-07"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1954,6 +1954,7 @@ transcription in Plaud before syncing. See the
 identifier = "work"
 account_email = "you@example.com"
 schedule = "30 */6 * * *"
+limit = 50
 enabled = true
 ```
 
@@ -1963,6 +1964,7 @@ enabled = true
 | `account_email` | Required | Explicit account email; normalized to lowercase and checked against live Plaud identity |
 | `endpoint` | `https://mcp.plaud.ai/mcp` | MCP resource endpoint override; changing it requires new authorization |
 | `schedule` | — | Five-field cron expression used by `msgvault serve` |
+| `limit` | `0` (all) | Most recordings a scheduled run checks; works like `sync-plaud --limit` |
 | `enabled` | `false` | Whether a scheduled entry runs in the daemon |
 
 Authorize with `msgvault add-plaud <identifier>` on the daemon host. The callback

@@ -7352,6 +7352,37 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type LocalEmbeddingsStatus struct {
+	DoneBytes     int64                      `json:"done_bytes"`
+	DownloadBytes int64                      `json:"download_bytes"`
+	Enabled       bool                       `json:"enabled"`
+	ErrorData     *string                    `json:"error,omitzero"`
+	Host          string                     `json:"host" validate:"required"`
+	Phase         LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
+	Provider      string                     `json:"provider" validate:"required"`
+	Running       *bool                      `json:"running,omitempty"`
+	TotalBytes    int64                      `json:"total_bytes"`
+}
+
+func (l LocalEmbeddingsStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Host, "required"); err != nil {
+		errors = errors.Append("Host", err)
+	}
+	if v, ok := any(l.Phase).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Phase", err)
+		}
+	}
+	if err := typesValidator.Var(l.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type LoopCounterparty struct {
 	Address       string `json:"address"`
 	DisplayName   string `json:"display_name"`

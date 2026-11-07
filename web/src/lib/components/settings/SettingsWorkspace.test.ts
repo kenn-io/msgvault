@@ -323,14 +323,14 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
     await screen.findByRole('heading', { name: 'Server' });
     expect(screen.getByLabelText('Stop when idle after')).toBeDefined();
-    const advanced = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
+    const advanced = screen.getByText('Advanced', { selector: '.kit-disclosure__title' }).closest('details')!;
     expect(within(advanced).getByRole('switch', { name: 'Trace every SQL statement' })).toBeDefined();
     const config = screen.getByText('Set in config.toml').closest('details')!;
     expect(within(config).getByText('Bind address')).toBeDefined();
     expect(within(config).getByText('127.0.0.1')).toBeDefined();
     expect(within(config).getByText('The daemon picks a free port')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
-    const archiveTuning = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
+    const archiveTuning = screen.getByText('Advanced', { selector: '.kit-disclosure__title' }).closest('details')!;
     expect(within(archiveTuning).getByLabelText('Builder threads')).toBeDefined();
   });
 
@@ -786,4 +786,68 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
     finish(new Response('{"type":"complete"}\n'));
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toHaveProperty('disabled', false));
+});
+
+const localStatus = (status: Record<string, unknown> = {}) => ({ host: 'archive.example.test', enabled: false, provider: '', download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, ...status });
+const localPosts = (seen: Seen[]) => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
+
+it.each(['http 503', 'network'] as const)('shows status diagnostics and refreshes after an initial %s failure', async failure => {
+  let reads = 0;
+  const { client, operationsController } = fixture(settingsDoc(), async request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (++reads === 1) {
+      if (failure === 'network') throw new TypeError('Network interrupted');
+      return Response.json({ error: 'unavailable', message: 'sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup' }, { status: 503 });
+    }
+    if (reads === 2) return Response.json(localStatus({ phase: 'downloading', running: true, done_bytes: 1000, total_bytes: 290000000 }));
+    return Response.json({ error: 'unavailable', message: 'toml: line 3: expected value but found "=" instead' }, { status: 503 });
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  await screen.findByRole('button', { name: 'Set up Search by meaning' });
+  const generic = screen.getByText('Search by meaning').closest('li')!;
+  expect(within(generic).queryByRole('button', { name: 'Turn on' })).toBeNull();
+  if (failure === 'http 503') expect((await within(generic).findByRole('alert')).textContent).toBe('sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  const row = screen.getByText('Search by meaning').closest('li')!;
+  expect((await within(row).findByRole('alert', {}, { timeout: 3000 })).textContent).toBe('toml: line 3: expected value but found "=" instead.');
+  expect(within(row).queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(within(row).getByRole('button', { name: 'Turn on' })).toBeDefined();
+});
+
+it.each(['http', 'network'] as const)('turns on local search once and keeps unrelated drafts after %s polling failure', async failure => {
+  let phase = 'idle';
+  let enabled = false;
+  let failed = false;
+  let releaseActivation!: () => void;
+  const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
+  const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (request.method === 'POST') {
+      phase = 'indexing'; enabled = true;
+      await activation;
+      return Response.json(localStatus({ host: '', download_bytes: 0, running: true }), { status: 202 });
+    } else if (phase !== 'idle' && !failed) {
+      failed = true;
+      if (failure === 'network') throw new TypeError('Network interrupted');
+      return new Response('', { status: 503 });
+    }
+    return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }));
+  });
+  render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
+  await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  const turnOn = await screen.findByRole('button', { name: 'Turn on' });
+  await fireEvent.click(turnOn);
+  await fireEvent.click(turnOn);
+  expect(localPosts(seen).map(request => request.body)).toEqual([undefined]);
+  releaseActivation();
+  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => expect(failed).toBe(true));
+  await screen.findByText(/^Indexing /, {}, { timeout: 3000 });
+  phase = 'idle'; enabled = true;
+  await screen.findByText('On', {}, { timeout: 3000 });
+  expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
 });

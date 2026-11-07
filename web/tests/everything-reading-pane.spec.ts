@@ -54,6 +54,8 @@ function exploreURLState(overrides: Record<string, unknown> = {}) {
 }
 
 test('recordings stay capped in Table and leave Timeline rows reachable', async ({ page }) => {
+  // Leave room for 350px of results and the reader's 160px minimum.
+  await page.setViewportSize({ width: 1280, height: 844 });
   let resolveReadiness!: () => void;
   const readiness = new Promise<void>(resolve => { resolveReadiness = resolve; });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
@@ -71,7 +73,6 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
   const resize = page.getByRole('separator', { name: 'Resize reading pane' });
   const handle = (await resize.boundingBox())!;
-  const pane = (await primary.boundingBox())!;
   await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
   await page.mouse.down();
   await page.mouse.move(handle.x + handle.width / 2, 0);
@@ -85,11 +86,12 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await expect(firstRow).toBeInViewport({ ratio: 1 });
   await expect.poll(async () => (await primary.boundingBox())!.height).toBe(120);
   const readyHandle = (await resize.boundingBox())!;
+  const readyPane = (await primary.boundingBox())!;
   await page.mouse.move(readyHandle.x + readyHandle.width / 2, readyHandle.y + readyHandle.height / 2);
   await page.mouse.down();
-  await page.mouse.move(handle.x + handle.width / 2, pane.y + 350);
+  await page.mouse.move(readyHandle.x + readyHandle.width / 2, readyHandle.y + readyHandle.height / 2 + 350 - readyPane.height);
   await page.mouse.up();
-  await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(350);
   await expect(recordings.getByRole('link', { name: 'Recording 1', exact: true })).toBeVisible();
   const results = (await primary.boundingBox())!;
   expect((await recordings.boundingBox())!.height).toBeLessThanOrEqual(Math.min(results.height * 0.4, 320) + 1);
@@ -100,7 +102,7 @@ test('recordings stay capped in Table and leave Timeline rows reachable', async 
   await page.getByRole('combobox', { name: 'Show as: Table' }).click();
   await page.getByRole('option', { name: 'Timeline', exact: true }).click();
   await grid.getByText('Synthetic subject 1', { exact: true }).click();
-  await expect.poll(async () => (await primary.boundingBox())!.height).toBeCloseTo(350, -1);
+  await expect.poll(async () => (await primary.boundingBox())!.height).toBe(350);
   await grid.evaluate(element => { element.scrollTop = element.scrollHeight; });
   await expect(grid.getByText('Synthetic subject 20', { exact: true })).toBeInViewport();
 });

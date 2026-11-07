@@ -146,7 +146,7 @@
 {#if extraActive}<span id={visualStatusId} class="kit-sr-only">Visual search active</span>{/if}
 
 {#if open}
-  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" bind:this={panelElement} style={panelStyle}>
+  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" data-form bind:this={panelElement} style={panelStyle}>
     {#if kinds.length > 0}
       <fieldset class="field">
         <legend>Kind</legend>

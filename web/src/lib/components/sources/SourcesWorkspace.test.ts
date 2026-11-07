@@ -125,8 +125,10 @@ describe('SourcesWorkspace', () => {
     }
 
     const alert = await within(panel).findByRole('alert');
-    expect(alert.textContent).toContain('Source status unavailable');
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Refresh' }));
+    expect(within(alert).getByText("Couldn't load your sources.")).toBeDefined();
+    const details = within(alert).getByText('Details').closest('details')!;
+    expect(details.textContent).toContain('Source status unavailable');
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(statusReads).toBe(3));
     await waitFor(() => expect(within(panel).queryByText('Source status unavailable')).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
@@ -276,6 +278,7 @@ describe('SourcesWorkspace', () => {
       await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
       await fireEvent.click(button);
       expect(await within(panel).findByText('Other sync rejected')).toBeDefined();
+      expect(within(panel).getByText("Couldn't start the sync.")).toBeDefined();
       expect(posts).toEqual(['/api/v1/sync/archive%40example.com', '/api/v1/sync/other%40example.com']);
     } finally { view.unmount(); }
   });
@@ -728,10 +731,16 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(archiveButton);
     expect(archiveButton.disabled).toBe(true);
     expect(otherButton.disabled).toBe(true);
-    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Starting sync timed out. Check source status before trying again.')).toBeDefined();
     expect(archiveButton.disabled).toBe(false);
     expect(otherButton.disabled).toBe(false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Archive' }));
+    const panel = screen.getByRole('dialog', { name: 'Archive' });
+    const panelAlert = within(panel).getByRole('alert');
+    expect(within(panelAlert).getByText('Starting sync timed out. Check source status before trying again.')).toBeDefined();
+    expect(within(panelAlert).queryByText('Details')).toBeNull();
+    await fireEvent.click(within(panelAlert).getByRole('button', { name: 'Refresh' }));
     expect(await screen.findByText('5 processed')).toBeDefined();
     expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(true);
     expect(triggers).toBe(1);
@@ -843,7 +852,10 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
-    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    const alert = await screen.findByRole('alert');
+    const guidance = within(alert).getByText('Loading source status timed out; the server may be busy, so retry in a moment.');
+    expect(guidance).toBeDefined();
+    expect(within(alert).queryByText('Details')).toBeNull();
     expect(signals[0]!.aborted).toBe(true);
     expect(screen.queryByText('Loading…')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -1101,7 +1113,7 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
     if (request.url.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (request.url.endsWith('/carddav/connections')) {
       if (++contactsReads > 1) return Response.json({ connections: [contact] });
-      if (failure === 'error') return Response.json({}, { status: 500 });
+      if (failure === 'error') return Response.json({ message: 'Contacts upstream unavailable' }, { status: 500 });
       return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
     }
     if (request.url.includes('/carddav/status')) return Response.json(contact.status);
@@ -1110,7 +1122,11 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   });
   const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []), requestTimeoutMs: 20 });
   try {
-    expect((await screen.findByRole('alert')).textContent).toMatch(/contacts/i);
+    const alert = await screen.findByRole('alert');
+    const message = failure === 'error' ? "Couldn't load your contact accounts." : 'Loading contact accounts timed out; retry in a moment.';
+    expect(within(alert).getByText(message)).toBeDefined();
+    if (failure === 'timeout') expect(within(alert).queryByText('Details')).toBeNull();
+    if (failure === 'error') expect(alert.textContent).toContain('Contacts upstream unavailable');
     expect(screen.queryByText('No sources yet')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(screen.getByRole('dialog', { name: 'Add source' })).toBeDefined();

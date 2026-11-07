@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-11-07"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -808,6 +808,12 @@ eligible on its next turn, so it cannot block later recordings in limited runs.
 Rotation state is stored once per source; run history retains outcomes and counts.
 Plaud pagination is eventually consistent, so changes during a run may be
 reconciled on a later run.
+
+Plaud limits how fast an account can call its service. When Plaud rejects a
+call, msgvault waits up to a minute before each retry and slows its remaining
+calls for the rest of the run. Large libraries can still hit the limit on
+every scheduled run. Set `limit` on the `[[plaud]]` entry to spread checks over
+several scheduled runs, for example `limit = 50` with a six-hour schedule.
 
 A recording awaiting transcription can still archive its metadata and notes.
 Later runs retry pending content. Temporarily missing transcripts or note tabs

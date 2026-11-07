@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -413,12 +414,34 @@ func TestImportCancellationIsNotAnAttachmentFailure(t *testing.T) {
 	c, st, source := importOnlyFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	summary, err := c.Import(cancelOnceStored{Context: ctx, cancel: cancel, db: st.DB()}, st, source)
+	// The source attachment query runs after the message commit has returned.
+	// Cancel there so the archive driver's commit cannot race the cancellation.
+	c.db.SetMaxOpenConns(1)
+	conn, err := c.db.Conn(t.Context())
+	require.NoError(err)
+	require.NoError(conn.Raw(func(raw any) error {
+		sqliteConn, ok := raw.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
+			if action == sqlite3.SQLITE_READ && table == "attachment" {
+				cancel()
+			}
+			return sqlite3.SQLITE_OK
+		})
+		return nil
+	}))
+	require.NoError(conn.Close())
+	summary, err := c.Import(ctx, st, source)
 	require.ErrorIs(err, context.Canceled)
 	require.NotErrorIs(err, ErrAttachmentImport)
 	assert.Equal(1, summary.MessagesAdded)
 	assert.Equal(summary.MessagesAdded+summary.MessagesUpdated, summary.MessagesImported)
 	assert.Zero(summary.AttachmentFailures)
+	var messages, attachments int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
+	assert.Equal(1, messages)
+	assert.Zero(attachments)
 }
 
 func TestImportRerunWritesOnlyChanges(t *testing.T) {

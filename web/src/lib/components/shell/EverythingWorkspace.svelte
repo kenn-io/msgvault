@@ -1,9 +1,11 @@
 <script lang="ts">
   import { tasksSettingsDestination } from './navigation';
-  import { Button, MEDIA, PageHeader } from '@kenn-io/kit-ui';
+  import { Button, MEDIA, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
 
+  import { getLocalEmbeddings } from '../../api/generated/api/api';
+  import type { LocalEmbeddingsStatus } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
@@ -438,6 +440,25 @@
   function reloadGroupMeetings(): void {
     session.readingDetailFingerprint = '';
     readingDetailRetryRevision += 1;
+  }
+
+  let localSetup = $state<LocalEmbeddingsStatus>();
+  const localSearchOff = $derived(localSetup && localSetup.provider !== 'configured' && !localSetup.enabled && !localSetup.running && localSetup.phase === 'idle' && !loader.loading && Boolean(loader.result) && Boolean(exploreState.current.query.trim()));
+  $effect(() => {
+    localSetup = undefined;
+    if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text') return;
+    const controller = new AbortController();
+    const load = () => void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
+      if (!controller.signal.aborted && response.ok) localSetup = data;
+    }).catch(() => undefined);
+    load();
+    // Another tab may have turned search on while this one was in the background.
+    window.addEventListener('focus', load);
+    return () => { controller.abort(); window.removeEventListener('focus', load); };
+  });
+  // Settings runs and follows the setup; the hint only opens it.
+  function openSearchSettings(): void {
+    commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
   }
 
   const coverageFiltersFingerprint = $derived(canonicalFingerprint(exploreState.current.filters));
@@ -897,9 +918,18 @@
     </SplitPane>
   </div>
 
+  {#if localSearchOff && localSetup}
+    <div class="local-search-hint">
+      <SearchByMeaningHint onturnon={openSearchSettings} />
+    </div>
+  {/if}
+
 </svelte:element>
 
 <style>
+  .local-search-hint { margin: 0; line-height: 1.45; }
+  .local-search-hint :global(.kit-search-by-meaning-hint) { font-size: var(--font-size-xs); text-wrap: balance; }
+  .local-search-hint :global(button) { text-decoration: underline; }
   .everything-workspace {
     display: flex;
     width: 100%;

@@ -368,7 +368,8 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // and runs schema init/migrations.
 //
 // Backup freeze begin, meeting import, and historical import jobs coordinate
-// the gate in their handlers.
+// the gate in their handlers. Local search acquires it in its controller after
+// installing shared files.
 // Meeting import first reads and validates its bounded request body so a slow
 // authenticated upload cannot hold the gate. Backup freeze end bypasses the
 // gate so it can release the freeze held by begin. Routing these through the
@@ -394,6 +395,7 @@ var operationGateExemptPaths = map[string]bool{
 	agentTokensPath:                    true,
 	sessionLoginPath:                   true,
 	importJobsEndpointPath:             true,
+	localEmbeddingsEndpointPath:        true,
 	meetingImportEndpointPath:          true,
 	muesliImportEndpointPath:           true,
 	muesliRecordingEndpointPath:        true,
