@@ -89,6 +89,39 @@ func (s classifiedTokenSource) Token() (*oauth2.Token, error) {
 	return token, nil
 }
 
+// providerFloorTransport checks the shared provider pause after oauth2 has
+// obtained a token and immediately before the Gmail transport sends the request.
+type providerFloorTransport struct {
+	client *Client
+	base   http.RoundTripper
+}
+
+func (t *providerFloorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.client.deferProviderRetry {
+		floor := t.client.RetryNotBefore()
+		if t.client.rateLimiter.clock.Now().Before(floor) {
+			throttled := &ThrottledError{Summary: "provider retry deferred", NotBefore: floor}
+			var err error = throttled
+			if ctxErr := req.Context().Err(); ctxErr != nil {
+				err = errors.Join(ctxErr, throttled)
+			}
+			return nil, &providerFloorAdmissionError{err: err}
+		}
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
+// providerFloorAdmissionError identifies a request rejected before the base
+// transport saw it, so a mutation remains known not to have been sent.
+type providerFloorAdmissionError struct{ err error }
+
+func (e *providerFloorAdmissionError) Error() string { return e.err.Error() }
+func (e *providerFloorAdmissionError) Unwrap() error { return e.err }
+
 // NewClient creates a new Gmail API client.
 func NewClient(tokenSource oauth2.TokenSource, opts ...ClientOption) *Client {
 	if tokenSource != nil {
@@ -109,6 +142,13 @@ func NewClient(tokenSource oauth2.TokenSource, opts ...ClientOption) *Client {
 	// Default rate limiter if not set
 	if c.rateLimiter == nil {
 		c.rateLimiter = NewRateLimiter(5.0)
+	}
+	if transport, ok := c.httpClient.Transport.(*oauth2.Transport); ok {
+		base := transport.Base
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		transport.Base = &providerFloorTransport{client: c, base: base}
 	}
 
 	return c
@@ -212,6 +252,9 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			if _, ok := errors.AsType[*providerFloorAdmissionError](err); ok {
+				return nil, err
+			}
 			if remoteMutation {
 				// A token failure, such as a refresh that could not be saved,
 				// happens before any Gmail request is sent.
@@ -235,17 +278,33 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 			lastErr = fmt.Errorf("http request: %w", err)
 			continue // Retry on network errors
 		}
+		responseAt := c.rateLimiter.clock.Now()
+		retryAfter := time.Duration(0)
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden {
+			retryAfter = httpretry.RetryAfterAt(resp.Header.Get("Retry-After"), 0, math.MaxInt64, responseAt)
+		}
+		var responseThrottle *ThrottledError
+		var responsePause time.Duration
+		if resp.StatusCode == http.StatusTooManyRequests {
+			responsePause = max(30*time.Second, retryAfter)
+			c.rateLimiter.Throttle(responsePause)
+			responseThrottle = &ThrottledError{Summary: "rate limited (429)", NotBefore: c.RetryNotBefore()}
+		}
 
 		respBody, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
+			readErr := fmt.Errorf("read response: %w", err)
 			if remoteMutation {
-				return nil, fmt.Errorf("%w: read response: %w", errWriteOutcomeUnknown, err)
+				return nil, errors.Join(fmt.Errorf("%w: %w", errWriteOutcomeUnknown, readErr), responseThrottle)
 			}
 			if ctx.Err() != nil {
-				return nil, retryBudgetError(ctx.Err(), attempt+1, lastErr)
+				return nil, errors.Join(retryBudgetError(ctx.Err(), attempt+1, errors.Join(lastErr, responseThrottle)), readErr)
 			}
-			lastErr = fmt.Errorf("read response: %w", err)
+			lastErr = errors.Join(readErr, responseThrottle)
+			if c.deferProviderRetry && responseThrottle != nil {
+				return nil, lastErr
+			}
 			continue
 		}
 
@@ -260,11 +319,7 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 			// Log at Debug level since rate limiting is expected during high-volume syncs
 			// and the retry logic handles it automatically
 			detail := gmailErrorDetail(resp.Header, respBody)
-			// The caller's context bounds the wait; don't shorten Gmail's Retry-After.
-			pause := max(30*time.Second, httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, math.MaxInt64))
-			c.logger.Debug("rate limited, backing off", "pause", pause, "path", path, "attempt", attempt, "detail", detail)
-			// Throttle the rate limiter to back off
-			c.rateLimiter.Throttle(pause)
+			c.logger.Debug("rate limited, backing off", "pause", responsePause, "path", path, "attempt", attempt, "detail", detail)
 			if remoteMutation {
 				return nil, newStatusError(resp.StatusCode, respBody)
 			}
@@ -276,7 +331,8 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 				// Log at Debug level since quota throttling is expected during high-volume syncs
 				// and the retry logic handles it automatically
 				detail := gmailErrorDetail(resp.Header, respBody)
-				pause := max(time.Minute, httpretry.RetryAfter(resp.Header.Get("Retry-After"), 0, math.MaxInt64))
+				pause := max(time.Minute, retryAfter)
+				pause = max(time.Duration(0), pause-c.rateLimiter.clock.Now().Sub(responseAt))
 				c.logger.Debug("quota exceeded, backing off", "pause", pause, "path", path, "attempt", attempt, "detail", detail)
 				// Throttle the rate limiter - quota errors need longer backoff
 				c.rateLimiter.Throttle(pause)

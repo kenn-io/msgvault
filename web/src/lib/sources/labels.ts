@@ -45,6 +45,17 @@ export function sourceFailure(
   return message || undefined;
 }
 
+/** The scheduler detail is shorter when the source status already says Failed. */
+export function sourceSchedulerErrorDetail(
+  source: StateSource & Pick<SourceStatus, 'scheduler_last_error'>,
+): string | undefined {
+  const message = source.scheduler_last_error;
+  if (message === 'email acquisition failed; retry scheduled' && sourceRunState(source) === 'failed') {
+    return 'Retry scheduled';
+  }
+  return message || undefined;
+}
+
 /** The sync command for a source that has no schedule. */
 export function syncCommand(source: Pick<SourceStatus, 'id' | 'source_type' | 'sync_unavailable_reason' | 'last_successful_sync'>): string | undefined {
   if (source.sync_unavailable_reason !== 'sync_not_configured') return undefined;

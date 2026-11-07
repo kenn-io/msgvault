@@ -6,7 +6,7 @@
   import type { SourceStatus, Setting } from '../../api/generated/models';
   import { persistedValue, readOnlyValue } from '../../settings/catalog';
   import { scheduleSummary } from '../../settings/cron';
-  import { sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
+  import { sourceRunState, sourceSchedulerErrorDetail, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
   import { operationStateChip } from '../../operations/labels';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
@@ -33,7 +33,8 @@
   let controller: AbortController | undefined;
   const prefix = $derived(SOURCE_SETTING_PREFIX[source.source_type]);
   const title = $derived(source.display_name || source.identifier);
-  const failure = $derived(sourceFailure(source));
+  const schedulerError = $derived(sourceSchedulerErrorDetail(source));
+  const failure = $derived(source.latest_sync?.error_message || schedulerError);
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
   const lastGood = $derived(source.last_successful_sync?.completed_at);
   const latest = $derived(source.latest_sync);
@@ -81,7 +82,7 @@
         <Button size="sm" label="Refresh" onclick={onRefresh} />
       </section>
     {/if}
-    {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
+    {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if schedulerError && schedulerError !== failure}<p class="failure">{schedulerError}</p>{/if}</section>{/if}
     {#if source.source_type !== 'meeting_import' && !source.can_sync && !syncing}
       {@const command = syncCommand(source)}
       <section class="block" aria-label="Sync">

@@ -26,6 +26,10 @@ func setDeadlineBase(t *testing.T, c *Client, transport deadlineTransport) {
 	t.Helper()
 	oauthTransport, ok := c.httpClient.Transport.(*oauth2.Transport)
 	require.True(t, ok, "NewClient must install an oauth2.Transport")
+	if floorTransport, ok := oauthTransport.Base.(*providerFloorTransport); ok {
+		floorTransport.base = transport
+		return
+	}
 	oauthTransport.Base = transport
 }
 
@@ -126,6 +130,45 @@ func TestGetProfileCaptures429RetryFloorBeforeReadingBody(t *testing.T) {
 	})
 }
 
+func TestGetProfileCaptures403QuotaFloorFromResponseReceipt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		c := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}))
+		c.DeferProviderRetries()
+		var responseAt, floorAtBodyRead time.Time
+		var requests atomic.Int32
+		setDeadlineBase(t, c, func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			responseAt = time.Now()
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Header:     http.Header{"Retry-After": []string{"60"}},
+				Body: &delayedDeadlineBody{
+					reader: strings.NewReader(`{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`),
+					delay:  10 * time.Second,
+					beforeRead: func() {
+						floorAtBodyRead = c.RetryNotBefore()
+					},
+				},
+			}, nil
+		})
+
+		_, err := c.GetProfile(t.Context())
+		var throttled *ThrottledError
+		require.ErrorAs(err, &throttled)
+		assert.Zero(floorAtBodyRead, "403 retry floors depend on the response body confirming quota exhaustion")
+		assert.EqualValues(1, requests.Load())
+		floor := c.RetryNotBefore()
+		assert.GreaterOrEqual(floor.Sub(responseAt), 59*time.Second)
+		assert.LessOrEqual(floor.Sub(responseAt), 61*time.Second,
+			"the confirmed quota floor stays anchored to response receipt")
+		assert.GreaterOrEqual(floor.Sub(time.Now()), 49*time.Second)
+		assert.LessOrEqual(floor.Sub(time.Now()), 51*time.Second,
+			"a slow body consumes the original quota Retry-After interval")
+	})
+}
+
 func TestGetProfilePreservesFloorAndCancellationForTruncated429(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -170,10 +213,8 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 			if rapid {
 				first.DeferProviderRetries()
 			}
-			firstTransport, ok := first.httpClient.Transport.(*oauth2.Transport)
-			require.True(t, ok)
 			var firstSends atomic.Int32
-			firstTransport.Base = deadlineTransport(func(*http.Request) (*http.Response, error) {
+			setDeadlineBase(t, first, func(*http.Request) (*http.Response, error) {
 				firstSends.Add(1)
 				return deadlineResponse(http.StatusOK, `{}`), nil
 			})
@@ -190,10 +231,8 @@ func TestSharedProviderFloorIsCheckedAfterTokenAcquisition(t *testing.T) {
 
 			second := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "second-token"}), WithRateLimiter(limiter))
 			second.DeferProviderRetries()
-			secondTransport, ok := second.httpClient.Transport.(*oauth2.Transport)
-			require.True(t, ok)
 			var secondSends atomic.Int32
-			secondTransport.Base = deadlineTransport(func(*http.Request) (*http.Response, error) {
+			setDeadlineBase(t, second, func(*http.Request) (*http.Response, error) {
 				secondSends.Add(1)
 				response := deadlineResponse(http.StatusTooManyRequests, `{}`)
 				response.Header.Set("Retry-After", "3600")

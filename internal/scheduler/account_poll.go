@@ -46,7 +46,7 @@ func (e *AcquisitionError) Error() string {
 	case AcquisitionCanonicalTarget:
 		return "Choose exactly one active mail account using its ACCOUNT value from msgvault list-accounts."
 	case AcquisitionFilteredCoverage:
-		return "rapid email requires unfiltered coverage; remove folder/date filters or disable poll_interval"
+		return "Rapid polling: remove folder/date filters or disable poll_interval."
 	}
 	if e.Credentials {
 		return "email credentials unavailable; reauthorize the selected account"
