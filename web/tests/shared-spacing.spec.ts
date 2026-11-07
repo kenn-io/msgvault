@@ -169,6 +169,13 @@ test('a long sidebar saved view list keeps every row at its full height and scro
   expect(await sidebar.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 });
 
+test('every sidebar item, footer included, is one height', async ({ page }) => {
+  const items = page.getByRole('complementary', { name: 'Sidebar', exact: true }).locator('.sidebar__item');
+  const heights = await items.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+  expect(heights.length).toBeGreaterThan(3);
+  expect(new Set(heights)).toEqual(new Set([36]));
+});
+
 for (const width of [1280, 390]) {
   for (const workspace of ['Messages', 'Files']) {
     test(`${workspace} Filter ${workspace === 'Messages' ? 'fields use' : 'filename uses'} the shared scale at ${width}px`, async ({ page }) => {
