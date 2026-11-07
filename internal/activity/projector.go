@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -110,7 +111,7 @@ func NewProjector(st projectorStore, options Options) (*Projector, error) {
 	if timezone == "" {
 		timezone = defaultProjectorTimezone
 	}
-	location, err := LoadZone(timezone)
+	location, err := activitydate.LoadZone(timezone)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +402,7 @@ func (p *Projector) convergeTimezone(
 				return nil
 			}
 		}
-		location, err := LoadZone(current.Target)
+		location, err := activitydate.LoadZone(current.Target)
 		if err != nil {
 			return fmt.Errorf("activity: persisted timezone transition: %w", err)
 		}
@@ -913,7 +914,7 @@ func (p *Projector) projections(
 			result = append(result, projection)
 			continue
 		}
-		dating, err := DateEvent(Timestamps{
+		dating, err := activitydate.DateEvent(activitydate.Timestamps{
 			SentAt:       candidate.SentAt,
 			ReceivedAt:   candidate.ReceivedAt,
 			InternalDate: candidate.InternalDate,
