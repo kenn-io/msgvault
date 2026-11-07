@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { loadMixedArchive } from './fixtures/mixed-archive';
 import { exploreHistoryState } from '../explore-state';
+import { stubOperationStatus } from '../kit-ui';
+import { sourceStatus } from '../../src/lib/jobs/fixtures.test-support';
 
 async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab' | 'Shift+Tab' = 'Tab') {
   const seen = new Set<string>();
@@ -19,6 +21,8 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
 }
 
 test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [sourceStatus({ scheduled: false })] } }));
   const fixture = await loadMixedArchive();
   const firstServedRow = fixture.firstPage.rows[0]!;
   const terminalServedRow = fixture.firstPage.rows.at(-1)!;

@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
+- Empty sender searches suggest matching addresses and a query you can retry, including incomplete addresses such as `from:alex@exam`. CLI hints stay on stderr, and MCP metadata results carry structured retry hints. Counts keep your search filters and account scope.
 
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and

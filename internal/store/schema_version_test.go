@@ -23,8 +23,8 @@ func TestSchemaVersionArchiveRequiresLINEUpgrade(t *testing.T) {
 		version string
 		tables  []string
 	}{
-		{"32", []string{"line_webhook_events", "line_profiles", "line_memberships", "line_reply_attempts"}},
-		{"33", []string{"line_reply_attempts"}},
+		{"33", []string{"line_webhook_events", "line_profiles", "line_memberships", "line_reply_attempts"}},
+		{"34", []string{"line_reply_attempts"}},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			require := require.New(t)
@@ -45,6 +45,94 @@ func TestSchemaVersionArchiveRequiresLINEUpgrade(t *testing.T) {
 				require.NoError(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count))
 				assert.Zero(count)
 			}
+		})
+	}
+}
+
+func TestInitSchemaUnlessCurrentPostgreSQLRepairs(t *testing.T) {
+	for _, repair := range []string{"default collection", "account identity keys", "system seeds"} {
+		t.Run(repair, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			if !f.Store.IsPostgreSQL() {
+				t.Skip("requires PostgreSQL")
+			}
+			ctx := t.Context()
+			switch repair {
+			case "default collection":
+				_, err := f.Store.DB().ExecContext(ctx, `DELETE FROM collection_sources WHERE source_id = $1`, f.Source.ID)
+				require.NoError(err)
+
+				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+				collection, err := f.Store.GetCollectionByNameContext(ctx, store.DefaultCollectionName)
+				require.NoError(err)
+				assert.Equal([]int64{f.Source.ID}, collection.SourceIDs)
+			case "account identity keys":
+				require.NoError(f.Store.AddAccountIdentityContext(ctx, f.Source.ID, "Alice@Example.com", "manual"))
+				// A previous-release writer omits address_key, leaving its default ''.
+				_, err := f.Store.DB().ExecContext(ctx,
+					`INSERT INTO account_identities (source_id, address, source_signal) VALUES ($1, 'alice@example.com', 'header')`, f.Source.ID)
+				require.NoError(err)
+
+				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+				identities, err := f.Store.ListAccountIdentitiesContext(ctx, f.Source.ID)
+				require.NoError(err)
+				assert.Len(identities, 1, "current archives repair case variants left by previous-release writers")
+			case "system seeds":
+				definition, err := f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+				require.NoError(err)
+				_, err = f.Store.DB().ExecContext(ctx,
+					`UPDATE attribute_definitions SET options = '{"max_length":120}' WHERE universal_id = $1`, definition.UniversalID)
+				require.NoError(err)
+				_, err = f.Store.DB().ExecContext(ctx, `UPDATE relationship_types SET is_symmetric = FALSE WHERE slug = 'neighbor'`)
+				require.NoError(err)
+
+				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+				definition, err = f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+				require.NoError(err)
+				require.NotNil(definition.Options)
+				assert.Equal(280, definition.Options.MaxLength)
+				repaired, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "neighbor")
+				require.NoError(err)
+				assert.True(repaired.IsSymmetric)
+			}
+		})
+	}
+}
+
+func TestInitSchemaUnlessCurrentPostgreSQLFallsThroughToFullInitializer(t *testing.T) {
+	for _, version := range []int{store.SchemaVersion - 1, store.SchemaVersion + 1} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			if !f.Store.IsPostgreSQL() {
+				t.Skip("requires PostgreSQL")
+			}
+			ctx := t.Context()
+			if version < store.SchemaVersion {
+				_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX idx_identity_match_candidates_right`)
+				require.NoError(err)
+			}
+			_, err := f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = $1 WHERE key = 'schema_version'`, strconv.Itoa(version))
+			require.NoError(err)
+
+			err = f.Store.InitSchemaUnlessCurrentContext(ctx)
+			if version > store.SchemaVersion {
+				require.ErrorContains(err, "newer")
+				got, err := f.Store.SchemaVersionContext(ctx)
+				require.NoError(err)
+				assert.Equal(t, version, got)
+				return
+			}
+			require.NoError(err)
+			got, err := f.Store.SchemaVersionContext(ctx)
+			require.NoError(err)
+			assert.Equal(t, store.SchemaVersion, got)
+			var indexes int
+			require.NoError(f.Store.DB().QueryRowContext(ctx,
+				`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&indexes))
+			assert.Equal(t, 1, indexes, "upgrading an archive recreates missing schema objects")
 		})
 	}
 }
@@ -312,8 +400,9 @@ var (
 		30: "41d1794a318cda45f41e498843ee7f7bff6d96ab206b4ed9dfc4d52dc52ea270",
 		31: "cad2b896394a3b1df1cb8b71cc2db52e893623272d87e1ede64ad757e6aba500",
 		32: "67195ce591cb53fde19ccf89d46f57a8d1cba7fcb96efd0b1d120dcde4c0dceb",
-		33: "2d98f058dce3d89bd637c3d8794bd623b5d1b136f8d6471759081b0e4c2cf5be",
-		34: "58a66a206782193ff21e93cbc76a306123ce0f9cc2012676735f711d687036aa",
+		33: "7158a0bdc0768658194eacd650486e790f43ce0ab26f9aeffcd01843e3958ecb",
+		34: "21117f641e1a287bdfcd447948abdd1e75ad3e1e6195299c428f2f9847fb66ff",
+		35: "6945db61db68f69b84de42b49a1dc413b044fdffdf57606cf20e3a345b15028b",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -343,8 +432,9 @@ var (
 		30: "9b5dde3f88bebb178ad918e86607113f312fdda56bd859b72450286e1a1f6182",
 		31: "f4b83986f7def2d4f1f49dce1074b828bb0bb2a3ff042ced1a512b8443407c90",
 		32: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
-		33: "e1065e8fec81997b9372838b2430667d51d95295d3c01f7cc58af0951fd214f7",
-		34: "b2e555d182a83cc36cb3eeea49f3e7c0f280062ca987449ce13849760113ea6d",
+		33: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
+		34: "e1065e8fec81997b9372838b2430667d51d95295d3c01f7cc58af0951fd214f7",
+		35: "b2e555d182a83cc36cb3eeea49f3e7c0f280062ca987449ce13849760113ea6d",
 	}
 )
 

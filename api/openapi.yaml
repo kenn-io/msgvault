@@ -2938,6 +2938,10 @@ components:
       properties:
         has_more:
           type: boolean
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         hybrid_available:
           type: boolean
         index_built:
@@ -15092,6 +15096,10 @@ components:
             format: int64
             type: integer
           type: array
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         index_state:
           type: string
         messages:
@@ -15113,6 +15121,28 @@ components:
         - query
         - messages
         - total_count
+      type: object
+    SearchHint:
+      additionalProperties: true
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retry_with:
+          $ref: "#/components/schemas/SearchHintRetryWithStruct"
+      required:
+        - code
+        - message
+        - retry_with
+      type: object
+    SearchHintRetryWithStruct:
+      additionalProperties: true
+      properties:
+        query:
+          type: string
+      required:
+        - query
       type: object
     SearchProvenance:
       additionalProperties: false
@@ -17259,7 +17289,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.48.0
+  version: 3.49.0
 openapi: 3.1.0
 paths:
   /api/ping:

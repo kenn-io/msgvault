@@ -534,6 +534,7 @@ alone, so bump the version by hand for one. SQLite and PostgreSQL use the
 versions before DDL and stamps this version only after its required steps succeed,
 using the caller's context. Keep optional and best-effort maintenance behavior separate from that
 completion guarantee.
+Writer opens and daemon start on a current PostgreSQL archive skip the full initializer; `msgvault migrate` and setup run it in full.
 
 The contract began in 0.22.0. Existing archives start at
 `0`; successful initialization upgrades them to the binary's expected version.

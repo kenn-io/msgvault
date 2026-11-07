@@ -244,12 +244,22 @@ func cliSearchFromGenerated(resp *generated.SearchCLIResponse) *CLISearch {
 		Results:          results,
 		HybridAvailable:  boolValue(resp.HybridAvailable),
 		HasMore:          boolValue(resp.HasMore),
+		Hints:            searchHintsFromGenerated(resp.Hints),
 		ScopeLabel:       stringValue(resp.ScopeLabel),
 		ScopeSourceCount: intValue(resp.ScopeSourceCount),
 		IndexBuilt:       boolValue(resp.IndexBuilt),
 		IndexedMessages:  int64Value(resp.IndexedMessages),
 		IndexState:       stringValue(resp.IndexState),
 	}
+}
+
+func searchHintsFromGenerated(hints []generated.SearchHint) []query.SearchHint {
+	result := make([]query.SearchHint, len(hints))
+	for i, hint := range hints {
+		result[i] = query.SearchHint{Code: hint.Code, Message: hint.Message}
+		result[i].RetryWith.Query = hint.RetryWith.Query
+	}
+	return result
 }
 
 func cliHybridSearchFromGenerated(resp generated.HybridSearchResponse) (*CLIHybridSearch, error) {

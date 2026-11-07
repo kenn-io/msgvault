@@ -546,12 +546,31 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
-  it('opens source setup and sync history from an empty workspace', async () => {
-    const onOpenOperations = vi.fn();
-    render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenOperations });
-    expect(await screen.findByText('No sources yet')).toBeDefined();
+  it('opens source setup from the header of a populated workspace', async () => {
+    render(SourcesWorkspace, { client: createCaptureClient(api([source()]), []) });
+    await screen.findByRole('table', { name: 'Sources' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByText('msgvault add-account user@example.com')).toBeDefined();
+  });
+
+  it('offers one source setup action after an empty workspace loads', async () => {
+    const onOpenOperations = vi.fn();
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const fetchFn = api([]);
+    render(SourcesWorkspace, { client: createCaptureClient(async (...args) => { await pending; return fetchFn(...args); }, []), onOpenOperations });
+    try {
+      await screen.findByText('Loading…');
+      expect(screen.queryByRole('button', { name: 'Add source' })).toBeNull();
+    } finally {
+      release();
+    }
+    await screen.findByText('No sources yet');
+    expect(screen.getByText('Add an account or import an export to start your archive.')).toBeDefined();
+    expect(screen.getAllByRole('button', { name: 'Add source' })).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByText('msgvault add-account user@example.com')).toBeDefined();
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add source' })).getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
   });
@@ -786,6 +805,9 @@ describe('SourcesWorkspace', () => {
     await tick();
     await Promise.all(requests);
     expect(events).toEqual([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    expect(screen.getByRole('dialog', { name: 'Add source' })).toBeDefined();
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add source' })).getByRole('button', { name: 'Close' }));
 
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(1);
@@ -1134,6 +1156,9 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   try {
     expect((await screen.findByRole('alert')).textContent).toMatch(/contacts/i);
     expect(screen.queryByText('No sources yet')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    expect(screen.getByRole('dialog', { name: 'Add source' })).toBeDefined();
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add source' })).getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();

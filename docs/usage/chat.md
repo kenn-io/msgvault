@@ -81,7 +81,7 @@ non-dry-run plan through client elicitation.
 
 ## Draft tools
 
-These tools run the matching CLI commands through your selected daemon. Draft preparation and lifecycle tools require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft creation and lifecycle commands do not send. On unreleased `main`, the owner can send reviewed LINE text drafts with `send_line_reply` (API schema 3.48.0); see [LINE setup and receipts](line.md#reply-from-a-reviewed-draft).
+These tools run the matching CLI commands through your selected daemon. Draft preparation and lifecycle tools require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft creation and lifecycle commands do not send. On unreleased `main`, the owner can send reviewed LINE text drafts with `send_line_reply` (API schema 3.49.0); see [LINE setup and receipts](line.md#reply-from-a-reviewed-draft).
 
 `draft_delete`, `draft_recover`, and `send_line_reply` require client confirmation for the specific tool and arguments. Deletion removes a draft, recovery can finish an interrupted deletion, and LINE sending can make a provider request. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete, recover, or send them.
 
@@ -179,6 +179,14 @@ these tools do not complete tasks or infer new ones.
 ## Setup
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
+
+### Tools available for your archive
+
+MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
+
+Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
+
+The complete default stdio `tools/list` response, including output schemas, measures 173,598 bytes for an mbox-only archive and 226,314 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, rounded up from the measured sizes plus 10%. Optional write flags are off in both measurements.
 
 ### Claude Desktop Configuration
 
@@ -473,6 +481,8 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
   "has_more": true
 }
 ```
+
+On SQLite, an empty first page for an incomplete `from:` name or address can include `hints`, for example `{"code":"sender_name_requires_address","message":"…","retry_with":{"query":"from:alex@example.com"}}`. Retry with that query and keep the other tool arguments, including `account`, `limit`, and `offset`. The legacy `search_messages` metadata mode returns the same hints.
 
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and

@@ -33,6 +33,15 @@ function row(index: number, overrides: Partial<EntryRow> = {}): EntryRow {
 }
 
 describe('EverythingTable', () => {
+  it('offers source setup for an empty archive', async () => {
+    const onAddSource = vi.fn();
+    render(EverythingTable, { rows: [], selection: new ExploreSelectionState(), onAddSource });
+    expect(screen.getByText('No mail yet')).toBeDefined();
+    expect(screen.getByText('Add an account or import an export to start your archive.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    expect(onAddSource).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { label: 'message sender', kind: 'message' as const, sender: 'Zoe Sender', expected: 'Zoe Sender' },
     { label: 'message roster without a sender', kind: 'message' as const, sender: undefined, expected: 'Alice Recipient, Zoe Sender' }
