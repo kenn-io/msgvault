@@ -33,10 +33,9 @@
 
 </script>
 
-{#snippet rowActions(action: OverviewAction | undefined, authority: OverviewRow['relatedStatus'], name: string, retry = false)}
+{#snippet rowActions(action: OverviewAction | undefined, authority: OverviewRow['relatedStatus'], name: string)}
       <span class="row__action">
         {#if authority}<Button size="sm" surface="soft" label="Details" ariaLabel={`Details, ${name}`} onclick={() => onDetails(authority)} />{/if}
-        {#if retry}<Button size="sm" label="Retry setup" ariaLabel={`Retry setup, ${name}`} onclick={() => onLocalSearch()} />{/if}
         {#if action?.kind === 'settings'}
           <Button size="sm" label="Set up" ariaLabel={`Set up ${name}`} onclick={() => onSetUp(action)} />
         {:else if action?.kind === 'start' && action.id === 'messages'}
@@ -72,7 +71,6 @@
     {@const recovery = enabled && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
     {@const shown = local && (local.kind === 'off' || local.kind === 'downloaded' || (enabled && row.chip.text !== 'On')) ? localError : ''}
     {@const error = shown && !/[.!?]$/.test(shown) ? `${shown}.` : shown}
-    {@const retry = Boolean(enabled && error && action?.kind !== 'start')}
     <li class="row" data-feature={row.id}>
       {#if local}
         <div class="row__local">
@@ -87,7 +85,7 @@
               <span class="row__coverage">Message index <Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
               {#if error}<p class="row__error" role="alert">{error}</p>{/if}
             </div>
-            {@render rowActions(action?.kind === 'settings' ? undefined : action, authority, row.name, retry)}
+            {@render rowActions(action?.kind === 'settings' ? undefined : action, authority, row.name)}
           </div>
         {/if}
       {:else}

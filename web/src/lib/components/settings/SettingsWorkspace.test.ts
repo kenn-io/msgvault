@@ -804,47 +804,43 @@ it('shows an Ollama setup as status only', async () => {
   expect(within(row).queryAllByRole('button')).toEqual([]);
 });
 
-const unfinishedIndex = (path: string) => {
-  if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'publication-1', eligible_count: 6, embedded_count: 4, percentage: 66.7, status: 'initializing', actions: [] });
-  if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 4, pending: 0 });
-  if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
-};
-
-it.each([
-  { name: 'a failed startup in the Off row through Turn on', button: 'Turn on', failure: { download_bytes: 0, error: 'Local model files need setup. Turn on to retry.' }, shown: 'Local model files need setup. Turn on to retry.', routes: undefined },
-  { name: 'setup while the message index is not current', button: 'Retry setup, Search by meaning', failure: { enabled: true, provider: 'builtin', download_bytes: 0, error: 'invalid embed cron' }, shown: 'invalid embed cron.', routes: unfinishedIndex },
-])('retries $name', async ({ button, failure, shown, routes }) => {
+it('retries a failed startup in the Off row through Turn on', async () => {
   let retried = false;
   const { client, operationsController, seen } = fixture(settingsDoc(), request => {
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') {
-      if (request.method === 'POST') {
-        retried = true;
-        return Response.json(localStatus({ running: true }), { status: 202 });
-      }
-      return Response.json(localStatus(retried ? { enabled: true, provider: 'builtin', download_bytes: 0 } : failure));
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (request.method === 'POST') {
+      retried = true;
+      return Response.json(localStatus({ running: true }), { status: 202 });
     }
-    return routes?.(path);
+    return Response.json(localStatus(retried ? { enabled: true, provider: 'builtin', download_bytes: 0 } : { download_bytes: 0, error: 'Local model files need setup. Turn on to retry.' }));
   });
   render(SettingsWorkspace, { client, operationsController });
-  expect((await screen.findByRole('alert')).textContent).toBe(shown);
-  await fireEvent.click(screen.getByRole('button', { name: button }));
+  expect((await screen.findByRole('alert')).textContent).toBe('Local model files need setup. Turn on to retry.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
   await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });
 
-it('offers recovery for a first index build interrupted by a daemon restart', async () => {
+it('finishes a first index build interrupted by a daemon restart through Build index', async () => {
+  let built = false;
   const { client, operationsController, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return request.method === 'POST'
-      ? Response.json(localStatus({ running: true }), { status: 202 })
-      : Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0 }));
-    return unfinishedIndex(path);
+    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0 }));
+    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: built ? 'restart-2' : 'restart-1', eligible_count: 6, embedded_count: built ? 6 : 4, percentage: built ? 100 : 66.7, status: built ? 'ready' : 'initializing', actions: built ? [] : ['build_index'] });
+    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: built ? 6 : 4, pending: built ? 0 : 2 });
+    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+    if (path === '/api/v1/cli/run') {
+      built = true;
+      return new Response('{"type":"complete"}\n');
+    }
   });
   render(SettingsWorkspace, { client, operationsController });
   const row = (await screen.findByText('Message index')).closest('li')!;
-  await fireEvent.click(await within(row).findByRole('button', { name: 'Retry setup, Search by meaning' }));
-  await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
+  await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Search by meaning' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  await waitFor(() => expect(within(row).queryByText('Message index')).toBeNull());
+  expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(1);
+  expect(localPosts(seen)).toEqual([]);
 });
 
 it.each(['manual', 'scheduled'] as const)('hides the setup failure after a successful %s index recovery', async recovery => {
