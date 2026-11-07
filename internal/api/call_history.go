@@ -60,7 +60,7 @@ func (s *Server) registerCallHistoryRoutes(api huma.API) {
 			pagination = "offset"
 		}
 		for _, name := range []string{"person_id", "limit", pagination} {
-			op.Parameters = append(op.Parameters, &huma.Param{Name: name, In: "query", Schema: &huma.Schema{Type: "integer", Format: "int64"}})
+			op.Parameters = append(op.Parameters, queryIntegerParam(name, ""))
 		}
 		for _, name := range []string{"after", "before"} {
 			op.Parameters = append(op.Parameters, &huma.Param{Name: name, In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}})
