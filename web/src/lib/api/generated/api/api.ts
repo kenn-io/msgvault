@@ -190,6 +190,7 @@ import type {
   GetPersonMessagingRoutesParams,
   GetPersonNetworkParams,
   GetPersonNetworkPathParameters,
+  GetPersonPhotosParams,
   GetPersonProfileHistoryPathParameters,
   GetPersonProfileMediaContentPathParameters,
   GetPersonProfilePathParameters,
@@ -373,6 +374,9 @@ import type {
   PersonMergesResponse,
   PersonMessagingRoutesPage,
   PersonNetwork,
+  PersonPhotoLinkRequest,
+  PersonPhotoLinkResponse,
+  PersonPhotosResponse,
   PersonProfileHistory,
   PersonProfilePatchRequest,
   PersonRelationship,
@@ -2894,6 +2898,35 @@ export const getPersonByUID = (
 ) => {
   return orvalFetch<Person>(
     { url: `/api/v1/people/by-uid`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Link a person to Docbank
+ */
+export const putPersonPhotoLink = (
+  personPhotoLinkRequest: PersonPhotoLinkRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonPhotoLinkResponse>>,
+) => {
+  return orvalFetch<PersonPhotoLinkResponse>(
+    {
+      url: `/api/v1/people/by-uid/photo-link`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: personPhotoLinkRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary List confirmed person photo attachments
+ */
+export const getPersonPhotos = (
+  params: GetPersonPhotosParams,
+  options?: SecondParameter<typeof orvalFetch<PersonPhotosResponse>>,
+) => {
+  return orvalFetch<PersonPhotosResponse>(
+    { url: `/api/v1/people/by-uid/photos`, method: "GET", params },
     options,
   );
 };

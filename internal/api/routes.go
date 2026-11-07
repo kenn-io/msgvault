@@ -261,6 +261,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMCPCapabilitiesRoute(api, apiV1)
 	s.registerSessionRoutes(api)
 	s.registerDocbankAttachmentRoutes(apiV1)
+	s.registerPersonPhotoRoutes(apiV1)
 	registerRawHumaJSONRoute[HealthResponse](api, huma.Operation{
 		OperationID: "health",
 		Method:      http.MethodGet,

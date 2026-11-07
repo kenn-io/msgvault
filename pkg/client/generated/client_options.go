@@ -8033,6 +8033,94 @@ func (o *GetPersonByUIDRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// PutPersonPhotoLinkRequestOptions is the options needed to make a request to PutPersonPhotoLink.
+type PutPersonPhotoLinkRequestOptions struct {
+	Body *PutPersonPhotoLinkBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *PutPersonPhotoLinkRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PutPersonPhotoLinkRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PutPersonPhotoLinkRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PutPersonPhotoLinkRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PutPersonPhotoLinkRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPersonPhotosRequestOptions is the options needed to make a request to GetPersonPhotos.
+type GetPersonPhotosRequestOptions struct {
+	Query *GetPersonPhotosQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetPersonPhotosRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPersonPhotosRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPersonPhotosRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPersonPhotosRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPersonPhotosRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // FindContactCandidatesRequestOptions is the options needed to make a request to FindContactCandidates.
 type FindContactCandidatesRequestOptions struct {
 	Query *FindContactCandidatesQuery

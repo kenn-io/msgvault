@@ -843,6 +843,14 @@ type ClientInterface interface {
 	GetPersonByUID(ctx context.Context, options *GetPersonByUIDRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonByUIDResponse, error)
 	GetPersonByUIDWithResponse(ctx context.Context, options *GetPersonByUIDRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonByUIDResp, error)
 
+	// PutPersonPhotoLink Link a person to Docbank
+	PutPersonPhotoLink(ctx context.Context, options *PutPersonPhotoLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutPersonPhotoLinkResponse, error)
+	PutPersonPhotoLinkWithResponse(ctx context.Context, options *PutPersonPhotoLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutPersonPhotoLinkResp, error)
+
+	// GetPersonPhotos List confirmed person photo attachments
+	GetPersonPhotos(ctx context.Context, options *GetPersonPhotosRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonPhotosResponse, error)
+	GetPersonPhotosWithResponse(ctx context.Context, options *GetPersonPhotosRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonPhotosResp, error)
+
 	// FindContactCandidates Find durable people by saved or observed names without selecting a duplicate
 	FindContactCandidates(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResponse, error)
 	FindContactCandidatesWithResponse(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResp, error)
@@ -13756,6 +13764,139 @@ func (c *Client) GetPersonByUID(ctx context.Context, options *GetPersonByUIDRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-uid")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PutPersonPhotoLink Link a person to Docbank
+func (c *Client) PutPersonPhotoLink(ctx context.Context, options *PutPersonPhotoLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PutPersonPhotoLinkResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/by-uid/photo-link",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PutPersonPhotoLinkResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PutPersonPhotoLinkErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PutPersonPhotoLinkErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PutPersonPhotoLinkResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PutPersonPhotoLinkResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-uid/photo-link")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPersonPhotos List confirmed person photo attachments
+func (c *Client) GetPersonPhotos(ctx context.Context, options *GetPersonPhotosRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonPhotosResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"uid":    {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/by-uid/photos",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetPersonPhotosResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetPersonPhotosErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetPersonPhotosErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetPersonPhotosResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetPersonPhotosResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/by-uid/photos")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

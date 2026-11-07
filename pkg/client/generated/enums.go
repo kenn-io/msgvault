@@ -2448,6 +2448,23 @@ func (p PersonMergeResultCacheState) Validate() error {
 	}
 }
 
+type PersonPhotoLinkRequestState string
+
+const (
+	Current  PersonPhotoLinkRequestState = "current"
+	Unlinked PersonPhotoLinkRequestState = "unlinked"
+)
+
+// Validate checks if the PersonPhotoLinkRequestState value is valid
+func (p PersonPhotoLinkRequestState) Validate() error {
+	switch p {
+	case Current, Unlinked:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonPhotoLinkRequestState value, got: %v", p))
+	}
+}
+
 type PersonSplitResultCacheState string
 
 const (
