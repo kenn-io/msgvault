@@ -1,6 +1,6 @@
 import type { OperationLaneStatus, OperationRunSummary, SourceStatus, SyncRunStatus } from '../api/generated/models';
 import { lane } from '../../test/operations';
-import canonical from '../../../tests/e2e/fixtures/operations-public.json';
+import canonical from '../../../tests/e2e/fixtures/operations-public.json' with { type: 'json' };
 
 const failedRuns = canonical.job_runs as OperationRunSummary[];
 
