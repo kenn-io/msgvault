@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -20,17 +21,18 @@ import (
 const sourceTypeDiscord = "discord"
 
 type discordCommandDeps struct {
-	bind                 func(context.Context) discordCommandDeps
-	openStore            func() (*store.Store, func(), error)
-	openReadOnlyStore    func() (*store.Store, func(), error)
-	tokenManager         func() *discord.TokenManager
-	apiBaseURL           func() string
-	providerConfig       func() config.DiscordConfig
-	attachmentsDir       func() string
-	databaseDSN          func() string
-	rebuildCache         func(string) error
-	postSourceMigrations func(*store.Store) error
-	registerGuild        func(context.Context, *store.Store, discord.Guild, string) error
+	conversationPolicySettings func() (conversationpolicy.Settings, error)
+	bind                       func(context.Context) discordCommandDeps
+	openStore                  func() (*store.Store, func(), error)
+	openReadOnlyStore          func() (*store.Store, func(), error)
+	tokenManager               func() *discord.TokenManager
+	apiBaseURL                 func() string
+	providerConfig             func() config.DiscordConfig
+	attachmentsDir             func() string
+	databaseDSN                func() string
+	rebuildCache               func(string) error
+	postSourceMigrations       func(*store.Store) error
+	registerGuild              func(context.Context, *store.Store, discord.Guild, string) error
 }
 
 func defaultDiscordCommandDeps() discordCommandDeps {
@@ -44,7 +46,8 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 		currentCfg = state.cfg
 	}
 	return discordCommandDeps{
-		bind: defaultDiscordCommandDepsForContext,
+		bind:                       defaultDiscordCommandDepsForContext,
+		conversationPolicySettings: currentConversationPolicySettingsSource(state),
 		openReadOnlyStore: func() (*store.Store, func(), error) {
 			return openReadOnlyStoreForInvocation(ctx, state)
 		},

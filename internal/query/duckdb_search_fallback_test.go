@@ -22,6 +22,10 @@ func TestDuckDBSearchFallbackHiddenTextPresent(t *testing.T) {
 	dbPath, db := seedMessageDetailSenderFixture(t)
 	_, err := db.ExecContext(t.Context(), `UPDATE messages SET hidden_text_present = 1 WHERE id = 1`)
 	require.NoError(err)
+	// Default search covers Full chat rooms only; a chat without a policy row
+	// is hidden until setup classifies it.
+	_, err = db.ExecContext(t.Context(), `INSERT INTO conversation_policy(conversation_id, effective_tier) VALUES (1, 'full')`)
+	require.NoError(err)
 	require.NoError(db.Close())
 	engine, err := NewDuckDBEngine(t.Context(), "", dbPath, nil)
 	require.NoError(err)

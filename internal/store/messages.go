@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -1366,19 +1367,7 @@ func (s *Store) MessageMetadataWithRawBatch(
 // the whole thread once per synced message — quadratic queue churn on a large
 // thread.
 func (s *Store) EnsureConversation(ctx context.Context, sourceID int64, sourceConversationID, title string) (int64, error) {
-	if err := s.requireSyncSource(sourceID); err != nil {
-		return 0, err
-	}
-	if s.syncGeneration != nil {
-		var id int64
-		err := s.withTxContext(ctx, func(tx *loggedTx) error {
-			var err error
-			id, err = ensureConversation(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, sourceConversationID, title)
-			return err
-		})
-		return id, err
-	}
-	return ensureConversation(boundQuerier{ctx: ctx, q: s.db}, s.dialect, sourceID, sourceConversationID, title)
+	return s.ensureConversationPolicyContext(ctx, sourceID, sourceConversationID, "email_thread", title, true)
 }
 
 func ensureConversation(
@@ -1544,6 +1533,12 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 			return 0, fmt.Errorf("read bodyless message journal state: %w", err)
 		}
 	}
+	if !journalCandidate {
+		err := q.QueryRow(`SELECT conversation_id FROM messages WHERE source_id=? AND source_message_id=?`, msg.SourceID, msg.SourceMessageID).Scan(&prior.conversationID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
 	sql := upsertMessageSQL(d.Now())
 	sourceIsFromMe := msg.IsFromMe && !msg.IdentityDerivedIsFromMe
 	identityIsFromMe := msg.IsFromMe && msg.IdentityDerivedIsFromMe
@@ -1605,6 +1600,9 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		if err := appendPersonSweepMessageInsert(q, d, id); err != nil {
 			return 0, err
 		}
+	}
+	if err := markConversationPolicyActivitiesDirtyWith(q, []int64{prior.conversationID.Int64, msg.ConversationID}); err != nil {
+		return 0, err
 	}
 	return id, nil
 }
@@ -1710,6 +1708,19 @@ func enqueueActivityProjectionMessage(q querier, d Dialect, messageID int64) err
 		return fmt.Errorf("enqueue activity projection message %d: %w", messageID, err)
 	}
 	return nil
+}
+
+func (s *Store) enqueueConversationActivityProjectionTx(ctx context.Context, tx *loggedTx, conversationID int64) error {
+	if conversationID <= 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO activity_projection_queue (message_id, revision, processed_revision, queued_at)
+		SELECT id, 1, 0, %s FROM messages WHERE conversation_id = ?
+		ON CONFLICT (message_id) DO UPDATE SET
+			revision = activity_projection_queue.revision + 1,
+			queued_at = excluded.queued_at`, s.dialect.Now()), conversationID)
+	return err
 }
 
 // UpsertMessageBody stores the body text and HTML for a message in the separate message_bodies table.
@@ -2766,8 +2777,10 @@ func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID i
 				return err
 			}
 		}
-		_, err := s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{})
-		return err
+		if _, err := s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{}); err != nil {
+			return err
+		}
+		return markMessageConversationPolicyActivityDirtyWith(boundQuerier{ctx: ctx, q: tx}, messageID)
 	})
 }
 
@@ -3473,6 +3486,50 @@ func (s *Store) RemoveMessageLabels(ctx context.Context, messageID int64, labelI
 	})
 }
 
+// Reply repair takes the policy fence before source/sync and message locks.
+// A policy refresh holds the exclusive fence while reading those messages and
+// draining their activity hints, so the opposite order can deadlock.
+func (s *Store) withConversationPolicyReplyTx(ctx context.Context, sourceID int64, write func(*loggedTx) error) error {
+	if sourceID > 0 {
+		if err := s.requireSyncSource(sourceID); err != nil {
+			return err
+		}
+	}
+	return s.withConversationPolicySharedTx(ctx, func(tx *loggedTx) error {
+		if s.syncGeneration != nil && sourceID > 0 {
+			return s.lockSyncSourceTx(ctx, tx, sourceID)
+		}
+		return nil
+	}, write)
+}
+
+// withConversationPolicySharedTx runs write after taking the shared policy
+// fence, then afterFence's locks. Writers that mark activity hints for many
+// rooms must use it: a refresh drains those hints under the exclusive fence,
+// and taking hint row locks first lets the two lock keys in opposite orders.
+func (s *Store) withConversationPolicySharedTx(
+	ctx context.Context, afterFence func(*loggedTx) error, write func(*loggedTx) error,
+) error {
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyShared)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			if err := s.LockPostgresConversationPolicyTx(ctx, tx.Tx, ConversationPolicyShared); err != nil {
+				return err
+			}
+		}
+		if afterFence != nil {
+			return afterFence(tx)
+		}
+		return nil
+	}, write)
+}
+
 // SetReplyTo links a channel reply to its parent by resolving the parent's
 // source_message_id to its internal messages.id within the same source.
 func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
@@ -3481,13 +3538,21 @@ func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMes
 
 // SetReplyToContext honors cancellation during SetReplyTo.
 func (s *Store) SetReplyToContext(ctx context.Context, sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
-	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
-		_, err := q.Exec(`
-			UPDATE messages SET reply_to_message_id =
-			  (SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?)
-			WHERE source_id = ? AND source_message_id = ?`,
-			sourceID, parentSourceMessageID, sourceID, childSourceMessageID)
-		return err
+	return s.withConversationPolicyReplyTx(ctx, sourceID, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		_, err := q.Exec(`UPDATE messages SET reply_to_message_id=(SELECT parent.id FROM messages parent WHERE parent.source_id=messages.source_id AND parent.source_message_id=?) WHERE source_id=? AND source_message_id=?`, parentSourceMessageID, sourceID, childSourceMessageID)
+		if err != nil {
+			return err
+		}
+		var child int64
+		err = q.QueryRow(`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`, sourceID, childSourceMessageID).Scan(&child)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return markMessageConversationPolicyActivityDirtyWith(q, child)
 	})
 }
 
@@ -3559,10 +3624,16 @@ func setMessageEditedStateWith(q querier, messageID int64, edited bool) error {
 // SetMessageReplyContext links a message to the message it replies to while
 // preserving the scoped sync-generation fence of the writer.
 func (s *Store) SetMessageReplyContext(ctx context.Context, messageID, replyToMessageID int64) error {
-	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		_, err := q.Exec(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`,
-			replyToMessageID, messageID)
-		return err
+	return s.withConversationPolicyReplyTx(ctx, 0, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		_, err := q.Exec(`UPDATE messages SET reply_to_message_id=? WHERE id=?`, replyToMessageID, messageID)
+		if err != nil {
+			return err
+		}
+		return markMessageConversationPolicyActivityDirtyWith(q, messageID)
 	})
 }
 
@@ -3573,12 +3644,23 @@ func (s *Store) ClearMessageRepliesContext(ctx context.Context, sourceID int64, 
 	if len(messageIDs) == 0 {
 		return nil
 	}
-	if err := s.requireSyncSource(sourceID); err != nil {
-		return err
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return execInChunksContext(ctx, tx, messageIDs, []any{sourceID},
-			`UPDATE messages SET reply_to_message_id = NULL WHERE source_id = ? AND id IN (%s)`)
+	return s.withConversationPolicyReplyTx(ctx, sourceID, func(tx *loggedTx) error {
+		if err := execInChunksContext(ctx, tx, messageIDs, []any{sourceID},
+			`UPDATE messages SET reply_to_message_id = NULL WHERE source_id = ? AND id IN (%s)`); err != nil {
+			return err
+		}
+		var rooms []int64
+		if err := queryInChunksContext(ctx, tx, messageIDs, []any{sourceID}, `SELECT conversation_id FROM messages WHERE source_id=? AND id IN (%s) GROUP BY conversation_id`, func(rows *loggedRows) error {
+			var room sql.NullInt64
+			if err := rows.Scan(&room); err != nil {
+				return err
+			}
+			rooms = append(rooms, room.Int64)
+			return nil
+		}); err != nil {
+			return err
+		}
+		return markConversationPolicyActivitiesDirtyWith(boundQuerier{ctx: ctx, q: tx}, rooms)
 	})
 }
 
@@ -4534,19 +4616,102 @@ func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID,
 
 // EnsureConversationWithTypeContext honors cancellation during EnsureConversationWithType.
 func (s *Store) EnsureConversationWithTypeContext(ctx context.Context, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
+	return s.ensureConversationPolicyContext(ctx, sourceID, sourceConversationID, conversationType, title, false)
+}
+
+func (s *Store) ensureConversationPolicyContext(ctx context.Context, sourceID int64, providerID, conversationType, title string, legacy bool) (int64, error) {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return 0, err
 	}
-	if s.syncGeneration != nil {
-		var id int64
-		err := s.withTxContext(ctx, func(tx *loggedTx) error {
-			var err error
-			id, err = ensureConversationWithType(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, sourceConversationID, conversationType, title)
-			return err
-		})
+	if id, ok, err := s.ensureClassifiedConversationContext(ctx, sourceID, providerID, conversationType, title, legacy); err != nil || ok {
 		return id, err
 	}
-	return ensureConversationWithType(boundQuerier{ctx: ctx, q: s.db}, s.dialect, sourceID, sourceConversationID, conversationType, title)
+	var id int64
+	err := s.withConversationPolicyWrite(ctx, func(tx *loggedTx) error {
+		var err error
+		if legacy {
+			id, err = ensureConversation(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, providerID, title)
+		} else {
+			id, err = ensureConversationWithType(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, providerID, conversationType, title)
+		}
+		if err != nil {
+			return err
+		}
+		settings, _, err := s.conversationPolicySettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		_, err = s.refreshConversationPolicyTx(ctx, tx, settings, []int64{id}, time.Now(), false)
+		return err
+	})
+	return id, err
+}
+
+// ensureClassifiedConversationContext updates an existing conversation under
+// the shared policy fence when the update cannot change eligibility, so a
+// re-synced thread does not wait for long analytical reads. Eligibility reads
+// only policy rows and source types, never the conversation type or title.
+// A room that still needs its first policy row reports !ok and takes the
+// exclusive path, which classifies it in the same transaction.
+func (s *Store) ensureClassifiedConversationContext(ctx context.Context, sourceID int64, providerID, conversationType, title string, legacy bool) (int64, bool, error) {
+	// A new conversation always needs the exclusive path. Check outside any
+	// transaction so creation pays no extra transaction; the shared
+	// transaction below re-checks everything it relies on.
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM conversations
+		WHERE source_id = ? AND source_conversation_id = ?)`), sourceID, providerID).Scan(&exists); err != nil {
+		return 0, false, fmt.Errorf("check existing conversation: %w", err)
+	}
+	if !exists {
+		return 0, false, nil
+	}
+	var id int64
+	var ok bool
+	err := s.withConversationPolicySharedTx(ctx, nil, func(tx *loggedTx) error {
+		var classified bool
+		var sourceType, sourceIdentifier string
+		err := tx.QueryRowContext(ctx, `SELECT c.id,
+			EXISTS(SELECT 1 FROM conversation_policy p WHERE p.conversation_id = c.id),
+			src.source_type, src.identifier
+			FROM conversations c JOIN sources src ON src.id = c.source_id
+			WHERE c.source_id = ? AND c.source_conversation_id = ?`, sourceID, providerID).
+			Scan(&id, &classified, &sourceType, &sourceIdentifier)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("find conversation for policy fast path: %w", err)
+		}
+		if !classified {
+			if conversationpolicy.Supported(sourceType) {
+				return nil
+			}
+			settings, _, err := s.conversationPolicySettingsTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			for _, override := range settings.Overrides {
+				if override.SourceType == sourceType && override.SourceIdentifier == sourceIdentifier && override.ConversationID == providerID {
+					return nil
+				}
+			}
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		if legacy {
+			id, err = ensureConversation(q, s.dialect, sourceID, providerID, title)
+		} else {
+			id, err = ensureConversationWithType(q, s.dialect, sourceID, providerID, conversationType, title)
+		}
+		if err != nil {
+			return err
+		}
+		ok = true
+		return nil
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return id, ok, nil
 }
 
 // SetConversationTitle applies an explicit provider title, including removal.

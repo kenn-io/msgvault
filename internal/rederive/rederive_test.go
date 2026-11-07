@@ -49,6 +49,7 @@ func TestRunIfStaleRecordsAndSkips(t *testing.T) {
 	assert := assert.New(t)
 
 	st := testutil.NewTestStore(t)
+	beforeRevision := derivedDataRevision(t, st)
 	calls := 0
 	Register("test-gate", "v1", func(context.Context, *store.Store, int64, func(string)) (*Summary, error) {
 		calls++
@@ -62,14 +63,14 @@ func TestRunIfStaleRecordsAndSkips(t *testing.T) {
 	require.NotNil(sum)
 	assert.Equal(int64(10), sum.MessagesScanned)
 	assert.Equal(1, calls)
-	assert.Equal(int64(1), derivedDataRevision(t, st),
+	assert.Equal(beforeRevision+1, derivedDataRevision(t, st),
 		"a sync-triggered repair must invalidate the analytics cache")
 
 	_, ran, err = RunIfStale(t.Context(), st, "test-gate", "acct", 1, nil)
 	require.NoError(err)
 	assert.False(ran, "an already-recorded pass must not run again")
 	assert.Equal(1, calls)
-	assert.Equal(int64(1), derivedDataRevision(t, st),
+	assert.Equal(beforeRevision+1, derivedDataRevision(t, st),
 		"skipping an applied pass must not invalidate the cache again")
 
 	// A different account of the same type is tracked separately.
@@ -77,7 +78,7 @@ func TestRunIfStaleRecordsAndSkips(t *testing.T) {
 	require.NoError(err)
 	assert.True(ran)
 	assert.Equal(2, calls)
-	assert.Equal(int64(2), derivedDataRevision(t, st),
+	assert.Equal(beforeRevision+2, derivedDataRevision(t, st),
 		"each completed source repair must advance cache freshness")
 }
 
@@ -86,6 +87,7 @@ func TestRunIfStaleEmptyPassRecordsWithoutAdvancingRevision(t *testing.T) {
 	assert := assert.New(t)
 
 	st := testutil.NewTestStore(t)
+	beforeRevision := derivedDataRevision(t, st)
 	calls := 0
 	Register("test-empty", "v1", func(context.Context, *store.Store, int64, func(string)) (*Summary, error) {
 		calls++
@@ -99,7 +101,7 @@ func TestRunIfStaleEmptyPassRecordsWithoutAdvancingRevision(t *testing.T) {
 	require.NotNil(sum)
 	assert.Zero(sum.MessagesScanned)
 	assert.Equal(1, calls)
-	assert.Zero(derivedDataRevision(t, st),
+	assert.Equal(beforeRevision, derivedDataRevision(t, st),
 		"an empty source has no derived rows that could stale the analytics cache")
 
 	applied, err := st.IsMigrationApplied(LedgerKey("test-empty", "acct", "v1"))
@@ -117,6 +119,7 @@ func TestRunIfStaleRetriesSummaryErrorsWithoutRecordingLedger(t *testing.T) {
 	assert := assert.New(t)
 
 	st := testutil.NewTestStore(t)
+	beforeRevision := derivedDataRevision(t, st)
 	calls := 0
 	Register("test-partial", "v1", func(context.Context, *store.Store, int64, func(string)) (*Summary, error) {
 		calls++
@@ -133,14 +136,14 @@ func TestRunIfStaleRetriesSummaryErrorsWithoutRecordingLedger(t *testing.T) {
 	applied, err := st.IsMigrationApplied(LedgerKey("test-partial", "acct", "v1"))
 	require.NoError(err)
 	assert.False(applied, "a pass with row-level errors must remain retryable")
-	assert.Equal(int64(1), derivedDataRevision(t, st),
+	assert.Equal(beforeRevision+1, derivedDataRevision(t, st),
 		"partial writes must still invalidate the analytics cache")
 
 	_, ran, err = RunIfStale(t.Context(), st, "test-partial", "acct", 1, nil)
 	require.NoError(err)
 	assert.True(ran, "the next sync must retry an incomplete pass")
 	assert.Equal(2, calls)
-	assert.Equal(int64(2), derivedDataRevision(t, st))
+	assert.Equal(beforeRevision+2, derivedDataRevision(t, st))
 }
 
 // TestRunRecordsSoASyncDoesNotRepeatIt covers the on-demand path: it runs even
@@ -151,6 +154,7 @@ func TestRunRecordsSoASyncDoesNotRepeatIt(t *testing.T) {
 	assert := assert.New(t)
 
 	st := testutil.NewTestStore(t)
+	beforeRevision := derivedDataRevision(t, st)
 	calls := 0
 	Register("test-run", "v1", func(context.Context, *store.Store, int64, func(string)) (*Summary, error) {
 		calls++
@@ -162,7 +166,7 @@ func TestRunRecordsSoASyncDoesNotRepeatIt(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(7), sum.MessagesScanned)
 	assert.Equal(1, calls)
-	assert.Equal(int64(1), derivedDataRevision(t, st),
+	assert.Equal(beforeRevision+1, derivedDataRevision(t, st),
 		"an on-demand repair must invalidate the analytics cache")
 
 	// A later sync sees the archive as current.
@@ -170,13 +174,13 @@ func TestRunRecordsSoASyncDoesNotRepeatIt(t *testing.T) {
 	require.NoError(err)
 	assert.False(ran, "an on-demand repair must record the ledger")
 	assert.Equal(1, calls)
-	assert.Equal(int64(1), derivedDataRevision(t, st))
+	assert.Equal(beforeRevision+1, derivedDataRevision(t, st))
 
 	// Asking again by hand still re-runs: that is the point of the escape hatch.
 	_, err = Run(t.Context(), st, "test-run", "acct", 1, nil)
 	require.NoError(err)
 	assert.Equal(2, calls)
-	assert.Equal(int64(2), derivedDataRevision(t, st))
+	assert.Equal(beforeRevision+2, derivedDataRevision(t, st))
 }
 
 func derivedDataRevision(t *testing.T, st *store.Store) int64 {

@@ -24,6 +24,9 @@ const searchMetadataSnippetSQL = `SELECT rowid, snippet(messages_fts, -1, char(1
 
 func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Query, includeSnippet bool) (map[int64]SearchMetadata, error) {
 	result := make(map[int64]SearchMetadata, len(ids))
+	// The caller's search already chose these IDs, so hydrate them exactly.
+	// Semantic hits are not filtered by room policy here; re-filtering would
+	// leave a returned hit without its attachments.
 	// Attachment rows can lag the authoritative stored count while sync is writing them.
 	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.attachment_count, 0), a.id IS NOT NULL, COALESCE(a.filename, '')
 		FROM messages m LEFT JOIN attachments a ON a.message_id = m.id

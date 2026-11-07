@@ -124,9 +124,12 @@ type DocumentVectorSearchHit struct {
 	Rank  int
 }
 
+// PolicyRevision pins the conversation policy, which decides which rooms'
+// documents are eligible. Older cursors omit it and read as stale.
 type documentSearchCursor struct {
 	Version        int    `json:"version"`
 	Revision       int64  `json:"revision"`
+	PolicyRevision int64  `json:"policy_revision"`
 	RequestHash    string `json:"request_hash"`
 	Offset         int    `json:"offset"`
 	CandidateLimit int    `json:"candidate_limit"`
@@ -158,7 +161,7 @@ func (s *Store) SearchDocuments(
 	ctx context.Context,
 	request DocumentSearchRequest,
 ) (DocumentSearchResponse, error) {
-	prepared, terms, requestHash, offset, candidateLimit, revision, err := s.prepareDocumentSearch(ctx, request)
+	prepared, terms, requestHash, offset, candidateLimit, revision, policyRevision, err := s.prepareDocumentSearch(ctx, request)
 	if err != nil {
 		return DocumentSearchResponse{}, err
 	}
@@ -199,7 +202,7 @@ func (s *Store) SearchDocuments(
 	}
 	if end < len(rows) {
 		response.NextCursor, err = encodeDocumentSearchCursor(documentSearchCursor{
-			Version: documentSearchCursorVersion, Revision: revision,
+			Version: documentSearchCursorVersion, Revision: revision, PolicyRevision: policyRevision,
 			RequestHash: requestHash, Offset: end, CandidateLimit: candidateLimit,
 		})
 		if err != nil {
@@ -370,17 +373,17 @@ func (s *Store) ResolveDocumentVectorSearchOccurrences(
 func (s *Store) prepareDocumentSearch(
 	ctx context.Context,
 	request DocumentSearchRequest,
-) (DocumentSearchRequest, []string, string, int, int, int64, error) {
+) (DocumentSearchRequest, []string, string, int, int, int64, int64, error) {
 	request.Query = strings.TrimSpace(request.Query)
 	if request.Query == "" || len(request.Query) > maxDocumentSearchQueryBytes || !utf8.ValidString(request.Query) {
-		return request, nil, "", 0, 0, 0, fmt.Errorf("%w: requires a bounded UTF-8 query", ErrDocumentSearchInvalidRequest)
+		return request, nil, "", 0, 0, 0, 0, fmt.Errorf("%w: requires a bounded UTF-8 query", ErrDocumentSearchInvalidRequest)
 	}
 	terms := strings.Fields(request.Query)
 	if len(terms) == 0 || len(terms) > maxDocumentSearchTerms {
-		return request, nil, "", 0, 0, 0, fmt.Errorf("%w: query has invalid term count", ErrDocumentSearchInvalidRequest)
+		return request, nil, "", 0, 0, 0, 0, fmt.Errorf("%w: query has invalid term count", ErrDocumentSearchInvalidRequest)
 	}
 	if s.dialect.BuildFTSArg(terms) == "" {
-		return request, nil, "", 0, 0, 0, fmt.Errorf("%w: query contains no searchable terms", ErrDocumentSearchInvalidRequest)
+		return request, nil, "", 0, 0, 0, 0, fmt.Errorf("%w: query contains no searchable terms", ErrDocumentSearchInvalidRequest)
 	}
 	if request.PageSize == 0 {
 		request.PageSize = 20
@@ -393,36 +396,40 @@ func (s *Store) prepareDocumentSearch(
 		request.AttachmentID < 0 || request.MessageID < 0 || request.PersonID < 0 || request.ParticipantID < 0 ||
 		(request.PersonID > 0 && request.ParticipantID > 0) ||
 		((request.PersonID > 0 || request.ParticipantID > 0) && request.Person == nil) {
-		return request, nil, "", 0, 0, 0, fmt.Errorf("%w: request has invalid bounds", ErrDocumentSearchInvalidRequest)
+		return request, nil, "", 0, 0, 0, 0, fmt.Errorf("%w: request has invalid bounds", ErrDocumentSearchInvalidRequest)
 	}
 	var err error
 	request.Query = strings.ToLower(strings.Join(terms, " "))
 	request.SourceIDs, err = sortedUniquePositive(request.SourceIDs, "source IDs")
 	if err != nil {
-		return request, nil, "", 0, 0, 0, err
+		return request, nil, "", 0, 0, 0, 0, err
 	}
 	request.MessageIDs, err = sortedUniquePositive(request.MessageIDs, "message IDs")
 	if err != nil {
-		return request, nil, "", 0, 0, 0, err
+		return request, nil, "", 0, 0, 0, 0, err
 	}
 	request.MessageTypes, err = sortedUniqueNonempty(request.MessageTypes)
 	if err != nil {
-		return request, nil, "", 0, 0, 0, err
+		return request, nil, "", 0, 0, 0, 0, err
 	}
 	request.Person, err = normalizeDocumentPersonScope(request.Person)
 	if err != nil {
-		return request, nil, "", 0, 0, 0, err
+		return request, nil, "", 0, 0, 0, 0, err
 	}
 	if request.After != nil && request.Before != nil && !request.After.Before(*request.Before) {
-		return request, nil, "", 0, 0, 0, fmt.Errorf("%w: after must be before before", ErrDocumentSearchInvalidRequest)
+		return request, nil, "", 0, 0, 0, 0, fmt.Errorf("%w: after must be before before", ErrDocumentSearchInvalidRequest)
 	}
 	requestHash, err := hashDocumentSearchRequest(request)
 	if err != nil {
-		return request, nil, "", 0, 0, 0, err
+		return request, nil, "", 0, 0, 0, 0, err
 	}
 	revision, err := s.GetDocumentIndexRevision(ctx)
 	if err != nil {
-		return request, nil, "", 0, 0, 0, err
+		return request, nil, "", 0, 0, 0, 0, err
+	}
+	policyRevision, err := s.ConversationPolicyRevision(ctx)
+	if err != nil {
+		return request, nil, "", 0, 0, 0, 0, err
 	}
 	offset := 0
 	// RRF ranks are meaningful only for one fixed candidate set. Every page
@@ -432,20 +439,20 @@ func (s *Store) prepareDocumentSearch(
 	if request.Cursor != "" {
 		cursor, decodeErr := decodeDocumentSearchCursor(request.Cursor)
 		if decodeErr != nil {
-			return request, nil, "", 0, 0, 0, decodeErr
+			return request, nil, "", 0, 0, 0, 0, decodeErr
 		}
 		if cursor.RequestHash != requestHash {
-			return request, nil, "", 0, 0, 0, ErrDocumentSearchInvalidCursor
+			return request, nil, "", 0, 0, 0, 0, ErrDocumentSearchInvalidCursor
 		}
-		if cursor.Revision != revision {
-			return request, nil, "", 0, 0, 0, ErrDocumentSearchCursorStale
+		if cursor.Revision != revision || cursor.PolicyRevision != policyRevision {
+			return request, nil, "", 0, 0, 0, 0, ErrDocumentSearchCursorStale
 		}
 		offset = cursor.Offset
 		if cursor.CandidateLimit != candidateLimit {
-			return request, nil, "", 0, 0, 0, ErrDocumentSearchInvalidCursor
+			return request, nil, "", 0, 0, 0, 0, ErrDocumentSearchInvalidCursor
 		}
 	}
-	return request, terms, requestHash, offset, candidateLimit, revision, nil
+	return request, terms, requestHash, offset, candidateLimit, revision, policyRevision, nil
 }
 
 func (s *Store) searchDocumentContent(
@@ -619,7 +626,7 @@ func documentSearchValidityForConsent(consentName string) string {
 		AND ` + documentRoleScopeSQL(attachment, "COALESCE((SELECT include_inline FROM document_extraction_profiles WHERE id = ds.target_profile_id), FALSE)") + `
 		AND o.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
 		AND ` + attachment + `.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
-		AND ` + LiveMessagesWhere(message, true) + `
+		AND ` + LiveMessagesWhere(message, true) + ` AND ` + FullMessageWhere(message) + `
 		AND (` + attachment + `.content_hash = ` + head + `.canonical_blob_hash
 		     OR (COALESCE(` + attachment + `.content_hash, '') = ''
 		         AND ` + attachment + `.storage_path =

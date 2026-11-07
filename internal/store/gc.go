@@ -200,6 +200,12 @@ func (s *Store) ExecuteGCContext(
 				)
 			}
 		}
+		// Source-deleted messages still count toward room activity, and GC
+		// also clears reply links to them. Leave a hint so the next policy
+		// refresh reclassifies rooms that lost their last activity signal.
+		if err := markConversationPolicyActivitiesDirtyWith(q, affectedConversationIDs); err != nil {
+			return fmt.Errorf("mark policy activity after archive GC: %w", err)
+		}
 		if deleted > 0 {
 			if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 				return fmt.Errorf("invalidate caches after archive GC: %w", err)

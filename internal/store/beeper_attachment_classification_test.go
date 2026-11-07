@@ -123,21 +123,22 @@ func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForExistingMetadata(t *t
 		return revision
 	}
 	assertRevision := func(want int64) { require.Equal(want, readRevision()) }
+	before := readRevision()
 
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{
 		ref(`{"source_transcript":{"provider":"beeper","text":"old"}}`),
 	}))
-	assertRevision(1)
+	assertRevision(before + 1)
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{
 		ref(`{"source_transcript":{"provider":"beeper","text":"old"}}`),
 	}))
-	assertRevision(1)
+	assertRevision(before + 1)
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{
 		ref(`{"source_transcript":{"provider":"beeper","text":"new"}}`),
 	}))
-	assertRevision(2)
+	assertRevision(before + 2)
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, nil))
-	assertRevision(3)
+	assertRevision(before + 3)
 }
 
 func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForAddedMetadata(t *testing.T) {
@@ -163,13 +164,14 @@ func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForAddedMetadata(t *test
 	}
 	first := ref("beeper:voice", "aa/"+strings.Repeat("a", 64), `{"source_transcript":{"provider":"beeper","text":"old"}}`)
 	second := ref("beeper:photo", "bb/"+strings.Repeat("b", 64), `{"source_transcript":{"provider":"beeper","text":"new"}}`)
+	before := readRevision()
 
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{first}))
-	require.Equal(int64(1), readRevision(), "initial Beeper attachment publication must invalidate exported metadata")
+	require.Equal(before+1, readRevision(), "initial Beeper attachment publication must invalidate exported metadata")
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{first, second}))
-	require.Equal(int64(2), readRevision(), "adding a Beeper attachment must invalidate exported metadata")
+	require.Equal(before+2, readRevision(), "adding a Beeper attachment must invalidate exported metadata")
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{first, second}))
-	require.Equal(int64(2), readRevision(), "replaying the same attachment set must be a no-op")
+	require.Equal(before+2, readRevision(), "replaying the same attachment set must be a no-op")
 }
 
 func TestReplaceMessageBeeperAttachmentsRollsBackRevisionAndMetadata(t *testing.T) {
@@ -185,6 +187,8 @@ func TestReplaceMessageBeeperAttachmentsRollsBackRevisionAndMetadata(t *testing.
 		RoleSource:         store.AttachmentRoleSourceImporterSemantics,
 	}
 	require.NoError(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{ref}))
+	before, err := f.Store.DerivedDataRevision()
+	require.NoError(err)
 	triggerSQL := `
 		CREATE TRIGGER fail_derived_revision
 		BEFORE UPDATE OF value ON archive_metadata
@@ -202,7 +206,7 @@ func TestReplaceMessageBeeperAttachmentsRollsBackRevisionAndMetadata(t *testing.
 			FOR EACH ROW WHEN (NEW.key = 'derived_data_revision')
 			EXECUTE FUNCTION fail_derived_revision()`
 	}
-	_, err := f.Store.DB().ExecContext(t.Context(), triggerSQL)
+	_, err = f.Store.DB().ExecContext(t.Context(), triggerSQL)
 	require.NoError(err)
 	ref.Metadata = `{"source_transcript":{"provider":"beeper","text":"new"}}`
 	require.Error(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{ref}))
@@ -213,7 +217,7 @@ func TestReplaceMessageBeeperAttachmentsRollsBackRevisionAndMetadata(t *testing.
 	var revision int64
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`).Scan(&revision))
-	require.Equal(int64(1), revision)
+	require.Equal(before, revision)
 	dropSQL := `DROP TRIGGER fail_derived_revision`
 	if f.Store.IsPostgreSQL() {
 		dropSQL = `DROP TRIGGER fail_derived_revision ON archive_metadata; DROP FUNCTION fail_derived_revision()`

@@ -263,11 +263,12 @@ func filenameScopeFilters(scope FilenameSuggestionScope) bool {
 		scope.After != nil || scope.Before != nil || scope.Person != nil
 }
 
-// filenameScopeConditions renders live-message and request constraints over
-// aliases a (attachments), m (messages) and c (conversations). Candidate
-// admission and authoritative rows share it so the two cannot drift.
+// filenameScopeConditions renders live-message, Full-room and request
+// constraints over aliases a (attachments), m (messages) and c
+// (conversations). Candidate admission and authoritative rows share it so the
+// two cannot drift.
 func (s *Store) filenameScopeConditions(scope FilenameSuggestionScope) ([]string, []any) {
-	conditions := []string{LiveMessagesWhere("m", false)}
+	conditions := []string{LiveMessagesWhere("m", false), FullMessageWhere("m")}
 	var args []any
 	if len(scope.SourceIDs) > 0 {
 		conditions = append(conditions, "m.source_id IN ("+placeholders(len(scope.SourceIDs))+")")

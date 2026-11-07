@@ -424,11 +424,27 @@ func (s *Store) refreshDirectoryPersonTx(ctx context.Context, tx *loggedTx, pers
 	}
 	contactState, primaryChannel, lastContactKey := "inactive", "", ""
 	var channel sql.NullString
-	var lastContact sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT last_contact_channel, last_contact_at
-		FROM person_contact_state WHERE person_id = ?`, personID).Scan(&channel, &lastContact)
+	var lastContact, dirty sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT last_contact_channel, last_contact_at, dirty_at
+		FROM person_contact_state WHERE person_id = ?`, personID).Scan(&channel, &lastContact, &dirty)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("load directory contact state: %w", err)
+	}
+	if err == nil && dirty.Valid {
+		// Stored contact state waits for the activity projector, which may run
+		// rarely or not at all. A room demoted since then must not keep shaping
+		// Directory filters and sort order, so read the latest eligible contact.
+		channel, lastContact = sql.NullString{}, sql.NullTime{}
+		err = tx.QueryRowContext(ctx, `SELECT ae.channel, ae.occurred_at
+			FROM activity_event_persons aep
+			JOIN activity_events ae ON ae.message_id = aep.message_id
+			JOIN messages m ON m.id = ae.message_id
+			WHERE aep.person_id = ? AND aep.evidence = 'direct' AND `+FullMessageWhere("m")+`
+			ORDER BY ae.occurred_at DESC, ae.message_id DESC LIMIT 1`, personID).Scan(&channel, &lastContact)
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("load directory eligible contact: %w", err)
+		}
+		err = nil
 	}
 	if err == nil {
 		if lastContact.Valid {

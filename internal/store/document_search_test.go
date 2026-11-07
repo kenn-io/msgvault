@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -269,6 +270,34 @@ func TestSearchDocumentsRejectsStaleOrMismatchedCursor(t *testing.T) {
 	_, eligible, err = f.Store.ReconcileDocumentOccurrence(t.Context(), thirdAttachmentID, 3)
 	require.NoError(err)
 	require.True(eligible)
+	_, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
+		Query: "nebula", PageSize: 1, Cursor: first.NextCursor,
+	})
+	require.ErrorIs(err, store.ErrDocumentSearchCursorStale)
+}
+
+// Document search returns Full-room documents only, so a conversation policy
+// change between pages can change the result set. The cursor must go stale
+// instead of skipping or repeating documents.
+func TestConversationPolicyChangeInvalidatesDocumentSearchCursor(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	publishSearchDocument(t, f, profile, hash, "policy nebula evidence", "search-policy")
+	secondMessageID := f.CreateMessage("document-policy-page-two")
+	secondAttachmentID := addSearchAttachment(t, f, secondMessageID, hash, "second.pdf", "provider:policy")
+	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), secondAttachmentID, 2)
+	require.NoError(err)
+	require.True(eligible)
+
+	first, err := f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "nebula", PageSize: 1})
+	require.NoError(err)
+	require.NotEmpty(first.NextCursor)
+
+	settings := conversationpolicy.RecommendedSettings()
+	settings.ActivityWindowDays++
+	_, err = f.Store.ConfigureConversationPolicy(t.Context(), settings, time.Now())
+	require.NoError(err)
 	_, err = f.Store.SearchDocuments(t.Context(), store.DocumentSearchRequest{
 		Query: "nebula", PageSize: 1, Cursor: first.NextCursor,
 	})

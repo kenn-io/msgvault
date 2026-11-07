@@ -4683,7 +4683,7 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
 
--- Staged chat policy. Missing rows remain full for backwards compatibility.
+-- Chat policy. Supported chat sources need a policy row for default search.
 CREATE TABLE IF NOT EXISTS conversation_policy (
  conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
  effective_tier TEXT NOT NULL DEFAULT 'full' CHECK (effective_tier IN ('full','cold','stub','skip')),

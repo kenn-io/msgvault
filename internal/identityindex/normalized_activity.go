@@ -14,11 +14,13 @@ func RoomDomainSQL(col string) string {
 // CanonicalParticipantsSQL resolves participants through their identity clusters.
 // Its arguments are trusted SQL relations from the cache builder or query engine.
 func CanonicalParticipantsSQL(participants, clusters string) string {
+	// Older caches can store these columns with other types; cast before
+	// COALESCE so mixed BIGINT and VARCHAR columns cannot fail the query.
 	return fmt.Sprintf(`SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
-	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
+	       coalesce(try_cast(c.canonical_id AS BIGINT), p.id::BIGINT) AS canonical_id,
+	       lower(coalesce(try_cast(p.domain AS VARCHAR), '')) AS participant_domain
 	FROM %s p LEFT JOIN %s c ON c.participant_id = p.id
-	WHERE NOT %s OR c.canonical_id IN (SELECT hc.canonical_id FROM %s h JOIN %s hc ON hc.participant_id = h.id WHERE NOT %s)`, participants, clusters, RoomDomainSQL("lower(coalesce(p.domain, ''))"), participants, clusters, RoomDomainSQL("lower(coalesce(h.domain, ''))"))
+	WHERE NOT %s OR try_cast(c.canonical_id AS BIGINT) IN (SELECT try_cast(hc.canonical_id AS BIGINT) FROM %s h JOIN %s hc ON hc.participant_id = h.id WHERE NOT %s)`, participants, clusters, RoomDomainSQL("lower(coalesce(try_cast(p.domain AS VARCHAR), ''))"), participants, clusters, RoomDomainSQL("lower(coalesce(try_cast(h.domain AS VARCHAR), ''))"))
 }
 
 // OwnerCanonicalsSQL projects confirmed owners through a canonical participant relation.
@@ -40,7 +42,7 @@ WITH message_facts AS (
 	SELECT m.id::BIGINT AS message_id, m.conversation_id::BIGINT AS conversation_id,
 	       m.source_id::BIGINT AS source_id, s.source_type::VARCHAR AS source_type,
 	       m.sent_at::TIMESTAMP AS occurred_at, m.message_type::VARCHAR AS message_type,
-	       coalesce(c.conversation_type, '')::VARCHAR AS conversation_type,
+	       coalesce(try_cast(c.conversation_type AS VARCHAR), '') AS conversation_type,
 	       %s AS entry_kind, (%s) AS is_chat,
 	       m.is_from_me::BOOLEAN AS is_from_me, m.attachment_count::INTEGER AS attachment_count,
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
@@ -100,7 +102,7 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        false AS is_conversation_member, false AS is_sender,
        false AS is_author, false AS is_owner, m.occurred_year
 FROM message_facts m`, EntryKindSQL("m.message_type"),
-		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
+		IsChatSQL("m.message_type", "coalesce(try_cast(c.conversation_type AS VARCHAR), '')"),
 		messages, quoteSQLString(path("sources")),
 		quoteSQLString(path("conversations")), unsentMessages, occurredYear,
 		CanonicalParticipantsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participants"))), fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participant_clusters")))),

@@ -12,11 +12,7 @@ import (
 )
 
 // purgeQuerier is the exclusive connection a channel purge runs on.
-type purgeQuerier interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
+type purgeQuerier = ConversationPolicyTx
 
 // channelPurge selects one Slack channel or one Discord parent and its threads.
 type channelPurge struct {
@@ -45,6 +41,13 @@ func (p channelPurge) targetMessages() string {
 func (s *Store) PurgeChannelContext(ctx context.Context, sourceID int64, channelID string) (retErr error) {
 	if channelID == "" {
 		return errors.New("channel ID is required")
+	}
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyExclusive)
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
 	execution, err := s.AcquireSyncExecutionContext(ctx, sourceID)
 	if err != nil {
@@ -79,8 +82,16 @@ func (s *Store) PurgeChannelContext(ctx context.Context, sourceID int64, channel
 		return fmt.Errorf("acquire channel purge connection: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	if err := s.dialect.BeginExclusive(ctx, conn); err != nil {
-		return fmt.Errorf("begin channel purge: %w", err)
+	var beginErr error
+	if pg, ok := s.dialect.(*PostgreSQLDialect); ok {
+		beginErr = pg.beginExclusive(ctx, conn, func() error {
+			return s.LockPostgresConversationPolicyTx(ctx, conn, ConversationPolicyExclusive)
+		})
+	} else {
+		beginErr = s.dialect.BeginExclusive(ctx, conn)
+	}
+	if beginErr != nil {
+		return fmt.Errorf("begin channel purge: %w", beginErr)
 	}
 	committed := false
 	defer func() {
@@ -93,7 +104,32 @@ func (s *Store) PurgeChannelContext(ctx context.Context, sourceID int64, channel
 	if err := s.rejectConflictingSyncOperation(ctx, conn, sourceID, ""); err != nil {
 		return err
 	}
-	if err := s.purgeChannelExec(ctx, conn, purge); err != nil {
+	tx := &loggedTx{manualConn: conn, rebind: s.Rebind, attribution: &attributionLockState{exclusive: true}}
+	roomIDs, err := s.purgedConversationRowIDs(ctx, tx.callerTransaction(), purge)
+	if err != nil {
+		return err
+	}
+	var policyState conversationPolicyLifecycle
+	if len(roomIDs) > 0 {
+		policyState, err = s.captureConversationPolicyRoomsTx(ctx, tx, roomIDs)
+		if err != nil {
+			return fmt.Errorf("capture channel policy state: %w", err)
+		}
+	}
+	if err := s.purgeChannelExec(ctx, tx.callerTransaction(), purge); err != nil {
+		return err
+	}
+	if len(roomIDs) > 0 {
+		if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.recomputeUnsupportedGeneratedIdentityMatchesTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.finishConversationPolicyLifecycleTx(ctx, tx, policyState); err != nil {
+			return err
+		}
+	} else if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
@@ -137,9 +173,29 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 	if err := s.deleteUnreferencedPackMappings(ctx, q, packedHashes); err != nil {
 		return err
 	}
-	// Analytics caches cannot unpublish exported rows incrementally; a new
-	// revision makes the next cache pass rebuild without the purged messages.
-	return s.bumpDerivedDataRevisionContext(ctx, q)
+	return nil
+}
+
+func (s *Store) purgedConversationRowIDs(ctx context.Context, q purgeQuerier, purge channelPurge) ([]int64, error) {
+	rows, err := q.QueryContext(ctx, s.dialect.Rebind(
+		"SELECT id FROM conversations WHERE source_id = ? AND ("+purge.condition+") ORDER BY id"),
+		purge.args...)
+	if err != nil {
+		return nil, fmt.Errorf("list channel policy conversations: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan channel policy conversation: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list channel policy conversations: %w", err)
+	}
+	return ids, nil
 }
 
 func (s *Store) purgedConversationIDs(ctx context.Context, q purgeQuerier, purge channelPurge) ([]string, error) {

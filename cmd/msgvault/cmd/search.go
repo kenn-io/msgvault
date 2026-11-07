@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
+const searchModeFTS = "fts"
+
 var (
 	searchLimit         int
 	searchOffset        int
@@ -24,6 +26,7 @@ var (
 	searchAccount       string
 	searchCollection    string
 	searchMode          string
+	searchIncludeCold   bool
 	searchExplain       bool
 	searchDeletionScope string
 	searchMessageTypes  []string
@@ -44,6 +47,9 @@ Choose a search mode with --mode fts|vector|hybrid:
   vector: search by meaning with a natural-language description.
   hybrid: combine keyword and meaning search when wording is uncertain.
 Vector and hybrid require a usable embedding generation and free text.
+
+Search covers full conversations by default. Use include:cold or --include-cold
+with --mode fts to search retained cold text.
 Combine intent queries with after:, newer_than:, from:, or filename: filters.
 Use --explain to see per-signal scores. --sort date orders the retrieved
 semantic page newest first; date filters restrict candidates before ranking.
@@ -83,6 +89,7 @@ Use | between alternatives, for example invoice from:alice | receipt from:bob.
 filename: values use case-insensitive literal substring matching, including
 %, _, and backslashes. Repeat filename: to require every value to match.
 The filename operator requires daemon API schema 3.14.0 or newer.
+With a remote daemon, include:cold requires daemon API schema 3.49.0 or newer.
 
 Examples:
   msgvault search from:alice@example.com has:attachment
@@ -97,6 +104,9 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Join all args to form the query (allows unquoted multi-term searches)
 		queryStr := strings.Join(args, " ")
+		if searchIncludeCold {
+			queryStr = strings.TrimSpace(queryStr + " include:cold")
+		}
 
 		if queryStr == "" && searchAccount == "" && searchCollection == "" && len(searchMessageTypes) == 0 {
 			return usageErr(cmd, errors.New("provide a search query or --account/--collection flag"))
@@ -106,17 +116,20 @@ Examples:
 			return usageErr(cmd, fmt.Errorf("invalid --sort: %q (want date)", searchSort))
 		}
 		// Validate mode before any scope work so we fail fast on a typo.
-		if searchMode != "fts" && searchMode != "vector" && searchMode != "hybrid" {
+		if searchMode != searchModeFTS && searchMode != "vector" && searchMode != "hybrid" {
 			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
 		}
-		if searchSort == "date" && searchMode == "fts" {
+		if searchMode != searchModeFTS && search.Parse(queryStr).IncludeCold {
+			return usageErr(cmd, errors.New("include:cold requires --mode=fts"))
+		}
+		if searchSort == "date" && searchMode == searchModeFTS {
 			return usageErr(cmd, errors.New("--sort date requires --mode vector or hybrid"))
 		}
 		if searchDeletionScope != "active" && searchDeletionScope != "deleted" && searchDeletionScope != "any" {
 			return usageErr(cmd, fmt.Errorf(
 				"invalid --deletion-scope: %q (want active|deleted|any)", searchDeletionScope))
 		}
-		if searchMode != "fts" && searchDeletionScope != "active" {
+		if searchMode != searchModeFTS && searchDeletionScope != "active" {
 			return usageErr(cmd, fmt.Errorf(
 				"--deletion-scope=%s is only supported with --mode=fts; vector and hybrid indexes cover active messages only",
 				searchDeletionScope,
@@ -146,10 +159,10 @@ Examples:
 		// rather than silently dropping the filter and running a wider query.
 		// Checked before the empty-query test so the user sees the offending
 		// value instead of a misleading "empty search query".
-		if err := search.ParseWithOR(queryStr, searchMode == "fts").Err(); err != nil {
+		if err := search.ParseWithOR(queryStr, searchMode == searchModeFTS).Err(); err != nil {
 			return usageErr(cmd, err)
 		}
-		if searchMode == "fts" {
+		if searchMode == searchModeFTS {
 			parsed := search.ParseOR(queryStr)
 			for _, warning := range search.LiteralORWarnings(queryStr) {
 				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning:", warning); err != nil {
@@ -162,7 +175,7 @@ Examples:
 			}
 			return runHTTPSearch(cmd, queryStr)
 		}
-		if searchMode != "fts" && searchOffset > 0 {
+		if searchMode != searchModeFTS && searchOffset > 0 {
 			return usageErr(cmd, fmt.Errorf("--offset is not supported with --mode=%s (pagination is single-page)", searchMode))
 		}
 		// Vector and hybrid modes need free-text terms to embed; both
@@ -170,7 +183,7 @@ Examples:
 		// would fail at the embed call. Check both up front and surface
 		// a CLI error rather than a late engine-level one. FTS still
 		// allows scoped queryless searches.
-		if searchMode != "fts" {
+		if searchMode != searchModeFTS {
 			if queryStr == "" {
 				return usageErr(cmd, fmt.Errorf("--mode=%s requires query text to embed; pass a query or use --mode=fts", searchMode))
 			}
@@ -428,7 +441,8 @@ func init() {
 	searchCmd.Flags().StringVar(&searchCollection, "collection", "",
 		"Limit results to all member accounts of one collection")
 	searchCmd.MarkFlagsMutuallyExclusive("account", "collection")
-	searchCmd.Flags().StringVar(&searchMode, "mode", "fts", "Search mode: fts|vector|hybrid")
+	searchCmd.Flags().StringVar(&searchMode, "mode", searchModeFTS, "Search mode: fts|vector|hybrid")
+	searchCmd.Flags().BoolVar(&searchIncludeCold, "include-cold", false, "Include retained cold conversations (--mode fts only)")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false, "Include per-signal scores in output (hybrid/vector modes)")
 	searchCmd.Flags().StringVar(&searchDeletionScope, "deletion-scope", "active",
 		"Source deletion scope: active|deleted|any (FTS mode only)")

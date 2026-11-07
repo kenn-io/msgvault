@@ -99,7 +99,7 @@ var buildCacheMu = newContextMutex()
 // query.CacheBuildLockPath): DuckDB readers hold it shared per query, and
 // cache writers hold it exclusively only while they actually mutate live
 // cache paths — the brief rename+marker publication step, and destructive
-// maintenance while draining readers and invalidating the marker.
+// maintenance (lockCacheAndInvalidateSyncState) while invalidating the marker.
 // Staging and index construction run under cacheBuilderFileLock instead, so
 // a multi-minute rebuild no longer blocks queries against the committed
 // generation. The lock file lives NEXT TO the analytics directory, not
@@ -148,27 +148,31 @@ func invalidateSyncStateFile(stateFile string) error {
 	return nil
 }
 
-// lockCacheAndInvalidateSyncState drains readers and invalidates the cache marker
-// under the exclusive reader lock, then releases it. Callers keep the builder
-// lock through their database mutation and rebuild. A destructive mutation must
-// not proceed when invalidation or unlocking fails.
-func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) {
+// lockCacheAndInvalidateSyncState serializes builders until release. It briefly
+// takes policy R then cache W to drain readers and invalidate the marker, then
+// releases both. Callers keep the builder lock through their database mutation
+// and rebuild; no policy or cache lock spans a Store mutation, which may itself
+// require the exclusive policy fence. A destructive mutation must not proceed
+// when invalidation or unlocking fails.
+func lockCacheAndInvalidateSyncState(s *store.Store, analyticsDir string) (func() error, error) {
 	builderLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("serialize against cache builders: %w", err)
 	}
+	releasePolicy, err := s.AcquireSQLiteConversationPolicyFence(context.Background(), store.ConversationPolicyShared)
+	if err != nil {
+		_ = builderLock.Unlock()
+		return nil, err
+	}
+	defer releasePolicy()
 	readerLock, err := cacheBuildFileLock(analyticsDir)
 	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("create analytics cache lock: %w", err),
-			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
-		)
+		_ = builderLock.Unlock()
+		return nil, err
 	}
-	if err := readerLock.Lock(); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("lock analytics cache: %w", err),
-			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
-		)
+	if err = readerLock.Lock(); err != nil {
+		_ = builderLock.Unlock()
+		return nil, fmt.Errorf("acquire cache publication lock: %w", err)
 	}
 	invalidateErr := invalidateSyncStateFile(query.CacheStatePath(analyticsDir))
 	unlockErr := readerLock.Unlock()
@@ -642,8 +646,14 @@ func ownerParticipantsSelectSQL(primaryEmailPresence string) string {
 		accountIdentities, participants, accountIdentities, identifiers, participants)
 }
 
+// cacheFullMessageWhere reuses Store eligibility against the pinned source tables.
+func cacheFullMessageWhere(alias string) string {
+	return strings.NewReplacer("FROM conversations ", "FROM sqlite_db.conversations ", "FROM conversation_policy ", "FROM sqlite_db.conversation_policy ", "FROM sources ", "FROM sqlite_db.sources ").Replace(store.FullMessageWhere(alias))
+}
+
 // messageExportColumns is the messages Parquet column list through is_from_me.
 func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribution string) string {
+	full := cacheFullMessageWhere("m")
 	return fmt.Sprintf(`
 			m.id,
 			m.source_id,
@@ -651,6 +661,7 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 			COALESCE(%s, '') AS source_message_id,
 			%s AS rfc822_message_id,
 			m.conversation_id,
+ CASE WHEN `+full+` THEN 'full' ELSE (SELECT effective_tier FROM sqlite_db.conversation_policy exported_policy WHERE exported_policy.conversation_id=m.conversation_id) END AS conversation_tier,
 			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
 			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
 			m.sent_at,
@@ -971,7 +982,7 @@ func (s *cacheSourceSnapshot) personDisplayNamesExportSelectSQL() string {
 // not re-derive. Account-identity drift must always take the full-rebuild
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
-	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
+	return !staleness.FullRebuild && (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
 		staleness.HasConversationTypeDrift || staleness.HasUnsentDrift || staleness.HasParticipantIdentifierDrift ||
 		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
@@ -1007,8 +1018,8 @@ func refreshIdentityDatasetsOnly(
 }
 
 // buildCacheLocked exports and publishes a cache while the caller holds the
-// exclusive cross-process cache builder lock. Publication briefly takes the
-// reader lock to replace datasets and write the marker.
+// exclusive cross-process cache builder lock. Publication takes policy R then
+// cache W after staging finishes to replace datasets and write the marker.
 func buildCacheLocked(
 	ctx context.Context,
 	dbPath, analyticsDir string,
@@ -1174,6 +1185,7 @@ func buildCacheLockedAttempt(
 		return nil, err
 	}
 	defer func() { _ = staging.cleanup() }()
+	staging.policyDBPath = dbPath
 
 	policy := duckdbutil.BuilderPolicyWithOverrides(
 		filepath.Join(staging.root, "duckdb-tmp"),
@@ -1201,6 +1213,14 @@ func buildCacheLockedAttempt(
 	exportStarted := time.Now()
 	cacheWatermark := exportStarted.UTC().Truncate(time.Second)
 
+	var conversationPolicyRevision int64
+	if err := sourceSnapshot.QueryRowContext(ctx, `SELECT COALESCE((SELECT CAST(value AS BIGINT) FROM archive_metadata WHERE key='conversation_policy_revision'),0)`).Scan(&conversationPolicyRevision); err != nil {
+		return nil, fmt.Errorf("read snapshot conversation policy revision: %w", err)
+	}
+	if hasPreviousState && conversationPolicyRevision != previousState.ConversationPolicyRevision {
+		fullRebuild = true
+		lastMessageID = 0
+	}
 	var maxMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
 	var relatedChangeSeq int64
@@ -1261,7 +1281,7 @@ func buildCacheLockedAttempt(
 				return nil, fmt.Errorf("check cached message population: %w", err)
 			}
 			coveredCounted = true
-			populationChanged = coveredCount != previousState.Stats.TotalMessages
+			populationChanged = coveredCount != previousState.ArchivedMessageCount
 		}
 		failedSyncChanged := syncCounters.failedRunCount != previousState.LastFailedSyncRunCount ||
 			syncCounters.failedRunIDSum != previousState.LastFailedSyncRunIDSum
@@ -1672,6 +1692,8 @@ func buildCacheLockedAttempt(
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
+		ConversationPolicyRevision:          conversationPolicyRevision,
+		ArchivedMessageCount:                expectedTotalCount,
 		LastMessageID:                       maxID,
 		LastSyncAt:                          cacheWatermark,
 		SchemaVersion:                       cacheSchemaVersion,
@@ -2146,7 +2168,8 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
-		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
+		{tableMessages, "SELECT " + messageColumns + " FROM messages", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
+		{"conversation_policy", "SELECT conversation_id,effective_tier FROM conversation_policy", "types={'conversation_id':'BIGINT','effective_tier':'VARCHAR'}", nil},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients" + childFilter("message_recipients"),
 			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
@@ -2170,8 +2193,8 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 			"types={'id': 'BIGINT', 'name': 'VARCHAR'}", nil},
 		{"sources", "SELECT id, identifier, source_type FROM sources",
 			"types={'id': 'BIGINT', 'identifier': 'VARCHAR', 'source_type': 'VARCHAR'}", identityColumns("identifier")},
-		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations",
-			"types={'id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}", identityColumns("source_conversation_id")},
+		{tableConversations, "SELECT id, source_id, source_conversation_id, title, COALESCE(CAST(conversation_type AS TEXT), 'email_thread') AS conversation_type FROM conversations",
+			"types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}", identityColumns("source_conversation_id")},
 		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants",
 			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
 	}
