@@ -25,15 +25,20 @@ func (e duplicateMetadataEvidence) quality(sourceType, sourceMessageID string) i
 	if strings.TrimSpace(e.rfc822ID) != "" {
 		quality++
 	}
-	threadKey := strings.TrimSpace(e.providerThreadKey)
-	if e.hasReplyParent ||
-		(sourceType == "gmail" && threadKey != "" && sourceMessageID != "" &&
-			threadKey != sourceMessageID) ||
-		(sourceType == "google-groups" && isGoogleGroupsProviderThread(threadKey)) ||
+	if e.hasReplyParent || hasProviderThread(sourceType, sourceMessageID, e.providerThreadKey) ||
 		hasArchivedReplyHeader(e.metadata) {
 		quality++
 	}
 	return quality
+}
+
+// hasProviderThread reports whether the conversation key came from the
+// provider's own thread rather than a fallback derived from the message.
+func hasProviderThread(sourceType, sourceMessageID, threadKey string) bool {
+	sourceMessageID = strings.TrimSpace(sourceMessageID)
+	threadKey = strings.TrimSpace(threadKey)
+	return (sourceType == "gmail" && threadKey != "" && sourceMessageID != "" && threadKey != sourceMessageID) ||
+		(sourceType == "google-groups" && isGoogleGroupsProviderThread(threadKey))
 }
 
 func isGoogleGroupsProviderThread(key string) bool {
