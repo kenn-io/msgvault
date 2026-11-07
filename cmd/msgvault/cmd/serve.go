@@ -701,6 +701,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.ScheduledYouTubeSources() {
+		if err := registerScheduledYouTubeJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredYouTubeSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule YouTube", "profile", source.Identifier, "error", err)
+		}
+	}
+
 	for _, src := range cfg.Pocket {
 		if src.Enabled && src.Schedule == "" {
 			logger.Warn("pocket source is enabled but has no schedule; the daemon will not sync it", "source", src.Identifier)
