@@ -527,9 +527,74 @@ describe('SourcesWorkspace', () => {
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenOperations });
     expect(await screen.findByText('No sources yet')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
-    expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByText('msgvault add-account user@example.com')).toBeDefined();
+    const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
+    await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
+    const email = dialog.getByLabelText('Email address');
+    expect(dialog.queryByText(/Run this in a terminal/)).toBeNull();
+    await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
+    expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
+    expect(dialog.getAllByRole('button', { name: 'Copy msgvault add-account you@gmail.com' })).toHaveLength(1);
+    expect(dialog.getByText('POSIX shell and Command Prompt')).toBeDefined();
+    expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();
+    dialog.getByRole('button', { name: 'Back' }).focus();
+    await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
+    expect(dialog.getByRole('list', { name: 'Source kinds' })).toBeDefined();
+    expect(document.activeElement).toBe(dialog.getByRole('button', { name: 'Set up Gmail' }));
+    await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
+    expect((dialog.getByLabelText('Email address') as HTMLInputElement).value).toBe('');
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
+  });
+
+  it('clears copy feedback when the command changes', async () => {
+    const writeText = vi.fn(async () => undefined);
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
+      await screen.findByText('No sources yet');
+      await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+      const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
+      await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
+      const email = dialog.getByLabelText('Email address');
+      await fireEvent.input(email, { target: { value: 'one@example.com' } });
+      await fireEvent.click(dialog.getByRole('button', { name: 'Copy msgvault add-account one@example.com' }));
+      await waitFor(() => expect(dialog.getByRole('button', { name: 'Copied' })).toBeDefined());
+      expect(writeText).toHaveBeenCalledWith('msgvault add-account one@example.com');
+      await fireEvent.input(email, { target: { value: 'two@example.com' } });
+      expect(dialog.getByRole('button', { name: 'Copy msgvault add-account two@example.com' })).toBeDefined();
+      await fireEvent.click(dialog.getByRole('button', { name: 'Copy msgvault add-account two@example.com' }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('msgvault add-account two@example.com'));
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
+  it('shows the IMAP password prompt and separate shell commands', async () => {
+    render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
+    await screen.findByText('No sources yet');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
+    await fireEvent.click(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
+    expect(dialog.queryByText("You'll be prompted for your password.")).toBeNull();
+    await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: 'imap.example.com' } });
+    await fireEvent.input(dialog.getByLabelText('Username'), { target: { value: '~/reader' } });
+    expect(dialog.getByText("You'll be prompted for your password.")).toBeDefined();
+    expect(dialog.getByText('POSIX shell')).toBeDefined();
+    expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();
+    const copies = dialog.getAllByRole('button', { name: /^Copy / });
+    expect(copies).toHaveLength(2);
+    expect(copies[0].getAttribute('aria-label')).not.toBe(copies[1].getAttribute('aria-label'));
+  });
+
+  it('opens existing CardDAV setup and closes the picker', async () => {
+    const onOpenSettings = vi.fn();
+    render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenSettings });
+    await screen.findByText('No sources yet');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Set up Contacts (CardDAV)' }));
+    expect(onOpenSettings).toHaveBeenCalledWith('carddav');
+    expect(screen.queryByRole('dialog', { name: 'Add source' })).toBeNull();
   });
 
   it('keeps polling through idle races until the accepted run completes', async () => {

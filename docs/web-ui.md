@@ -391,7 +391,10 @@ failed or timed-out requests; after that it stops automatic refresh, shows
 sync was requested, but it hasn't started yet. Refresh to check again." rather
 than claiming success. Conflicting runs and unavailable capabilities retain
 their explicit errors or reasons. Full resync, pause/resume, schedule editing,
-and source add/remove are not available in Sources.
+and source removal are not available in Sources.
+
+**Add source** shows setup commands for Gmail, Microsoft 365, and IMAP and
+opens CardDAV setup for contacts.
 
 Viewing Sources does not repair runs left marked as running after a crash.
 They remain active until the daemon restarts or another sync for that source

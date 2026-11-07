@@ -14,17 +14,15 @@
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
   import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
-  import Dialog from '../common/Dialog.svelte';
   import { EmptyState } from '@kenn-io/kit-ui';
   import { operationStateChip } from '../../operations/labels';
-  import CommandLine from './CommandLine.svelte';
+  import AddSourceDialog from './AddSourceDialog.svelte';
   import ContactPanel from './ContactPanel.svelte';
   import SourcePanel from './SourcePanel.svelte';
 
   type Source = SourceStatus;
   const MIN_POLL_MS = 500;
   const MAX_POLL_MS = 8000;
-  const ADD_SOURCE_COMMAND = 'msgvault add-account user@example.com';
 
   // Re-read idle scheduled sources to observe queued syncs.
   const IDLE_POLL_MS = 30_000;
@@ -544,9 +542,7 @@
 {/if}
 
 {#if adding}
-  <Dialog title="Add source" onclose={() => (adding = false)}>
-    <CommandLine command={ADD_SOURCE_COMMAND} />
-  </Dialog>
+  <AddSourceDialog onclose={() => (adding = false)} {onOpenSettings} />
 {/if}
 
 <style>
