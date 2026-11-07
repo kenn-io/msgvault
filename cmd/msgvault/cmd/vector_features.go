@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -59,5 +60,6 @@ type vectorFeatures struct {
 	// a no-op because the pgvector backend shares the main store's handle,
 	// which is owned and closed elsewhere. Every caller that receives a
 	// non-nil vectorFeatures must invoke Close during shutdown.
-	Close func() error
+	Close         func() error
+	configureText func(context.Context, *invocation, vector.Config, providercredentials.Snapshot) (*vectorFeatures, error)
 }

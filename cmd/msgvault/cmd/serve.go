@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
@@ -60,6 +61,7 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	"golang.org/x/oauth2"
 )
 
@@ -1092,6 +1094,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
+		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
+			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
+			inspect: embedlocal.Inspect, install: embedlocal.Install,
+		})
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -1874,12 +1881,24 @@ type storeAPIAdapter struct {
 	lookupEnv              personenrichment.CredentialLookup
 }
 
+// publishedConfig applies a live vector activation without adopting other
+// saved edits that remain pending until their runtime is activated.
+func (a *storeAPIAdapter) publishedConfig(ctx context.Context) *config.Config {
+	vectorCfg, ok := api.PublishedVectorConfig(ctx)
+	if !ok || a.config == nil {
+		return a.config
+	}
+	cfg := *a.config
+	cfg.Vector = vectorCfg
+	return &cfg
+}
+
 func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context {
 	if a == nil {
 		return ctx
 	}
 	state := newInvocation()
-	state.cfg = a.config
+	state.cfg = a.publishedConfig(ctx)
 	state.options = a.options
 	if a.logger != nil {
 		state.logger = a.logger

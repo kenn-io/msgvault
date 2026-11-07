@@ -7556,6 +7556,43 @@ components:
       required:
         - manifests
       type: object
+    LocalEmbeddingsStatus:
+      additionalProperties: true
+      properties:
+        done_bytes:
+          format: int64
+          type: integer
+        download_bytes:
+          format: int64
+          type: integer
+        enabled:
+          type: boolean
+        error:
+          type: string
+        host:
+          type: string
+        phase:
+          enum:
+            - idle
+            - downloading
+            - indexing
+          type: string
+        provider:
+          type: string
+        running:
+          type: boolean
+        total_bytes:
+          format: int64
+          type: integer
+      required:
+        - host
+        - enabled
+        - provider
+        - download_bytes
+        - phase
+        - done_bytes
+        - total_bytes
+      type: object
     LoopCounterparty:
       additionalProperties: true
       properties:
@@ -17264,7 +17301,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.47.0
+  version: 3.48.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -22379,6 +22416,71 @@ paths:
       summary: Get one domain's canonical activity timeline
       tags:
         - Exploration
+  /api/v1/embeddings/local:
+    get:
+      operationId: getLocalEmbeddings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalEmbeddingsStatus"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get local search setup
+      tags:
+        - API
+    post:
+      operationId: enableLocalEmbeddings
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalEmbeddingsStatus"
+          description: Accepted
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Turn on local search
+      tags:
+        - API
   /api/v1/embeddings/status:
     get:
       operationId: getEmbeddingStatus

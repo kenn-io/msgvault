@@ -1434,7 +1434,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
-	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
+	if err := runner.RunCLICommand(s.withPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
@@ -1591,7 +1591,7 @@ func (s *Server) handleCLIEmbeddingsPlan(w http.ResponseWriter, r *http.Request)
 	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
-	resp, err := planner.PlanCLIEmbeddings(r.Context(), req)
+	resp, err := planner.PlanCLIEmbeddings(s.withPublishedVectorConfig(r.Context()), req)
 	if err != nil {
 		writeAPIHTTPError(w, newAPIHTTPError(http.StatusBadRequest, "embeddings_plan_failed", err.Error()))
 		return

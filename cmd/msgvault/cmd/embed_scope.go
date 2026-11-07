@@ -228,6 +228,8 @@ func openResolvedVectorConfig(ctx context.Context, state *invocation) (vector.Co
 
 var localEmbeddingsDir = embedlocal.DefaultDir
 
+var localEmbeddingEndpoint = embedlocal.Endpoint
+
 var errLocalEmbeddingDownloadRequired = errors.New("local embedding download required")
 
 // resolveLocalVectorConfig resolves transport without changing message identity.
@@ -240,7 +242,7 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 	if err != nil {
 		return vector.Config{}, fmt.Errorf("local embedding directory: %w", err)
 	}
-	endpoint, err := embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
+	endpoint, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
 	if errors.Is(err, embedlocal.ErrNotFound) {
 		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(context.Context, int64) (bool, error) {
 			return false, errLocalEmbeddingDownloadRequired
@@ -251,7 +253,7 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 		if installErr != nil {
 			return vector.Config{}, fmt.Errorf("install local embeddings: %w", installErr)
 		}
-		endpoint, err = embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
+		endpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
 	}
 	if err != nil {
 		return vector.Config{}, fmt.Errorf("resolve local embeddings: %w", err)

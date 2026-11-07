@@ -1,6 +1,8 @@
 <script lang="ts">
   import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
   import {
+    getLocalEmbeddings,
+    enableLocalEmbeddings,
     getEmbeddingStatus as generatedGetEmbeddingStatus,
     getSettings as generatedGetSettings,
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
@@ -11,6 +13,7 @@
   import type { APIClient } from '../../api/client';
   import type {
     EmbeddingStatus,
+    LocalEmbeddingsStatus,
     PersonEnrichmentProviderSetting as GeneratedPersonEnrichmentProviderSetting,
     ProviderCredentialResponse as GeneratedProviderCredentialResponse,
     SettingUpdate as GeneratedSettingUpdate,
@@ -35,6 +38,7 @@
     type SettingState,
     type SettingGroupState,
   } from '../../settings/catalog';
+  import { localSearchState, localSearchLabels } from '../../settings/local-embeddings';
   import { overviewRows, type OverviewAction } from '../../settings/overview';
   import {
     LABELS,
@@ -109,6 +113,52 @@
   let activeCategory = $state(untrack(() => category));
   let root = $state<HTMLElement>();
   let embeddingStatus = $state<EmbeddingStatus>();
+  let localStatus = $state<LocalEmbeddingsStatus>();
+  let localError = $state('');
+  let localPosting = $state(false);
+  let localTimer: ReturnType<typeof setTimeout> | undefined;
+  const localController = new AbortController();
+  onDestroy(() => { localController.abort(); clearTimeout(localTimer); });
+  async function loadLocalSearch(): Promise<void> {
+    try {
+      const { data, response, error } = await getLocalEmbeddings({ ...client, signal: localController.signal });
+      if (localController.signal.aborted) return;
+      // A rejection with a diagnostic, such as a malformed config, ends what this page can follow.
+      if (!response.ok && error?.message) {
+        if (localStatus) localStatus = { ...localStatus, running: false, phase: 'idle' };
+        localError = error.message;
+      }
+      if (!response.ok || !data) return;
+      const previous = localStatus && (localStatus.running || localStatus.phase !== 'idle');
+      localStatus = data;
+      localError = data.error ?? '';
+      if (data.running || data.phase !== 'idle') {
+        statusRevision += 1;
+      } else if (previous) {
+        await loadSettings(true);
+        refreshFeatureStatus();
+      }
+    } catch { /* Keep observing an active setup after a temporary request failure. */ }
+    finally {
+      clearTimeout(localTimer);
+      if (!localController.signal.aborted && localStatus && (localStatus.running || localStatus.phase !== 'idle')) {
+        localTimer = setTimeout(() => void loadLocalSearch(), 1000);
+      }
+    }
+  }
+  async function turnOnLocalSearch(): Promise<void> {
+    if (localPosting || localStatus?.running || (localStatus && localStatus.phase !== 'idle')) return;
+    localPosting = true;
+    localError = '';
+    try {
+      const { data, response, error } = await enableLocalEmbeddings(client);
+      if (!response.ok || !data) throw new Error(error?.message || 'Could not turn on search by meaning.');
+      localStatus = data;
+      clearTimeout(localTimer);
+      void loadLocalSearch();
+    } catch (cause) { localError = cause instanceof Error ? cause.message : 'Could not turn on search by meaning.'; }
+    finally { localPosting = false; }
+  }
   let visualStatus = $state<VisualStatus>();
   const operationStatus = $derived(operationsController.snapshot);
   const lanes = $derived(operationStatus.statusLanes.flatMap(lane => lane.kinds));
@@ -149,6 +199,7 @@
 
   onMount(() => {
     void loadSettings(false);
+    void loadLocalSearch();
   });
 
   let followedCategory = untrack(() => category);
@@ -193,6 +244,7 @@
   function refreshFeatureStatus(): void {
     statusRevision += 1;
     void operationsController.refreshStatus();
+    void loadLocalSearch();
   }
 
   async function build(id: string, run: () => Promise<void>): Promise<void> {
@@ -597,7 +649,11 @@
           {:else if !operationStatus.statusReadable}
             <p class="state" role="status">Loading…</p>
           {:else}
-            <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
+            <SettingsOverview
+              localSearch={localStatus && localStatus.provider !== 'configured' ? localSearchState(localStatus, embeddingStatus) : undefined}
+              localLabels={localStatus ? localSearchLabels(localStatus) : undefined}
+              {localError} onLocalSearch={() => void turnOnLocalSearch()}
+              onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'people_catalog'}
           <PeopleCatalogSettings {client} {onDirectoryChange} />

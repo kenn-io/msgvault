@@ -156,6 +156,13 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 // vector.Backend interface.
 func (b *Backend) Close() error { return nil }
 
+// WithBuildScope pins message coverage without reopening or closing shared storage.
+func (b *Backend) WithBuildScope(scope vector.BuildScope) vector.Backend {
+	next := *b
+	next.scope = vector.NewBuildScope(scope.MessageTypes, scope.SourceIDs)
+	return &next
+}
+
 // DB returns the underlying *sql.DB. Exposed to mirror the sqlitevec
 // surface; callers that need the shared pool (e.g. the embed worker)
 // can retrieve it here instead of carrying the main handle separately.
