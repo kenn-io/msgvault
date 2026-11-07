@@ -118,6 +118,15 @@ func RetryEligible(state DownloadState) bool {
 	return state == "" || state == StatePending || state == StateFailed
 }
 
+// RetryAllows reports whether a stored outcome should be fetched under p:
+// unfinished work always is, and a policy skip is once p admits it.
+func (p Policy) RetryAllows(state DownloadState, conversation Conversation, size int64) bool {
+	if state == StateSkipped {
+		return p.Allows(conversation, size)
+	}
+	return RetryEligible(state)
+}
+
 // OversizeMarkerSize returns a safely representable observation that remains
 // above maxBytes. Providers use it when a bounded stream proves the source's
 // declared size was missing or understated.

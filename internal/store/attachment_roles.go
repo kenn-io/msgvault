@@ -206,6 +206,12 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 func (s *Store) UpsertAttachmentRecordWithStats(
 	ctx context.Context, messageID int64, write AttachmentWrite, invalidateCache bool,
 ) error {
+	return s.upsertAttachmentRecordWithStats(ctx, messageID, write, invalidateCache, false)
+}
+
+func (s *Store) upsertAttachmentRecordWithStats(
+	ctx context.Context, messageID int64, write AttachmentWrite, invalidateCache, recomputeSize bool,
+) error {
 	write = write.normalized()
 	if err := write.validate(); err != nil {
 		return err
@@ -220,6 +226,11 @@ func (s *Store) UpsertAttachmentRecordWithStats(
 		}
 		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
 			return err
+		}
+		if recomputeSize && write.State == attachmentpolicy.StateStored {
+			if err := recomputeMessageSizeEstimateWith(q, messageID); err != nil {
+				return err
+			}
 		}
 		if invalidateCache {
 			return s.bumpDerivedDataRevisionContext(ctx, tx)

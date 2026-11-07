@@ -1,0 +1,210 @@
+package line
+
+import (
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"go.kenn.io/msgvault/internal/store"
+)
+
+const webhookPrefix = "/webhooks/line/"
+const webhookMaxBytes = 1 << 20
+const webhookIngressLimit = 16
+
+// ReceiverChannel is one enabled, registered channel captured at daemon startup.
+type ReceiverChannel struct {
+	ChannelID string
+	SourceID  int64
+	BotUserID string
+	Secret    string `json:"-"`
+}
+
+type receiverChannel struct {
+	config      ReceiverChannel
+	invalid     atomic.Uint64
+	lastWarning atomic.Int64
+}
+
+// Receiver authenticates and commits incoming events without calling LINE.
+// Channel configuration is immutable; only signature counters change at runtime.
+type Receiver struct {
+	store    *store.Store
+	channels map[string]*receiverChannel
+	ingress  chan struct{}
+	wake     func(string)
+}
+
+// NewReceiver takes enabled channels only. wake must enqueue work without waiting
+// for processing; it receives the channel ID after a successful nonempty commit.
+func NewReceiver(st *store.Store, channels []ReceiverChannel, wake func(string)) *Receiver {
+	receiver := &Receiver{
+		store: st, channels: make(map[string]*receiverChannel),
+		ingress: make(chan struct{}, webhookIngressLimit), wake: wake,
+	}
+	for _, channel := range channels {
+		receiver.channels[channel.ChannelID] = &receiverChannel{config: channel}
+	}
+	return receiver
+}
+
+// Handles admits only a literal POST route with one nonempty channel segment.
+// Unknown channels receive 404 in Receive; known channels with bad signatures receive 401.
+func (r *Receiver) Handles(request *http.Request) bool {
+	if r == nil || len(r.channels) == 0 || request.Method != http.MethodPost || request.URL == nil {
+		return false
+	}
+	path := request.URL.Path
+	if request.URL.RawPath != "" || request.URL.EscapedPath() != path || !strings.HasPrefix(path, webhookPrefix) {
+		return false
+	}
+	channelID := strings.TrimPrefix(path, webhookPrefix)
+	return channelID != "" && !strings.Contains(channelID, "/")
+}
+
+// Active reports whether this source has a mounted receiver.
+func (r *Receiver) Active(sourceID int64, channelID string) bool {
+	channel := r.channels[channelID]
+	return channel != nil && channel.config.SourceID == sourceID
+}
+
+func (r *Receiver) InvalidSignatures(channelID string) uint64 {
+	if channel := r.channels[channelID]; channel != nil {
+		return channel.invalid.Load()
+	}
+	return 0
+}
+
+// Receive processes requests admitted by Handles. beginMutation coordinates
+// authenticated inbox writes with the daemon and releases before waking work.
+// A nil beginMutation is for standalone receivers without a daemon.
+func (r *Receiver) Receive(w http.ResponseWriter, request *http.Request, beginMutation func(context.Context) (func(), error)) {
+	channel := r.channels[strings.TrimPrefix(request.URL.Path, webhookPrefix)]
+	if channel == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	// Bound each request from its first body read through its inbox commit.
+	select {
+	case r.ingress <- struct{}{}:
+		defer func() { <-r.ingress }()
+	default:
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	body := http.MaxBytesReader(w, request.Body, webhookMaxBytes)
+	defer func() { _ = body.Close() }()
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		return
+	}
+	if !Verify(channel.config.Secret, raw, request.Header.Get("X-Line-Signature")) {
+		channel.invalid.Add(1)
+		now := time.Now().Unix()
+		previous := channel.lastWarning.Load()
+		if now-previous >= 60 && channel.lastWarning.CompareAndSwap(previous, now) {
+			slog.Warn("LINE webhook signature rejected", "channel_id", channel.config.ChannelID)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	var envelope struct {
+		Destination string         `json:"destination"`
+		Events      jsontext.Value `json:"events"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if envelope.Destination == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if envelope.Destination != channel.config.BotUserID {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	// Decode into a slice only after excluding missing/null/nonarray events.
+	if len(envelope.Events) == 0 || envelope.Events[0] != '[' {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var events []jsontext.Value
+	if err := json.Unmarshal(envelope.Events, &events); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	batch := make([]store.LineWebhookEvent, 0, len(events))
+	for _, rawEvent := range events {
+		event, err := receiverEvent(rawEvent)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		batch = append(batch, event)
+	}
+	if len(batch) > 0 {
+		err := func() error {
+			if beginMutation != nil {
+				done, err := beginMutation(request.Context())
+				if err != nil {
+					return err
+				}
+				defer done()
+			}
+			return r.store.EnqueueLineEventsContext(request.Context(), channel.config.SourceID, channel.config.ChannelID, batch)
+		}()
+		if err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+	if len(batch) > 0 && r.wake != nil {
+		r.wake(channel.config.ChannelID)
+	}
+}
+
+func receiverEvent(raw jsontext.Value) (store.LineWebhookEvent, error) {
+	clean, err := SanitizeEvent(raw)
+	if err != nil {
+		return store.LineWebhookEvent{}, err
+	}
+	// Future event types own their native payload shapes. Validate only common
+	// routing fields until the type is known to require a message or unsend.
+	var event Event
+	if err := json.Unmarshal(clean, &event); err != nil {
+		return store.LineWebhookEvent{}, err
+	}
+	if event.Type == "" || event.WebhookEventID == "" || len(event.WebhookEventID) > 200 || event.Timestamp <= 0 {
+		return store.LineWebhookEvent{}, errors.New("line: invalid webhook event")
+	}
+	target := ""
+	switch event.Type {
+	case "message", "messageEdited", "unsend":
+		if event.Type == "unsend" {
+			if event.Unsend == nil || event.Unsend.MessageID == "" {
+				return store.LineWebhookEvent{}, errors.New("line: invalid unsend event")
+			}
+			target = event.Unsend.MessageID
+		} else {
+			if event.Message == nil || event.Message.ID == "" || event.Message.Type == "" {
+				return store.LineWebhookEvent{}, errors.New("line: invalid message event")
+			}
+			target = event.Message.ID
+		}
+	}
+	return store.LineWebhookEvent{WebhookEventID: event.WebhookEventID, EventType: event.Type, EventTimestamp: event.Timestamp, TargetMessageID: target, RawJSON: string(clean)}, nil
+}

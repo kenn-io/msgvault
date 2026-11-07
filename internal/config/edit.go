@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,6 +62,8 @@ type Edit struct {
 // headers already define the table implicitly, because a super-table may
 // follow its sub-tables).
 type TableEdit struct {
+	// Match selects an array table by a string identity field. Missing records are inserted.
+	Match  map[string]string
 	Path   []string
 	Values map[string]any
 	Remove bool
@@ -1120,6 +1123,13 @@ func applyTableEdits(content []byte, edits []TableEdit) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(edit.Match) > 0 {
+			lines, err = editArrayTable(lines, path, encodedPath, edit)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
 		identity := strings.Join(path, "\x00")
 		if _, duplicate := seen[identity]; duplicate {
 			return nil, fmt.Errorf("%w: duplicate requested table %s", ErrAmbiguousConfigTarget, encodedPath)
@@ -2113,4 +2123,67 @@ func encodeTOMLValue(value any) (string, error) {
 		return "", errors.New("value is not representable as one TOML assignment")
 	}
 	return strings.TrimPrefix(line, prefix), nil
+}
+
+// editArrayTable keeps sibling records and comments intact.
+func editArrayTable(lines []tomlLine, path []string, encodedPath string, edit TableEdit) ([]tomlLine, error) {
+	if len(edit.Match) != 1 || edit.Remove {
+		return nil, errors.New("array table edits require one identity field and values")
+	}
+	var identityKey, identityValue string
+	for key, value := range edit.Match {
+		identityKey, identityValue = key, value
+	}
+	if value, exists := edit.Values[identityKey]; exists && value != identityValue {
+		return nil, errors.New("array table edit cannot change its identity")
+	}
+	structural := tomlStructuralLines(lines)
+	var matches []int
+	for index, line := range lines {
+		if !structural[index] {
+			continue
+		}
+		parsed, array, ok := parseTOMLTable(line.body)
+		if !ok || !equalPath(parsed, path) {
+			continue
+		}
+		if !array {
+			return nil, fmt.Errorf("%w: %s requires array tables", ErrAmbiguousConfigTarget, encodedPath)
+		}
+		end := index + 1
+		for end < len(lines) {
+			if _, _, header := parseTOMLTable(lines[end].body); structural[end] && header {
+				break
+			}
+			end++
+		}
+		var values map[string]any
+		if _, err := toml.Decode(string(joinTOMLLines(lines[index+1:end])), &values); err != nil {
+			return nil, fmt.Errorf("decode array table %s: %w", encodedPath, err)
+		}
+		if values[identityKey] == identityValue {
+			matches = append(matches, index)
+		}
+	}
+	if len(matches) > 1 || (len(matches) == 1 && edit.InsertOnly) {
+		return nil, fmt.Errorf("%w: array table %s", ErrAmbiguousConfigTarget, encodedPath)
+	}
+	if len(matches) == 0 {
+		values := maps.Clone(edit.Values)
+		values[identityKey] = identityValue
+		return appendTOMLTable(lines, "["+encodedPath+"]", values)
+	}
+	keys := make([]string, 0, len(edit.Values))
+	for key := range edit.Values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		var err error
+		lines, err = editExactTOMLTableValue(lines, matches[0], path, key, edit.Values[key])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return lines, nil
 }

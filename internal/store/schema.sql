@@ -4778,3 +4778,45 @@ CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
 AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
+
+-- LINE's signed webhook inbox retains event IDs for duplicate detection.
+-- Message purges scrub payloads while preserving receipt status.
+CREATE TABLE IF NOT EXISTS line_webhook_events (
+    id INTEGER PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    webhook_event_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    target_message_id TEXT NOT NULL DEFAULT '',
+    event_timestamp BIGINT NOT NULL,
+    raw_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','processed','ignored','retry','failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT '',
+    next_attempt_at DATETIME,
+    received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_id, webhook_event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_line_webhook_due ON line_webhook_events(source_id,state,next_attempt_at,event_timestamp);
+CREATE INDEX IF NOT EXISTS idx_line_webhook_target ON line_webhook_events(source_id,target_message_id,state);
+CREATE INDEX IF NOT EXISTS idx_line_webhook_received ON line_webhook_events(source_id,received_at);
+
+-- Operational presentation and membership state are separate from deliveries.
+CREATE TABLE IF NOT EXISTS line_profiles (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (source_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS line_memberships (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    conversation_key TEXT NOT NULL,
+    member_identifier TEXT NOT NULL,
+    joined_at BIGINT NOT NULL DEFAULT 0,
+    left_at BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (source_id,conversation_key,member_identifier)
+);
+
+CREATE INDEX IF NOT EXISTS idx_line_unresolved_quotes
+    ON messages(source_id,conversation_id,json_extract(metadata,'$.quotedMessageId'))
+    WHERE message_type='line' AND reply_to_message_id IS NULL;

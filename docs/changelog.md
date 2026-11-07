@@ -19,6 +19,7 @@ All notable changes to msgvault, grouped by release.
   continue using retained evidence. They need HTTP API schema 3.44.0.
 - Keep Apple WhatsApp and iMessage archives current with daemon schedules,
   run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
+- [LINE Official Account](usage/line.md) archives incoming chats through signed webhooks, including available media, quotes, group text edits, membership, and retained flagged unsends. Capture starts at go-live; earlier history and replies sent through Official Account Manager or other tools are unavailable. Setup requires a public HTTPS webhook and environment-only channel credentials.
 - Resumed Gmail full syncs preserve their starting History point so the next
   incremental sync catches mail that arrived meanwhile. A full sync interrupted
   under an earlier release starts from the first page once; previously archived

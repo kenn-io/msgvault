@@ -471,6 +471,7 @@ export * from "./kataIssueCreateRequest";
 export * from "./kataIssueListResponse";
 export * from "./kataIssueReceipt";
 export * from "./kataIssueResponse";
+export * from "./lineWebhookStatus";
 export * from "./linkKataEvidencePathParameters";
 export * from "./linkPersonAgendaItemPathParameters";
 export * from "./listAttributeDefinitionsParams";

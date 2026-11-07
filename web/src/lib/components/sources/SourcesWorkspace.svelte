@@ -12,7 +12,7 @@
   import { CardDAVController } from '../../carddav/controller.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
-  import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
+  import { sourceRunState, sourceTypeLabel, syncRunning, syncStatusChip, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
   import { EmptyState } from '@kenn-io/kit-ui';
@@ -62,7 +62,7 @@
   const initialLoading = $derived((loading || contactsLoading) && !sources.length && !contacts.length);
   const STALE_STATUS_MESSAGE = 'Automatic refresh paused. Source status may be stale.';
   let lockStatusStale = $state(false);
-  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
+  let awaitingState = $state<'idle' | 'awaiting' | 'not_observed' | 'line_requested'>('idle');
   let statusError = $state('');
   let contactsError = $state('');
   let triggerError = $state('');
@@ -241,6 +241,7 @@
         awaitingAttempts += 1;
         if (awaitingAttempts >= maxAwaitingPolls) {
           awaitingSourceID = undefined;
+          awaitingBaselineRunID = undefined;
           awaitingState = 'not_observed';
         } else {
           awaitingState = 'awaiting';
@@ -330,10 +331,10 @@
       }
       stopPolling();
       pollDelay = MIN_POLL_MS;
-      awaitingSourceID = source.id;
+      awaitingSourceID = source.source_type === 'line' ? undefined : source.id;
       awaitingBaselineRunID = source.latest_sync?.id;
       awaitingAttempts = 0;
-      awaitingState = 'awaiting';
+      awaitingState = source.source_type === 'line' ? 'line_requested' : 'awaiting';
       await load();
     } catch (cause) {
       if (disposed) return;
@@ -412,7 +413,7 @@
     </div>{/if}
   {#if contactsError}<div class="notice notice--error" role="alert"><span>{contactsError}</span><Button size="sm" label="Retry" onclick={refresh} /></div>{/if}
   {#if lockStatusStale}<div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
-  {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
+  {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'line_requested'}<div class="notice" role="status"><span>Inbox processing requested. Retries keep their scheduled times.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if triggerError}<div class="notice notice--error" role="alert">
       <span>{triggerError}</span>
       <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
@@ -432,7 +433,7 @@
       {/snippet}
       {#each sources as source (source.id)}
         {@const key = `source:${source.id}`}
-        {@const chip = operationStateChip(sourceRunState(source) ?? 'Never synced')}
+        {@const chip = syncStatusChip(source)}
         <tr class:selected={selected === key} aria-selected={selected === key} onclick={() => toggle(key)}>
           <td>
             <div class="name">
@@ -448,7 +449,17 @@
               <span class="muted">{sourceTypeLabel(source.source_type)}</span>
             </div>
           </td>
-          <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}
+          <td><div class="name">
+            {#if source.line_webhook}
+              <span>New messages only.</span>
+              {#if !source.line_webhook.active}<span>Check configuration and restart</span>{/if}
+              {#if source.line_webhook.last_received_at}<span>Last event <time datetime={source.line_webhook.last_received_at}>{formatDateTime(source.line_webhook.last_received_at)}</time></span>{:else}<span>No events received yet</span>{/if}
+              {#if source.line_webhook.last_received_at || source.line_webhook.pending > 0 || source.line_webhook.failed > 0}
+                <span>{source.line_webhook.pending.toLocaleString()} pending · <span style:color={source.line_webhook.failed > 0 ? 'var(--status-warning-ink)' : undefined}>{source.line_webhook.failed.toLocaleString()} failed</span></span>
+              {/if}
+              {#if source.line_webhook.invalid_signatures > 0}<span>{source.line_webhook.invalid_signatures.toLocaleString()} rejected requests since restart</span>{/if}
+            {/if}
+            <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}
             {#if source.scheduler_queued_at && !source.active_sync}
               <span class="muted">Queued since <time datetime={source.scheduler_queued_at} title={formatDateTime(source.scheduler_queued_at, 'long')}>{formatDateTime(source.scheduler_queued_at)}</time></span>
             {/if}
@@ -460,8 +471,8 @@
                 size="sm"
                 tone="info"
                 surface="soft"
-                label={source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : syncRunning(source) ? 'Syncing…' : syncing(source) ? 'Starting…' : 'Sync now'}
-                ariaLabel={`Sync now ${label(source)}`}
+                label={source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : syncRunning(source) ? 'Syncing…' : syncing(source) ? 'Starting…' : source.line_webhook ? 'Process inbox' : 'Sync now'}
+                ariaLabel={`${source.line_webhook ? 'Process inbox' : 'Sync now'} ${label(source)}`}
                 disabled={Boolean(triggering) || syncing(source)}
                 onclick={(event) => {
                   event.stopPropagation();

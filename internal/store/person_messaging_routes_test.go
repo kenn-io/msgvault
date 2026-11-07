@@ -548,6 +548,14 @@ func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) 
 	requirements.Len(telegram.Routes.Items, 1)
 	assertions.Equal(telegramID, telegram.Routes.Items[0].ConversationID)
 	assertions.Equal("telegram", telegram.Routes.Items[0].Network)
+
+	lineID := nativeConversation("line", "line-peer")
+	line, err := f.Store.GetPersonMessagingRoutesContext(t.Context(),
+		store.PersonMessagingRouteQuery{PersonUID: person.VCardUID, Network: "line"})
+	requirements.NoError(err)
+	requirements.Len(line.Routes.Items, 1)
+	assertions.Equal(lineID, line.Routes.Items[0].ConversationID)
+	assertions.Equal("line", line.Routes.Items[0].Network)
 }
 
 func TestMessagingRoutesKeepDeletionSignalAfterArchiveGC(t *testing.T) {

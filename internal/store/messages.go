@@ -4279,7 +4279,18 @@ func (s *Store) RecomputeConversationStatsForConversationContext(ctx context.Con
 	return write(boundQuerier{ctx: ctx, q: s.db})
 }
 
-func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, arg any) error {
+// RecomputeConversationStatsForSourceConversationContext refreshes one chat
+// without scanning every conversation owned by the source.
+func (s *Store) RecomputeConversationStatsForSourceConversationContext(ctx context.Context, sourceID int64, sourceConversationID string) error {
+	if sourceID <= 0 || sourceConversationID == "" {
+		return errors.New("invalid source conversation identity")
+	}
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		return s.recomputeConversationStatsWith(q, "source_id = ? AND source_conversation_id = ?", sourceID, sourceConversationID)
+	})
+}
+
+func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, args ...any) error {
 	_, err := q.Exec(fmt.Sprintf(`
 		UPDATE conversations SET
 			message_count = (
@@ -4299,7 +4310,7 @@ func (s *Store) recomputeConversationStatsWith(q querier, whereClause string, ar
 			),
 			last_message_preview = %s
 		WHERE %s
-	`, latestConversationPreviewSubquery, whereClause), arg)
+	`, latestConversationPreviewSubquery, whereClause), args...)
 	if err != nil {
 		return fmt.Errorf("recompute conversation stats: %w", err)
 	}
@@ -4967,6 +4978,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		}
 		// Identifier values are globally unique, so a plain repoint suffices.
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+		if err := s.refreshLineMembershipAfterParticipantMergeTx(ctx, tx, newID); err != nil {
 			return err
 		}
 		if err := s.rewriteObservationsForMergeTx(
@@ -6553,22 +6567,26 @@ func (s *Store) ReplaceMessageInlineAttachments(ctx context.Context, messageID i
 		if err := s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, deleteWhere, refs); err != nil {
 			return err
 		}
-		var body sql.NullString
-		err := tx.QueryRowContext(ctx, `SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read Teams message body for size estimate: %w", err)
-		}
-		_, err = tx.ExecContext(ctx, `
-			UPDATE messages SET size_estimate = ? + (
-				SELECT COALESCE(SUM(size), 0) FROM attachments
-				WHERE message_id = ? AND content_hash != ''
-			) WHERE id = ?
-		`, len(body.String), messageID, messageID)
-		if err != nil {
-			return fmt.Errorf("update Teams message size estimate: %w", err)
-		}
-		return nil
+		return recomputeMessageSizeEstimateWith(tx, messageID)
 	})
+}
+
+func recomputeMessageSizeEstimateWith(q querier, messageID int64) error {
+	var body sql.NullString
+	err := q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read message body for size estimate: %w", err)
+	}
+	_, err = q.Exec(`
+		UPDATE messages SET size_estimate = ? + (
+			SELECT COALESCE(SUM(size), 0) FROM attachments
+			WHERE message_id = ? AND content_hash != ''
+		) WHERE id = ?
+	`, len(body.String), messageID, messageID)
+	if err != nil {
+		return fmt.Errorf("update message size estimate: %w", err)
+	}
+	return nil
 }
 
 // MessageTeamsInlineAttachments returns Teams-managed inline media rows keyed

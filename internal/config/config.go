@@ -617,6 +617,7 @@ type Config struct {
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
+	Line               []LineSource                    `toml:"line"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -1161,6 +1162,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "line" {
+			return nil, fmt.Errorf("unknown LINE config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1326,6 +1330,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
+	if err := cfg.validateLineSources(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validateChatwootSources(); err != nil {
 		return nil, err
 	}
@@ -2004,14 +2011,14 @@ func (c *Config) validateMediaPolicies() error {
 		{name: "imessage", policy: c.IMessage.MediaPolicy(), providerMaxMB: c.IMessage.MaxMediaMB},
 	}
 	for _, provider := range providers {
-		if !validMaxMediaMB(provider.providerMaxMB) {
+		if !validMaxMediaMB(int64(provider.providerMaxMB)) {
 			return fmt.Errorf("invalid [%s] max_media_mb %d: must be between 0 and %d", provider.name, provider.providerMaxMB, maxMediaMBLimit)
 		}
 		if err := provider.policy.Validate(); err != nil {
 			return fmt.Errorf("invalid [%s] attachment policy: %w", provider.name, err)
 		}
 		for account, maxMediaMB := range provider.accountMaxMedia {
-			if !validMaxMediaMB(maxMediaMB) {
+			if !validMaxMediaMB(int64(maxMediaMB)) {
 				return fmt.Errorf("invalid [%s] account %q max_media_mb %d: must be between 0 and %d",
 					provider.name, account, maxMediaMB, maxMediaMBLimit)
 			}
@@ -2023,8 +2030,8 @@ func (c *Config) validateMediaPolicies() error {
 // maxMediaMBLimit is the largest max_media_mb whose byte count fits in an int64.
 const maxMediaMBLimit = math.MaxInt64 >> 20
 
-func validMaxMediaMB(mb int) bool {
-	return mb >= 0 && int64(mb) <= maxMediaMBLimit
+func validMaxMediaMB(mb int64) bool {
+	return mb >= 0 && mb <= maxMediaMBLimit
 }
 
 func mediaAccountMaximums(accounts map[string]MediaAccountConfig) map[string]int {

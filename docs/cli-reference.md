@@ -1578,6 +1578,51 @@ the source message has since been deleted. See
 
 ---
 
+## add-line
+
+Register a LINE Official Account Messaging API channel and save its `[[line]]`
+configuration. Available on `main`. Credentials come from the named environment
+variable on the daemon host; the secret is never a flag value.
+
+```bash
+msgvault add-line --channel-id 2000000001 --secret-env MSGVAULT_LINE_SECRET_EXAMPLE
+```
+
+| Flag | Default | Contract |
+|---|---|---|
+| `--channel-id` | required | Canonical positive decimal channel ID |
+| `--secret-env` | required | Environment-variable name holding the channel secret |
+| `--webhook-base-url` | omitted | Public HTTPS base URL; userinfo, query, and fragment are rejected; the webhook path is `/webhooks/line/<channel_id>` |
+
+The command checks credentials and bot identity, registers the archive source,
+and saves configuration. Restart the daemon or service with the secret variable
+in its environment. Set the printed webhook URL in LINE Developers Console,
+enable **Use webhook**, and use **Verify**. The optional base URL prints the
+complete webhook URL; remote webhook settings are managed in the Console.
+Consider **Webhook redelivery**. See [LINE setup](usage/line.md).
+
+---
+
+## sync-line
+
+Process due work already in the LINE webhook inbox. Available on `main`. It
+retries eligible profile and media work through the daemon; it never fetches
+message history or bypasses a saved retry deadline.
+
+```bash
+msgvault sync-line
+msgvault sync-line --channel-id 2000000001
+```
+
+| Flag | Default | Contract |
+|---|---|---|
+| `--channel-id` | omitted | Restrict the pass to one configured channel |
+
+**Process inbox** for a LINE source performs the same inbox-processing pass. See
+[delivery and retries](usage/line.md#delivery-and-retries).
+
+---
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
@@ -3081,6 +3126,9 @@ in the stored headers of mail not yet attributed, so each message keeps its
 account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
 warning before sharing its output.
+
+LINE subsets copy selected archived messages and their conversation participants.
+They omit the operational webhook inbox, cached profiles, and membership clocks.
 
 ---
 
@@ -4970,7 +5018,9 @@ msgvault merge-account --from-source-id 42 --into-source-id 43 --yes
 
 Both sources must have the same source type and be idle. Known conflicting
 Beeper networks are incompatible. Pending provider drafts on the historical
-source must finish first. The destination must not be retired; it may be
+source must finish first. A LINE source with pending or retrying webhook
+events cannot retire; stop remote delivery and let `sync-line` finish its inbox
+first. The destination must not be retired; it may be
 history-only. Cancel or finish staged deletions before merging, because
 batches targeting a retired source cannot execute. Restage them against the
 destination if needed.

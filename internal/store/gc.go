@@ -22,6 +22,17 @@ const managedDraftRetainedMessageSQL = `EXISTS (
 		   OR draft_owner.pending_original_message_id = messages.id
 	)`
 
+// gcPurgedMessageSQL selects the message rows archive GC permanently removes.
+const gcPurgedMessageSQL = `deleted_from_source_at IS NOT NULL AND NOT (` + managedDraftRetainedMessageSQL + `)`
+
+// gcPurgedProviderIdentitiesSQL lists the provider identities of purged
+// messages, including those an account merge recorded before rekeying them.
+const gcPurgedProviderIdentitiesSQL = `
+	SELECT source_id, source_message_id FROM messages WHERE ` + gcPurgedMessageSQL + `
+	UNION ALL
+	SELECT original_source_id, original_message_id FROM source_merge_messages
+	WHERE message_id IN (SELECT id FROM messages WHERE ` + gcPurgedMessageSQL + `)`
+
 // ErrGCUnsupported is returned before mutation when archive GC is requested
 // against PostgreSQL. PostgreSQL retention and compaction require an
 // operator-managed backup and VACUUM policy outside this SQLite command.
@@ -163,6 +174,13 @@ func (s *Store) ExecuteGCContext(
 			)
 		`); err != nil {
 			return fmt.Errorf("clear replies to source-deleted messages: %w", err)
+		}
+
+		if _, err := q.Exec(`
+			UPDATE line_webhook_events SET raw_json = '{}'
+			WHERE (source_id, target_message_id) IN (` + gcPurgedProviderIdentitiesSQL + `)
+		`); err != nil {
+			return fmt.Errorf("clear source-deleted LINE event payloads: %w", err)
 		}
 
 		result, err := q.Exec(`

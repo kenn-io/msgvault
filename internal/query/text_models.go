@@ -179,6 +179,7 @@ var KnownMessageTypes = []string{
 	"inline",
 	"matrix",
 	"telegram",
+	"line",
 }
 
 // IsKnownMessageType reports whether mt is a message_type value that msgvault

@@ -1241,6 +1241,8 @@ func TestStore_InterruptSyncWithCheckpoint(t *testing.T) {
 		wantStatus string
 	}{
 		{name: "handoff", cause: jobctx.ErrYieldedToWaiter, err: context.Canceled, wantStatus: store.SyncStatusCancelled},
+		{name: "budget expiry", cause: jobctx.ErrRunBudgetExceeded, err: context.Canceled, wantStatus: store.SyncStatusCancelled},
+		{name: "cooperative handoff", err: jobctx.ErrYieldedToWaiter, wantStatus: store.SyncStatusCancelled},
 		{name: "wrapped handoff", cause: jobctx.ErrYieldedToWaiter, err: fmt.Errorf("fetch: %w", context.Canceled), wantStatus: store.SyncStatusCancelled},
 		{name: "user cancellation", cause: context.Canceled, err: context.Canceled, wantStatus: store.SyncStatusFailed},
 		{name: "provider error during handoff", cause: jobctx.ErrYieldedToWaiter, err: providerErr, wantStatus: store.SyncStatusFailed},
@@ -1255,7 +1257,10 @@ func TestStore_InterruptSyncWithCheckpoint(t *testing.T) {
 			id, err := f.Store.StartSync(f.Source.ID, "slack")
 			require.NoError(err)
 			ctx, cancel := context.WithCancelCause(t.Context())
-			cancel(tc.cause)
+			defer cancel(nil)
+			if tc.cause != nil {
+				cancel(tc.cause)
+			}
 			cp := &store.Checkpoint{PageToken: "resume-cursor", MessagesProcessed: 7, MessagesAdded: 3, ErrorsCount: tc.itemErrors}
 			require.NoError(f.Store.InterruptSyncWithCheckpoint(ctx, id, tc.err, cp))
 			run, err := f.Store.GetLatestSync(f.Source.ID)

@@ -926,6 +926,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	lineRuntime, err := newLineRuntime(ctx, s, state, sched, attachmentMaint, logger)
+	if err != nil {
+		return fmt.Errorf("initialize LINE receivers: %w", err)
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -933,6 +938,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	sched.Start()
 	startSQLiteMaintenanceJob(sched, s, logger)
 	mediaSched.Start()
+	lineRuntime.queueStartup()
 
 	// Create adapters for the API interfaces
 	refreshCacheAfterWrite := func(_ context.Context, label string) error {
@@ -979,6 +985,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
+		LineWebhook:    lineRuntime.receiver,
 		Config:         cfg,
 		Store:          storeAdapter,
 		SavedViewStore: s,
@@ -1820,6 +1827,12 @@ func hasServeOAuthConfig(c *config.Config) bool {
 func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
 	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
 		return nil
+	}
+	// Push sources need a reachable daemon even between deliveries.
+	for _, channel := range c.Line {
+		if channel.Enabled {
+			return nil
+		}
 	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout

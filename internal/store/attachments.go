@@ -144,13 +144,9 @@ func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 			casAttachmentDownloaded(AttachmentRef{StoragePath: storagePath}) {
 			continue
 		}
-		eligible := attachmentpolicy.RetryEligible(state)
-		if state == attachmentpolicy.StateSkipped {
-			eligible = policy.Allows(attachmentpolicy.Conversation{
-				Type: item.ConversationType, ParticipantCount: item.ParticipantCount,
-			}, size)
-		}
-		if eligible {
+		if policy.RetryAllows(state, attachmentpolicy.Conversation{
+			Type: item.ConversationType, ParticipantCount: item.ParticipantCount,
+		}, size) {
 			items = append(items, item)
 			lastAdded = item.MessageID
 		}

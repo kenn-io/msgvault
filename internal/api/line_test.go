@@ -1,0 +1,259 @@
+package api
+
+import (
+	"bufio"
+	"context"
+	"database/sql"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/backup"
+	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/line"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/lineapi"
+	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
+)
+
+const lineTestBot = "U00000000000000000000000000000001"
+const lineTestSecret = "synthetic-line-secret"
+const lineTestPath = "/webhooks/line/2000000000"
+
+type lineAPIServerFixture struct {
+	server   *Server
+	st       *store.Store
+	sourceID int64
+	base     string
+	wakes    *atomic.Int64
+}
+
+func newLineAPIServer(t *testing.T, apiKey string, configure ...func(*Server)) lineAPIServerFixture {
+	t.Helper()
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("line", "2000000000")
+	require.NoError(t, err)
+	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
+	channels := []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}
+	wakes := new(atomic.Int64)
+	receiver := line.NewReceiver(st, channels, func(string) { wakes.Add(1) })
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Server.BindAddr = "127.0.0.1"
+	cfg.Server.APIKey = apiKey
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{stats: &StoreStats{}}, Logger: testLogger(), LineWebhook: receiver, OperationGate: NewSerialOperationGate()})
+	for _, configureServer := range configure {
+		configureServer(server)
+	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { done <- server.StartOnListener(listener) }()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, server.WaitStarted(ctx))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		require.NoError(t, server.Shutdown(ctx))
+		require.ErrorIs(t, <-done, http.ErrServerClosed)
+	})
+	return lineAPIServerFixture{server: server, st: st, sourceID: source.ID, base: "http://" + listener.Addr().String(), wakes: wakes}
+}
+
+func lineAPIRequest(t *testing.T, base, method, path, body string, headers http.Header) (int, string) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), method, base+path, strings.NewReader(body))
+	require.NoError(t, err)
+	request.Host = "archive.example.com"
+	request.Header = headers.Clone()
+	if request.Header == nil {
+		request.Header = make(http.Header)
+	}
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	raw, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	return response.StatusCode, string(raw)
+}
+
+func lineSignedHeaders(body string) http.Header {
+	return http.Header{"X-Line-Signature": {lineapi.Sign(lineTestSecret, []byte(body))}, "Content-Type": {"application/json"}}
+}
+func lineEnvelope(events string) string {
+	return `{"destination":"` + lineTestBot + `","events":` + events + `}`
+}
+func lineEvent(id string) string {
+	return `{"type":"message","webhookEventId":"` + id + `","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}`
+}
+
+func TestLineReceiptDuringBackupFreeze(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	dbPath := filepath.Join(t.TempDir(), "archive.db")
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	source, err := st.GetOrCreateSource("line", "2000000000")
+	must.NoError(err)
+	must.NoError(st.SetLineBotContext(t.Context(), source.ID, lineTestBot))
+	gate := NewSerialOperationGate()
+	wakes := 0
+	var server *Server
+	receiver := line.NewReceiver(st, []line.ReceiverChannel{{ChannelID: "2000000000", SourceID: source.ID, BotUserID: lineTestBot, Secret: lineTestSecret}}, func(string) {
+		if checks.True(server.backupFreeze.mu.TryLock(), "release the freeze mutex before waking processing") {
+			server.backupFreeze.mu.Unlock()
+		}
+		wakes++
+	})
+	server = NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: testLogger(), LineWebhook: receiver, OperationGate: gate})
+	t.Cleanup(func() { must.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
+	router := server.Router()
+	body := lineEnvelope("[" + lineEvent("freeze-event") + "]")
+	token := beginBackupFreeze(t, server)
+	for _, tc := range []struct {
+		body, signature string
+		status          int
+	}{
+		{body, "invalid-signature", http.StatusUnauthorized},
+		{`{"destination":"` + lineTestBot + `"}`, "", http.StatusBadRequest},
+		{lineEnvelope("[]"), "", http.StatusOK},
+	} {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, strings.NewReader(tc.body))
+		request.Header = lineSignedHeaders(tc.body)
+		if tc.signature != "" {
+			request.Header.Set("X-Line-Signature", tc.signature)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		checks.Equal(tc.status, response.Code, "authentication, validation, and empty checks precede the gate")
+	}
+	observedDB, observer := sqlobserve.OpenFile(t, "file:"+dbPath+"?mode=rw", nil)
+	observer.BeforeQuery = func(_ context.Context, statement string) {
+		if statement != "SELECT count(*) FROM sqlite_master" {
+			return
+		}
+		// Kit has checkpointed the main file, but hasn't pinned its snapshot.
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, strings.NewReader(body))
+		request.Header = lineSignedHeaders(body)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		checks.Equal(http.StatusServiceUnavailable, response.Code, "receipt during backup freeze")
+		checks.Zero(wakes)
+	}
+	session, err := backup.OpenFrozenSessionWithOpener(t.Context(), dbPath, backup.NoopFreezeCoordinator{}, backup.SQLiteOpenFunc(func(string, backup.SQLiteOpenOptions) (*sql.DB, error) {
+		return observedDB, nil
+	}))
+	must.NoError(err)
+	t.Cleanup(func() { must.NoError(session.Close()) })
+	var liveReceipts int
+	must.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM line_webhook_events").Scan(&liveReceipts))
+	checks.Zero(liveReceipts, "rejected receipts must leave the live archive empty")
+	endResponse := httptest.NewRecorder()
+	router.ServeHTTP(endResponse, endBackupFreeze(t, token))
+	must.Equal(http.StatusOK, endResponse.Code)
+	for range 2 {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, strings.NewReader(body))
+		request.Header = lineSignedHeaders(body)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		checks.Equal(http.StatusOK, response.Code)
+	}
+	rows, err := st.DueLineEventsContext(t.Context(), source.ID, time.Now(), 10)
+	must.NoError(err)
+	checks.Len(rows, 1, "redelivery after freeze commits exactly once")
+	checks.Equal(2, wakes)
+}
+
+func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+
+	fixture := newLineAPIServer(t, "")
+	server, st, sourceID, base, wakes := fixture.server, fixture.st, fixture.sourceID, fixture.base, fixture.wakes
+	must.True(server.listenerBound)
+	body := lineEnvelope("[" + lineEvent("security-event") + "]")
+	headers := lineSignedHeaders(body)
+	headers.Set("Origin", "https://hostile.example.com")
+	headers.Set("Cookie", sessionCookieName+"=ambient-cookie")
+	headers.Set("Forwarded", `host="malformed`)
+	status, response := lineAPIRequest(t, base, "POST", lineTestPath, body, headers)
+	checks.Equal(200, status, response)
+	rows, err := st.DueLineEventsContext(t.Context(), sourceID, time.Now(), 10)
+	must.NoError(err)
+	must.Len(rows, 1)
+	checks.Equal(int64(1), wakes.Load())
+	for _, tc := range []struct{ method, path string }{
+		{"GET", lineTestPath}, {"POST", "/other"},
+	} {
+		status, response := lineAPIRequest(t, base, tc.method, tc.path, body, lineSignedHeaders(body))
+		checks.Equal(403, status, tc.path+": "+response)
+		checks.Contains(response, "untrusted_host")
+	}
+	checks.Equal(int64(1), wakes.Load())
+	// Unknown channels also pass the host boundary.
+	status, response = lineAPIRequest(t, base, "POST", "/webhooks/line/2000000001", body, lineSignedHeaders(body))
+	checks.Equal(http.StatusNotFound, status, response)
+	checks.Empty(response)
+}
+
+func TestLineWebhookBurstWithAPIKey(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	fixture := newLineAPIServer(t, "synthetic-api-key")
+	for i := range 40 {
+		body := lineEnvelope("[" + lineEvent(fmt.Sprintf("burst-%d", i)) + "]")
+		status, response := lineAPIRequest(t, fixture.base, "POST", lineTestPath, body, lineSignedHeaders(body))
+		checks.Equal(http.StatusOK, status, response)
+	}
+	rows, err := fixture.st.DueLineEventsContext(t.Context(), fixture.sourceID, time.Now(), 100)
+	must.NoError(err)
+	checks.Len(rows, 40)
+}
+
+func TestLineWebhookCLIHeaderCannotDisableDeadlines(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	fixture := newLineAPIServer(t, "", func(server *Server) {
+		server.readTimeout = 250 * time.Millisecond //nolint:kennlint // deadlinetest: unfinished webhook bodies must release ingress without another client write
+	})
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, lineTestPath, nil)
+
+	readers := make([]*bufio.Reader, 0, 16)
+	for range 16 {
+		conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(t.Context(), "tcp4", strings.TrimPrefix(fixture.base, "http://"))
+		must.NoError(err)
+		t.Cleanup(func() { _ = conn.Close() })
+		must.NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
+		_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: archive.example.com\r\n%s: %s\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n{", lineTestPath, apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+		must.NoError(err)
+		reader := bufio.NewReader(conn)
+		response, err := http.ReadResponse(reader, request)
+		must.NoError(err)
+		must.Equal(http.StatusContinue, response.StatusCode, "receiver has admitted the unfinished body")
+		must.NoError(response.Body.Close())
+		readers = append(readers, reader)
+	}
+	for _, reader := range readers {
+		response, err := http.ReadResponse(reader, request)
+		must.NoError(err, "unfinished unsigned requests must expire while their connections remain open")
+		checks.Equal(http.StatusBadRequest, response.StatusCode)
+		must.NoError(response.Body.Close())
+	}
+	body := lineEnvelope("[" + lineEvent("after-read-deadline") + "]")
+	status, response := lineAPIRequest(t, fixture.base, http.MethodPost, lineTestPath, body, lineSignedHeaders(body))
+	checks.Equal(http.StatusOK, status, response)
+}
