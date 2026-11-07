@@ -661,3 +661,34 @@ func TestLocalEmbeddingsBuildIndexResumesUnfinishedInitialBuild(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) {
+	require := require.New(t)
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
+	f.server.SetLocalEmbeddings(f.controller)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/embeddings/local", nil)
+	request.Header.Set("Authorization", "Bearer owner")
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusAccepted, response.Code, response.Body.String())
+	var status api.LocalEmbeddingsStatus
+	require.Eventually(func() bool {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
+		request.Header.Set("Authorization", "Bearer owner")
+		request.RemoteAddr = "127.0.0.1:1234"
+		response := httptest.NewRecorder()
+		f.server.Router().ServeHTTP(response, request)
+		require.Equal(http.StatusOK, response.Code, response.Body.String())
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+		return !status.Running
+	}, 10*time.Second, 10*time.Millisecond)
+	require.True(status.Enabled, "the provider is published before the first index is built")
+	building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
+	require.NoError(err)
+	require.NotNil(building)
+	require.NotEmpty(status.Error, "an enabled provider does not mean its first index build succeeded")
+}
