@@ -176,7 +176,7 @@ func DiscoverWithExternalEvidence(
 	if err != nil {
 		return DiscoverResult{}, err
 	}
-	src, err := ResolveSource(st, req.SourceSelector)
+	src, err := ResolveSource(ctx, st, req.SourceSelector)
 	if err != nil {
 		return DiscoverResult{}, err
 	}

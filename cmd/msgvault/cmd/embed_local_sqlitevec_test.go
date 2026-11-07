@@ -77,7 +77,7 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { require.NoError(st.Close()) }()
-	_, err = st.DB().Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject) VALUES (3, 1, 1, 'a2', 'email', 'new message'); INSERT INTO message_bodies (message_id, body_text) VALUES (3, 'new body')`)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject) VALUES (3, 1, 1, 'a2', 'email', 'new message'); INSERT INTO message_bodies (message_id, body_text) VALUES (3, 'new body')`)
 	require.NoError(err)
 	embedFullRebuild = false
 	require.NoError(runEmbeddingsBuildLocal(command))

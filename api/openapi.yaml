@@ -2936,6 +2936,8 @@ components:
     CliSearchResponse:
       additionalProperties: true
       properties:
+        has_more:
+          type: boolean
         hybrid_available:
           type: boolean
         index_built:
@@ -6287,6 +6289,9 @@ components:
       properties:
         accelerator:
           type: string
+        candidate_limit_reached:
+          format: int64
+          type: integer
         generation:
           $ref: "#/components/schemas/HybridGenerationSummary"
         has_more:
@@ -6297,6 +6302,9 @@ components:
           type: boolean
         query:
           type: string
+        ranking_limit_reached:
+          format: int64
+          type: integer
         results:
           items:
             $ref: "#/components/schemas/HybridSearchItem"

@@ -32,7 +32,7 @@ func TestRunRepairLabelsLocalDryRunApplyAndNoop(t *testing.T) {
 	t.Cleanup(func() { cfg = savedCfg })
 
 	messageID := newLabelRepairArchive(t, "labels@example.test", cfg)
-	_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
 	beforeRevision := labelRepairArchiveRevision(t, cfg)
 	beforeCacheState, err := query.ReadCacheSyncState(cfg.AnalyticsDir())
@@ -181,7 +181,7 @@ func TestRunRepairLabelsLocalRebuildsCacheDespitePartialFailure(t *testing.T) {
 
 	newLabelRepairArchive(t, "one@example.test", cfg)
 	newLabelRepairArchive(t, "two@example.test", cfg)
-	_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 	require.NoError(err)
 	beforeRevision := labelRepairArchiveRevision(t, cfg)
 
@@ -239,12 +239,12 @@ func newLabelRepairArchive(t *testing.T, identifier string, configs ...*config.C
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchema())
 	source, err := st.GetOrCreateSource("imap", identifier)
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, "label-repair-thread", "Label repair")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "label-repair-thread", "Label repair")
 	require.NoError(t, err)
 
 	newMessage := func(sourceMessageID string) int64 {
@@ -269,9 +269,9 @@ func newLabelRepairArchive(t *testing.T, identifier string, configs ...*config.C
 		},
 	}}))
 
-	strayLabelID, err := st.EnsureLabel(source.ID, "stray-source-label", "Stray", "user")
+	strayLabelID, err := st.EnsureLabel(t.Context(), source.ID, "stray-source-label", "Stray", "user")
 	require.NoError(t, err)
-	_, err = st.ReconcileMessageLabels(messageID1, []int64{strayLabelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), messageID1, []int64{strayLabelID}, false)
 	require.NoError(t, err)
 
 	require.NoError(t, st.Close())
@@ -285,10 +285,10 @@ func labelRepairArchiveLabels(t *testing.T, messageID int64, configs ...*config.
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT l.name
 		FROM labels l
 		JOIN message_labels ml ON ml.label_id = l.id
@@ -314,7 +314,7 @@ func labelRepairArchiveRevision(t *testing.T, configs ...*config.Config) int64 {
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	revision, err := st.DerivedDataRevision()

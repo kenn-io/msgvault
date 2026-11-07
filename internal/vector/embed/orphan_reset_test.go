@@ -46,13 +46,15 @@ CREATE TABLE applied_migrations (
     name TEXT PRIMARY KEY,
     applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );`
-	_, err = mainDB.Exec(schema)
+	_, err = mainDB.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 	for i := 1; i <= n; i++ {
-		_, err := mainDB.Exec(
+		_, err := mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i))
 		require.NoError(t, err, "insert message")
-		_, err = mainDB.Exec(
+		_, err = mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i))
 		require.NoError(t, err, "insert body")
 	}
@@ -91,7 +93,7 @@ func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newOrphanFixture(t, 2)
 
 	// Simulate a recreated vectors.db: empty index_generations, but main.db
@@ -149,7 +151,7 @@ func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newOrphanFixture(t, 2)
 
 	// First Open: empty vectors.db. Create + activate a real generation with

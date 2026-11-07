@@ -368,7 +368,7 @@ func (w *AttachmentMirror) upload(
 	if attachmentOutcome(err) != "source_unavailable" {
 		return ref, err
 	}
-	entry, lookupErr := w.store.GetAttachmentPackEntry(d.ContentHash)
+	entry, lookupErr := w.store.GetAttachmentPackEntry(ctx, d.ContentHash)
 	if lookupErr != nil {
 		return ref, attachmentSourceError(lookupErr)
 	}

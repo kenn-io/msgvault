@@ -31,7 +31,7 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			source, err := f.Store.GetOrCreateSource("slack", "document-upgrade")
 			requirements.NoError(err)
 			f.Source = source
-			f.ConvID, err = f.Store.EnsureConversation(source.ID, "document-upgrade", "Document upgrade")
+			f.ConvID, err = f.Store.EnsureConversation(t.Context(), source.ID, "document-upgrade", "Document upgrade")
 			requirements.NoError(err)
 			ctx := t.Context()
 			exec := func(statement string, args ...any) {

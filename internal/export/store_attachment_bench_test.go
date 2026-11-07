@@ -38,7 +38,7 @@ func BenchmarkStoreAttachmentFromPathNew(b *testing.B) {
 		binary.LittleEndian.PutUint64(content, uint64(i))
 		require.NoError(b, os.WriteFile(src, content, 0o600))
 		b.StartTimer()
-		_, _, _, err := StoreAttachmentFromPath(dir, src, 0)
+		_, _, _, err := StoreAttachmentFromPath(b.Context(), dir, src, 0)
 		require.NoError(b, err)
 	}
 }
@@ -48,7 +48,7 @@ func BenchmarkStoreAttachmentFromPathDuplicate(b *testing.B) {
 	src := filepath.Join(b.TempDir(), "source.bin")
 	content := bytes.Repeat([]byte("duplicate path attachment ingest payload\n"), 4096)
 	require.NoError(b, os.WriteFile(src, content, 0o600))
-	storagePath, contentHash, storedSize, err := StoreAttachmentFromPath(dir, src, 0)
+	storagePath, contentHash, storedSize, err := StoreAttachmentFromPath(b.Context(), dir, src, 0)
 	require.NoError(b, err)
 	require.NotEmpty(b, storagePath)
 	require.NotEmpty(b, contentHash)
@@ -57,7 +57,7 @@ func BenchmarkStoreAttachmentFromPathDuplicate(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		_, _, _, err := StoreAttachmentFromPath(dir, src, 0)
+		_, _, _, err := StoreAttachmentFromPath(b.Context(), dir, src, 0)
 		require.NoError(b, err)
 	}
 }

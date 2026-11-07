@@ -2859,6 +2859,7 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
+	HasMore          *bool                    `json:"has_more,omitempty"`
 	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexState       *string                  `json:"index_state,omitzero"`
@@ -6105,18 +6106,20 @@ func (h HybridSearchMatch) Validate() error {
 }
 
 type HybridSearchResponse struct {
-	Accelerator      *string                 `json:"accelerator,omitzero"`
-	Generation       HybridGenerationSummary `json:"generation"`
-	HasMore          bool                    `json:"has_more"`
-	Mode             string                  `json:"mode" validate:"required"`
-	PoolSaturated    bool                    `json:"pool_saturated"`
-	Query            string                  `json:"query" validate:"required"`
-	Results          []HybridSearchItem      `json:"results" validate:"required"`
-	Returned         int64                   `json:"returned"`
-	ScopeLabel       *string                 `json:"scope_label,omitzero"`
-	ScopeSourceCount *int64                  `json:"scope_source_count,omitempty"`
-	Timings          HybridSearchTimings     `json:"timings"`
-	TookMs           int64                   `json:"took_ms"`
+	Accelerator           *string                 `json:"accelerator,omitzero"`
+	CandidateLimitReached *int64                  `json:"candidate_limit_reached,omitempty"`
+	Generation            HybridGenerationSummary `json:"generation"`
+	HasMore               bool                    `json:"has_more"`
+	Mode                  string                  `json:"mode" validate:"required"`
+	PoolSaturated         bool                    `json:"pool_saturated"`
+	Query                 string                  `json:"query" validate:"required"`
+	RankingLimitReached   *int64                  `json:"ranking_limit_reached,omitempty"`
+	Results               []HybridSearchItem      `json:"results" validate:"required"`
+	Returned              int64                   `json:"returned"`
+	ScopeLabel            *string                 `json:"scope_label,omitzero"`
+	ScopeSourceCount      *int64                  `json:"scope_source_count,omitempty"`
+	Timings               HybridSearchTimings     `json:"timings"`
+	TookMs                int64                   `json:"took_ms"`
 }
 
 func (h HybridSearchResponse) Validate() error {

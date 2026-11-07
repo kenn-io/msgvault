@@ -46,7 +46,7 @@ func requireTemplate(t *testing.T, dbURL string) *pgTemplate {
 func currentSchemaOf(t *testing.T, st *store.Store) string {
 	t.Helper()
 	var name string
-	require.NoError(t, st.DB().QueryRow("SELECT current_schema()").Scan(&name), "select current_schema")
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT current_schema()").Scan(&name), "select current_schema")
 	return name
 }
 
@@ -56,7 +56,7 @@ func currentSchemaOf(t *testing.T, st *store.Store) string {
 func countSources(t *testing.T, st *store.Store) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow("SELECT count(*) FROM sources").Scan(&count), "count sources")
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM sources").Scan(&count), "count sources")
 	return count
 }
 
@@ -65,7 +65,7 @@ func countSources(t *testing.T, st *store.Store) int {
 func currentDatabaseOf(t *testing.T, st *store.Store) string {
 	t.Helper()
 	var name string
-	require.NoError(t, st.DB().QueryRow("SELECT current_database()").Scan(&name), "select current_database")
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT current_database()").Scan(&name), "select current_database")
 	return name
 }
 
@@ -74,7 +74,7 @@ func databaseExists(t *testing.T, db *sql.DB, name string) bool {
 	t.Helper()
 	var count int
 	require.NoError(t,
-		db.QueryRow("SELECT count(*) FROM pg_database WHERE datname = $1", name).Scan(&count),
+		db.QueryRowContext(t.Context(), "SELECT count(*) FROM pg_database WHERE datname = $1", name).Scan(&count),
 		"count pg_database rows")
 	return count > 0
 }
@@ -175,9 +175,10 @@ func TestNewTestStoreFallsBackWhenTemplatesDisabled(t *testing.T) {
 // leaking them on failure.
 func createOwnedDatabaseForTest(t *testing.T, admin *sql.DB, name string) {
 	t.Helper()
-	_, err := admin.Exec("CREATE DATABASE " + name)
+	_, err := admin.ExecContext(t.Context(), "CREATE DATABASE "+name)
 	require.NoErrorf(t, err, "create database %s", name)
-	t.Cleanup(func() { dropOwnedDatabase(admin, name) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, name) })
 }
 
 // TestSweepReclaimsOnlyUnownedTemplates covers the sweep's ownership rule: a
@@ -189,7 +190,7 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := requirePostgresTestURL(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Sibling test binaries sweep the configured database's scope too. Use a
 	// private database so they cannot claim the staged orphans before this test.
@@ -198,7 +199,8 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	require.NoError(err, "open parent admin connection")
 	privateDB, err := parent.clone(ctx)
 	require.NoError(err, "clone private lock scope")
-	t.Cleanup(func() { dropOwnedDatabase(parentAdmin, privateDB) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { dropOwnedDatabase(context.WithoutCancel(t.Context()), parentAdmin, privateDB) })
 	dbURL = withDatabase(dbURL, privateDB)
 
 	admin, err := pgAdminDB(dbURL)
@@ -208,8 +210,9 @@ func TestSweepReclaimsOnlyUnownedTemplates(t *testing.T) {
 	// This binary's own template first: building it sweeps, and the staged
 	// databases below must be judged by the sweep under test, not that one.
 	own := requireTemplate(t, dbURL)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		dropOwnedDatabase(admin, own.name())
+		dropOwnedDatabase(context.WithoutCancel(t.Context()), admin, own.name())
 		_, _ = own.owner.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", templateLockKey(own.token))
 		_ = own.owner.Close()
 	})
@@ -272,18 +275,21 @@ func TestDropOwnedDatabaseIgnoresForeignNames(t *testing.T) {
 	require.NoError(err, "open admin connection")
 
 	var configured string
-	require.NoError(admin.QueryRow("SELECT current_database()").Scan(&configured), "configured database")
+	require.NoError(admin.QueryRowContext(t.Context(), "SELECT current_database()").Scan(&configured), "configured database")
 	// Not through createOwnedDatabaseForTest: its cleanup is the function under
 	// test, which must refuse this name, so the test drops it directly.
 	lookalike := templateDBPrefix + "lookalike"
-	_, err = admin.Exec("DROP DATABASE IF EXISTS " + lookalike)
+	_, err = admin.ExecContext(t.Context(), "DROP DATABASE IF EXISTS "+lookalike)
 	require.NoError(err, "clear a leftover lookalike")
-	_, err = admin.Exec("CREATE DATABASE " + lookalike)
+	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+lookalike)
 	require.NoError(err, "create lookalike database")
-	t.Cleanup(func() { _, _ = admin.Exec("DROP DATABASE IF EXISTS " + lookalike) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() {
+		_, _ = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP DATABASE IF EXISTS "+lookalike)
+	})
 
-	dropOwnedDatabase(admin, configured)
-	dropOwnedDatabase(admin, lookalike)
+	dropOwnedDatabase(t.Context(), admin, configured)
+	dropOwnedDatabase(t.Context(), admin, lookalike)
 
 	assert.True(databaseExists(t, admin, configured), "the configured database can never be a target")
 	assert.True(databaseExists(t, admin, lookalike), "a name outside the generated shape is never dropped")

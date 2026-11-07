@@ -2,7 +2,6 @@ package client
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -170,7 +169,7 @@ func TestGeneratedPersonMergeRoundTrip(t *testing.T) {
 	require.NoError(err)
 
 	response, err := client.MergePersonsWithResponse(
-		context.Background(), &generated.MergePersonsRequestOptions{
+		t.Context(), &generated.MergePersonsRequestOptions{
 			PathParams: &generated.MergePersonsPath{ID: 7},
 			Header: &generated.MergePersonsHeaders{
 				IfMatch:        `"person-7-r3", "person-9-r2"`,
@@ -550,7 +549,7 @@ func TestCreateCommunicationServiceAcceptsIdempotentOKResponse(t *testing.T) {
 	require.NoError(err)
 
 	service, err := c.CreateCommunicationService(
-		context.Background(), &generated.CreateCommunicationServiceRequestOptions{
+		t.Context(), &generated.CreateCommunicationServiceRequestOptions{
 			Body: &generated.CreateCommunicationServiceBody{
 				Slug: "example-chat", DisplayLabel: "Example Chat",
 				ScopePolicy:   generated.CreateCommunicationServiceRequestScopePolicyNone,
@@ -1014,7 +1013,7 @@ func TestListChangedMessagesRoundTripsTheCursorVerbatim(t *testing.T) {
 	// First poll: a consumer with no cursor yet. Sending cursor= would be a
 	// different request than omitting it, so the client must omit.
 	limit := int64(100)
-	first, err := c.ListChangedMessages(context.Background(), &generated.ListChangedMessagesRequestOptions{
+	first, err := c.ListChangedMessages(t.Context(), &generated.ListChangedMessagesRequestOptions{
 		Query: &generated.ListChangedMessagesQuery{Limit: &limit},
 	})
 	require.NoError(err, "ListChangedMessages first poll")
@@ -1032,7 +1031,7 @@ func TestListChangedMessagesRoundTripsTheCursorVerbatim(t *testing.T) {
 
 	// Second poll: the response fed straight back, exactly as the docs tell a
 	// consumer to do it.
-	second, err := c.ListChangedMessages(context.Background(), &generated.ListChangedMessagesRequestOptions{
+	second, err := c.ListChangedMessages(t.Context(), &generated.ListChangedMessagesRequestOptions{
 		Query: &generated.ListChangedMessagesQuery{
 			Cursor: &first.NextCursor,
 			Limit:  &limit,
@@ -1121,7 +1120,7 @@ func TestListChangedMessagesDecodesTheDocumentedErrors(t *testing.T) {
 			require.NoError(err, "New")
 
 			resp, err := c.ListChangedMessagesWithResponse(
-				context.Background(), &generated.ListChangedMessagesRequestOptions{})
+				t.Context(), &generated.ListChangedMessagesRequestOptions{})
 			require.Error(err, "an error status must be reported as an error")
 			require.NotNil(resp, "the response is what carries the decoded body")
 			assert.Equal(tc.status, resp.StatusCode, "status code")
@@ -1155,7 +1154,7 @@ func TestGeneratedGetAttachmentContentReturnsBinaryBytes(t *testing.T) {
 	c, err := generated.NewDefaultClient(server.URL, runtime.WithHTTPClient(httpClientDoer{client: http.DefaultClient}))
 	require.NoError(err, "NewDefaultClient")
 
-	got, err := c.GetAttachmentContent(context.Background(), &generated.GetAttachmentContentRequestOptions{
+	got, err := c.GetAttachmentContent(t.Context(), &generated.GetAttachmentContentRequestOptions{
 		PathParams: &generated.GetAttachmentContentPath{Hash: hash},
 	})
 	require.NoError(err, "GetAttachmentContent")
@@ -1181,9 +1180,9 @@ func TestGetAttachmentContentVerifiesRequestedHash(t *testing.T) {
 	options := &generated.GetAttachmentContentRequestOptions{
 		PathParams: &generated.GetAttachmentContentPath{Hash: hash},
 	}
-	_, err = c.GetAttachmentContent(context.Background(), options)
+	_, err = c.GetAttachmentContent(t.Context(), options)
 	require.ErrorIs(err, contentverify.ErrMismatch)
-	response, err := c.GetAttachmentContentWithResponse(context.Background(), options)
+	response, err := c.GetAttachmentContentWithResponse(t.Context(), options)
 	require.ErrorIs(err, contentverify.ErrMismatch)
 	require.NotNil(response)
 	assert.Equal(t, corrupt, response.Body)
@@ -1203,7 +1202,7 @@ func TestNewCreatesTypedClient(t *testing.T) {
 	require.NoError(
 		err, "New")
 
-	stats, err := client.GetStats(context.Background())
+	stats, err := client.GetStats(t.Context())
 	require.NoError(
 		err, "GetStats")
 
@@ -1227,7 +1226,7 @@ func TestRunQueryDecodesScalarCells(t *testing.T) {
 	require.NoError(
 		err, "New")
 
-	got, err := c.RunQuery(context.Background(), &generated.RunQueryRequestOptions{
+	got, err := c.RunQuery(t.Context(), &generated.RunQueryRequestOptions{
 		Body: &generated.RunQueryBody{SQL: "SELECT 1"},
 	})
 	require.NoError(
@@ -1308,7 +1307,7 @@ func TestGetMessageRendersLargeIDInPath(t *testing.T) {
 	c, err := New(server.URL)
 	require.NoError(err, "New")
 
-	resp, err := c.GetMessageWithResponse(context.Background(), &generated.GetMessageRequestOptions{
+	resp, err := c.GetMessageWithResponse(t.Context(), &generated.GetMessageRequestOptions{
 		PathParams: &generated.GetMessagePath{ID: 24489626},
 	})
 	require.NoError(err, "GetMessageWithResponse")
@@ -1332,7 +1331,7 @@ func TestListMessagesRendersLargeQueryValue(t *testing.T) {
 	require.NoError(err, "New")
 
 	page := int64(12345678)
-	resp, err := c.ListMessagesWithResponse(context.Background(), &generated.ListMessagesRequestOptions{
+	resp, err := c.ListMessagesWithResponse(t.Context(), &generated.ListMessagesRequestOptions{
 		Query: &generated.ListMessagesQuery{Page: &page},
 	})
 	require.NoError(err, "ListMessagesWithResponse")
@@ -1356,7 +1355,7 @@ func TestAddAccountAcceptsIdempotentOK(t *testing.T) {
 	require.NoError(
 		err, "New")
 
-	got, err := c.AddAccount(context.Background(), &generated.AddAccountRequestOptions{
+	got, err := c.AddAccount(t.Context(), &generated.AddAccountRequestOptions{
 		Body: &generated.AddAccountBody{
 			Email:    "alice@example.com",
 			Enabled:  true,
@@ -1392,7 +1391,7 @@ func TestCreatePersonAcceptsIdempotentOK(t *testing.T) {
 	c, err := New(server.URL)
 	require.NoError(err, "New")
 
-	got, err := c.CreatePerson(context.Background(), &generated.CreatePersonRequestOptions{
+	got, err := c.CreatePerson(t.Context(), &generated.CreatePersonRequestOptions{
 		Body: &generated.CreatePersonBody{ParticipantID: 42},
 	})
 	require.NoError(err, "CreatePerson")
@@ -1418,7 +1417,7 @@ func TestImportMeetingAcceptsIdempotentOK(t *testing.T) {
 	c, err := New(server.URL)
 	require.NoError(err, "New")
 
-	got, err := c.ImportMeeting(context.Background(), &generated.ImportMeetingRequestOptions{
+	got, err := c.ImportMeeting(t.Context(), &generated.ImportMeetingRequestOptions{
 		Body: &generated.ImportMeetingBody{
 			Source: generated.Source{
 				Identifier:   "local-meetings",
@@ -1455,7 +1454,7 @@ func TestStageDeletionAcceptsDryRunOK(t *testing.T) {
 
 	sender := "alice@example.com"
 	dryRun := true
-	got, err := c.StageDeletion(context.Background(), &generated.StageDeletionRequestOptions{
+	got, err := c.StageDeletion(t.Context(), &generated.StageDeletionRequestOptions{
 		Body: &generated.StageDeletionBody{
 			Filter: &generated.StageDeletionFilter{Sender: &sender},
 			DryRun: &dryRun,
@@ -1486,7 +1485,7 @@ func TestCaptureTelemetryEventSendsPropertyValues(t *testing.T) {
 
 	c, err := New(server.URL)
 	require.NoError(err, "New")
-	_, err = c.CaptureTelemetryEvent(context.Background(), &generated.CaptureTelemetryEventRequestOptions{
+	_, err = c.CaptureTelemetryEvent(t.Context(), &generated.CaptureTelemetryEventRequestOptions{
 		Body: &generated.CaptureTelemetryEventBody{
 			Event:      "app_opened",
 			Properties: map[string]any{"surface": "web"},

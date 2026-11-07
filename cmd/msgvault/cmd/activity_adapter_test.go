@@ -32,7 +32,8 @@ func TestStoreAPIAdapterServesActivityRoute(t *testing.T) {
 		Store:  &storeAPIAdapter{store: st},
 		Logger: slog.New(slog.DiscardHandler),
 	})
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID),
 		nil,

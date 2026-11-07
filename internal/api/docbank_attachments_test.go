@@ -38,7 +38,7 @@ func TestDocbankAttachmentBackfillConsentAndRetry(t *testing.T) {
 	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: sched, Logger: slog.New(slog.DiscardHandler)})
 	router := server.Router()
 	post := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/integrations/docbank/attachments/backfill", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/integrations/docbank/attachments/backfill", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		return w
@@ -100,7 +100,7 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	server := NewServerWithOptions(ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
 	get := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
 		return w
 	}
 	response := get()
@@ -138,7 +138,7 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	server.docbankAttachments = &DocbankAttachmentReader{Store: f.Store, Destination: "destination", Folder: "/msgvault"}
 	get = func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
 		return w
 	}
 	var running DocbankAttachmentStatus
@@ -186,10 +186,10 @@ func TestDocbankAttachmentFileReceipt(t *testing.T) {
 	ref := store.DocbankAttachmentRef{Endpoint: "https://docbank.example.com", Folder: "/msgvault", NodeID: 8, VersionID: "v1", BlobHash: hash}
 	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash}, ref, ""))
 	var id int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM attachments WHERE message_id=?"), mid).Scan(&id))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind("SELECT id FROM attachments WHERE message_id=?"), mid).Scan(&id))
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Logger: slog.New(slog.DiscardHandler)})
 	response := httptest.NewRecorder()
-	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/files/%d", id), nil))
+	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/files/%d", id), nil))
 	require.Equal(http.StatusOK, response.Code)
 	var file FileMetadataResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &file))

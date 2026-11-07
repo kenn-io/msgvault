@@ -47,7 +47,7 @@ func TestFilenameDiscoverySchedulerOneBatch(t *testing.T) {
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	for i := range 1201 {
-		_, err = tx.Exec(f.Store.Rebind(`INSERT INTO attachments
+		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
 			(message_id, filename, storage_path) VALUES (?, ?, '')`), message, fmt.Sprintf("report-%04d.pdf", i))
 		require.NoError(t, err)
 	}
@@ -61,7 +61,7 @@ func TestFilenameDiscoverySchedulerOneBatch(t *testing.T) {
 		t.Cleanup(func() { <-sched.Stop().Done() })
 		require.NoError(registerFilenameDiscoveryJob(sched, f.Store))
 		var count int
-		require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
 		assert.Zero(count, "registration never bootstraps the archive")
 		disposition, err := sched.StartJob("filename-discovery", false)
 		require.NoError(err)
@@ -69,14 +69,14 @@ func TestFilenameDiscoverySchedulerOneBatch(t *testing.T) {
 		<-gate.waiting
 		gate.permit <- struct{}{}
 		<-gate.waiting // follow-up must release and reacquire the scheduler gate
-		require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
 		assert.Equal(500, count)
 		status, err := f.Store.FilenameDiscoveryStatusContext(t.Context())
 		require.NoError(err)
 		assert.Equal("bootstrap", status.Phase)
 		<-sched.Stop().Done()
 		synctest.Wait()
-		require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
 		assert.Equal(500, count, "shutdown cancels the queued next batch")
 	})
 }
@@ -102,7 +102,7 @@ func TestFilenameDiscoverySchedulerCancellation(t *testing.T) {
 		require.NoError(err)
 		assert.Zero(status.Generation)
 		var count int
-		require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
 		assert.Zero(count)
 	})
 }
@@ -113,7 +113,7 @@ func TestFilenameDiscoveryWarmMaintenanceDoesNotExtendIdleTimeout(t *testing.T) 
 		require := require.New(t)
 		f := storetest.New(t)
 		message := f.CreateMessage("filename-idle-maintenance")
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path)
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path)
 			VALUES(?,'report.pdf','')`), message)
 		require.NoError(err)
 		ready := false

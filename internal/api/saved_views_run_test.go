@@ -35,13 +35,14 @@ func newSavedViewRunTestServer(t *testing.T) (*Server, *store.Store) {
 		Engine:         newExploreDuckDBFixture(t),
 		Logger:         testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	return srv, st
 }
 
 func createRunTestView(t *testing.T, st *store.Store, name, state string) *store.SavedView {
 	t.Helper()
-	view, err := st.CreateSavedView(context.Background(), store.SavedViewInput{
+	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{
 		Name: name, CanonicalState: json.RawMessage(state), SchemaVersion: store.CurrentSavedViewSchemaVersion,
 	})
 	require.NoError(t, err)
@@ -100,7 +101,8 @@ func TestRunSavedViewPreservesVersionedPipeMeaning(t *testing.T) {
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st, SavedViewStore: st,
 		Engine: engine, Logger: testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{
 		Name: "v1 literal AND", SchemaVersion: 1,
 		CanonicalState: json.RawMessage(`{"query":"alpha | gamma","search_mode":"full_text"}`),
@@ -321,7 +323,8 @@ func TestRunSavedViewFilesDeclaresSemanticDeletionScope(t *testing.T) {
 		Store:          &mockStore{messages: []APIMessage{{ID: 1}}, total: 1, stats: &StoreStats{}},
 		SavedViewStore: st, Engine: engine, HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	view := createRunTestView(t, st, "Semantic files", `{"query":"alpha","search_mode":"semantic","presentation":"files"}`)
 
 	response, page := runSavedView(t, srv, view.ID, `{}`)

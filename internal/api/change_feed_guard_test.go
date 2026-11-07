@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,9 +33,10 @@ func newChangeFeedGuardTestServer(
 }
 
 func requestChangeFeed(
+	ctx context.Context,
 	srv *Server, origin string, fetchSites []string, apiKey string,
 ) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/changes?limit=1", nil)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages/changes?limit=1", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	if origin != "" {
 		req.Header.Set("Origin", origin)
@@ -74,7 +76,7 @@ func TestChangeFeedGuard_KeylessBrowserOrigin(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, lister := newChangeFeedGuardTestServer(t, "")
 
-			w := requestChangeFeed(srv, tt.origin, tt.fetchSites, "")
+			w := requestChangeFeed(t.Context(), srv, tt.origin, tt.fetchSites, "")
 
 			require.Equal(t, tt.wantStatus, w.Code, "body: %s", w.Body.String())
 			assert.Equal(t, tt.wantCalls, lister.calls,
@@ -91,7 +93,7 @@ func TestChangeFeedGuard_APIKeyAllowsCrossOrigin(t *testing.T) {
 	const apiKey = "change-feed-test-key"
 	srv, lister := newChangeFeedGuardTestServer(t, apiKey)
 
-	w := requestChangeFeed(srv, "https://dashboard.example", []string{"cross-site"}, apiKey)
+	w := requestChangeFeed(t.Context(), srv, "https://dashboard.example", []string{"cross-site"}, apiKey)
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.Equal(t, 1, lister.calls, "an explicit API key is not an ambient browser credential")
@@ -104,11 +106,11 @@ func TestChangeFeedGuard_LoopbackCannotBypassRateLimit(t *testing.T) {
 	srv, lister := newChangeFeedGuardTestServer(t, "")
 
 	for requestNumber := 1; requestNumber <= 4; requestNumber++ {
-		w := requestChangeFeed(srv, "", nil, "")
+		w := requestChangeFeed(t.Context(), srv, "", nil, "")
 		require.Equalf(http.StatusOK, w.Code, "request %d body: %s", requestNumber, w.Body.String())
 	}
 
-	w := requestChangeFeed(srv, "", nil, "")
+	w := requestChangeFeed(t.Context(), srv, "", nil, "")
 	require.Equal(http.StatusTooManyRequests, w.Code, "body: %s", w.Body.String())
 	assert.NotEmpty(w.Header().Get("Retry-After"))
 	assert.Equal(4, lister.calls,

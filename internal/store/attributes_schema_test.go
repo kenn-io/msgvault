@@ -16,7 +16,7 @@ import (
 func insertRawDefinition(t *testing.T, st *store.Store, slug string) int64 {
 	t.Helper()
 	var id int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO attribute_definitions
 		    (universal_id, object_type, slug, label, value_type, field_type)
 		VALUES (?, 'person', ?, ?, 'text', 'text')
@@ -31,7 +31,7 @@ func TestInitSchemaAddsSensitivityToLegacyAttributeDefinitions(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "legacy-attributes.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TABLE attribute_definitions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			universal_id TEXT NOT NULL UNIQUE,
@@ -77,7 +77,7 @@ func insertRawValue(
 ) error {
 	t.Helper()
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(args)), ", ")
-	_, err := st.DB().Exec(st.Rebind(fmt.Sprintf(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(fmt.Sprintf(`
 		INSERT INTO person_attribute_values
 		    (person_id, definition_id, source, %s)
 		VALUES (?, ?, 'user', %s)
@@ -103,7 +103,7 @@ func TestAttributeSchemaRejectsNoTypedValueColumn(t *testing.T) {
 	person := mustSchemaTestPerson(t, st)
 	definition := insertRawDefinition(t, st, "needs_a_value")
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO person_attribute_values (person_id, definition_id, source)
 		VALUES (?, ?, 'user')
 	`), person, definition)
@@ -187,7 +187,7 @@ func TestAttributeSchemaAllowsOnlyOneCurrentValuePerOrdinal(t *testing.T) {
 		"value_text, ordinal, active_from", "second", 0, from.Add(time.Hour))
 	require.Error(err, "two active rows at the same ordinal must violate the unique index")
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_attribute_values
 		SET active_until = ?, superseded_at = ?
 		WHERE person_id = ? AND definition_id = ? AND ordinal = 0 AND active_until IS NULL
@@ -198,7 +198,7 @@ func TestAttributeSchemaAllowsOnlyOneCurrentValuePerOrdinal(t *testing.T) {
 		"value_text, ordinal, active_from", "second", 0, from.Add(time.Hour)))
 
 	var historyCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM person_attribute_values
 		WHERE person_id = ? AND definition_id = ?
 	`), person, definition).Scan(&historyCount))
@@ -218,7 +218,7 @@ func TestAttributeSchemaProvenanceVocabularyIsOpenAtTheDatabase(t *testing.T) {
 	definition := insertRawDefinition(t, st, "provenance_probe")
 
 	for ordinal, provenance := range store.AllProvenances {
-		_, err := st.DB().Exec(st.Rebind(`
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO person_attribute_values
 			    (person_id, definition_id, ordinal, value_text, source)
 			VALUES (?, ?, ?, ?, ?)
@@ -226,7 +226,7 @@ func TestAttributeSchemaProvenanceVocabularyIsOpenAtTheDatabase(t *testing.T) {
 		require.NoError(t, err, "provenance %q must be accepted", provenance)
 	}
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO person_attribute_values
 		    (person_id, definition_id, ordinal, value_text, source)
 		VALUES (?, ?, ?, ?, ?)
@@ -247,7 +247,7 @@ func TestAttributeSchemaRefusesDeletingADefinitionThatHasValues(t *testing.T) {
 	definition := insertRawDefinition(t, st, "restricted")
 	require.NoError(t, insertRawValue(t, st, person, definition, "value_text", "alice"))
 
-	_, err := st.DB().Exec(st.Rebind(
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(
 		`DELETE FROM attribute_definitions WHERE id = ?`), definition)
 	require.Error(t, err, "ON DELETE RESTRICT must refuse while values exist")
 }
@@ -261,12 +261,12 @@ func TestAttributeSchemaCascadesValuesWhenAPersonIsDeleted(t *testing.T) {
 	require.NoError(insertRawValue(t, st, person, definition, "value_text", "alice"))
 
 	var revision int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT revision FROM persons WHERE id = ?`), person).Scan(&revision))
 	require.NoError(st.DeletePerson(person, revision))
 
 	var remaining int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM person_attribute_values WHERE person_id = ?`),
 		person).Scan(&remaining))
 	assert.Equal(0, remaining)

@@ -119,7 +119,7 @@ func TestSyncMuesliOutputMatchesBase(t *testing.T) {
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, start_time TEXT, created_at TEXT, raw_transcript TEXT);
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, start_time TEXT, created_at TEXT, raw_transcript TEXT);
 		INSERT INTO meetings VALUES (1, 'Planning', '2026-09-01T14:00:00Z', '2026-09-01 14:00:03', 'Synthetic meeting notes')`)
 	require.NoError(err)
 	require.NoError(db.Close())
@@ -255,7 +255,7 @@ func TestMeetingProviderErrorsMatchBase(t *testing.T) {
 	t.Run("scheduled sync of an unregistered source", func(t *testing.T) {
 		require := require.New(t)
 		st := testutil.NewTestStore(t)
-		ctx := testInvocationContext(context.Background(), config.NewDefaultConfig(), invocationOptions{})
+		ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{})
 
 		require.EqualError(runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work", APIKey: "grn_test"}),
 			`granola source "work" is not registered; run msgvault add-granola work`)
@@ -292,8 +292,8 @@ func TestMeetingSourcesResolve(t *testing.T) {
 func TestMeetingSyncRunFinish(t *testing.T) {
 	importErr := errors.New("provider failed")
 	refreshErr := errors.New("refresh failed")
-	live := context.Background()
-	canceled, cancel := context.WithCancel(context.Background())
+	live := t.Context()
+	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	for _, tc := range []struct {
 		name          string

@@ -34,7 +34,7 @@ func (s *Store) AdoptMessageSourceIDContext(
 	}
 	var changed bool
 	err := s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
-		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `

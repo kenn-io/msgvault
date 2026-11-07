@@ -1,7 +1,6 @@
 package taskclient
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +56,7 @@ func TestClientProtocolOperations(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newLoopbackClient(t, server.URL, "operation-test-key", nil)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	project, err := client.ResolveProject(ctx, "test-project")
 	requirements.NoError(err)
@@ -122,7 +121,7 @@ func TestClientEncodesIdentifierPathSegmentsOnce(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := newLoopbackClient(t, server.URL, "encoding-test-key", nil)
 
-			task, err := client.GetTask(context.Background(), test.project, test.taskID)
+			task, err := client.GetTask(t.Context(), test.project, test.taskID)
 
 			require.NoError(t, err)
 			assert.Equal(t, test.wantPath, <-escapedPaths)
@@ -164,7 +163,7 @@ func TestClientOperationsEncodeIdentifiersOnceAcrossEndpoints(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newLoopbackClient(t, server.URL, "encoding-test-key", nil)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	resolved, err := client.ResolveProject(ctx, project)
 	requirements.NoError(err)
@@ -208,7 +207,7 @@ func TestClientRejectsIdentifiersWithPathDelimiters(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newLoopbackClient(t, server.URL, "rejection-test-key", nil)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, invalid := range []string{"", ".", "..", "a/b", `a\b`, "a?b", "a#b"} {
 		_, err := client.GetTask(ctx, invalid, "task-test")
@@ -223,10 +222,10 @@ func TestClientRequiresMutationSafetyHeaders(t *testing.T) {
 	client, err := New(ClientOptions{Endpoint: "https://tasks.example.com", APIKey: "test-key"})
 	require.NoError(t, err)
 
-	_, err = client.CreateTask(context.Background(), "test-project", "", TaskCreate{Title: "Synthetic task"})
+	_, err = client.CreateTask(t.Context(), "test-project", "", TaskCreate{Title: "Synthetic task"})
 	require.ErrorIs(t, err, ErrIdempotencyKeyRequired)
 
-	_, err = client.MutateMetadata(context.Background(), "test-project", "task-test", "", map[string]any{})
+	_, err = client.MutateMetadata(t.Context(), "test-project", "task-test", "", map[string]any{})
 	require.ErrorIs(t, err, ErrRevisionRequired)
 }
 
@@ -235,7 +234,7 @@ func TestClientValidatesResponseShapesAndAuthentication(t *testing.T) {
 		server := capabilityServer(t, Capabilities{}, http.StatusUnauthorized)
 		client := newLoopbackClient(t, server.URL, "rejected-test-key", nil)
 
-		_, err := client.Capabilities(context.Background())
+		_, err := client.Capabilities(t.Context())
 
 		assert.ErrorIs(t, err, ErrAuthenticationRequired)
 	})
@@ -247,7 +246,7 @@ func TestClientValidatesResponseShapesAndAuthentication(t *testing.T) {
 		t.Cleanup(server.Close)
 		client := newLoopbackClient(t, server.URL, "shape-test-key", nil)
 
-		_, err := client.GetTask(context.Background(), "test-project", "task-test")
+		_, err := client.GetTask(t.Context(), "test-project", "task-test")
 
 		assert.ErrorIs(t, err, ErrInvalidResponse)
 	})
@@ -261,7 +260,7 @@ func TestClientUsesETagAsTaskRevision(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := newLoopbackClient(t, server.URL, "etag-test-key", nil)
 
-	task, err := client.GetTask(context.Background(), "test-project", "task-test")
+	task, err := client.GetTask(t.Context(), "test-project", "task-test")
 
 	require.NoError(t, err)
 	assert.Equal(t, `"etag-revision"`, task.Revision)
@@ -289,7 +288,7 @@ func TestCapabilitiesClassifyReachedHTTPResponses(t *testing.T) {
 			server := capabilityServer(t, Capabilities{}, test.statusCode)
 			client := newLoopbackClient(t, server.URL, "protocol-test-key", nil)
 
-			_, err := client.Capabilities(context.Background())
+			_, err := client.Capabilities(t.Context())
 
 			require.ErrorIs(t, err, test.want)
 		})
@@ -301,7 +300,7 @@ func TestCapabilitiesClassifyReachedHTTPResponses(t *testing.T) {
 		server.Close()
 		client := newLoopbackClient(t, endpoint, "protocol-test-key", nil)
 
-		_, err := client.Capabilities(context.Background())
+		_, err := client.Capabilities(t.Context())
 
 		require.ErrorIs(t, err, ErrUnreachable)
 	})
@@ -316,7 +315,7 @@ func TestTaskOperationsPreserveConflictResponses(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := newLoopbackClient(t, server.URL, "conflict-test-key", nil)
 
-			_, err := client.MutateMetadata(context.Background(), "test-project", "task-test", `"r1"`, map[string]any{})
+			_, err := client.MutateMetadata(t.Context(), "test-project", "task-test", `"r1"`, map[string]any{})
 
 			require.ErrorIs(t, err, ErrConflict)
 		})
@@ -332,7 +331,7 @@ func TestTaskOperationsClassifyValidationResponsesAsRequestRejections(t *testing
 			t.Cleanup(server.Close)
 			client := newLoopbackClient(t, server.URL, "validation-test-key", nil)
 
-			_, err := client.CreateTask(context.Background(), "test-project", "request-id", TaskCreate{Title: "Synthetic task"})
+			_, err := client.CreateTask(t.Context(), "test-project", "request-id", TaskCreate{Title: "Synthetic task"})
 
 			require.ErrorIs(t, err, ErrRequestRejected)
 			assert.NotErrorIs(t, err, ErrIncompatible)
@@ -348,7 +347,7 @@ func TestResolveProjectBindsConfiguredIdentityAndRevision(t *testing.T) {
 		t.Cleanup(server.Close)
 		client := newLoopbackClient(t, server.URL, "project-test-key", nil)
 
-		_, err := client.ResolveProject(context.Background(), "test-project")
+		_, err := client.ResolveProject(t.Context(), "test-project")
 
 		require.ErrorIs(t, err, ErrWrongProject)
 	})
@@ -360,7 +359,7 @@ func TestResolveProjectBindsConfiguredIdentityAndRevision(t *testing.T) {
 		t.Cleanup(server.Close)
 		client := newLoopbackClient(t, server.URL, "project-test-key", nil)
 
-		_, err := client.ResolveProject(context.Background(), "test-project")
+		_, err := client.ResolveProject(t.Context(), "test-project")
 
 		require.ErrorIs(t, err, ErrInvalidResponse)
 	})

@@ -225,7 +225,7 @@ func TestIdentityScoringMCPRejectsUnsolicitedConfirmationResponse(t *testing.T) 
 	require.NoError(err)
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, IdentityScoring: backend, AllowIdentityScoring: true}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(opts, true).Connect(ctx, serverTransport, nil)

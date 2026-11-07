@@ -63,7 +63,7 @@ func task4RawRequest(
 		"params":  requestParams,
 	})
 	must.NoError(err)
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
@@ -273,7 +273,7 @@ func TestAttachmentResourceDaemonNotFoundIsInvalidParams(t *testing.T) {
 func TestAttachmentResourceRecoveryFailurePreservesGuidance(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	must.NoError(err)
 	endpoint := "http://" + listener.Addr().String()
 	must.NoError(listener.Close())
@@ -361,9 +361,10 @@ func TestMCPTracePropagationCreatesServerSpanAndReachesDaemon(t *testing.T) {
 	)
 	previousProvider := otel.GetTracerProvider()
 	otel.SetTracerProvider(provider)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		otel.SetTracerProvider(previousProvider)
-		must.NoError(provider.Shutdown(context.Background()))
+		must.NoError(provider.Shutdown(context.WithoutCancel(t.Context())))
 	})
 
 	headers := make(chan http.Header, 1)

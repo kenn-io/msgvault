@@ -96,19 +96,19 @@ func TestMutationsAreIdempotentMergeOnlyAndRetryOnce(t *testing.T) {
 	client := &mutationClient{tasks: []taskclient.Task{existing, retried}, mutateErrs: []error{taskclient.ErrConflict, nil}}
 	service := Service{Client: client, Project: "project"}
 
-	linked, err := service.Link(context.Background(), "task-1", identity)
+	linked, err := service.Link(t.Context(), "task-1", identity)
 	require.NoError(t, err)
 	assert.Equal("kept", linked.Metadata["owner"])
 	assert.Len(client.mutations, 2)
 	assert.Equal("kept", client.mutations[0]["owner"])
 
 	client.tasks = []taskclient.Task{linked}
-	_, err = service.Link(context.Background(), "task-1", identity)
+	_, err = service.Link(t.Context(), "task-1", identity)
 	require.NoError(t, err)
 	assert.Len(client.mutations, 2, "duplicate link is a no-op")
 
 	client.tasks = []taskclient.Task{linked}
-	unlinked, err := service.Unlink(context.Background(), "task-1", identity)
+	unlinked, err := service.Unlink(t.Context(), "task-1", identity)
 	require.NoError(t, err)
 	assert.Equal("kept", unlinked.Metadata["owner"])
 }
@@ -126,7 +126,7 @@ func TestUnlinkRemovesEverySupportedRepresentationOfTheMessage(t *testing.T) {
 	}
 	client := &mutationClient{tasks: []taskclient.Task{existing}}
 
-	unlinked, err := (Service{Client: client, Project: "project"}).Unlink(context.Background(), "task-1", identity)
+	unlinked, err := (Service{Client: client, Project: "project"}).Unlink(t.Context(), "task-1", identity)
 
 	require.NoError(t, err)
 	links := MailLinks(unlinked.Metadata)
@@ -152,7 +152,7 @@ func TestMutationPreservesUnrelatedRawMailLinkFieldsLosslessly(t *testing.T) {
 		},
 	}
 	client := &mutationClient{tasks: []taskclient.Task{existing}}
-	_, err := (Service{Client: client, Project: "project"}).Link(context.Background(), "task-1", identity)
+	_, err := (Service{Client: client, Project: "project"}).Link(t.Context(), "task-1", identity)
 	require.NoError(err)
 	require.Len(client.mutations, 1)
 	rawLinks, ok := client.mutations[0][MailLinksKey].([]any)
@@ -167,7 +167,7 @@ func TestMutationFailsClosedForUnparseableRawMailLinkElement(t *testing.T) {
 		Metadata: map[string]any{MailLinksKey: []any{map[string]any{"message_id": float64(8)}, "opaque-extension"}},
 	}
 	client := &mutationClient{tasks: []taskclient.Task{existing}}
-	_, err := (Service{Client: client, Project: "project"}).Link(context.Background(), "task-1", testIdentity())
+	_, err := (Service{Client: client, Project: "project"}).Link(t.Context(), "task-1", testIdentity())
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrUnsafeMailLinks)
 	assert.Empty(t, client.mutations, "unsafe metadata must not be overwritten")
@@ -178,7 +178,7 @@ func TestMutationSecondConflictIsSurfaced(t *testing.T) {
 	retried := existing
 	retried.Revision = "r2"
 	client := &mutationClient{tasks: []taskclient.Task{existing, retried}, mutateErrs: []error{taskclient.ErrConflict, taskclient.ErrConflict}}
-	_, err := (Service{Client: client, Project: "project"}).Link(context.Background(), "task-1", testIdentity())
+	_, err := (Service{Client: client, Project: "project"}).Link(t.Context(), "task-1", testIdentity())
 	require.ErrorIs(t, err, taskclient.ErrConflict)
 	assert.Len(t, client.mutations, 2)
 }
@@ -220,9 +220,9 @@ func TestCreateRetryExercisesIdempotentHTTPContractWithIdenticalPayload(t *testi
 	addedAt := time.Date(2026, 7, 19, 1, 2, 3, 0, time.UTC)
 	service := Service{Client: client, Project: "project", Now: func() time.Time { return addedAt }}
 
-	first, err := service.Create(context.Background(), "stable-key", taskclient.TaskCreate{Title: "Synthetic", Priority: "high", Labels: []string{"mail"}}, testIdentity())
+	first, err := service.Create(t.Context(), "stable-key", taskclient.TaskCreate{Title: "Synthetic", Priority: "high", Labels: []string{"mail"}}, testIdentity())
 	require.NoError(err)
-	second, err := service.Create(context.Background(), "stable-key", taskclient.TaskCreate{Title: "Synthetic", Priority: "high", Labels: []string{"mail"}}, testIdentity())
+	second, err := service.Create(t.Context(), "stable-key", taskclient.TaskCreate{Title: "Synthetic", Priority: "high", Labels: []string{"mail"}}, testIdentity())
 	require.NoError(err)
 	assert.Equal(first, second)
 	assert.Equal(1, createCalls, "the external service must create only once for a repeated key and payload")

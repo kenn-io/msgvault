@@ -28,8 +28,8 @@ func TestDocbankAttachmentQueryReceipts(t *testing.T) {
 		}
 		var sequence int
 		var name, path string
-		require.NoError(f.Store.DB().QueryRow(`PRAGMA database_list`).Scan(&sequence, &name, &path))
-		engine, err := query.NewDuckDBEngine("", path, nil)
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `PRAGMA database_list`).Scan(&sequence, &name, &path))
+		engine, err := query.NewDuckDBEngine(t.Context(), "", path, nil)
 		require.NoError(err)
 		t.Cleanup(func() { _ = engine.Close() })
 		if !query.HasSQLiteScanner(engine) {

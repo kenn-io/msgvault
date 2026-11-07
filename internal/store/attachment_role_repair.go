@@ -94,7 +94,7 @@ func (s *Store) RepairHistoricalAttachmentRolesBatch(
 		if decodeErr != nil {
 			continue
 		}
-		messageUpdates, err := s.prepareAttachmentRoleRepair(messageID, raw)
+		messageUpdates, err := s.prepareAttachmentRoleRepair(ctx, messageID, raw)
 		if err != nil {
 			return AttachmentRoleRepairProgress{}, err
 		}
@@ -330,7 +330,7 @@ func decodeMessageRawBounded(
 	return data, bytesRead, nil
 }
 
-func (s *Store) prepareAttachmentRoleRepair(messageID int64, raw []byte) ([]attachmentRoleRepairUpdate, error) {
+func (s *Store) prepareAttachmentRoleRepair(ctx context.Context, messageID int64, raw []byte) ([]attachmentRoleRepairUpdate, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -343,7 +343,7 @@ func (s *Store) prepareAttachmentRoleRepair(messageID int64, raw []byte) ([]atta
 		id          int64
 		contentHash string
 	}
-	rows, err := s.db.Query(`
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(content_hash, '')
 		FROM attachments
 		WHERE message_id = ? AND attachment_role = 'unknown'

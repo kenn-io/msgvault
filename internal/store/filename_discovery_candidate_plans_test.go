@@ -102,7 +102,7 @@ func filenameObservedStore(t *testing.T) (*Store, *filenamePostingObserver) {
 		path = st.dbPath
 	} else {
 		var err error
-		st, err = OpenForTest(path)
+		st, err = OpenForTest(t.Context(), path)
 		require.NoError(t, err)
 		require.NoError(t, st.InitSchema())
 	}
@@ -127,7 +127,7 @@ func filenamePostingPlanFixture(t *testing.T) (*Store, *filenamePostingObserver)
 	st, observer := filenameObservedStore(t)
 	source, err := st.GetOrCreateSource("imap", "postings@example.test")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "posting-plan", "Posting Example")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "posting-plan", "Posting Example")
 	require.NoError(err)
 	tx, err := st.db.BeginTx(t.Context(), nil)
 	require.NoError(err)

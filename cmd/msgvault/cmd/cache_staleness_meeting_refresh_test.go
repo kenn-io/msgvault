@@ -61,15 +61,15 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 		RecordingURL: "https://media.example.com/initial",
 	}}
 	imp := circleback.NewImporter(st, source)
-	first, err := imp.Import(context.Background(), circleback.ImportOptions{Identifier: "alice@example.com"})
+	first, err := imp.Import(t.Context(), circleback.ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(1, first.MeetingsAdded)
 
 	var originalID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'meeting:refresh-1'`).Scan(&originalID))
-	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'meeting:refresh-1'`).Scan(&originalID))
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
-	noOp, err := imp.Import(context.Background(), circleback.ImportOptions{Identifier: "alice@example.com"})
+	noOp, err := imp.Import(t.Context(), circleback.ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, noOp.MeetingsUpdated)
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
@@ -79,7 +79,7 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	source.meeting.Notes = "Refreshed meeting notes"
 	source.meeting.Attendees = []circleback.Attendee{{Name: "Carol", Email: "carol@example.com"}}
 	source.meeting.RecordingURL = ""
-	second, err := imp.Import(context.Background(), circleback.ImportOptions{Identifier: "alice@example.com"})
+	second, err := imp.Import(t.Context(), circleback.ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, second.MeetingsAdded)
 	assert.EqualValues(1, second.MeetingsUpdated)
@@ -87,7 +87,7 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	var refreshedID int64
 	var subject, snippet string
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT id, subject, snippet, attachment_count
 		FROM messages WHERE source_message_id = 'meeting:refresh-1'
 	`).Scan(&refreshedID, &subject, &snippet, &attachmentCount))
@@ -96,12 +96,12 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	assert.Contains(snippet, "Refreshed meeting notes")
 	assert.Zero(attachmentCount, "refresh clears the stale recording attachment")
 	var attachmentRows int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, refreshedID).Scan(&attachmentRows))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments WHERE message_id = ?`, refreshedID).Scan(&attachmentRows))
 	assert.Zero(attachmentRows, "refresh removes the stale recording junction")
 
 	var recipient string
 	var recipientCount int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*), MAX(p.email_address)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -114,7 +114,7 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	require.True(staleness.NeedsBuild, "Circleback refresh must invalidate cache: %+v", staleness)
 	require.True(staleness.FullRebuild, "Circleback refresh requires full rebuild: %+v", staleness)
 
-	rebuilt, err := buildCache(dbPath, analyticsDir, false)
+	rebuilt, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	require.False(rebuilt.Skipped, "direct build-cache must honor existing-message mutations")
 
@@ -122,7 +122,7 @@ func TestCacheNeedsBuild_CirclebackRefresh(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = duckDB.Close() })
 	var cachedSubject string
-	require.NoError(duckDB.QueryRow(`
+	require.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT subject
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE id = ?
@@ -150,15 +150,15 @@ func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 		Notes:     "Initial meeting notes",
 	}}
 	imp := circleback.NewImporter(st, source)
-	first, err := imp.Import(context.Background(), circleback.ImportOptions{Identifier: "alice@example.com"})
+	first, err := imp.Import(t.Context(), circleback.ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(1, first.MeetingsAdded)
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	abandonedRunID, err := st.StartSync(first.SourceID, circleback.SourceType)
 	require.NoError(err)
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		UPDATE messages SET subject = 'Persisted Before Exit'
 		WHERE source_message_id = 'meeting:failed-refresh-1'
 	`)
@@ -167,7 +167,7 @@ func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 
 	var status string
 	var additions, updates int64
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT status, messages_added, messages_updated
 		FROM sync_runs WHERE id = ?
 	`, abandonedRunID).Scan(&status, &additions, &updates))
@@ -180,7 +180,7 @@ func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 	require.True(staleness.FullRebuild, "failed-run progress requires a full rebuild: %+v", staleness)
 	require.Contains(staleness.Reason, "interrupted sync")
 
-	rebuilt, err := buildCache(dbPath, analyticsDir, false)
+	rebuilt, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	require.False(rebuilt.Skipped, "direct build-cache must honor failed-run progress")
 
@@ -188,7 +188,7 @@ func TestCacheNeedsBuild_FailedCirclebackRunWithoutCheckpoint(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = duckDB.Close() })
 	var cachedSubject string
-	require.NoError(duckDB.QueryRow(`
+	require.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT subject FROM read_parquet(?, hive_partitioning=true)
 		WHERE source_message_id = 'meeting:failed-refresh-1'
 	`, filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&cachedSubject))
@@ -262,24 +262,24 @@ func TestCacheNeedsBuild_GranolaRefresh(t *testing.T) {
 
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	imp := granola.NewImporter(st, granola.NewClient(server.URL, "grn_testkey"))
-	first, err := imp.Import(context.Background(), granola.ImportOptions{Identifier: "alice@example.com"})
+	first, err := imp.Import(t.Context(), granola.ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(1, first.NotesAdded)
 
 	var originalID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'note-refresh-1'`).Scan(&originalID))
-	_, err = buildCache(dbPath, analyticsDir, false)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'note-refresh-1'`).Scan(&originalID))
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	api.setNote(cacheRefreshGranolaNote(t, "Refreshed Note", "2026-07-02T10:00:00Z", "carol@example.com", "Refreshed note summary"))
-	second, err := imp.Import(context.Background(), granola.ImportOptions{Identifier: "alice@example.com"})
+	second, err := imp.Import(t.Context(), granola.ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, second.NotesAdded)
 	assert.EqualValues(1, second.NotesUpdated)
 
 	var refreshedID int64
 	var subject, snippet string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT id, subject, snippet FROM messages WHERE source_message_id = 'note-refresh-1'
 	`).Scan(&refreshedID, &subject, &snippet))
 	assert.Equal(originalID, refreshedID, "refresh updates the existing note")
@@ -288,7 +288,7 @@ func TestCacheNeedsBuild_GranolaRefresh(t *testing.T) {
 
 	var recipient string
 	var recipientCount int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*), MAX(p.email_address)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id

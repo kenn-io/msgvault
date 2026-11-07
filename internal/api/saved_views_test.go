@@ -257,7 +257,8 @@ func newSavedViewTestServer(t *testing.T) *Server {
 		SavedViewStore: st,
 		Logger:         testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	return srv
 }
 
@@ -274,7 +275,7 @@ func performSavedViewRequest(
 	t *testing.T, srv *Server, method, path string, body []byte, headers http.Header,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, "http://example.com"+path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, "http://example.com"+path, bytes.NewReader(body))
 	req.RemoteAddr = "192.0.2.10:4242"
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")

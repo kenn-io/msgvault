@@ -203,19 +203,15 @@ func OpenContext(ctx context.Context, dbPath string) (*Store, error) {
 //
 // Not for production use — a process crash mid-test can leave a corrupt
 // database, which is fine because tests recreate it from scratch.
-func OpenForTest(dbPath string) (*Store, error) {
+func OpenForTest(ctx context.Context, dbPath string) (*Store, error) {
 	if IsPostgresURL(dbPath) {
-		return openPostgres(dbPath)
+		return openPostgres(ctx, dbPath)
 	}
-	return openSQLite(dbPath, testSQLiteParams)
+	return openSQLiteContext(ctx, dbPath, testSQLiteParams)
 }
 
-// openSQLite opens a SQLite database at the given file path with the
+// openSQLiteContext opens a SQLite database at the given file path with the
 // supplied DSN parameters appended.
-func openSQLite(dbPath, params string) (*Store, error) {
-	return openSQLiteContext(context.Background(), dbPath, params)
-}
-
 func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -307,8 +303,8 @@ func appendSQLiteParams(dsn, params string) string {
 }
 
 // openPostgres opens a PostgreSQL database using the given connection URL.
-func openPostgres(dbURL string) (*Store, error) {
-	return OpenPostgresContext(context.Background(), dbURL)
+func openPostgres(ctx context.Context, dbURL string) (*Store, error) {
+	return OpenPostgresContext(ctx, dbURL)
 }
 
 // OpenPostgresContext opens PostgreSQL explicitly, accepting a URL or libpq keyword DSN.
@@ -1258,10 +1254,6 @@ type chunkQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-func queryInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
-	return queryInChunksContext(context.Background(), db, ids, prefixArgs, queryTemplate, fn)
-}
-
 func queryInChunksContext[T any](ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string, fn func(*loggedRows) error) error {
 	return queryInChunksWithValueExprContext(ctx, db, ids, prefixArgs, queryTemplate, "?", fn)
 }
@@ -1340,20 +1332,12 @@ func insertInChunks(tx interface {
 	return nil
 }
 
-// execInChunks executes a parameterized DELETE/UPDATE with an IN-clause in chunks
-// to stay within SQLite's parameter limit. queryTemplate must contain a single %s
-// placeholder for the comma-separated "?" list. The prefix args are prepended before
-// each chunk's args (e.g., a message_id filter).
-func execInChunks[T any](db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string) error {
-	return execInChunksContext(context.Background(), db, ids, prefixArgs, queryTemplate)
-}
-
-// execInChunksContext is the context-aware form of execInChunks: every chunk's
+// execInChunksContext executes a parameterized DELETE/UPDATE with an IN-clause
+// in chunks to stay within SQLite's parameter limit. queryTemplate must contain
+// a single %s placeholder for the comma-separated "?" list. The prefix args are
+// prepended before each chunk's args (e.g., a message_id filter). Every chunk's
 // statement carries ctx, and the walk stops at the next chunk boundary once it
-// is cancelled. Callers whose write scales with archive size — the legacy
-// calendar-attribution backfill in particular — must use this form, because a
-// chunked whole-table walk on a background context is unreachable by SIGINT and
-// SIGTERM for as long as any one chunk waits on a lock.
+// is cancelled.
 func execInChunksContext[T any](
 	ctx context.Context, db chunkQuerier, ids []T, prefixArgs []any, queryTemplate string,
 ) error {

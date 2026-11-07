@@ -11,13 +11,13 @@ import (
 func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
-	_, err := f.store.DB().Exec(f.store.Rebind(
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "person_sweep_change_triggers_v6")
 	requirements.NoError(err)
 	if f.store.IsPostgreSQL() {
-		_, err = f.store.DB().Exec(`DROP TRIGGER IF EXISTS trg_person_sweep_changes_recipients ON message_recipients`)
+		_, err = f.store.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_person_sweep_changes_recipients ON message_recipients`)
 		requirements.NoError(err)
-		_, err = f.store.DB().Exec(`
+		_, err = f.store.DB().ExecContext(t.Context(), `
 			CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_recipients() RETURNS trigger AS $$
 			BEGIN RETURN NEW; END $$ LANGUAGE plpgsql;
 			CREATE TRIGGER trg_person_sweep_changes_recipients
@@ -25,9 +25,9 @@ func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 			FOR EACH ROW EXECUTE FUNCTION msgvault_person_sweep_changes_recipients()`)
 		requirements.NoError(err)
 	} else {
-		_, err = f.store.DB().Exec(`DROP TRIGGER IF EXISTS trg_person_sweep_recipients_insert`)
+		_, err = f.store.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_person_sweep_recipients_insert`)
 		requirements.NoError(err)
-		_, err = f.store.DB().Exec(`
+		_, err = f.store.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER trg_person_sweep_recipients_insert
 			AFTER INSERT ON message_recipients FOR EACH ROW BEGIN SELECT 1; END`)
 		requirements.NoError(err)
@@ -37,7 +37,7 @@ func TestPersonSweepTriggerMigrationRepairsOldDefinition(t *testing.T) {
 	messageID := f.insertMessage(t, "trigger-repair", "email", f.bobID,
 		time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
 	before := latestPersonSweepSequence(t, f.store)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address)
 		VALUES (?, ?, 'to', ?)`), messageID, f.aliceID, "alice@example.test")
 	requirements.NoError(err)

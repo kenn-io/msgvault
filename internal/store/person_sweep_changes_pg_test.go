@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -27,7 +26,7 @@ func TestPersonSweepJournalPostgreSQLSequenceFollowsCommitOrder(t *testing.T) {
 	requirements.NoError(err)
 	before := latestPersonSweepSequence(t, f.store)
 
-	first, err := f.store.DB().BeginTx(context.Background(), nil)
+	first, err := f.store.DB().BeginTx(t.Context(), nil)
 	requirements.NoError(err)
 	firstOpen := true
 	t.Cleanup(func() {
@@ -35,7 +34,7 @@ func TestPersonSweepJournalPostgreSQLSequenceFollowsCommitOrder(t *testing.T) {
 			_ = first.Rollback()
 		}
 	})
-	second, err := f.store.DB().BeginTx(context.Background(), nil)
+	second, err := f.store.DB().BeginTx(t.Context(), nil)
 	requirements.NoError(err)
 	secondOpen := true
 	t.Cleanup(func() {
@@ -44,7 +43,7 @@ func TestPersonSweepJournalPostgreSQLSequenceFollowsCommitOrder(t *testing.T) {
 		}
 	})
 
-	_, err = second.Exec(f.store.Rebind(`
+	_, err = second.ExecContext(t.Context(), f.store.Rebind(`
 		INSERT INTO messages
 			(source_id, source_message_id, conversation_id, message_type, sender_id, sent_at)
 		VALUES (?, 'second', ?, 'email', ?, ?)`),
@@ -54,7 +53,7 @@ func TestPersonSweepJournalPostgreSQLSequenceFollowsCommitOrder(t *testing.T) {
 	requirements.NoError(second.Commit())
 	secondOpen = false
 
-	_, err = first.Exec(f.store.Rebind(`
+	_, err = first.ExecContext(t.Context(), f.store.Rebind(`
 		INSERT INTO messages
 			(source_id, source_message_id, conversation_id, message_type, sender_id, sent_at)
 		VALUES (?, 'first', ?, 'email', ?, ?)`),

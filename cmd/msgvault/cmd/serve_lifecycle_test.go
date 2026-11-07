@@ -170,7 +170,7 @@ func TestServeStatusPrintsVectorLine(t *testing.T) {
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
 
-			health := fetchDaemonHealth(context.Background(), srv.URL)
+			health := fetchDaemonHealth(t.Context(), srv.URL)
 			require.NotNil(health, "health response")
 			lines := vectorStatusLines(health.Vector)
 			if tt.wantNone {
@@ -222,8 +222,8 @@ func TestRunServeStatusIncludesVectorHealth(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	cmd, stdout, stderr := lifecycleTestCommand()
-	cmd.SetContext(context.Background())
+	cmd, stdout, stderr := lifecycleTestCommand(t)
+	cmd.SetContext(t.Context())
 	require.NoError(runServeStatus(cmd, dataDir), "runServeStatus")
 
 	out := stdout.String()
@@ -291,8 +291,8 @@ func TestServeStatusCommandUsesAuthenticatedHealthForOperationDetails(t *testing
 	cfg.Server.APIKey = "secret-key"
 	t.Cleanup(func() { cfg = oldCfg })
 
-	cmd, stdout, stderr := lifecycleTestCommand()
-	cmd.SetContext(testInvocationContext(context.Background(), cfg, invocationOptions{}))
+	cmd, stdout, stderr := lifecycleTestCommand(t)
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	statusCmd, _, err := serveCmd.Find([]string{"status"})
 	require.NoError(err, "find serve status")
 	require.NoError(statusCmd.RunE(cmd, nil), "serve status")
@@ -350,7 +350,7 @@ func TestDaemonStatusContinuesWhenServerAPIKeyFileIsUnavailable(t *testing.T) {
 	})
 	require.NoError(err)
 
-	command, stdout, _ := lifecycleTestCommand()
+	command, stdout, _ := lifecycleTestCommand(t)
 	command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	status := newLifecycleCommand("status", false)
 	require.NoError(status.RunE(command, nil))
@@ -421,7 +421,7 @@ func TestRunServeStatusReportsStartupPhase(t *testing.T) {
 	})
 	require.NoError(err, "write starting runtime record")
 
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStatus(cmd, dataDir), "runServeStatus")
 
 	assert.Contains(stdout.String(),
@@ -455,7 +455,7 @@ func TestRunServeStatusKeepsInitializingRecordWhenOwnershipHeldDespiteCreateTime
 	})
 	require.NoError(err, "write starting runtime record")
 
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStatus(cmd, dataDir), "runServeStatus")
 
 	assert.Contains(stdout.String(),
@@ -484,7 +484,7 @@ func TestStopTargetRequiresProcessIdentityDespiteRespondingPing(t *testing.T) {
 		},
 	}
 
-	info, err := probeDaemonRuntimeRecord(context.Background(), rec)
+	info, err := probeDaemonRuntimeRecord(t.Context(), rec)
 	require.NoError(err, "precondition: recorded endpoint responds to daemon ping")
 	require.Equal(rec.PID, info.PID, "precondition: ping claims the recorded pid")
 	require.False(stopTargetConfirmed(rec),
@@ -493,7 +493,7 @@ func TestStopTargetRequiresProcessIdentityDespiteRespondingPing(t *testing.T) {
 
 func startBlockingDaemonStandIn(t *testing.T) *exec.Cmd {
 	t.Helper()
-	cmd := helperProcessCommand(context.Background(), "block")
+	cmd := helperProcessCommand(t.Context(), "block")
 	require.NoError(t, cmd.Start(), "start blocking daemon stand-in")
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
@@ -682,7 +682,7 @@ func testStopLiveDaemons(
 		Metadata: metadata,
 	})
 	require.NoError(err, "write runtime record")
-	cmd, stdout, _ := lifecycleTestCommand()
+	cmd, stdout, _ := lifecycleTestCommand(t)
 	cfg := lifecycleTestConfig(dataDir)
 	if serverAPIKeyFileUnavailable {
 		cfg.Server.APIKeyFile = filepath.Join(dataDir, "missing-api-key")
@@ -805,7 +805,7 @@ func TestRunServeRestartDoesNotLaunchOverInitializingIdentityMismatch(t *testing
 		started = true
 		return nil, errors.New("unexpected background launch")
 	})
-	cmd, _, _ := lifecycleTestCommand()
+	cmd, _, _ := lifecycleTestCommand(t)
 
 	err = runServeRestart(cmd, lifecycleTestConfig(dataDir))
 
@@ -815,7 +815,7 @@ func TestRunServeRestartDoesNotLaunchOverInitializingIdentityMismatch(t *testing
 }
 
 func TestRunServeStatusNoDaemonWritesOnlyStdout(t *testing.T) {
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 
 	require.NoError(t, runServeStatus(cmd, t.TempDir()))
 
@@ -827,7 +827,7 @@ func TestRunServeStatusReturnsRuntimeListError(t *testing.T) {
 	assert := assert.New(t)
 
 	dataDir := runtimeDataDirFile(t)
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 
 	err := runServeStatus(cmd, dataDir)
 
@@ -841,7 +841,7 @@ func TestStopLiveDaemonsReturnsRuntimeListError(t *testing.T) {
 	assert := assert.New(t)
 
 	dataDir := runtimeDataDirFile(t)
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 
 	err := stopLiveDaemons(cmd, dataDir, false)
 
@@ -857,7 +857,7 @@ func TestWaitForBackgroundServeReadyReturnsRuntimeListError(t *testing.T) {
 	dataDir := runtimeDataDirFile(t)
 
 	rt, ready, err := waitForBackgroundServeReady(
-		context.Background(),
+		t.Context(),
 		dataDir,
 		nil,
 		time.Second,
@@ -876,7 +876,7 @@ func TestWaitForDaemonRuntimeCancelsDuringProbe(t *testing.T) {
 
 	dataDir := t.TempDir()
 	block := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var cancelProbe sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		cancelProbe.Do(func() {
@@ -986,7 +986,7 @@ func TestRunServeStartAlreadyRunningWritesOnlyStdout(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	cfg := lifecycleTestConfig(dataDir)
 	cfg.Server.BindAddr = "0.0.0.0"
 	require.NoError(runServeStart(cmd, cfg))
@@ -1064,7 +1064,7 @@ func TestRunServeStartRecognizesLegacyDaemonWithIndeterminateCreateTime(t *testi
 				return nil, errors.New("unreachable")
 			})
 
-			cmd, stdout, _ := lifecycleTestCommand()
+			cmd, stdout, _ := lifecycleTestCommand(t)
 			require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
 			assert.Contains(stdout.String(), "msgvault already running")
 			assert.False(apiKeySent.Load(), "legacy discovery must not transmit the API key")
@@ -1106,7 +1106,7 @@ func TestRunServeStartDoesNotDowngradeNewerDaemon(t *testing.T) {
 		require.FailNow("older CLI must not start over a newer daemon")
 		return nil, errors.New("unreachable")
 	})
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
 	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
@@ -1166,7 +1166,7 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 			Port:   9090,
 		}, true, nil
 	})
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
 	assert.Equal(os.Getpid(), stoppedPID, "stopped older daemon")
 	assert.Equal(
@@ -1227,7 +1227,7 @@ func TestRunServeStartIgnoresDisabledDaemonAutoStart(t *testing.T) {
 	})
 	c := lifecycleTestConfig(dataDir)
 	c.Server.DaemonAutoStart = new(false)
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStart(cmd, c))
 	assert.Equal(os.Getpid(), stoppedPID, "explicit start still stops an older daemon")
 	assert.Equal(
@@ -1273,7 +1273,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 	})
 	cfg := lifecycleTestConfig(dataDir)
 	cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStart(cmd, cfg))
 	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
@@ -1332,7 +1332,7 @@ func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
 			Port:   9092,
 		}, true, nil
 	})
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStart(cmd, lifecycleTestConfig(dataDir)))
 	assert.Equal(os.Getpid(), stoppedPID, "stopped older incompatible daemon")
 	assert.Equal(
@@ -1375,7 +1375,7 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 		require.FailNow("older CLI must not start over a newer incompatible daemon")
 		return nil, errors.New("unreachable")
 	})
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 
 	err = runServeStart(cmd, lifecycleTestConfig(dataDir))
 	require.Error(err, "newer incompatible daemon must be refused")
@@ -1386,9 +1386,9 @@ func TestRunServeStartRefusesNewerIncompatibleDaemon(t *testing.T) {
 }
 
 func TestReportBackgroundLaunchInProgressUsesCanonicalCommand(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	cmd, stdout, _ := lifecycleTestCommand()
+	cmd, stdout, _ := lifecycleTestCommand(t)
 	cmd.SetContext(ctx)
 
 	reportBackgroundLaunchInProgress(cmd, t.TempDir())
@@ -1418,7 +1418,7 @@ func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {
 			Port:   9091,
 		}, true, nil
 	})
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 
 	require.NoError(t, runServeRestart(cmd, lifecycleTestConfig(dataDir)))
 
@@ -1486,7 +1486,7 @@ func TestDaemonReplacementRejectsInvalidConfigBeforeStopping(t *testing.T) {
 			if tt.upgrade {
 				err = stopDaemonRuntimeForUpgradeImpl(*cfg, daemonRuntimeFromRecord(record), slog.New(slog.DiscardHandler))
 			} else {
-				cmd, _, _ := lifecycleTestCommand()
+				cmd, _, _ := lifecycleTestCommand(t)
 				err = runServeRestart(cmd, cfg)
 			}
 			require.ErrorContains(err, tt.wantError)
@@ -1514,7 +1514,7 @@ func TestRunServeStartNotReadyPrintsWebUIURLForFixedPort(t *testing.T) {
 	) (*DaemonRuntime, bool, error) {
 		return nil, false, nil
 	})
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 
 	require.NoError(t, runServeStart(cmd, lifecycleTestConfig(dataDir)))
 
@@ -1546,7 +1546,7 @@ func TestRunServeStartNotReadyPointsAtStatusForAutoPort(t *testing.T) {
 	})
 	cfg := lifecycleTestConfig(dataDir)
 	cfg.Server.APIPort = 0
-	cmd, stdout, stderr := lifecycleTestCommand()
+	cmd, stdout, stderr := lifecycleTestCommand(t)
 
 	require.NoError(t, runServeStart(cmd, cfg))
 
@@ -1559,7 +1559,7 @@ func TestRunServeStartNotReadyPointsAtStatusForAutoPort(t *testing.T) {
 }
 
 func TestStopBackgroundServeStartupTerminatesProcess(t *testing.T) {
-	cmd := helperProcessCommand(context.Background(), "block")
+	cmd := helperProcessCommand(t.Context(), "block")
 	require.NoError(t, cmd.Start(), "start blocking helper")
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -1605,7 +1605,7 @@ func TestStartServeBackgroundProcessTransfersProcessTreeOwnership(t *testing.T) 
 	oldCommand := newServeBackgroundCommandForRun
 	oldConfigure := configureServeBackgroundCommandForRun
 	newServeBackgroundCommandForRun = func(string, ...string) *exec.Cmd {
-		return helperProcessCommand(context.Background(), "block")
+		return helperProcessCommand(t.Context(), "block")
 	}
 	configureServeBackgroundCommandForRun = func(*exec.Cmd) (backgroundServeCommandConfig, error) {
 		return backgroundServeCommandConfig{ProcessTree: tree}, nil
@@ -1638,7 +1638,7 @@ func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	cmd := helperProcessCommand(context.Background(), "block")
+	cmd := helperProcessCommand(t.Context(), "block")
 	require.NoError(cmd.Start(), "start blocking helper")
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -1739,8 +1739,10 @@ func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 	})
 }
 
-func lifecycleTestCommand() (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
+func lifecycleTestCommand(t *testing.T) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
 	cmd := &cobra.Command{Use: "test"}
+	cmd.SetContext(t.Context())
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cmd.SetOut(stdout)

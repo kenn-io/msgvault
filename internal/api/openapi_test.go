@@ -2244,13 +2244,14 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 		_, err := os.ReadFile(filepath.Join("..", "..", "tools", "oapi-codegen", name))
 		requirements.NoError(err)
 	}
-	cmd := exec.Command("go", "build", "-modfile=../../tools/oapi-codegen/go.mod", "-o", generator,
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-modfile=../../tools/oapi-codegen/go.mod", "-o", generator,
 		"github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen")
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	out, err := cmd.CombinedOutput()
 	requirements.NoError(err, "build client generator:\n%s", out)
 
-	cmd = exec.Command(
+	cmd = exec.CommandContext(
+		t.Context(),
 		generator,
 		"-config",
 		"config.yaml",
@@ -2266,7 +2267,7 @@ func TestOpenAPIClientArtifactUpToDate(t *testing.T) {
 		_, err := os.ReadDir(filepath.Join(fixer, name))
 		requirements.NoError(err)
 	}
-	cmd = exec.Command("go", "run", fixer, filepath.Join(tmpGenerated, "types.go"), filepath.Join(tmpGenerated, "client.go"))
+	cmd = exec.CommandContext(t.Context(), "go", "run", fixer, filepath.Join(tmpGenerated, "types.go"), filepath.Join(tmpGenerated, "client.go"))
 	out, err = cmd.CombinedOutput()
 	requirements.NoError(err, "apply generated-client validator fixup:\n%s", out)
 

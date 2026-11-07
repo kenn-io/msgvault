@@ -172,7 +172,7 @@ func (imp *Importer) applyDecrypted(ctx context.Context, sourceID, convID int64,
 		return false, false, nil
 	}
 	if message {
-		current, err := imp.archivedEvent(item.MessageID)
+		current, err := imp.archivedEvent(ctx, item.MessageID)
 		if err != nil {
 			return false, false, err
 		}
@@ -249,7 +249,7 @@ func (imp *Importer) preferEarlierMessage(ctx context.Context, sourceID, convID 
 	if err := imp.store.SetMatrixEncryptedEventRecovered(ctx, holderID, false, stamp, time.Now().Unix()); err != nil {
 		return err
 	}
-	current, err := imp.archivedEvent(holderID)
+	current, err := imp.archivedEvent(ctx, holderID)
 	if err != nil {
 		return err
 	}
@@ -266,7 +266,7 @@ func (imp *Importer) preferEarlierMessage(ctx context.Context, sourceID, convID 
 	if err := imp.store.ClearMessageRepliesContext(ctx, sourceID, []int64{holderID}); err != nil {
 		return err
 	}
-	metadata, err := imp.mergedMetadata(holderID, map[string]any{
+	metadata, err := imp.mergedMetadata(ctx, holderID, map[string]any{
 		editEventKey: nil, editTSKey: nil, "referenced_message_id": nil,
 		"matrix_replay_conflict": item.plain.ID.String(),
 	})

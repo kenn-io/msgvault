@@ -117,7 +117,8 @@ func seedMoreChangedMessages(t *testing.T, st *store.Store, prefix string, count
 func setChangesWatermark(t *testing.T, st *store.Store, value string, ids ...int64) {
 	t.Helper()
 	for _, id := range ids {
-		_, err := st.DB().Exec(
+		_, err := st.DB().ExecContext(
+			t.Context(),
 			st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id = ?`), value, id)
 		require.NoErrorf(t, err, "set content_changed_at for message %d", id)
 	}
@@ -136,7 +137,8 @@ func setChangesWatermarkAt(t *testing.T, st *store.Store, when time.Time, ids ..
 		value = when.UTC().Format(store.SQLiteTimestampLayout)
 	}
 	for _, id := range ids {
-		_, err := st.DB().Exec(
+		_, err := st.DB().ExecContext(
+			t.Context(),
 			st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id = ?`), value, id)
 		require.NoErrorf(t, err, "set content_changed_at for message %d", id)
 	}
@@ -162,14 +164,15 @@ func seedChangedMessageAtID(t *testing.T, st *store.Store, id int64) int64 {
 			alter = fmt.Sprintf(
 				`ALTER TABLE messages ALTER COLUMN id SET MINVALUE %d RESTART WITH %d`, id, id)
 		}
-		_, err := st.DB().Exec(alter)
+		_, err := st.DB().ExecContext(t.Context(), alter)
 		require.NoErrorf(t, err, "reposition the messages identity sequence to %d", id)
 		got := seedChangedMessages(t, st, 1)[0]
 		require.Equalf(t, id, got, "the seeded message did not land on id %d", id)
 		return id
 	}
 	got := seedChangedMessages(t, st, 1)[0]
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET id = ? WHERE id = ?`), id, got)
 	require.NoErrorf(t, err, "move message %d to id %d", got, id)
 	return id
@@ -179,7 +182,8 @@ func seedChangedMessageAtID(t *testing.T, st *store.Store, id int64) int64 {
 // These are content columns, so the write also bumps the watermark.
 func setChangesMessageTimestamp(t *testing.T, st *store.Store, id int64, col string, value time.Time) {
 	t.Helper()
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(fmt.Sprintf(`UPDATE messages SET %s = ? WHERE id = ?`, col)), value, id)
 	require.NoErrorf(t, err, "set messages.%s for message %d", col, id)
 }
@@ -226,7 +230,7 @@ func changesArchiveUID(t *testing.T, srv *Server) string {
 	t.Helper()
 	identifier, ok := srv.store.(ArchiveIdentifier)
 	require.True(t, ok, "the change feed's store must be able to identify its archive")
-	uid, err := identifier.ArchiveUIDContext(context.Background())
+	uid, err := identifier.ArchiveUIDContext(t.Context())
 	require.NoError(t, err, "ArchiveUIDContext")
 	return uid
 }
@@ -310,7 +314,7 @@ func waitChangesBoundPast(t *testing.T, srv *Server, at time.Time) {
 // getChangesPage serves one feed request and decodes a successful response.
 func getChangesPage(t *testing.T, srv *Server, target string) ChangesResponse {
 	t.Helper()
-	w := doGet(srv, target)
+	w := doGet(t.Context(), srv, target)
 	require.Equalf(t, http.StatusOK, w.Code, "GET %s: %s", target, w.Body.String())
 	var resp ChangesResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode changes response")
@@ -449,7 +453,7 @@ func TestChangesEndpoint_EmptyArchiveReturnsEchoableCursor(t *testing.T) {
 	assert := assert.New(t)
 	srv, _ := newChangesServer(t)
 
-	w := doGet(srv, changesTarget("", 0))
+	w := doGet(t.Context(), srv, changesTarget("", 0))
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var raw map[string]json.RawMessage
@@ -764,7 +768,7 @@ func TestChangesEndpoint_PublishedLimitRangeMatchesWhatTheServerAccepts(t *testi
 	require.NotNil(limit.Schema, "the limit parameter must carry a schema")
 
 	for _, raw := range []int64{0, -1, maxPageSize + 1, 1_000_000} {
-		w := doGet(srv, fmt.Sprintf("/api/v1/messages/changes?limit=%d", raw))
+		w := doGet(t.Context(), srv, fmt.Sprintf("/api/v1/messages/changes?limit=%d", raw))
 		require.Equalf(http.StatusOK, w.Code,
 			"the server clamps limit=%d rather than rejecting it: %s", raw, w.Body.String())
 
@@ -824,7 +828,7 @@ func TestChangesEndpoint_RejectsMalformedCursor(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			w := doGet(srv, tc.target)
+			w := doGet(t.Context(), srv, tc.target)
 			require.Equalf(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 			env := decodeErrorEnvelope(t, w)
 			assert.Equal(t, tc.wantCode, env.Error, "error code")
@@ -931,7 +935,7 @@ func TestChangesEndpoint_RejectsACursorFromAnotherArchive(t *testing.T) {
 	idsB := seedChangedMessages(t, stB, 4)
 	setChangesWatermark(t, stB, subSecondWatermark(stB), idsB...)
 
-	w := doGet(srvB, changesTarget(first.NextCursor, 10))
+	w := doGet(t.Context(), srvB, changesTarget(first.NextCursor, 10))
 	require.Equalf(http.StatusBadRequest, w.Code,
 		"a cursor from another archive must be rejected, not silently honoured: %s",
 		w.Body.String())
@@ -1035,7 +1039,7 @@ func TestChangesEndpoint_UnavailableWhenStoreLacksSupport(t *testing.T) {
 	require.NotImplements((*ChangedMessageLister)(nil), srv.store,
 		"this test only means something with a store that lacks the feed")
 
-	w := doGet(srv, changesTarget("", 0))
+	w := doGet(t.Context(), srv, changesTarget("", 0))
 
 	require.Equalf(http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
 	env := decodeErrorEnvelope(t, w)
@@ -1107,7 +1111,7 @@ func TestChangesEndpoint_StoreFailureIsA500WithTheDetailOnlyInTheLog(t *testing.
 		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
-	w := doGet(srv, changesTarget("", 10))
+	w := doGet(t.Context(), srv, changesTarget("", 10))
 
 	require.Equalf(http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
 	env := decodeErrorEnvelope(t, w)
@@ -1133,7 +1137,7 @@ func TestChangesEndpoint_MalformedWatermarkIsA500WithoutACursor(t *testing.T) {
 		Logger: testLogger(),
 	})
 
-	w := doGet(srv, changesTarget("", 10))
+	w := doGet(t.Context(), srv, changesTarget("", 10))
 
 	require.Equalf(http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
 	env := decodeErrorEnvelope(t, w)
@@ -1160,7 +1164,7 @@ func TestChangesEndpoint_CanceledRequestIsNotReportedAsAServerFault(t *testing.T
 		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
-	w := doGet(srv, changesTarget("", 10))
+	w := doGet(t.Context(), srv, changesTarget("", 10))
 
 	require.Equalf(http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
 	env := decodeErrorEnvelope(t, w)
@@ -1203,7 +1207,7 @@ func TestChangesEndpoint_UnavailableWhenTheStoreCannotIdentifyItsArchive(t *test
 	require.NotImplements((*ArchiveIdentifier)(nil), srv.store,
 		"and that cannot identify its archive")
 
-	w := doGet(srv, changesTarget("", 10))
+	w := doGet(t.Context(), srv, changesTarget("", 10))
 
 	require.Equalf(http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
 	env := decodeErrorEnvelope(t, w)
@@ -1250,7 +1254,7 @@ func TestChangesEndpoint_UnreadableArchiveIdentityIsA500WithTheDetailOnlyInTheLo
 		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
-	w := doGet(srv, changesTarget("", 10))
+	w := doGet(t.Context(), srv, changesTarget("", 10))
 
 	require.Equalf(http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
 	env := decodeErrorEnvelope(t, w)
@@ -1315,9 +1319,9 @@ func TestChangesEndpoint_CanceledRequestDoesNotBlockInArchiveIdentity(t *testing
 		Logger: testLogger(),
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, changesTarget("", 10), nil).WithContext(ctx)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, changesTarget("", 10), nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 	served := make(chan struct{})
 	go func() {
@@ -1366,7 +1370,7 @@ func TestChangesEndpoint_NoBoundPublishesNull(t *testing.T) {
 		Logger: testLogger(),
 	})
 
-	w := doGet(srv, changesTarget("", 10))
+	w := doGet(t.Context(), srv, changesTarget("", 10))
 	require.Equalf(http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var raw map[string]json.RawMessage
@@ -1471,7 +1475,7 @@ func TestChangesEndpoint_PagesSatisfyTheGeneratedClientContract(t *testing.T) {
 // into the published client's model rather than this package's.
 func decodeGeneratedChangesPage(t *testing.T, srv *Server, target string) generated.ChangesResponse {
 	t.Helper()
-	w := doGet(srv, target)
+	w := doGet(t.Context(), srv, target)
 	require.Equalf(t, http.StatusOK, w.Code, "GET %s: %s", target, w.Body.String())
 	var page generated.ChangesResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page),
@@ -1521,7 +1525,7 @@ func TestChangesEndpointIncludesListID(t *testing.T) {
 	require := require.New(t)
 	srv, st := newChangesServer(t)
 	messageID := seedChangedMessages(t, st, 1)[0]
-	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
 		"<changes.example.test>", messageID)
 	require.NoError(err)
 	settleChangesClock(t, srv)
@@ -1561,10 +1565,11 @@ func TestChangesEndpoint_PublishesHowFarItIsComplete(t *testing.T) {
 		caughtUpValue, caughtUp.ServerTime)
 
 	// A writer stamps a change and holds its transaction open.
-	tx, err := st.DB().BeginTx(context.Background(), nil)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err, "begin the pending write")
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(
+	_, err = tx.ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "pending", ids[0])
 	require.NoError(err, "stamp the pending change")
 
@@ -1755,7 +1760,8 @@ func countMessagesStampedBelow(t *testing.T, st *store.Store, instant time.Time)
 		arg = instant.UTC().Format(store.SQLiteTimestampLayout)
 	}
 	var n int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT count(*) FROM messages WHERE content_changed_at < ?`), arg).Scan(&n),
 		"count the committed changes below the bound")
 	return n

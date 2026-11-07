@@ -146,12 +146,12 @@ func New(resolver packstore.Resolver, attachmentsDir string) (*Store, error) {
 }
 
 // Open preserves msgvault's established string-hash reader interface.
-func (s *Store) Open(hash string) (io.ReadSeekCloser, int64, error) {
+func (s *Store) Open(ctx context.Context, hash string) (io.ReadSeekCloser, int64, error) {
 	parsed, err := parseHash(hash)
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse attachment hash: %w", err)
 	}
-	reader, size, err := s.store.Open(context.Background(), parsed)
+	reader, size, err := s.store.Open(ctx, parsed)
 	if err != nil {
 		return nil, 0, fmt.Errorf("open attachment %s: %w", hash, err)
 	}

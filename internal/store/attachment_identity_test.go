@@ -21,7 +21,7 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 		{"beeper", "beeper:", (*store.Store).ReplaceMessageBeeperAttachments},
 		{"inline", "inline:", (*store.Store).ReplaceMessageInlineProviderAttachments},
 		{"teams-inline", "teams:inline:", func(st *store.Store, messageID int64, refs []store.AttachmentRef) error {
-			return st.ReplaceMessageInlineAttachments(messageID, refs, true)
+			return st.ReplaceMessageInlineAttachments(t.Context(), messageID, refs, true)
 		}},
 		{"teams-links", "teams:link:", (*store.Store).ReplaceMessageLinkAttachments},
 	} {
@@ -55,10 +55,10 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 			}
 			requirements.NoError(tc.replace(f.Store, messageID, []store.AttachmentRef{keep, drop}))
 			var keepID, dropID int64
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 				`SELECT id FROM attachments WHERE message_id = ? AND source_attachment_id = ?`),
 				messageID, keep.SourceAttachmentID).Scan(&keepID))
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 				`SELECT id FROM attachments WHERE message_id = ? AND source_attachment_id = ?`),
 				messageID, drop.SourceAttachmentID).Scan(&dropID))
 			// A later row also prevents SQLite from reusing the deleted maximum ID.
@@ -102,9 +102,9 @@ func TestAttachmentResyncInvalidatesThumbnails(t *testing.T) {
 		messageID, []store.AttachmentRef{ref},
 	))
 	var attachmentID int64
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT id FROM attachments WHERE message_id = ?`), messageID).Scan(&attachmentID))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ? WHERE id = ?`),
 		strings.Repeat("c", 64), "cc/"+strings.Repeat("c", 64), attachmentID)
 	requirements.NoError(err)
@@ -125,7 +125,7 @@ func TestAttachmentResyncInvalidatesThumbnails(t *testing.T) {
 				messageID, []store.AttachmentRef{ref},
 			))
 			var thumbnailHash, thumbnailPath sql.NullString
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 				SELECT thumbnail_hash, thumbnail_path FROM attachments WHERE id = ?`),
 				attachmentID).
 				Scan(&thumbnailHash, &thumbnailPath))
@@ -155,7 +155,7 @@ func TestReplaceAttachmentsRetainsProviderIDWhenAssigningPartKey(t *testing.T) {
 				}))
 			var attachmentID int64
 			var initialKey sql.NullString
-			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 				SELECT id, source_part_key FROM attachments WHERE message_id = ?`), messageID).
 				Scan(&attachmentID, &initialKey))
 			requirements.False(initialKey.Valid)

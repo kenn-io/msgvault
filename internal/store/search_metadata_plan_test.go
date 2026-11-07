@@ -15,7 +15,7 @@ func TestSearchMetadataSnippetQueryPlan(t *testing.T) {
 	dbtest.SkipIfPostgres(t, "match excerpts use SQLite FTS5")
 	assert := assert.New(t)
 	req := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "snippet-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "snippet-plan.db"))
 	req.NoError(err)
 	t.Cleanup(func() { req.NoError(st.Close()) })
 	req.NoError(st.InitSchema())

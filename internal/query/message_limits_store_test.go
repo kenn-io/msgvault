@@ -1,7 +1,6 @@
 package query_test
 
 import (
-	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -76,7 +75,7 @@ func TestBoundedMessageDetails(t *testing.T) {
 			setup: func(t *testing.T) int64 {
 				t.Helper()
 				id := withRaw(t, "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Fixture\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nFallback body.\r\n")
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
 				require.NoError(t, err)
 				return id
 			},
@@ -87,7 +86,7 @@ func TestBoundedMessageDetails(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			id := tc.setup(t)
-			ctx := query.WithMessageByteLimit(context.Background(), tc.limit)
+			ctx := query.WithMessageByteLimit(t.Context(), tc.limit)
 			if tc.raw {
 				_, err := engine.GetMessageRaw(ctx, id)
 				require.ErrorIs(err, tc.wantErr)
@@ -115,11 +114,11 @@ func TestBoundedAllThreadMembershipNeverTruncates(t *testing.T) {
 		f.NewMessage().Create(t, f.Store)
 	}
 	thread := query.ThreadQuery{ID: first, All: true, MaxMembers: query.ThreadMaxLimit}
-	page, err := engine.ListThread(context.Background(), thread)
+	page, err := engine.ListThread(t.Context(), thread)
 	require.NoError(err)
 	assert.Len(page.Messages, query.ThreadMaxLimit)
 
 	f.NewMessage().Create(t, f.Store)
-	_, err = engine.ListThread(context.Background(), thread)
+	_, err = engine.ListThread(t.Context(), thread)
 	require.ErrorIs(err, query.ErrThreadTooLarge)
 }

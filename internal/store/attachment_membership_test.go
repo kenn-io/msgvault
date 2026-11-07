@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -44,7 +43,8 @@ func newMembershipFixture(
 	conversationID, err := st.EnsureConversationWithType(
 		source.ID, sourceType+"-conversation", "channel", "Membership")
 	require.NoError(err)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`),
 		observed, conversationID)
 	require.NoError(err)
@@ -219,14 +219,14 @@ func TestRetryableAttachmentMessagesFailClosedWithoutArchivedRoster(t *testing.T
 		StoragePath:        "mxc://beeper.local/legacy",
 		Size:               5, State: attachmentpolicy.StatePending,
 	}}))
-	result, err := st.ApplyBeeperRetryableAttachmentPolicy(context.Background(), beeper.sourceID, policy)
+	result, err := st.ApplyBeeperRetryableAttachmentPolicy(t.Context(), beeper.sourceID, policy)
 	require.NoError(err)
 	assert.EqualValues(1, result.NewlySkipped, "the policy pass must not admit on an unarchived roster either")
-	items, err = st.ListBeeperRetryableAttachmentMessages(beeper.sourceID, policy)
+	items, err = st.ListBeeperRetryableAttachmentMessages(t.Context(), beeper.sourceID, policy)
 	require.NoError(err)
 	assert.Empty(items)
 	require.NoError(st.SetConversationMemberCount(beeper.conversationID, 2))
-	items, err = st.ListBeeperRetryableAttachmentMessages(beeper.sourceID, policy)
+	items, err = st.ListBeeperRetryableAttachmentMessages(t.Context(), beeper.sourceID, policy)
 	require.NoError(err)
 	require.Len(items, 1, "the resolved roster releases the skip")
 	assert.Equal(2, items[0].ParticipantCount)
@@ -252,18 +252,18 @@ func TestBeeperRetryPolicyWeighsArchivedTotal(t *testing.T) {
 	pending()
 	policy := attachmentpolicy.Policy{MaxParticipants: 5, MaxBytes: 1 << 20}
 
-	result, err := st.ApplyBeeperRetryableAttachmentPolicy(context.Background(), fixture.sourceID, policy)
+	result, err := st.ApplyBeeperRetryableAttachmentPolicy(t.Context(), fixture.sourceID, policy)
 	require.NoError(err)
 	assert.EqualValues(1, result.NewlySkipped, "the archived total excludes what the stored rows would admit")
 	assert.True(result.HasExcluded)
-	items, err := st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
+	items, err := st.ListBeeperRetryableAttachmentMessages(t.Context(), fixture.sourceID, policy)
 	require.NoError(err)
 	assert.Empty(items)
 
 	// The roster shrinks below the limit: the archived total is authoritative
 	// in both directions.
 	require.NoError(st.SetConversationMemberCount(fixture.conversationID, 3))
-	items, err = st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
+	items, err = st.ListBeeperRetryableAttachmentMessages(t.Context(), fixture.sourceID, policy)
 	require.NoError(err)
 	require.Len(items, 1)
 	assert.Equal(3, items[0].ParticipantCount)
@@ -271,10 +271,10 @@ func TestBeeperRetryPolicyWeighsArchivedTotal(t *testing.T) {
 	// An unresolved roster fails closed even though the last total permits.
 	pending()
 	require.NoError(st.MarkConversationMemberCountUnknown(fixture.conversationID))
-	result, err = st.ApplyBeeperRetryableAttachmentPolicy(context.Background(), fixture.sourceID, policy)
+	result, err = st.ApplyBeeperRetryableAttachmentPolicy(t.Context(), fixture.sourceID, policy)
 	require.NoError(err)
 	assert.EqualValues(1, result.NewlySkipped)
-	items, err = st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
+	items, err = st.ListBeeperRetryableAttachmentMessages(t.Context(), fixture.sourceID, policy)
 	require.NoError(err)
 	assert.Empty(items)
 
@@ -283,18 +283,18 @@ func TestBeeperRetryPolicyWeighsArchivedTotal(t *testing.T) {
 	// clears its durable marker.
 	require.NoError(st.SetConversationMemberCount(fixture.conversationID, 3))
 	require.NoError(st.SetSourceConversationRosterRepairPendingContext(
-		context.Background(), fixture.sourceID, "beeper-conversation", true,
+		t.Context(), fixture.sourceID, "beeper-conversation", true,
 	))
-	items, err = st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
+	items, err = st.ListBeeperRetryableAttachmentMessages(t.Context(), fixture.sourceID, policy)
 	require.NoError(err)
 	assert.Empty(items, "media retries fail closed while the archived roster repair is incomplete")
-	membership, err := st.AttachmentConversationMembershipContext(context.Background(), fixture.messageID)
+	membership, err := st.AttachmentConversationMembershipContext(t.Context(), fixture.messageID)
 	require.NoError(err)
 	assert.False(membership.RosterArchived)
 	require.NoError(st.SetSourceConversationRosterRepairPendingContext(
-		context.Background(), fixture.sourceID, "beeper-conversation", false,
+		t.Context(), fixture.sourceID, "beeper-conversation", false,
 	))
-	items, err = st.ListBeeperRetryableAttachmentMessages(fixture.sourceID, policy)
+	items, err = st.ListBeeperRetryableAttachmentMessages(t.Context(), fixture.sourceID, policy)
 	require.NoError(err)
 	require.Len(items, 1, "clearing the marker releases a successful roster repair")
 }
@@ -316,7 +316,7 @@ func TestAttachmentPolicyCandidatesReportUnresolvedRosters(t *testing.T) {
 		ContentHash:        contentHash, Size: 5, State: attachmentpolicy.StateStored,
 	}}))
 	candidate := func() store.AttachmentPolicyCandidate {
-		candidates, err := st.ListAttachmentPolicyCandidates(context.Background())
+		candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
 		require.NoError(err)
 		require.Len(candidates, 1)
 		return candidates[0]
@@ -345,7 +345,7 @@ func TestAttachmentPolicyCandidatesReportUnresolvedRosters(t *testing.T) {
 	assert.True(candidate().RosterUnresolved)
 	require.NoError(st.SetConversationMemberCount(fixture.conversationID, 3))
 	require.NoError(st.SetSourceConversationRosterRepairPendingContext(
-		context.Background(), fixture.sourceID, "slack-conversation", true,
+		t.Context(), fixture.sourceID, "slack-conversation", true,
 	))
 	assert.True(candidate().RosterUnresolved,
 		"an interrupted roster replacement must not be a purge eligibility proof")

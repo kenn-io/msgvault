@@ -30,13 +30,14 @@ func TestShowThreadDelegatedThroughRoot(t *testing.T) {
 	remoteAPISchemaCheckEnabled = true
 	t.Cleanup(func() { remoteAPISchemaCheckEnabled = previousCheck })
 	st := testutil.NewTestStore(t)
-	src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.org", "message-1", "Plan", "Synthetic reply")
+	src, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.org", "message-1", "Plan", "Synthetic reply")
 	requirements.NoError(err)
-	other, _, err := testutil.CreateIndexedSourceMessage(st, "other@example.org", "message-2", "Other", "Outside the grant")
+	other, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "other@example.org", "message-2", "Other", "Outside the grant")
 	requirements.NoError(err)
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	server := httptest.NewServer(srv.Router())
 	t.Cleanup(server.Close)
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
@@ -92,7 +93,7 @@ func TestRemoteAgentReadCommands(t *testing.T) {
 	assertions := assert.New(t)
 
 	st := testutil.NewTestStore(t)
-	src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message-1", "glacier", "synthetic body")
+	src, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "message-1", "glacier", "synthetic body")
 	requirements.NoError(err)
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})

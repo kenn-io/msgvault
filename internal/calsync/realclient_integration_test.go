@@ -16,7 +16,6 @@ package calsync
 // responses always include cancellations and never carry timeMin/timeMax.
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -52,7 +51,7 @@ func TestRealClientSyncOffsetFreeTime(t *testing.T) {
 	syncer := New(realCalClient(t, srv), st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
 	_, err := syncer.Full(t.Context())
 	requirements.NoError(err)
-	src, err := st.GetSourceByIdentifier(testAccount + "/primary")
+	src, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/primary")
 	requirements.NoError(err)
 	event, ok := loadEvent(t, st, src.ID, "offset-free")
 	requirements.True(ok)
@@ -123,7 +122,7 @@ func loadEvent(t *testing.T, st *store.Store, sourceID int64, smid string) (pers
 	var p persistedEvent
 	var subj, metaStr sql.NullString
 	var deletedAt sql.NullTime
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id, message_type, subject, sent_at, is_from_me, metadata, deleted_from_source_at
 		FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, smid).
 		Scan(&p.id, &p.mtype, &subj, &p.sentAt, &p.isFromMe, &metaStr, &deletedAt)
@@ -137,9 +136,9 @@ func loadEvent(t *testing.T, st *store.Store, sourceID int64, smid string) (pers
 		_ = json.Unmarshal([]byte(metaStr.String), &p.meta)
 	}
 	var body sql.NullString
-	_ = st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), p.id).Scan(&body)
+	_ = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), p.id).Scan(&body)
 	p.body = body.String
-	_ = st.DB().QueryRow(st.Rebind(`SELECT raw_format FROM message_raw WHERE message_id = ?`), p.id).Scan(&p.rawFmt)
+	_ = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT raw_format FROM message_raw WHERE message_id = ?`), p.id).Scan(&p.rawFmt)
 	p.to = recipientEmails(t, st, p.id, "to")
 	return p, true
 }
@@ -212,10 +211,10 @@ func TestRealClient_DozenEvents_FullThenIncremental(t *testing.T) {
 		Calendars:    []string{account},
 	}).WithLogger(quietLogger())
 
-	res, err := syncer.Full(context.Background())
+	res, err := syncer.Full(t.Context())
 	require.NoError(err)
 
-	src, err := st.GetSourceByIdentifier(account + "/" + account)
+	src, err := st.GetSourceByIdentifier(t.Context(), account+"/"+account)
 	require.NoError(err)
 	require.NotNil(src)
 	assert.Equal("SYNC_AFTER_FULL", src.SyncCursor.String, "final sync token persisted as cursor")
@@ -298,7 +297,7 @@ func TestRealClient_DozenEvents_FullThenIncremental(t *testing.T) {
 		{"id":"evt_solo","status":"cancelled"}
 	],"nextSyncToken":"SYNC_AFTER_INC"}`
 
-	res2, err := syncer.Incremental(context.Background())
+	res2, err := syncer.Incremental(t.Context())
 	require.NoError(err)
 	assert.Equal(1, res2.EventsAdded)
 	assert.Equal(1, res2.EventsCancelled)
@@ -314,12 +313,12 @@ func TestRealClient_DozenEvents_FullThenIncremental(t *testing.T) {
 	assert.Equal("Focus block", solo.subject, "original subject preserved despite empty cancellation delta")
 	assert.Equal("cancelled", solo.meta["status"])
 
-	src2, _ := st.GetSourceByIdentifier(account + "/" + account)
+	src2, _ := st.GetSourceByIdentifier(t.Context(), account+"/"+account)
 	assert.Equal("SYNC_AFTER_INC", src2.SyncCursor.String, "cursor advanced after incremental")
 
 	// A subsequent empty incremental is a clean no-op.
 	cs.incPages["SYNC_AFTER_INC"] = `{"items":[],"nextSyncToken":"SYNC_AFTER_INC"}`
-	_, err = syncer.Incremental(context.Background())
+	_, err = syncer.Incremental(t.Context())
 	require.NoError(err)
 }
 

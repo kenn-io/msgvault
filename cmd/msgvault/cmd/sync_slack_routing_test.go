@@ -46,7 +46,7 @@ func TestResolveSlackSyncSourcesFiltersByTeam(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
-	_, err := resolveSlackSyncSources(st, "")
+	_, err := resolveSlackSyncSources(t.Context(), st, "")
 	require.ErrorContains(err, "no Slack workspaces registered")
 
 	_, err = st.GetOrCreateSource(sourceTypeSlack, "T01:UME")
@@ -54,16 +54,16 @@ func TestResolveSlackSyncSourcesFiltersByTeam(t *testing.T) {
 	_, err = st.GetOrCreateSource(sourceTypeSlack, "T02:UOTHER")
 	require.NoError(err)
 
-	all, err := resolveSlackSyncSources(st, "")
+	all, err := resolveSlackSyncSources(t.Context(), st, "")
 	require.NoError(err)
 	assert.Len(all, 2)
 
-	one, err := resolveSlackSyncSources(st, "T02")
+	one, err := resolveSlackSyncSources(t.Context(), st, "T02")
 	require.NoError(err)
 	require.Len(one, 1)
 	assert.Equal("T02:UOTHER", one[0].Identifier)
 
-	_, err = resolveSlackSyncSources(st, "TYPO")
+	_, err = resolveSlackSyncSources(t.Context(), st, "TYPO")
 	require.ErrorContains(err, `slack workspace "TYPO" is not registered`)
 }
 
@@ -81,12 +81,12 @@ func TestResolveSlackSyncSourcesSkipsRetiredWorkspaces(t *testing.T) {
 	})
 	require.NoError(err)
 
-	all, err := resolveSlackSyncSources(st, "")
+	all, err := resolveSlackSyncSources(t.Context(), st, "")
 	require.NoError(err)
 	require.Len(all, 1)
 	assert.Equal(active.ID, all[0].ID)
 
-	_, err = resolveSlackSyncSources(st, "T01")
+	_, err = resolveSlackSyncSources(t.Context(), st, "T01")
 	require.ErrorIs(err, store.ErrSourceRetired)
 }
 
@@ -162,10 +162,10 @@ func TestScheduledSlackAttemptsResumeAfterInterruptedWorkspace(t *testing.T) {
 		_, err := st.GetOrCreateSource(sourceTypeSlack, identifier)
 		require.NoError(err)
 	}
-	sources, err := resolveSlackSyncSources(st, "")
+	sources, err := resolveSlackSyncSources(t.Context(), st, "")
 	require.NoError(err)
 	rotation := &slackWorkspaceRotation{}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var first []string
 	err = runScheduledSlackAttempts(ctx, sources, rotation, func(src *store.Source) (bool, error) {
 		first = append(first, src.Identifier)
@@ -176,7 +176,7 @@ func TestScheduledSlackAttemptsResumeAfterInterruptedWorkspace(t *testing.T) {
 	assert.Equal([]string{sources[0].Identifier}, first)
 
 	var resumed []string
-	err = runScheduledSlackAttempts(context.Background(), sources, rotation,
+	err = runScheduledSlackAttempts(t.Context(), sources, rotation,
 		func(src *store.Source) (bool, error) {
 			resumed = append(resumed, src.Identifier)
 			return true, nil

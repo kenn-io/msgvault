@@ -54,11 +54,11 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 	analyticsDir, cleanup := pb.build()
 	t.Cleanup(cleanup)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Startup probe sees the new schema.
 	require.True(engine.hasCol("messages", "message_type"),
@@ -87,15 +87,15 @@ func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
 	analyticsDir, cleanup := buildStandardTestData(t).Build()
 	t.Cleanup(cleanup)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "open ready cache")
 	t.Cleanup(func() { _ = engine.Close() })
 
 	require.NoError(os.Remove(CacheStatePath(analyticsDir)), "interrupt cache")
-	_, err = engine.Aggregate(context.Background(), ViewSenders, DefaultAggregateOptions())
+	_, err = engine.Aggregate(t.Context(), ViewSenders, DefaultAggregateOptions())
 	require.ErrorIs(err, ErrCacheUnavailable)
 
-	second, err := NewDuckDBEngine(analyticsDir, "", nil)
+	second, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	if second != nil {
 		_ = second.Close()
 	}
@@ -114,7 +114,7 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 	analyticsDir, cleanup := b.Build()
 	t.Cleanup(cleanup)
 	db := dbtest.NewTestDB(t, "../store/schema.sql")
-	_, err := db.DB.Exec(`
+	_, err := db.DB.ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'gmail', 'live@example.com');
 		INSERT INTO participants (id, email_address, domain, display_name) VALUES (11, 'live@example.com', 'example.com', 'Live');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES (701, 7, 'live-thread', 'email', 'Live');
@@ -131,7 +131,7 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 	requirements.NoError(err)
 	engines := make(map[bool]*DuckDBEngine)
 	for _, enabled := range []bool{false, true} {
-		engine, err := NewDuckDBEngine(analyticsDir, "", db.DB, DuckDBOptions{
+		engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", db.DB, DuckDBOptions{
 			DisableSQLiteScanner: true, LiveSQLWhenCacheUnavailable: enabled,
 		})
 		requirements.NoError(err)
@@ -324,11 +324,11 @@ func TestDuckDBEngine_SearchFastWithStatsRejectsMessageParquetDrift(t *testing.T
 	analyticsDir, cleanup := pb.build()
 	t.Cleanup(cleanup)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	q := search.Parse("SOFRA")
 
 	first, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
@@ -371,11 +371,11 @@ func TestDuckDBEngine_SearchFastWithStatsRejectsAttachmentParquetDrift(t *testin
 	analyticsDir, cleanup := pb.build()
 	t.Cleanup(cleanup)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	q := search.Parse("SOFRA")
 
 	first, err := engine.SearchFastWithStats(ctx, q, "SOFRA", MessageFilter{}, ViewSenders, 10, 0)
@@ -403,7 +403,7 @@ func TestDuckDBEngine_CacheFingerprintCoversRequiredParquetDirs(t *testing.T) {
 	analyticsDir, cleanup := buildStandardTestData(t).Build()
 	t.Cleanup(cleanup)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -481,11 +481,11 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 	analyticsDir, cleanup := b.Build()
 	t.Cleanup(cleanup)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	now := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 
 	exploreBefore, err := engine.Explore(ctx, ExploreRequest{})
@@ -543,7 +543,7 @@ func TestDuckDBEngine_ReloadsOwnerEventIDsAfterPublication(t *testing.T) {
 	b.AddTo(event, owner, "Owner")
 	root, cleanup := b.Build()
 	t.Cleanup(cleanup)
-	engine, err := NewDuckDBEngine(root, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), root, "", nil)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(engine.Close()) })
 	request := ExploreRequest{PersonInteractionsOnly: true, Context: Context{ParticipantIDs: []int64{person}}}
@@ -553,11 +553,11 @@ func TestDuckDBEngine_ReloadsOwnerEventIDsAfterPublication(t *testing.T) {
 	assert.Equal(event, *before.Rows[0].AnchorMessageID)
 
 	activity := firstRequiredParquetForTest(t, root, identityindex.DatasetActivity)
-	_, err = engine.db.Exec("COPY (SELECT * REPLACE (false AS is_owner) FROM read_parquet('" + escapePath(activity) + "')) TO '" + escapePath(activity) + ".tmp' (FORMAT PARQUET)")
+	_, err = engine.db.ExecContext(t.Context(), "COPY (SELECT * REPLACE (false AS is_owner) FROM read_parquet('"+escapePath(activity)+"')) TO '"+escapePath(activity)+".tmp' (FORMAT PARQUET)")
 	require.NoError(err)
 	require.NoError(os.Rename(activity+".tmp", activity))
 	owners := firstRequiredParquetForTest(t, root, datasetOwnerParticipants)
-	_, err = engine.db.Exec("COPY (SELECT * FROM read_parquet('" + escapePath(owners) + "') WHERE false) TO '" + escapePath(owners) + ".tmp' (FORMAT PARQUET)")
+	_, err = engine.db.ExecContext(t.Context(), "COPY (SELECT * FROM read_parquet('"+escapePath(owners)+"') WHERE false) TO '"+escapePath(owners)+".tmp' (FORMAT PARQUET)")
 	require.NoError(err)
 	require.NoError(os.Rename(owners+".tmp", owners))
 	republishCacheStateForTest(t, root)
@@ -578,10 +578,10 @@ func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t 
 			b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", sent)
 			root, cleanup := b.Build()
 			t.Cleanup(cleanup)
-			engine, err := NewDuckDBEngine(root, "", nil)
+			engine, err := NewDuckDBEngine(t.Context(), root, "", nil)
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(engine.Close()) })
-			_, err = engine.db.Exec("SET enable_external_file_cache = false")
+			_, err = engine.db.ExecContext(t.Context(), "SET enable_external_file_cache = false")
 			require.NoError(err)
 			after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 			request := PersonSearchRequest{Explore: ExploreRequest{Context: Context{After: &after}}, Query: "Bob"}
@@ -664,12 +664,12 @@ func TestDuckDBEngine_QueryPathMemoizesFullFingerprintWalks(t *testing.T) {
 	analyticsDir, cleanup := buildStandardTestData(t).Build()
 	t.Cleanup(cleanup)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 	require.Equal(1, walks, "startup performs the single full fingerprint walk")
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for range 5 {
 		_, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
 		require.NoError(err, "Aggregate against unchanged cache")

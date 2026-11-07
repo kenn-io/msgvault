@@ -17,8 +17,8 @@ import (
 )
 
 // doGet serves a GET request against the router and returns the recorder.
-func doGet(srv *Server, target string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, target, nil)
+func doGet(ctx context.Context, srv *Server, target string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	return w
@@ -84,7 +84,7 @@ func TestInvalidQueryParamsReturn400(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newTestServerWithEngine(t, &querytest.MockEngine{})
-			w := doGet(srv, tc.target)
+			w := doGet(t.Context(), srv, tc.target)
 			require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 			env := decodeErrorEnvelope(t, w)
 			assert.Equal(t, tc.wantCode, env.Error, "error code")
@@ -105,7 +105,7 @@ func TestValidQueryParamsAccepted(t *testing.T) {
 	for _, target := range targets {
 		t.Run(target, func(t *testing.T) {
 			srv := newTestServerWithEngine(t, &querytest.MockEngine{})
-			w := doGet(srv, target)
+			w := doGet(t.Context(), srv, target)
 			assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 		})
 	}
@@ -128,7 +128,7 @@ func TestOutOfRangePaginationClamps(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			srv := newTestServerWithEngine(t, &querytest.MockEngine{})
-			w := doGet(srv, tc.target)
+			w := doGet(t.Context(), srv, tc.target)
 			require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
 			var resp MessageListResponse
 			require.NoError(json.Unmarshal(w.Body.Bytes(), &resp))
@@ -148,7 +148,7 @@ func TestUnknownAPIPathReturnsJSON404(t *testing.T) {
 	for _, target := range targets {
 		t.Run(target, func(t *testing.T) {
 			srv := newTestServerWithEngine(t, &querytest.MockEngine{})
-			w := doGet(srv, target)
+			w := doGet(t.Context(), srv, target)
 			require.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
 			env := decodeErrorEnvelope(t, w)
 			assert.Equal(t, "not_found", env.Error)
@@ -164,7 +164,7 @@ func TestTypedRouteErrorEnvelopeHasNoSchema(t *testing.T) {
 	// cli/identities is a typed huma.Register route; an unknown account yields a
 	// 400 whose body must match the bare {error,message} envelope, not the
 	// $schema-wrapped huma variant.
-	w := doGet(srv, "/api/v1/cli/identities?account=nosuch@example.com")
+	w := doGet(t.Context(), srv, "/api/v1/cli/identities?account=nosuch@example.com")
 	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 	decodeErrorEnvelope(t, w)
 }
@@ -200,7 +200,7 @@ func TestQueryEndpointRejectsNonReadOnly(t *testing.T) {
 			assert := assert.New(t)
 			ranSQL = false
 			body := strings.NewReader(`{"sql":` + mustJSONString(tc.sql) + `}`)
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/query", body)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/query", body)
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)

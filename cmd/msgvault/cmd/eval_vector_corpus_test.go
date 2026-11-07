@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -23,7 +22,7 @@ func seedEmbeddedGeneration(
 	t *testing.T, dataDir, mainPath string, mainDB *store.Store, vecCfg vector.Config, msgIDs ...int64,
 ) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path:      filepath.Join(dataDir, "vectors.db"),
@@ -51,7 +50,7 @@ func seedEmbeddedGeneration(
 	require.NoError(t, b.ActivateGeneration(ctx, gen, true), "ActivateGeneration")
 
 	for _, id := range msgIDs {
-		_, err = mainDB.DB().Exec(`UPDATE messages SET embed_gen = ? WHERE id = ?`, int64(gen), id)
+		_, err = mainDB.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = ? WHERE id = ?`, int64(gen), id)
 		require.NoError(t, err, "stamp embed_gen on message %d", id)
 	}
 }
@@ -216,7 +215,7 @@ func TestAttachVector_CorpusIncludesMessagesWithStaleEmbedGenStamp(t *testing.T)
 	// Simulate a content change on message 1 after it was embedded: the
 	// backfill machinery resets embed_gen to mark it for re-embedding, but
 	// its vector row in vectors.db is untouched until that re-embed runs.
-	_, err := s.DB().Exec(`UPDATE messages SET embed_gen = NULL WHERE id = 1`)
+	_, err := s.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id = 1`)
 	require.NoError(err, "reset embed_gen to simulate a pending re-embed")
 
 	ev := &evaluator{ctx: ctx, diag: &runDiagnostics{}}

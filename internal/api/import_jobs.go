@@ -132,7 +132,7 @@ func (s *Server) handleCreateImportJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to create import job")
 		return
 	}
-	finishIdleWork, idleAcquired := s.idleTracker.BeginWork()
+	finishIdleWork, idleAcquired := s.idleTracker.BeginWorkContext(r.Context())
 	if !idleAcquired {
 		release()
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "Historical imports are unavailable")

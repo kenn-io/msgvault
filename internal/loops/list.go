@@ -60,12 +60,12 @@ var ErrEvidenceIncomplete = &EvidenceIncompleteError{}
 type Store interface {
 	LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error]
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
-	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
+	GetMessageBodyText(ctx context.Context, messageID int64) (string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
 	LoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, string, bool, error)
 	CachedLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, bool, error)
 	SaveLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int, token string, evidence store.LoopMessageEvidence) error
-	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
+	MessageConversation(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 	ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error)
@@ -102,7 +102,7 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 		return e, ErrEvidenceIncomplete
 	}
 	r.left--
-	body, err := r.st.GetMessageBodyTextContext(r.ctx, id)
+	body, err := r.st.GetMessageBodyText(r.ctx, id)
 	if err != nil {
 		return e, err
 	}
@@ -255,7 +255,7 @@ func Reopen(ctx context.Context, st Store, messageID int64) (store.LoopDecision,
 // closed loop. Covered questions cannot anchor an action. Listed questions
 // narrow the loop to exactly those, and each must still be open in it.
 func requireAnchor(ctx context.Context, st Store, messageID int64, questions []int64, now time.Time) (Loop, error) {
-	ref, err := st.MessageConversationContext(ctx, messageID)
+	ref, err := st.MessageConversation(ctx, messageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Loop{}, ErrNotOpen
 	}

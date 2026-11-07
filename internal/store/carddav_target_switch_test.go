@@ -24,7 +24,7 @@ func TestCardDAVCrossAccountTargetSwitchRacingPublication(t *testing.T) {
 	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), input)
 	require.NoError(err)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name) VALUES ('review-target-race','Example Person') RETURNING id`).Scan(&personID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('review-target-race','Example Person') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

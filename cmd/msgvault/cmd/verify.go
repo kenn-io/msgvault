@@ -112,7 +112,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 	logger := state.logger
 	email := args[0]
 
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
+	release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 			emitln()
 		} else {
 			emitln("Running database integrity check...")
-			integrityErrors, err := runIntegrityCheck(s)
+			integrityErrors, err := runIntegrityCheck(cmd.Context(), s)
 			if err != nil {
 				return fmt.Errorf("integrity check failed: %w", err)
 			}
@@ -424,11 +424,11 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 // require server-side privileges this CLI does not assume. On PG we
 // return no errors so the rest of `verify` (Gmail message round-trip)
 // still runs — the user is expected to monitor PG health separately.
-func runIntegrityCheck(s *store.Store) ([]string, error) {
+func runIntegrityCheck(ctx context.Context, s *store.Store) ([]string, error) {
 	if s.IsPostgreSQL() {
 		return nil, nil
 	}
-	rows, err := s.DB().Query("PRAGMA integrity_check(100)")
+	rows, err := s.DB().QueryContext(ctx, "PRAGMA integrity_check(100)")
 	if err != nil {
 		return nil, err
 	}

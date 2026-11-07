@@ -207,7 +207,7 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 	if cfg == nil {
 		return nil
 	}
-	st, err := store.OpenReadOnly(cfg.DatabaseDSN())
+	st, err := store.OpenReadOnlyContext(ctx, cfg.DatabaseDSN())
 	if err != nil {
 		return nil
 	}

@@ -259,7 +259,7 @@ func (r *emlxOccurrenceImporter) tryHit(
 	// The receipt was written after this mailbox label was applied; restore it
 	// only if it was removed since.
 	if !target.HasLabel {
-		if err := r.st.AddMessageLabels(target.MessageID, []int64{chunk.labelID}); err != nil {
+		if err := r.st.AddMessageLabels(ctx, target.MessageID, []int64{chunk.labelID}); err != nil {
 			return out, true, err
 		}
 		chunk.forget(targetID)
@@ -472,7 +472,7 @@ func (r *emlxOccurrenceImporter) importCold(
 		chunk.forget(c.targetID)
 		// Ingestion also applies the mailbox label, so it retries one that
 		// failed to attach.
-		if err := r.st.AddMessageLabels(c.target.MessageID, []int64{chunk.labelID}); err != nil {
+		if err := r.st.AddMessageLabels(ctx, c.target.MessageID, []int64{chunk.labelID}); err != nil {
 			if err := r.completeTarget(ctx, chunk, c.targetID, c.target, c.current, c.fallbackDate); err != nil {
 				return out, err
 			}

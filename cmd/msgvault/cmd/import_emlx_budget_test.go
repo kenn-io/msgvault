@@ -197,9 +197,9 @@ func emlxBudgetAccountsDB(t *testing.T, home, guid string) string {
 	db, err := sql.Open("sqlite3", path)
 	r.NoError(err)
 	defer func() { r.NoError(db.Close()) }()
-	_, err = db.Exec(`CREATE TABLE ZACCOUNT (Z_PK INTEGER PRIMARY KEY, ZIDENTIFIER TEXT, ZUSERNAME TEXT, ZACCOUNTDESCRIPTION TEXT, ZPARENTACCOUNT INTEGER)`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE ZACCOUNT (Z_PK INTEGER PRIMARY KEY, ZIDENTIFIER TEXT, ZUSERNAME TEXT, ZACCOUNTDESCRIPTION TEXT, ZPARENTACCOUNT INTEGER)`)
 	r.NoError(err)
-	_, err = db.Exec(`INSERT INTO ZACCOUNT VALUES (1, ?, 'owner@example.test', 'Synthetic account', NULL)`, guid)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO ZACCOUNT VALUES (1, ?, 'owner@example.test', 'Synthetic account', NULL)`, guid)
 	r.NoError(err)
 	return path
 }
@@ -211,7 +211,7 @@ func emlxBudgetCheckArchive(t *testing.T, home string, oldPart, newPart []byte, 
 	r.NoError(err)
 	defer func() { r.NoError(st.Close()) }()
 	var mid int64
-	r.NoError(st.DB().QueryRow(`SELECT id FROM messages WHERE rfc822_message_id = 'budget-cli@example.test'`).Scan(&mid))
+	r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE rfc822_message_id = 'budget-cli@example.test'`).Scan(&mid))
 	raw, err := st.GetMessageRawContext(t.Context(), mid)
 	r.NoError(err)
 	parsed, err := mime.Parse(raw)
@@ -224,7 +224,7 @@ func emlxBudgetCheckArchive(t *testing.T, home string, oldPart, newPart []byte, 
 		a.Equal(newPart, parsed.Attachments[1].Content)
 		for _, part := range parsed.Attachments {
 			var path string
-			r.NoError(st.DB().QueryRow(`SELECT storage_path FROM attachments WHERE message_id = ? AND filename = ? AND COALESCE(content_hash, '') <> ''`, mid, part.Filename).Scan(&path))
+			r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT storage_path FROM attachments WHERE message_id = ? AND filename = ? AND COALESCE(content_hash, '') <> ''`, mid, part.Filename).Scan(&path))
 			blob, err := os.ReadFile(filepath.Join(home, "attachments", filepath.FromSlash(path)))
 			r.NoError(err)
 			a.Equal(part.Content, blob)
@@ -235,9 +235,9 @@ func emlxBudgetCheckArchive(t *testing.T, home string, oldPart, newPart []byte, 
 	a.Len(labels, 1)
 	r.True(st.FTS5Available())
 	var indexed, receipts int
-	r.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'budgetrecoveryneedle'`).Scan(&indexed))
+	r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'budgetrecoveryneedle'`).Scan(&indexed))
 	a.Equal(1, indexed)
-	r.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM source_import_items WHERE provider = 'emlx-occurrence' AND status = 'imported'`).Scan(&receipts))
+	r.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM source_import_items WHERE provider = 'emlx-occurrence' AND status = 'imported'`).Scan(&receipts))
 	// Platforms without filesystem fingerprints still complete receipts; they
 	// only lack the signature that lets a rerun skip content reads.
 	a.Equal(completed, receipts)

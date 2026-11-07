@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +13,7 @@ func TestPersonKeepsManyCurrentAndHistoricalContactPointsWithoutJSONBundling(t *
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	inputs := []store.PersonContactPointInput{
@@ -50,7 +49,7 @@ func TestSameUsernameIsSafeAcrossServicesAndScopes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	for _, scope := range []string{"irc.example.net", "irc.example.org"} {
@@ -75,7 +74,7 @@ func TestContactPointScopeKindAndLanguageValidation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	_, err := st.AddPersonContactPointContext(ctx, personID, store.PersonContactPointInput{
@@ -102,7 +101,7 @@ func TestRetractedContactPointLeavesCurrentSetButStaysInHistory(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	_, err := st.AddPersonContactPointContext(ctx, personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressUsername, ServiceSlug: new("x"),

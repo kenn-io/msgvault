@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,9 +11,10 @@ import (
 
 // setDeletedFromSource marks a message as deleted from its source account
 // (retained in the archive).
-func setDeletedFromSource(f *storetest.Fixture, id int64) {
+func setDeletedFromSource(ctx context.Context, f *storetest.Fixture, id int64) {
 	f.T.Helper()
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		ctx,
 		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"),
 		id,
 	)
@@ -21,9 +23,10 @@ func setDeletedFromSource(f *storetest.Fixture, id int64) {
 
 // setDedupHidden marks a message as a dedup loser (deleted_at), which every
 // user-facing count must exclude regardless of the source-deletion split.
-func setDedupHidden(f *storetest.Fixture, id int64) {
+func setDedupHidden(ctx context.Context, f *storetest.Fixture, id int64) {
 	f.T.Helper()
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		ctx,
 		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"),
 		id,
 	)
@@ -47,11 +50,11 @@ func TestStore_StatsSourceDeletedBreakdown(t *testing.T) {
 		f.CreateMessage("src-del-3"),
 	}
 	for _, id := range sourceDeleted {
-		setDeletedFromSource(f, id)
+		setDeletedFromSource(t.Context(), f, id)
 	}
 
 	dedup := f.CreateMessage("dedup-hidden-1")
-	setDedupHidden(f, dedup)
+	setDedupHidden(t.Context(), f, dedup)
 
 	stats, err := f.Store.GetStats()
 	require.NoError(err, "GetStats")
@@ -79,7 +82,7 @@ func TestStore_CollectionSourceDeletedCount(t *testing.T) {
 
 	f.CreateMessages(4)
 	del := f.CreateMessage("coll-src-del-1")
-	setDeletedFromSource(f, del)
+	setDeletedFromSource(t.Context(), f, del)
 
 	_, err := f.Store.CreateCollection("team", "", []int64{f.Source.ID})
 	require.NoError(err, "CreateCollection")

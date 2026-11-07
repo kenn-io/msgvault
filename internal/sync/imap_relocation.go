@@ -37,7 +37,7 @@ func (s *Syncer) relocateIMAPMessageToTarget(
 		raw == nil || raw.ID != target.NewSourceMessageID {
 		return errors.New("invalid IMAP relocation target")
 	}
-	savedOrigin, err := s.savedIMAPContentOrigin(target.InternalID)
+	savedOrigin, err := s.savedIMAPContentOrigin(ctx, target.InternalID)
 	if err != nil {
 		return err
 	}
@@ -166,6 +166,7 @@ func (s *Syncer) publishMIMEAttachments(
 			)
 		}
 		receipt, err := export.StoreAttachmentFileDurable(
+			ctx,
 			s.opts.AttachmentsDir, attachment)
 		if receipt.Created {
 			created[receipt.StoragePath] = receipt

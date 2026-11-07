@@ -69,7 +69,7 @@ func TestNativeMCPBridge(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
 				canceled, exited := make(chan struct{}), make(chan struct{})
-				unwind, release := context.WithCancel(context.Background())
+				unwind, release := context.WithCancel(t.Context())
 				defer release()
 				transport := nativeMCPTransport{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					defer close(exited)
@@ -119,7 +119,7 @@ func TestNativeMCPBridge(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			entered, canceled, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			unwind, release := context.WithCancel(context.Background())
+			unwind, release := context.WithCancel(t.Context())
 			engine := &querytest.MockEngine{ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
 				defer close(exited)
 				close(entered)
@@ -130,11 +130,11 @@ func TestNativeMCPBridge(t *testing.T) {
 			}}
 			cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner", BindAddr: "127.0.0.1"}}
 			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), Engine: engine})
-			defer func() { release(); require.NoError(server.Shutdown(context.Background())) }()
+			defer func() { release(); require.NoError(server.Shutdown(t.Context())) }()
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
 			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(err)
 			serving := make(chan error, 1)
 			go func() { serving <- server.StartOnListener(listener) }()
@@ -160,7 +160,7 @@ func TestNativeMCPBridge(t *testing.T) {
 			<-canceled
 			require.ErrorIs(<-requested, context.Canceled)
 			shutdown := make(chan error, 1)
-			go func() { shutdown <- server.Shutdown(context.Background()) }()
+			go func() { shutdown <- server.Shutdown(t.Context()) }()
 			require.ErrorIs(<-serving, http.ErrServerClosed)
 			select {
 			case err := <-shutdown:
@@ -183,7 +183,7 @@ func TestNativeMCPBridge(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		entered := make(chan struct{})
-		unwind, release := context.WithCancel(context.Background())
+		unwind, release := context.WithCancel(t.Context())
 		engine := &querytest.MockEngine{ListMessagesFunc: func(ctx context.Context, _ query.MessageFilter) ([]query.MessageSummary, error) {
 			close(entered)
 			<-unwind.Done()
@@ -194,13 +194,13 @@ func TestNativeMCPBridge(t *testing.T) {
 		}}
 		cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner"}}
 		server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), Engine: engine})
-		defer func() { release(); require.NoError(server.Shutdown(context.Background())) }()
+		defer func() { release(); require.NoError(server.Shutdown(t.Context())) }()
 		cmd := &cobra.Command{Use: "serve"}
 		addServeConfigFlags(cmd)
 		serveCtx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		require.NoError(installServeMCP(serveCtx, cmd, server, &invocation{cfg: cfg}))
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(err)
 		serving := make(chan error, 1)
 		go func() { serving <- server.StartOnListener(listener) }()
@@ -226,7 +226,7 @@ func TestNativeMCPBridge(t *testing.T) {
 		<-entered
 		cancel()
 		drained := make(chan error, 1)
-		go func() { drained <- server.Shutdown(context.Background()) }()
+		go func() { drained <- server.Shutdown(t.Context()) }()
 		require.ErrorIs(<-serving, http.ErrServerClosed)
 		release()
 		response := <-result
@@ -249,11 +249,11 @@ func TestNativeMCPBridge(t *testing.T) {
 				}
 			}}
 			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), Engine: engine, RequestTimeout: 20 * time.Millisecond})
-			defer func() { require.NoError(server.Shutdown(context.Background())) }()
+			defer func() { require.NoError(server.Shutdown(t.Context())) }()
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
 			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
-			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_messages","arguments":{}}}`))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_messages","arguments":{}}}`))
 			request.Header.Set("Authorization", "Bearer owner")
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Accept", "application/json, text/event-stream")
@@ -277,7 +277,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 				cfg.Server.TrustedProxies = nil
 			}
 			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), Engine: &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, Subject: "synthetic message"}}}})
-			defer func() { must.NoError(server.Shutdown(context.Background())) }()
+			defer func() { must.NoError(server.Shutdown(t.Context())) }()
 			daemon := httptest.NewServer(server.Router())
 			defer daemon.Close()
 			must.Zero(cfg.Server.APIPort)
@@ -294,7 +294,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 			}
 			must.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
 			for _, path := range []string{"/mcp", "/mcp/writes"} {
-				request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`))
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`))
 				request.Header.Set("Authorization", "Bearer owner")
 				request.Header.Set("Content-Type", "application/json")
 				request.Header.Set("Accept", "application/json, text/event-stream")
@@ -383,7 +383,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 
 func TestNativeMCPStartup(t *testing.T) {
 	catalog := func(server *api.Server) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
 		request.Header.Set("Authorization", "Bearer owner")
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Accept", "application/json, text/event-stream")
@@ -400,7 +400,7 @@ func TestNativeMCPStartup(t *testing.T) {
 			cfg.Vector.Enabled = true
 			cfg.Vector.Multimodal.Enabled = true
 			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler), VectorCfg: cfg.Vector, VectorStatus: api.VectorStatusInitializing})
-			defer func() { require.NoError(server.Shutdown(context.Background())) }()
+			defer func() { require.NoError(server.Shutdown(t.Context())) }()
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
 			assert.Equal(http.StatusServiceUnavailable, catalog(server).Code)
@@ -434,7 +434,7 @@ func TestNativeMCPStartup(t *testing.T) {
 			cfg.Vector.Multimodal.Enabled = true
 			logger := slog.New(slog.DiscardHandler)
 			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: logger, VectorCfg: cfg.Vector, VectorStatus: api.VectorStatusInitializing})
-			defer func() { require.NoError(t, server.Shutdown(context.Background())) }()
+			defer func() { require.NoError(t, server.Shutdown(t.Context())) }()
 			server.SetVectorScopeCheck(func(ctx context.Context) (string, error) {
 				<-ctx.Done()
 				return "", ctx.Err()
@@ -448,7 +448,7 @@ func TestNativeMCPStartup(t *testing.T) {
 			assert.Contains(t, response.Body.String(), `"get_stats"`)
 			assert.NotContains(t, response.Body.String(), `"find_similar_messages"`)
 
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 			request.Header.Set("Authorization", "Bearer owner")
 			response = httptest.NewRecorder()
 			server.Router().ServeHTTP(response, request)

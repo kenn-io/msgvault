@@ -694,14 +694,16 @@ func isDeleteStagedUsageError(err error) bool {
 }
 
 func resolveDeleteStagedTarget(
+	ctx context.Context,
 	st *store.Store,
 	manifests []*deletion.Manifest,
 	requestedAccount string,
 ) (deleteStagedTarget, error) {
-	return resolveDeleteStagedTargetWithSourceID(st, manifests, requestedAccount, 0, false)
+	return resolveDeleteStagedTargetWithSourceID(ctx, st, manifests, requestedAccount, 0, false)
 }
 
 func resolveDeleteStagedTargetWithSourceID(
+	ctx context.Context,
 	st *store.Store,
 	manifests []*deletion.Manifest,
 	requestedAccount string,
@@ -728,7 +730,7 @@ func resolveDeleteStagedTargetWithSourceID(
 	}
 
 	if durable != nil {
-		source, err := st.GetSourceByTypeAndIdentifier(durable.Type, durable.Identifier)
+		source, err := st.GetSourceByTypeAndIdentifier(ctx, durable.Type, durable.Identifier)
 		if err != nil {
 			return deleteStagedTarget{}, err
 		}
@@ -736,7 +738,7 @@ func resolveDeleteStagedTargetWithSourceID(
 			return deleteStagedTarget{}, fmt.Errorf("source %d is not a gmail, imap or msmail source", source.ID)
 		}
 		if requestedSourceIDSet {
-			selected, selectErr := sourceops.ResolveExactOne(st, sourceops.Selector{
+			selected, selectErr := sourceops.ResolveExactOneContext(ctx, st, sourceops.Selector{
 				SourceID: requestedSourceID, SourceIDSet: true,
 			})
 			if selectErr != nil {
@@ -749,7 +751,7 @@ func resolveDeleteStagedTargetWithSourceID(
 			}
 		}
 		if strings.TrimSpace(requestedAccount) != "" {
-			selected, selectErr := sourceops.ResolveExactOne(st, sourceops.Selector{Account: requestedAccount})
+			selected, selectErr := sourceops.ResolveExactOneContext(ctx, st, sourceops.Selector{Account: requestedAccount})
 			if selectErr != nil {
 				return deleteStagedTarget{}, selectErr
 			}
@@ -784,7 +786,7 @@ func resolveDeleteStagedTargetWithSourceID(
 			selector.Account = account
 		}
 	}
-	source, err := sourceops.ResolveExactOne(st, selector)
+	source, err := sourceops.ResolveExactOneContext(ctx, st, selector)
 	if err != nil {
 		return deleteStagedTarget{}, err
 	}
@@ -1020,7 +1022,7 @@ Examples:
 		manager := plan.Manager
 		manifests := plan.Manifests
 
-		release, err := acquireDirectSQLiteWriteLock(cfg, state)
+		release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 		if err != nil {
 			return err
 		}
@@ -1045,6 +1047,7 @@ Examples:
 		// remote call, while the direct write lock keeps the source catalog
 		// stable for the duration of the command.
 		target, err := resolveDeleteStagedTargetWithSourceID(
+			cmd.Context(),
 			s, manifests, deleteAccount, deleteSourceID, cmd.Flags().Changed("source-id"),
 		)
 		if err != nil {
@@ -1262,7 +1265,7 @@ Examples:
 			fmt.Println("\nDeletion complete!")
 			return nil
 		}, func() error {
-			return rebuildCacheAfterWrite(dbPath, state)
+			return rebuildCacheAfterWrite(ctx, dbPath, state)
 		})
 	},
 }
@@ -1480,7 +1483,7 @@ func planCLIDeleteStaged(
 	cfg := state.cfg
 	var resolvedSource *store.Source
 	if req.SourceID != nil {
-		resolved, err := sourceops.ResolveExactOne(st, sourceops.Selector{
+		resolved, err := sourceops.ResolveExactOneContext(ctx, st, sourceops.Selector{
 			Account: req.Account, SourceID: *req.SourceID, SourceIDSet: true,
 		})
 		if err != nil {
@@ -1488,7 +1491,7 @@ func planCLIDeleteStaged(
 		}
 		resolvedSource = resolved
 	} else if strings.TrimSpace(req.Account) != "" {
-		resolved, err := sourceops.ResolveExactOne(st, sourceops.Selector{Account: req.Account})
+		resolved, err := sourceops.ResolveExactOneContext(ctx, st, sourceops.Selector{Account: req.Account})
 		if err != nil {
 			return api.CLIDeleteStagedPlanResponse{}, err
 		}
@@ -1520,6 +1523,7 @@ func planCLIDeleteStaged(
 	}
 	if plan.NeedsExecution && req.RemoteDeleteEnabled {
 		target, err := resolveDeleteStagedTargetWithSourceID(
+			ctx,
 			st, plan.Manifests, "", resolvedSourceID, resolvedSource != nil,
 		)
 		if err != nil {

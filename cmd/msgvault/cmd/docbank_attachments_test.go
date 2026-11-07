@@ -71,7 +71,7 @@ func TestDocbankAttachmentJobReportsUploadFailure(t *testing.T) {
 				assert.Equal(http.StatusServiceUnavailable, httpErr.Status)
 				assert.Equal(err.Error(), sched.JobStatus()[0].LastError)
 				uploads.UploadFaults.Clear()
-				_, err = f.Store.DB().Exec(`UPDATE docbank_attachment_deliveries SET next_action_at=NULL WHERE state='sending'`)
+				_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE docbank_attachment_deliveries SET next_action_at=NULL WHERE state='sending'`)
 				require.NoError(err)
 				require.NoError(sched.TriggerJob(api.DocbankAttachmentMirrorJob))
 			} else {
