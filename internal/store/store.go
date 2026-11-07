@@ -716,28 +716,33 @@ func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
 // analyzed only to be dropped again, every pass rewrote sqlite_stat1 and could
 // leave free pages behind in an archive VACUUM had just compacted.
 func optimizeSQLiteStatistics(ctx context.Context, conn *sql.Conn) error {
-	tx, err := conn.BeginTx(ctx, nil)
+	// Acquire the write lock before reading so concurrent ingest cannot invalidate the snapshot.
+	_, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		// Release the transaction even if maintenance was canceled.
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+	}()
 
 	var statements string
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(GROUP_CONCAT(optimize, ';'), '')
+	err = conn.QueryRowContext(ctx, `SELECT COALESCE(GROUP_CONCAT(optimize, ';'), '')
 		FROM pragma_optimize(0x10003) WHERE optimize NOT IN (
 			SELECT printf('ANALYZE "main"."%w_data"', name) FROM sqlite_master
 			WHERE `+sqliteFTS5TablePredicate+`
 		)`).Scan(&statements)
 	if err == nil && statements != "" {
-		_, err = tx.ExecContext(ctx, statements)
+		_, err = conn.ExecContext(ctx, statements)
 	}
 	if err != nil {
 		return err
 	}
-	if err := dropFTSDataStatistics(ctx, tx); err != nil {
+	if err := dropFTSDataStatistics(ctx, conn); err != nil {
 		return err
 	}
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	return err
 }
 
 const sqliteFTS5TablePredicate = `type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'`
