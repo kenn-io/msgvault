@@ -178,22 +178,23 @@ Maintenance and repair:
   unpack-attachments   Restore packed attachments to loose files
 
 Setup, daemon, and integrations:
-  agent-token  Manage restricted agent grant tokens
-  completion   Generate shell completion script
-  credentials  Manage provider credentials on the daemon host
-  daemon       Manage the background daemon
-  docbank      Manage the Docbank attachment mirror
-  export-token Export OAuth token to a remote msgvault instance
-  help         Help about any command
-  logs         View and tail msgvault's structured log files
-  mcp          Run MCP server for Claude Desktop integration
-  openapi      Print the msgvault OpenAPI schema
-  quickstart   Print a quickstart guide for AI agents
-  serve        Run msgvault as a daemon with scheduled sync
-  setup        Run first-time setup; 'setup status' shows enabled features
-  skills       Manage agent skills for coding assistants
-  update       Update msgvault to the latest version
-  version      Print version information
+  agent-instructions Print or explicitly write MCP-only agent instructions
+  agent-token        Manage restricted agent grant tokens
+  completion         Generate shell completion script
+  credentials        Manage provider credentials on the daemon host
+  daemon             Manage the background daemon
+  docbank            Manage the Docbank attachment mirror
+  export-token       Export OAuth token to a remote msgvault instance
+  help               Help about any command
+  logs               View and tail msgvault's structured log files
+  mcp                Run MCP server for Claude Desktop integration
+  openapi            Print the msgvault OpenAPI schema
+  quickstart         Print a quickstart guide for AI agents
+  serve              Run msgvault as a daemon with scheduled sync
+  setup              Run first-time setup; 'setup status' shows enabled features
+  skills             Manage agent skills for coding assistants
+  update             Update msgvault to the latest version
+  version            Print version information
 
 Flags:
       --agent-allow-insecure      Allow plain HTTP for agent-delegated connections (trusted networks only)

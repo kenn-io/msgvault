@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-07"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -5468,9 +5468,41 @@ Print a quickstart guide for AI agents.
 ```bash
 msgvault quickstart
 msgvault quickstart --mcp
+msgvault quickstart --mcp-only
 ```
 
 The `--mcp` flag prints the [MCP guide](guides/agent-quickstart.md) offline.
+The `--mcp-only` flag prints native tool workflows for an already connected
+assistant, without shell prerequisites. These flags are mutually exclusive.
+Neither guide loads configuration, opens an archive or starts a daemon.
+
+---
+
+## agent-instructions
+
+Print a small MCP-only instruction block, or explicitly add it to a local file.
+
+```bash
+msgvault agent-instructions
+msgvault agent-instructions --write ./AGENTS.md
+```
+
+Printing is the default and changes no files. `--write` creates only the named
+file in an existing directory, or replaces msgvault's one managed block while
+preserving unrelated text and the existing file mode. New files use mode 0600.
+Repeating the same write leaves the file unchanged. Symlinks, nonregular or
+read-only files and malformed, duplicate, inline or reversed markers are
+rejected without replacing the file.
+
+This command works offline without configuration, an archive or a daemon. It
+does not configure a provider or MCP connection. An assistant connected to a
+remote server must use its own file editor; the server cannot write the
+assistant's instruction file.
+
+The native `setup` and `quickstart` guide renderers are available for the bundled
+guide adapter. Serving them through `msgvault.skills` depends on the native
+guide transport in [PR #1926](https://github.com/kenn-io/msgvault/pull/1926) and
+its released Kit dependency; this command alone does not add that endpoint.
 
 ---
 
