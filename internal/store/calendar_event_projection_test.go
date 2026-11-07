@@ -141,7 +141,7 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 		committed: func(_ bool) {
 			if pending.Swap(false) {
 				committed++
-				if committed == 3 {
+				if committed == 1 {
 					cancel()
 				}
 			}
@@ -151,7 +151,7 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 	requirements.ErrorIs(st.InitSchemaContext(ctx), context.Canceled)
 	var count int
 	requirements.NoError(base.db.QueryRow(`SELECT COUNT(*) FROM calendar_events`).Scan(&count))
-	assertions.Equal(3, count)
+	assertions.Equal(100, count, "the committed page survives cancellation")
 	applied, err := base.IsMigrationAppliedContext(t.Context(), "calendar_event_projection_v1", 1)
 	requirements.NoError(err)
 	assertions.False(applied)
@@ -159,6 +159,9 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 	requirements.NoError(base.db.QueryRow(`SELECT COUNT(*) FROM calendar_events`).Scan(&count))
 	assertions.Equal(103, count)
+	applied, err = base.IsMigrationAppliedContext(t.Context(), "calendar_event_projection_v1", 1)
+	requirements.NoError(err)
+	assertions.True(applied)
 	rejectCalendarWrites(t, base)
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 }
