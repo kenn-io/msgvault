@@ -14,7 +14,7 @@ describe('local search row', () => {
     { name: 'Ollama not set up', labels: { downloaded: 'Uses Ollama on this computer' }, status: { ...off, provider: 'ollama' }, state: { kind: 'downloaded' } },
     { name: 'Ollama', labels: { keepsIndex: '' }, status: { ...off, enabled: true, provider: 'ollama' }, state: { kind: 'ollama' } },
     { name: 'on', status: { ...off, enabled: true, provider: 'builtin', download_bytes: 0 }, state: { kind: 'on' } },
-    { name: 'waiting for setup', labels: { downloading: 'Preparing…' }, status: { ...off, running: true }, state: { kind: 'downloading', doneBytes: 0, totalBytes: 290000000 } },
+    { name: 'waiting for setup', labels: { downloading: 'Preparing' }, status: { ...off, running: true }, state: { kind: 'downloading', doneBytes: 0, totalBytes: 290000000 } },
     { name: 'downloading', labels: { downloading: undefined }, status: { ...off, phase: 'downloading', running: true, done_bytes: 1000000, total_bytes: 290000000 }, state: { kind: 'downloading', doneBytes: 1000000, totalBytes: 290000000 } },
     { name: 'indexing', status: { ...off, enabled: true, provider: 'builtin', download_bytes: 0, running: true, phase: 'indexing' }, state: { kind: 'indexing', done: 0, total: 10 } },
   ])('$name', ({ status, state, labels: expectedLabels }) => {

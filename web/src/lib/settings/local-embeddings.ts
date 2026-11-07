@@ -19,7 +19,7 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 
 export function localSearchLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
   return {
-    ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing…' } : {}),
+    ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing' } : {}),
     ...(!status.enabled && status.provider === 'ollama' ? { downloaded: 'Uses Ollama on this computer' } : {}),
     keepsIndex: '',
   };
