@@ -143,7 +143,7 @@ func newSyncYouTubeCmd() *cobra.Command {
 		return errors.Join(errs...)
 	}}
 	cmd.Flags().IntVar(&budget, "max-requests", 1000, "maximum Data API requests including channel verification (minimum 2)")
-	cmd.Flags().Bool("captions", false, "attach an official non-ASR transcript (overrides this run's profile setting)")
+	cmd.Flags().Bool("captions", false, "attach official captions made by people (override profile for this run)")
 	cmd.Flags().Int("caption-units", youtube.DefaultCaptionUnits, "separate caption quota units for this run (list 50, download 200)")
 	return cmd
 }

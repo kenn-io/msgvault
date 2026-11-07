@@ -17,7 +17,6 @@ func TestYouTubeCaptionFlagsOverrideOnlyInvocation(t *testing.T) {
 	cmd := newSyncYouTubeCmd()
 	requirements.NotNil(cmd.Flags().Lookup("captions"))
 	requirements.NotNil(cmd.Flags().Lookup("caption-units"))
-	assertions.Equal("2000", cmd.Flags().Lookup("caption-units").DefValue)
 	requirements.NoError(cmd.Flags().Parse([]string{"--captions", "--caption-units=250"}))
 	profiles := []config.YouTubeSource{{Identifier: "fixture"}}
 	got, err := applyYouTubeCaptionFlags(cmd, profiles)

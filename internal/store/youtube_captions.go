@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var ErrYouTubeCaptionCursorChanged = errors.New("YouTube caption cursor changed concurrently")
+var ErrYouTubeCaptionCursorChanged = errors.New("Another sync changed the saved YouTube caption progress")
 
 // YouTubeCaptionRoot is one persisted video root eligible for caption polling.
 type YouTubeCaptionRoot struct {
