@@ -537,10 +537,13 @@ func (p *Processor) membership(ctx context.Context, e Event) (func(context.Conte
 		if err != nil {
 			return nil, err
 		}
-		if err = p.store.SetLineMembershipContext(ctx, conversationID, pid, UserIdentifier(p.channelID, userID), joined, time.UnixMilli(e.Timestamp).UTC()); err != nil {
+		changed, err := p.store.SetLineMembershipContext(ctx, conversationID, pid, UserIdentifier(p.channelID, userID), joined, time.UnixMilli(e.Timestamp).UTC())
+		if err != nil {
 			return nil, err
 		}
-		p.recordMutation(ctx, 0, 1)
+		if changed {
+			p.recordMutation(ctx, 0, 1)
+		}
 	}
 	if !joined {
 		return nil, nil //nolint:nilnil // Departures need no provider enrichment.

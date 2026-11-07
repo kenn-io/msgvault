@@ -24,7 +24,8 @@ func TestLineMembershipWriteDoesNotDeadlockWithRemoval(t *testing.T) {
 	must.NoError(err)
 	participant, err := st.EnsureParticipantByIdentifier("line_user_id", "channel:2000000001:user:U00000000000000000000000000000001", "")
 	must.NoError(err)
-	must.NoError(st.SetLineMembershipContext(t.Context(), conversation, participant, "channel:2000000001:user:U00000000000000000000000000000001", true, time.Now().UTC()))
+	_, err = st.SetLineMembershipContext(t.Context(), conversation, participant, "channel:2000000001:user:U00000000000000000000000000000001", true, time.Now().UTC())
+	must.NoError(err)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
@@ -40,7 +41,8 @@ func TestLineMembershipWriteDoesNotDeadlockWithRemoval(t *testing.T) {
 
 	membershipDone := make(chan error, 1)
 	go func() {
-		membershipDone <- st.SetLineMembershipContext(ctx, conversation, participant, "channel:2000000001:user:U00000000000000000000000000000001", false, time.Now().UTC().Add(time.Second))
+		_, err := st.SetLineMembershipContext(ctx, conversation, participant, "channel:2000000001:user:U00000000000000000000000000000001", false, time.Now().UTC().Add(time.Second))
+		membershipDone <- err
 	}()
 	writerPID := waitForPostgresBlocker(t, st.DB(), blockerPID)
 	removalDone := make(chan error, 1)

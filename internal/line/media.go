@@ -24,21 +24,21 @@ func mediaMessage(kind string) bool {
 
 // media stores a provider occurrence before fetching bytes. Its stable key and
 // terminal states make retries/restarts safe, including zero-byte content.
-func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted bool) error {
+func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted bool) (bool, error) {
 	if e.Message == nil || !mediaMessage(e.Message.Type) {
-		return nil
+		return false, nil
 	}
 	m := e.Message
 	if m.Type != "file" && m.ContentProvider != nil && m.ContentProvider.Type == "external" {
-		return nil
+		return false, nil
 	}
 	refs, err := p.store.MessageProviderAttachments(messageID, "line:")
 	if err != nil {
-		return err
+		return false, err
 	}
 	key := "line:" + m.ID
 	if prior, found := refs[key]; found && !p.mediaPolicy.RetryAllows(prior.State, attachmentpolicy.Conversation{}, int64(prior.Size)) {
-		return nil
+		return false, nil
 	}
 	filename := m.FileName
 	if filename == "" {
@@ -55,36 +55,36 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 		return nil
 	}
 	if deleted {
-		return save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
+		return false, save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 	}
 	if m.Type != "file" && m.ContentProvider != nil && m.ContentProvider.Type != "" && m.ContentProvider.Type != "line" {
-		return save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
+		return false, save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 	}
 	policy := p.mediaPolicy
 	if reason := policy.Evaluate(attachmentpolicy.Conversation{}, m.FileSize); reason != "" {
-		return save(attachmentpolicy.StateSkipped, reason)
+		return false, save(attachmentpolicy.StateSkipped, reason)
 	}
 	if _, found := refs[key]; !found {
 		if err = save(attachmentpolicy.StatePending, ""); err != nil {
-			return err
+			return false, err
 		}
 	}
 	response, err := p.client.Content(ctx, m.ID, p.mediaPolicy.MaxBytes)
 	if err != nil {
 		if saveErr := save(attachmentpolicy.StateFailed, attachmentpolicy.SkipFetchFailure); saveErr != nil {
-			return saveErr
+			return false, saveErr
 		}
-		return retryEvent(err)
+		return false, retryEvent(err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	switch response.StatusCode {
 	case http.StatusAccepted:
 		if err = save(attachmentpolicy.StatePending, ""); err != nil {
-			return err
+			return false, err
 		}
-		return retryEvent(errors.New("LINE media is still being prepared"))
+		return false, retryEvent(errors.New("LINE media is still being prepared"))
 	case http.StatusNotFound, http.StatusGone:
-		return save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
+		return false, save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 	}
 	if parsed, _, parseErr := mime.ParseMediaType(response.Header.Get("Content-Type")); parseErr == nil {
 		write.MIMEType = parsed
@@ -93,21 +93,22 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	path, hash, size, err := p.storeMediaBody(ctx, source, response.ContentLength)
 	if errors.Is(err, export.ErrAttachmentTooLarge) {
 		write.Size = size
-		return save(attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap)
+		return false, save(attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap)
 	}
 	if err != nil {
 		if source.Err == nil && ctx.Err() == nil {
-			return fmt.Errorf("store LINE media: %w", err)
+			return false, fmt.Errorf("store LINE media: %w", err)
 		}
 		if saveErr := save(attachmentpolicy.StateFailed, attachmentpolicy.SkipFetchFailure); saveErr != nil {
-			return saveErr
+			return false, saveErr
 		}
-		return retryEvent(fmt.Errorf("fetch LINE media: %w", err))
+		return false, retryEvent(fmt.Errorf("fetch LINE media: %w", err))
 	}
 	write.StoragePath = path
 	write.ContentHash = hash
 	write.Size = size
-	return save(attachmentpolicy.StateStored, "")
+	err = save(attachmentpolicy.StateStored, "")
+	return err == nil, err
 }
 
 // storeMediaBody streams fetched bytes into storage. An oversized body reports

@@ -104,7 +104,7 @@ func TestMediaTranscodingRetry(t *testing.T) {
 	path := "/v2/bot/message/1/content"
 	content := lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"}
 	content.Header = http.Header{"Content-Type": []string{"application/octet-stream"}}
-	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted}, content)
+	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted}, lineapi.Response{Status: http.StatusAccepted}, content)
 	f.enqueue(t, f.fileEvent(), time.Time{})
 	f.run(t)
 	checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
@@ -115,12 +115,16 @@ func TestMediaTranscodingRetry(t *testing.T) {
 	f.run(t)
 	var updated int64
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	checks.Zero(updated, "media preparation must preserve the cache update watermark")
+	f.now = f.now.Add(time.Hour)
+	f.run(t)
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Equal(int64(1), updated)
 	stored := f.media(t)
 	checks.Equal(attachmentpolicy.StateStored, stored.State)
 	checks.Len(stored.ContentHash, 64)
 	checks.NotEmpty(stored.StoragePath)
-	checks.Equal(2, f.api.Count(http.MethodGet, path))
+	checks.Equal(3, f.api.Count(http.MethodGet, path))
 }
 
 func TestMediaFailureAtRetryHorizon(t *testing.T) {

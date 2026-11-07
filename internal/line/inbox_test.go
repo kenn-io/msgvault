@@ -335,7 +335,7 @@ func TestProcessorLatestEditWins(t *testing.T) {
 	f.run(t)
 	added, updated = latestCounts()
 	checks.Zero(added, "replaying an existing message is not a new addition")
-	checks.Equal(int64(1), updated, "replaying an existing message records its enrichment pass")
+	checks.Zero(updated, "unchanged enrichment must preserve the cache update watermark")
 	archived := f.archived(t, "1")
 	body, edited, sent := archived.body, archived.edited, archived.sent
 	checks.Equal("latest", body)
@@ -617,9 +617,14 @@ func TestProcessorRefreshesRenamedGroupTitle(t *testing.T) {
 	checks.Equal("Example Group", title())
 
 	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: 200, Body: `{"groupId":"` + testGroup + `","groupName":"Renamed Group"}`})
-	f.enqueue(t, f.message("2", "after rename", f.now.UnixMilli()+1), time.Time{})
+	replay := f.message("1", "before rename", f.now.UnixMilli())
+	replay.WebhookEventID = "title-refresh"
+	f.enqueue(t, replay, time.Time{})
 	f.run(t)
 	checks.Equal("Renamed Group", title())
+	var updated int64
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	checks.Equal(int64(1), updated, "a title change affects exported conversations")
 }
 
 func TestProcessorProfileFailureKeepsText(t *testing.T) {
@@ -628,7 +633,8 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 
 	f := newInboxFixture(t)
 	path := "/v2/bot/group/" + testGroup + "/member/" + testUser
-	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: 503, Body: `{"message":"synthetic failure"}`})
+	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: 503, Body: `{"message":"synthetic failure"}`}, lineapi.Response{Status: 503})
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/summary", lineapi.Response{Status: 503}, lineapi.Response{Status: 503})
 	f.enqueue(t, f.message("1", "text survives enrichment failure", f.now.UnixMilli()), time.Time{})
 	f.run(t)
 	body := f.archived(t, "1").body
@@ -638,10 +644,14 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 	checks.Equal(int64(1), status.Pending)
 	f.now = f.now.Add(time.Minute)
 	f.run(t)
+	var updated int64
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	checks.Zero(updated, "an unchanged retry must preserve the cache update watermark")
+	f.now = f.now.Add(time.Hour)
+	f.run(t)
 	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	must.NoError(err)
 	checks.Zero(status.Pending)
-	var updated int64
 	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
 	checks.Equal(int64(1), updated)
 	archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
@@ -811,11 +821,22 @@ func TestProcessorMembershipEventsProjectTransitions(t *testing.T) {
 	checks := assert.New(t)
 
 	f := newInboxFixture(t)
+	path := "/v2/bot/group/" + testGroup + "/member/" + testUser
+	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: 503}, lineapi.Response{Status: 503})
 	stamp := f.now.UnixMilli()
 	source := Source{Type: "group", GroupID: testGroup}
 	for _, e := range []Event{{Type: "memberJoined", WebhookEventID: "joined", Timestamp: stamp, Source: source, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}}}}, {Type: "memberLeft", WebhookEventID: "left", Timestamp: stamp + 20, Source: source, Left: &Members{Members: []Source{{Type: "user", UserID: testUser}}}}} {
 		f.enqueue(t, e, time.Time{})
 		f.run(t)
+		var updated int64
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+		checks.Equal(int64(1), updated, "a membership transition must invalidate cached participants")
+		if e.Type == "memberJoined" {
+			f.now = f.now.Add(time.Minute)
+			f.run(t)
+			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+			checks.Zero(updated, "an unchanged membership retry must preserve the cache update watermark")
+		}
 	}
 	var joined, left sql.NullTime
 	must.NoError(f.st.DB().QueryRow(`SELECT joined_at,left_at FROM conversation_participants`).Scan(&joined, &left))

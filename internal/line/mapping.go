@@ -143,20 +143,22 @@ func (p *Processor) message(ctx context.Context, e Event, previous store.Message
 		return 0, err
 	}
 	if deleted {
-		return 0, p.media(ctx, messageID, e, true)
+		_, err := p.media(ctx, messageID, e, true)
+		return 0, err
 	}
 	return messageID, nil
 }
 
 func (p *Processor) enrichMessage(ctx context.Context, e Event, messageID int64, previous store.MessageMetadataRecord, key, kind string) error {
-	mediaErr := p.media(ctx, messageID, e, false)
+	mediaChanged, mediaErr := p.media(ctx, messageID, e, false)
 	// Provider requests run after the whole batch has committed its local writes.
 	profile, profileErr := p.profile(ctx, e.Source, e.Source.UserID)
 	var senderSnapshotErr error
+	var senderChanged bool
 	if profileErr == nil && profile.DisplayName != "" {
-		senderSnapshotErr = p.store.UpdateLineMessageSenderDisplayNameContext(ctx, p.sourceID, messageID, profile.DisplayName)
+		senderChanged, senderSnapshotErr = p.store.UpdateLineMessageSenderDisplayNameContext(ctx, p.sourceID, messageID, profile.DisplayName)
 	}
-	if previous.ID != 0 {
+	if previous.ID != 0 && (mediaChanged || senderChanged) {
 		p.recordMutation(ctx, 0, 1)
 	}
 	title, cached := p.groupNames[key]
@@ -175,8 +177,15 @@ func (p *Processor) enrichMessage(ctx context.Context, e Event, messageID int64,
 		}
 	}
 	if title != "" {
+		titles, err := p.store.ConversationTitlesBatchContext(ctx, p.sourceID, []string{key})
+		if err != nil {
+			return err
+		}
 		if _, err := p.store.EnsureConversationWithTypeContext(ctx, p.sourceID, key, kind, title); err != nil {
 			return err
+		}
+		if previous.ID != 0 && titles[key] != title && !mediaChanged && !senderChanged {
+			p.recordMutation(ctx, 0, 1)
 		}
 	}
 	return errors.Join(mediaErr, profileErr, senderSnapshotErr, retryEvent(titleErr))

@@ -259,16 +259,18 @@ func (s *Store) SetLineBotContext(ctx context.Context, sourceID int64, botID str
 // The record is keyed by the stable provider identifier, which follows the
 // member through participant merges. Native conversation keys also let a first
 // message record its clock before creating the conversation projection.
-func (s *Store) SetLineMembershipContext(ctx context.Context, conversationID, participantID int64, memberIdentifier string, joined bool, at time.Time) error {
+func (s *Store) SetLineMembershipContext(ctx context.Context, conversationID, participantID int64, memberIdentifier string, joined bool, at time.Time) (changed bool, err error) {
 	if at.IsZero() {
-		return errors.New("LINE membership timestamp required")
+		return false, errors.New("LINE membership timestamp required")
 	}
 	if memberIdentifier == "" {
-		return errors.New("LINE membership identifier required")
+		return false, errors.New("LINE membership identifier required")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return s.setLineMembershipTx(ctx, tx, conversationID, participantID, memberIdentifier, joined, at)
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+		changed, err = s.setLineMembershipTx(ctx, tx, conversationID, participantID, memberIdentifier, joined, at)
+		return err
 	})
+	return changed, err
 }
 
 // PersistLineGroupMessageContext commits a group/room message and its inferred
@@ -288,7 +290,7 @@ func (s *Store) PersistLineGroupMessageContext(ctx context.Context, data *Messag
 		return 0, errors.New("LINE message membership requires identity and timestamp")
 	}
 	prepare := func(ctx context.Context, tx *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
-		if err := s.setLineMembershipClockTx(ctx, tx, data.Message.SourceID, data.Conversation.SourceConversationID, memberIdentifier, true, data.Message.SentAt.Time); err != nil {
+		if _, err := s.setLineMembershipClockTx(ctx, tx, data.Message.SourceID, data.Conversation.SourceConversationID, memberIdentifier, true, data.Message.SentAt.Time); err != nil {
 			return nil, err
 		}
 		// The LINE projection inserts the sender with the event timestamp.
@@ -316,33 +318,39 @@ func (s *Store) PersistLineGroupMessageContext(ctx context.Context, data *Messag
 	)
 }
 
-func (s *Store) setLineMembershipTx(ctx context.Context, tx *loggedTx, conversationID, participantID int64, memberIdentifier string, joined bool, at time.Time) error {
+func (s *Store) setLineMembershipTx(ctx context.Context, tx *loggedTx, conversationID, participantID int64, memberIdentifier string, joined bool, at time.Time) (bool, error) {
 	if err := s.requireSyncConversationSourceTx(tx, conversationID); err != nil {
-		return err
+		return false, err
 	}
 	var sourceID int64
 	var conversationKey string
 	if err := tx.QueryRowContext(ctx, `SELECT source_id,source_conversation_id FROM conversations WHERE id=?`, conversationID).Scan(&sourceID, &conversationKey); err != nil {
-		return err
+		return false, err
 	}
-	if err := s.setLineMembershipClockTx(ctx, tx, sourceID, conversationKey, memberIdentifier, joined, at); err != nil {
-		return err
+	changed, err := s.setLineMembershipClockTx(ctx, tx, sourceID, conversationKey, memberIdentifier, joined, at)
+	if err != nil {
+		return false, err
 	}
-	return s.projectLineMembershipTx(ctx, tx, sourceID, conversationID, participantID, memberIdentifier)
+	return changed, s.projectLineMembershipTx(ctx, tx, sourceID, conversationID, participantID, memberIdentifier)
 }
 
-func (s *Store) setLineMembershipClockTx(ctx context.Context, tx *loggedTx, sourceID int64, conversationKey, memberIdentifier string, joined bool, at time.Time) error {
+func (s *Store) setLineMembershipClockTx(ctx context.Context, tx *loggedTx, sourceID int64, conversationKey, memberIdentifier string, joined bool, at time.Time) (bool, error) {
 	var join, leave int64
 	if joined {
 		join = at.UnixMilli()
 	} else {
 		leave = at.UnixMilli()
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO line_memberships(source_id,conversation_key,member_identifier,joined_at,left_at)
+	result, err := tx.ExecContext(ctx, `INSERT INTO line_memberships(source_id,conversation_key,member_identifier,joined_at,left_at)
  VALUES (?,?,?,?,?) ON CONFLICT(source_id,conversation_key,member_identifier) DO UPDATE SET
  joined_at=CASE WHEN excluded.joined_at>line_memberships.joined_at THEN excluded.joined_at ELSE line_memberships.joined_at END,
- left_at=CASE WHEN excluded.left_at>line_memberships.left_at THEN excluded.left_at ELSE line_memberships.left_at END`, sourceID, conversationKey, memberIdentifier, join, leave)
-	return err
+ left_at=CASE WHEN excluded.left_at>line_memberships.left_at THEN excluded.left_at ELSE line_memberships.left_at END
+ WHERE excluded.joined_at>line_memberships.joined_at OR excluded.left_at>line_memberships.left_at`, sourceID, conversationKey, memberIdentifier, join, leave)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
 }
 
 // projectLineMembershipTx derives one participant's membership from its current
@@ -549,14 +557,14 @@ func (s *Store) LineMessageContext(ctx context.Context, sourceID int64, messageI
 
 // UpdateLineMessageSenderDisplayNameContext fills an uncached LINE sender
 // snapshot without replacing edits or message contents.
-func (s *Store) UpdateLineMessageSenderDisplayNameContext(ctx context.Context, sourceID, messageID int64, name string) error {
+func (s *Store) UpdateLineMessageSenderDisplayNameContext(ctx context.Context, sourceID, messageID int64, name string) (changed bool, err error) {
 	if sourceID <= 0 || messageID <= 0 {
-		return errors.New("invalid LINE message identity")
+		return false, errors.New("invalid LINE message identity")
 	}
 	if name == "" {
-		return nil
+		return false, nil
 	}
-	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
+	err = s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := s.lockMessageForRecipientWrite(q, messageID); err != nil {
 			return err
@@ -572,13 +580,16 @@ func (s *Store) UpdateLineMessageSenderDisplayNameContext(ctx context.Context, s
 		if actualSourceID != sourceID || messageType != "line" {
 			return errors.New("LINE message does not belong to the requested source")
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE message_recipients SET display_name=?
+		result, err := tx.ExecContext(ctx, `UPDATE message_recipients SET display_name=?
  WHERE message_id=? AND recipient_type='from' AND COALESCE(display_name,'')=''`, name, messageID)
 		if err != nil {
 			return fmt.Errorf("update LINE sender snapshot: %w", err)
 		}
-		return nil
+		rows, err := result.RowsAffected()
+		changed = rows > 0
+		return err
 	})
+	return changed, err
 }
 
 // UpdateLineParticipantNameContext refreshes observed presentation only while
