@@ -183,6 +183,18 @@ before publication. This exception does not permit reuse in ordinary tests.
 - Route database operations through `Store`. Use DuckDB for Parquet queries,
   `mattn/go-sqlite3` for SQLite, context cancellation for long operations, and
   wrapped errors with useful context. Prefer table-driven tests.
+- Pass the caller's `context.Context` to database, HTTP, and subprocess calls:
+  `QueryContext`, `ExecContext`, `BeginTx`, `http.NewRequestWithContext`, and
+  `exec.CommandContext`. The `noctx` linter in `make lint-ci` rejects the forms
+  without a context. A function that does such work takes `ctx` as its first
+  parameter; call `context.Background()` only at a process root.
+- Use `context.WithoutCancel(ctx)` only for work that must finish after
+  cancellation, such as recording a failed sync run, a resume checkpoint, or
+  cleanup. Add a short comment that says why.
+- Tests use `t.Context()`. The `usetesting` linter rejects
+  `context.Background()` and `context.TODO()` in tests. `t.Cleanup` callbacks
+  run after `t.Context()` is canceled, so use
+  `context.WithoutCancel(t.Context())` there.
 - Use `gogs/chardet` for charset detection and `golang.org/x/text/encoding` for
   conversion.
 - Never use `SELECT DISTINCT` with JOINs; use `EXISTS` subqueries to avoid

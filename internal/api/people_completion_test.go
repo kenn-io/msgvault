@@ -65,7 +65,7 @@ func TestParticipantCompletionMergesCanonicalTypedCandidatesWithoutURLQuery(t *t
 				Value: "Alice Industries", MatchValue: "alice industries", Source: "profile"},
 		},
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/completions",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/completions",
 		bytes.NewBufferString(`{"query":"alice","limit":3}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -114,7 +114,7 @@ func TestParticipantCompletionMatchesAtPrefixedUsername(t *testing.T) {
 		},
 	}
 	completionStore := &completionAPIStore{mockStore: &mockStore{}}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/completions",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/completions",
 		bytes.NewBufferString(`{"query":"@alice"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestParticipantCompletionValidatesBodyBeforeCallingBackends(t *testing.T) {
 		t.Run(body[:min(len(body), 24)], func(t *testing.T) {
 			engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}}
 			completionStore := &completionAPIStore{mockStore: &mockStore{}}
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/completions",
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/completions",
 				bytes.NewBufferString(body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -188,7 +188,7 @@ func TestParticipantCompletionDoesNotReturnPartialRowsWhenProfileLookupFails(t *
 				Value: "Alice", MatchValue: "alice"}}, CacheRevision: "cache",
 		}}
 	completionStore := &completionAPIStore{mockStore: &mockStore{}, err: errors.New("profile unavailable")}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/completions",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/completions",
 		bytes.NewBufferString(`{"query":"alice"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()

@@ -17,7 +17,7 @@ func TestInitSchemaRegistersLegacyMatrixPlaceholders(t *testing.T) {
 	s := testutil.NewTestStore(t)
 	source, err := s.GetOrCreateSource("matrix", "@archive:example.org")
 	req.NoError(err)
-	convID, err := s.EnsureConversation(source.ID, "!room:example.org", "Room")
+	convID, err := s.EnsureConversation(t.Context(), source.ID, "!room:example.org", "Room")
 	req.NoError(err)
 	persist := func(eventID, raw string) int64 {
 		messageID, err := s.PersistMessageContext(t.Context(), &store.MessagePersistData{
@@ -31,7 +31,7 @@ func TestInitSchemaRegistersLegacyMatrixPlaceholders(t *testing.T) {
 	encryptedID := persist("$encrypted", encrypted)
 	// A plaintext message can contain the placeholder text; it has nothing to recover.
 	persist("$typed", `{"type":"m.room.message","event_id":"$typed","content":{"msgtype":"m.text","body":"[encrypted message — keys unavailable]"}}`)
-	_, err = s.DB().Exec(s.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "matrix_encrypted_events_v1")
+	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "matrix_encrypted_events_v1")
 	req.NoError(err)
 
 	req.NoError(s.InitSchemaContext(t.Context()))

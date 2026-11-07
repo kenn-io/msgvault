@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 )
@@ -35,8 +36,8 @@ func (s *Syncer) imapContentOrigin(sourceMessageID string) imapContentOrigin {
 	return imapContentOutgoing
 }
 
-func (s *Syncer) savedIMAPContentOrigin(messageID int64) (imapContentOrigin, error) {
-	metadata, err := s.store.GetMessageMetadata(messageID)
+func (s *Syncer) savedIMAPContentOrigin(ctx context.Context, messageID int64) (imapContentOrigin, error) {
+	metadata, err := s.store.GetMessageMetadataContext(ctx, messageID)
 	if err != nil {
 		return "", fmt.Errorf("get IMAP content origin: %w", err)
 	}

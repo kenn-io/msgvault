@@ -510,7 +510,7 @@ func (s *Syncer) initSyncState(
 	}
 
 	if !s.opts.NoResume {
-		priorSync, err := s.store.GetLatestCheckpointedSyncByType(sourceID, "full")
+		priorSync, err := s.store.GetLatestCheckpointedSyncByType(ctx, sourceID, "full")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("check checkpointed sync: %w", err)
 		}
@@ -702,7 +702,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		}
 	}
 	existingMap, err := s.store.MessageMetadataWithRawBatch(
-		sourceID, lookupMessageIDs)
+		ctx, sourceID, lookupMessageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("check existing: %w", err)
 	}
@@ -864,6 +864,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 						continue
 					}
 					err := s.preserveReusedIMAPSource(
+						ctx,
 						existing.ID, sourceMessageID)
 					if err != nil {
 						s.logger.Warn("failed to preserve reused IMAP source ID",
@@ -887,6 +888,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 
 			changed, err := s.reconcileValidatedMessageLabels(
+				ctx,
 				existing.ID,
 				sourceMessageID,
 				labelResult.RFC822MessageID,
@@ -989,7 +991,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 
 			if needsRawComparison {
-				archivedRaw, err := s.store.GetMessageRaw(existing.ID)
+				archivedRaw, err := s.store.GetMessageRawContext(ctx, existing.ID)
 				if err != nil {
 					s.logger.Warn("failed to load archived message for identity comparison",
 						"id", sourceMessageID, "error", err)
@@ -1006,6 +1008,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 				if bytes.Equal(archivedRaw, raw.Raw) {
 					changed, err := s.reconcileValidatedMessageLabels(
+						ctx,
 						existing.ID,
 						sourceMessageID,
 						pendingRefresh.rfc822MessageID,
@@ -1044,6 +1047,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					continue
 				}
 				if err := s.preserveReusedIMAPSource(
+					ctx,
 					existing.ID, sourceMessageID); err != nil {
 					s.logger.Warn("failed to preserve reused IMAP source ID",
 						"id", sourceMessageID, "error", err)
@@ -1067,6 +1071,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				changed := false
 				if !s.defersAuthoritativeLabelReconciliation() {
 					changed, err = s.store.ReconcileMessageLabels(
+						ctx,
 						existing.ID,
 						labelIDsFor(raw.LabelIDs, labelMap),
 						false,
@@ -1269,7 +1274,7 @@ func (s *Syncer) recoverExpiredHistoryAttempt(
 	if err != nil {
 		return nil, fmt.Errorf("recover expired history: full sync: %w", err)
 	}
-	refreshed, err := s.store.GetSourceByID(source.ID)
+	refreshed, err := s.store.GetSourceByIDContext(ctx, source.ID)
 	if err != nil {
 		return nil, fmt.Errorf("recover expired history: reload source: %w", err)
 	}
@@ -1610,7 +1615,8 @@ func (s *Syncer) full(
 	// recovery remains paused and discoverable for catch-up.
 	if reconcilePresence {
 		// Keep the phase discoverable until catch-up publishes the source cursor.
-		if err := s.store.PauseSyncWithCheckpoint(state.syncID, state.durableCheckpoint()); err != nil {
+		// A canceled run still records its terminal state.
+		if err := s.store.PauseSyncWithCheckpoint(context.WithoutCancel(ctx), state.syncID, state.durableCheckpoint()); err != nil {
 			return nil, fmt.Errorf("pause Gmail recovery for catch-up: %w", err)
 		}
 	} else if err := s.completeSyncAndRunHook(ctx, state.syncID, historyIDStr, source, true); err != nil {
@@ -1690,7 +1696,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 		}
 	}
 
-	return s.store.EnsureLabelsBatch(sourceID, labelInfos)
+	return s.store.EnsureLabelsBatch(ctx, sourceID, labelInfos)
 }
 
 // messageData holds all parsed data for a message before persistence.
@@ -1715,13 +1721,13 @@ type messageData struct {
 
 // resolvePreparedMessage performs the store-mutating resolution needed by
 // ordinary ingest after pure MIME preparation and deduplication have finished.
-func (s *Syncer) resolvePreparedMessage(data *messageData) (*messageData, error) {
+func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) (*messageData, error) {
 	allAddresses := make([]mime.Address, 0, len(data.from)+len(data.to)+len(data.cc)+len(data.bcc))
 	allAddresses = append(allAddresses, data.from...)
 	allAddresses = append(allAddresses, data.to...)
 	allAddresses = append(allAddresses, data.cc...)
 	allAddresses = append(allAddresses, data.bcc...)
-	participantMap, err := s.store.EnsureParticipantsBatch(allAddresses)
+	participantMap, err := s.store.EnsureParticipantsBatch(ctx, allAddresses)
 	if err != nil {
 		return nil, fmt.Errorf("ensure participants: %w", err)
 	}
@@ -1734,11 +1740,13 @@ func (s *Syncer) resolvePreparedMessage(data *messageData) (*messageData, error)
 
 	var conversationID int64
 	if data.conversationType == conversationTypeChat {
-		conversationID, err = s.store.EnsureConversationWithType(
+		conversationID, err = s.store.EnsureConversationWithTypeContext(
+			ctx,
 			data.message.SourceID, data.threadID, data.conversationType, data.conversationTitle,
 		)
 	} else {
 		conversationID, err = s.store.EnsureConversation(
+			ctx,
 			data.message.SourceID, data.threadID, data.conversationTitle,
 		)
 	}
@@ -1924,7 +1932,7 @@ func (s *Syncer) isGmailChat(labelIDs []string) bool {
 // the internal message ID to callers. No vector-search enqueue happens
 // here: persisted rows leave embed_gen NULL (column default) and the
 // scan-and-fill worker discovers them later.
-func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (int64, error) {
+func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap map[string]int64) (int64, error) {
 	// Map Gmail label IDs to internal IDs
 	var labelIDs []int64
 	for _, gmailLabelID := range data.gmailLabelIDs {
@@ -1950,7 +1958,7 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 	}
 
 	// Persist atomically
-	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
+	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
 		Metadata:    data.metadata,
 		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
@@ -1964,25 +1972,28 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		return 0, err
 	}
 	delete(s.pendingAcquisitions, data.message.SourceMessageID)
+	// The message row is committed. Finish its local attachment and search
+	// writes so a cancellation cannot leave it permanently incomplete.
+	postCommit := context.WithoutCancel(ctx)
 
 	// Store attachments (best-effort, file I/O outside transaction)
 	if s.opts.AttachmentsDir != "" && len(data.attachments) > 0 {
 		for _, att := range data.attachments {
-			if err := s.storeAttachment(messageID, &att); err != nil {
+			if err := s.storeAttachment(postCommit, messageID, &att); err != nil {
 				s.logger.Warn("failed to store attachment", "message", messageID, "filename", att.Filename, "error", err)
 			}
 		}
 
 		// Correct metadata if any attachments failed to store
 		var storedCount int
-		if err := s.store.DB().QueryRow( // #nosec G701 -- Rebind only rewrites placeholders in this literal; messageID is bound separately.
+		if err := s.store.DB().QueryRowContext(postCommit, // #nosec G701 -- Rebind only rewrites placeholders in this literal; messageID is bound separately.
 			s.store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
 			s.logger.Warn("failed to count stored attachments",
 				"message", messageID, "error", err)
 		} else if storedCount != len(data.attachments) {
-			if err := s.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+			if err := s.store.RecomputeMessageAttachmentStatsContext(postCommit, messageID); err != nil {
 				s.logger.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err)
 			}
@@ -1998,7 +2009,7 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		fromAddr := joinEmails(data.from)
 		toAddrs := joinEmails(data.to)
 		ccAddrs := joinEmails(data.cc)
-		if err := s.store.UpsertFTS(messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
+		if err := s.store.UpsertFTSContext(postCommit, messageID, subject, data.bodyText, fromAddr, toAddrs, ccAddrs); err != nil {
 			s.logger.Warn("failed to upsert FTS", "message", messageID, "error", err)
 		}
 	}
@@ -2053,6 +2064,7 @@ func (s *Syncer) ingestMessage(
 	if s.opts.SourceType == sourceTypeIMAP &&
 		data.message.RFC822MessageID.Valid {
 		existingID, err := s.store.GetMessageIDByRFC822ID(
+			ctx,
 			sourceID, data.message.RFC822MessageID.String)
 		if err != nil {
 			return false, fmt.Errorf("check rfc822 dedup: %w", err)
@@ -2065,7 +2077,7 @@ func (s *Syncer) ingestMessage(
 					"exact source validation unavailable for IMAP dedup")
 			}
 
-			oldSourceMessageID, err := s.store.GetMessageSourceID(existingID)
+			oldSourceMessageID, err := s.store.GetMessageSourceID(ctx, existingID)
 			if err != nil {
 				return false, fmt.Errorf("get dedup source ID: %w", err)
 			}
@@ -2096,6 +2108,7 @@ func (s *Syncer) ingestMessage(
 					return false, errDeferredIMAPIdentity
 				}
 				changed, err := s.store.ReconcileMessageLabels(
+					ctx,
 					existingID, labelIDs, false)
 				return dedupMutationResultWithSentinel(
 					changed,
@@ -2104,7 +2117,7 @@ func (s *Syncer) ingestMessage(
 					errDeferredIMAPIdentity,
 				)
 			}
-			savedOrigin, err := s.savedIMAPContentOrigin(existingID)
+			savedOrigin, err := s.savedIMAPContentOrigin(ctx, existingID)
 			if err != nil {
 				return false, err
 			}
@@ -2115,7 +2128,7 @@ func (s *Syncer) ingestMessage(
 			if matches {
 				if complete && oldSourceMessageID != data.message.SourceMessageID {
 					if destinationOrigin.canRefresh(savedOrigin, true) && destinationOrigin.canRefresh(canonicalOrigin, true) {
-						storedRaw, err := s.store.GetMessageRaw(existingID)
+						storedRaw, err := s.store.GetMessageRawContext(ctx, existingID)
 						if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrInvalidMessageRaw) {
 							return false, fmt.Errorf("read canonical IMAP raw: %w", err)
 						}
@@ -2135,7 +2148,7 @@ func (s *Syncer) ingestMessage(
 						// Identical bytes need no content rewrite or relocation. Save
 						// their outgoing origin so later stale Drafts copies still
 						// lose, then apply the normal location and label rules.
-						if err := s.store.SetMessageMetadata(existingID, *data.metadata); err != nil {
+						if err := s.store.SetMessageMetadataContext(ctx, existingID, *data.metadata); err != nil {
 							return false, fmt.Errorf("record identical IMAP content origin: %w", err)
 						}
 					}
@@ -2163,6 +2176,7 @@ func (s *Syncer) ingestMessage(
 				changed := false
 				if !deferLabels {
 					changed, err = s.store.ReconcileMessageLabels(
+						ctx,
 						existingID, labelIDs, complete)
 					if err != nil {
 						return false, fmt.Errorf(
@@ -2191,6 +2205,7 @@ func (s *Syncer) ingestMessage(
 			if complete {
 				if deferLabels {
 					rekeyed, err := s.store.RekeyMessageSourceID(
+						ctx,
 						existingID, oldSourceMessageID, data.message.SourceMessageID)
 					if err != nil {
 						return false, fmt.Errorf("rekey dedup message: %w", err)
@@ -2204,6 +2219,7 @@ func (s *Syncer) ingestMessage(
 						true, "rekey dedup message", nil)
 				}
 				changed, err := s.store.UpdateMessageOnDedup(
+					ctx,
 					existingID,
 					data.message.SourceMessageID,
 					labelIDs,
@@ -2212,6 +2228,7 @@ func (s *Syncer) ingestMessage(
 					changed, "update dedup message", err)
 			}
 			changed, err := s.store.UpdateMessageOnPartialDedup(
+				ctx,
 				existingID,
 				data.message.SourceMessageID,
 				labelIDs,
@@ -2221,11 +2238,11 @@ func (s *Syncer) ingestMessage(
 		}
 	}
 
-	data, err = s.resolvePreparedMessage(data)
+	data, err = s.resolvePreparedMessage(ctx, data)
 	if err != nil {
 		return false, err
 	}
-	messageID, err := s.persistMessage(data, labelMap)
+	messageID, err := s.persistMessage(ctx, data, labelMap)
 	if err == nil && s.opts.RemoteImages != nil && data.message.MessageType == store.MessageTypeEmail {
 		archived := s.opts.RemoteImages.Archive(ctx, s.store, s.opts.AttachmentsDir, messageID, data.bodyHTML)
 		for _, imageErr := range archived.Errors {
@@ -2241,10 +2258,12 @@ func invalidatedIMAPSourceID(messageID int64) string {
 }
 
 func (s *Syncer) preserveReusedIMAPSource(
+	ctx context.Context,
 	existingID int64,
 	sourceMessageID string,
 ) error {
 	rekeyed, err := s.store.RekeyMessageSourceID(
+		ctx,
 		existingID,
 		sourceMessageID,
 		invalidatedIMAPSourceID(existingID),
@@ -2262,6 +2281,7 @@ func (s *Syncer) preserveReusedIMAPSource(
 }
 
 func (s *Syncer) reconcileValidatedMessageLabels(
+	ctx context.Context,
 	existingID int64,
 	sourceMessageID string,
 	rfc822MessageID string,
@@ -2272,6 +2292,7 @@ func (s *Syncer) reconcileValidatedMessageLabels(
 	if !s.defersAuthoritativeLabelReconciliation() {
 		var err error
 		changed, err = s.store.ReconcileMessageLabels(
+			ctx,
 			existingID, labelIDs, snapshotComplete)
 		if err != nil {
 			return false, err
@@ -2393,12 +2414,12 @@ func StoreMIMEAttachment(attachmentsDir string, att *mime.Attachment) (store.Att
 }
 
 // storeAttachment stores an attachment to disk and records it in the database.
-func (s *Syncer) storeAttachment(messageID int64, att *mime.Attachment) error {
+func (s *Syncer) storeAttachment(ctx context.Context, messageID int64, att *mime.Attachment) error {
 	write, err := StoreMIMEAttachment(s.opts.AttachmentsDir, att)
 	if err != nil || write.StoragePath == "" {
 		return err
 	}
-	return s.store.UpsertAttachmentRecord(context.Background(), messageID, write)
+	return s.store.UpsertAttachmentRecord(ctx, messageID, write)
 }
 
 // joinEmails concatenates email addresses from a slice of mime.Address with spaces.

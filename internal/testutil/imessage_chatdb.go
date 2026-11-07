@@ -17,7 +17,7 @@ func NewIMessageChatDB(t *testing.T) (string, *sql.DB) {
 	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
  CREATE TABLE message (
   guid TEXT NOT NULL DEFAULT 'synthetic-message', text TEXT, attributedBody BLOB,
   date INTEGER NOT NULL, is_from_me INTEGER NOT NULL DEFAULT 0,
@@ -39,7 +39,7 @@ func NewIMessageChatDB(t *testing.T) (string, *sql.DB) {
 func NewIMessageAttachmentChatDB(t *testing.T) (string, *sql.DB) {
 	t.Helper()
 	path, db := NewIMessageChatDB(t)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
  CREATE TABLE attachment (guid TEXT, filename TEXT, transfer_name TEXT, mime_type TEXT, uti TEXT, total_bytes INTEGER, is_sticker INTEGER);
  CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
  INSERT INTO message (date,text,cache_has_attachments) VALUES (700000000,'Voice',1),(700000001,'Shared',1);

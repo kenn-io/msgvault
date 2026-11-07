@@ -1,7 +1,6 @@
 package gcal
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -53,7 +52,7 @@ func TestRequest_TokenSourceErrorFailsFast(t *testing.T) {
 	c := NewClient(ts, WithBaseURL(srv.URL))
 
 	start := time.Now()
-	_, err := c.ListCalendars(context.Background(), "")
+	_, err := c.ListCalendars(t.Context(), "")
 	require.Error(t, err)
 
 	assert := assert.New(t)
@@ -97,7 +96,7 @@ func TestRequest_TransientTokenErrorIsRetried(t *testing.T) {
 	ts := &flakyTokenSource{}
 	c := NewClient(ts, WithBaseURL(srv.URL))
 
-	_, err := c.ListCalendars(context.Background(), "")
+	_, err := c.ListCalendars(t.Context(), "")
 	require.NoError(t, err)
 	assert.Equal(t, 2, ts.calls, "token fetch retried after a 503")
 }
@@ -116,7 +115,7 @@ func TestRequest_AccessNotConfiguredFailsFast(t *testing.T) {
 	c := NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "t"}))
 	c.baseURL = srv.URL
 	start := time.Now()
-	_, err := c.ListCalendars(context.Background(), "")
+	_, err := c.ListCalendars(t.Context(), "")
 	require.Error(t, err)
 	assert := assert.New(t)
 	assert.Contains(err.Error(), "has not been used in project")

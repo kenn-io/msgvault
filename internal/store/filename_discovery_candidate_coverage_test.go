@@ -41,7 +41,7 @@ func TestFilenameCandidatesNumericSeed(t *testing.T) {
 	assert.Equal(3, set.PostingRows, "one full-name hit plus two exact-token hits")
 	assert.False(set.CandidateLimitReached)
 	var deletes int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT count(*) FROM filename_discovery_deletes WHERE attachment_id=?`), ids[0]).Scan(&deletes))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT count(*) FROM filename_discovery_deletes WHERE attachment_id=?`), ids[0]).Scan(&deletes))
 	assert.Zero(deletes, "an all-number basename needs no typo postings")
 }
 
@@ -101,14 +101,14 @@ func TestFilenameCandidatesUnavailableAndCancellation(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(status.Generation)
 	var consumers int
-	require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM attachment_change_consumers`).Scan(&consumers))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachment_change_consumers`).Scan(&consumers))
 	assert.Zero(consumers)
 	ready := filenameReady(t, f.Store)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = f.Store.FilenameCandidatesContext(ctx, q, store.FilenameSuggestionScope{})
 	require.ErrorIs(err, context.Canceled)
-	_, err = f.Store.DB().Exec(`DELETE FROM attachment_change_consumers WHERE consumer_key='filename-discovery/v1'`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM attachment_change_consumers WHERE consumer_key='filename-discovery/v1'`)
 	require.NoError(err)
 	_, err = f.Store.FilenameCandidatesContext(t.Context(), q, store.FilenameSuggestionScope{})
 	require.ErrorIs(err, store.ErrFilenameIndexUnavailable)
@@ -157,7 +157,7 @@ func TestFilenameCandidatesSkipHiddenMessages(t *testing.T) {
 		names[i] = "rep.pdf"
 	}
 	f, ids := filenameCandidateFixture(t, names)
-	_, err := f.Store.DB().Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP`)
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_at=CURRENT_TIMESTAMP`)
 	require.NoError(err)
 	set := filenameCandidates(t, f.Store, "rep.pdf")
 	assert.Empty(set.IDs)
@@ -165,7 +165,7 @@ func TestFilenameCandidatesSkipHiddenMessages(t *testing.T) {
 	assert.False(set.CandidateLimitReached)
 	visible := f.CreateMessage("visible")
 	var id int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'rep.pdf','') RETURNING id`), visible).Scan(&id))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'rep.pdf','') RETURNING id`), visible).Scan(&id))
 	// Hiding 600 messages journaled 600 events ahead of the insert.
 	drained := false
 	for range 10 {
@@ -191,16 +191,16 @@ func TestFilenameCandidatesScopedAdmission(t *testing.T) {
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	var message int64
-	require.NoError(tx.QueryRow(f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type) VALUES(?,?,'mine','email') RETURNING id`), f.Source.ID, f.ConvID).Scan(&message))
-	_, err = tx.Exec(f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'to','member@example.test')`), message, members[0])
+	require.NoError(tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type) VALUES(?,?,'mine','email') RETURNING id`), f.Source.ID, f.ConvID).Scan(&message))
+	_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'to','member@example.test')`), message, members[0])
 	require.NoError(err)
-	require.NoError(tx.QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report final.pdf','') RETURNING id`), message).Scan(&mine))
+	require.NoError(tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report final.pdf','') RETURNING id`), message).Scan(&mine))
 	require.NoError(tx.Commit())
 	other := f.CreateMessage("other")
 	tx, err = f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	for i := range 600 {
-		_, err := tx.Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,?,'')`), other, fmt.Sprintf("report %d.pdf", i))
+		_, err := tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,?,'')`), other, fmt.Sprintf("report %d.pdf", i))
 		require.NoError(err)
 	}
 	require.NoError(tx.Commit())

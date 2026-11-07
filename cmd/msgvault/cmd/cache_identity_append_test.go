@@ -18,14 +18,14 @@ func TestCacheIdentityDriftWithAppendPreservesMessageShards(t *testing.T) {
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err)
 	before := snapshotMessagesDatasetBytes(t, analyticsDir)
 	st, err := store.Open(dbPath)
 	require.NoError(err)
 	_, err = st.LinkParticipants(3, 4)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO messages
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages
 		(id, source_id, source_message_id, conversation_id, message_type, sent_at, sender_id)
 		VALUES (6, 1, 'message-6', 101, 'email', '2024-03-02 10:00:00', 3)`)
 	require.NoError(err)
@@ -34,7 +34,7 @@ func TestCacheIdentityDriftWithAppendPreservesMessageShards(t *testing.T) {
 	assert.True(stale.HasIdentityDrift)
 	assert.True(stale.HasNew)
 	assert.False(stale.FullRebuild, "identity links do not change baked message facts")
-	result, err := buildCacheAuto(dbPath, analyticsDir)
+	result, err := buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	assert.Equal(int64(1), result.StagedCount)
 	after := snapshotMessagesDatasetBytes(t, analyticsDir)
@@ -44,7 +44,7 @@ func TestCacheIdentityDriftWithAppendPreservesMessageShards(t *testing.T) {
 	assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
 
 	fullDir := filepath.Join(tmp, "full")
-	_, err = buildCache(dbPath, fullDir, true)
+	_, err = buildCache(t.Context(), dbPath, fullDir, true)
 	require.NoError(err)
 	duckDB, err := sql.Open("duckdb", "")
 	require.NoError(err)
@@ -56,10 +56,10 @@ func TestCacheIdentityDriftWithAppendPreservesMessageShards(t *testing.T) {
 		}
 		actual, want := pattern(analyticsDir), pattern(fullDir)
 		var differences int64
-		err := duckDB.QueryRow(`SELECT COUNT(*) FROM (
-			(SELECT * FROM ` + actual + ` EXCEPT ALL SELECT * FROM ` + want + `)
+		err := duckDB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM (
+			(SELECT * FROM `+actual+` EXCEPT ALL SELECT * FROM `+want+`)
 			UNION ALL
-			(SELECT * FROM ` + want + ` EXCEPT ALL SELECT * FROM ` + actual + `))`).Scan(&differences)
+			(SELECT * FROM `+want+` EXCEPT ALL SELECT * FROM `+actual+`))`).Scan(&differences)
 		require.NoError(err, dataset)
 		assert.Zero(differences, dataset)
 	}

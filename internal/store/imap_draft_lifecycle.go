@@ -484,7 +484,7 @@ func (s *Store) retireIMAPDraftMembershipTx(
 			return fmt.Errorf("tombstone retired IMAP draft: %w", err)
 		}
 	}
-	if err := s.bumpDerivedDataRevision(tx); err != nil {
+	if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 		return fmt.Errorf("bump derived-data revision for retired IMAP draft: %w", err)
 	}
 	return nil

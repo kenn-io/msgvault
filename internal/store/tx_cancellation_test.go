@@ -22,7 +22,7 @@ func TestTransactionBeginFailureLogLevel(t *testing.T) {
 					assert, require := assert.New(t), require.New(t)
 					db := openLoggedMem(t)
 					st := &Store{db: db}
-					ctx := WithRequestID(context.Background(), "test-request")
+					ctx := WithRequestID(t.Context(), "test-request")
 					wantLevel := slog.LevelWarn.String()
 					var wantErr error
 					switch failure {

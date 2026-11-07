@@ -157,7 +157,7 @@ func TestImportCancellationDuringDatabaseWork(t *testing.T) {
 				assert.Equal("failed", run.Status)
 				if phase == "message" {
 					var body sql.NullString
-					err = st.DB().QueryRow("SELECT body_text FROM message_bodies LIMIT 1").Scan(&body)
+					err = st.DB().QueryRowContext(t.Context(), "SELECT body_text FROM message_bodies LIMIT 1").Scan(&body)
 					assert.ErrorIs(err, sql.ErrNoRows, "canceled persistence must not write the body after the lock is released")
 				}
 			})

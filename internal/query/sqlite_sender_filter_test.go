@@ -25,7 +25,7 @@ func TestSenderListBoundedWork(t *testing.T) {
 		st := testutil.NewSQLiteTestStoreAt(t, path)
 		fixture := &dbtest.TestDB{DB: st.DB(), T: t}
 		fixture.SeedStandardDataSet()
-		_, err := st.DB().Exec(`WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<30100)
+		_, err := st.DB().ExecContext(t.Context(), `WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<30100)
  INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,sender_id,message_type)
  SELECT id,1,1,'bulk-' || id,'2024-06-01 00:00:00',CASE WHEN id=100 THEN 3 WHEN id<=1100 THEN 2 ELSE 1 END,'email' FROM ids;
  INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES (100,3,'from');
@@ -81,7 +81,7 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
 			st := testutil.NewSQLiteTestStoreAt(t, path)
 			fixture := &dbtest.TestDB{DB: st.DB(), T: t}
 			fixture.SeedStandardDataSet()
-			_, err := st.DB().Exec(fmt.Sprintf(`INSERT INTO participants(id,email_address) VALUES(4,'bounded@example.org');
+			_, err := st.DB().ExecContext(t.Context(), fmt.Sprintf(`INSERT INTO participants(id,email_address) VALUES(4,'bounded@example.org');
  WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<300099)
  INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,sender_id,message_type)
  SELECT id,1,1,'bulk-' || id,'2024-06-01 00:00:00',CASE WHEN id<%d THEN 4 ELSE 1 END,'email' FROM ids;
@@ -89,7 +89,7 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
  SELECT id,4,'from' FROM messages WHERE sender_id=4 AND ?`, 100+tc.count), tc.hidden == "")
 			require.NoError(err)
 			if tc.hidden != "" {
-				_, err = st.DB().Exec("UPDATE messages SET " + tc.hidden + "='2024-06-02 00:00:00' WHERE id>100 AND sender_id=4")
+				_, err = st.DB().ExecContext(t.Context(), "UPDATE messages SET "+tc.hidden+"='2024-06-02 00:00:00' WHERE id>100 AND sender_id=4")
 				require.NoError(err)
 			}
 			require.NoError(st.Close())
@@ -134,14 +134,14 @@ func TestSenderListDistinctMessageWork(t *testing.T) {
 			st := testutil.NewSQLiteTestStoreAt(t, path)
 			fixture := &dbtest.TestDB{DB: st.DB(), T: t}
 			fixture.SeedStandardDataSet()
-			_, err := st.DB().Exec(`INSERT INTO participants(id,email_address) VALUES(4,'bounded@example.org');
+			_, err := st.DB().ExecContext(t.Context(), `INSERT INTO participants(id,email_address) VALUES(4,'bounded@example.org');
 WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<300099)
 INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,sender_id,message_type)
 SELECT id,1,1,'bulk-' || id,datetime('2024-06-01','+' || id || ' seconds'),CASE WHEN id<? THEN 4 ELSE 1 END,'email' FROM ids`, 100+tc.count)
 			require.NoError(err)
 			for alias := range tc.aliases {
 				// Merges preserve each envelope address on the surviving participant.
-				_, err = st.DB().Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address)
+				_, err = st.DB().ExecContext(t.Context(), `INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address)
 SELECT id,4,'from',? FROM messages WHERE sender_id=4`, fmt.Sprintf("alias-%d@example.org", alias))
 				require.NoError(err)
 			}
@@ -168,7 +168,7 @@ func TestSenderListEquivalence(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	fixture := &dbtest.TestDB{DB: st.DB(), T: t}
 	fixture.SeedStandardDataSet()
-	_, err := st.DB().Exec(`UPDATE participants SET email_address='bob@example.org' WHERE id=2;
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE participants SET email_address='bob@example.org' WHERE id=2;
  UPDATE participants SET phone_number='+12025550123' WHERE id=3;
  UPDATE messages SET sent_at='2024-01-01 00:00:00';
  UPDATE messages SET sender_id=1 WHERE id=1;
@@ -187,7 +187,7 @@ func TestSenderListEquivalence(t *testing.T) {
 	baseline := make(map[string][]query.MessageSummary)
 	for _, extra := range []int{0, 10001} {
 		if extra > 0 {
-			_, err := st.DB().Exec(`WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<10100)
+			_, err := st.DB().ExecContext(t.Context(), `WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<10100)
 INSERT INTO messages(id,source_id,conversation_id,source_message_id,message_type,sent_at,sender_id,deleted_at)
 SELECT id,1,1,'hidden-' || id,'email','2024-01-01 00:00:00',1,'2024-06-01 00:00:00' FROM ids;
 INSERT INTO message_recipients(message_id,participant_id,recipient_type)
@@ -269,7 +269,7 @@ func TestSenderListProbeWork(t *testing.T) {
 		st := testutil.NewSQLiteTestStoreAt(t, path)
 		fixture := &dbtest.TestDB{DB: st.DB(), T: t}
 		fixture.SeedStandardDataSet()
-		_, err := st.DB().Exec(`INSERT INTO participants(id,email_address) VALUES(4,'large@example.org');
+		_, err := st.DB().ExecContext(t.Context(), `INSERT INTO participants(id,email_address) VALUES(4,'large@example.org');
 WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<200099)
 INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,message_type,deleted_at)
 SELECT id,1,1,'large-' || id,datetime('2024-06-01','+' || id || ' seconds'),'email',

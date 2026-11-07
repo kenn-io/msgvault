@@ -251,9 +251,13 @@ func (l *daemonOwnerLock) Close() error {
 
 type daemonOwnerLockHeldError struct {
 	path string
+	url  string
 }
 
 func (e daemonOwnerLockHeldError) Error() string {
+	if e.url != "" {
+		return fmt.Sprintf("msgvault running at %s; open this URL in your browser; to run in the foreground, run msgvault daemon stop first", e.url)
+	}
 	return fmt.Sprintf(
 		"msgvault daemon is already running for this data directory "+
 			"(daemon lock %s is held); stop it with `msgvault daemon stop` "+

@@ -307,6 +307,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[StatsResponse](apiV1, "getStats", http.MethodGet, "/stats", "Get archive statistics", s.handleStats)
 	s.registerImportJobRoutes(apiV1)
+	s.registerLocalEmbeddingsRoutes(apiV1)
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)

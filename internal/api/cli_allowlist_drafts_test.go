@@ -133,7 +133,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		body := CLIRunRequest{Args: args}
 		bs, marshalErr := json.Marshal(body)
 		require.NoError(t, marshalErr)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		for _, h := range extraHeaders {
@@ -164,7 +164,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	t.Run("add-imap returns command_not_allowed", func(t *testing.T) {
 		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"add-imap", "imap://example.com"}})
 		require.NoError(t, marshalErr)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
@@ -178,7 +178,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 	t.Run("remove-account returns command_not_allowed", func(t *testing.T) {
 		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"remove-account"}})
 		require.NoError(t, marshalErr)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
@@ -192,7 +192,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		// query is allowlisted for owner but not for delegated
 		bs, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"query", "SELECT 1"}})
 		require.NoError(t, marshalErr)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(bs))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
@@ -211,7 +211,7 @@ func TestDelegatedCLIRunAdmission(t *testing.T) {
 		// calling the runner.
 		envBody, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}, Env: map[string]string{"X": "y"}})
 		require.NoError(t, marshalErr)
-		envReq := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(envBody))
+		envReq := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(envBody))
 		envReq.Header.Set("Content-Type", "application/json")
 		envReq.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		envW := httptest.NewRecorder()
@@ -243,7 +243,7 @@ func TestDelegatedCLIRunRequiresGrantedPermission(t *testing.T) {
 				return nil
 			}
 			srv := &Server{store: stub, logger: testLogger()}
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewBufferString(`{"args":["draft-reply","42"]}`))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewBufferString(`{"args":["draft-reply","42"]}`))
 			req = req.WithContext(context.WithValue(req.Context(), requestSecurityContextKey{}, requestSecurity{
 				auth: requestAuthentication{Mode: AuthModeDelegated, Grant: tc.grant},
 			}))
@@ -277,7 +277,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 	operationGateWaitLimit = 20 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = oldWaitLimit })
 
-	release, ok := gate.BeginLabeledWorkContext(context.Background(), "owner draft operation")
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "owner draft operation")
 	setupRequirements.True(ok, "hold operation gate for delegated requests")
 	defer release()
 
@@ -297,7 +297,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 			body, err := json.Marshal(CLIRunRequest{Args: command.args})
 			requirements.NoError(err)
 
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			response := httptest.NewRecorder()
@@ -340,13 +340,13 @@ func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:parall
 	operationGateWaitLimit = 20 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = oldWaitLimit })
 
-	release, ok := gate.BeginLabeledWorkContext(context.Background(), "owner draft operation")
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "owner draft operation")
 	requirements.True(ok, "hold operation gate for delegated request")
 	defer release()
 
 	body, err := json.Marshal(CLIRunRequest{Args: []string{"draft-get", "draft-abc"}})
 	requirements.NoError(err)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	response := httptest.NewRecorder()
@@ -400,7 +400,7 @@ func TestOwnerDraftLifecycleCommandsUseOperationGateAndRunner(t *testing.T) {
 			beforeRuns := runnerCalls
 			beforeBegins, beforeDone := gate.counts()
 
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Api-Key", "test-owner-key")
 			response := httptest.NewRecorder()
@@ -457,7 +457,7 @@ func TestDelegatedGrantScopesSource(t *testing.T) {
 
 	body, marshalErr := json.Marshal(CLIRunRequest{Args: []string{"draft-reply", "42"}})
 	require.NoError(marshalErr)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()

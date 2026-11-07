@@ -107,10 +107,11 @@ For Gmail, first create an OAuth credential with the
 msgvault init-db
 msgvault add-account you@gmail.com
 msgvault sync-full you@gmail.com --limit 100
-msgvault serve
+msgvault daemon start
 ```
 
-Open the `API server` URL printed by `msgvault serve`. The release binary
+Open the URL printed by `msgvault daemon start` in your browser. For foreground
+operation, see the [setup guide](docs/setup.md#open-the-web-ui). The release binary
 includes the browser application; it needs no separate Node or Bun installation
 at runtime. Use `msgvault tui` for the terminal interface.
 

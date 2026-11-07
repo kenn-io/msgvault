@@ -35,7 +35,7 @@ func TestExploreMailingListFilterAcceptsValuesAndConjoinsRepeats(t *testing.T) {
 
 func TestParseMessageFilterPreservesExactListID(t *testing.T) {
 	t.Parallel()
-	request := httptest.NewRequest(http.MethodGet,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/messages/filter?list_id=%3CDev_1%40Example.Test%3E", nil)
 	filter, err := parseMessageFilter(request)
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestExploreUnavailableUsesRequestInitializationSnapshot(t *testing.T) {
 	srv.SetAnalyticsInitializationActive(false)
 
 	response := httptest.NewRecorder()
-	ctx := context.WithValue(context.Background(), analyticsEngineContextKey{}, snapshot)
+	ctx := context.WithValue(t.Context(), analyticsEngineContextKey{}, snapshot)
 	srv.writeExploreUnavailable(ctx, response, query.CacheAbsent)
 
 	requirements.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())

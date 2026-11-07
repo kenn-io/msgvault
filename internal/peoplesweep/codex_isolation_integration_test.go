@@ -40,7 +40,7 @@ func TestCodexIsolationAgainstPromptInjectedToolAccess(t *testing.T) {
 	must.NoError(os.WriteFile(authCanary, []byte("SYNTHETIC_AUTH_CANARY"), 0o600))
 	t.Setenv("MSGVAULT_CODEX_SYNTHETIC_ENV_CANARY", "SYNTHETIC_ENV_CANARY")
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	must.NoError(err)
 	defer func() { _ = listener.Close() }()
 	var listenerAccepted atomic.Bool

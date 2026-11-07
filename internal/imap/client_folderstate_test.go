@@ -47,7 +47,7 @@ func newTestClient(t *testing.T, addr string, opts ...Option) *Client {
 // listAllMessages drains every page of ListMessages.
 func listAllMessages(t *testing.T, client *Client) []string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	var ids []string
@@ -288,20 +288,20 @@ func TestAcknowledgeMessagesFlushesFolderStateWhenFolderComplete(t *testing.T) {
 	}))
 	require.Len(listAllMessages(t, client), 3)
 
-	client.AcknowledgeMessages(context.Background(), []string{"INBOX|1"})
+	client.AcknowledgeMessages(t.Context(), []string{"INBOX|1"})
 	assert.Empty(saved, "folder state must not be saved until every listed UID in the folder is handled")
 
-	client.AcknowledgeMessages(context.Background(), []string{"INBOX|2"})
+	client.AcknowledgeMessages(t.Context(), []string{"INBOX|2"})
 	require.Len(saved, 1)
 	assert.Equal("INBOX", saved[0].mailbox)
 	assert.Equal(client.ObservedFolderStates()["INBOX"], saved[0].state)
 
-	client.AcknowledgeMessages(context.Background(), []string{"Archive|1"})
+	client.AcknowledgeMessages(t.Context(), []string{"Archive|1"})
 	require.Len(saved, 2)
 	assert.Equal("Archive", saved[1].mailbox)
 	assert.Equal(client.ObservedFolderStates()["Archive"], saved[1].state)
 
-	client.AcknowledgeMessages(context.Background(), []string{"INBOX|2"})
+	client.AcknowledgeMessages(t.Context(), []string{"INBOX|2"})
 	assert.Len(saved, 2, "duplicate acknowledgements must not save a folder twice")
 }
 
@@ -614,23 +614,23 @@ func TestSourceMessageExists(t *testing.T) {
 	client := newTestClient(t, addr)
 
 	exists, err := client.SourceMessageExists(
-		context.Background(), "INBOX|1")
+		t.Context(), "INBOX|1")
 	require.NoError(err)
 	require.True(exists)
 
 	exists, err = client.SourceMessageExists(
-		context.Background(), "INBOX|99")
+		t.Context(), "INBOX|99")
 	require.NoError(err)
 	require.False(exists)
 
 	require.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
 
 	exists, err = client.SourceMessageExists(
-		context.Background(), "Renamed|1")
+		t.Context(), "Renamed|1")
 	require.NoError(err)
 	require.False(exists)
 
-	_, err = client.SourceMessageExists(context.Background(), "invalid")
+	_, err = client.SourceMessageExists(t.Context(), "invalid")
 	require.Error(err)
 }
 
@@ -648,7 +648,7 @@ func TestSourceMessageExistsPreservesListedMailboxSelectionError(t *testing.T) {
 	require.Equal([]string{"INBOX"}, client.mailboxCache)
 
 	_, err := client.SourceMessageExists(
-		context.Background(), "INBOX|1")
+		t.Context(), "INBOX|1")
 	require.Error(err)
 }
 
@@ -670,7 +670,7 @@ func TestSourceMessageMatchesDefersExcludedMailbox(t *testing.T) {
 	require.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
 
 	matches, conclusive, err := client.SourceMessageMatches(
-		context.Background(), "Archive|1", "excluded@example.com")
+		t.Context(), "Archive|1", "excluded@example.com")
 	require.NoError(err)
 	assert.False(matches)
 	assert.False(conclusive)
@@ -687,19 +687,19 @@ func TestSourceMessageMatchesRFC822Identity(t *testing.T) {
 	require.Equal([]string{"INBOX|1"}, listAllMessages(t, client))
 
 	matches, conclusive, err := client.SourceMessageMatches(
-		context.Background(), "INBOX|1", messageID)
+		t.Context(), "INBOX|1", messageID)
 	require.NoError(err)
 	require.True(matches)
 	require.True(conclusive)
 
 	matches, conclusive, err = client.SourceMessageMatches(
-		context.Background(), "INBOX|1", "<"+messageID+">")
+		t.Context(), "INBOX|1", "<"+messageID+">")
 	require.NoError(err)
 	require.True(matches)
 	require.True(conclusive)
 
 	matches, conclusive, err = client.SourceMessageMatches(
-		context.Background(), "INBOX|1", "<"+messageID)
+		t.Context(), "INBOX|1", "<"+messageID)
 	require.NoError(err)
 	assert.False(matches, "a legacy-only match without a known epoch is not source identity proof")
 	assert.True(conclusive)
@@ -708,13 +708,13 @@ func TestSourceMessageMatchesRFC822Identity(t *testing.T) {
 	client.priorFolderStates = map[string]FolderState{"INBOX": client.observedFolderStates["INBOX"]}
 	client.mu.Unlock()
 	matches, conclusive, err = client.SourceMessageMatches(
-		context.Background(), "INBOX|1", "<"+messageID)
+		t.Context(), "INBOX|1", "<"+messageID)
 	require.NoError(err)
 	assert.True(matches, "an unchanged epoch proves a legacy-only match")
 	assert.True(conclusive)
 
 	matches, conclusive, err = client.SourceMessageMatches(
-		context.Background(), "INBOX|1", "replacement@example.com")
+		t.Context(), "INBOX|1", "replacement@example.com")
 	require.NoError(err)
 	require.False(matches)
 	require.True(conclusive)
@@ -738,7 +738,7 @@ func TestSourceMessageMatchesRejectsUIDValidityChange(t *testing.T) {
 	second := newTestClient(t, addr, WithFolderStates(stale))
 	require.Equal([]string{"INBOX|1"}, listAllMessages(t, second))
 	matches, conclusive, err := second.SourceMessageMatches(
-		context.Background(), "INBOX|1", messageID)
+		t.Context(), "INBOX|1", messageID)
 	require.NoError(err)
 	require.False(matches)
 	require.True(conclusive)
@@ -1201,7 +1201,7 @@ func TestListMessages_LimitedSyncDisablesFolderSkipping(t *testing.T) {
 func TestLabelMapSelectReconnectsAfterDroppedConnection(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	addr, user := testutil.StartIMAPMemServer(t, map[string]int{
 		"INBOX":   0,
 		"Archive": 0,
@@ -1239,12 +1239,12 @@ func TestSourceMessageExistsIsNotDefiniteWhenHeadersMissing(t *testing.T) {
 
 	// Select INBOX first. The in-memory server then answers a FETCH of a UID
 	// another session expunged with an empty body, rather than leaving it out.
-	exists, err := client.SourceMessageExists(context.Background(), "INBOX|1")
+	exists, err := client.SourceMessageExists(t.Context(), "INBOX|1")
 	require.NoError(err)
 	require.True(exists)
 	testutil.ExpungeIMAPMessage(t, addr, "INBOX", imapv2.UID(2))
 
-	_, err = client.SourceMessageExists(context.Background(), "INBOX|2")
+	_, err = client.SourceMessageExists(t.Context(), "INBOX|2")
 	require.Error(err, "a live message without headers is not definitive absence")
 	require.NotErrorIs(err, errIMAPFetchResultMissing)
 }

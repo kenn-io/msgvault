@@ -36,7 +36,7 @@ func TestImportEMLDirMergesDuplicateMessageLabels(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(aDir, "first.eml"), raw, 0o600))
 	require.NoError(os.WriteFile(filepath.Join(bDir, "duplicate.eml"), raw, 0o600))
 
-	summary, err := ImportEMLDir(context.Background(), st, root, EMLImportOptions{
+	summary, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{
 		Identifier: "alice@example.com",
 		NoResume:   true,
 	})
@@ -45,10 +45,10 @@ func TestImportEMLDirMergesDuplicateMessageLabels(t *testing.T) {
 	assert.Equal(int64(1), summary.MessagesSkipped)
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(1, messageCount)
 
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT l.name
 		FROM message_labels ml
 		JOIN labels l ON l.id = ml.label_id
@@ -65,7 +65,7 @@ func TestImportEMLDirMergesDuplicateMessageLabels(t *testing.T) {
 	assert.Equal([]string{"A", "A/B"}, labels)
 
 	var sourceType, rawFormat string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT s.source_type, mr.raw_format
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
@@ -82,7 +82,7 @@ func TestImportEMLDirRequiresIdentifier(t *testing.T) {
 	require.NoError(os.Mkdir(root, 0o700))
 	require.NoError(os.WriteFile(filepath.Join(root, "message.eml"), []byte("Subject: test\r\n\r\nbody"), 0o600))
 
-	summary, err := ImportEMLDir(context.Background(), st, root, EMLImportOptions{})
+	summary, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{})
 
 	assert.Nil(summary)
 	assert.ErrorContains(err, "identifier is required")
@@ -165,13 +165,14 @@ func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {
 	assert.NotEqual(interrupted.ID, completed.ID,
 		"a resumed import must use a new sync generation")
 	var interruptedStatus string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT status FROM sync_runs WHERE id = ?`, interrupted.ID,
 	).Scan(&interruptedStatus))
 	assert.Equal(store.SyncStatusFailed, interruptedStatus)
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(2, messageCount)
 }
 
@@ -318,7 +319,7 @@ func TestImportEMLDirResumeRescansFilesBeforeCheckpoint(t *testing.T) {
 		"new files before the checkpoint must still be imported")
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(2, messageCount)
 }
 

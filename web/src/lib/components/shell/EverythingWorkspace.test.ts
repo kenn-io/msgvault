@@ -18,9 +18,10 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0 })) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+  if (path === '/api/v1/embeddings/local') return localFetch(input, init);
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
   if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
@@ -2785,3 +2786,35 @@ describe('EverythingWorkspace', () => {
 function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
+
+it('checks local availability once and opens Settings from the full-text results hint', async () => {
+  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
+  const methods: string[] = [];
+  const fetchFn: typeof fetch = async input => {
+    const request = input as Request;
+    if (new URL(request.url).pathname === '/api/v1/embeddings/local') {
+      methods.push(request.method);
+      return Response.json({ host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
+    }
+    return Response.json(exploreResponse());
+  };
+  const client = createAPIClient(fetchFn, fetchFn);
+  const state = new ExploreState(window);
+  const view = render(AppShell, { client, state });
+  await waitFor(() => expect(methods).toEqual(['GET']));
+  expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
+  state.replaceSearchDraft('orchard', 'full_text');
+  await screen.findByRole('button', { name: 'Turn on' });
+  state.replaceSearchDraft('pear', 'full_text');
+  // The hint steps aside while the new query loads.
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull());
+  await screen.findByRole('button', { name: 'Turn on' });
+  expect(methods).toEqual(['GET']);
+  await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+  await waitFor(() => expect(state.current.workspace).toBe('settings'));
+  expect(state.current.settingsCategory).toBe('overview');
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
+  expect(methods.filter(method => method !== 'GET')).toEqual([]);
+  view.unmount();
+  state.destroy();
+});

@@ -15,6 +15,7 @@
   import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
   import { EmptyState } from '@kenn-io/kit-ui';
   import { operationStateChip } from '../../operations/labels';
   import CommandLine from './CommandLine.svelte';
@@ -22,6 +23,7 @@
   import SourcePanel from './SourcePanel.svelte';
 
   type Source = SourceStatus;
+  type RequestError = { message: string; details?: string };
   const MIN_POLL_MS = 500;
   const MAX_POLL_MS = 8000;
   const ADD_SOURCE_COMMAND = 'msgvault add-account user@example.com';
@@ -63,9 +65,9 @@
   const STALE_STATUS_MESSAGE = 'Automatic refresh paused. Source status may be stale.';
   let lockStatusStale = $state(false);
   let awaitingState = $state<'idle' | 'awaiting' | 'not_observed'>('idle');
-  let statusError = $state('');
-  let contactsError = $state('');
-  let triggerError = $state('');
+  let statusError = $state<RequestError>();
+  let contactsError = $state<RequestError>();
+  let triggerError = $state<RequestError>();
   let triggerErrorSourceID = $state<number>();
   let triggering = $state<string>();
   $effect(() => {
@@ -126,9 +128,9 @@
     const statusRevisions = new Map(Array.from(contactControllers.values(), controller => [controller, controller.statusRevision]));
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
-      const { data } = await generatedListCardDAVConnections({ ...client, signal });
+      const { data, error: responseError } = await generatedListCardDAVConnections({ ...client, signal });
       if (signal.aborted || disposed) return;
-      if (!data) throw new Error();
+      if (!data) throw new Error(messageFor(responseError, "Can't load contacts."));
       connections = data.connections.filter((connection) => !connection.orphaned);
       const names = new Set(connections.map(connection => connection.connection));
       for (const [name, controller] of contactControllers) {
@@ -146,9 +148,11 @@
         }
         void controller.refreshFromConnection(connection.status, statusRevisions.get(controller));
       }
-      contactsError = '';
-    } catch {
-      if (!request.signal.aborted && !disposed) contactsError = "Can't load contacts.";
+      contactsError = undefined;
+    } catch (cause) {
+      if (!request.signal.aborted && !disposed) contactsError = signal.aborted && signal.reason?.name === 'TimeoutError'
+        ? { message: 'Loading contact accounts timed out; retry in a moment.' }
+        : { message: "Couldn't load your contact accounts.", details: cause instanceof Error && cause.message ? cause.message : "Can't load contacts." };
     } finally {
       if (contactsRequest === request) {
         contactsRequest = undefined;
@@ -266,7 +270,7 @@
         lockHoldPolls = 0;
         lockStatusStale = false;
       }
-      statusError = '';
+      statusError = undefined;
       hasLoadedStatus = true;
       if (nextDelay !== undefined) {
         schedulePoll(nextDelay, false, lockHoldPoll);
@@ -275,11 +279,9 @@
       }
     } catch (cause) {
       if (requestGeneration !== generation || disposed || requestController.signal.aborted) return;
-      if (signal.aborted && signal.reason?.name === 'TimeoutError') {
-        statusError = 'Loading source status timed out. The server may be busy; retry in a moment.';
-      } else {
-        statusError = cause instanceof Error ? cause.message : 'Unable to load source status.';
-      }
+      statusError = signal.aborted && signal.reason?.name === 'TimeoutError'
+        ? { message: 'Loading source status timed out; the server may be busy, so retry in a moment.' }
+        : { message: "Couldn't load your sources.", details: cause instanceof Error ? cause.message : 'Unable to load source status.' };
       if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
         !sources.some((source) => syncRunning(source) || source.scheduler_queued) && awaitingSourceID === undefined) {
@@ -313,7 +315,7 @@
   async function syncNow(source: Source): Promise<void> {
     if (!source.can_sync || triggering) return;
     triggering = source.identifier;
-    triggerError = '';
+    triggerError = undefined;
     triggerErrorSourceID = source.id;
     const signal = AbortSignal.timeout(requestTimeoutMs);
     try {
@@ -338,8 +340,8 @@
     } catch (cause) {
       if (disposed) return;
       triggerError = signal.aborted
-        ? 'Starting sync timed out. Check source status before trying again.'
-        : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
+        ? { message: 'Starting sync timed out. Check source status before trying again.' }
+        : { message: "Couldn't start the sync.", details: cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.` };
       schedulePoll(MIN_POLL_MS);
     } finally {
       triggering = undefined;
@@ -364,11 +366,14 @@
       ? value.message
       : fallback;
   }
+  export function openAddSource(): void {
+    adding = true;
+  }
   export function refresh(): void {
     stopPolling(false);
     lockHoldPolls = 0;
     lockStatusStale = false;
-    statusError = '';
+    statusError = undefined;
     pollDelay = MIN_POLL_MS;
     void load();
     void loadContacts();
@@ -394,27 +399,33 @@
   {/if}
 {/snippet}
 
+{#snippet syncErrorNotice()}
+  {#if triggerError}<InlineNotice {...triggerError} actionLabel="Refresh" onaction={refresh} />{/if}
+{/snippet}
+
+{#snippet statusErrorNotice()}
+  {#if statusError}<InlineNotice {...statusError} actionLabel="Retry" onaction={refresh} />{/if}
+{/snippet}
+
 <main class="sources" aria-label="Sources">
   <PageHeader title="Sources">
     {#snippet actions()}
       <Button size="sm" label="Sync history" onclick={onOpenOperations} />
-      <Button size="sm" tone="info" surface="solid" label="Add source" onclick={() => (adding = true)} />
+      {#if statusError || contactsError || sources.length > 0 || contacts.length > 0}
+        <Button size="sm" tone="info" surface="solid" label="Add source" onclick={openAddSource} />
+      {/if}
     {/snippet}
   </PageHeader>
-  {#if statusError}<div class="notice notice--error" role="alert">
-      <span>{statusError}</span>
-      <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
-    </div>{/if}
-  {#if contactsError}<div class="notice notice--error" role="alert"><span>{contactsError}</span><Button size="sm" label="Retry" onclick={refresh} /></div>{/if}
+  {#if statusError}{@render statusErrorNotice()}{/if}
+  {#if contactsError}<InlineNotice {...contactsError} actionLabel="Retry" onaction={refresh} />{/if}
   {#if lockStatusStale}<div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
-  {#if triggerError}<div class="notice notice--error" role="alert">
-      <span>{triggerError}</span>
-      <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
-    </div>{/if}
+  {#if triggerError}{@render syncErrorNotice()}{/if}
   {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
-    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" />{/if}
+    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" description="Add an account or import an export to start your archive.">
+        <Button size="sm" tone="info" surface="solid" label="Add source" onclick={openAddSource} />
+      </EmptyState>{/if}
   {:else}
     <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
@@ -526,12 +537,20 @@
       source={selectedSource}
       syncing={syncing(selectedSource)}
       starting={Boolean(triggering)}
-      triggerError={triggerErrorSourceID === selectedSource.id && triggerError ? triggerError : statusError || (lockStatusStale ? STALE_STATUS_MESSAGE : '')}
-      onRefresh={refresh}
       onSync={() => void syncNow(selectedSource)}
       onclose={() => (selected = undefined)}
       onOpenSettings={() => onOpenSettings('sources')}
-    />
+    >
+      {#snippet notice()}
+        {#if triggerErrorSourceID === selectedSource.id && triggerError}
+          {@render syncErrorNotice()}
+        {:else if statusError}
+          {@render statusErrorNotice()}
+        {:else if lockStatusStale}
+          <div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>
+        {/if}
+      {/snippet}
+    </SourcePanel>
   {/key}
 {:else if selectedContact}
   <ContactPanel
@@ -635,9 +654,5 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-subtle);
-  }
-  .notice--error {
-    border-color: var(--accent-red);
-    color: var(--text-danger);
   }
 </style>

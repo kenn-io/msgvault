@@ -2169,6 +2169,7 @@ type PlaudSource struct {
 	AccountEmail string `toml:"account_email"`
 	Endpoint     string `toml:"endpoint"`
 	Schedule     string `toml:"schedule"`
+	Limit        int    `toml:"limit"` // max recordings checked per scheduled run; 0 = all
 	Enabled      bool   `toml:"enabled"`
 }
 
@@ -2475,6 +2476,9 @@ func (c *Config) validateMeetingSources() error {
 			if r < 32 || r == 127 {
 				return fmt.Errorf("[[plaud]]: unsafe identifier %q", id)
 			}
+		}
+		if c.Plaud[i].Limit < 0 {
+			return fmt.Errorf("[[plaud]] %q: limit must be nonnegative", id)
 		}
 		email, err := c.Plaud[i].EffectiveAccountEmail()
 		if err != nil {

@@ -33,6 +33,7 @@ func TestStore_RFC822IDBackfillStreamsAcrossBoundedPages(t *testing.T) {
 	source, err := st.GetOrCreateSource("gmail", "bounded-backfill@example.test")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "bounded-backfill-conversation", "bounded backfill")
 	require.NoError(err)
 	messageIDs := make([]int64, 5)
@@ -77,7 +78,7 @@ func newRFC822IDBackfillBackendStore(t *testing.T) *Store {
 	if dbURL := os.Getenv("MSGVAULT_TEST_DB"); IsPostgresURL(dbURL) {
 		return newPGStoreInternal(t)
 	}
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "bounded-rfc822-backfill.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "bounded-rfc822-backfill.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(t, st.InitSchemaContext(t.Context()))
@@ -242,9 +243,10 @@ func TestStore_ApplyRFC822IDBackfillSQLiteReservesWriterBeforeValidation(t *test
 	t.Cleanup(func() { _ = connA.Close() })
 	require.NoError(execManualSQL(t.Context(), connA, "BEGIN IMMEDIATE"))
 	committedA := false
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if !committedA {
-			_ = execManualSQL(context.Background(), connA, "ROLLBACK")
+			_ = execManualSQL(context.WithoutCancel(t.Context()), connA, "ROLLBACK")
 		}
 	})
 	_, err = connA.ExecContext(t.Context(), st.dialect.Rebind(
@@ -307,9 +309,10 @@ func TestStore_ApplyRFC822IDBackfillPostgresLocksAscendingAndRollsBackDrift(t *t
 	t.Cleanup(func() { _ = connA.Close() })
 	require.NoError(execManualSQL(t.Context(), connA, "BEGIN"))
 	committedA := false
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if !committedA {
-			_ = execManualSQL(context.Background(), connA, "ROLLBACK")
+			_ = execManualSQL(context.WithoutCancel(t.Context()), connA, "ROLLBACK")
 		}
 	})
 	var lockedID int64
@@ -391,7 +394,7 @@ func newRFC822IDBackfillSQLiteGateStore(
 ) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "rfc822-id-backfill-lock-order.db")
-	setup, err := OpenForTest(path)
+	setup, err := OpenForTest(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, setup.InitSchemaContext(t.Context()))
 	require.NoError(t, setup.Close())
@@ -415,7 +418,7 @@ func newInternalRFC822IDBackfillPlan(
 	t.Helper()
 	source, err := st.GetOrCreateSource("gmail", prefix+"@example.com")
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, prefix+"-conversation", prefix)
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, prefix+"-conversation", prefix)
 	require.NoError(t, err)
 	newMessage := func(suffix string) int64 {
 		messageID, insertErr := st.UpsertMessage(&Message{

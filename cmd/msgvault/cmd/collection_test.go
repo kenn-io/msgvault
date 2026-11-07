@@ -482,7 +482,7 @@ func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
 
-	ids, err := collectionops.ResolveAccountList(st, []string{strconv.FormatInt(src.ID, 10)})
+	ids, err := collectionops.ResolveAccountList(t.Context(), st, []string{strconv.FormatInt(src.ID, 10)})
 	require.NoError(err, "resolveAccountList(existing id)")
 	require.Equal([]int64{src.ID}, ids, "resolveAccountList(existing id)")
 
@@ -493,7 +493,7 @@ func TestResolveAccountListRejectsMissingNumericID(t *testing.T) {
 	// identifier (e.g. unprefixed phone "15551234567") that wasn't a
 	// source ID would never get a chance to match by identifier. The
 	// test below asserts the fall-through path is reachable.
-	_, err = collectionops.ResolveAccountList(st, []string{"999999"})
+	_, err = collectionops.ResolveAccountList(t.Context(), st, []string{"999999"})
 	require.Error(err, "expected error for missing numeric source ID")
 }
 
@@ -518,7 +518,7 @@ func TestResolveAccountListNumericFallthroughResolvesIdentifier(t *testing.T) {
 	require.NotEqual(phoneIdentifier, strconv.FormatInt(src.ID, 10),
 		"test assumption broken: source id %d collides with identifier", src.ID)
 
-	ids, err := collectionops.ResolveAccountList(st, []string{phoneIdentifier})
+	ids, err := collectionops.ResolveAccountList(t.Context(), st, []string{phoneIdentifier})
 	require.NoError(err, "resolveAccountList(numeric identifier)")
 	require.Equal([]int64{src.ID}, ids, "resolveAccountList(numeric identifier)")
 }

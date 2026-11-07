@@ -13,7 +13,7 @@ it('shows one alert for an attributes failure', async () => {
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
 
-async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
+async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -26,6 +26,11 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
     if (path === '/api/v1/people/7/agenda' && options.taskChange) {
       const hasTask = options.taskChange === 'merge' ? person.revision > 1 : person.revision === 1;
       return Response.json({ project: 'msgvault', items: hasTask ? [{ uid: 'task-one', ref: 'one', title: 'Ask about the proposal', list: 'agenda', state: 'open', status: 'open' }] : [] });
+    }
+    if (path === '/api/v1/loops' && options.loops) {
+      const loop = { kind: 'reply_owed', anchor_message_id: 40 + person.revision, question_message_ids: [40 + person.revision], conversation_id: 3, source_id: 1, channel: 'email',
+        counterparty: { participant_id: 5, display_name: 'Example Contact', address: 'contact@example.test' }, summary: `Revision ${person.revision} question?`, owed_since_at: when, last_activity_at: when };
+      return Response.json({ items: [loop], truncated: false, skipped_unparseable: 0, coverage_incomplete: false });
     }
     if (path === '/api/v1/people/directory') return Response.json({ people: [person] });
     if (path.endsWith('/attributes/location') && request.method === 'PUT') { pinned = true; return Response.json({ value }); }
@@ -104,6 +109,17 @@ it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation wh
   if (operation === 'split') expect(screen.queryByText('Ask about the proposal')).toBeNull();
   expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', 'Send meeting notes');
   expect(screen.getByLabelText('List')).toHaveProperty('value', 'Follow ups');
+});
+
+it('reloads open loops after an identity split', async () => {
+  const { person, directory } = await renderDetails([5], { loops: true });
+  await screen.findByRole('link', { name: 'Revision 1 question?' });
+
+  person.revision = 2;
+  await directory.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 });
+
+  expect(await screen.findByRole('link', { name: 'Revision 2 question?' })).toBeDefined();
+  expect(screen.queryByRole('link', { name: 'Revision 1 question?' })).toBeNull();
 });
 
 it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute %s without changing the ledger section', async operation => {

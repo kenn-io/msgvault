@@ -651,7 +651,7 @@ func executePersonEnrichmentCommand(
 	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	err := root.ExecuteContext(context.Background())
+	err := root.ExecuteContext(t.Context())
 	return stdout.String(), stderr.String(), err
 }
 

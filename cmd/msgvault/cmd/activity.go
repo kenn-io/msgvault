@@ -58,7 +58,7 @@ func runActivityBuildLocal(cmd *cobra.Command, backstop bool) error {
 	}
 	cfg := state.cfg
 	logger := state.logger
-	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}

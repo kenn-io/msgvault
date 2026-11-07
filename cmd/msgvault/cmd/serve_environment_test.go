@@ -60,7 +60,7 @@ func TestRunServeFailedRestartKeepsRunningDaemonKey(t *testing.T) { //nolint:par
 	lockPath := daemonOwnerLockPath(home)
 	require.NoError(os.Chmod(lockPath, 0o400))
 	t.Cleanup(func() { require.NoError(os.Chmod(lockPath, 0o600)) })
-	restartCommand, _, _ := lifecycleTestCommand()
+	restartCommand, _, _ := lifecycleTestCommand(t)
 	err = runServeRestart(restartCommand, replacement)
 	require.ErrorIs(err, os.ErrPermission)
 	require.NoError(os.Chmod(lockPath, 0o600))
@@ -104,14 +104,18 @@ func TestRunServeRejectedContenderKeepsRunningDaemonKey(t *testing.T) { //nolint
 	require.NoError(err)
 	require.NoError(initial.Close())
 
-	contender, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0"), APIPort: new(0)})
-	require.NoError(err)
-	contenderCommand := &cobra.Command{Use: "serve"}
-	contenderCommand.SetContext(testInvocationContext(t.Context(), contender, invocationOptions{}))
-	err = runServe(contenderCommand, nil)
-	require.ErrorAs(err, &daemonOwnerLockHeldError{})
-	_, err = os.Stat(contender.ServerKeyFilePath())
-	require.ErrorIs(err, os.ErrNotExist, "a rejected contender must not create a new daemon credential")
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	for _, contenderPort := range []int{0, port} {
+		contender, err := config.LoadWithOverrides(path, home, config.RuntimeOverrides{BindAddr: new("0.0.0.0"), APIPort: new(contenderPort)})
+		require.NoError(err)
+		contenderCommand := &cobra.Command{Use: "serve"}
+		contenderCommand.SetContext(testInvocationContext(t.Context(), contender, invocationOptions{}))
+		err = runServe(contenderCommand, nil)
+		require.ErrorAs(err, &daemonOwnerLockHeldError{})
+		assert.Contains(t, err.Error(), url)
+		_, err = os.Stat(contender.ServerKeyFilePath())
+		require.ErrorIs(err, os.ErrNotExist, "a rejected contender must not create a new daemon credential")
+	}
 
 	fresh, err := config.Load(path, home)
 	require.NoError(err)
@@ -137,7 +141,7 @@ func TestRunServeCredentialFailureReleasesStartupResources(t *testing.T) {
 	writeLock, err := tryAcquireWriteOwnerLock(cfg.Data.DataDir)
 	require.NoError(err, "credential failure must release archive ownership")
 	t.Cleanup(func() { require.NoError(writeLock.Close()) })
-	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Server.BindAddr, strconv.Itoa(cfg.Server.APIPort)))
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", net.JoinHostPort(cfg.Server.BindAddr, strconv.Itoa(cfg.Server.APIPort)))
 	require.NoError(err, "credential failure must release the reserved listener")
 	require.NoError(listener.Close())
 	records, err := daemonRuntimeStore(cfg.Data.DataDir).List()
@@ -206,7 +210,11 @@ func TestRunServeEnvironmentOnlyAuthenticatedRestart(t *testing.T) { //nolint:pa
 		// Startup polling can consume the public request burst. Wait for the
 		// unauthenticated request to reach auth after the limiter replenishes.
 		require.Eventually(func() bool {
-			response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/health", port))
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/health", port), nil)
+			if err != nil {
+				return false
+			}
+			response, err := client.Do(request)
 			if err != nil {
 				return false
 			}

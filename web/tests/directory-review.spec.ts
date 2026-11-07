@@ -1,7 +1,19 @@
 import { expect, test } from '@playwright/test';
-import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
+import { installDirectoryReviewArchive, installMixedArchive } from './e2e/fixtures/mixed-archive';
 const peopleURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships' }));
 const duplicatesURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true }));
+
+test('inline People fields use the shared field scale on a phone', async ({ page }) => {
+  await installDirectoryReviewArchive(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await page.getByRole('button', { name: 'Add phone', exact: true }).click();
+  const form = page.getByRole('form', { name: 'Edit contact points' });
+  for (const field of [form.locator('.kit-text-input').first(), form.locator('select')]) {
+    expect(await field.evaluate(element => ({ height: element.getBoundingClientRect().height, font: getComputedStyle(element).fontSize }))).toEqual({ height: 32, font: '16px' });
+  }
+});
 
 test('People Filter restores History on reload and To review on Back', async ({ page }) => {
   await installDirectoryReviewArchive(page);
@@ -48,4 +60,30 @@ test('History wraps long provenance at phone width', async ({ page }) => {
     return [...range.getClientRects()].every(rect => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1);
   })).toBe(true);
   expect(await historyDialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+
+test('address actions align with the first text line while details opens', async ({ page }) => {
+  await installMixedArchive(page);
+  await page.route('**/api/v1/participants/12', route => route.fulfill({ json: {
+    id: 12, display_label: 'Archive Person', partial_label: false, identifiers: [
+      { type: 'email', value: 'linked@example.com', participant_id: 34, is_primary: true, provenance: 'participant_identifiers' }
+    ], activity_count: 3, file_count: 1, source_counts: [], cache_revision: 'synthetic',
+    cluster: { canonical_id: 12, member_ids: [12, 34], edges: [{ participant_a: 12, participant_b: 34 }] }
+  } }));
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:12' })));
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const identity = page.getByRole('group', { name: 'Identity linked@example.com', exact: true });
+  const row = identity.locator('..').locator('..');
+  const summary = identity.locator('summary');
+  for (const expanded of [false, true]) {
+    if (expanded) await summary.click();
+    const positions = await row.evaluate(element => {
+      const text = document.createRange(); text.selectNodeContents(element.querySelector('summary')!);
+      const bounds = text.getBoundingClientRect();
+      return { text: bounds.top + bounds.height / 2, actions: [...element.querySelectorAll('button')].map(button => { const box = button.getBoundingClientRect(); return box.top + box.height / 2; }) };
+    });
+    expect(positions.actions).toHaveLength(2);
+    for (const center of positions.actions) expect(Math.abs(center - positions.text)).toBeLessThanOrEqual(2);
+  }
 });

@@ -35,7 +35,7 @@ func TestResolveAccountPreservesPrimaryThenCalendarOrdering(t *testing.T) {
 	require.NoError(err)
 	config, err := json.Marshal(map[string]string{"account_email": primary.Identifier})
 	require.NoError(err)
-	require.NoError(f.Store.UpdateSourceSyncConfig(calendar.ID, string(config)))
+	require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), calendar.ID, string(config)))
 
 	scope, err := ResolveAccount(f.Store, primary.Identifier)
 	require.NoError(err)

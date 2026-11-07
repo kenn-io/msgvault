@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"database/sql"
 	"strconv"
 	"testing"
@@ -20,7 +19,7 @@ func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(db.Close()) })
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE messages AS
 		SELECT i::BIGINT AS id, 2::BIGINT AS sender_id, 700::BIGINT AS conversation_id, false AS is_from_me
 		FROM generate_series(1, 100000) rows(i);
@@ -39,7 +38,8 @@ func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing
 		Directions:     []PersonFileDirection{PersonFileGroup},
 	})
 	var aggregatedMessages int64
-	err = db.QueryRowContext(context.Background(),
+	err = db.QueryRowContext(
+		t.Context(),
 		"WITH "+ctes+" SELECT COUNT(*) FROM person_matches_unfiltered", args...).Scan(&aggregatedMessages)
 	requirements.NoError(err)
 	requirements.Equal(int64(1), aggregatedMessages,
@@ -68,7 +68,7 @@ func TestSearchFilesAppliesCanonicalContextAndFileFilters(t *testing.T) {
 	b.AddFrom(third, person, "Alice")
 	b.AddAttachmentWithMIME(43, third, 512, "quarterly-report.pdf", "application/pdf")
 
-	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+	result, err := b.BuildEngine().SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{
 			SourceIDs: []int64{sourceA}, ParticipantIDs: []int64{person}, Domains: []string{"example.com"},
 			After: &after, Before: &before,
@@ -103,7 +103,7 @@ func TestSearchFilesRestrictsVisualCandidateAttachmentIDsAfterHardFilters(t *tes
 	b.AddAttachmentWithMIME(72, message, 20, "second.pdf", "application/pdf")
 	b.AddAttachmentWithMIME(73, message, 30, "third.png", "image/png")
 
-	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+	result, err := b.BuildEngine().SearchFiles(t.Context(), FileSearchRequest{
 		AttachmentIDs: []int64{72, 73}, MIMEFamilies: []FileMIMEFamily{FileMIMEImage},
 		Sort: SortSpec{Field: "filename", Direction: "asc"}, Page: PageSpec{Limit: 10},
 	})
@@ -138,7 +138,7 @@ func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
 
 	engine := b.BuildEngine()
 	search := func(direction IdentityDirection) *FileSearchResponse {
-		result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		result, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 			Explore: ExploreRequest{Context: Context{Identity: &IdentityPredicate{
 				SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: direction,
 			}}},
@@ -165,7 +165,7 @@ func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
 	assertions.Equal([]string{"sent.pdf", "received.pdf"}, []string{anyDirection.Files[0].Filename, anyDirection.Files[1].Filename})
 	assertions.Equal(int64(2), anyDirection.TotalCount)
 
-	grouped, err := engine.GroupFiles(context.Background(), FileGroupRequest{
+	grouped, err := engine.GroupFiles(t.Context(), FileGroupRequest{
 		Explore: ExploreRequest{Context: Context{Identity: &IdentityPredicate{
 			SourceID: sourceA, ParticipantIDs: []int64{identityID}, Direction: IdentityDirectionAny,
 		}}},
@@ -245,7 +245,7 @@ func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *test
 
 	engine := b.BuildEngine()
 	search := func(directions ...PersonFileDirection) *FileSearchResponse {
-		result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		result, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 			Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
 			Person:  &PersonFileScope{ParticipantIDs: []int64{person, alias}, Directions: directions},
 			Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
@@ -296,7 +296,7 @@ func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *test
 	})
 	assertions.Equal(int64(4), allDirections.TotalCount)
 
-	defaultScope, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	defaultScope, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
 		Person: &PersonFileScope{
 			ParticipantIDs: []int64{person, alias},
@@ -319,7 +319,7 @@ func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *test
 	}, defaultScope.Files[4].PersonProvenance)
 	assertions.Equal(int64(5), defaultScope.TotalCount)
 
-	unrestricted, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	unrestricted, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Person: &PersonFileScope{
 			ParticipantIDs: []int64{person, alias},
 			Directions:     []PersonFileDirection{PersonFileFromPerson, PersonFileToPerson, PersonFileGroup},
@@ -334,7 +334,7 @@ func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *test
 	})
 	assertions.Equal(int64(5), unrestricted.TotalCount)
 
-	deletedOnly, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	deletedOnly, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{Deletion: DeletionDeleted}},
 		Person:  &PersonFileScope{ParticipantIDs: []int64{person, alias}, Directions: []PersonFileDirection{PersonFileFromPerson}},
 		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
@@ -387,7 +387,7 @@ func TestSearchFilesPersonScopeDirectChatSenderUsesWholeCluster(t *testing.T) {
 
 	engine := b.BuildEngine()
 	search := func(direction PersonFileDirection) *FileSearchResponse {
-		result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+		result, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 			Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
 			Person:  &PersonFileScope{ParticipantIDs: []int64{person, alias}, Directions: []PersonFileDirection{direction}},
 			Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
@@ -412,7 +412,7 @@ func TestSearchFilesPersonScopeDirectChatSenderUsesWholeCluster(t *testing.T) {
 	requirements.NotNil(toPerson.Files[0].PersonProvenance)
 	assertions.Equal([]PersonFileDirection{PersonFileToPerson}, toPerson.Files[0].PersonProvenance.Directions)
 
-	unclassified, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	unclassified, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
 		Person: &PersonFileScope{
 			ParticipantIDs: []int64{person, alias},
@@ -452,7 +452,7 @@ func TestSearchFilesPersonScopeValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := engine.SearchFiles(context.Background(), FileSearchRequest{Person: &test.scope})
+			_, err := engine.SearchFiles(t.Context(), FileSearchRequest{Person: &test.scope})
 			require.ErrorIs(t, err, ErrInvalidExploreRequest)
 		})
 	}
@@ -465,7 +465,7 @@ func TestSearchFilesEmptyPersonPopulationReturnsNoFiles(t *testing.T) {
 	message := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated"})
 	b.AddAttachmentWithMIME(1, message, 10, "unrelated.pdf", "application/pdf")
 
-	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+	result, err := b.BuildEngine().SearchFiles(t.Context(), FileSearchRequest{
 		Person: &PersonFileScope{Directions: []PersonFileDirection{PersonFileFromPerson}},
 		Page:   PageSpec{Limit: 10},
 	})
@@ -487,7 +487,7 @@ func TestSearchFilesFlattensSnippetMarkupInContainingTitle(t *testing.T) {
 	})
 	b.AddAttachmentWithMIME(61, message, 1024, "notes.pdf", "application/pdf")
 
-	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+	result, err := b.BuildEngine().SearchFiles(t.Context(), FileSearchRequest{
 		Sort: SortSpec{Field: "filename", Direction: "asc"}, Page: PageSpec{Limit: 25},
 	})
 	requirements.NoError(err)
@@ -507,7 +507,7 @@ func TestSearchFilesPreservesSubjectContainingTitleWithMarkdownLikeCharacters(t 
 	})
 	b.AddAttachmentWithMIME(62, message, 1024, "notes.pdf", "application/pdf")
 
-	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+	result, err := b.BuildEngine().SearchFiles(t.Context(), FileSearchRequest{
 		Sort: SortSpec{Field: "filename", Direction: "asc"}, Page: PageSpec{Limit: 25},
 	})
 	requirements.NoError(err)
@@ -539,7 +539,7 @@ func TestSearchFilesUsesStableDateNameAndSizeSorts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+			result, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 				Sort: test.sort, Page: PageSpec{Limit: 1},
 			})
 			requirements.NoError(err)
@@ -547,7 +547,7 @@ func TestSearchFilesUsesStableDateNameAndSizeSorts(t *testing.T) {
 			assertions.Equal(test.wantFirst, result.Files[0].ID)
 			assertions.Equal(int64(3), result.TotalCount)
 
-			second, secondErr := engine.SearchFiles(context.Background(), FileSearchRequest{
+			second, secondErr := engine.SearchFiles(t.Context(), FileSearchRequest{
 				Sort: test.sort, Page: PageSpec{Limit: 1, Offset: 1},
 			})
 			requirements.NoError(secondErr)
@@ -559,11 +559,11 @@ func TestSearchFilesUsesStableDateNameAndSizeSorts(t *testing.T) {
 
 func TestSearchFilesNamesUnavailableCache(t *testing.T) {
 	t.Parallel()
-	engine, err := NewDuckDBEngine("", "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, engine.Close()) })
 
-	_, err = engine.SearchFiles(context.Background(), FileSearchRequest{})
+	_, err = engine.SearchFiles(t.Context(), FileSearchRequest{})
 	var unavailable *CacheUnavailableError
 	require.ErrorAs(t, err, &unavailable)
 	assert.Equal(t, CacheAbsent, unavailable.Readiness)
@@ -592,7 +592,7 @@ func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
 		Dimension: "source", Sort: SortSpec{Field: "count", Direction: "desc"},
 		Page: PageSpec{Limit: 10},
 	}
-	grouped, err := engine.GroupFiles(context.Background(), request)
+	grouped, err := engine.GroupFiles(t.Context(), request)
 	requirements.NoError(err)
 	requirements.Equal(int64(1), grouped.TotalCount)
 	requirements.Len(grouped.Rows, 1)
@@ -601,14 +601,14 @@ func TestGroupFilesUsesExactFilteredFilePopulation(t *testing.T) {
 	assertions.Equal(int64(300), grouped.Rows[0].EstimatedBytes)
 	assertions.NotEmpty(grouped.CacheRevision)
 
-	files, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	files, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: request.Explore, FilenameQuery: request.FilenameQuery, MIMEFamilies: request.MIMEFamilies,
 		Sort: SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
 	assertions.Equal(files.TotalCount, grouped.Rows[0].Count, "group count must equal filtered Files rows")
 	request.Dimension = timeGranularityDay
-	days, err := engine.GroupFiles(context.Background(), request)
+	days, err := engine.GroupFiles(t.Context(), request)
 	requirements.NoError(err)
 	requirements.Len(days.Rows, 1)
 	assertions.Equal("2026-07-18", days.Rows[0].Key)
@@ -633,7 +633,7 @@ func TestGroupFilesByMailingList(t *testing.T) {
 	withoutList := b.AddMessage(MessageOpt{Subject: "No list"})
 	b.AddAttachmentWithMIME(204, withoutList, 200, "fourth.pdf", "application/pdf")
 
-	result, err := b.BuildEngine().GroupFiles(context.Background(), FileGroupRequest{
+	result, err := b.BuildEngine().GroupFiles(t.Context(), FileGroupRequest{
 		Dimension: "mailing_list",
 		Sort:      SortSpec{Field: "count", Direction: "desc"},
 		Page:      PageSpec{Limit: 10},
@@ -670,7 +670,7 @@ func TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 	b.AddAttachmentWithMIME(403, calendar, 7, "invite.ics", "text/calendar")
 	engine := b.BuildEngine()
 
-	result, err := engine.GroupFiles(context.Background(), FileGroupRequest{
+	result, err := engine.GroupFiles(t.Context(), FileGroupRequest{
 		Dimension: messageTypeDimension,
 		Sort:      SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -684,7 +684,7 @@ func TestGroupFilesMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 	assertions.Equal(messageTypeCalendar, result.Rows[1].Key)
 	assertions.Equal(int64(1), result.Rows[1].Count)
 
-	drilled, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	drilled, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{MessageTypes: []string{messageTypeEmail}}},
 		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -709,7 +709,7 @@ func TestGroupFilesDeduplicatesParticipantAndDomainMembershipPerFile(t *testing.
 	b.AddAttachmentWithMIME(201, message, 125, "people.pdf", "application/pdf")
 
 	engine := b.BuildEngine()
-	participants, err := engine.GroupFiles(context.Background(), FileGroupRequest{
+	participants, err := engine.GroupFiles(t.Context(), FileGroupRequest{
 		Dimension: "participant", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
@@ -719,7 +719,7 @@ func TestGroupFilesDeduplicatesParticipantAndDomainMembershipPerFile(t *testing.
 		{Key: "2", Label: "Bob Example", Count: 1, EstimatedBytes: 125, LatestAt: participants.Rows[1].LatestAt},
 	}, participants.Rows)
 
-	domains, err := engine.GroupFiles(context.Background(), FileGroupRequest{
+	domains, err := engine.GroupFiles(t.Context(), FileGroupRequest{
 		Dimension: "domain", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 1},
 	})
 	requirements.NoError(err)
@@ -750,7 +750,7 @@ func TestGroupFilesLabelsRosterOnlyParticipants(t *testing.T) {
 	b.AddConversationParticipant(88, carol)
 	b.AddAttachmentWithMIME(401, message, 55, "roster.pdf", "application/pdf")
 
-	result, err := b.BuildEngine().GroupFiles(context.Background(), FileGroupRequest{
+	result, err := b.BuildEngine().GroupFiles(t.Context(), FileGroupRequest{
 		Dimension: "participant", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
@@ -796,7 +796,7 @@ func TestGroupFilesMergesLinkedParticipantIdentities(t *testing.T) {
 	assertions := assert.New(t)
 	b, _, _ := linkedParticipantFilesFixture(t)
 
-	result, err := b.BuildEngine().GroupFiles(context.Background(), FileGroupRequest{
+	result, err := b.BuildEngine().GroupFiles(t.Context(), FileGroupRequest{
 		Dimension: "participant", Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
@@ -817,7 +817,7 @@ func TestSearchFilesParticipantFilterMatchesLinkedAliases(t *testing.T) {
 	b, alice, alias := linkedParticipantFilesFixture(t)
 	engine := b.BuildEngine()
 
-	byCanonical, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	byCanonical, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alice}}},
 		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -826,7 +826,7 @@ func TestSearchFilesParticipantFilterMatchesLinkedAliases(t *testing.T) {
 	assertions.Equal(int64(302), byCanonical.Files[0].ID, "alias-only file")
 	assertions.Equal(int64(301), byCanonical.Files[1].ID)
 
-	byAlias, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	byAlias, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alias}}},
 		Sort:    SortSpec{Field: sortFieldOccurredAt, Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -861,7 +861,7 @@ func TestSearchFilesAdditionalParticipantGroupIntersects(t *testing.T) {
 	b.AddAttachmentWithMIME(403, both, 10, "both.pdf", "application/pdf")
 	engine := b.BuildEngine()
 
-	result, err := engine.SearchFiles(context.Background(), FileSearchRequest{
+	result, err := engine.SearchFiles(t.Context(), FileSearchRequest{
 		Explore: ExploreRequest{Context: Context{
 			ParticipantIDs: []int64{alice}, AdditionalParticipantGroups: [][]int64{{bob}},
 		}},
@@ -874,11 +874,11 @@ func TestSearchFilesAdditionalParticipantGroupIntersects(t *testing.T) {
 
 func TestGroupFilesNamesUnavailableCache(t *testing.T) {
 	t.Parallel()
-	engine, err := NewDuckDBEngine("", "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, engine.Close()) })
 
-	_, err = engine.GroupFiles(context.Background(), FileGroupRequest{})
+	_, err = engine.GroupFiles(t.Context(), FileGroupRequest{})
 	var unavailable *CacheUnavailableError
 	require.ErrorAs(t, err, &unavailable)
 	assert.Equal(t, CacheAbsent, unavailable.Readiness)

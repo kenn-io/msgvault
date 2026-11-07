@@ -31,7 +31,7 @@ func TestKataDocbankSourceEditBeforeReconciliation(t *testing.T) {
 			require.NoError(err)
 			mapping := audio.mapping("destination", original, "processing")
 			retainAudio(t, f.Store, mapping, "occurrence")
-			_, err = f.Store.DB().Exec("UPDATE beeper_media_deliveries SET supplied_input_id='input'")
+			_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE beeper_media_deliveries SET supplied_input_id='input'")
 			require.NoError(err)
 			binding, err := f.Store.KataDocbankBinding(t.Context(), "destination", audio.attachmentID)
 			require.NoError(err)
@@ -54,7 +54,7 @@ func TestKataEvidenceMessage(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("evidence-message")
-	_, err := f.Store.DB().Exec(f.Store.Rebind("INSERT INTO message_bodies (message_id,body_text) VALUES (?,?)"), id, "Please send the revised budget by Friday.")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("INSERT INTO message_bodies (message_id,body_text) VALUES (?,?)"), id, "Please send the revised budget by Friday.")
 	require.NoError(err)
 
 	svc := kataevidence.New(f.Store)
@@ -68,9 +68,9 @@ func TestKataEvidenceMessage(t *testing.T) {
 	assert.Equal(kataevidence.Available, got.State)
 	assert.Equal(prepared[0].Excerpt, got.Evidence.Excerpt)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE message_bodies SET body_text=? WHERE message_id=?"), "Please send the final budget by Friday.", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE message_bodies SET body_text=? WHERE message_id=?"), "Please send the final budget by Friday.", id)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET subject=? WHERE id=?"), "Budget", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET subject=? WHERE id=?"), "Budget", id)
 	require.NoError(err)
 	got, err = svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
@@ -79,7 +79,7 @@ func TestKataEvidenceMessage(t *testing.T) {
 	assert.Empty(got.Evidence.Excerpt)
 
 	// Without a stored body or raw MIME there is nothing to cite.
-	_, err = f.Store.DB().Exec(f.Store.Rebind("DELETE FROM message_bodies WHERE message_id=?"), id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("DELETE FROM message_bodies WHERE message_id=?"), id)
 	require.NoError(err)
 	_, err = svc.Prepare(t.Context(), []kataevidence.Selector{selector})
 	require.ErrorIs(err, kataevidence.ErrUnavailable)
@@ -130,11 +130,11 @@ func TestKataEvidenceDocumentChunk(t *testing.T) {
 	_, err = svc.Prepare(t.Context(), []kataevidence.Selector{missing})
 	require.ErrorIs(err, kataevidence.ErrUnavailable)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_chunks SET checksum='' WHERE extraction_id=? AND chunk_key=?"), "evidence-old", hit.ChunkKey)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE document_chunks SET checksum='' WHERE extraction_id=? AND chunk_key=?"), "evidence-old", hit.ChunkKey)
 	require.NoError(err)
 	_, err = svc.Prepare(t.Context(), []kataevidence.Selector{selector})
 	require.ErrorIs(err, kataevidence.ErrUnavailable, "a chunk without a checksum cannot be cited, but the request was valid")
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_chunks SET checksum=? WHERE extraction_id=? AND chunk_key=?"), prepared[0].Reference.DocumentChunk.ChunkChecksum, "evidence-old", hit.ChunkKey)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE document_chunks SET checksum=? WHERE extraction_id=? AND chunk_key=?"), prepared[0].Reference.DocumentChunk.ChunkChecksum, "evidence-old", hit.ChunkKey)
 	require.NoError(err)
 
 	tampered := prepared[0].Reference
@@ -147,7 +147,7 @@ func TestKataEvidenceDocumentChunk(t *testing.T) {
 	assert.Empty(got.Evidence.Excerpt)
 	assert.Equal(prepared[0].Display, got.Evidence.Display, "a changed chunk still names its file")
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET normalization_version=NULL WHERE id=?"), "evidence-old")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE document_extractions SET normalization_version=NULL WHERE id=?"), "evidence-old")
 	require.NoError(err)
 	got, err = svc.ResolveAround(t.Context(), prepared[0].Reference, 0)
 	require.NoError(err)
@@ -155,7 +155,7 @@ func TestKataEvidenceDocumentChunk(t *testing.T) {
 
 	// A file cites only what document search finds, which leaves out messages
 	// deleted at their source.
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), hit.MessageID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), hit.MessageID)
 	require.NoError(err)
 	_, err = svc.Prepare(t.Context(), []kataevidence.Selector{selector})
 	require.ErrorIs(err, kataevidence.ErrUnavailable)
@@ -175,7 +175,7 @@ func TestKataCitationSourceMatchesPreparedEvidence(t *testing.T) {
 	require.NoError(err)
 	require.Len(hits.Results, 1)
 	hit := hits.Results[0]
-	_, err = f.Store.DB().Exec(f.Store.Rebind("INSERT INTO message_bodies (message_id,body_text) VALUES (?,?)"), hit.MessageID, "Please send the revised budget by Friday.")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("INSERT INTO message_bodies (message_id,body_text) VALUES (?,?)"), hit.MessageID, "Please send the revised budget by Friday.")
 	require.NoError(err)
 
 	start, end := 0, 6
@@ -198,7 +198,7 @@ func TestKataCitationSourceMatchesPreparedEvidence(t *testing.T) {
 	require.ErrorIs(err, kataevidence.ErrUnavailable)
 
 	// Issues filed before a message left its source still name it.
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), hit.MessageID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), hit.MessageID)
 	require.NoError(err)
 	file, err = f.Store.KataCitationSource(t.Context(), hit.MessageID, hit.AttachmentID)
 	require.NoError(err)
@@ -241,24 +241,24 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 			case "different destination":
 				destination = "other-destination"
 			case "deleted at source":
-				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), audio.messageID)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?"), audio.messageID)
 				require.NoError(err)
 			case "content refresh":
 				changed := addBeeperAudio(t, f.Store, f.Source.ID, f.ConvID, "voice1", strings.Repeat("b", 64))
 				require.Equal(audio.attachmentID, changed.attachmentID)
 			case "reused attachment":
-				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE attachments SET content_hash=?, source_attachment_id=?, source_part_key=? WHERE id=?"),
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE attachments SET content_hash=?, source_attachment_id=?, source_part_key=? WHERE id=?"),
 					strings.Repeat("c", 64), "beeper:mxc://audio/other", "beeper:mxc://audio/other", audio.attachmentID)
 				require.NoError(err)
 			case "document and Docbank sources":
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO document_occurrences(occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO document_occurrences(occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source)
 					SELECT 'doc-occurrence',a.id,a.message_id,m.source_id,a.content_hash,a.attachment_role,'test' FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.id=?`), audio.attachmentID)
 				require.NoError(err)
 			}
 			inputID := ""
 			if name != "unknown supplied input" && name != "generated" {
 				inputID = "input"
-				_, err := f.Store.DB().Exec(f.Store.Rebind("UPDATE beeper_media_deliveries SET supplied_input_id='input' WHERE destination_key=? AND processing_key=?"), mapping.DestinationKey, mapping.ProcessingKey)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE beeper_media_deliveries SET supplied_input_id='input' WHERE destination_key=? AND processing_key=?"), mapping.DestinationKey, mapping.ProcessingKey)
 				require.NoError(err)
 			}
 			binding, err := f.Store.KataDocbankBinding(t.Context(), destination, audio.attachmentID)

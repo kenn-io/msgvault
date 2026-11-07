@@ -26,7 +26,7 @@ func TestUploadTokenUsesCommandStore(t *testing.T) {
 	cfg := &config.Config{HomeDir: t.TempDir(), OAuth: config.OAuthConfig{Tokens: commands}, Server: config.ServerConfig{APIPort: 8080}}
 	cfg.Data.DataDir = cfg.HomeDir
 	server := NewServer(cfg, nil, newMockScheduler(), testLogger())
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/reader@example.com", strings.NewReader(`{"refresh_token":"example-refresh","client_id":"example-client","scopes":["example-read"]}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/auth/token/reader@example.com", strings.NewReader(`{"refresh_token":"example-refresh","client_id":"example-client","scopes":["example-read"]}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
@@ -40,7 +40,7 @@ func TestUploadTokenUsesCommandStore(t *testing.T) {
 	commands.WriteCommand = testutil.SecretCommand(t, "fail")
 	cfg.OAuth.Tokens = commands
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/token/reader@example.com", strings.NewReader(`{"refresh_token":"new-example"}`))
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/auth/token/reader@example.com", strings.NewReader(`{"refresh_token":"new-example"}`))
 	request.Header.Set("Content-Type", "application/json")
 	server.Router().ServeHTTP(response, request)
 	assert.Equal(http.StatusInternalServerError, response.Code)
@@ -74,7 +74,7 @@ func TestGoogleAuthorizationFinalReadHonorsCancellation(t *testing.T) {
 	srv := &Server{cardDAV: controller, logger: testLogger()}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	request := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"reader@example.com","redirect_uri":"https://archive.example/"}`)).WithContext(ctx)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"reader@example.com","redirect_uri":"https://archive.example/"}`)).WithContext(ctx)
 	request.Header.Set("Origin", "https://archive.example")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()

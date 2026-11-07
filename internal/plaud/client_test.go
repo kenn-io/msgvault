@@ -40,10 +40,10 @@ func resultSession(t *testing.T, results map[string]func(map[string]any) *mcp.Ca
 		})
 	}
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(context.Background(), st, nil)
+	ss, err := server.Connect(t.Context(), st, nil)
 	require.NoError(t, err)
 	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault-test", Version: "0"}, nil)
-	cs, err := client.Connect(context.Background(), ct, nil)
+	cs, err := client.Connect(t.Context(), ct, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cs.Close(); _ = ss.Wait() })
 	return &Session{cs: cs, limiter: rate.NewLimiter(rate.Inf, 1)}
@@ -69,7 +69,7 @@ func TestTransientToolFailuresAreRetried(t *testing.T) {
 				}
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: `{"email":"user@example.com"}`}}}
 			}})
-			email, err := s.CurrentUser(context.Background())
+			email, err := s.CurrentUser(t.Context())
 			if tc.want == 1 {
 				require.Error(err)
 			} else {
@@ -79,6 +79,67 @@ func TestTransientToolFailuresAreRetried(t *testing.T) {
 			assert.Equal(tc.want, calls)
 		})
 	}
+}
+
+func TestRateLimitedCallsRetryLongerAndSlowTheSession(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		failures      int
+		wantCalls     int
+		wantErr       bool
+		wantLimit     rate.Limit
+	}{
+		{"rate limit recovers", "Failed to get file: Error: API error: 429 Too Many Requests", 5, 6, false, 1000.0 / 32},
+		{"rate limit exhausted", "Failed to get file: Error: API error: 429 Too Many Requests", 100, 6, true, 1000.0 / 64},
+		{"other transient failure", "Failed to get file: Error: API error: 503 Service Unavailable", 100, 4, true, 1000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			calls := 0
+			s := resultSession(t, map[string]func(map[string]any) *mcp.CallToolResult{"get_current_user": func(map[string]any) *mcp.CallToolResult {
+				calls++
+				if calls <= tc.failures {
+					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: tc.message}}}
+				}
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: `{"email":"user@example.com"}`}}}
+			}})
+			s.limiter = rate.NewLimiter(1000, 2)
+			_, err := s.CurrentUser(t.Context())
+			if tc.wantErr {
+				require.Error(err)
+				assert.Contains(err.Error(), tc.message)
+			} else {
+				require.NoError(err)
+			}
+			assert.Equal(tc.wantCalls, calls)
+			assert.InDelta(float64(tc.wantLimit), float64(s.limiter.Limit()), 1e-9)
+		})
+	}
+}
+
+func TestRetryBackoffOutlastsRateLimitWindow(t *testing.T) {
+	s := newSession(nil)
+	var transient, rateLimited []time.Duration
+	for attempt := range retryAttempts - 1 {
+		transient = append(transient, s.backoff(attempt, false))
+	}
+	for attempt := range rateLimitAttempts - 1 {
+		rateLimited = append(rateLimited, s.backoff(attempt, true))
+	}
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, transient)
+	assert.Equal(t, []time.Duration{
+		5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute,
+	}, rateLimited)
+}
+
+func TestRateLimitSlowdownStopsAtFloor(t *testing.T) {
+	s := &Session{limiter: rate.NewLimiter(0.3, 2)}
+	s.slowDown()
+	assert.InDelta(t, float64(minCallRate), float64(s.limiter.Limit()), 1e-9)
+	assert.Equal(t, 1, s.limiter.Burst())
+	s.slowDown()
+	assert.InDelta(t, float64(minCallRate), float64(s.limiter.Limit()), 1e-9)
 }
 
 func TestToolErrorsPreserveProviderMessage(t *testing.T) {
@@ -98,7 +159,7 @@ func TestToolErrorsPreserveProviderMessage(t *testing.T) {
 					}
 				},
 			})
-			_, err := s.Recording(context.Background(), "file-1")
+			_, err := s.Recording(t.Context(), "file-1")
 			require.EqualError(t, err, "plaud tool get_file: tool returned an error: "+tc.want)
 		})
 	}
@@ -139,11 +200,11 @@ func TestTransientHTTPToolFailuresAreRetried(t *testing.T) {
 				handler.ServeHTTP(w, r)
 			}))
 			defer host.Close()
-			s, err := Connect(context.Background(), host.URL, nil)
+			s, err := Connect(t.Context(), host.URL, nil)
 			require.NoError(err)
 			defer func() { _ = s.Close() }()
-			s.retryDelay = 0
-			email, err := s.CurrentUser(context.Background())
+			s.retryDelay, s.rateLimitDelay = 0, 0
+			email, err := s.CurrentUser(t.Context())
 			require.NoError(err)
 			assert.Equal("user@example.com", email)
 			assert.True(failed)
@@ -172,7 +233,7 @@ func TestRecordingHydratesEveryTranscriptPageAndNotes(t *testing.T) {
 			return wrap(`{"file_id":"file-1","block":"transaction_polish","total":2,"offset":1,"returned":1,"next_cursor":null,"segments":[{"speaker":"Alex Example","content":"Second page","start_time":61,"end_time":62}]}`)
 		},
 	})
-	rec, err := s.Recording(context.Background(), "file-1")
+	rec, err := s.Recording(t.Context(), "file-1")
 	require.NoError(err)
 	require.Len(rec.Segments, 2)
 	assert.Equal("Second page", rec.Segments[1].Text)
@@ -209,7 +270,7 @@ func TestTranscriptFallbackAndContractFailures(t *testing.T) {
 					return tc.first
 				},
 			})
-			rec, err := s.Recording(context.Background(), "f")
+			rec, err := s.Recording(t.Context(), "f")
 			if tc.wantError {
 				require.Error(err)
 			} else {
@@ -232,10 +293,10 @@ func TestAccountAndListValidation(t *testing.T) {
 			return wrap(`{"data":[{"id":"f","name":"Meeting","created_at":"2026-09-01T12:00:00Z"}],"total":1}`)
 		},
 	})
-	email, err := s.CurrentUser(context.Background())
+	email, err := s.CurrentUser(t.Context())
 	require.NoError(err)
 	assert.Equal("user@example.com", email)
-	page, err := s.ListFiles(context.Background(), 1, 100)
+	page, err := s.ListFiles(t.Context(), 1, 100)
 	require.NoError(err)
 	require.Len(page.Files, 1)
 	assert.Equal("f", page.Files[0].ID)
@@ -248,7 +309,7 @@ func TestNoteHydrationFailureCannotBecomeEmptySuccess(t *testing.T) {
 			return `[ {"data_type":"auto_sum_note","data_content":"","data_content_error":"fetch failed"} ]`
 		},
 	})
-	_, err := s.Recording(context.Background(), "f")
+	_, err := s.Recording(t.Context(), "f")
 	require.Error(t, err)
 }
 

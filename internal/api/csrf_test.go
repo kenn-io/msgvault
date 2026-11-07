@@ -239,8 +239,9 @@ func TestSessionCookieRequiresSameOrigin(t *testing.T) {
 				CORSOrigins:     tt.corsOrigins,
 				CORSCredentials: tt.corsCredentials,
 			}}, nil, nil, testLogger())
+			// Cleanup runs after t.Context() is canceled.
 			t.Cleanup(func() {
-				require.NoError(t, srv.Shutdown(context.Background()))
+				require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
 			})
 
 			login := performSessionRequest(t, srv, http.MethodPost, sessionLoginPath,
@@ -281,8 +282,9 @@ func TestRejectedSessionMutationDoesNotReachOperationGate(t *testing.T) {
 		Logger:        testLogger(),
 		OperationGate: gate,
 	})
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		require.NoError(t, srv.Shutdown(context.Background()))
+		require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
 	})
 
 	login := performSessionRequest(t, srv, http.MethodPost, sessionLoginPath,
@@ -448,8 +450,9 @@ func newTrustedProxySessionTestServer(t *testing.T) *Server {
 		APIKey:         testSessionAPIKey,
 		TrustedProxies: []string{"127.0.0.1/32"},
 	}}, nil, nil, testLogger())
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		require.NoError(t, srv.Shutdown(context.Background()))
+		require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
 	})
 	return srv
 }
@@ -463,7 +466,7 @@ func performProxyRequest(
 	headers http.Header,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:4242"
 	req.Host = "proxy.internal:8080"
 	if len(body) > 0 {

@@ -30,13 +30,13 @@ func recordingBody(t *testing.T, f *storetest.Fixture, id int64, body string) {
 
 func recordingState(t *testing.T, f *storetest.Fixture, id int64) (state, code, operation string) {
 	t.Helper()
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT state,error_code,operation_id FROM recording_references WHERE message_id=? LIMIT 1`), id).Scan(&state, &code, &operation))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT state,error_code,operation_id FROM recording_references WHERE message_id=? LIMIT 1`), id).Scan(&state, &code, &operation))
 	return
 }
 
 func due(t *testing.T, f *storetest.Fixture) {
 	t.Helper()
-	_, err := f.Store.DB().Exec(`UPDATE recording_references SET next_action_at='2000-01-01 00:00:00.000'`)
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE recording_references SET next_action_at='2000-01-01 00:00:00.000'`)
 	require.NoError(t, err)
 }
 
@@ -145,14 +145,14 @@ func TestRecordingReferenceFeed(t *testing.T) {
 	assert.NotEqual(oldPolicy, cursor.Policy)
 	source, err := f.Store.GetOrCreateSource("slack", "alice")
 	require.NoError(err)
-	conv, err := f.Store.EnsureConversation(source.ID, "thread", "Thread")
+	conv, err := f.Store.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
 	require.NoError(err)
 	two, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "two", MessageType: "slack"})
 	require.NoError(err)
 	recordingBody(t, f, two, "https://cap.example.test/s/two")
 	waitForRecordingChange(t, w, two)
 	var count int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM recording_references WHERE message_id=?`), two).Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM recording_references WHERE message_id=?`), two).Scan(&count))
 	assert.Zero(count)
 	w = NewWorker(f.Store, client, "destination", []string{"https://cap.example.test"}, nil)
 	runDiscovery(t, w, 3)
@@ -165,7 +165,7 @@ func TestRecordingReferenceFeed(t *testing.T) {
 func TestRecordingReferenceLegacyBeeper(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type='beeper' WHERE id=?`), f.Source.ID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE sources SET source_type='beeper' WHERE id=?`), f.Source.ID)
 	require.NoError(err)
 	id := f.CreateMessage("recording")
 	recordingBody(t, f, id, "Watch recording")
@@ -182,17 +182,17 @@ func TestRecordingReferenceLegacyBeeper(t *testing.T) {
 	require.NoError(err)
 	before, err = f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`ALTER TABLE message_raw RENAME TO recording_raw_unavailable`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `ALTER TABLE message_raw RENAME TO recording_raw_unavailable`)
 	require.NoError(err)
 	require.Error(w.RunBatch(t.Context()))
 	after, err := f.Store.LoadRecordingReferenceCursor(t.Context(), "destination")
 	require.NoError(err)
 	assert.Equal(before, after)
-	_, err = f.Store.DB().Exec(`ALTER TABLE recording_raw_unavailable RENAME TO message_raw`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `ALTER TABLE recording_raw_unavailable RENAME TO message_raw`)
 	require.NoError(err)
 	for _, raw := range [][]byte{[]byte(`{"text":`), nil} {
 		if raw == nil {
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM message_raw WHERE message_id=?`), id)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM message_raw WHERE message_id=?`), id)
 			require.NoError(err)
 		} else {
 			require.NoError(f.Store.UpsertMessageRawWithFormat(id, raw, "beeper_json"))
@@ -355,13 +355,13 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 					return
 				}
 				var state, op string
-				if !assert.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT state,operation_id FROM recording_references WHERE message_id=?`), id).Scan(&state, &op)) {
+				if !assert.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT state,operation_id FROM recording_references WHERE message_id=?`), id).Scan(&state, &op)) {
 					return
 				}
 				assert.Equal("uncertain", state)
 				assert.Equal(oldOperation, op)
 				var sent sql.NullTime
-				if !assert.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT last_send_at FROM recording_references WHERE message_id=?`), id).Scan(&sent)) {
+				if !assert.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT last_send_at FROM recording_references WHERE message_id=?`), id).Scan(&sent)) {
 					return
 				}
 				assert.True(sent.Valid)
@@ -375,7 +375,7 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 			assert.Equal("uncertain", state)
 			assert.Equal(oldOperation, op)
 			if change == "hide" {
-				_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
 				require.NoError(err)
 			} else {
 				recordingBody(t, f, id, "https://loom.com/share/abc?token=new")
@@ -459,7 +459,7 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 			runDiscovery(t, worker, 1)
 			op, ok := oldOperation.Load().(string)
 			require.True(ok)
-			_, err = f.Store.DB().Exec(`UPDATE recording_references SET last_send_at='2000-01-01 00:00:00.000'`)
+			_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE recording_references SET last_send_at='2000-01-01 00:00:00.000'`)
 			require.NoError(err)
 			claims, err := f.Store.ClaimRecordingReferences(t.Context(), "destination", time.Now().Add(time.Hour), 20)
 			require.NoError(err)
@@ -567,11 +567,11 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 			assert.Equal("uncertain", state)
 			assert.Equal("transport", code)
 			if !tc.live {
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
 				require.NoError(err)
 			}
 			if tc.old {
-				_, err := f.Store.DB().Exec(`UPDATE recording_references SET last_send_at='2000-01-01 00:00:00.000'`)
+				_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE recording_references SET last_send_at='2000-01-01 00:00:00.000'`)
 				require.NoError(err)
 			}
 			lose = false
@@ -584,7 +584,7 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 			assert.Equal(op, after)
 			if tc.name == "resend" {
 				var outcome, coverage string
-				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT outcome,coverage_state FROM recording_references WHERE message_id=?`), id).Scan(&outcome, &coverage))
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT outcome,coverage_state FROM recording_references WHERE message_id=?`), id).Scan(&outcome, &coverage))
 				assert.Equal("access_required", outcome)
 				assert.Equal("unprocessed", coverage)
 			}
@@ -606,7 +606,7 @@ func TestRecordingReferenceUncertain(t *testing.T) {
 					require.NoError(err)
 					require.Len(claims, 1)
 					assert.Equal(sent, claims[0].LastSendAt)
-					_, err = f.Store.DB().Exec(`UPDATE recording_references SET last_send_at='2000-01-01 00:00:00.000'`)
+					_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE recording_references SET last_send_at='2000-01-01 00:00:00.000'`)
 					require.NoError(err)
 					due(t, f)
 					err = w.RunBatch(t.Context())
@@ -644,7 +644,7 @@ func TestRecordingReferenceSecrets(t *testing.T) {
 	w := NewWorker(f.Store, client, "destination", []string{"https://cap.example.test"}, slog.New(slog.NewTextHandler(&logs, nil)))
 	runDiscovery(t, w, 1)
 	var row string
-	require.NoError(f.Store.DB().QueryRow(`SELECT route_key || ref_sha256 || operation_id || occurrence_json || state || error_code || source_id || occurrence_id || outcome || coverage_state FROM recording_references`).Scan(&row))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT route_key || ref_sha256 || operation_id || occurrence_json || state || error_code || source_id || occurrence_id || outcome || coverage_state FROM recording_references`).Scan(&row))
 	for _, secret := range []string{"path_secret", "query_secret", "fragment_secret"} {
 		assert.NotContains(row, secret)
 		assert.NotContains(logs.String(), secret)
@@ -684,7 +684,7 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 			if tc.field == "sent_at" {
 				value = "2026-01-01 10:00:00.123"
 			}
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET `+tc.field+`=? WHERE id=?`), value, id)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET `+tc.field+`=? WHERE id=?`), value, id)
 			require.NoError(err)
 			waitForRecordingChange(t, worker, id)
 			if tc.settlement == "rollback" {
@@ -733,10 +733,11 @@ func rejectRecordingReplacement(t *testing.T, f *storetest.Fixture) func() {
 CREATE TRIGGER reject_recording_replacement BEFORE UPDATE OF operation_id ON recording_references FOR EACH ROW WHEN (NEW.operation_id <> OLD.operation_id) EXECUTE FUNCTION reject_recording_replacement()`
 		drop = `DROP TRIGGER IF EXISTS reject_recording_replacement ON recording_references; DROP FUNCTION IF EXISTS reject_recording_replacement()`
 	}
-	_, err := f.Store.DB().Exec(create)
+	_, err := f.Store.DB().ExecContext(t.Context(), create)
 	require.NoError(t, err)
 	return func() {
-		_, err := f.Store.DB().Exec(drop)
+		// Callers register this with t.Cleanup, which runs after t.Context() is canceled.
+		_, err := f.Store.DB().ExecContext(context.WithoutCancel(t.Context()), drop)
 		require.NoError(t, err)
 	}
 }
@@ -748,7 +749,7 @@ func TestRecordingReferenceCorrectionDuringHTTP(t *testing.T) {
 			f := storetest.New(t)
 			id := f.CreateMessage("original")
 			recordingBody(t, f, id, "https://loom.com/share/abc")
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000' WHERE id=?`), id)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000' WHERE id=?`), id)
 			require.NoError(err)
 			requests := make(chan docbankmedia.ReferenceRequest, 5)
 			release := make(chan struct{})
@@ -789,7 +790,7 @@ func TestRecordingReferenceCorrectionDuringHTTP(t *testing.T) {
 				require.FailNow("request did not reach HTTP")
 			}
 			mu.Lock()
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "corrected", id)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "corrected", id)
 			mu.Unlock()
 			require.NoError(err)
 			discovery := NewWorker(f.Store, client, "destination", nil, nil).WithOperationGate(gate)

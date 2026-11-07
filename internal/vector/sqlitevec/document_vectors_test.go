@@ -21,7 +21,7 @@ import (
 func openDocumentBackendForTest(t *testing.T) (*Backend, *DocumentBackend) {
 	t.Helper()
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
-	b, err := Open(context.Background(), Options{
+	b, err := Open(t.Context(), Options{
 		Path:      filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension: 3,
 	})
@@ -35,7 +35,8 @@ func TestDocumentBackendContractSQLite(t *testing.T) {
 	testDocumentBackendContract(t, backend, func(token string) int {
 		t.Helper()
 		var count int
-		require.NoError(t, parent.db.QueryRow(
+		require.NoError(t, parent.db.QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM document_vector_embeddings WHERE token = ?`, token).Scan(&count))
 		return count
 	})
@@ -43,12 +44,14 @@ func TestDocumentBackendContractSQLite(t *testing.T) {
 		{Token: "stable-rowid", Vector: []float32{1, 0, 0}},
 	}))
 	var before, after int64
-	require.NoError(t, parent.db.QueryRow(
+	require.NoError(t, parent.db.QueryRowContext(
+		t.Context(),
 		`SELECT document_vector_id FROM document_vector_embeddings WHERE token = ?`, "stable-rowid").Scan(&before))
 	require.NoError(t, backend.PutUnpublished(t.Context(), 21, 3, []document.Embedding{
 		{Token: "stable-rowid", Vector: []float32{0, 1, 0}},
 	}))
-	require.NoError(t, parent.db.QueryRow(
+	require.NoError(t, parent.db.QueryRowContext(
+		t.Context(),
 		`SELECT document_vector_id FROM document_vector_embeddings WHERE token = ?`, "stable-rowid").Scan(&after))
 	assert.Equal(t, before, after, "replacement preserves the vec0-linked metadata rowid")
 }
@@ -84,7 +87,7 @@ func TestDocumentBackendSearchPagesEqualDistancesWithoutOverlapSQLite(t *testing
 
 func testDocumentBackendContract(t *testing.T, backend document.Backend, tokenCount func(string) int) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	gen1 := document.GenerationID(11)
 	gen2 := document.GenerationID(12)
 	require.NoError(t, backend.PutUnpublished(ctx, gen1, 3, nil))
@@ -263,14 +266,16 @@ func hitRanks(hits []document.Hit) []int {
 func TestDocumentVectorMigrationSQLite(t *testing.T) {
 	parent, _ := openDocumentBackendForTest(t)
 	var tableSQL string
-	require.NoError(t, parent.db.QueryRow(
+	require.NoError(t, parent.db.QueryRowContext(
+		t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'document_vector_embeddings'`).Scan(&tableSQL))
 	assert.Contains(t, tableSQL, "token")
 	assert.NotContains(t, tableSQL, "REFERENCES index_generations")
 
-	require.NoError(t, EnsureDocumentVectorTable(context.Background(), parent.db, 4))
-	require.NoError(t, EnsureDocumentVectorTable(context.Background(), parent.db, 4), "lazy table migration is idempotent")
-	require.NoError(t, parent.db.QueryRow(
+	require.NoError(t, EnsureDocumentVectorTable(t.Context(), parent.db, 4))
+	require.NoError(t, EnsureDocumentVectorTable(t.Context(), parent.db, 4), "lazy table migration is idempotent")
+	require.NoError(t, parent.db.QueryRowContext(
+		t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, DocumentVectorTableName(4)).Scan(&tableSQL))
 	assert.Contains(t, tableSQL, "distance_metric=cosine")
 }

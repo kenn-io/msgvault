@@ -55,6 +55,44 @@ function operationAuthorityResponse(path: string): Response | undefined {
 }
 
 describe('AppShell', () => {
+  it('opens source setup from an archive with no sources', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const client = createAPIClient(async () => Response.json(exploreResponse()));
+    const rendered = render(AppShell, { client, state });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Add source' }));
+      expect(await screen.findByRole('dialog', { name: 'Add source' })).toBeDefined();
+      expect(state.current.workspace).toBe('sources');
+      await fireEvent.keyDown(document, { key: 'Escape' });
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources' })));
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it('keeps source setup hidden when the archive has a source', async () => {
+    const start = vi.spyOn(ShellData.prototype, 'start');
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const client = createAPIClient(async input => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [sourceStatus()] });
+      return Response.json(exploreResponse());
+    });
+    const rendered = render(AppShell, { client, state });
+    try {
+      await waitFor(() => expect((start.mock.contexts[0] as ShellData | undefined)?.jobs.loaded).toBe(true));
+      expect(screen.queryByText('No mail yet')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Add source' })).toBeNull();
+    } finally {
+      start.mockRestore();
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   it('keeps confirmation focus through held Back and its restoring traversal', async () => {
     window.history.replaceState({ exploreIndex: 0 }, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 1 }, '', '/?workspace=settings');

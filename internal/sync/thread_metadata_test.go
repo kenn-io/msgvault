@@ -27,11 +27,11 @@ func TestFullSyncScoresStoredThreadEvidence(t *testing.T) {
 			env.Mock.UseRawThreadID = true
 			env.Mock.Messages["thread-message"].ThreadID = tc.thread
 			runFullSync(t, env)
-			source, err := env.Store.GetSourceByIdentifier(testEmail)
+			source, err := env.Store.GetSourceByIdentifier(t.Context(), testEmail)
 			require.NoError(err)
 			ids, err := env.Store.MessageExistsBatch(source.ID, []string{"thread-message"})
 			require.NoError(err)
-			raw, err := env.Store.GetAllRawMIMECandidates(source.ID)
+			raw, err := env.Store.GetAllRawMIMECandidates(t.Context(), source.ID)
 			require.NoError(err)
 			require.Len(raw, 1)
 			require.Equal(ids["thread-message"], raw[0].ID)

@@ -38,7 +38,7 @@ func newSourceScopeFixture(t *testing.T) (*store.Store, archive.QueryEngine, htt
 	for i, identifier := range []string{"reader-a@example.com", "reader-b@example.com"} {
 		source, err := st.GetOrCreateSource("gmail", identifier)
 		requirements.NoError(err)
-		conversation, err := st.EnsureConversation(source.ID, "thread", "Telescope")
+		conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Telescope")
 		requirements.NoError(err)
 		fixtures[i] = scopedSourceFixture{source: source, conversation: conversation}
 		for j := range 2 {
@@ -53,8 +53,8 @@ func newSourceScopeFixture(t *testing.T) (*store.Store, archive.QueryEngine, htt
 			requirements.NoError(st.UpsertFTS(id, "telescope", "telescope body", "", "", ""))
 			fixtures[i].messages = append(fixtures[i].messages, id)
 		}
-		requirements.NoError(st.UpsertAttachment(fixtures[i].messages[0], identifier+".txt", "text/plain", "", "", 12))
-		requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id=?"), fixtures[i].messages[0]).Scan(&fixtures[i].attachment))
+		requirements.NoError(st.UpsertAttachment(t.Context(), fixtures[i].messages[0], identifier+".txt", "text/plain", "", "", 12))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id=?"), fixtures[i].messages[0]).Scan(&fixtures[i].attachment))
 	}
 	_, err := st.CreateCollection("both", "", []int64{fixtures[0].source.ID, fixtures[1].source.ID})
 	requirements.NoError(err)
@@ -62,7 +62,8 @@ func newSourceScopeFixture(t *testing.T) (*store.Store, archive.QueryEngine, htt
 	requirements.NoError(err)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	srv := archive.NewServer(archive.ServerOptions{Store: st, Engine: engine})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	return st, engine, srv.Handler(nil), fixtures
 }
 
@@ -290,7 +291,8 @@ type sourceScopeCustomStore struct{ *store.Store }
 func TestLibrarySourceScopeRequiresNativeStore(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	srv := archive.NewServer(archive.ServerOptions{Store: &sourceScopeCustomStore{st}})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	w := sourceScopeRequest(archive.WithSourceScope(t.Context(), []int64{1}), t, srv.Handler(nil), "/api/v1/messages")
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 }
@@ -390,7 +392,8 @@ func TestLibrarySourceScopeHidesUnauthorizedMergeTarget(t *testing.T) {
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: retired.ID, IntoSourceID: active.ID})
 	requirements.NoError(err)
 	srv := archive.NewServer(archive.ServerOptions{Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL())})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	handler := srv.Handler(nil)
 	for _, tc := range []struct {
 		name       string

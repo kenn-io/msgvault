@@ -51,13 +51,13 @@ func newIndexingGateFixture(t *testing.T, email string, bodies []string) (*store
 	t.Helper()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
-	st, err := store.OpenForTest(mainPath)
+	st, err := store.OpenForTest(t.Context(), mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(t, st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", email)
 	require.NoError(t, err)
-	conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
 	require.NoError(t, err)
 	for i, body := range bodies {
 		id, err := st.UpsertMessage(&store.Message{

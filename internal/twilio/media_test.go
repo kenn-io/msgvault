@@ -1,7 +1,6 @@
 package twilio
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"testing"
@@ -28,14 +27,14 @@ func TestRecordingDualFallbackAndBounds(t *testing.T) {
 		_, err := w.Write(testWAV)
 		assert.NoError(err)
 	}, nil)
-	reader, err := c.OpenRecording(context.Background(), Recording{SID: testRE, AccountSID: testAC, Status: "completed", Channels: 2}, 100)
+	reader, err := c.OpenRecording(t.Context(), Recording{SID: testRE, AccountSID: testAC, Status: "completed", Channels: 2}, 100)
 	require.NoError(err)
 	data, err := io.ReadAll(reader)
 	require.NoError(err)
 	require.NoError(reader.Close())
 	assert.Equal(testWAV, data)
 	assert.Equal(2, requests)
-	_, err = c.OpenRecording(context.Background(), Recording{SID: testRE, Status: "completed"}, 12)
+	_, err = c.OpenRecording(t.Context(), Recording{SID: testRE, Status: "completed"}, 12)
 	require.ErrorIs(err, export.ErrAttachmentTooLarge)
 
 	// A JSON error body labeled as audio is refused.
@@ -44,7 +43,7 @@ func TestRecordingDualFallbackAndBounds(t *testing.T) {
 		_, err := w.Write([]byte(`{"error":"not audio"}`))
 		assert.NoError(err)
 	}, nil)
-	reader, err = jsonBody.OpenRecording(context.Background(), Recording{SID: testRE, Status: "completed"}, 100)
+	reader, err = jsonBody.OpenRecording(t.Context(), Recording{SID: testRE, Status: "completed"}, 100)
 	if reader != nil {
 		require.NoError(reader.Close())
 	}

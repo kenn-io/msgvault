@@ -24,12 +24,19 @@ func main() {
 }
 
 func run(check bool) error {
-	const path = "docs/guides/agent-quickstart.md"
+	return publishGuide("docs/guides/agent-quickstart.md", check)
+}
+
+func publishGuide(path string, check bool) error {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	generated, err := updateToolTable(source, mcp.ToolSummaries())
+	tools := mcp.ToolSummaries()
+	if err := validateGuide(string(source), tools); err != nil {
+		return err
+	}
+	generated, err := updateToolTable(source, tools)
 	if err != nil {
 		return err
 	}

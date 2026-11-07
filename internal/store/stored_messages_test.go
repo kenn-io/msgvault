@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -41,7 +40,7 @@ func persistStoredMessage(
 func TestStoredMessagesContext(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("whatsapp", "+15555550100")
@@ -76,7 +75,8 @@ func TestStoredMessagesContext(t *testing.T) {
 	_, foreign := stored["foreign"]
 	assert.False(foreign, "another source's message with the same ID is excluded")
 
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
 		[]byte("not zlib"), firstID,
 	)
@@ -99,7 +99,7 @@ func TestStoredMessagesContext(t *testing.T) {
 func TestMessageContentMatchesContext(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("whatsapp", "+15555550100")
@@ -160,7 +160,7 @@ func TestMessageContentMatchesContext(t *testing.T) {
 	if st.IsPostgreSQL() {
 		clearDocument = `UPDATE messages SET search_fts = NULL WHERE id = ?`
 	}
-	_, err = st.DB().Exec(st.Rebind(clearDocument), id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(clearDocument), id)
 	require.NoError(err)
 	absent, err := st.MessageContentMatchesContext(ctx, id, body, doc)
 	require.NoError(err)

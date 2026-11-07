@@ -16,7 +16,7 @@ func TestMicrosoftMailFoldersStopAtFailedNameLookup(t *testing.T) {
 	}
 	assert := assert.New(t)
 	require := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "folders.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "folders.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())

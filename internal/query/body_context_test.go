@@ -21,7 +21,7 @@ func TestMarkedFragmentContext(t *testing.T) {
 		startMarker + "needle" + endMarker + " answer" + ellipsisMarker
 
 	snippets, truncated, err := markedFragmentContext(
-		context.Background(), marked, startMarker, endMarker, ellipsisMarker,
+		t.Context(), marked, startMarker, endMarker, ellipsisMarker,
 	)
 	require.NoError(err, "marked fragment context")
 	require.Len(snippets, 1)
@@ -33,7 +33,7 @@ func TestMarkedFragmentContext(t *testing.T) {
 
 func TestMarkedFragmentContextHonorsCancellation(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, _, err := markedFragmentContext(ctx, "body", "<s>", "</s>", "...")

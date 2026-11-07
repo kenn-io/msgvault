@@ -59,7 +59,7 @@ func TestDocumentFailureDiagnosticsPersistAcrossRetryAndRebuild(t *testing.T) {
 		Claim: claim, ReasonCode: "spool_capacity_unavailable", Detail: "spool quota is exhausted", RetryAt: time.Now().Add(time.Minute),
 	}))
 	// Retry touches the old row too; diagnostic ordering follows creation, not retry timestamps.
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET created_at = ?, updated_at = ? WHERE id = ?"), time.Now().Add(-time.Hour), time.Now().Add(time.Hour), "failure-first")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE document_extractions SET created_at = ?, updated_at = ? WHERE id = ?"), time.Now().Add(-time.Hour), time.Now().Add(time.Hour), "failure-first")
 	require.NoError(err)
 	status, err = f.Store.GetDocumentIndexStatusForScope(t.Context(), profile.ID, "original", profile.AllowedMediaTypes, nil)
 	require.NoError(err)
@@ -89,8 +89,8 @@ func TestDocumentFailureDiagnosticsPersistAcrossRetryAndRebuild(t *testing.T) {
 	// All legacy attempts may share a second-resolution timestamp. New attempts
 	// must preserve chronological order even when caller IDs sort backwards.
 	var successCreated, failureCreated time.Time
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT created_at FROM document_extractions WHERE id = ?"), "failure-success").Scan(&successCreated))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT created_at FROM document_extractions WHERE id = ?"), "failure-rebuild").Scan(&failureCreated))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind("SELECT created_at FROM document_extractions WHERE id = ?"), "failure-success").Scan(&successCreated))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind("SELECT created_at FROM document_extractions WHERE id = ?"), "failure-rebuild").Scan(&failureCreated))
 	assert.True(failureCreated.After(successCreated), "attempt chronology must not rely on lexical extraction IDs")
 	// A successful replacement hides all historical failures.
 	changed, err = f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
@@ -121,7 +121,7 @@ func TestDocumentFailureDiagnosticsFollowNewestAttemptWhenClockRepeats(t *testin
 	}))
 	// A coarse or stepped-back clock: the earlier attempt's timestamp is not
 	// before the time the next claim reads, and its ID sorts after the next one.
-	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE document_extractions SET created_at = ? WHERE id = ?"),
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE document_extractions SET created_at = ? WHERE id = ?"),
 		time.Now().Add(time.Hour).UTC(), "z-earlier")
 	require.NoError(err)
 	changed, err := f.Store.RetryDocumentExtraction(t.Context(), profile.ID, hash)
@@ -152,7 +152,7 @@ func TestDocumentFailureDiagnosticsBoundAndLegacyFallback(t *testing.T) {
 		_, _, err := f.Store.ReconcileDocumentOccurrence(t.Context(), singleAttachmentID(t, f, message), 1)
 		require.NoError(err)
 		// Legacy records have only terminal_reason.
-		_, err = f.Store.DB().Exec(f.Store.Rebind("INSERT INTO document_extractions (id,profile_id,canonical_blob_hash,extraction_input_key,state,local_bytes,terminal_reason) VALUES (?,?,?,'original','terminal',128,'invalid_local_source')"), fmt.Sprintf("legacy-failure-%d", i), profile.ID, hash)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("INSERT INTO document_extractions (id,profile_id,canonical_blob_hash,extraction_input_key,state,local_bytes,terminal_reason) VALUES (?,?,?,'original','terminal',128,'invalid_local_source')"), fmt.Sprintf("legacy-failure-%d", i), profile.ID, hash)
 		require.NoError(err)
 	}
 	status, err := f.Store.GetDocumentIndexStatusForScope(t.Context(), profile.ID, "original", profile.AllowedMediaTypes, nil)
@@ -182,7 +182,7 @@ func TestDocumentFailureSurvivesStoreReopen(t *testing.T) {
 	}))
 	var sequence int
 	var name, path string
-	require.NoError(f.Store.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &path))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
 	require.NoError(f.Store.Close())
 	reopened, err := store.Open(path)
 	require.NoError(err)

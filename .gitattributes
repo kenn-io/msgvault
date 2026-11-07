@@ -23,3 +23,6 @@ internal/slack/testdata/slackdump/standard/__uploads/** -text
 
 # Keep the pinned upstream Vec1 source byte-for-byte reproducible.
 internal/vector/sqlitevec/vec1/vec1.c -text whitespace=-blank-at-eol,-blank-at-eof
+
+# The MCP server embeds and declares these exact image bytes.
+internal/mcp/assets/*.png binary

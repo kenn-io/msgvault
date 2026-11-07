@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -21,7 +20,7 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 	require.NoError(t, err, "open")
 	t.Cleanup(func() { _ = db.Close() })
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sources (
 			id INTEGER PRIMARY KEY,
 			source_type TEXT NOT NULL DEFAULT 'imessage',
@@ -63,14 +62,14 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 		t.Skipf("FTS5 not available: %v", err)
 	}
 
-	_, err = db.Exec(`INSERT INTO sources (id, identifier) VALUES (1, 'test@example.com')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO sources (id, identifier) VALUES (1, 'test@example.com')`)
 	require.NoError(t, err, "insert source")
-	_, err = db.Exec(`INSERT INTO conversations (id, source_id) VALUES (1, 1)`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO conversations (id, source_id) VALUES (1, 1)`)
 	require.NoError(t, err, "insert conv")
-	res, err := db.Exec(`INSERT INTO messages (id, source_id, conversation_id, subject, message_type) VALUES (1, 1, 1, 'hello world', 'imessage')`)
+	res, err := db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, conversation_id, subject, message_type) VALUES (1, 1, 1, 'hello world', 'imessage')`)
 	require.NoError(t, err, "insert message")
 	msgID, _ := res.LastInsertId()
-	_, err = db.Exec(`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, 'hello world', 'hello world')`, msgID)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages_fts (rowid, subject, body) VALUES (?, 'hello world', 'hello world')`, msgID)
 	require.NoError(t, err, "insert fts")
 	return db, msgID
 }
@@ -80,7 +79,7 @@ func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
 	require := require.New(t)
 	db, msgID := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Confirm the message appears before deletion.
 	results, err := engine.TextSearch(ctx, "hello", nil, 10, 0)
@@ -88,7 +87,7 @@ func TestSQLiteEngine_TextSearch_ExcludesDedupHidden(t *testing.T) {
 	require.Len(results, 1, "want 1 result before delete")
 
 	// Soft-delete via dedup (deleted_at).
-	_, err = db.Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, msgID)
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, msgID)
 	require.NoError(err, "set deleted_at")
 
 	results, err = engine.TextSearch(ctx, "hello", nil, 10, 0)
@@ -100,10 +99,10 @@ func TestSQLiteEngine_TextSearch_ExcludesSourceDeleted(t *testing.T) {
 	t.Parallel()
 	db, msgID := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Soft-delete via source deletion (deleted_from_source_at).
-	_, err := db.Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, msgID)
+	_, err := db.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, msgID)
 	require.NoError(t, err, "set deleted_from_source_at")
 
 	results, err := engine.TextSearch(ctx, "hello", nil, 10, 0)
@@ -152,7 +151,7 @@ func TestTextSearch_SanitizesFTSInput(t *testing.T) {
 		t.Run(eng.name, func(t *testing.T) {
 			db, _ := openTextSearchDB(t)
 			engine := eng.make(t, db)
-			ctx := context.Background()
+			ctx := t.Context()
 
 			for _, tc := range tests {
 				t.Run(tc.name, func(t *testing.T) {
@@ -177,7 +176,7 @@ func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 	assert := assert.New(t)
 	db, _ := openTextSearchDB(t)
 	engine := NewSQLiteEngine(db)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	insertTextSearchMessage(t, db, 2, "sms", "sms body")
 	insertTextSearchMessage(t, db, 3, "mms", "mms body")
@@ -198,9 +197,9 @@ func TestTextModeIncludesTeamsAndMMSAndExcludesSynctechCalls(t *testing.T) {
 
 func insertTextSearchMessage(t *testing.T, db *sql.DB, id int64, messageType, body string) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO messages (id, source_id, conversation_id, subject, snippet, message_type) VALUES (?, 1, 1, ?, ?, ?)`, id, body, body, messageType)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, conversation_id, subject, snippet, message_type) VALUES (?, 1, 1, ?, ?, ?)`, id, body, body, messageType)
 	require.NoError(t, err, "insert %s message", messageType)
-	_, err = db.Exec(`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, id, body, body)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, id, body, body)
 	require.NoError(t, err, "insert %s fts", messageType)
 }
 
@@ -208,7 +207,7 @@ func TestTextSearchScopesBeforePagination(t *testing.T) {
 	t.Parallel()
 	db, _ := openTextSearchDB(t)
 	insertTextSearchMessage(t, db, 2, "imessage", "hello second")
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO sources (id, identifier) VALUES (2, 'second@example.com');
 		UPDATE messages SET sent_at = '2026-01-01 10:00:00' WHERE id = 1;
 		UPDATE messages SET source_id = 2, sent_at = '2026-01-01 11:00:00' WHERE id = 2;

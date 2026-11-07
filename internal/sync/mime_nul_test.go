@@ -76,7 +76,7 @@ func TestMIMENULAcquisition(t *testing.T) {
 			stored, err := e.Store.GetMessageRaw(id)
 			require.NoError(err)
 			assert.Equal(raw, stored)
-			body, err := e.Store.GetMessageBodyText(id)
+			body, err := e.Store.GetMessageBodyText(t.Context(), id)
 			require.NoError(err)
 			assert.Equal("beforetoken�aftertoken", body)
 			message, err := e.Store.GetMessage(id)
@@ -89,9 +89,9 @@ func TestMIMENULAcquisition(t *testing.T) {
 				assert.Equal(int64(1), total)
 			}
 			var filename, name string
-			require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT filename FROM attachments WHERE message_id = ?`), id).Scan(&filename))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT filename FROM attachments WHERE message_id = ?`), id).Scan(&filename))
 			assert.Equal("file�name.bin", filename)
-			require.NoError(e.Store.DB().QueryRow(e.Store.Rebind(`SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`), id).Scan(&name))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), e.Store.Rebind(`SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`), id).Scan(&name))
 			assert.Equal("Sender�Name", name)
 			debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
 			require.NoError(err)
@@ -118,7 +118,7 @@ func TestMIMENULRetryAfterWriteFailure(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(ids)
 	var rawCount int
-	require.NoError(e.Store.DB().QueryRow(`SELECT COUNT(*) FROM message_raw`).Scan(&rawCount))
+	require.NoError(e.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_raw`).Scan(&rawCount))
 	assert.Zero(rawCount)
 	debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
 	require.NoError(err)
