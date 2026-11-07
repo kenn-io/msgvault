@@ -2,8 +2,9 @@ import type { SearchByMeaningState, SearchByMeaningLabels } from '@kenn-io/kit-u
 import type { EmbeddingStatus, LocalEmbeddingsStatus } from '../api/generated/models';
 
 // kit-ui formats the row's size itself but doesn't export the formatter the hint needs.
+// The hint wraps on phones, so its size stays on one line.
 function megabytes(bytes: number): string {
-  return new Intl.NumberFormat(undefined, { style: 'unit', unit: 'megabyte', unitDisplay: 'short', maximumFractionDigits: 0 }).format(bytes / 1_000_000);
+  return new Intl.NumberFormat(undefined, { style: 'unit', unit: 'megabyte', unitDisplay: 'short', maximumFractionDigits: 0 }).format(bytes / 1_000_000).replace(/ /g, '\u00a0');
 }
 
 export function localSearchState(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): SearchByMeaningState {
