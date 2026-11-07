@@ -596,6 +596,17 @@ func (s *Store) RemoveAccountIdentityContext(
 	return removed, nil
 }
 
+// DefaultIdentityOptedOut reports whether the source configuration disables automatic identities.
+func DefaultIdentityOptedOut(config map[string]jsontext.Value) (bool, error) {
+	var optedOut bool
+	if value := config["no_default_identity"]; len(value) > 0 {
+		if err := json.Unmarshal(value, &optedOut); err != nil {
+			return false, fmt.Errorf("decode no_default_identity: %w", err)
+		}
+	}
+	return optedOut, nil
+}
+
 func (s *Store) persistDefaultIdentityOptOutAfterLastRemovalContext(
 	ctx context.Context,
 	tx *loggedTx,

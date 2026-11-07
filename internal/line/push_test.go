@@ -1,0 +1,156 @@
+package line_test
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/line"
+	"go.kenn.io/msgvault/internal/testutil/lineapi"
+)
+
+const replyRetryKey = "00000000-0000-4000-8000-000000000001"
+const replyUser = "U00000000000000000000000000000002"
+
+func TestPushTextReceiptAndDedupe(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		disconnect bool
+		request    line.PushTextRequest
+		payload    string
+	}{
+		{"receipt received", false, line.PushTextRequest{To: replyUser, Text: "Thanks! 🌍", QuoteToken: "synthetic-parent-quote"}, `{"to":"U00000000000000000000000000000002","messages":[{"type":"text","text":"Thanks! 🌍","quoteToken":"synthetic-parent-quote"}]}`},
+		{"first response disconnected", true, line.PushTextRequest{To: replyUser, Text: "hello"}, `{"to":"U00000000000000000000000000000002","messages":[{"type":"text","text":"hello"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			client, fake := newClient(t)
+			if tc.disconnect {
+				fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+			}
+			receipt, err := client.PushText(t.Context(), replyRetryKey, tc.request)
+			if tc.disconnect {
+				require.Error(err)
+			} else {
+				require.NoError(err)
+				assert.True(receipt.Accepted)
+				assert.Equal("900000000000000001", receipt.MessageID)
+				assert.Equal(200, receipt.StatusCode)
+			}
+			repeated, err := client.PushText(t.Context(), replyRetryKey, tc.request)
+			require.NoError(err)
+			assert.True(repeated.Accepted)
+			assert.Equal(409, repeated.StatusCode)
+			assert.Equal("900000000000000001", repeated.MessageID)
+			if !tc.disconnect {
+				assert.Equal(receipt.MessageID, repeated.MessageID)
+				assert.Equal(receipt.QuoteToken, repeated.QuoteToken)
+				assert.Equal(receipt.RequestID, repeated.RequestID)
+			}
+			for _, r := range fake.Requests() {
+				if r.Path != "/v2/bot/message/push" {
+					continue
+				}
+				assert.Equal(replyRetryKey, r.Header.Get("X-Line-Retry-Key"))
+				assert.JSONEq(tc.payload, string(r.Body))
+			}
+		})
+	}
+}
+
+func TestPushRefreshKeepsRetryKeyAndPayload(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	client, fake := newClient(t)
+	fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: 401})
+	receipt, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
+	require.NoError(err)
+	assert.True(receipt.Accepted)
+	assert.Equal(2, fake.Count("POST", "/oauth2/v3/token"))
+	assert.Equal(2, fake.Count("POST", "/v2/bot/message/push"))
+	var bodies [][]byte
+	for _, r := range fake.Requests() {
+		if r.Path == "/v2/bot/message/push" {
+			assert.Equal(replyRetryKey, r.Header.Get("X-Line-Retry-Key"))
+			bodies = append(bodies, r.Body)
+		}
+	}
+	require.Len(bodies, 2)
+	assert.Equal(bodies[0], bodies[1])
+	assert.JSONEq(`{"to":"U00000000000000000000000000000002","messages":[{"type":"text","text":"hello"}]}`, string(bodies[0]))
+}
+
+func TestPushMalformedAcceptanceAndErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		responses []lineapi.Response
+		accepted  bool
+	}{
+		{"empty 200", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[]}`}}, true},
+		{"invalid JSON receipt", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[{"id":100}]}`}, {Status: 200, Body: `private provider text`}}, true},
+		{"blank ID", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[{"id":" "}]}`}}, true},
+		{"multiple IDs", []lineapi.Response{{Status: 200, Body: `{"sentMessages":[{"id":"100"},{"id":"101"}]}`}}, true},
+		{"accepted 409 without ID", []lineapi.Response{{Status: 409, Header: http.Header{"X-Line-Accepted-Request-Id": {"original-request"}}, Body: `{}`}}, true},
+		{"409 missing accepted header", []lineapi.Response{{Status: 409, Body: `{"sentMessages":[{"id":"100"}]}`}}, false},
+		{"bad request", []lineapi.Response{{Status: 400, Body: `private provider text`}}, false},
+		{"server error", []lineapi.Response{{Status: 503, Body: `private provider text`}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			client, fake := newClient(t)
+			for _, response := range tc.responses {
+				fake.Enqueue("POST", "/v2/bot/message/push", response)
+				receipt, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
+				require.Error(t, err)
+				assert.NotContains(err.Error(), "private provider text")
+				assert.Equal(tc.accepted, receipt.Accepted)
+				assert.Equal(response.Status, receipt.StatusCode)
+				assert.Empty(receipt.MessageID)
+			}
+		})
+	}
+}
+
+func TestPushRetryAfter(t *testing.T) {
+	for _, status := range []int{429, 503} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			client, fake := newClient(t, line.WithClock(func() time.Time { return now }), line.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				response, err := http.DefaultTransport.RoundTrip(request)
+				if request.URL.Path == "/v2/bot/message/push" {
+					now = now.Add(time.Minute)
+				}
+				return response, err
+			})}))
+			fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: status, Header: http.Header{"Retry-After": {"180"}}})
+			receipt, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
+			require.Error(t, err)
+			assert.Equal(t, time.Date(2026, 10, 30, 0, 4, 0, 0, time.UTC), receipt.RetryAfter)
+		})
+	}
+}
+
+func TestValidateReplyText(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		valid      bool
+	}{
+		{"empty", "", false}, {"blank", " \t\n\u3000", false},
+		{"BMP boundary", strings.Repeat("a", 5000), true}, {"BMP over", strings.Repeat("a", 5001), false},
+		{"astral boundary", strings.Repeat("🌍", 2500), true}, {"astral over", strings.Repeat("🌍", 2501), false},
+		{"mixed boundary", strings.Repeat("a", 4998) + "🌍", true}, {"mixed over", strings.Repeat("a", 4999) + "🌍", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := line.ValidateReplyText(tc.text)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}

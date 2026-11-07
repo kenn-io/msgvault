@@ -1393,11 +1393,15 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
 		return
 	}
+	auth := s.requestAuthentication(r)
+	if auth.Mode == AuthModeDelegated && IsCLIRunSendLineReply(req.Args) {
+		writeError(w, http.StatusForbidden, "not_permitted", "LINE sending requires the owner")
+		return
+	}
 	if !cliRunCommandAllowed(req.Args) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
 	}
-	auth := s.requestAuthentication(r)
 	if auth.Mode == AuthModeDelegated {
 		if !delegatedCLIRunAdmitted(req.Args, auth.Grant) {
 			writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
@@ -1454,7 +1458,7 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunSendLineReply(args) || IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1704,6 +1708,9 @@ func cliRunCommandAllowed(args []string) bool {
 	if len(args) > 1 && strings.HasPrefix(args[1], "__") {
 		return false
 	}
+	if IsCLIRunSendLineReply(args) {
+		return len(args) >= 2
+	}
 	if IsCLIRunDraftCreate(args) {
 		return len(args) >= 2
 	}
@@ -1770,6 +1777,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-calendar",
 		"add-circleback",
 		"add-chatwoot",
+		"add-line",
 		"add-plaud",
 		"add-twenty",
 		"add-pocket",
@@ -1833,6 +1841,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"sync-calendar",
 		"sync-circleback",
 		"sync-chatwoot",
+		"sync-line",
 		"sync-plaud",
 		"sync-twenty",
 		"sync-pocket",

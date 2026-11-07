@@ -37,7 +37,7 @@ func validateGuide(text string, tools []mcp.ToolSummary) error {
 		known[tool.Name] = true
 	}
 	// Input and response fields documented in the narrative are not tool names.
-	for _, field := range []string{"person_id", "vcard_uid", "participant_id", "person_uid", "source_message_id", "thread_id", "body_returned", "body_length", "has_more", "group_by", "job_id", "message_id", "draft_id"} {
+	for _, field := range []string{"person_id", "vcard_uid", "participant_id", "person_uid", "source_message_id", "thread_id", "body_returned", "body_length", "has_more", "group_by", "job_id", "message_id", "draft_id", "allow_send", "reply_to"} {
 		known[field] = true
 	}
 	prose := text

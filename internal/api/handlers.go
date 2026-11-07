@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -117,8 +118,20 @@ type SourceStatusResponse struct {
 	Sources []SourceStatus `json:"sources"`
 }
 
+// LineWebhookStatus describes inbound delivery, independent of processor ticks.
+type LineWebhookStatus struct {
+	Active         bool    `json:"active"`
+	LastReceivedAt *string `json:"last_received_at,omitempty"`
+	Pending        int64   `json:"pending"`
+	Failed         int64   `json:"failed"`
+	// InvalidSignatures counts rejected signatures since this daemon started.
+	InvalidSignatures uint64 `json:"invalid_signatures"`
+}
+
 // SourceStatus represents one source and its read-only sync status.
 type SourceStatus struct {
+	LineWebhook *LineWebhookStatus `json:"line_webhook,omitempty"`
+
 	ID                    int64          `json:"id"`
 	SourceType            string         `json:"source_type"`
 	Identifier            string         `json:"identifier"`
@@ -1658,6 +1671,24 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		SourceType: source.SourceType,
 		Identifier: source.Identifier,
 		UpdatedAt:  source.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if source.SourceType == line.SourceType {
+		webhook := &LineWebhookStatus{}
+		if reader, ok := s.store.(LineStatusStore); ok {
+			inbox, err := reader.LineInboxStatusContext(ctx, source.ID)
+			if err != nil {
+				return SourceStatus{}, fmt.Errorf("get LINE inbox status: %w", err)
+			}
+			webhook.Pending, webhook.Failed = inbox.Pending, inbox.Failed
+			if inbox.LastReceivedAt != nil {
+				webhook.LastReceivedAt = nullableTimePtr(*inbox.LastReceivedAt)
+			}
+		}
+		if s.lineWebhook != nil {
+			webhook.Active = s.lineWebhook.Active(source.ID, source.Identifier)
+			webhook.InvalidSignatures = s.lineWebhook.InvalidSignatures(source.Identifier)
+		}
+		status.LineWebhook = webhook
 	}
 	if source.DisplayName.Valid {
 		status.DisplayName = new(source.DisplayName.String)

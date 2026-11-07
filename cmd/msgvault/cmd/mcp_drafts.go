@@ -15,18 +15,22 @@ import (
 )
 
 var mcpDraftCommandConstructors = map[string]func() *cobra.Command{
-	api.CLIRunDraftReplyCommand:   newDraftReplyCommand,
-	api.CLIRunDraftComposeCommand: newDraftComposeCommand,
-	api.CLIRunDraftForwardCommand: newDraftForwardCommand,
-	api.CLIRunDraftGetCommand:     newDraftGetCommand,
-	api.CLIRunDraftEditCommand:    newDraftEditCommand,
-	api.CLIRunDraftDeleteCommand:  newDraftDeleteCommand,
-	api.CLIRunDraftRecoverCommand: newDraftRecoverCommand,
-	api.CLIRunDraftSendAsCommand:  newDraftSendAsCommand,
+	api.CLIRunSendLineReplyCommand: newSendLineReplyCommand,
+	api.CLIRunDraftReplyCommand:    newDraftReplyCommand,
+	api.CLIRunDraftComposeCommand:  newDraftComposeCommand,
+	api.CLIRunDraftForwardCommand:  newDraftForwardCommand,
+	api.CLIRunDraftGetCommand:      newDraftGetCommand,
+	api.CLIRunDraftEditCommand:     newDraftEditCommand,
+	api.CLIRunDraftDeleteCommand:   newDraftDeleteCommand,
+	api.CLIRunDraftRecoverCommand:  newDraftRecoverCommand,
+	api.CLIRunDraftSendAsCommand:   newDraftSendAsCommand,
 }
 
-func mcpDraftCommands(delegated bool) []string {
+func mcpDraftCommands(delegated bool, schemaVersion string) []string {
 	commands := slices.Sorted(maps.Keys(mcpDraftCommandConstructors))
+	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, sendLineReplyMinAPISchemaVersion) {
+		commands = slices.DeleteFunc(commands, func(command string) bool { return command == api.CLIRunSendLineReplyCommand })
+	}
 	if delegated {
 		commands = slices.DeleteFunc(commands, func(command string) bool { return !agentDelegatedCommand(command) })
 	}

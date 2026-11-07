@@ -680,9 +680,9 @@ provider checks, retention, retry behavior, and recovery limits.
 
 ### Local chat drafts
 
-Slack, Teams, and Discord conversations get drafts that live only in msgvault.
-They never appear in the provider's composer and no command makes a provider
-request.
+Slack, Teams, Discord, and LINE conversations get drafts that live only in
+msgvault. Creating, reading, editing, and deleting these drafts stays local.
+The owner can separately [send a reviewed LINE reply](#send-line-reply).
 
 ```bash
 msgvault draft-compose --conversation <conversation-id> --body <text> [--reply-to <message-id>] [--json]
@@ -690,7 +690,8 @@ msgvault draft-get --conversation <conversation-id> [--json]
 ```
 
 The conversation's source owns the draft. `--reply-to` names an archived
-message in the same conversation. `draft-get --conversation` lists that
+message in the same conversation and source. LINE drafts require `--reply-to`.
+`draft-get --conversation` lists that
 conversation's drafts oldest first, so a lost draft ID can be found again;
 `--json` returns one array. `draft-get`, `draft-edit`, and `draft-delete` take
 the returned `chat-draft-` ID and report `location` as `msgvault`. A stale
@@ -698,7 +699,30 @@ revision returns `revision_mismatch` and leaves the draft unchanged.
 `draft-recover` returns `not_supported`. Delegated tokens use the same
 permissions as mail drafts, scoped to the conversation's source, except that
 listing and retrieval need `draft.edit` or `draft.delete`. Removing the source or
-conversation deletes its local drafts.
+conversation deletes its local drafts. An admitted LINE send makes edits return
+`pending_operation`; deleting the draft preserves send recovery. See
+[LINE receipts and recovery](usage/line.md#read-a-send-receipt).
+
+## send-line-reply
+
+Send a reviewed local LINE text draft as the owner. Available on unreleased
+`main` with API schema 3.49.0 or newer:
+
+```bash
+msgvault send-line-reply <chat-draft-id> --revision <n> [--json]
+```
+
+`--revision` must name the reviewed positive revision. The daemon requires an
+archived parent in the same source and conversation, an enabled `[[line]]`
+channel with `allow_send = true`, and its secret in the daemon environment.
+Agent grants cannot send. Environment and directory overrides are rejected.
+
+`--json` returns a safe send receipt. Repeat the same command and admitted
+revision to recover that send; completed calls return their stored receipt
+after the draft is removed. A successful command can return an accepted receipt
+with archive work still pending, so inspect `status`. A different revision
+returns `revision_mismatch`. See [LINE reply setup, limits, and receipt
+recovery](usage/line.md#reply-from-a-reviewed-draft).
 
 ## draft-send-as
 
@@ -1575,6 +1599,51 @@ Backfill re-fetches each selected source message that has pending attachments
 to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
 the source message has since been deleted. See
 [Discord](/docs/usage/discord/#attachment-backfill-and-limits).
+
+---
+
+## add-line
+
+Register a LINE Official Account Messaging API channel and save its `[[line]]`
+configuration. Available on `main`. Credentials come from the named environment
+variable on the daemon host; the secret is never a flag value.
+
+```bash
+msgvault add-line --channel-id 2000000001 --secret-env MSGVAULT_LINE_SECRET_EXAMPLE
+```
+
+| Flag | Default | Contract |
+|---|---|---|
+| `--channel-id` | required | Canonical positive decimal channel ID |
+| `--secret-env` | required | Environment-variable name holding the channel secret |
+| `--webhook-base-url` | omitted | Public HTTPS base URL; userinfo, query, and fragment are rejected; the webhook path is `/webhooks/line/<channel_id>` |
+
+The command checks credentials and bot identity, registers the archive source,
+and saves configuration. Restart the daemon or service with the secret variable
+in its environment. Set the printed webhook URL in LINE Developers Console,
+enable **Use webhook**, and use **Verify**. The optional base URL prints the
+complete webhook URL; remote webhook settings are managed in the Console.
+Consider **Webhook redelivery**. See [LINE setup](usage/line.md).
+
+---
+
+## sync-line
+
+Process due work already in the LINE webhook inbox. Available on `main`. It
+retries eligible profile and media work through the daemon; it never fetches
+message history or bypasses a saved retry deadline.
+
+```bash
+msgvault sync-line
+msgvault sync-line --channel-id 2000000001
+```
+
+| Flag | Default | Contract |
+|---|---|---|
+| `--channel-id` | omitted | Restrict the pass to one configured channel |
+
+**Process inbox** for a LINE source performs the same inbox-processing pass. See
+[delivery and retries](usage/line.md#delivery-and-retries).
 
 ---
 
@@ -3082,6 +3151,9 @@ account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
 warning before sharing its output.
 
+LINE subsets copy selected archived messages and their conversation participants.
+They omit the operational webhook inbox, cached profiles, and membership clocks.
+
 ---
 
 ## export-token
@@ -4548,7 +4620,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. The eight preparation and lifecycle tools require API schema 3.0.0 or newer. On unreleased `main`, the owner also has `send_line_reply` (API schema 3.49.0), with per-channel opt-in and confirmation of the exact draft ID and revision. See [draft and reply tools](usage/chat.md#draft-tools).
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` requires a daemon with API schema 3.9.0 or newer and serves scoped read tools, up to six delegated draft tools, and calendar tools over stdio. Tool selection follows the token's permissions and granted sources. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
@@ -4564,7 +4636,7 @@ msgvault mcp [flags]
 | `--http-token-file` | — | Read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | Name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, managed draft writes, and owner LINE reply sending over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
@@ -4970,7 +5042,9 @@ msgvault merge-account --from-source-id 42 --into-source-id 43 --yes
 
 Both sources must have the same source type and be idle. Known conflicting
 Beeper networks are incompatible. Pending provider drafts on the historical
-source must finish first. The destination must not be retired; it may be
+source must finish first. A LINE source with pending or retrying webhook
+events cannot retire; stop remote delivery and let `sync-line` finish its inbox
+first. The destination must not be retired; it may be
 history-only. Cancel or finish staged deletions before merging, because
 batches targeting a retired source cannot execute. Restage them against the
 destination if needed.

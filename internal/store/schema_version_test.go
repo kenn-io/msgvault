@@ -18,6 +18,37 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestSchemaVersionArchiveRequiresLINEUpgrade(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		tables  []string
+	}{
+		{"33", []string{"line_webhook_events", "line_profiles", "line_memberships", "line_reply_attempts"}},
+		{"34", []string{"line_reply_attempts"}},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			s := testutil.NewTestStore(t)
+			ctx := t.Context()
+			for _, table := range tc.tables {
+				_, err := s.DB().ExecContext(ctx, "DROP TABLE "+table)
+				require.NoError(err)
+			}
+			_, err := s.DB().ExecContext(ctx, s.Rebind("UPDATE archive_metadata SET value=? WHERE key='schema_version'"), tc.version)
+			require.NoError(err)
+			require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+			require.NoError(s.InitSchemaContext(ctx))
+			require.NoError(s.ValidateSchemaContext(ctx))
+			for _, table := range tc.tables {
+				var count int
+				require.NoError(s.DB().QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count))
+				assert.Zero(count)
+			}
+		})
+	}
+}
+
 func TestInitSchemaUnlessCurrentPostgreSQLRepairs(t *testing.T) {
 	for _, repair := range []string{"default collection", "account identity keys", "system seeds"} {
 		t.Run(repair, func(t *testing.T) {
@@ -370,6 +401,8 @@ var (
 		31: "cad2b896394a3b1df1cb8b71cc2db52e893623272d87e1ede64ad757e6aba500",
 		32: "67195ce591cb53fde19ccf89d46f57a8d1cba7fcb96efd0b1d120dcde4c0dceb",
 		33: "7158a0bdc0768658194eacd650486e790f43ce0ab26f9aeffcd01843e3958ecb",
+		34: "21117f641e1a287bdfcd447948abdd1e75ad3e1e6195299c428f2f9847fb66ff",
+		35: "6945db61db68f69b84de42b49a1dc413b044fdffdf57606cf20e3a345b15028b",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -400,6 +433,8 @@ var (
 		31: "f4b83986f7def2d4f1f49dce1074b828bb0bb2a3ff042ced1a512b8443407c90",
 		32: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
 		33: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
+		34: "e1065e8fec81997b9372838b2430667d51d95295d3c01f7cc58af0951fd214f7",
+		35: "b2e555d182a83cc36cb3eeea49f3e7c0f280062ca987449ce13849760113ea6d",
 	}
 )
 

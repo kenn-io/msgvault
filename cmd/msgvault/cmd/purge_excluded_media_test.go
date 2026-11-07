@@ -49,6 +49,11 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 				accountID, messageType = 10, "meeting_transcript"
 			}
 			identifier = chatwoot.SourceIdentifier("https://chatwoot.example.com", accountID, 8)
+		case "line":
+			identifier = "2000000001"
+			if conversationType == "channel" {
+				conversationType = "group_chat"
+			}
 		case sourceTypeInline:
 			identifier = "api.inline.chat:user:42"
 		}
@@ -82,6 +87,15 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 		excludedMessageID: provider + ":excluded",
 		retainedMessageID: provider + ":retained",
 	} {
+		if provider == "line" {
+			require.NoError(t, st.UpsertAttachmentRecordWithStats(t.Context(), messageID, store.AttachmentWrite{
+				SourceAttachmentID: sourceAttachmentID, SourcePartKey: sourceAttachmentID,
+				Filename: "synthetic.bin", MediaType: "file", StoragePath: path, ContentHash: hash, Size: 100,
+				Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit,
+				State: attachmentpolicy.StateStored,
+			}, false))
+			continue
+		}
 		require.NoError(t, replaceAttachments(messageID, []store.AttachmentRef{{
 			SourceAttachmentID: sourceAttachmentID,
 			StoragePath:        path,
@@ -532,4 +546,21 @@ func TestChatwootPurgeResolvesAccountPolicyAndSharedMeetings(t *testing.T) {
 			assert.NoFileExists(f.fullPath)
 		})
 	}
+}
+
+func TestLinePurgeAppliesChannelPolicy(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newPurgeMediaFixture(t, "line")
+	var identifier string
+	must.NoError(f.store.DB().QueryRowContext(t.Context(), "SELECT identifier FROM sources LIMIT 1").Scan(&identifier))
+	f.config.Line = []config.LineSource{{ChannelID: identifier, SecretEnv: "EXAMPLE_LINE_SECRET", Media: new(false)}}
+	command := newPurgeExcludedMediaLocalCmd(f.deps())
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"--yes"})
+	must.NoError(command.Execute())
+	checks.Equal(attachmentpolicy.StateSkipped, f.state(t, f.excludedID))
+	checks.Equal(attachmentpolicy.StateSkipped, f.state(t, f.retainedID))
+	checks.NoFileExists(f.fullPath)
 }

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,12 +46,12 @@ func TestChatDraftLifecycleKeepsDraftsOutOfArchive(t *testing.T) {
 			assertions.Empty(edited.Body)
 			_, err = st.UpdateChatDraftContext(t.Context(), created.DraftID, 1, "stale")
 			requirements.ErrorIs(err, store.ErrChatDraftRevisionConflict)
-			requirements.ErrorIs(st.DeleteChatDraftContext(t.Context(), created.DraftID, 1), store.ErrChatDraftRevisionConflict)
+			requirements.ErrorIs(st.DeleteChatDraftContext(t.Context(), created.DraftID, 1, time.Now()), store.ErrChatDraftRevisionConflict)
 			unchanged, err := st.GetChatDraftContext(t.Context(), created.DraftID)
 			requirements.NoError(err)
 			assertions.Equal(edited, unchanged)
 
-			requirements.NoError(st.DeleteChatDraftContext(t.Context(), created.DraftID, 2))
+			requirements.NoError(st.DeleteChatDraftContext(t.Context(), created.DraftID, 2, time.Now()))
 			_, err = st.GetChatDraftContext(t.Context(), created.DraftID)
 			requirements.ErrorIs(err, store.ErrChatDraftNotFound)
 			after, err := st.GetStatsContext(t.Context())

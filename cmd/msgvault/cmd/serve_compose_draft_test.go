@@ -13,8 +13,10 @@ import (
 	emersionimap "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/line"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -82,6 +84,36 @@ func TestDraftComposeEndToEnd(t *testing.T) {
 	requirements.Equal(int64(1), total)
 	requirements.Len(matches, 1)
 	assertions.Equal(result.MessageID, matches[0].ID)
+}
+
+func TestLineReplyThroughOwnerCLI(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	clearServerKeyEnvironment(t)
+	a, draft, fake := lineReplyAdapterFixture(t)
+	a.config.Server.DaemonAutoStart = new(false)
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
+	mux.Handle("/", api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(a.config.Server.AuthenticationKey()))
+	_, err := daemonRuntimeStore(a.config.Data.DataDir).Write(rt.Record)
+	require.NoError(err)
+
+	cmd := newSendLineReplyCommand()
+	cmd.SetContext(withStoreResolverConfig(t, a.config))
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{draft.DraftID, "--revision=1", "--json"})
+	require.NoError(cmd.ExecuteContext(cmd.Context()))
+	var sent line.ReplyReceipt
+	require.NoError(json.Unmarshal(stdout.Bytes(), &sent))
+	assert.Equal("sent", sent.Status)
+	assert.True(sent.Accepted)
+	assert.Empty(stderr.String())
+	assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 }
 
 func TestDraftComposeHTTPPublishesManagedDraft(t *testing.T) {

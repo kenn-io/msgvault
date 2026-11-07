@@ -469,6 +469,40 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	assert.Empty(logs.String())
 }
 
+func TestDelegatedMCPDraftCommandsOmitLineReply(t *testing.T) {
+	assert.NotContains(t, mcpDraftCommands(true, "3.49.0"), api.CLIRunSendLineReplyCommand)
+}
+
+func TestDaemonMCPServeOptionsGatesLineReplyBySchema(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		schemaVersion string
+		wantLineReply bool
+	}{
+		{name: "before LINE reply schema", schemaVersion: "3.47.0"},
+		{name: "LINE reply schema", schemaVersion: "3.49.0", wantLineReply: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/health" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.schemaVersion})
+					return
+				}
+				http.NotFound(w, r)
+			})
+
+			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
+			assert.Contains(opts.DraftCommands, api.CLIRunDraftReplyCommand, "existing draft tools remain available")
+			if tc.wantLineReply {
+				assert.Contains(opts.DraftCommands, api.CLIRunSendLineReplyCommand)
+			} else {
+				assert.NotContains(opts.DraftCommands, api.CLIRunSendLineReplyCommand)
+			}
+		})
+	}
+}
+
 func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) {
 	require := require.New(t)
 

@@ -1,0 +1,703 @@
+package store_test
+
+import (
+	"database/sql"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+)
+
+const replyBotID = "U00000000000000000000000000000001"
+
+func allowLineReply(store.LineReplyAttempt) error { return nil }
+
+func replyStoreFixture(t *testing.T) (*store.Store, store.ChatDraft, int64) {
+	t.Helper()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("line", "2000000001")
+	require.NoError(t, err)
+	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, replyBotID))
+	_, err = st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:"+replyBotID, "Example Bot")
+	require.NoError(t, err)
+	chat, err := st.EnsureConversationWithType(source.ID, "user:U00000000000000000000000000000002", "direct_chat", "Example")
+	require.NoError(t, err)
+	metadata := sql.NullString{String: `{"quoteToken":"synthetic-parent-quote"}`, Valid: true}
+	parent, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message:  &store.Message{SourceID: source.ID, ConversationID: chat, SourceMessageID: "100", MessageType: "line", SentAt: sql.NullTime{Time: time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC), Valid: true}, Snippet: sql.NullString{String: "Incoming", Valid: true}},
+		BodyText: sql.NullString{String: "Incoming", Valid: true}, Metadata: &metadata, FTS: &store.FTSDoc{Body: "Incoming"},
+	})
+	require.NoError(t, err)
+	draft, err := st.CreateChatDraftContext(t.Context(), chat, parent, "Thanks!", func(string, string) error { return nil })
+	require.NoError(t, err)
+	return st, draft, parent
+}
+
+func TestLineReplyArchiveQuotesOnlyWithToken(t *testing.T) {
+	for _, quoted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "without quote token", true: "with quote token"}[quoted], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, parent := replyStoreFixture(t)
+			if !quoted {
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET metadata=? WHERE id=?`), `{}`, parent)
+				require.NoError(err)
+			}
+			acceptedReply(t, st, draft)
+			sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			var reply sql.NullInt64
+			var metadata string
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id,metadata FROM messages WHERE id=?`), sent.MessageID).Scan(&reply, &metadata))
+			if quoted {
+				assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, reply)
+				assert.JSONEq(`{"quoteToken":"synthetic-sent-quote","quotedMessageId":"100"}`, metadata)
+			} else {
+				assert.False(reply.Valid)
+				assert.JSONEq(`{"quoteToken":"synthetic-sent-quote"}`, metadata)
+			}
+		})
+	}
+}
+
+func TestLineReplyAdmissionFreezesRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, draft, parent := replyStoreFixture(t)
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	calls := 0
+	attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, func(candidate store.LineReplyAttempt) error {
+		calls++
+		assert.Equal("Thanks!", candidate.Body)
+		assert.Equal("synthetic-parent-quote", candidate.QuoteToken)
+		return nil
+	})
+	require.NoError(err)
+	require.NoError(uuid.Validate(attempt.RetryKey))
+	assert.Equal(store.LineReplyAdmitted, attempt.State)
+	assert.Equal(draft.SourceID, attempt.SourceID)
+	assert.Equal(draft.ConversationID, attempt.ConversationID)
+	assert.Equal(parent, attempt.ReplyToMessageID)
+	assert.Equal("100", attempt.ReplyToSourceMessageID)
+	assert.Equal(now.Add(23*time.Hour), attempt.RetryUntil)
+	repeated, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now.Add(time.Hour), func(store.LineReplyAttempt) error { calls++; return errors.New("must not readmit") })
+	require.NoError(err)
+	assert.Equal(1, calls)
+	assert.Equal(attempt.RetryKey, repeated.RetryKey)
+	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+	require.ErrorIs(err, store.ErrChatDraftFrozen)
+	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 2, "stale")
+	require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
+	_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 2, now, allowLineReply)
+	require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
+	unchanged, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(draft, unchanged)
+	firstPush := now.Add(2 * time.Hour)
+	nextRetry := firstPush.Add(time.Minute)
+	started, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush, nextRetry)
+	require.NoError(err)
+	assert.Equal(firstPush, started.AdmittedAt)
+	assert.Equal(attempt.RetryUntil, started.RetryUntil)
+	assert.Equal(now.Add(23*time.Hour), started.RetryUntil)
+}
+
+func TestLineReplyAdmissionGateFailureLeavesDraftEditable(t *testing.T) {
+	require := require.New(t)
+	st, draft, _ := replyStoreFixture(t)
+	denied := errors.New("synthetic policy denial")
+	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, time.Now(), func(store.LineReplyAttempt) error { return denied })
+	require.ErrorIs(err, denied)
+	_, err = st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+	require.ErrorIs(err, sql.ErrNoRows)
+	edited, err := st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "editable")
+	require.NoError(err)
+	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, edited.Revision, time.Now()))
+}
+
+func TestLineReplyAcceptanceAndBackoffNeverRegress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, draft, _ := replyStoreFixture(t)
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+	require.NoError(err)
+	attempt, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
+	attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, RequestID: "original-request", StatusCode: 200, NextRetryAt: now.Add(time.Minute)})
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
+	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+	require.ErrorIs(err, store.ErrLineReplyRetryWait)
+	attempt, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(time.Minute), now.Add(90*time.Second))
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
+	_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 503, NextRetryAt: now.Add(3 * time.Minute)})
+	require.NoError(err)
+	attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, NextRetryAt: now.Add(time.Minute)})
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
+	assert.Equal("original-request", attempt.RequestID)
+	assert.Equal(200, attempt.StatusCode)
+	assert.Equal(now.Add(3*time.Minute), attempt.NextRetryAt)
+}
+
+func acceptedReply(t *testing.T, st *store.Store, draft store.ChatDraft) store.LineReplyAttempt {
+	t.Helper()
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+	require.NoError(t, err)
+	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+	require.NoError(t, err)
+	attempt, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, MessageID: "900000000000000001", QuoteToken: "synthetic-sent-quote", RequestID: "original-request", StatusCode: 200})
+	require.NoError(t, err)
+	return attempt
+}
+
+func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
+	t.Run("leading whitespace in preview", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, draft, parent := replyStoreFixture(t)
+		draft, err := st.CreateChatDraftContext(t.Context(), draft.ConversationID, parent, strings.Repeat("\n", 200)+"Visible reply", func(string, string) error { return nil })
+		require.NoError(err)
+		acceptedReply(t, st, draft)
+		sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		var snippet, preview sql.NullString
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT snippet FROM messages WHERE id=?`), sent.MessageID).Scan(&snippet))
+		assert.Equal(sql.NullString{String: "Visible reply", Valid: true}, snippet)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT last_message_preview FROM conversations WHERE id=?`), draft.ConversationID).Scan(&preview))
+		assert.Equal(sql.NullString{String: "Visible reply", Valid: true}, preview)
+	})
+	t.Run("receipt and conversation summary", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, draft, _ := replyStoreFixture(t)
+		require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
+		now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+		_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+		require.NoError(err)
+		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+		require.NoError(err)
+		_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{DefiniteRejection: true, StatusCode: 429, NextRetryAt: now.Add(30 * time.Second)})
+		require.NoError(err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message:  &store.Message{SourceID: draft.SourceID, ConversationID: draft.ConversationID, SourceMessageID: "101", MessageType: "line", SentAt: sql.NullTime{Time: now.Add(21 * time.Hour), Valid: true}, Snippet: sql.NullString{String: "A newer incoming message", Valid: true}},
+			BodyText: sql.NullString{String: "A newer incoming message", Valid: true},
+		})
+		require.NoError(err)
+		require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
+		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(22*time.Hour), now.Add(22*time.Hour+30*time.Second))
+		require.NoError(err)
+		accepted, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, MessageID: "900000000000000001", QuoteToken: "synthetic-sent-quote", RequestID: "original-request", StatusCode: 200})
+		require.NoError(err)
+		sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(store.LineReplySent, sent.State)
+		require.Positive(sent.MessageID)
+		assert.Equal(accepted.RemoteMessageID, sent.RemoteMessageID)
+		assert.Empty(sent.Body)
+		assert.Empty(sent.QuoteToken)
+		assert.Empty(sent.RemoteQuoteToken)
+		assert.Empty(sent.SourceConversationID)
+		stored, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(sent, stored)
+		_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+		require.ErrorIs(err, store.ErrChatDraftNotFound)
+		var latest sql.NullTime
+		var preview sql.NullString
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT last_message_at,last_message_preview FROM conversations WHERE id=?`), draft.ConversationID).Scan(&latest, &preview))
+		require.True(latest.Valid)
+		assert.Equal(time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC), latest.Time.UTC())
+		assert.Equal(sql.NullString{String: "Thanks!", Valid: true}, preview)
+		repeated, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(sent, repeated)
+		var conversation, sender int64
+		var fromMe bool
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id,sender_id,is_from_me FROM messages WHERE id=?`), sent.MessageID).Scan(&conversation, &sender, &fromMe))
+		assert.Equal(draft.ConversationID, conversation)
+		assert.True(fromMe)
+		assert.Positive(sender)
+		var sentAt time.Time
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sent_at FROM messages WHERE id=?`), sent.MessageID).Scan(&sentAt))
+		assert.Equal(time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC), sentAt.UTC())
+		body, raw, err := st.GetMessageBodyAndRawContext(t.Context(), sent.MessageID)
+		require.NoError(err)
+		assert.Equal("Thanks!", body)
+		assert.JSONEq(`{"status_code":200,"request_id":"original-request","sentMessages":[{"id":"900000000000000001","quoteToken":"synthetic-sent-quote"}]}`, string(raw))
+		var summaryCount int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&summaryCount))
+		assert.Equal(int64(3), summaryCount)
+	})
+	t.Run("earlier incoming quote", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, draft, _ := replyStoreFixture(t)
+		quoteMetadata := sql.NullString{String: `{"quotedMessageId":"900000000000000001"}`, Valid: true}
+		quotedMessageID, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message:  &store.Message{SourceID: draft.SourceID, ConversationID: draft.ConversationID, SourceMessageID: "200", MessageType: "line"},
+			BodyText: sql.NullString{String: "Reply received before local recovery", Valid: true}, Metadata: &quoteMetadata,
+			FTS: &store.FTSDoc{Body: "Reply received before local recovery"},
+		})
+		require.NoError(err)
+		var parent sql.NullInt64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
+		assert.False(parent.Valid)
+
+		acceptedReply(t, st, draft)
+		sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
+		require.True(parent.Valid)
+		assert.Equal(sent.MessageID, parent.Int64)
+	})
+}
+
+func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, draft, _ := replyStoreFixture(t)
+	acceptedReply(t, st, draft)
+	var install, remove []string
+	if st.IsPostgreSQL() {
+		install = []string{`CREATE FUNCTION fail_line_reply() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.is_from_me THEN RAISE EXCEPTION 'synthetic archive failure'; END IF; RETURN NEW; END$$`, `CREATE TRIGGER fail_line_reply BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION fail_line_reply()`}
+		remove = []string{`DROP TRIGGER fail_line_reply ON messages`, `DROP FUNCTION fail_line_reply()`}
+	} else {
+		install = []string{`CREATE TRIGGER fail_line_reply BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`}
+		remove = []string{`DROP TRIGGER fail_line_reply`}
+	}
+	for _, statement := range install {
+		_, err := st.DB().ExecContext(t.Context(), statement)
+		require.NoError(err)
+	}
+	_, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+	require.Error(err)
+	pending, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(store.LineReplyRemoteAccepted, pending.State)
+	_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	count, err := st.CountMessagesForSourceContext(t.Context(), draft.SourceID)
+	require.NoError(err)
+	assert.Equal(int64(1), count)
+	for _, statement := range remove {
+		_, err := st.DB().ExecContext(t.Context(), statement)
+		require.NoError(err)
+	}
+	sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(store.LineReplySent, sent.State)
+}
+
+func TestLineReplyCompletionProjectsRosterAndMembership(t *testing.T) {
+	for _, kind := range []string{"user", "group", "room"} {
+		t.Run(kind, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, draft, parent := replyStoreFixture(t)
+			if kind != "user" {
+				native := "group:C00000000000000000000000000000003"
+				if kind == "room" {
+					native = "room:R00000000000000000000000000000004"
+				}
+				chat, err := st.EnsureConversationWithType(draft.SourceID, native, "group_chat", "Example")
+				require.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET conversation_id=? WHERE id=?`), chat, parent)
+				require.NoError(err)
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)))
+				draft, err = st.CreateChatDraftContext(t.Context(), chat, parent, "Thanks!", func(string, string) error { return nil })
+				require.NoError(err)
+			}
+			peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:U00000000000000000000000000000002", "Example Peer")
+			require.NoError(err)
+			_, err = st.SetLineMembershipContext(t.Context(), draft.ConversationID, peer, "channel:2000000001:user:U00000000000000000000000000000002", true, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC))
+			require.NoError(err)
+			require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
+			accepted := acceptedReply(t, st, draft)
+			_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			if kind == "user" {
+				policies, err := st.ListConversationPolicies(t.Context())
+				require.NoError(err)
+				require.Len(policies, 1)
+				assert.Equal(2, policies[0].Participants)
+			} else {
+				var count int
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
+				assert.Equal(2, count)
+			}
+			var joined time.Time
+			var left sql.NullTime
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cp.joined_at,cp.left_at FROM conversation_participants cp JOIN participant_identifiers i ON i.participant_id=cp.participant_id WHERE cp.conversation_id=? AND i.identifier_type='line_user_id' AND i.identifier_value=?`), draft.ConversationID, "channel:2000000001:user:"+replyBotID).Scan(&joined, &left))
+			assert.True(accepted.AdmittedAt.Equal(joined))
+			assert.False(left.Valid)
+		})
+	}
+}
+
+func TestLineReplyExpiryClearsPayloadAcrossDraftDeletion(t *testing.T) {
+	for _, acceptance := range []string{"unknown", "accepted without ID"} {
+		for _, order := range []string{"expire by Start", "delete past deadline", "expire then delete", "delete then expire"} {
+			t.Run(acceptance+"/"+order, func(t *testing.T) {
+				must := require.New(t)
+				checks := assert.New(t)
+				st, draft, _ := replyStoreFixture(t)
+				now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+				admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+				must.NoError(err)
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				must.NoError(err)
+				if acceptance == "accepted without ID" {
+					accepted, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "accepted-request", QuoteToken: "remote-quote"})
+					must.NoError(err)
+					must.Equal(store.LineReplyRemoteUnknown, accepted.State)
+					must.Equal("Thanks!", accepted.Body)
+					must.Equal("synthetic-parent-quote", accepted.QuoteToken)
+					must.Equal("remote-quote", accepted.RemoteQuoteToken)
+				}
+				if acceptance == "unknown" && order == "delete past deadline" {
+					must.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2, now.Add(24*time.Hour)), store.ErrChatDraftRevisionConflict)
+					unchanged, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+					must.NoError(err)
+					checks.Equal("Thanks!", unchanged.Body)
+				}
+				switch order {
+				case "delete past deadline":
+					must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now.Add(24*time.Hour)))
+				case "delete then expire":
+					must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+				}
+				if order != "delete past deadline" {
+					expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
+					must.ErrorIs(err, store.ErrLineReplyExpired)
+					checks.Equal(store.LineReplyExpired, expired.State)
+					checks.Empty(expired.Body)
+					checks.Empty(expired.QuoteToken)
+					checks.Empty(expired.RemoteQuoteToken)
+					checks.Empty(expired.SourceConversationID)
+				}
+				if order == "expire then delete" {
+					must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+				}
+				if order != "expire by Start" {
+					_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+					must.ErrorIs(err, store.ErrChatDraftNotFound)
+				}
+				receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+				must.NoError(err)
+				checks.Equal(store.LineReplyExpired, receipt.State)
+				checks.False(store.LineReplyHasAcceptance(receipt.State))
+				checks.Equal(admitted.RetryKey, receipt.RetryKey)
+				if acceptance == "accepted without ID" {
+					checks.Equal("accepted-request", receipt.RequestID)
+					checks.Equal(200, receipt.StatusCode)
+				}
+				checks.Equal(draft.SourceID, receipt.SourceID)
+				checks.Equal(draft.ConversationID, receipt.ConversationID)
+				checks.Equal(admitted.ReplyToMessageID, receipt.ReplyToMessageID)
+				checks.Empty(receipt.Body)
+				checks.Empty(receipt.QuoteToken)
+				checks.Empty(receipt.RemoteQuoteToken)
+				checks.Empty(receipt.SourceConversationID)
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+				must.ErrorIs(err, store.ErrLineReplyExpired)
+			})
+		}
+	}
+}
+
+func TestLineReplyBindingChangesFailClosed(t *testing.T) {
+	for _, change := range []string{"conversation", "parent", "bot"} {
+		t.Run(change, func(t *testing.T) {
+			require := require.New(t)
+			st, draft, parent := replyStoreFixture(t)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			switch change {
+			case "conversation":
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET source_conversation_id=? WHERE id=?`), "user:U00000000000000000000000000000009", draft.ConversationID)
+			case "parent":
+				other, createErr := st.EnsureConversationWithType(draft.SourceID, "group:C00000000000000000000000000000009", "group_chat", "")
+				require.NoError(createErr)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET conversation_id=? WHERE id=?`), other, parent)
+			case "bot":
+				err = st.SetLineBotContext(t.Context(), draft.SourceID, "U00000000000000000000000000000009")
+			}
+			require.NoError(err)
+			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+			require.ErrorIs(err, store.ErrChatDraftInvalidDestination)
+		})
+	}
+}
+
+func TestLineReplyReceiptCannotOverwriteInboundMessage(t *testing.T) {
+	require := require.New(t)
+	st, draft, parent := replyStoreFixture(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+	require.NoError(err)
+	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+	require.NoError(err)
+	_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "100", RequestID: "original-request"})
+	require.NoError(err)
+	_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+	require.ErrorIs(err, store.ErrLineReplyReceiptConflict)
+	body, err := st.GetMessageBodyText(t.Context(), parent)
+	require.NoError(err)
+	assert.Equal(t, "Incoming", body)
+}
+
+func TestLineReplyUnresolvedAttemptPreventsSourceRetirement(t *testing.T) {
+	for _, tc := range []struct {
+		state     string
+		liveDraft bool
+	}{
+		{store.LineReplyAdmitted, false},
+		{store.LineReplyAdmitted, true},
+		{store.LineReplyRemoteUnknown, false},
+		{store.LineReplyRemoteAccepted, false},
+		{store.LineReplyProviderRejected, false},
+		{store.LineReplySent, false},
+	} {
+		name := tc.state
+		if tc.liveDraft {
+			name += "/live draft"
+		} else {
+			name += "/deleted draft"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			if tc.state != store.LineReplyAdmitted {
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+				outcome := store.LineReplyOutcome{StatusCode: 503}
+				switch tc.state {
+				case store.LineReplyRemoteAccepted, store.LineReplySent:
+					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"}
+				case store.LineReplyProviderRejected:
+					outcome = store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
+				}
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
+				require.NoError(err)
+				if tc.state == store.LineReplySent {
+					_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+					require.NoError(err)
+				}
+			}
+			if !tc.liveDraft && tc.state != store.LineReplySent {
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+			}
+			before, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			target, err := st.GetOrCreateSource("line", "2000000002")
+			require.NoError(err)
+			blocked := tc.liveDraft || tc.state == store.LineReplyRemoteUnknown || tc.state == store.LineReplyRemoteAccepted
+			for _, dryRun := range []bool{true, false} {
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID, DryRun: dryRun})
+				if blocked {
+					require.ErrorIs(err, store.ErrSourceMergeInvalid)
+				} else {
+					require.NoError(err)
+				}
+				after, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				assert.Equal(before, after)
+			}
+		})
+	}
+}
+
+func TestLineReplyAdmissionHonorsSyncSourceScope(t *testing.T) {
+	st, draft, _ := replyStoreFixture(t)
+	other, err := st.GetOrCreateSource("line", "2000000002")
+	require.NoError(t, err)
+	run, err := st.StartSyncContext(t.Context(), other.ID, "full")
+	require.NoError(t, err)
+	scoped := st.ScopedToSync(other.ID, run)
+	_, err = scoped.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, time.Now(), allowLineReply)
+	require.ErrorContains(t, err, "scoped to source")
+}
+
+func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
+	// Archive GC is SQLite-only.
+	t.Setenv("MSGVAULT_TEST_DB", "")
+	for _, phase := range []string{"before admission", "lost response", "known receipt"} {
+		t.Run(phase, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, parent := replyStoreFixture(t)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			if phase != "before admission" {
+				_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+				require.NoError(err)
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+			}
+			if phase == "known receipt" {
+				_, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"})
+				require.NoError(err)
+			}
+			require.NoError(st.MarkMessageDeletedContext(t.Context(), draft.SourceID, "100"))
+			plan, err := st.PlanGCContext(t.Context())
+			require.NoError(err)
+			require.Equal(int64(1), plan.SourceDeleted)
+			deleted, err := st.ExecuteGCContext(t.Context(), plan)
+			require.NoError(err)
+			require.Equal(int64(1), deleted)
+			if phase == "before admission" {
+				_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+				assert.ErrorIs(err, store.ErrChatDraftInvalidDestination)
+				return
+			}
+			if phase == "lost response" {
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(time.Minute), now.Add(2*time.Minute))
+				require.NoError(err)
+			}
+			if phase == "lost response" {
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"})
+				require.NoError(err)
+			}
+			sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(store.LineReplySent, sent.State)
+			var reply sql.NullInt64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), sent.MessageID).Scan(&reply))
+			assert.False(reply.Valid)
+			durable, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(parent, durable.ReplyToMessageID, "the admitted snapshot stays frozen")
+		})
+	}
+}
+
+func TestLineReplyDraftDeletionCancelsOnlyAdmittedAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		state        string
+		afterRefusal bool
+		unflagged400 bool
+	}{
+		{store.LineReplyAdmitted, false, false},
+		{store.LineReplyAdmitted, true, false},
+		{store.LineReplyRemoteUnknown, false, false},
+		{store.LineReplyRemoteUnknown, false, true},
+		{store.LineReplyRemoteAccepted, false, false},
+		{store.LineReplyProviderRejected, false, false},
+		{store.LineReplySent, false, false},
+	} {
+		name := tc.state
+		if tc.unflagged400 {
+			name += "/unflagged 400"
+		}
+		if tc.afterRefusal {
+			name += "/after credential refusal"
+		}
+		t.Run(name, func(t *testing.T) {
+			state := tc.state
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			if tc.afterRefusal {
+				originalKey := attempt.RetryKey
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+				attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{DefiniteRejection: true})
+				require.NoError(err)
+				assert.Equal(originalKey, attempt.RetryKey)
+			}
+			if state != store.LineReplyAdmitted {
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+				outcome := store.LineReplyOutcome{StatusCode: 503}
+				if tc.unflagged400 {
+					outcome.StatusCode = 400
+				}
+				switch state {
+				case store.LineReplyRemoteAccepted, store.LineReplySent:
+					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"}
+				case store.LineReplyProviderRejected:
+					outcome = store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
+				}
+				attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
+				require.NoError(err)
+				if state == store.LineReplySent {
+					attempt, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+					require.NoError(err)
+				}
+			}
+			assert.Equal(state, attempt.State)
+			if state != store.LineReplySent {
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+			}
+			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+			require.ErrorIs(err, store.ErrChatDraftNotFound)
+			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			wantReceipt := attempt
+			if state == store.LineReplyAdmitted {
+				wantReceipt.State = store.LineReplyExpired
+			}
+			if state == store.LineReplyAdmitted || state == store.LineReplyProviderRejected {
+				wantReceipt.Body = ""
+				wantReceipt.QuoteToken = ""
+				wantReceipt.SourceConversationID = ""
+			}
+			assert.Equal(wantReceipt, receipt)
+		})
+	}
+	t.Run("delete then reject", func(t *testing.T) {
+		checks := assert.New(t)
+		must := require.New(t)
+		st, draft, _ := replyStoreFixture(t)
+		now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+		admitted, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+		must.NoError(err)
+		_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+		must.NoError(err)
+		must.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1, now))
+		_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true})
+		must.NoError(err)
+		receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+		must.NoError(err)
+		must.Equal(store.LineReplyProviderRejected, receipt.State)
+		checks.Equal(admitted.RetryKey, receipt.RetryKey)
+		checks.Empty(receipt.Body)
+		checks.Empty(receipt.QuoteToken)
+		checks.Empty(receipt.SourceConversationID)
+	})
+}
+
+func TestLineReplyArchiveIndexesSenderAddressAfterBotMerge(t *testing.T) {
+	require := require.New(t)
+	st, draft, _ := replyStoreFixture(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	bot, err := st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:"+replyBotID, "Example Bot")
+	require.NoError(err)
+	email, err := st.EnsureParticipantContext(t.Context(), "replysender@example.com", "Example Sender", "example.com")
+	require.NoError(err)
+	require.NoError(st.MergeParticipantsContext(t.Context(), bot, email))
+	acceptedReply(t, st, draft)
+	_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assertFTSContains(t, st, "replysender", 1)
+}

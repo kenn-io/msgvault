@@ -73,7 +73,7 @@ type draftLifecycleOutput struct {
 }
 
 func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
-	if !api.IsCLIRunDraftLifecycle(args) {
+	if !api.IsCLIRunDraftLifecycle(args) && !api.IsCLIRunSendLineReply(args) {
 		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("expected a draft lifecycle command"))
 	}
 	intent := draftLifecycleIntent{Operation: args[0]}
@@ -163,9 +163,9 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 		if !revisionSet || !bodySet {
 			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-edit requires --revision and --body"))
 		}
-	case api.CLIRunDraftDeleteCommand:
+	case api.CLIRunDraftDeleteCommand, api.CLIRunSendLineReplyCommand:
 		if !revisionSet || bodySet {
-			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-delete requires --revision and no body"))
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", fmt.Errorf("%s requires --revision and no body", intent.Operation))
 		}
 	case api.CLIRunDraftRecoverCommand:
 		if !revisionSet || bodySet {

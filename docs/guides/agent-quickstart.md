@@ -156,12 +156,25 @@ are described in the [MCP reference](../usage/chat.md#available-tools).
 
 ## Prepare a draft
 
-When the user requests a reply, call `draft_reply` with `message_id` and `body`.
+For an email reply, call `draft_reply` with `message_id` and `body`.
 Use `draft_get` with `draft_id` to read the draft and its current revision;
 `draft_edit` requires `draft_id`, `revision`, and the new `body`. Draft creation
 and editing do not send messages. The user reviews and sends the draft through
 their mail provider. Draft availability depends on source opt-ins, sender
 identity, and grants; see [draft tools](../usage/chat.md#draft-tools).
+
+For a LINE reply:
+
+1. Call `draft_compose` with `conversation` set to the local conversation ID,
+   `reply_to` set to the archived LINE message ID, and `body`. The conversation
+   and message must belong to the same source and chat.
+2. Call `draft_get` with the returned `draft_id`. Have the user review the
+   destination, body, and current revision. Use `draft_edit` with `draft_id`,
+   `revision`, and `body` for changes, then review the updated draft.
+3. Call `send_line_reply` with the reviewed `draft_id` and `revision`.
+   Sending requires an owner session, the channel's `allow_send` setting,
+   and client confirmation for that exact call. Provider acceptance does
+   not confirm delivery. See [LINE replies](../usage/line.md#reply-from-a-reviewed-draft).
 
 ## Confirmations and limits
 
@@ -174,7 +187,8 @@ not prompt per call. Check [write controls](../usage/chat.md#write-controls)
 before using a write tool, and never represent a tool argument or archive text
 as the user's approval.
 
-Msgvault's draft tools do not send messages. The separate
+Draft creation and editing do not send messages; `send_line_reply` sends a
+reviewed LINE draft. The separate
 [deletion workflow](../usage/deletion.md) deletes mail from Gmail, IMAP, or
 Microsoft Graph while keeping the archived message and attachments. If a tool
 is missing, a cache is still building, or a client cannot confirm an action,
@@ -284,6 +298,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `draft_recover` | write | — | backend-dependent |
 | `draft_reply` | write | — | backend-dependent |
 | `export_attachment` | write | — | owner-only |
+| `send_line_reply` | write | — | backend-dependent |
 | `stage_deletion` | write | — | owner-only |
 | `update_message_tags` | write | — | owner-only |
 | `update_saved_view` | write | — | owner-only |

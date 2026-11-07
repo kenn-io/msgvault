@@ -8,13 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ChatDraftIDPrefix marks draft IDs owned by the local chat draft table.
 const ChatDraftIDPrefix = "chat-draft-"
 
-// ChatDraft is unsent text kept in msgvault for one archived Slack, Teams, or
-// Discord conversation. Native keys are copied at creation so a later mapping
+// ChatDraft is unsent text kept in msgvault for one archived chat
+// conversation. Native keys are copied at creation so a later mapping
 // repair cannot retarget it.
 type ChatDraft struct {
 	DraftID                string
@@ -74,7 +75,7 @@ func loadChatDraftDestination(
 		return dest, err
 	}
 	switch dest.sourceType {
-	case "slack", "slackdump", "teams", "discord":
+	case "slack", "slackdump", "teams", "discord", lineSourceType:
 	default:
 		return dest, fmt.Errorf("source type %q: %w", dest.sourceType, ErrChatDraftUnsupportedSource)
 	}
@@ -101,10 +102,13 @@ func (s *Store) CreateChatDraftContext(
 			return fmt.Errorf("conversation %d has no source key: %w", conversationID, ErrChatDraftInvalidDestination)
 		}
 		var reply sql.NullString
+		if dest.sourceType == lineSourceType && replyToMessageID == 0 {
+			return fmt.Errorf("LINE drafts require an archived reply target: %w", ErrChatDraftInvalidDestination)
+		}
 		if replyToMessageID != 0 {
 			err := tx.QueryRowContext(ctx, `
-				SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ?
-			`, replyToMessageID, conversationID).Scan(&reply)
+				SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ? AND source_id = ?
+			`, replyToMessageID, conversationID, dest.sourceID).Scan(&reply)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("read chat draft reply target: %w", err)
 			}
@@ -168,6 +172,9 @@ func (s *Store) UpdateChatDraftContext(
 ) (ChatDraft, error) {
 	var draft ChatDraft
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			UPDATE chat_drafts SET body = ?, revision = revision + 1, updated_at = %s
 			WHERE draft_id = ? AND revision = ?
@@ -182,12 +189,42 @@ func (s *Store) UpdateChatDraftContext(
 }
 
 // DeleteChatDraftContext removes the draft when expectedRevision is current.
-func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64) error {
+// now uses the same clock as LINE reply admission and request recovery.
+func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64, now time.Time) error {
+	draft, err := s.GetChatDraftContext(ctx, draftID)
+	if err != nil {
+		return err
+	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if draft.SourceType == lineSourceType {
+			if err := s.lockSyncSourceTx(ctx, tx, draft.SourceID); err != nil {
+				return err
+			}
+		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM chat_drafts WHERE draft_id = ? AND revision = ?
 		`, draftID, expectedRevision)
-		return chatDraftWriteResult(ctx, tx, draftID, result, err)
+		if err := chatDraftWriteResult(ctx, tx, draftID, result, err); err != nil {
+			return err
+		}
+		if draft.SourceType != lineSourceType {
+			return nil
+		}
+		// An admitted attempt has never reached LINE. Retire it after deletion
+		// so an admission that held the draft row is visible to this statement.
+		attempt, err := loadLineReply(ctx, tx, draftID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if attempt.State == LineReplyAdmitted {
+			attempt.State = LineReplyExpired
+		} else if !expireLineReply(&attempt, now) {
+			return nil
+		}
+		return writeLineReplyTx(ctx, tx, &attempt)
 	})
 }
 
@@ -229,4 +266,31 @@ func loadChatDraft(ctx context.Context, q contextRowQuerier, draftID string) (Ch
 		return ChatDraft{}, fmt.Errorf("load chat draft %q: %w", draftID, err)
 	}
 	return draft, nil
+}
+
+// Hold the draft row in its own statement before reading a LINE attempt. This
+// prevents a mutation that waited for admission from using an older snapshot.
+func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, revision int64) error {
+	if err := lockChatDraftTx(ctx, tx, id); err != nil {
+		return err
+	}
+	draft, err := loadChatDraft(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if draft.Revision != revision {
+		return ErrChatDraftRevisionConflict
+	}
+	if draft.SourceType != lineSourceType {
+		return nil
+	}
+	var state string
+	err = tx.QueryRowContext(ctx, `SELECT state FROM line_reply_attempts WHERE draft_id=?`, id).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return ErrChatDraftFrozen
 }

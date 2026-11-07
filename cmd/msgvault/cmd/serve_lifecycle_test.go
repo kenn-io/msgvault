@@ -1707,8 +1707,10 @@ func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
 		name       string
 		background string
 		override   string
+		line       bool
 	}{
 		{name: "foreground"},
+		{name: "LINE receiver", background: "1", line: true},
 		{name: "environment override", background: "1", override: "0s"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1716,6 +1718,9 @@ func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
 			t.Setenv(daemonIdleTimeoutEnv, tt.override)
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Server.DaemonIdleTimeout = time.Second
+			if tt.line {
+				cfg.Line = []config.LineSource{{ChannelID: "2000000001", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true}}
+			}
 
 			assert.Nil(t, newDaemonIdleTracker(cfg, nil, testDiscardLogger()))
 		})

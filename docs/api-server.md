@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-02
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -23,6 +23,77 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Submit a background backfill | [Historical import jobs](#historical-import-jobs) |
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
+| Receive LINE Official Account events | [LINE webhook](#line-webhook) |
+| Send a reviewed LINE reply | [Owner CLI transport](#line-reply) |
+
+### Send a reviewed LINE reply {#line-reply}
+
+Available on unreleased `main` with API schema 3.49.0: the owner can invoke
+`send-line-reply` through `POST /api/v1/cli/run` with ordinary owner API
+authentication:
+
+```json
+{"args":["send-line-reply","chat-draft-example","--revision","1","--json"]}
+```
+
+The CLI transport returns newline-delimited JSON events;
+`stdout` event data contains the send receipt, followed by a `complete` event.
+Inspect the receipt's `status`: command completion can report an accepted send
+with local archive work still pending. Repeating the command with the admitted
+revision resumes the same send; a completed receipt needs no provider request.
+See [LINE receipt states and recovery](usage/line.md#read-a-send-receipt).
+
+The daemon checks the current saved channel's `enabled` and `allow_send` policy
+and its own secret environment before admission and provider retries. Request
+`env` and `cwd` overrides are rejected. Delegated credentials receive HTTP 403
+`not_permitted` before draft lookup, regardless of draft permissions. Local
+LINE draft creation and lifecycle operations use the existing draft commands;
+see [the CLI reference](cli-reference.md#local-chat-drafts).
+
+### LINE webhook {#line-webhook}
+
+Available on `main`: `POST /webhooks/line/<channel_id>` accepts events for an
+enabled LINE Official Account channel. This route is outside `/api/v1` and the
+generated public OpenAPI document. See [LINE setup](usage/line.md) for channel
+registration and a proxy that exposes only the webhook.
+
+The exact POST route authenticates the original request body with the channel
+secret and the base64 HMAC-SHA256 `x-line-signature` header, before decoding JSON.
+The envelope's `destination` must match the registered bot user ID. It does not
+require an API key, session cookie, or CSRF token. Other paths and methods,
+including suffixes and encoded-path variations, retain ordinary Host,
+authentication, same-origin, CSRF, and operation-gate protections. Server
+timeouts still apply. Signed webhook routes bypass the API IP rate limiter;
+the receiver applies its own signature checks and concurrency bounds.
+After authentication and validation, nonempty batches check the daemon's backup
+freeze before the inbox commit. An active backup freeze returns retryable `503`.
+
+The body limit is 1 MiB. Across configured channels, at most 16 requests can
+read bodies or commit inbox events at once. Excess requests receive `503` before
+their body is read. `events` must be an array; a signed empty array is a valid connection
+check. Each event needs a nonempty `type`, a positive integer
+`timestamp`, and a nonempty `webhookEventId` of at most 200 bytes.
+Message and edit events require `message.id` and `message.type`;
+unsend events require `unsend.messageId`. Unknown event types retain sanitized
+native evidence. Missing source identities are retained for the processor to
+handle, rather than merged into a shared anonymous direct chat.
+
+| Status | Meaning |
+|---|---|
+| `200` | Sanitized nonempty batch committed atomically, or valid signed empty check |
+| `400` | Malformed signed JSON, missing envelope/event fields, invalid event ID, or malformed message structure; no partial batch is stored |
+| `401` | Missing/invalid signature or a destination that differs from the registered bot |
+| `404` | Unknown or disabled channel on a mounted receiver; empty response body, distinct from the `401` for a bad signature |
+| `413` | Request body exceeds 1 MiB |
+| `503` | Receiver concurrency bound reached, backup freeze active, or inbox transaction failed; delivery can be retried |
+
+With no enabled channels, the route is not mounted and ordinary server
+protections apply. Valid batches remove `replyToken` and `markAsReadToken`
+recursively before persistence. Duplicate IDs are ignored per source. The
+receiver queues processing only after commit; no profile lookups or media
+requests delay acknowledgement. A `200` confirms receipt into the durable
+inbox, not completion of enrichment or downloads. See
+[retention](usage/line.md#privacy-and-retention) for inbox cleanup and unsends.
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
@@ -160,7 +231,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.47.0**.
+it is separate from the binary release version. The current schema is **3.49.0**.
+
+Schema 3.49.0 adds owner-only `send-line-reply` with durable LINE reply receipts.
+
+Schema 3.48.0 adds optional LINE webhook delivery status to source status.
 
 Schema 3.47.0 adds optional `hints` to CLI and fast-search responses. Each hint contains `code`, `message`, and `retry_with.query`.
 

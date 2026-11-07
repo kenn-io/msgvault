@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
+import { syncStatusChip, syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -13,7 +13,7 @@ describe('source labels', () => {
     ['imazing_csv', 'iMazing CSV'], ['circleback', 'Circleback'], ['gcal', 'Google Calendar'],
     ['plaud', 'Plaud'], ['muesli', 'Muesli'], ['granola', 'Granola'], ['notion_meetings', 'Notion meetings'], ['twilio', 'Twilio'], ['twenty', 'Twenty'],
     ['pst', 'PST import'], ['apple-mail', 'Apple Mail'], ['mbox', 'Mbox import'],
-    ['beeper', 'Beeper'], ['slack', 'Slack'], ['matrix', 'Matrix'], ['eml', 'EML import'], ['maildir', 'Maildir import'],
+    ['beeper', 'Beeper'], ['slack', 'Slack'], ['matrix', 'Matrix'], ['line', 'LINE Official Account'], ['eml', 'EML import'], ['maildir', 'Maildir import'],
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
@@ -62,4 +62,18 @@ it.each([
   ['msmail', 'sync_not_configured', null, 'msgvault sync --source-id 4'],
 ] as const)('offers a manual sync command for %s with reason %s and last successful sync %j', (source_type, sync_unavailable_reason, last_successful_sync, want) => {
   expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
+});
+
+
+it.each([
+  [true, null, false, undefined, 'Listening', 'success'],
+  [false, null, false, undefined, 'Receiver inactive', 'warning'],
+  [true, run('completed'), false, undefined, 'Listening', 'success'],
+  [true, run('completed'), true, undefined, 'Queued', 'info'],
+  [true, run('completed'), false, '2026-07-19T10:00:00Z', 'Running', 'info'],
+  [true, run('failed'), false, undefined, 'Failed', 'danger'],
+] as const)('shows receiver status %#', (active, latest_sync, scheduler_queued, scheduler_started_at, label, tone) => {
+  expect(syncStatusChip({ active_sync: null, latest_sync, scheduler_queued, scheduler_started_at,
+    line_webhook: { active, pending: 0, failed: 0, invalid_signatures: 0 }
+  })).toEqual({ label, tone });
 });

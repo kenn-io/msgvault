@@ -265,9 +265,8 @@ recover memberships that the archive has never observed.
 ## Drafts
 
 Create a fresh message or a reply in your IMAP Drafts folder, then review and
-send it from your usual mail application. Msgvault never sends email. Draft
-creation is disabled until an operator grants it for one exact IMAP source on
-the daemon host.
+send it from your usual mail application. IMAP draft creation is disabled until
+an operator grants it for one exact IMAP source on the daemon host.
 
 1. Run `msgvault list-accounts` to find the source ID. Confirm the Drafts
     folder's exact name with `msgvault list-folders <account>`.

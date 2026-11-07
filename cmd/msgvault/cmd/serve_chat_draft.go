@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -67,6 +68,8 @@ func chatDraftStoreError(err error, grant *agentgrant.Grant) error {
 		return draftReplyError("invalid_destination", err)
 	case errors.Is(err, store.ErrChatDraftUnsupportedSource):
 		return draftReplyError("unsupported_source", err)
+	case errors.Is(err, store.ErrChatDraftFrozen):
+		return draftReplyError("pending_operation", err)
 	case errors.Is(err, store.ErrChatDraftRevisionConflict):
 		return draftReplyError("revision_mismatch", err)
 	default:
@@ -141,7 +144,7 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 		draft, err = a.store.UpdateChatDraftContext(ctx, draft.DraftID, intent.Revision, intent.Body)
 	case api.CLIRunDraftDeleteCommand:
 		status = "deleted"
-		err = a.store.DeleteChatDraftContext(ctx, draft.DraftID, intent.Revision)
+		err = a.store.DeleteChatDraftContext(ctx, draft.DraftID, intent.Revision, time.Now())
 	}
 	if err != nil {
 		return chatDraftStoreError(err, grant)

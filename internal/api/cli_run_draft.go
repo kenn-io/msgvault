@@ -105,3 +105,10 @@ type CLIRunCodedError struct {
 func (e *CLIRunCodedError) Error() string { return e.Code }
 
 func (e *CLIRunCodedError) Unwrap() error { return e.Err }
+
+// CLIRunSendLineReplyCommand is an owner-only reviewed LINE send.
+const CLIRunSendLineReplyCommand = "send-line-reply"
+
+func IsCLIRunSendLineReply(args []string) bool {
+	return len(args) > 0 && args[0] == CLIRunSendLineReplyCommand
+}

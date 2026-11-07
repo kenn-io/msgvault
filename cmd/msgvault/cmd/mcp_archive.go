@@ -19,14 +19,14 @@ func addMCPSourceFamilies(f *mcpserver.ArchiveFamilies, kind string) {
 		f.Meetings = true
 	}
 	switch kind {
-	case "gmail", "google_voice", "inline", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "chatwoot":
+	case "gmail", "google_voice", "inline", "beeper", "slack", "slackdump", "teams", "discord", "whatsapp", "telegram", "matrix", "apple_messages", "synctech_sms", "imazing_csv", "facebook_messenger", "chatwoot", "line":
 		f.Chat = true
 	}
 	if kind == "slack" || kind == "slackdump" {
 		f.Slack = true
 	}
 	switch kind {
-	case "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord":
+	case "gmail", "imap", "beeper", "slack", "slackdump", "teams", "discord", "line":
 		f.Drafts = true
 	}
 }

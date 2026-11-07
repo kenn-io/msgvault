@@ -48,9 +48,10 @@ This allows Claude Desktop (or any MCP client) to query your archive
 using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
 aggregate, get_person_agenda, list_saved_views, run_saved_view, stage_deletion,
 draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
-draft_recover, and draft_send_as.
+draft_recover, draft_send_as, and send_line_reply.
 Draft tools create, read, edit, delete, and recover managed drafts through the
-daemon. Msgvault never sends. With --agent-url and --agent-token-file, stdio
+daemon. Owner sessions can send reviewed LINE drafts with send_line_reply.
+Sending requires per-channel allow_send and confirmation. With --agent-url and --agent-token-file, stdio
 exposes scoped read, draft and calendar tools and the daemon enforces the
 agent grant.
 
@@ -171,6 +172,7 @@ const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
+const sendLineReplyMinAPISchemaVersion = "3.49.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
 // Source inventory is required to select tools within the grant.
@@ -195,7 +197,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		addMCPSourceFamilies(families, source.Type)
 	}
 	opts := mcpserver.ServeOptions{
-		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
+		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true, schemaVersion), DelegatedOnly: true,
 		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
 	}
@@ -350,7 +352,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.IdentityScoring = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
-		opts.DraftCommands = mcpDraftCommands(false)
+		opts.DraftCommands = mcpDraftCommands(false, schemaVersion)
 	}
 
 	return opts

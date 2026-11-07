@@ -2250,3 +2250,25 @@ func TestEditConfigRejectsInvalidSourceSchedule(t *testing.T) {
 		})
 	}
 }
+
+func TestEditConfigTablesSelectsArrayRecord(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	const before = "# keep this comment\n[web]\ntheme = \"dark\"\n\n[[line]]\nchannel_id = \"2000000001\"\nsecret_env = \"OLD_SECRET\" # keep inline\nenabled = false\n"
+	must.NoError(os.WriteFile(path, []byte(before), 0600))
+	snapshot, err := ReadConfigFile(path)
+	must.NoError(err)
+	first, err := EditConfigTables(path, snapshot.ETag, []TableEdit{{Path: []string{"line"}, Match: map[string]string{"channel_id": "2000000001"}, Values: map[string]any{"secret_env": "NEW_SECRET"}}})
+	must.NoError(err)
+	checks.Contains(string(first.Content), "secret_env = \"NEW_SECRET\" # keep inline")
+	checks.Contains(string(first.Content), "# keep this comment\n[web]\ntheme = \"dark\"")
+	second, err := EditConfigTables(path, first.ETag, []TableEdit{{Path: []string{"line"}, Match: map[string]string{"channel_id": "2000000002"}, Values: map[string]any{"secret_env": "OTHER_SECRET", "enabled": true}}})
+	must.NoError(err)
+	loaded, err := LoadConfigFile(second, "")
+	must.NoError(err)
+	must.Len(loaded.Line, 2)
+	checks.False(loaded.GetLineSource("2000000001").Enabled)
+	checks.Equal("NEW_SECRET", loaded.GetLineSource("2000000001").SecretEnv)
+	checks.True(loaded.GetLineSource("2000000002").Enabled)
+}

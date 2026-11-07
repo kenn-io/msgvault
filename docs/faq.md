@@ -4,9 +4,13 @@ title: Frequently Asked Questions
 description: Common questions about msgvault, Gmail API safety, and what the tool can and cannot do.
 ---
 
-<p class="faq-question">Can msgvault send email or prepare a reply?</p>
+<p class="faq-question">Can msgvault send messages or prepare a reply?</p>
 
-msgvault never sends email. For an IMAP source, an operator can grant access to
+msgvault can send reviewed LINE replies when an operator enables `allow_send`
+for that source. See [LINE replies](usage/line.md#reply-from-a-reviewed-draft).
+
+For email, msgvault prepares drafts for you to send. For an IMAP source, an
+operator can grant access to
 one exact Drafts folder; `draft-reply` can then create a plain-text reply draft
 for review and sending in your usual mail application. The grant is disabled by
 default. See [IMAP drafts](usage/imap.md#drafts).
@@ -30,6 +34,10 @@ per-operation approval through an MCP client that supports elicitation; Kata
 issues that quote archive text require `--allow-kata-writes`. HTTP writes also
 need `--http-allow-writes`. Execution of a staged mail deletion
 remains a separate CLI step. See the [MCP tool and access reference](usage/chat.md).
+
+The owner MCP tool `send_line_reply` can send a reviewed LINE reply when sending
+is enabled for the source. It requires client confirmation of the draft ID and
+revision. See [LINE replies](usage/line.md#reply-from-a-reviewed-draft).
 
 Treat imported messages, attachments, and generated briefs as untrusted input to
 an assistant. Choose an assistant and model provider you are willing to give

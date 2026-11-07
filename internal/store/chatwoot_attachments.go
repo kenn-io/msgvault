@@ -108,11 +108,9 @@ func (s *Store) syncChatwootSelfAgentsTx(ctx context.Context, tx *loggedTx, sour
 	if err != nil {
 		return err
 	}
-	var optedOut bool
-	if value := config["no_default_identity"]; len(value) > 0 {
-		if err := json.Unmarshal(value, &optedOut); err != nil {
-			return fmt.Errorf("decode no_default_identity: %w", err)
-		}
+	optedOut, err := DefaultIdentityOptedOut(config)
+	if err != nil {
+		return err
 	}
 	changed := false
 	for _, address := range wanted {
