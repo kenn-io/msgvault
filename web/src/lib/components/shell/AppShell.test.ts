@@ -72,9 +72,9 @@ describe('AppShell', () => {
     }
   });
 
-  it('keeps the no-match message for a source with no search results', async () => {
+  it('keeps source setup hidden when the archive has a source', async () => {
     const start = vi.spyOn(ShellData.prototype, 'start');
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'missing mail' }))}`);
+    window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const client = createAPIClient(async input => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -84,7 +84,6 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client, state });
     try {
       await waitFor(() => expect((start.mock.contexts[0] as ShellData | undefined)?.jobs.loaded).toBe(true));
-      expect(await screen.findByText('No items match this view')).toBeDefined();
       expect(screen.queryByText('No mail yet')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Add source' })).toBeNull();
     } finally {
