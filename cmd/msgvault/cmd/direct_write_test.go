@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -15,6 +17,60 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestOpenWritableStoreAndInitPostgreSQLWithOpenWriter(t *testing.T) {
+	require := require.New(t)
+	if os.Getenv("MSGVAULT_TEST_DB") == "" {
+		t.Skip("requires PostgreSQL")
+	}
+	st := testutil.NewTestStore(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	setMatrixTestDatabaseURL(t, st, cfg)
+	source, err := st.GetOrCreateSource("imap", "writer@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "held-thread", "Held write")
+	require.NoError(err)
+	messageID, err := st.UpsertMessageContext(t.Context(), &store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "held", MessageType: "email",
+	})
+	require.NoError(err)
+
+	writer, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { require.NoError(writer.Rollback()) }()
+	_, err = writer.ExecContext(t.Context(), `UPDATE messages SET snippet = snippet WHERE id = $1`, messageID)
+	require.NoError(err)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	opened, cleanup, err := openWritableStoreAndInitForInvocation(ctx, testInvocationWithConfig(cfg))
+	if cleanup != nil {
+		defer cleanup()
+	}
+	require.NoError(err, "a current archive opens while another session holds a message write")
+	require.NotNil(opened)
+}
+
+func TestOpenWritableStoreAndInitPostgreSQLUpgradesSchema(t *testing.T) {
+	require := require.New(t)
+	if os.Getenv("MSGVAULT_TEST_DB") == "" {
+		t.Skip("requires PostgreSQL")
+	}
+	st := testutil.NewTestStore(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	setMatrixTestDatabaseURL(t, st, cfg)
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = $1 WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion-1))
+	require.NoError(err)
+
+	opened, cleanup, err := openWritableStoreAndInitForInvocation(t.Context(), testInvocationWithConfig(cfg))
+	if cleanup != nil {
+		defer cleanup()
+	}
+	require.NoError(err)
+	version, err := opened.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(t, store.SchemaVersion, version)
+}
 
 func TestAcquireDirectSQLiteWriteLockSkipsPostgreSQL(t *testing.T) {
 	dataDir := t.TempDir()

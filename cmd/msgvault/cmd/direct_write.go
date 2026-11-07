@@ -116,7 +116,21 @@ func openStoreAndInitWithInvocation(ctx context.Context, state *invocation, migr
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	if err := st.InitSchemaContext(ctx); err != nil {
+	var version int
+	if st.IsPostgreSQL() {
+		version, err = st.SchemaVersionContext(ctx)
+		if err != nil {
+			_ = st.Close()
+			return nil, fmt.Errorf("read schema version: %w", err)
+		}
+	}
+	if st.IsPostgreSQL() && version == store.SchemaVersion {
+		// Daemon start and setup own DDL and repairs for a current archive.
+		err = st.ValidateSchemaContext(ctx)
+	} else {
+		err = st.InitSchemaContext(ctx)
+	}
+	if err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
