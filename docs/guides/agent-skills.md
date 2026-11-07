@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-11-06
 title: Agent Skills
 description: Teach coding agents the msgvault CLI with installable skills
 ---
@@ -16,8 +17,9 @@ session.
 | `msgvault-search` | Query syntax, search modes (fts/vector/hybrid), reading messages, exporting raw email |
 | `msgvault-attachments` | Finding attachments, filtering by type/size, exporting by content hash or message |
 | `msgvault-analytics` | Built-in aggregates, raw SQL over the analytics views, time-series queries |
+| `msgvault-one-to-one` | [Compare prior meeting actions with cited outcomes, feedback and followups](one-to-one.md) |
 
-All three cover read-only workflows only. They explicitly tell agents
+All skills cover read-only workflows only. They explicitly tell agents
 not to run archive-mutating commands (sync, import, dedup, deletion)
 without your direction.
 
