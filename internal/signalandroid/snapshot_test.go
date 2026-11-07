@@ -74,8 +74,37 @@ func TestInterruptedImportKeepsConversationState(t *testing.T) {
 	assert.Equal(int64(2), summary.MessagesAdded)
 	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM messages`))
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT SUM(message_count) FROM conversations`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT SUM(message_count) FROM conversations`).Scan(&count))
 	assert.Equal(2, count)
+}
+
+// This test replaces the process-wide SQL logger and must run serially.
+func TestImportCancelAfterLastMessageCommitFailsSync(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
+	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+	opts := DefaultOptions()
+	opts.Phone = signalfixture.OwnPhone
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	queryCtx := context.WithoutCancel(t.Context())
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var count int
+		require.NoError(st.DB().QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages`).Scan(&count))
+		return count == 7
+	})
+
+	_, err := NewImporter(st, nil).Import(ctx, path, opts)
+	require.ErrorIs(err, context.Canceled)
+	require.True(canceled(), "cancellation must land after the last message commits")
+
+	var status string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+	assert.Equal("failed", status)
+	var counted, stored int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(SUM(message_count), 0) FROM conversations`).Scan(&counted))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&stored))
+	assert.Equal(stored, counted)
 }
 
 func TestImportSnapshotReportsWriteFailures(t *testing.T) {
@@ -110,12 +139,12 @@ func TestImportSnapshotReportsWriteFailures(t *testing.T) {
 				progress.onStart = func() { changeFixture(t, dir, "DROP TABLE "+table) }
 			case "body-write":
 				changeFixture(t, dir, `UPDATE message SET body = 'Changed text' WHERE _id = 300`)
-				_, err := st.DB().Exec(`CREATE TRIGGER fail_body BEFORE UPDATE ON message_bodies WHEN NEW.body_text = 'Changed text' BEGIN SELECT RAISE(ABORT, 'body failure'); END`)
+				_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_body BEFORE UPDATE ON message_bodies WHEN NEW.body_text = 'Changed text' BEGIN SELECT RAISE(ABORT, 'body failure'); END`)
 				require.NoError(err)
 			case "attachment-write":
 				changeFixture(t, dir, `UPDATE message SET body = 'Changed group text' WHERE _id = 200`, `UPDATE reaction SET emoji = 'x' WHERE message_id = 200`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (504, 200, 'image/jpeg')`)
 				require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_504_-1.bin"), []byte("new photo"), 0o600))
-				_, err := st.DB().Exec(`CREATE TRIGGER fail_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'attachment failure'); END`)
+				_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'attachment failure'); END`)
 				require.NoError(err)
 			case "reactor-conflict":
 				// A new phone for an ACI-only reactor conflicts with two curated people.
@@ -123,7 +152,7 @@ func TestImportSnapshotReportsWriteFailures(t *testing.T) {
 				require.NoError(err)
 				_, _, err = st.CreatePersonFromParticipant(aciPID)
 				require.NoError(err)
-				phonePID, err := st.EnsureParticipantByPhone("+15555550102", "Other Example", SourceType)
+				phonePID, err := st.EnsureParticipantByPhone(t.Context(), "+15555550102", "Other Example", SourceType)
 				require.NoError(err)
 				_, _, err = st.CreatePersonFromParticipant(phonePID)
 				require.NoError(err)
@@ -148,7 +177,7 @@ func TestImportSnapshotReportsWriteFailures(t *testing.T) {
 			assert.Equal(before, importedMessages(t, st))
 			if stage == "body-write" {
 				var snippet string
-				require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE source_message_id = ?`, "signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)).Scan(&snippet))
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE source_message_id = ?`, "signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)).Scan(&snippet))
 				assert.Equal("Carol here", snippet)
 			}
 			assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Changed'`))

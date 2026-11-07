@@ -1,7 +1,6 @@
 package signalandroid
 
 import (
-	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -23,7 +22,7 @@ func changeFixture(t *testing.T, dir string, stmts ...string) {
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()
 	for _, stmt := range stmts {
-		_, err := db.Exec(stmt)
+		_, err := db.ExecContext(t.Context(), stmt)
 		require.NoError(err, stmt)
 	}
 }
@@ -31,7 +30,7 @@ func changeFixture(t *testing.T, dir string, stmts ...string) {
 func countRows(t *testing.T, st *store.Store, query string, args ...any) int {
 	t.Helper()
 	var n int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(query), args...).Scan(&n))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(query), args...).Scan(&n))
 	return n
 }
 
@@ -51,7 +50,7 @@ func TestRerunReplacesReactions(t *testing.T) {
 
 	assert.Equal(int64(1), summary.ReactionsAdded)
 	reactionsOf := func(id string) []string {
-		rows, err := st.DB().Query(st.Rebind(`
+		rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 			SELECT r.reaction_value FROM reactions r JOIN messages m ON m.id = r.message_id
 			WHERE m.source_message_id = ? ORDER BY r.reaction_value`), id)
 		require.NoError(t, err)
@@ -116,7 +115,7 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 			opts := DefaultOptions()
 			opts.Phone = tc.phone
 			st := testutil.NewTestStore(t)
-			summary, err := NewImporter(st, nil).Import(context.Background(), path, opts)
+			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			if tc.wantError != "" {
 				require.Error(err)
 				assert.Contains(err.Error(), tc.wantError)
@@ -176,7 +175,7 @@ func TestRerunRecordsUpdatedMessagesOnSyncRun(t *testing.T) {
 	summary := runImport(t, st, dir, t.TempDir())
 
 	var processed, added, updated int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT messages_processed, messages_added, messages_updated FROM sync_runs
 		WHERE source_id = ? ORDER BY id DESC LIMIT 1`), summary.SourceID).Scan(&processed, &added, &updated))
 	assert.Equal(summary.MessagesProcessed, processed)
@@ -195,7 +194,7 @@ func TestSendStateFollowsSignal(t *testing.T) {
 
 	isSent := func() bool {
 		var sent bool
-		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT is_sent FROM messages WHERE source_message_id = ?`),
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_sent FROM messages WHERE source_message_id = ?`),
 			"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:self:"+ms(signalfixture.TReply)).Scan(&sent))
 		return sent
 	}
@@ -227,7 +226,7 @@ func TestImportAttachmentReferenceRoles(t *testing.T) {
 				`UPDATE message SET `+tc.column+` = '`+tc.reference+`' WHERE _id = 200`)
 			runImport(t, st, dir, storage)
 			var messageID int64
-			require.NoError(st.DB().QueryRow(`SELECT message_id FROM attachments`).Scan(&messageID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
 			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), messageID)
 			require.NoError(err)
 			require.Len(refs, 1)
@@ -263,15 +262,15 @@ func TestRerunRefreshesAttachmentMetadata(t *testing.T) {
 			signalfixture.Write(t, dir, signalfixture.Current, 0)
 			runImport(t, st, dir, storage)
 			var attachmentID, messageID int64
-			require.NoError(st.DB().QueryRow(`SELECT id, message_id FROM attachments`).Scan(&attachmentID, &messageID))
-			before, err := st.MessageMIMEAttachmentsContext(context.Background(), messageID)
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, message_id FROM attachments`).Scan(&attachmentID, &messageID))
+			before, err := st.MessageMIMEAttachmentsContext(t.Context(), messageID)
 			require.NoError(err)
 			require.Len(before, 1)
 
 			changeFixture(t, dir, `UPDATE attachment SET `+tc.change+` WHERE _id = 500`)
 			summary := runImport(t, st, dir, storage)
 			assert.Zero(summary.AttachmentsStored)
-			after, err := st.MessageMIMEAttachmentsContext(context.Background(), messageID)
+			after, err := st.MessageMIMEAttachmentsContext(t.Context(), messageID)
 			require.NoError(err)
 			require.Len(after, 1)
 			assert.Equal(tc.filename, after[0].Filename)
@@ -282,7 +281,7 @@ func TestRerunRefreshesAttachmentMetadata(t *testing.T) {
 			assert.Equal(before[0].SourcePartKey, after[0].SourcePartKey)
 			assert.Equal(before[0].ContentHash, after[0].ContentHash)
 			var updatedID int64
-			require.NoError(st.DB().QueryRow(`SELECT id FROM attachments`).Scan(&updatedID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM attachments`).Scan(&updatedID))
 			assert.Equal(attachmentID, updatedID)
 			if tc.media == "sticker" {
 				assert.Equal(store.AttachmentRoleSticker, after[0].Role)
@@ -344,11 +343,11 @@ func TestSignalRerunPreservesArchiveLabels(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	storage := t.TempDir()
 	first := runImport(t, st, dir, storage)
-	labelID, err := st.EnsureLabel(first.SourceID, "kept", "Kept", "user")
+	labelID, err := st.EnsureLabel(t.Context(), first.SourceID, "kept", "Kept", "user")
 	require.NoError(err)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages ORDER BY id LIMIT 1`).Scan(&messageID))
-	require.NoError(st.AddMessageLabels(messageID, []int64{labelID}))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages ORDER BY id LIMIT 1`).Scan(&messageID))
+	require.NoError(st.AddMessageLabels(t.Context(), messageID, []int64{labelID}))
 	runImport(t, st, dir, storage)
 	labels, err := st.MessageLabelIDsContext(t.Context(), messageID)
 	require.NoError(err)

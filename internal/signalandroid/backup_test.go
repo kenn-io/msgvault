@@ -264,7 +264,7 @@ func TestPhoneAppearsForArchivedSender(t *testing.T) {
 			pid, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
 			require.NoError(err)
 			var sender int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&sender))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&sender))
 			assert.Equal(pid, sender)
 			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id WHERE m.sender_id = ? AND cp.participant_id = m.sender_id`, pid))
 			if tc.wantPhone {
@@ -288,7 +288,7 @@ func TestDeferredReplyAfterBackupDropsChild(t *testing.T) {
 	changeFixture(t, dir, `DELETE FROM message WHERE _id = 101`)
 	runImport(t, st, dir, t.TempDir())
 	var parent string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?`), "signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TReply)).Scan(&parent))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT p.source_message_id FROM messages m JOIN messages p ON p.id = m.reply_to_message_id WHERE m.source_message_id = ?`), "signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TReply)).Scan(&parent))
 	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI+":peer:"+ms(signalfixture.TAlice1), parent)
 }
 

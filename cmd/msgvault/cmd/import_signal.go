@@ -97,7 +97,7 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 		return err
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -136,16 +136,18 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 	summary, err := signalandroid.NewImporter(s, progress).Import(ctx, dbPath, opts)
 	var postErr error
 	if summary != nil && summary.SourceID != 0 {
+		// Finish identity and migrations for the committed source after cancellation.
+		post := context.WithoutCancel(ctx)
 		if !flags.noDefaultIdentity {
-			source, sourceErr := s.GetSourceByIDContext(context.WithoutCancel(ctx), summary.SourceID)
+			source, sourceErr := s.GetSourceByIDContext(post, summary.SourceID)
 			if sourceErr != nil {
 				postErr = sourceErr
 			} else {
 				phone := source.Identifier
-				confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, phone, phone, "phone-e164", state.logger)
+				confirmDefaultIdentity(post, cmd.OutOrStdout(), s, summary.SourceID, phone, phone, "phone-e164", state.logger)
 			}
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(post, s, state); err != nil {
 			postErr = errors.Join(postErr, fmt.Errorf("post-source-create migrations: %w", err))
 		}
 	}
@@ -158,7 +160,7 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 		}
 		var cacheErr error
 		if summary != nil && summary.SourceID != 0 {
-			cacheErr = rebuildCacheAfterWrite(archiveDSN, state)
+			cacheErr = rebuildCacheAfterWrite(ctx, archiveDSN, state)
 		}
 		return errors.Join(err, postErr, cacheErr)
 	}
@@ -180,7 +182,7 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 	if summary.Errors > 0 {
 		fmt.Printf("  Errors:         %d\n", summary.Errors)
 	}
-	return rebuildCacheAfterWrite(archiveDSN, state)
+	return rebuildCacheAfterWrite(ctx, archiveDSN, state)
 }
 
 // signalCLIProgress reuses the WhatsApp terminal progress line.

@@ -64,10 +64,10 @@ func TestImportSignalRegistersDefaultIdentity(t *testing.T) {
 	done()
 	require.NoError(err)
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { require.NoError(st.Close()) }()
-	source, err := st.GetSourceByTypeAndIdentifier("signal", signalfixture.OwnPhone)
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "signal", signalfixture.OwnPhone)
 	require.NoError(err)
 	require.NotNil(source)
 	identities, err := st.ListAccountIdentities(source.ID)
@@ -91,9 +91,9 @@ func TestImportSignalRefreshesCacheAfterPartialFailure(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
 	command := &cobra.Command{Use: "import-signal"}
 	command.SetContext(withStoreResolverConfig(t, cfg))
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(invocationFromCommand(command))
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(command.Context(), invocationFromCommand(command))
 	require.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT, 'stats failure'); END`)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT, 'stats failure'); END`)
 	cleanup()
 	require.NoError(err)
 	dir := t.TempDir()
@@ -104,12 +104,12 @@ func TestImportSignalRefreshesCacheAfterPartialFailure(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(db.Close()) })
 	var count int
-	require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&count))
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&count))
+	st, err = store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	var archived int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&archived))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&archived))
 	require.Positive(archived)
 	assert.Equal(archived, count)
 }

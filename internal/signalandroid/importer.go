@@ -137,6 +137,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	r.imp = &scoped
 
 	defer func() {
+		// Finish reply links, counts, and the sync record after cancellation.
 		finalCtx := context.WithoutCancel(ctx)
 		if err := r.resolveReplies(finalCtx); err != nil {
 			retErr = errors.Join(retErr, err)
@@ -159,7 +160,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	}()
 
 	imp.progress.OnStart()
-	if err := r.ensureSelf(); err != nil {
+	if err := r.ensureSelf(ctx); err != nil {
 		return r.summary, err
 	}
 
@@ -225,8 +226,8 @@ func (r *run) resolveSelf(ctx context.Context) error {
 	return nil
 }
 
-func (r *run) ensureSelf() error {
-	pid, err := r.imp.store.EnsureParticipantByPhone(r.opts.Phone, r.opts.DisplayName, SourceType)
+func (r *run) ensureSelf(ctx context.Context) error {
+	pid, err := r.imp.store.EnsureParticipantByPhone(ctx, r.opts.Phone, r.opts.DisplayName, SourceType)
 	if err != nil {
 		return fmt.Errorf("ensure self participant: %w", err)
 	}
@@ -268,7 +269,7 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	switch {
 	case !found || recipient.GroupID != "":
 	case recipient.E164 != "":
-		pid, err = r.imp.store.EnsureParticipantByPhone(recipient.E164, recipient.Name, SourceType)
+		pid, err = r.imp.store.EnsureParticipantByPhone(ctx, recipient.E164, recipient.Name, SourceType)
 		if err == nil && recipient.ACI != "" {
 			identity, lookupErr := r.imp.store.GetParticipantIdentityContext(ctx, []int64{pid})
 			if lookupErr != nil {
@@ -570,7 +571,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 			break
 		}
 		rowAttachments := attachments[p.row.RowID]
-		archivedID, isExisting, err := r.resolveArchivedID(existing, &p)
+		archivedID, isExisting, err := r.resolveArchivedID(ctx, existing, &p)
 		if err != nil {
 			return added, err
 		}
@@ -603,13 +604,13 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 
 // resolveArchivedID finds p in the archive and moves an archived alias to
 // p's preferred ID.
-func (r *run) resolveArchivedID(existing map[string]int64, p *pendingMessage) (int64, bool, error) {
+func (r *run) resolveArchivedID(ctx context.Context, existing map[string]int64, p *pendingMessage) (int64, bool, error) {
 	preferredID := p.id
 	archivedID, isExisting := keepArchivedID(existing, p)
 	if !isExisting || p.id == preferredID {
 		return archivedID, isExisting, nil
 	}
-	rekeyed, err := r.imp.store.RekeyMessageSourceID(archivedID, p.id, preferredID)
+	rekeyed, err := r.imp.store.RekeyMessageSourceID(ctx, archivedID, p.id, preferredID)
 	if err != nil {
 		return 0, false, err
 	}

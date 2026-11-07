@@ -40,7 +40,7 @@ func TestReimportRecycledPhoneKeepsSendersSeparate(t *testing.T) {
 		{"signal:aci:" + newACI + ":peer:1700000500000", replacement},
 	} {
 		var sender int64
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), tc.message).Scan(&sender))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), tc.message).Scan(&sender))
 		assert.Equal(tc.sender, sender)
 	}
 	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.AliceACI)
@@ -117,7 +117,7 @@ func TestReimportGroupReplyAfterAuthorGainsACI(t *testing.T) {
 				tc.parentID: {conversation: "signal:group:" + signalfixture.GroupB64, body: "Hi @Alice Example, look\n\nBeach"},
 			}, before)
 			var archivedID int64
-			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&archivedID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&archivedID))
 
 			changeFixture(t, dir,
 				`UPDATE recipient SET aci = '`+signalfixture.BobACI+`' WHERE _id = 3`,
@@ -180,8 +180,8 @@ func TestReimportPNIChatGainsACI(t *testing.T) {
 			runImport(t, st, dir, attachments)
 			before := importedMessages(t, st)
 			var messageID, participantID int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), tc.messageKey).Scan(&messageID))
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM participants WHERE phone_number = ?`), signalfixture.DanaPhone).Scan(&participantID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), tc.messageKey).Scan(&messageID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM participants WHERE phone_number = ?`), signalfixture.DanaPhone).Scan(&participantID))
 
 			if len(tc.beforeUpdate) > 0 {
 				changeFixture(t, dir, tc.beforeUpdate...)

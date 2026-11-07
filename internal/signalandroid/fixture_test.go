@@ -19,7 +19,7 @@ func writeTablesFixture(t *testing.T, version int, ddl ...string) string {
 	path := filepath.Join(t.TempDir(), "database.sqlite")
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec(strings.Join(ddl, ";\n"))
+	_, err = db.ExecContext(t.Context(), strings.Join(ddl, ";\n"))
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "DatabaseVersion.sbf"), []byte("VERSION:uint32:"+strconv.Itoa(version)+"\n"), 0o600))
@@ -29,7 +29,7 @@ func writeTablesFixture(t *testing.T, version int, ddl ...string) string {
 func groupRecipientPhones(t *testing.T, st *store.Store) []string {
 	t.Helper()
 	require := require.New(t)
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT p.phone_number FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		JOIN participants p ON p.id = mr.participant_id

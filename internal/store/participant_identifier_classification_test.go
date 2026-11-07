@@ -34,7 +34,7 @@ func assertParticipantIdentifierClassification(
 
 func TestSignalPhoneParticipantIdentifierHasService(t *testing.T) {
 	st := storetest.New(t).Store
-	_, err := st.EnsureParticipantByPhone("+15550100004", "Test User", "signal")
+	_, err := st.EnsureParticipantByPhone(t.Context(), "+15550100004", "Test User", "signal")
 	require.NoError(t, err)
 	assertParticipantIdentifierClassification(t, st, "signal", "+15550100004", "signal", "", "")
 }

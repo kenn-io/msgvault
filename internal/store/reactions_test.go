@@ -40,7 +40,7 @@ func TestReplaceReactionsPreservesKnownTimestampAndStoresUnknownAsNull(t *testin
 		{ParticipantID: participantID, Type: "emoji", Value: "👍", CreatedAt: updated},
 		{ParticipantID: participantID, Type: "emoji", Value: "👀"},
 	}))
-	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), messageID, "👍").Scan(&gotKnown))
+	requires.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), messageID, "👍").Scan(&gotKnown))
 	requires.True(gotKnown.Valid)
 	assertions.Equal(updated, gotKnown.Time.UTC())
 }
@@ -58,13 +58,13 @@ func TestReplaceReactionsRestoresRemovedReaction(t *testing.T) {
 	known := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
 	reactions := []store.ReactionRef{{ParticipantID: participantID, Type: "emoji", Value: "👍", CreatedAt: known}}
 	require.NoError(st.ReplaceReactions(messageID, reactions))
-	_, err = st.DB().Exec(st.Rebind(`UPDATE reactions SET removed_at = ? WHERE message_id = ?`), known.Add(time.Hour), messageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE reactions SET removed_at = ? WHERE message_id = ?`), known.Add(time.Hour), messageID)
 	require.NoError(err)
 
 	// The source snapshot includes the reaction again with its original time.
 	require.NoError(st.ReplaceReactions(messageID, reactions))
 	var createdAt, removedAt sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT created_at, removed_at FROM reactions WHERE message_id = ?`), messageID).Scan(&createdAt, &removedAt))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT created_at, removed_at FROM reactions WHERE message_id = ?`), messageID).Scan(&createdAt, &removedAt))
 	require.True(createdAt.Valid)
 	assert.Equal(known, createdAt.Time.UTC())
 	assert.False(removedAt.Valid, "a reaction in the current snapshot is active")

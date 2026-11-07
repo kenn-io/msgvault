@@ -1,7 +1,6 @@
 package signalandroid
 
 import (
-	"context"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -28,14 +27,14 @@ func runImport(t *testing.T, st *store.Store, dbDir, attachmentsDir string) *Imp
 	opts.Phone = signalfixture.OwnPhone
 	opts.AttachmentFilesDir = dbDir
 	opts.AttachmentsDir = attachmentsDir
-	summary, err := NewImporter(st, nil).Import(context.Background(), filepath.Join(dbDir, "database.sqlite"), opts)
+	summary, err := NewImporter(st, nil).Import(t.Context(), filepath.Join(dbDir, "database.sqlite"), opts)
 	require.NoError(err)
 	return summary
 }
 
 func importedMessages(t *testing.T, st *store.Store) map[string]importedMessage {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT m.source_message_id, c.source_conversation_id, COALESCE(b.body_text, ''),
 		       m.is_from_me, COALESCE(m.is_edited, FALSE), COALESCE(p.source_message_id, '')
 		FROM messages m
@@ -79,23 +78,24 @@ func expectedMessages() map[string]importedMessage {
 }
 
 func TestImportSearchByRecipientEmail(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 
-	phoneID, err := st.EnsureParticipantByPhone(signalfixture.AlicePhone, "Alice Example", SourceType)
-	require.NoError(t, err)
+	phoneID, err := st.EnsureParticipantByPhone(t.Context(), signalfixture.AlicePhone, "Alice Example", SourceType)
+	require.NoError(err)
 	emailID, err := st.EnsureParticipant("alice@example.com", "Alice Example", "example.com")
-	require.NoError(t, err)
-	require.NoError(t, st.MergeParticipants(emailID, phoneID))
+	require.NoError(err)
+	require.NoError(st.MergeParticipants(emailID, phoneID))
 
 	runImport(t, st, dir, t.TempDir())
 
 	messages, total, err := st.SearchMessages(`"alice@example.com" Replying`, 0, 10)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
-	require.Len(t, messages, 1)
-	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TReply), messages[0].SourceMessageID)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
+	require.Len(messages, 1)
+	assert.Equal("signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TReply), messages[0].SourceMessageID)
 }
 
 func TestImportMapsSignalDatabase(t *testing.T) {
@@ -124,13 +124,13 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 			assert.Zero(summary.Errors)
 
 			var sourceType, identifier string
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT source_type, identifier FROM sources WHERE id = ?`), summary.SourceID).Scan(&sourceType, &identifier))
 			assert.Equal("signal", sourceType)
 			assert.Equal(signalfixture.OwnPhone, identifier)
 
 			var groupTitle, groupType string
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COALESCE(title, ''), conversation_type FROM conversations WHERE source_conversation_id = ?`),
 				"signal:group:"+signalfixture.GroupB64).Scan(&groupTitle, &groupType))
 			assert.Equal("Example Group", groupTitle)
@@ -138,7 +138,7 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 
 			type reaction struct{ message, emoji, phone string }
 			reactions := func() []reaction {
-				rows, err := st.DB().Query(st.Rebind(`
+				rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 				SELECT m.source_message_id, r.reaction_value, COALESCE(p.phone_number, '')
 				FROM reactions r
 				JOIN messages m ON m.id = r.message_id
@@ -162,7 +162,7 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 
 			// Bob has no visible number: his participant carries his ACI.
 			var bobName string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COALESCE(p.display_name, '') FROM participants p
 				JOIN participant_identifiers pi ON pi.participant_id = p.id
 				WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.BobACI).Scan(&bobName))
@@ -170,14 +170,14 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 
 			// Alice is matched by number and also carries her ACI.
 			var aliceByACI string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COALESCE(p.phone_number, '') FROM participants p
 				JOIN participant_identifiers pi ON pi.participant_id = p.id
 				WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.AliceACI).Scan(&aliceByACI))
 			assert.Equal(signalfixture.AlicePhone, aliceByACI)
 
 			var groupMembers int
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COUNT(*) FROM conversation_participants cp
 				JOIN conversations c ON c.id = cp.conversation_id
 				WHERE c.source_conversation_id = ?`), "signal:group:"+signalfixture.GroupB64).Scan(&groupMembers))
@@ -186,7 +186,7 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 			var mime, mediaType, partKey string
 			var size, width int64
 			var hasAttachments bool
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT a.mime_type, COALESCE(a.media_type, ''), a.size, COALESCE(a.width, 0),
 				       COALESCE(a.source_part_key, ''), m.has_attachments
 				FROM attachments a JOIN messages m ON m.id = a.message_id
@@ -223,7 +223,7 @@ func TestImportDirectChatRecipients(t *testing.T) {
 	} {
 		t.Run(tc.role, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			rows, err := st.DB().Query(st.Rebind(`
+			rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 				SELECT m.source_message_id FROM messages m
 				JOIN message_recipients mr ON mr.message_id = m.id
 				JOIN participants p ON p.id = mr.participant_id
@@ -265,7 +265,7 @@ func TestImportSenderSharedName(t *testing.T) {
 			runImport(t, st, dir, t.TempDir())
 
 			var name string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COALESCE(p.display_name, '') FROM messages m
 				JOIN participants p ON p.id = m.sender_id
 				WHERE m.source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&name))
@@ -292,9 +292,9 @@ func TestReimportAddsNothingAfterRestore(t *testing.T) {
 	assert.Equal(expectedMessages(), importedMessages(t, st))
 
 	var reactions, attachments, conversations int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM reactions`).Scan(&reactions))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachments))
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions`).Scan(&reactions))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM conversations WHERE source_id = ?`), summary.SourceID).Scan(&conversations))
 	assert.Equal(2, reactions)
 	assert.Equal(1, attachments)
@@ -331,7 +331,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 			opts := DefaultOptions()
 			opts.Phone = signalfixture.OwnPhone
 			st := testutil.NewTestStore(t)
-			_, err := NewImporter(st, nil).Import(context.Background(), path, opts)
+			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			require.ErrorIs(err, ErrUnsupportedDatabase)
 			assert.Contains(err.Error(), tt.want)
 			assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
@@ -398,15 +398,15 @@ func TestImportLimitStopsAfterWrites(t *testing.T) {
 	opts.Phone = signalfixture.OwnPhone
 	opts.Limit = 2
 	st := testutil.NewTestStore(t)
-	summary, err := NewImporter(st, nil).Import(context.Background(), path, opts)
+	summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 	require.NoError(err)
 	assert.Equal(int64(2), summary.MessagesAdded)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`),
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`),
 		summary.SourceID).Scan(&count))
 	assert.Equal(2, count)
 	// Existing messages precede the next new messages in the same backup.
-	summary, err = NewImporter(st, nil).Import(context.Background(), path, opts)
+	summary, err = NewImporter(st, nil).Import(t.Context(), path, opts)
 	require.NoError(err)
 	assert.Equal(int64(2), summary.MessagesAdded)
 	assert.Len(importedMessages(t, st), 4)

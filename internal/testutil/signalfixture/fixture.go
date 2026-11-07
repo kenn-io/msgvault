@@ -99,7 +99,7 @@ func Write(tb testing.TB, dir string, layout Layout, offset int64) string {
 			recipient_id INTEGER, range_start INTEGER, range_length INTEGER)`,
 	}
 	for _, stmt := range stmts {
-		_, err := db.Exec(stmt)
+		_, err := db.ExecContext(tb.Context(), stmt)
 		require.NoError(tb, err, stmt)
 	}
 
@@ -110,14 +110,14 @@ func Write(tb testing.TB, dir string, layout Layout, offset int64) string {
 			`ALTER TABLE recipient ADD COLUMN profile_given_name TEXT DEFAULT NULL`,
 			`ALTER TABLE message ADD COLUMN deleted_by INTEGER DEFAULT NULL REFERENCES recipient (_id) ON DELETE CASCADE`,
 		} {
-			_, err := db.Exec(stmt)
+			_, err := db.ExecContext(tb.Context(), stmt)
 			require.NoError(tb, err, stmt)
 		}
 	}
 
 	exec := func(query string, args ...any) {
 		tb.Helper()
-		_, err := db.Exec(query, args...)
+		_, err := db.ExecContext(tb.Context(), query, args...)
 		require.NoError(tb, err, query)
 	}
 	recipientSQL := fmt.Sprintf(`INSERT INTO recipient (_id, %s, %s, group_id, system_joined_name, profile_joined_name)
@@ -191,14 +191,14 @@ func WritePNIOnly(tb testing.TB, dir string, layout Layout) string {
 		pni = "PNI:" + pni
 	}
 	for _, stmt := range []string{`DELETE FROM message`, `DELETE FROM thread`} {
-		_, err := db.Exec(stmt)
+		_, err := db.ExecContext(tb.Context(), stmt)
 		require.NoError(tb, err)
 	}
-	_, err = db.Exec(fmt.Sprintf(`INSERT INTO recipient (_id, %s, pni, system_joined_name) VALUES (7, ?, ?, 'Dana Example')`, layout.e164), DanaPhone, pni)
+	_, err = db.ExecContext(tb.Context(), fmt.Sprintf(`INSERT INTO recipient (_id, %s, pni, system_joined_name) VALUES (7, ?, ?, 'Dana Example')`, layout.e164), DanaPhone, pni)
 	require.NoError(tb, err)
-	_, err = db.Exec(`INSERT INTO thread (_id, recipient_id) VALUES (14, 7)`)
+	_, err = db.ExecContext(tb.Context(), `INSERT INTO thread (_id, recipient_id) VALUES (14, 7)`)
 	require.NoError(tb, err)
-	_, err = db.Exec(`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+	_, err = db.ExecContext(tb.Context(), `INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
 		VALUES (600, 1700000400000, 1700000400001, 14, 1, 7, ?, 'hello Dana')`, TypeOutgoing)
 	require.NoError(tb, err)
 	return path

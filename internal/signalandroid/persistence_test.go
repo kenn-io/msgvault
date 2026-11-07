@@ -20,7 +20,7 @@ func TestRerunAfterPackingKeepsMediaPacked(t *testing.T) {
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	runImport(t, st, dir, storage)
 	var hash, storagePath string
-	require.NoError(st.DB().QueryRow(`SELECT content_hash, storage_path FROM attachments`).Scan(&hash, &storagePath))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT content_hash, storage_path FROM attachments`).Scan(&hash, &storagePath))
 	layout, err := packstore.NewLayout(storage, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
 	require.NoError(err)
 	maintainer, err := packstore.NewMaintainer(store.NewPackCatalog(st), layout, packstore.MaintainerOptions{})
@@ -56,7 +56,7 @@ func TestRerunRestoresMissingAttachmentFile(t *testing.T) {
 	runImport(t, st, dir, storage)
 	var attachmentID int64
 	var storagePath string
-	require.NoError(st.DB().QueryRow(`SELECT id, storage_path FROM attachments`).Scan(&attachmentID, &storagePath))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, storage_path FROM attachments`).Scan(&attachmentID, &storagePath))
 	path := filepath.Join(storage, storagePath)
 	require.NoError(os.Remove(path))
 
@@ -98,7 +98,7 @@ func TestCheckpointWriteFailureFailsImport(t *testing.T) {
 				wantError = "stats failure"
 				trigger = `CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT, 'stats failure'); END`
 			}
-			_, err := st.DB().Exec(trigger)
+			_, err := st.DB().ExecContext(t.Context(), trigger)
 			require.NoError(err)
 			opts := DefaultOptions()
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, t.TempDir()
@@ -110,7 +110,7 @@ func TestCheckpointWriteFailureFailsImport(t *testing.T) {
 				assert.Equal(int64(1), summary.MessagesProcessed)
 			}
 			var status, errorMessage string
-			require.NoError(st.DB().QueryRow(`SELECT status, error_message FROM sync_runs`).Scan(&status, &errorMessage))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status, error_message FROM sync_runs`).Scan(&status, &errorMessage))
 			assert.Equal("failed", status)
 			assert.Contains(errorMessage, wantError)
 		})
@@ -121,7 +121,7 @@ func TestFailedWriteCounts(t *testing.T) {
 	assert := assert.New(t)
 	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_carol BEFORE INSERT ON messages WHEN NEW.snippet = 'Carol here' BEGIN SELECT RAISE(ABORT, 'message failure'); END`)
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_carol BEFORE INSERT ON messages WHEN NEW.snippet = 'Carol here' BEGIN SELECT RAISE(ABORT, 'message failure'); END`)
 	require.NoError(t, err)
 	summary := runImport(t, st, dir, t.TempDir())
 	assert.Equal(int64(1), summary.Errors)
@@ -138,7 +138,7 @@ func TestRerunKeepsDocumentOccurrences(t *testing.T) {
 	storage := t.TempDir()
 	runImport(t, st, dir, storage)
 	var attachmentID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM attachments`).Scan(&attachmentID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM attachments`).Scan(&attachmentID))
 	_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
 	require.NoError(err)
 	require.True(eligible)
@@ -170,12 +170,12 @@ func TestRerunAfterGroupFailureRestoresRecipients(t *testing.T) {
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
 			switch stage {
 			case "participant write":
-				_, err := st.DB().Exec(`CREATE TRIGGER fail_group_member BEFORE INSERT ON participants WHEN NEW.phone_number = '+15555550101' BEGIN SELECT RAISE(ABORT, 'participant failure'); END`)
+				_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_group_member BEFORE INSERT ON participants WHEN NEW.phone_number = '+15555550101' BEGIN SELECT RAISE(ABORT, 'participant failure'); END`)
 				require.NoError(err)
 				summary := runImport(t, st, dir, storage)
 				assert.Positive(summary.Errors)
 				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages`), "leave the message unarchived until its recipients can be written")
-				_, err = st.DB().Exec(`DROP TRIGGER fail_group_member`)
+				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_group_member`)
 				require.NoError(err)
 			case "roster read":
 				summary, err := NewImporter(st, onStartProgress{onStart: func() {

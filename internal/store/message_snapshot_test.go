@@ -31,11 +31,11 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 	assert.Equal("photo.jpg", original.Attachments[0].Filename)
 	assert.True(original.HasAttachments)
 	var attachmentCount int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&attachmentCount))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&attachmentCount))
 	assert.Equal(1, attachmentCount)
 	readReactions := func() []string {
 		t.Helper()
-		rows, err := f.Store.DB().Query(f.Store.Rebind(`SELECT reaction_value FROM reactions WHERE message_id = ? ORDER BY reaction_value`), id)
+		rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`SELECT reaction_value FROM reactions WHERE message_id = ? ORDER BY reaction_value`), id)
 		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
 		values := []string{}
@@ -59,16 +59,16 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 	data.Attachments = []store.AttachmentWrite{{Filename: "new.jpg", MIMEType: "image/jpeg", StoragePath: "new.jpg", SourcePartKey: "signal:attachment:new:0"}}
 	query := `CREATE TRIGGER fail_reaction_snapshot BEFORE INSERT ON reactions BEGIN SELECT RAISE(ABORT, 'reaction failure'); END`
 	if f.Store.IsPostgreSQL() {
-		_, err := f.Store.DB().Exec(`CREATE FUNCTION fail_reaction_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'reaction failure'; END $$`)
+		_, err := f.Store.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_reaction_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'reaction failure'; END $$`)
 		require.NoError(err)
 		query = `CREATE TRIGGER fail_reaction_snapshot BEFORE INSERT ON reactions FOR EACH ROW EXECUTE FUNCTION fail_reaction_snapshot()`
 	}
-	_, err = f.Store.DB().Exec(query)
+	_, err = f.Store.DB().ExecContext(t.Context(), query)
 	require.NoError(err)
 	reactions = []store.ReactionRef{{ParticipantID: pid, Type: "emoji", Value: "x"}}
 	_, err = f.Store.PersistMessageContext(t.Context(), data)
 	require.ErrorContains(err, "reaction failure")
-	body, err := f.Store.GetMessageBodyText(id)
+	body, err := f.Store.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("Original text", body)
 	unchanged, err := f.Store.GetMessage(id)
@@ -85,7 +85,7 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 	final, err := f.Store.GetMessage(id)
 	require.NoError(err)
 	assert.Equal(original.Attachments, final.Attachments)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&attachmentCount))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), id).Scan(&attachmentCount))
 	assert.Equal(1, attachmentCount)
 
 	// A supplied empty snapshot clears reactions; a nil pointer leaves them.
