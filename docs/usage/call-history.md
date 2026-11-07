@@ -7,7 +7,7 @@ These commands require daemon API schema 3.48.0 or newer.
 
 ## Import a supplied record
 
-`calls import` reads consecutive JSON requests from a file or stdin, reports each result, reports each rejected record by number and continues, and exits with an error if any was rejected; malformed JSON stops it. It uses the
+`calls import` accepts one JSON request from a file or stdin; run it once per record. It uses the
 selected local or remote daemon and owner authentication. The call import,
 list, and summary routes are owner-only.
 

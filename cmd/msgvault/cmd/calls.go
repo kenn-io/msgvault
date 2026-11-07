@@ -2,15 +2,13 @@ package cmd
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -49,7 +47,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		return client, cleanup, nil
 	}
 	importCommand := &cobra.Command{
-		Use: "import [file|-]", Short: "Import supplied JSON observations (default: stdin)",
+		Use: "import [file|-]", Short: "Import one supplied JSON observation (default: stdin)",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			input := cmd.InOrStdin()
@@ -61,38 +59,20 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 				defer func() { _ = file.Close() }()
 				input = file
 			}
+			data, err := io.ReadAll(io.LimitReader(input, callhistory.MaxRequestBytes+1))
+			if err != nil {
+				return err
+			}
 			client, cleanup, err := open(cmd.Context())
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-			decoder := jsontext.NewDecoder(input)
-			rejected := 0
-			for record := 1; ; record++ {
-				data, err := decoder.ReadValue()
-				if errors.Is(err, io.EOF) && record > 1 {
-					if rejected > 0 {
-						return fmt.Errorf("%d call import records rejected", rejected)
-					}
-					return nil
-				}
-				if err != nil {
-					return fmt.Errorf("call import record %d: %w", record, err)
-				}
-				result, err := client.ImportCallObservation(cmd.Context(), data)
-				if err != nil {
-					var apiErr *daemonclient.APIError
-					if errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnprocessableEntity || apiErr.Status == http.StatusRequestEntityTooLarge) {
-						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "call import record %d: %v\n", record, err)
-						rejected++
-						continue
-					}
-					return fmt.Errorf("call import record %d: %w", record, err)
-				}
-				if err := writeJSONOutput(cmd, result); err != nil {
-					return fmt.Errorf("call import record %d: %w", record, err)
-				}
+			result, err := client.ImportCallObservation(cmd.Context(), data)
+			if err != nil {
+				return err
 			}
+			return writeJSONOutput(cmd, result)
 		},
 	}
 	root.AddCommand(importCommand)
