@@ -30,7 +30,7 @@ func TestCallImportRequestsCacheRefresh(t *testing.T) {
 	daemonCacheRefresher = refresher
 	t.Cleanup(func() {
 		daemonCacheRefresher = previous
-		require.NoError(refresher.Shutdown(context.Background()))
+		require.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
 	})
 	o := callhistory.Observation{
 		Version: 1, Provider: "signal", Account: "example",

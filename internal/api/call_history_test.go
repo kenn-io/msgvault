@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +27,7 @@ type callHTTPStore struct {
 func TestCallQueryIntegerParameterErrors(t *testing.T) {
 	for _, name := range []string{"person_id", "after_id", "limit", "offset"} {
 		t.Run(name, func(t *testing.T) {
-			_, err := callQueryFromRequest(httptest.NewRequest(http.MethodGet, "/api/v1/calls?"+name+"=invalid", nil))
+			_, err := callQueryFromRequest(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/calls?"+name+"=invalid", nil))
 			var paramErr *paramError
 			require.ErrorAs(t, err, &paramErr)
 			assert.Equal(t, name, paramErr.param)
@@ -49,7 +48,7 @@ func TestCallQueryDateParameters(t *testing.T) {
 				{"2026-10-01", new(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))},
 				{"2026-10-01T09:00:00.123456789-04:00", new(time.Date(2026, 10, 1, 13, 0, 0, 123456789, time.UTC))},
 			} {
-				q, err := callQueryFromRequest(httptest.NewRequest(http.MethodGet, "/api/v1/calls?"+name+"="+url.QueryEscape(tc.value), nil))
+				q, err := callQueryFromRequest(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/calls?"+name+"="+url.QueryEscape(tc.value), nil))
 				requirements.NoError(err)
 				got := q.After
 				if name == "before" {
@@ -57,7 +56,7 @@ func TestCallQueryDateParameters(t *testing.T) {
 				}
 				assertions.Equal(tc.want, got)
 			}
-			_, err := callQueryFromRequest(httptest.NewRequest(http.MethodGet, "/api/v1/calls?"+name+"=invalid", nil))
+			_, err := callQueryFromRequest(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/calls?"+name+"=invalid", nil))
 			var paramErr *paramError
 			requirements.ErrorAs(err, &paramErr)
 			assertions.Equal(name, paramErr.param)
@@ -84,7 +83,7 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	requirements.NoError(err)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 		req.RemoteAddr = "127.0.0.1:12345"
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
@@ -129,7 +128,7 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	}
 	for _, mediaType := range []string{"", "text/plain", "application/json; invalid"} {
 		t.Run("unsupported media type "+mediaType, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, callImportPath, strings.NewReader(string(body)))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, callImportPath, strings.NewReader(string(body)))
 			req.RemoteAddr = "127.0.0.1:12345"
 			req.Header.Set("Content-Type", mediaType)
 			req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
@@ -151,12 +150,12 @@ func TestCallHistoryImportUsesMutationGate(t *testing.T) {
 			Config: &config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}},
 			Store:  st, Logger: testLogger(), OperationGate: gate,
 		})
-		defer func() { requirements.NoError(server.Shutdown(context.Background())) }()
+		defer func() { requirements.NoError(server.Shutdown(t.Context())) }()
 		release, ok := gate.BeginWork()
 		requirements.True(ok)
 		releaseOnce := sync.OnceFunc(release)
 		defer releaseOnce()
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/import/calls", strings.NewReader(
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/calls", strings.NewReader(
 			`{"format":"signal_desktop","account":"example","record":{"callId":"x","timestamp":1790841600000}}`))
 		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 		req.Header.Set("Content-Type", "application/json")
