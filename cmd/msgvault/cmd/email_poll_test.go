@@ -47,7 +47,7 @@ poll_interval = "30s"
 			count := func() int {
 				t.Helper()
 				var n int
-			require.NoError(t, st.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources`).Scan(&n))
+				require.NoError(t, st.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources`).Scan(&n))
 				return n
 			}
 			assert := assert.New(t)
