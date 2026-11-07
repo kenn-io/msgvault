@@ -206,7 +206,7 @@ jobs:
 
       - name: Log cache sizes
         if: github.event_name != 'pull_request'
-        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
+        run: du -sh "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save

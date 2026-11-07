@@ -14,13 +14,25 @@ runs:
         python3 - <<'PY'
         import os
         from pathlib import Path
+        import re
         import shutil
         import subprocess
 
         cache = Path(subprocess.check_output(["go", "env", "GOCACHE"], text=True).strip())
         started = (Path(os.environ["RUNNER_TEMP"]) / "go-cache-used-after").stat().st_mtime_ns
-        for entry in cache.glob("[0-9a-f][0-9a-f]/*"):
-            if entry.name.endswith(("-a", "-d")) and entry.stat().st_mtime_ns <= started:
+        entries = list(cache.glob("[0-9a-f][0-9a-f]/*"))
+        retained = set()
+        # Go can reuse identical output bytes without refreshing their mtime.
+        # Validate all surviving v1 records before deleting any cache entries.
+        for entry in entries:
+            if entry.name.endswith("-a") and entry.stat().st_mtime_ns > started:
+                record = re.fullmatch(rb"v1 ([0-9a-f]{64}) ([0-9a-f]{64}) ([ 0-9]{20}) ([ 0-9]{20})\n", entry.read_bytes())
+                if record is None or record[1].decode() != entry.name[:-2] or any(not field.strip().isdigit() for field in record.groups()[2:]):
+                    raise ValueError(f"Unrecognized Go cache action record: {entry}")
+                output = record[2].decode()
+                retained.update((entry, cache / output[:2] / f"{output}-d"))
+        for entry in entries:
+            if entry.name.endswith(("-a", "-d")) and entry not in retained:
                 if entry.is_dir():
                     shutil.rmtree(entry)
                 else:
