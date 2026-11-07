@@ -236,3 +236,19 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
 }
+
+func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	db, _ := sqlobserve.Open(t, nil)
+	seedMetadataSearch(t, db)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim');
+ INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from');`)
+	require.NoError(err)
+	var requests atomic.Int32
+	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
+	response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": "from:alex@exam subject:first"})
+	assert.Equal(int32(1), requests.Load(), "hints must ride the single fast-search request")
+	require.Len(response.Hints, 1)
+	assert.Equal("sender_name_requires_address", response.Hints[0].Code)
+	assert.NotEmpty(response.Hints[0].RetryWith.Query)
+}

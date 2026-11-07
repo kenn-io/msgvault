@@ -1009,6 +1009,8 @@ type searchMetadataResponse struct {
 
 	IndexState string   `json:"index_state,omitempty"`
 	Warnings   []string `json:"warnings,omitempty"`
+
+	Hints []query.SearchHint `json:"hints,omitempty"`
 }
 type searchInMessageResponse struct {
 	paginatedResponse[messageMatch]
