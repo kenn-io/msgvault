@@ -30,11 +30,11 @@ func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('canonical', 'Example') RETURNING id`).Scan(&id))
-	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO person_uid_aliases (retired_uid, surviving_person_id, reason) VALUES ('retired', ?, 'merge')`, id)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_uid_aliases (retired_uid, surviving_person_id, reason) VALUES ('retired', ?, 'merge')`), id)
 	require.NoError(t, err)
 	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{ConnectionName: "test", BaseURL: "https://contacts.example.test/dav", Username: "example", PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/", Books: []store.CardDAVDiscoveredBook{{CanonicalURL: "https://contacts.example.test/books/one/", DisplayName: "Example"}}})
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO carddav_resources (address_book_id, href, remote_uid, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'mapped', 'remote', ?)`, books[0].ID, "https://contacts.example.test/books/one/person.vcf", "carddav-uid", `"one"`, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:carddav-uid\r\nFN:Example\r\nEND:VCARD\r\n"), "remote", "local", id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_resources (address_book_id, href, remote_uid, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'mapped', 'remote', ?)`), books[0].ID, "https://contacts.example.test/books/one/person.vcf", "carddav-uid", `"one"`, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:carddav-uid\r\nFN:Example\r\nEND:VCARD\r\n"), "remote", "local", id)
 	require.NoError(t, err)
 	archive, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestPersonPhotosOnlyLiveConfirmedImages(t *testing.T) {
 		}
 		require.NoError(t, f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "image", Filename: name + ".jpg", MIMEType: "image/jpeg", ContentHash: hash, StoragePath: "aa/" + hash, State: "stored"}))
 		if name == "deleted" {
-			_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, mid)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), mid)
 			require.NoError(t, err)
 		}
 	}
@@ -139,7 +139,7 @@ func TestPersonPhotoLinkRevisionAndRetiredUID(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('current', 'Example') RETURNING id`).Scan(&id))
-	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO person_uid_aliases (retired_uid, surviving_person_id, reason) VALUES ('old', ?, 'merge')`, id)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_uid_aliases (retired_uid, surviving_person_id, reason) VALUES ('old', ?, 'merge')`), id)
 	require.NoError(t, err)
 	archive, err := st.ArchiveUIDContext(t.Context())
 	require.NoError(t, err)
