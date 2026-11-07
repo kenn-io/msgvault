@@ -105,6 +105,20 @@ test('selection bar uses the shared inset and gap', async ({ page }) => {
     return { left: count.left - box.left, top: style.paddingTop, gap: style.columnGap };
   });
   expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
+
+  await page.route('**/api/v1/people/directory*', (route) => route.fulfill({ json: { people: [
+    { id: 1, revision: 1, display_name: 'Alex Example', primary_channel: 'email', contact_state: 'active', categories: [], organizations: [] }
+  ] } }));
+  await page.goto('/?workspace=directory');
+  const people = page.getByRole('grid').filter({ hasText: 'Alex Example' });
+  await people.locator('.row').filter({ hasText: 'Alex Example' }).hover();
+  await people.getByRole('checkbox', { name: 'Select Alex Example' }).check();
+  const peopleBar = page.locator('.selection-bar[data-toolbar]');
+  await expect(peopleBar).toBeVisible();
+  for (const button of await peopleBar.locator('.kit-button').all()) {
+    await expect(button).toHaveCSS('padding-left', '8px');
+    await expect(button).toHaveCSS('padding-right', '8px');
+  }
 });
 
 for (const width of [1280, 420]) {
@@ -424,10 +438,18 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   const directoryShape = await filter.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
   expect.soft(directoryShape.radius).toBeGreaterThanOrEqual(directoryShape.height / 2);
   await selectWorkspace(page, 'Sources');
-  const status = page.locator('.kit-chip').filter({ hasText: 'Never synced' });
-  await expect(status).toBeVisible();
-  const statusShape = await status.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
-  expect.soft(statusShape.radius).toBeGreaterThanOrEqual(statusShape.height / 2);
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme });
+    const status = page.locator('.kit-chip.kit-chip--tone-neutral').filter({ hasText: 'Never synced' });
+    await expect(status).toBeVisible();
+    const statusShape = await status.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
+    expect.soft(statusShape.radius).toBeGreaterThanOrEqual(statusShape.height / 2);
+    if (colorScheme === 'dark') {
+      await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+      await expect(status).toHaveCSS('border-top-width', '1px');
+      await expect(status).toHaveCSS('border-top-style', 'solid');
+    }
+  }
 });
 
 test('Settings uses the shared scrollbar and integer field sizes', async ({ page }) => {
@@ -514,20 +536,7 @@ test('the sidebar People item keeps its icon and label centered beside its dupli
   for (const offset of offsets) expect(offset).toBeLessThanOrEqual(0.5);
 });
 
-test.describe('dark chips', () => {
-  test.use({ colorScheme: 'dark' });
-
-  test('a neutral status chip draws a 1px edge in dark mode', async ({ page }) => {
-    await selectWorkspace(page, 'Sources');
-    const status = page.locator('.kit-chip.kit-chip--tone-neutral, .kit-chip.kit-chip--tone-muted').filter({ hasText: 'Never synced' });
-    await expect(status).toBeVisible();
-    await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-    await expect(status).toHaveCSS('border-top-width', '1px');
-    await expect(status).toHaveCSS('border-top-style', 'solid');
-  });
-});
-
-test('People rows center one-line names on a 32 avatar and the selection bar uses toolbar insets', async ({ page }) => {
+test('People rows center one-line names on a 32 avatar', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.route('**/api/v1/people/directory*', (route) => route.fulfill({ json: { people: [
     { id: 1, revision: 1, display_name: 'Alex Example', primary_channel: 'email', contact_state: 'active', categories: [], organizations: [] },
@@ -551,14 +560,6 @@ test('People rows center one-line names on a 32 avatar and the selection bar use
   const twoLine = grid.locator('.row').filter({ hasText: 'Blake Example' });
   await expect(twoLine.locator('.detail')).toHaveText('Example Org');
   expect(await twoLine.locator('[role="gridcell"]').evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(52);
-  await oneLine.hover();
-  await grid.getByRole('checkbox', { name: 'Select Alex Example' }).check();
-  const bar = page.locator('.selection-bar[data-toolbar]');
-  await expect(bar).toBeVisible();
-  for (const button of await bar.locator('.kit-button').all()) {
-    await expect(button).toHaveCSS('padding-left', '8px');
-    await expect(button).toHaveCSS('padding-right', '8px');
-  }
 });
 
 async function mockMeetingSelection(page: Page, {

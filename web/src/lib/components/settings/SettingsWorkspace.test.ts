@@ -315,9 +315,8 @@ describe('SettingsWorkspace', () => {
     await screen.findByRole('heading', { name: 'Advanced', level: 2 });
     expect(screen.queryByText(/plain HTTP/)).toBeNull();
     await view.rerender({ client, category: 'server', plainHTTPWarning: true });
-    // The shared notice reads as a status, not an alert: plain HTTP is a warning about the connection.
     const sentence = await screen.findByText('This connection uses plain HTTP. Use HTTPS for remote access.');
-    expect(sentence.closest('.inline-notice [role="status"]')).not.toBeNull();
+    expect(sentence.closest('.inline-notice [role="status"]')?.getAttribute('data-tone')).toBe('warning');
   });
 
   it('keeps tuning behind Advanced and host values behind Set in config.toml', async () => {

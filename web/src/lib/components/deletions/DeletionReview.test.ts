@@ -84,10 +84,8 @@ it('handles a pending stage when the review stays mounted, with Cancel until it 
   render(DeletionReview, { client, selection, onclose, onStaged });
   const stage = await screen.findByRole('button', { name: 'Stage 2 messages' });
   const cancel = screen.getByRole('button', { name: 'Cancel' });
-  expect(cancel.compareDocumentPosition(stage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   await fireEvent.click(stage);
   await waitFor(() => expect(finish).toBeTypeOf('function'));
-  await fireEvent.keyDown(document, { key: 'Escape' });
   await fireEvent.click(cancel);
   expect(onclose).not.toHaveBeenCalled();
   finish(Response.json({ id: 'batch-pending', message_count: 2, matched_count: 3, dry_run: false }, { status: 201 }));

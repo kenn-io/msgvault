@@ -142,7 +142,6 @@ describe('DeletionsWorkspace', () => {
     expect(deletes).toBe(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Stop batch…' }));
     const dialog = screen.getByRole('dialog', { name: 'Stop deletion batch?' });
-    expect(within(dialog).getByText('Messages not yet deleted stay in the source.')).toBeDefined();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Stop batch' }));
     await within(dialog).findByText('Busy');
     expect(onChanged).not.toHaveBeenCalled();

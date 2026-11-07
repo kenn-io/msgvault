@@ -74,7 +74,6 @@
   .metric-grid > div { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-left: 2px solid var(--border-strong); border-start-start-radius: 0; border-end-start-radius: 0; background: var(--bg-inset); }
   dt { color: var(--text-muted); font-size: var(--font-size-xs); }
   dd { color: var(--text-primary); font-size: var(--font-size-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .note { padding-top: var(--space-3); border-top: 1px solid var(--border-muted); color: var(--text-muted); font-size: var(--font-size-xs); line-height: 1.5; }
   .evidence-section { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border-muted); }
   .table-scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
   .table-scroll :global(table) { width: 100%; border-collapse: collapse; font-size: var(--font-size-xs); }
