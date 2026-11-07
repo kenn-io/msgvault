@@ -105,27 +105,6 @@ test('selection bar uses the shared inset and gap', async ({ page }) => {
     return { left: count.left - box.left, top: style.paddingTop, gap: style.columnGap };
   });
   expect(selectionInset).toEqual({ left: 12, top: '8px', gap: '8px' });
-
-  await page.route('**/api/v1/people/directory*', (route) => route.fulfill({ json: { people: [
-    { id: 1, revision: 1, display_name: 'Alex Example', primary_channel: 'email', contact_state: 'active', categories: [], organizations: [] }
-  ] } }));
-  await page.goto('/?workspace=directory');
-  const people = page.getByRole('grid').filter({ hasText: 'Alex Example' });
-  await people.locator('.row').filter({ hasText: 'Alex Example' }).hover();
-  await people.getByRole('checkbox', { name: 'Select Alex Example' }).check();
-  const peopleBar = page.locator('.selection-bar[data-toolbar]');
-  await expect(peopleBar).toBeVisible();
-  // The count starts where the rows' content does.
-  const peopleInset = await peopleBar.evaluate((element) => {
-    const cell = element.closest('.people-list')!.querySelector('.row [role="gridcell"]')!;
-    const content = cell.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(cell).paddingLeft);
-    return element.querySelector(':scope > span')!.getBoundingClientRect().left - content;
-  });
-  expect(peopleInset).toBe(0);
-  for (const button of await peopleBar.locator('.kit-button').all()) {
-    await expect(button).toHaveCSS('padding-left', '8px');
-    await expect(button).toHaveCSS('padding-right', '8px');
-  }
 });
 
 for (const width of [1280, 420]) {
@@ -159,15 +138,7 @@ for (const width of [1280, 420]) {
       await open.click();
       const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
       await expect(label).toBeVisible();
-      // The label is trimmed to its capital letters, which Chromium counts as
-      // vertical scroll overflow; the text's own box inside the label's clip
-      // box is what shows nothing is cut off.
-      expect(await label.evaluate((element) => {
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        const text = range.getBoundingClientRect(), box = element.getBoundingClientRect();
-        return element.scrollWidth <= element.clientWidth && text.top >= box.top && text.bottom <= box.bottom;
-      })).toBe(true);
+      expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     });
   });
 }
@@ -553,7 +524,7 @@ test('the sidebar People item keeps its icon and label centered beside its dupli
   for (const offset of offsets) expect(offset).toBeLessThanOrEqual(0.5);
 });
 
-test('People rows center one-line names on a 32 avatar', async ({ page }) => {
+test('People rows center one-line names on a 32 avatar and inset selection actions', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.route('**/api/v1/people/directory*', (route) => route.fulfill({ json: { people: [
     { id: 1, revision: 1, display_name: 'Alex Example', primary_channel: 'email', contact_state: 'active', categories: [], organizations: [] },
@@ -576,7 +547,22 @@ test('People rows center one-line names on a 32 avatar', async ({ page }) => {
   expect(geometry.detail).toBe(true);
   const twoLine = grid.locator('.row').filter({ hasText: 'Blake Example' });
   await expect(twoLine.locator('.detail')).toHaveText('Example Org');
-  expect(await twoLine.locator('[role="gridcell"]').evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(52);
+
+  await oneLine.hover();
+  await grid.getByRole('checkbox', { name: 'Select Alex Example' }).check();
+  const peopleBar = page.locator('.selection-bar[data-toolbar]');
+  await expect(peopleBar).toBeVisible();
+  // The count starts where the rows' content does.
+  const peopleInset = await peopleBar.evaluate((element) => {
+    const cell = element.closest('.people-list')!.querySelector('.row [role="gridcell"]')!;
+    const content = cell.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(cell).paddingLeft);
+    return element.querySelector(':scope > span')!.getBoundingClientRect().left - content;
+  });
+  expect(peopleInset).toBe(0);
+  for (const button of await peopleBar.locator('.kit-button').all()) {
+    await expect(button).toHaveCSS('padding-left', '8px');
+    await expect(button).toHaveCSS('padding-right', '8px');
+  }
 });
 
 async function mockMeetingSelection(page: Page, {

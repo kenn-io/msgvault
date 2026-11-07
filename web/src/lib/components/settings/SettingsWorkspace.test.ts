@@ -310,13 +310,17 @@ describe('SettingsWorkspace', () => {
   });
 
   it('shows the plain-HTTP warning on Server only', async () => {
-    const { client, operationsController, onStatusChange } = fixture();
+    const doc = settingsDoc();
+    doc.pending_restart = true;
+    const { client, operationsController, onStatusChange } = fixture(doc);
     const view = render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced', plainHTTPWarning: true });
     await screen.findByRole('heading', { name: 'Advanced', level: 2 });
     expect(screen.queryByText(/plain HTTP/)).toBeNull();
     await view.rerender({ client, category: 'server', plainHTTPWarning: true });
     const sentence = await screen.findByText('This connection uses plain HTTP. Use HTTPS for remote access.');
     expect(sentence.closest('.inline-notice [role="status"]')?.getAttribute('data-tone')).toBe('warning');
+    const restart = await screen.findByText('Saved. Restart msgvault to apply these changes.');
+    expect(restart.closest('.inline-notice [role="status"]')?.getAttribute('data-tone')).toBe('info');
   });
 
   it('keeps tuning behind Advanced and host values behind Set in config.toml', async () => {

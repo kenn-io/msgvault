@@ -180,7 +180,6 @@ for (const theme of ['light', 'dark'] as const) {
     await settings.getByRole('button', { name: 'Advanced', exact: true }).click();
     await expectRenderedContrast(settings.getByText('UTC or an IANA name such as America/New_York.', { exact: true }), 4.5);
     const restart = settings.locator('.kit-notice').filter({ hasText: 'Saved. Restart msgvault to apply these changes.' });
-    await expect(restart).toHaveAttribute('data-tone', 'info');
     await expectRenderedContrast(restart.getByText('Saved. Restart msgvault to apply these changes.'), 4.5);
   });
 }
