@@ -23,7 +23,7 @@ func TestDeliveryPolicyHTTPRoutes(t *testing.T) {
 	request := func(path string, v any) *httptest.ResponseRecorder {
 		body, err := json.Marshal(v)
 		requirements.NoError(err)
-		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(body))
 		req.RemoteAddr = "127.0.0.1:1234"
 		req.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
