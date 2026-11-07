@@ -162,10 +162,18 @@ func TestMediaFailureAtRetryHorizon(t *testing.T) {
 		if f.st.IsPostgreSQL() {
 			t.Skip("SQLite trigger injects a real failed finalization; normal processor contracts run on both backends")
 		}
-		f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202}, lineapi.Response{Status: 202})
+		f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusAccepted}, lineapi.Response{Status: http.StatusAccepted})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v2/bot/message/1/content" && f.api.Count(http.MethodGet, r.URL.Path) == 0 {
+				_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
+				checks.NoError(err)
+			}
+			f.api.ServeHTTP(w, r)
+		}))
+		t.Cleanup(server.Close)
+		f.client = NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
+		f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 		f.enqueue(t, f.fileEvent(), f.now.Add(-retryHorizon))
-		_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
-		must.NoError(err)
 		must.Error(f.processor.Process(context.Background()))
 		eventState := func() string {
 			t.Helper()
@@ -175,7 +183,7 @@ func TestMediaFailureAtRetryHorizon(t *testing.T) {
 		}
 		checks.Equal("pending", eventState(), "a failed event with a committed message waits for its conversation")
 
-		_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
+		_, err := f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
 		must.NoError(err)
 		f.run(t)
 		checks.Equal("failed", eventState())
