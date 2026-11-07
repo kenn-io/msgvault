@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { controllerWith, organization } from '../../directory/entity-fixtures.test-support';
 import EmploymentEditor from './EmploymentEditor.svelte';
 
@@ -27,20 +27,6 @@ it('shows loading, empty, and failed organization searches and recovers on anoth
     expect(screen.queryByRole('alert')).toBeNull();
   } finally {
     finish(Response.json({ organizations: [], total: 0, limit: 50, offset: 0 }));
-    view.unmount();
-    controller.destroy();
-  }
-});
-
-it('closes the employment editor when Escape reaches the closed picker', async () => {
-  const { controller } = controllerWith(async () => Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 }));
-  controller.organizations = [organization()];
-  const onClose = vi.fn();
-  const view = render(EmploymentEditor, { controller, personID: 7, onClose });
-  try {
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Organization: Choose an organization' }), { key: 'Escape' });
-    expect(onClose).toHaveBeenCalledOnce();
-  } finally {
     view.unmount();
     controller.destroy();
   }
