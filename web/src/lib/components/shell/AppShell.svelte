@@ -263,7 +263,13 @@
     replaceCommittedNavigation({ settingsCategory: 'carddav' });
   }
   let historyDialog = $state<{ restoreFocus: () => Promise<void> }>();
-  let sourcesPage = $state<{ refresh: () => void }>();
+  let sourcesPage = $state<{ refresh: () => void; openAddSource: () => void }>();
+
+  async function addSource(): Promise<void> {
+    commitWorkspace('sources');
+    await tick().then(() => navigationFocusTarget()?.focus());
+    sourcesPage?.openAddSource();
+  }
   const runHistory = $derived(exploreState.current.operationHistory
     ? { operationLane: exploreState.current.operationLane, operationKind: exploreState.current.operationKind, operationState: exploreState.current.operationState, operationStartedFrom: exploreState.current.operationStartedFrom, operationStartedBefore: exploreState.current.operationStartedBefore, operationRunID: exploreState.current.operationRunID, operationStatus: exploreState.current.operationStatus }
     : undefined);
@@ -1518,6 +1524,7 @@
         </main>
       {:else}
         <EverythingWorkspace
+          onAddSource={shellData.jobs.noSources ? addSource : undefined}
           bind:resultsWidth
           {client}
           {exploreState}

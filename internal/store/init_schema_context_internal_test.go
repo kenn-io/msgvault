@@ -310,8 +310,8 @@ func TestInitSchemaContext_RelationshipSeedHonoursContext(t *testing.T) {
 	require.Error(err, "a cancelled relationship seed must stop schema initialisation")
 	require.ErrorIs(err, context.Canceled, "and report it as cancellation")
 	var count int
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM relationship_types`).Scan(&count))
-	assert.Zero(count, "a cancelled relationship seed must roll back its transaction")
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'relationship_types'`).Scan(&count))
+	assert.Zero(count, "a cancelled relationship seed must roll back the fresh schema")
 }
 
 // TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled covers
@@ -493,7 +493,7 @@ type cancelDuringFTSProbeDialect struct {
 }
 
 func (d cancelDuringFTSProbeDialect) FTSAvailable(
-	ctx context.Context, db *sql.DB,
+	ctx context.Context, db SQLReader,
 ) (bool, error) {
 	d.cancel()
 	return d.Dialect.FTSAvailable(ctx, db)

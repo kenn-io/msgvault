@@ -2937,6 +2937,10 @@ components:
       properties:
         has_more:
           type: boolean
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         hybrid_available:
           type: boolean
         index_built:
@@ -14944,6 +14948,10 @@ components:
             format: int64
             type: integer
           type: array
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         index_state:
           type: string
         messages:
@@ -14965,6 +14973,26 @@ components:
         - query
         - messages
         - total_count
+      type: object
+    SearchHint:
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retry_with:
+          $ref: "#/components/schemas/SearchHintRetryWithStruct"
+      required:
+        - code
+        - message
+        - retry_with
+      type: object
+    SearchHintRetryWithStruct:
+      properties:
+        query:
+          type: string
+      required:
+        - query
       type: object
     SearchProvenance:
       additionalProperties: false

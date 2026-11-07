@@ -77,6 +77,7 @@
     selectionPreflight: ExplorePreflight | undefined;
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
+    onAddSource?: () => void;
     onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitSearch: (query: string, mode: ExploreSearchMode) => void;
@@ -114,6 +115,7 @@
     selectionPreflight,
     meetingSelection,
     exportSelection,
+    onAddSource,
     onReviewDeletion,
     commitNavigation,
     commitSearch,
@@ -855,6 +857,7 @@
               />
             {:else}
               <EverythingTable
+                {onAddSource}
                 rows={loader.rows}
                 selection={scope ? undefined : selection}
                 columns={exploreState.current.columns}

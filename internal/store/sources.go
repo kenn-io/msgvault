@@ -339,6 +339,9 @@ func (s *Store) RemoveSourceSerialized(
 	); err != nil {
 		return hadActiveSync, 0, err
 	}
+	if err := s.deleteSourceRepairMigrationsContext(ctx, conn.ExecContext, sourceID); err != nil {
+		return hadActiveSync, 0, err
+	}
 
 	res, err := conn.ExecContext(
 		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
@@ -448,6 +451,9 @@ func (s *Store) removeSourceExec(
 	); err != nil {
 		return err
 	}
+	if err := s.deleteSourceRepairMigrationsContext(ctx, tx.ExecContext, sourceID); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, sourceID)
 	if err != nil {
 		return fmt.Errorf("delete source: %w", err)
@@ -473,6 +479,23 @@ func (s *Store) removeSourceExec(
 // connection.
 type sourceIdentityQuery func(context.Context, string, ...any) (rowsScanner, error)
 type sourceIdentityExec func(context.Context, string, ...any) (sql.Result, error)
+
+// Source IDs can be reused after removal. Clear repair completion and progress
+// in the removal transaction so a recreated source cannot inherit either.
+func (s *Store) deleteSourceRepairMigrationsContext(ctx context.Context, exec sourceIdentityExec, sourceID int64) error {
+	_, err := exec(ctx, s.Rebind(`DELETE FROM applied_migrations WHERE EXISTS (
+		SELECT 1 FROM (
+			SELECT 'rederive:' || source_type || ':' || identifier || ':' AS prefix
+			FROM sources WHERE id = ?
+		) repair_source
+		WHERE SUBSTR(name, 1, LENGTH(prefix)) = prefix
+		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%:%'
+	)`), sourceID)
+	if err != nil {
+		return fmt.Errorf("delete source repair progress: %w", err)
+	}
+	return nil
+}
 
 // currentCandidateObservationPairSQL verifies the conjunctive observation
 // behind Beeper's generated participant matches. It deliberately derives the

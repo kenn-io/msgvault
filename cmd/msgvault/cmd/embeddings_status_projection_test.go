@@ -273,7 +273,9 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	assert.Equal(int64(2), after.Eligible)
 	assert.Equal(int64(2), after.Current, "skipped messages count as completed work")
 	assert.Zero(after.Pending, "a completed recovery refreshes pending work before the TTL expires")
-	embedded, err := f.source.backend.(vector.FilteredCoverageBackend).EmbeddedMessageCountForIDs(t.Context(), f.generation, []int64{f.messageID, blankID})
+	filteredBackend, ok := f.source.backend.(vector.FilteredCoverageBackend)
+	require.True(ok, "the backend must support filtered coverage")
+	embedded, err := filteredBackend.EmbeddedMessageCountForIDs(t.Context(), f.generation, []int64{f.messageID, blankID})
 	require.NoError(err)
 	assert.Equal(int64(1), embedded, "the blank message is skipped rather than indexed")
 

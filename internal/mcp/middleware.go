@@ -225,3 +225,28 @@ func traceMiddleware(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
 		return next(ctx, method, req)
 	}
 }
+
+// HTTP servers belong to one stateless request. Remove tools before the SDK
+// paginates its list, using the decoded method for every protocol version.
+func familyDiscoveryMiddleware(server *sdkmcp.Server, opts ServeOptions, allowWrites bool) sdkmcp.Middleware {
+	return func(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+		return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+			if method == "tools/list" && opts.DiscoverFamilies != nil {
+				families := opts.DiscoverFamilies(ctx)
+				var hidden []string
+				for _, d := range operationCatalog(opts, nil) {
+					if !families.allows(d.name) {
+						hidden = append(hidden, d.name)
+					}
+				}
+				for _, d := range operationalCatalog(opts, allowWrites) {
+					if !families.allows(d.definition.name) {
+						hidden = append(hidden, d.definition.name)
+					}
+				}
+				server.RemoveTools(hidden...)
+			}
+			return next(ctx, method, req)
+		}
+	}
+}

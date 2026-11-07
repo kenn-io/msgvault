@@ -262,12 +262,22 @@ type DomainSearchResult struct {
 	HasMore  bool
 }
 
+// SearchHint suggests a retry when a search returns no matches.
+type SearchHint struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RetryWith struct {
+		Query string `json:"query"`
+	} `json:"retry_with"`
+}
+
 // SearchFastResult carries messages and index status, with optional totals and aggregate stats.
 type SearchFastResult struct {
 	IndexState string
 	Messages   []MessageSummary
 	TotalCount int64
 	Stats      *TotalStats
+	Hints      []SearchHint
 }
 
 // TotalStats provides overall database statistics.
