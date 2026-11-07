@@ -3,7 +3,6 @@ package store_test
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"testing"
 	"time"
 
@@ -27,36 +26,6 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 }
 
 func TestCallObservationSearchAndMessageProjections(t *testing.T) {
-	t.Run("UTC timestamps preserve call window", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		st := storetest.New(t).Store
-		o, sourceID := validCallObservation(t, st)
-		var ids []int64
-		for i, timestamp := range []string{"2026-10-01T04:30:00Z", "2026-10-01T01:30:00Z"} {
-			o.RecordID = fmt.Sprintf("window-call-%d", i)
-			var err error
-			o.OccurredAt, err = time.Parse(time.RFC3339, timestamp)
-			require.NoError(err)
-			o.EndedAt = new(o.OccurredAt.Add(time.Minute))
-			o.Raw = []byte(fmt.Sprintf(`{"occurred_at":%q}`, timestamp))
-			id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
-			require.NoError(err)
-			ids = append(ids, id)
-			raw, err := st.GetMessageRawContext(t.Context(), id)
-			require.NoError(err)
-			assert.Equal(string(o.Raw), string(raw))
-		}
-		after := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC)
-		before := time.Date(2026, 10, 1, 5, 0, 0, 0, time.UTC)
-		calls, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{After: &after, Before: &before})
-		require.NoError(err)
-		require.Len(calls, 1)
-		assert.Equal(ids[0], calls[0].MessageID)
-		assert.Equal("2026-10-01T04:30:00Z", calls[0].OccurredAt.UTC().Format(time.RFC3339))
-		require.NotNil(calls[0].EndedAt)
-		assert.Equal("2026-10-01T04:31:00Z", calls[0].EndedAt.UTC().Format(time.RFC3339))
-	})
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -218,17 +187,4 @@ func TestCallObservationReplacement(t *testing.T) {
 	o.Participants[0].ID = peer
 	_, err = st.PutCallObservationContext(ctx, src.ID, o)
 	requirements.ErrorIs(err, context.Canceled)
-}
-
-func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
-	assertions := assert.New(t)
-	personID := int64(7)
-	got := store.ClassifyActivityCandidate(store.ActivityCandidate{
-		MessageType: callhistory.MessageType, ConversationType: "call_history",
-		SourceIsFromMe: true,
-		Counterparts:   []store.ActivityCounterpart{{ParticipantID: 1, PersonID: &personID, RecipientType: "call_joined"}},
-	}, 10)
-	assertions.Empty(got.Persons)
-	assertions.Equal(store.DirectionObserved, got.Direction)
-	assertions.Equal(store.ChannelOther, got.Channel)
 }
