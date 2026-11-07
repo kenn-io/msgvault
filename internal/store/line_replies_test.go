@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,21 @@ func acceptedReply(t *testing.T, st *store.Store, draft store.ChatDraft) store.L
 }
 
 func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
+	t.Run("leading whitespace in preview", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, draft, parent := replyStoreFixture(t)
+		draft, err := st.CreateChatDraftContext(t.Context(), draft.ConversationID, parent, strings.Repeat("\n", 200)+"Visible reply", func(string, string) error { return nil })
+		require.NoError(err)
+		acceptedReply(t, st, draft)
+		sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		var snippet, preview sql.NullString
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT snippet FROM messages WHERE id=?`), sent.MessageID).Scan(&snippet))
+		assert.Equal(sql.NullString{String: "Visible reply", Valid: true}, snippet)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT last_message_preview FROM conversations WHERE id=?`), draft.ConversationID).Scan(&preview))
+		assert.Equal(sql.NullString{String: "Visible reply", Valid: true}, preview)
+	})
 	t.Run("receipt and conversation summary", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
