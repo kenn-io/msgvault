@@ -20,14 +20,15 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 export function localSearchLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
   return {
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing' } : {}),
-    ...(!status.enabled && status.provider === 'ollama' ? { downloaded: 'Uses Ollama on this computer' } : {}),
+    ...(!status.enabled ? { downloaded: `${status.provider === 'ollama' ? 'Uses Ollama' : 'Already'} on ${status.host || 'this computer'}` } : {}),
     keepsIndex: '',
   };
 }
 
 export function localSearchHintLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
-  const disclosure = status.provider === 'ollama' ? 'Uses Ollama on this computer' : status.download_bytes
+  const labels = localSearchLabels(status);
+  const disclosure = status.provider !== 'ollama' && status.download_bytes
     ? `Downloads ${megabytes(status.download_bytes)} once${status.host ? ` to ${status.host}` : ''}`
-    : 'Already on this computer';
-  return { ...localSearchLabels(status), hint: `Search by meaning is off · ${disclosure}` };
+    : labels.downloaded;
+  return { ...labels, hint: `Search by meaning is off · ${disclosure}` };
 }
