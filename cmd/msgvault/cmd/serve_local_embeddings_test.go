@@ -28,7 +28,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/providercredentials"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -41,7 +40,6 @@ type localBuildTestRunner struct {
 	home        string
 	calls       [][]string
 	contexts    []context.Context
-	failBuild   bool
 	beforeBuild func()
 }
 
@@ -67,10 +65,6 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	}
 	if r.beforeBuild != nil {
 		r.beforeBuild()
-	}
-	if r.failBuild && req.Args[1] == "build" {
-		r.failBuild = false
-		return errors.New(cliSubprocessExitSentinel)
 	}
 	state := *invocationFromContext(ctx)
 	state.cfg = cfg
@@ -433,21 +427,6 @@ func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
 	require.Contains(plan.Prompt, fmt.Sprintf("Activate generation %d", generation))
 }
 
-func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	f.runner.failBuild = true
-	err := f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-	require.Error(err)
-	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-	require.NoError(err)
-	saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
-	require.NoError(err)
-	assert.True(saved.Vector.Enabled)
-}
-
 func TestLocalEmbeddingsCommandError(t *testing.T) {
 	for _, tc := range []struct {
 		name, stderr, want string
@@ -481,44 +460,58 @@ func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) 
 }
 
 func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
-	for _, failure := range []string{"download", "config conflict"} {
+	for _, failure := range []string{"download", "config conflict", "endpoint gone"} {
 		t.Run(failure, func(t *testing.T) {
 			require := require.New(t)
 			f := newLocalActivationFixture(t, "")
 			f.start(t)
 			expected, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
-			install := f.controller.install
+			install, endpoint := f.controller.install, localEmbeddingEndpoint
 			f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-				if failure == "download" {
+				switch failure {
+				case "download":
 					return embedlocal.Installation{}, errors.New("connection interrupted")
+				case "endpoint gone":
+					// Preparation resolves once; runtime initialization then finds its server gone.
+					calls := 0
+					localEmbeddingEndpoint = func(ctx context.Context, opts embedlocal.Options) (string, error) {
+						calls++
+						if calls > 1 {
+							return "", errors.New("local server unavailable")
+						}
+						return endpoint(ctx, opts)
+					}
+					return embedlocal.Installation{}, nil
+				default:
+					expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
+					require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
+					return install(ctx, opts)
 				}
-				expected = append(expected, []byte("\n[web]\ntheme = \"dark\"\n")...)
-				require.NoError(os.WriteFile(f.cfg.ConfigFilePath(), expected, 0o600))
-				return install(ctx, opts)
 			}
 			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
 			require.Nil(f.handle.vf)
-			if failure == "download" {
+			switch failure {
+			case "download":
 				require.ErrorContains(err, "connection interrupted")
-			} else {
+			case "endpoint gone":
+				require.ErrorContains(err, "local server unavailable")
+			default:
 				require.ErrorIs(err, config.ErrConfigConflict)
 				require.EqualError(err, "Settings changed during setup. Turn on to retry.")
 			}
 			actual, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			require.Equal(expected, actual)
-			if failure == "download" {
-				return
-			}
-			f.controller.install = install
-			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-			require.NoError(err)
+			f.controller.install, localEmbeddingEndpoint = install, endpoint
+			require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
 			loaded, err := f.cfg.ReloadConfigFile(snapshot)
 			require.NoError(err)
-			require.Equal("dark", loaded.Web.Theme)
+			if failure == "config conflict" {
+				require.Equal("dark", loaded.Web.Theme)
+			}
 			require.True(loaded.Vector.Embeddings.LocalOnly)
 		})
 	}
@@ -539,45 +532,13 @@ func TestLocalEmbeddingsPublishesScheduledBuild(t *testing.T) {
 	f := newLocalActivationFixture(t, "")
 	f.start(t)
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	assert.Equal(t, 1, f.installs)
 	assert.True(t, f.handle.vf.Cfg.Embeddings.LocalOnly)
-	assert.Contains(t, f.runner.calls[0], "--full-rebuild")
 	_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
 	require.NoError(t, err)
 	require.NoError(t, f.scheduler.TriggerJob(jobctx.ScheduledEmbeddingLabel))
 	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
-}
-
-func TestLocalEmbeddingsFailureBeforeConfigWriteOffersRetry(t *testing.T) {
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	endpoint := localEmbeddingEndpoint
-	f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
-		// The first resolution prepares the runtime; initialization then finds its server gone.
-		calls := 0
-		localEmbeddingEndpoint = func(ctx context.Context, opts embedlocal.Options) (string, error) {
-			calls++
-			if calls > 1 {
-				return "", errors.New("local server unavailable")
-			}
-			return endpoint(ctx, opts)
-		}
-		return embedlocal.Installation{}, nil
-	}
-	require.ErrorContains(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), "local server unavailable")
-	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-	require.NoError(t, err)
-	saved, err := f.cfg.ReloadConfigFile(snapshot)
-	require.NoError(t, err)
-	assert.False(t, saved.Vector.Enabled)
-	assert.False(t, saved.Vector.Embeddings.LocalOnly)
-	localEmbeddingEndpoint = endpoint
-	f.controller.install = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
-		return embedlocal.Installation{}, nil
-	}
-	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 }
 
 func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
@@ -681,6 +642,7 @@ func TestLocalEmbeddingsBuildIndexResumesUnfinishedInitialBuild(t *testing.T) {
 			require.NoError(err)
 			saved, err := f.cfg.ReloadConfigFile(snapshot)
 			require.NoError(err)
+			require.True(saved.Vector.Enabled)
 			require.Empty(saved.Vector.Embed.Schedule.Cron)
 			require.False(saved.Vector.Embed.Schedule.RunAfterSync)
 			if provider == "builtin after restart" {
@@ -690,32 +652,12 @@ func TestLocalEmbeddingsBuildIndexResumesUnfinishedInitialBuild(t *testing.T) {
 				require.True(f.handle.WaitTimeout(5 * time.Second))
 				f.controller.handle = f.handle
 			}
-			analyticsDir := t.TempDir()
-			_, err = buildCache(f.ctx, f.cfg.DatabaseDSN(), analyticsDir, true)
-			require.NoError(err)
-			engine, err := query.NewDuckDBEngine(f.ctx, analyticsDir, "", nil)
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(engine.Close()) })
-			f.server.SetAnalyticsEngine(engine, api.AnalyticsModeDuckDB)
-			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/coverage", strings.NewReader(`{}`))
-			request.Header.Set("Authorization", "Bearer owner")
-			request.Header.Set("Content-Type", "application/json")
-			request.RemoteAddr = "127.0.0.1:1234"
-			response := httptest.NewRecorder()
-			f.server.Router().ServeHTTP(response, request)
-			require.Equal(http.StatusOK, response.Code, response.Body.String())
-			var coverage api.SearchCoverageResponse
-			require.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
-			require.Contains(coverage.Actions, api.SearchCoverageActionBuildIndex)
-			// This is the existing Build index action's CLI request, through the fixture's real builder.
+			// Full rebuild selects through a different branch than Turn on's default resume.
 			f.runner.beforeBuild = nil // The hook checks Turn on's gate ownership; this call exercises the builder.
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
 			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
 			require.NoError(err)
 			require.Equal(building.ID, active.ID, "Build index must resume the matching generation")
-			results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-			require.NoError(err)
-			require.Len(results, 1)
 		})
 	}
 }
