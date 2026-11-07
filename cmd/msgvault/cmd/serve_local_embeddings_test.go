@@ -94,7 +94,6 @@ type localActivationFixture struct {
 	scheduler     *scheduler.Scheduler
 	controller    *localEmbeddingsController
 	runner        *localBuildTestRunner
-	onEmbedding   func([]string) error
 	inputs        atomic.Int32
 	installs      int
 	ollamaTags    bool
@@ -146,12 +145,6 @@ func newLocalActivationFixture(t *testing.T, model string) *localActivationFixtu
 		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
 			http.Error(w, "invalid embedding request", http.StatusBadRequest)
 			return
-		}
-		if f.onEmbedding != nil {
-			if err := f.onEmbedding(body.Input); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
 		}
 		f.inputs.Add(int32(len(body.Input)))
 		assert.NoError(t, writeFakeEmbeddingResponse(w, len(body.Input), 768))
@@ -447,7 +440,7 @@ func TestLocalEmbeddingsCommandError(t *testing.T) {
 		err                error
 		wantCanceled       bool
 	}{
-		{name: "canceled without output", err: context.Canceled, wantCanceled: true, want: "context canceled"},
+		{name: "canceled with output", err: context.Canceled, stderr: "index progress\nError: stopped\n", wantCanceled: true, want: "context canceled: stopped"},
 		{name: "plain failure", err: errors.New(cliSubprocessExitSentinel), stderr: "index progress\nError: model unavailable\n", want: "model unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
