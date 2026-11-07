@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -981,6 +982,21 @@ func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
 	require.NoError(err, "GetDuplicateGroupMessages")
 	require.Len(rows, 1)
 	assert.Equal(t, mxid, rows[0].FromEmail, "FromEmail (case must be preserved)")
+}
+
+func TestStore_GetAllRawMIMECandidates_SkipsCallRecords(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+
+	id := newRFC822Message(t, f, "call-raw", "rfc822-call-raw")
+	_, err := f.Store.DB().ExecContext(t.Context(),
+		f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), callhistory.MessageType, id)
+	require.NoError(err)
+	require.NoError(f.Store.UpsertMessageRaw(id, []byte(`{"same":"evidence"}`)))
+
+	cands, err := f.Store.GetAllRawMIMECandidates(t.Context())
+	require.NoError(err)
+	require.Empty(cands)
 }
 
 // TestStore_GetAllRawMIMECandidates_PreservesFromCase mirrors
