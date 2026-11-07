@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -48,28 +47,31 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	if _, unavailable := setupVectorBackend(c.state.cfg); unavailable != "" {
 		return api.LocalEmbeddingsStatus{}, errors.New(unavailable)
 	}
-	snapshot, err := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
-	if err != nil {
-		return api.LocalEmbeddingsStatus{}, err
-	}
-	loaded, err := c.state.cfg.ReloadConfigFile(snapshot)
-	if err != nil {
-		return api.LocalEmbeddingsStatus{}, err
-	}
-	dir, err := localEmbeddingsDir()
-	if err != nil {
-		return api.LocalEmbeddingsStatus{}, err
-	}
 	c.handle.mu.Lock()
-	cfg := loaded.Vector
+	var cfg vector.Config
 	missingRuntime := c.handle.vf == nil
 	if c.handle.vf != nil {
 		cfg = c.handle.vf.Cfg
 	}
 	c.handle.mu.Unlock()
+	if missingRuntime {
+		snapshot, err := config.ReadConfigFile(c.state.cfg.ConfigFilePath())
+		if err != nil {
+			return api.LocalEmbeddingsStatus{}, err
+		}
+		loaded, err := c.state.cfg.ReloadConfigFile(snapshot)
+		if err != nil {
+			return api.LocalEmbeddingsStatus{}, err
+		}
+		cfg = loaded.Vector
+	}
 	configured := cfg.Enabled || cfg.Embeddings.LocalOnly || cfg.Embeddings.Endpoint != "" || cfg.Embeddings.Model != ""
 	if missingRuntime {
 		cfg.Enabled = false
+	}
+	dir, err := localEmbeddingsDir()
+	if err != nil {
+		return api.LocalEmbeddingsStatus{}, err
 	}
 	status, err := c.inspect(ctx, embedlocal.Options{DataDir: dir, SkipOllama: configured})
 	if err != nil {
@@ -129,9 +131,14 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	deps := defaultSetupProvidersDeps(ctx)
 	deps.lookupEnv = func(string) (string, bool) { return "", false }
 	deps.localEndpoint = localEmbeddingEndpoint
-	detection := detectSetupProviders(ctx, loaded, deps, setupProvidersOptions{localEmbeddings: loaded.Vector.Embeddings.LocalOnly})
+	detection := detectSetupProviders(ctx, loaded, deps, setupProvidersOptions{localEmbeddings: !loaded.Vector.Enabled && loaded.Vector.Embeddings.LocalOnly})
 	detection.configKeys = configKeys
 	lane := planTextSearch(loaded, detection)
+	if lane.Action == planActionKeep {
+		if status, err := c.Inspect(ctx); err == nil && status.Enabled && status.Provider != "configured" {
+			return nil
+		}
+	}
 	if lane.Action != planActionEnable {
 		return errors.New(lane.Reason)
 	}
@@ -234,10 +241,6 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
 	fingerprint := vf.Cfg.GenerationFingerprint()
-	building, err := vf.Backend.BuildingGeneration(ctx)
-	if err != nil {
-		return err
-	}
 	run := func(args ...string) error {
 		stderr := &childStderr{w: io.Discard}
 		err := c.runner.RunCLICommand(workCtx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
@@ -249,21 +252,13 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		})
 		return localEmbeddingsCommandError(workCtx, err, string(stderr.tail))
 	}
-	if building != nil && building.Fingerprint != fingerprint {
-		if err := run("embeddings", "retire", strconv.FormatInt(int64(building.ID), 10), "--yes"); err != nil {
-			return err
-		}
-		building = nil
-	}
 	args := []string{"embeddings", "build", "--backstop", "--yes"}
-	if building == nil {
-		active, err := vf.Backend.ActiveGeneration(ctx)
-		if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
-			return fmt.Errorf("read active index: %w", err)
-		}
-		if errors.Is(err, vector.ErrNoActiveGeneration) || active.Fingerprint != fingerprint {
-			args = append(args, "--full-rebuild")
-		}
+	active, err := vf.Backend.ActiveGeneration(ctx)
+	if err != nil && !errors.Is(err, vector.ErrNoActiveGeneration) {
+		return fmt.Errorf("read active index: %w", err)
+	}
+	if errors.Is(err, vector.ErrNoActiveGeneration) || active.Fingerprint != fingerprint {
+		args = append(args, "--full-rebuild")
 	}
 	return run(args...)
 }

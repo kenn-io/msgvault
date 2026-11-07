@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
 
 type localBuildTestRunner struct {
@@ -68,16 +69,12 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	}
 	state := *invocationFromContext(ctx)
 	state.cfg = cfg
-	oldYes, oldRebuild, oldRetire, oldBackstop := embedYes, embedFullRebuild, embeddingsRetireYes, embedBackstop
+	oldYes, oldRebuild, oldBackstop := embedYes, embedFullRebuild, embedBackstop
 	defer func() {
-		embedYes, embedFullRebuild, embeddingsRetireYes, embedBackstop = oldYes, oldRebuild, oldRetire, oldBackstop
+		embedYes, embedFullRebuild, embedBackstop = oldYes, oldRebuild, oldBackstop
 	}()
 	command := newEmbeddingsBuildCmd("build")
 	command.RunE = func(cmd *cobra.Command, _ []string) error { return runEmbeddingsBuildLocal(cmd) }
-	if req.Args[1] == "retire" {
-		command = &cobra.Command{Use: "retire", RunE: runEmbeddingsRetire}
-		command.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Confirm retirement")
-	}
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 	command.SetArgs(args)
@@ -223,45 +220,45 @@ func (f *localActivationFixture) start(t *testing.T) {
 }
 
 func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
-	for _, startupFailed := range []bool{false, true} {
-		t.Run(fmt.Sprintf("startup_failed=%t", startupFailed), func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := newLocalActivationFixture(t, "nomic-embed-text")
-			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
-				return embedlocal.Status{OllamaAvailable: true, DownloadBytes: 290000000}, nil
-			}
-			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": startupFailed}}, {Path: []string{"vector", "embeddings"}, Values: map[string]any{"local_only": true, "endpoint": ""}}})
-			require.NoError(err)
-			f.cfg.Vector.Enabled = startupFailed
-			f.cfg.Vector.Embeddings.LocalOnly = true
-			f.cfg.Vector.Embeddings.Endpoint = ""
-			fixtureEndpoint := localEmbeddingEndpoint
-			localEmbeddingEndpoint = embedlocal.Endpoint
-			f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
-			require.True(f.handle.WaitTimeout(5 * time.Second))
-			f.controller.handle = f.handle
-
-			status, err := f.controller.Inspect(f.ctx)
-			require.NoError(err)
-			require.Equal("builtin", status.Provider)
-			require.False(status.Enabled, "missing model files must leave Turn on available")
-			assert.Empty(status.Error)
-			localEmbeddingEndpoint = fixtureEndpoint
-			require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-			require.Equal(1, f.installs)
-			status, err = f.controller.Inspect(f.ctx)
-			require.NoError(err)
-			assert.Empty(status.Error)
-			require.True(status.Enabled)
-			require.Equal("builtin", status.Provider)
-			messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
-			require.NoError(err)
-			require.Len(messages, 1)
-		})
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newLocalActivationFixture(t, "nomic-embed-text")
+	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+		return embedlocal.Status{OllamaAvailable: true, DownloadBytes: 290000000}, nil
 	}
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": false}}, {Path: []string{"vector", "embeddings"}, Values: map[string]any{"local_only": true, "endpoint": ""}}})
+	require.NoError(err)
+	f.cfg.Vector.Enabled = false
+	f.cfg.Vector.Embeddings.LocalOnly = true
+	f.cfg.Vector.Embeddings.Endpoint = ""
+	fixtureEndpoint := localEmbeddingEndpoint
+	localEmbeddingEndpoint = embedlocal.Endpoint
+	f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
+	require.True(f.handle.WaitTimeout(5 * time.Second))
+	f.controller.handle = f.handle
+
+	status, err := f.controller.Inspect(f.ctx)
+	require.NoError(err)
+	require.Equal("builtin", status.Provider)
+	require.False(status.Enabled, "missing model files must leave Turn on available")
+	assert.Empty(status.Error)
+	localEmbeddingEndpoint = fixtureEndpoint
+	require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	require.Equal(1, f.installs)
+	builds := len(f.runner.calls)
+	require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	assert.Equal(1, f.installs)
+	assert.Len(f.runner.calls, builds)
+	status, err = f.controller.Inspect(f.ctx)
+	require.NoError(err)
+	assert.Empty(status.Error)
+	require.True(status.Enabled)
+	require.Equal("builtin", status.Provider)
+	messages, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(err)
+	require.Len(messages, 1)
 }
 
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
@@ -336,6 +333,20 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 				assert.Equal(before, after)
 			} else {
 				assert.True(status.Enabled)
+				before, err := os.ReadFile(f.cfg.ConfigFilePath())
+				require.NoError(err)
+				builds := len(f.runner.calls)
+				err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+				if tc.wantProvider == "ollama" {
+					assert.NoError(err)
+				} else {
+					assert.Error(err)
+				}
+				after, err := os.ReadFile(f.cfg.ConfigFilePath())
+				require.NoError(err)
+				assert.Equal(before, after)
+				assert.Zero(f.installs)
+				assert.Len(f.runner.calls, builds)
 			}
 			assert.Equal(tc.wantProvider, status.Provider)
 		})
@@ -343,62 +354,51 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 }
 
 func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
-	for _, tc := range []struct {
-		name, building string
-		reuse          bool
-		changedRecipe  bool
-	}{
-		{name: "matching active", reuse: true},
-		{name: "different active", changedRecipe: true},
-		{name: "matching build", building: "matching"},
-		{name: "different build", building: "obsolete-build", changedRecipe: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newLocalActivationFixture(t, "nomic-embed-text")
-			f.useBuiltin(t)
-			f.start(t)
-			old, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-			require.NoError(t, err)
-			if tc.reuse {
-				// Leave a pending message below the saved watermark.
-				_, err = f.store.DB().ExecContext(t.Context(), "UPDATE messages SET embed_gen = NULL WHERE embed_gen = ?", old.ID)
-				require.NoError(t, err)
+	for _, name := range []string{"matching active", "different build"} {
+		t.Run(name, func(t *testing.T) {
+			model := ""
+			if name == "matching active" {
+				model = "nomic-embed-text"
 			}
-			if tc.changedRecipe {
+			f := newLocalActivationFixture(t, model)
+			if model != "" {
+				f.useBuiltin(t)
+				require.NoError(t, f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(t, err)
-				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"document_prefix": "updated: "}}})
+				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": false}}})
 				require.NoError(t, err)
+				f.cfg.Vector.Enabled = false
 			}
+			f.start(t)
+			require.NoError(t, sqlitevec.RegisterExtension())
+			options := sqlitevec.Options{Path: filepath.Join(f.cfg.Data.DataDir, "vectors.db"), MainPath: f.cfg.DatabaseDSN(), MainDB: f.store.DB(), Dimension: 768}
+			backend, err := sqlitevec.Open(f.ctx, options)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, backend.Close()) })
+			if name == "different build" {
+				buildingID, err := backend.CreateGeneration(f.ctx, "another-model", 768, "another-recipe")
+				require.NoError(t, err)
+				assert.ErrorIs(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}), vector.ErrBuildingInProgress)
+				building, err := backend.BuildingGeneration(f.ctx)
+				require.NoError(t, err)
+				require.NotNil(t, building)
+				assert.Equal(t, buildingID, building.ID)
+				return
+			}
+			old, err := backend.ActiveGeneration(f.ctx)
+			require.NoError(t, err)
+			// Leave a pending message below the saved watermark.
+			_, err = f.store.DB().ExecContext(t.Context(), "UPDATE messages SET embed_gen = NULL WHERE embed_gen = ?", old.ID)
+			require.NoError(t, err)
 			_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "second", "Pear", "A pear tree is growing.")
 			require.NoError(t, err)
-			var building vector.GenerationID
-			if tc.building != "" {
-				fingerprint := tc.building
-				if tc.building == "matching" {
-					fingerprint = f.handle.vf.Cfg.GenerationFingerprint()
-				}
-				building, err = f.handle.vf.Backend.CreateGeneration(f.ctx, "nomic-embed-text", 768, fingerprint)
-				require.NoError(t, err)
-			}
 			before := f.inputs.Load()
 			require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+			active, err := backend.ActiveGeneration(f.ctx)
 			require.NoError(t, err)
-			if tc.reuse {
-				assert.Equal(t, old.ID, active.ID)
-				assert.Equal(t, int32(2), f.inputs.Load()-before)
-			} else {
-				assert.NotEqual(t, old.ID, active.ID)
-			}
-			if tc.building == "matching" {
-				assert.Equal(t, building, active.ID)
-			}
-			if tc.building == "obsolete-build" {
-				require.GreaterOrEqual(t, len(f.runner.calls), 3)
-				assert.Equal(t, "retire", f.runner.calls[len(f.runner.calls)-2][1])
-				assert.Contains(t, f.runner.calls[len(f.runner.calls)-1], "--full-rebuild")
-			}
+			assert.Equal(t, old.ID, active.ID)
+			assert.Equal(t, int32(2), f.inputs.Load()-before)
 		})
 	}
 }

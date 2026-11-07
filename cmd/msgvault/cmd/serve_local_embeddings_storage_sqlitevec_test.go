@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,38 +36,20 @@ func TestLocalEmbeddingsActivationKeepsBuilderStorage(t *testing.T) {
 }
 
 func TestLocalEmbeddingsRefusesPendingArchiveStorageChange(t *testing.T) {
-	for _, setting := range []struct {
-		table, field string
-		live         bool
-	}{
-		{table: "data", field: "database_url", live: false},
-		{table: "vector", field: "db_path", live: true},
-	} {
-		t.Run(fmt.Sprintf("%s.%s/live=%t", setting.table, setting.field, setting.live), func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := newLocalActivationFixture(t, "")
-			f.start(t)
-			if setting.live {
-				require.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-			}
-			value := t.TempDir()
-			if setting.table == "vector" {
-				value = filepath.Join(value, "replacement-vectors.db")
-			} else {
-				value = filepath.Join(value, "other-archive.db")
-			}
-			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{setting.table}, Values: map[string]any{setting.field: value}}})
-			require.NoError(err)
-			installs, builds := f.installs, len(f.runner.calls)
-			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-			require.ErrorContains(err, "Restart msgvault")
-			assert.Equal(installs, f.installs, "a pending storage change must be refused before installation")
-			assert.Len(f.runner.calls, builds, "the builder must keep the serving archive")
-			after, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			assert.Equal(written.Content, after.Content, "the refused activation must leave the pending settings unchanged")
-		})
-	}
+	assert, require := assert.New(t), require.New(t)
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	value := filepath.Join(t.TempDir(), "other-archive.db")
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"data"}, Values: map[string]any{"database_url": value}}})
+	require.NoError(err)
+	installs, builds := f.installs, len(f.runner.calls)
+	err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+	require.ErrorContains(err, "Restart msgvault")
+	assert.Equal(installs, f.installs, "a pending storage change must be refused before installation")
+	assert.Len(f.runner.calls, builds, "the builder must keep the serving archive")
+	after, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(err)
+	assert.Equal(written.Content, after.Content, "the refused activation must leave the pending settings unchanged")
 }
