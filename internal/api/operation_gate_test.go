@@ -781,6 +781,8 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/relationships",
 		"/api/v1/relationships/7/calendar",
 		"/api/v1/relationships/7/timeline",
+		"/api/v1/meetings/actions",
+		"/api/v1/meetings/metrics",
 		"/api/v1/search/coverage",
 	}
 	for _, path := range paths {
@@ -857,13 +859,41 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 	assert.Equal(http.StatusNoContent, resp.Code, "status")
 }
 
+func TestOperationGateMiddlewareSkipsMeetingReadsWhileMaintenanceGateHeld(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "sqlite-maintenance")
+	require.True(t, ok, "occupy operation gate")
+	defer release()
+
+	for _, path := range []string{"/api/v1/meetings/actions", "/api/v1/meetings/metrics"} {
+		t.Run(path, func(t *testing.T) {
+			called := false
+			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				assert.False(t, gate.HasRequestWaiters(), "meeting reads must not make maintenance yield")
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(`{}`))
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			assert.True(t, called, "meeting reads should bypass the held maintenance gate")
+			assert.Equal(t, http.StatusNoContent, resp.Code, "status")
+		})
+	}
+}
+
 // TestReadOnlyPostRoutePatternsMatchExplorationRoutes pins the gate's
 // read-only POST table to the registered analytical routes: every POST
 // operation tagged "Exploration" (registerExploreRoute and the search
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image proxy,
 // CardDAV account test, participant completion, evidence preparation, Saved View
-// run, and message tag endpoints are pinned non-Exploration entries. Message tags
+// run, meeting actions and metrics, and message tag endpoints are pinned non-Exploration entries. Message tags
 // acquire the gate in their handler for writes. Each entry must remain a POST route.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	t.Parallel()
@@ -887,7 +917,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(messageTags, "message tags route must exist")
 	require.NotNil(messageTags.Post, "message tags must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, "/api/v1/meetings/actions", "/api/v1/meetings/metrics"}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
