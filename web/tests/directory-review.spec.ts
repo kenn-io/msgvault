@@ -65,7 +65,7 @@ test('History wraps long provenance at phone width', async ({ page }) => {
 });
 
 
-test('address actions align with the first text line while details opens', async ({ page }, testInfo) => {
+test('address actions align with the first text line while details opens', async ({ page }) => {
   await installMixedArchive(page);
   await page.route('**/api/v1/participants/12', route => route.fulfill({ json: {
     id: 12, display_label: 'Archive Person', partial_label: false, identifiers: [
@@ -88,5 +88,4 @@ test('address actions align with the first text line while details opens', async
     expect(positions.actions).toHaveLength(2);
     for (const center of positions.actions) expect(Math.abs(center - positions.text)).toBeLessThanOrEqual(2);
   }
-  await page.screenshot({ path: testInfo.outputPath('address-actions.png') });
 });

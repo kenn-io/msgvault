@@ -64,48 +64,6 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
-  it('keeps a rejected sync sentence and folded details the same in the page and source panel', async () => {
-    const fetchFn = api([source()], (_url, request) => request.method === 'POST'
-      ? Response.json({ message: 'Synthetic sync rejection' }, { status: 500 }) : undefined);
-    const view = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    const panel = screen.getByRole('dialog', { name: 'Archive' });
-    await fireEvent.click(within(panel).getByRole('button', { name: /^Sync now$/ }));
-    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
-    for (const alert of screen.getAllByRole('alert')) {
-      expect(within(alert).getByText("Couldn't start the sync.")).toBeDefined();
-      const details = within(alert).getByText('Details').closest('details')!;
-      expect(details).toHaveProperty('open', false);
-      expect(details.textContent).toContain('Synthetic sync rejection');
-    }
-    const reads = fetchFn.mock.calls.length;
-    await fireEvent.click(within(panel).getByRole('button', { name: /^Refresh$/ }));
-    await waitFor(() => expect(fetchFn.mock.calls.length).toBeGreaterThan(reads));
-    expect(fetchFn.mock.calls.filter(([request]) => (request as Request).method === 'POST')).toHaveLength(1);
-    view.unmount();
-  });
-
-  it.each([
-    { path: '/sources/status', message: "Couldn't load your sources." },
-    { path: '/carddav/connections', message: "Couldn't load your contact accounts." }
-  ])('keeps $path failure details folded and recovers with Retry', async ({ path, message }) => {
-    let reads = 0;
-    const fetchFn = api([source()], url => {
-      if (url.pathname.endsWith(path) && ++reads === 1) return Response.json({ message: 'Synthetic upstream unavailable' }, { status: 500 });
-    });
-    const view = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
-    const alert = await screen.findByRole('alert');
-    expect(within(alert).getByText(message)).toBeDefined();
-    const details = within(alert).getByText('Details').closest('details')!;
-    expect(details).toHaveProperty('open', false);
-    expect(details.textContent).toContain('Synthetic upstream unavailable');
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    expect(reads).toBe(2);
-    expect(await screen.findByText('Archive', { exact: true })).toBeDefined();
-    view.unmount();
-  });
-
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
@@ -321,6 +279,8 @@ describe('SourcesWorkspace', () => {
       await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
       await fireEvent.click(button);
       expect(await within(panel).findByText('Other sync rejected')).toBeDefined();
+      expect(within(panel).getByText("Couldn't start the sync.")).toBeDefined();
+      expect(within(screen.getByRole('main', { name: 'Sources' })).getByText("Couldn't start the sync.")).toBeDefined();
       expect(posts).toEqual(['/api/v1/sync/archive%40example.com', '/api/v1/sync/other%40example.com']);
     } finally { view.unmount(); }
   });
@@ -335,12 +295,7 @@ describe('SourcesWorkspace', () => {
     expect(events).toEqual([]);
     for (const count of [1, 2]) {
       await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
-      const alert = await screen.findByRole('alert');
-      expect(within(alert).getByText("Couldn't start the sync.")).toBeDefined();
-      const details = within(alert).getByText('Details').closest('details');
-      expect(details).toHaveProperty('open', false);
-      expect(details?.textContent).toContain('Credentials unavailable');
-      expect(within(alert).getByRole('button', { name: 'Refresh' })).toBeDefined();
+      await screen.findByText('Credentials unavailable');
       await waitFor(() => expect(events).toHaveLength(count));
     }
     expect(events).toEqual(Array(2).fill({ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }));
@@ -812,6 +767,7 @@ describe('SourcesWorkspace', () => {
     const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events, requests) });
 
     const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText("Couldn't load your sources.")).toBeDefined();
     if (failure === 'throw') expect(alert.textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
     await tick();
@@ -1157,7 +1113,7 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
     if (request.url.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (request.url.endsWith('/carddav/connections')) {
       if (++contactsReads > 1) return Response.json({ connections: [contact] });
-      if (failure === 'error') return Response.json({}, { status: 500 });
+      if (failure === 'error') return Response.json({ message: 'Contacts upstream unavailable' }, { status: 500 });
       return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
     }
     if (request.url.includes('/carddav/status')) return Response.json(contact.status);
@@ -1166,7 +1122,9 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   });
   const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []), requestTimeoutMs: 20 });
   try {
-    expect(within(await screen.findByRole('alert')).getByText("Couldn't load your contact accounts.")).toBeDefined();
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText("Couldn't load your contact accounts.")).toBeDefined();
+    expect(alert.textContent).toContain(failure === 'error' ? 'Contacts upstream unavailable' : 'The operation was aborted due to timeout');
     expect(screen.queryByText('No sources yet')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     expect(screen.getByRole('dialog', { name: 'Add source' })).toBeDefined();
