@@ -86,36 +86,34 @@ func TestDraftComposeEndToEnd(t *testing.T) {
 	assertions.Equal(result.MessageID, matches[0].ID)
 }
 
-func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
-	t.Run("local daemon runtime send", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		clearServerKeyEnvironment(t)
-		a, draft, fake := lineReplyAdapterFixture(t)
-		a.config.Server.DaemonAutoStart = new(false)
-		mux := http.NewServeMux()
-		mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
-		mux.Handle("/", api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
-		server := httptest.NewServer(mux)
-		t.Cleanup(server.Close)
-		rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(a.config.Server.AuthenticationKey()))
-		_, err := daemonRuntimeStore(a.config.Data.DataDir).Write(rt.Record)
-		require.NoError(err)
+func TestLineReplyThroughOwnerCLI(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	clearServerKeyEnvironment(t)
+	a, draft, fake := lineReplyAdapterFixture(t)
+	a.config.Server.DaemonAutoStart = new(false)
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
+	mux.Handle("/", api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(a.config.Server.AuthenticationKey()))
+	_, err := daemonRuntimeStore(a.config.Data.DataDir).Write(rt.Record)
+	require.NoError(err)
 
-		cmd := newSendLineReplyCommand()
-		cmd.SetContext(withStoreResolverConfig(t, a.config))
-		var stdout, stderr bytes.Buffer
-		cmd.SetOut(&stdout)
-		cmd.SetErr(&stderr)
-		cmd.SetArgs([]string{draft.DraftID, "--revision=1", "--json"})
-		require.NoError(cmd.ExecuteContext(cmd.Context()))
-		var sent line.ReplyReceipt
-		require.NoError(json.Unmarshal(stdout.Bytes(), &sent))
-		assert.Equal("sent", sent.Status)
-		assert.True(sent.Accepted)
-		assert.Empty(stderr.String())
-		assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
-	})
+	cmd := newSendLineReplyCommand()
+	cmd.SetContext(withStoreResolverConfig(t, a.config))
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{draft.DraftID, "--revision=1", "--json"})
+	require.NoError(cmd.ExecuteContext(cmd.Context()))
+	var sent line.ReplyReceipt
+	require.NoError(json.Unmarshal(stdout.Bytes(), &sent))
+	assert.Equal("sent", sent.Status)
+	assert.True(sent.Accepted)
+	assert.Empty(stderr.String())
+	assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 }
 
 func TestDraftComposeHTTPPublishesManagedDraft(t *testing.T) {

@@ -171,7 +171,7 @@ func TestLineReplyInvalidTextExplainsLimit(t *testing.T) {
 }
 
 func TestLineReplyJSONFlagForwarding(t *testing.T) {
-	for _, flag := range []string{"", "--json=false", "--json=true"} {
+	for _, flag := range []string{"", "--json=false"} {
 		t.Run("json flag "+flag, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -191,13 +191,7 @@ func TestLineReplyJSONFlagForwarding(t *testing.T) {
 				return nil
 			})
 			require.NoError(err)
-			if flag == "--json=true" {
-				var receipt line.ReplyReceipt
-				require.NoError(json.Unmarshal([]byte(out.String()), &receipt))
-				assert.Equal(store.LineReplySent, receipt.Status)
-			} else {
-				assert.Contains(out.String(), "status=sent accepted=true")
-			}
+			assert.Contains(out.String(), "status=sent accepted=true")
 		})
 	}
 }

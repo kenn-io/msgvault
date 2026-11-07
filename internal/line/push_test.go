@@ -116,14 +116,20 @@ func TestPushMalformedAcceptanceAndErrors(t *testing.T) {
 }
 
 func TestPushRetryAfter(t *testing.T) {
-	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 	for _, status := range []int{429, 503} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			client, fake := newClient(t, line.WithClock(func() time.Time { return now }))
+			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			client, fake := newClient(t, line.WithClock(func() time.Time { return now }), line.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				response, err := http.DefaultTransport.RoundTrip(request)
+				if request.URL.Path == "/v2/bot/message/push" {
+					now = now.Add(time.Minute)
+				}
+				return response, err
+			})}))
 			fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: status, Header: http.Header{"Retry-After": {"180"}}})
 			receipt, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
 			require.Error(t, err)
-			assert.Equal(t, now.Add(3*time.Minute), receipt.RetryAfter)
+			assert.Equal(t, time.Date(2026, 10, 30, 0, 4, 0, 0, time.UTC), receipt.RetryAfter)
 		})
 	}
 }

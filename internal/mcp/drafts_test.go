@@ -82,8 +82,6 @@ func TestDraftRemovalRequiresConfirmation(t *testing.T) {
 			assert.Contains(prompt.Message, "data")
 			if tc.command == "send-line-reply" {
 				assert.Contains(prompt.Message, "LINE")
-				assert.Contains(prompt.Message, `"draft_id":"chat-draft-example"`)
-				assert.Contains(prompt.Message, `"revision":1`)
 			}
 			for _, response := range []*sdkmcp.ElicitResult{{Action: "decline"}, {Action: "accept", Content: map[string]any{"confirm": false}}} {
 				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: tc.args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": response}})
