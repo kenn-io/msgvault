@@ -99,7 +99,7 @@ poll_interval = "30s"
 	require.ErrorContains(err, "reauthorize", "authenticated mismatch must fail closed with stable remediation")
 	for _, table := range []string{"account_identities", "sync_runs", "messages"} {
 		var count int
-		require.NoError(st.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+		require.NoError(st.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count))
 		assert.Zero(count, "profile verification precedes every %s mutation", table)
 	}
 	current, err := st.Store.GetSourceByID(src.ID)

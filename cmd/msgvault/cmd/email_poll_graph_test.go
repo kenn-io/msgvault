@@ -36,7 +36,7 @@ func TestRapidEmailGraphProfileMismatchPrecedesArchiveMutation(t *testing.T) {
 	assert.EqualValues(1, calls.Load())
 	for _, table := range []string{"account_identities", "sync_runs", "messages"} {
 		var count int
-		require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count))
 		assert.Zero(count, "authenticated evidence precedes %s writes", table)
 	}
 }

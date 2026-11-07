@@ -75,7 +75,7 @@ func TestProviderStateReadFollowupAndMove(t *testing.T) {
 	c := NewClient(proxy.URL, func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
 	run := func() {
 		t.Helper()
-		_, err := Import(context.Background(), st, c, Options{Email: "sample@example.test", AttachmentsDir: t.TempDir()}, slog.Default())
+		_, err := Import(t.Context(), st, c, Options{Email: "sample@example.test", AttachmentsDir: t.TempDir()}, slog.Default())
 		require.NoError(t, err)
 	}
 	assert := assert.New(t)
@@ -87,7 +87,7 @@ func TestProviderStateReadFollowupAndMove(t *testing.T) {
 	require.NoError(err)
 	labels := func() []string {
 		t.Helper()
-		rows, err := st.DB().Query(st.Rebind(`SELECT l.source_label_id FROM labels l JOIN message_labels ml ON ml.label_id=l.id WHERE ml.message_id=?`), ids["m1"])
+		rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT l.source_label_id FROM labels l JOIN message_labels ml ON ml.label_id=l.id WHERE ml.message_id=?`), ids["m1"])
 		require.NoError(err)
 		defer func() { _ = rows.Close() }()
 		var result []string
@@ -100,22 +100,22 @@ func TestProviderStateReadFollowupAndMove(t *testing.T) {
 		return result
 	}
 	assert.ElementsMatch([]string{"inbox", "msmail-state:unread", "msmail-state:flagged"}, labels())
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET is_read=TRUE WHERE id=?`), ids["m1"])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_read=TRUE WHERE id=?`), ids["m1"])
 	require.NoError(err)
 	state.Store(map[string]any{})
 	f.put("m1", "archive")
 	run()
 	assert.ElementsMatch([]string{"archive", "msmail-state:unread", "msmail-state:flagged"}, labels())
 	var localRead bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_read FROM messages WHERE id=?`), ids["m1"]).Scan(&localRead))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_read FROM messages WHERE id=?`), ids["m1"]).Scan(&localRead))
 	assert.True(localRead, "provider unread state must not overwrite local reader state")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET is_read=FALSE WHERE id=?`), ids["m1"])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_read=FALSE WHERE id=?`), ids["m1"])
 	require.NoError(err)
 	state.Store(map[string]any{"isRead": true, "flag": map[string]any{"flagStatus": "complete"}})
 	f.put("m1", "archive")
 	run()
 	assert.Equal([]string{"archive"}, labels())
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_read FROM messages WHERE id=?`), ids["m1"]).Scan(&localRead))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_read FROM messages WHERE id=?`), ids["m1"]).Scan(&localRead))
 	assert.False(localRead, "provider read state must not overwrite local reader state")
 }
 
@@ -316,7 +316,7 @@ func TestProviderStateDownloadIntentPrecedesMIMEAndSurvivesPostStoreFailure(t *t
 	require.NoError(err)
 	assert.False(summary.Incomplete)
 	var attachments int
-	require.NoError(reopened.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachments))
+	require.NoError(reopened.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
 	assert.Equal(1, attachments)
 }
 

@@ -66,12 +66,12 @@ func TestAccountPollingOldFinisherCannotClearReplacementRun(t *testing.T) {
 		s.RemoveAccount("sample@example.test")
 		require.NoError(t, s.AddAccount("sample@example.test", "0 0 1 1 *"))
 		err := s.TriggerSync("sample@example.test", false)
-		if !assert.NoError(t, err) {
+		if err != nil {
 			close(first)
 			close(second)
 			<-s.Stop().Done()
-			return
 		}
+		require.NoError(t, err)
 		synctest.Wait()
 		close(first)
 		synctest.Wait()

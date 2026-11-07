@@ -32,7 +32,7 @@ func TestReadCommandCancellationClosesCapturedTransport(t *testing.T) {
 	client := newTestClient(t, addr)
 	client.conn = conn
 	client.logger = slog.Default()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	finished := make(chan error, 1)
 	go func() {

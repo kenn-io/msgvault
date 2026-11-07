@@ -12,7 +12,7 @@ import (
 
 func microsoftStateIDs(tb testing.TB, st *store.Store, message int64) []string {
 	tb.Helper()
-	rows, err := st.DB().Query(st.Rebind(`SELECT l.source_label_id FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=?`), message)
+	rows, err := st.DB().QueryContext(tb.Context(), st.Rebind(`SELECT l.source_label_id FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=?`), message)
 	require.NoError(tb, err)
 	defer func() { _ = rows.Close() }()
 	var ids []string
@@ -59,7 +59,7 @@ func TestMicrosoftMailStateSurvivesMovesCategoriesAndNameCollisions(t *testing.T
 	require.NoError(err)
 	assert.ElementsMatch(want, microsoftStateIDs(t, st, id))
 	var kind, name string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT label_type,name FROM labels WHERE source_id=? AND source_label_id='msmail-state:unread'`), source.ID).Scan(&kind, &name))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT label_type,name FROM labels WHERE source_id=? AND source_label_id='msmail-state:unread'`), source.ID).Scan(&kind, &name))
 	assert.Equal("system", kind)
 	assert.NotEqual("Provider: Unread (2)", name)
 }
@@ -79,7 +79,7 @@ func TestMicrosoftMailStatePartialObservationsPreserveLastKnownProjection(t *tes
 		}
 		_, err := st.ReconcileMicrosoftMailStateContext(t.Context(), id, &inbox, nil, store.MicrosoftMailState{IsRead: &read, FlagStatus: &flag})
 		require.NoError(ht, err)
-		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET is_read=? WHERE id=?`), localRead, id)
+		_, err = st.DB().ExecContext(ht.Context(), st.Rebind(`UPDATE messages SET is_read=? WHERE id=?`), localRead, id)
 		require.NoError(ht, err)
 		observations := hegel.Draw(ht, hegel.Lists(hegel.Integers(0, 11)))
 		for _, observation := range observations[:min(len(observations), 100)] {
@@ -105,7 +105,7 @@ func TestMicrosoftMailStatePartialObservationsPreserveLastKnownProjection(t *tes
 			}
 			assert.ElementsMatch(ht, want, microsoftStateIDs(ht, st, id))
 			var actualLocalRead bool
-			require.NoError(ht, st.DB().QueryRow(st.Rebind(`SELECT is_read FROM messages WHERE id=?`), id).Scan(&actualLocalRead))
+			require.NoError(ht, st.DB().QueryRowContext(ht.Context(), st.Rebind(`SELECT is_read FROM messages WHERE id=?`), id).Scan(&actualLocalRead))
 			assert.Equal(ht, localRead, actualLocalRead, "provider state preserves local reader state")
 		}
 	})

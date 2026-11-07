@@ -220,7 +220,7 @@ func pollingIMAPSource(t *testing.T, st *store.Store, ic *imaplib.Config) *store
 func TestRapidEmailIMAPRefreshesFlagsWithoutBodyDownload(t *testing.T) {
 	for _, rapid := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rapid=%t", rapid), func(t *testing.T) {
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(t, err)
 			counted := &pollingIMAPListener{Listener: ln}
 			user := testutil.ServeIMAPMemServer(t, counted, map[string]int{"INBOX": 1, "Projects": 1}, nil)
@@ -252,7 +252,7 @@ func TestRapidEmailIMAPRefreshesFlagsWithoutBodyDownload(t *testing.T) {
 			run()
 			assert.Equal(bodies, counted.bodies.Load(), "flag refresh of known exact IDs uses metadata only")
 			var rawFlags string
-			require.NoError(st.Store.DB().QueryRow(st.Store.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox='INBOX' AND uid=1`), src.ID).Scan(&rawFlags))
+			require.NoError(st.Store.DB().QueryRowContext(t.Context(), st.Store.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox='INBOX' AND uid=1`), src.ID).Scan(&rawFlags))
 			var flags []string
 			require.NoError(json.Unmarshal([]byte(rawFlags), &flags))
 			if rapid {
@@ -267,7 +267,7 @@ func TestRapidEmailIMAPRefreshesFlagsWithoutBodyDownload(t *testing.T) {
 			testutil.AppendIMAPMessage(t, user, "Later")
 			run()
 			var messages int
-			require.NoError(st.Store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+			require.NoError(st.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 			assert.Equal(3, messages)
 		})
 	}
@@ -290,7 +290,7 @@ func TestRapidEmailIMAPRejectsEffectiveFilterBeforeMutation(t *testing.T) {
 			require.ErrorContains(t, err, "filter")
 			for _, table := range []string{"messages", "sync_runs", "account_identities", "imap_folder_state"} {
 				var n int
-				require.NoError(t, st.Store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
+				require.NoError(t, st.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n))
 				assert.Zero(t, n, "filter preflight precedes %s writes", table)
 			}
 		})
@@ -300,7 +300,7 @@ func TestRapidEmailIMAPRejectsEffectiveFilterBeforeMutation(t *testing.T) {
 func TestRapidEmailIMAPRetryFloorDefersFollowupAfterObservedLimitCancellation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	counted := &pollingIMAPListener{Listener: ln, limitCommand: "LIST"}
 	counted.limitNext.Store(true)
@@ -357,7 +357,7 @@ func TestRapidEmailIMAPRetryFloorDefersFollowupAfterObservedLimitCancellation(t 
 func TestRapidEmailIMAPPositiveLimitReleasesArchiveGateBeforeRetryFloor(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	counted := &pollingIMAPListener{Listener: ln, limitCommand: "LIST", limitDelay: "60"}
 	counted.limitNext.Store(true)
@@ -466,7 +466,7 @@ func TestRapidEmailIMAPPositiveLimitReleasesArchiveGateBeforeRetryFloor(t *testi
 func TestRapidEmailIMAPPartialLimitDefersManualFollowup(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	counted := &pollingIMAPListener{
 		Listener: ln, limitCommand: "UID FETCH", limitBodyOnly: true,
@@ -534,7 +534,7 @@ func TestRapidEmailIMAPPartialLimitDefersManualFollowup(t *testing.T) {
 func TestRapidEmailIMAPPartialLimitGatesNextCommand(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	counted := &pollingIMAPListener{
 		Listener: ln, limitCommand: "UID FETCH", limitBodyOnly: true,

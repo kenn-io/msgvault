@@ -47,7 +47,7 @@ poll_interval = "30s"
 			count := func() int {
 				t.Helper()
 				var n int
-				require.NoError(t, st.Store.DB().QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&n))
+			require.NoError(t, st.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources`).Scan(&n))
 				return n
 			}
 			assert := assert.New(t)
@@ -96,7 +96,7 @@ func TestRapidEmailResolverSelectsCurrentSourceAfterReplacement(t *testing.T) {
 	first, err := rapidEmailSource(f.Store, old.Identifier)
 	require.NoError(err)
 	assert.Equal(old.ID, first.ID)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM sources WHERE id=?`), old.ID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM sources WHERE id=?`), old.ID)
 	require.NoError(err)
 	replacement, err := f.Store.GetOrCreateSource("gmail", old.Identifier)
 	require.NoError(err)
