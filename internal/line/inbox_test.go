@@ -1076,7 +1076,7 @@ func TestProcessorMemberProfileFailureDoesNotStarveOtherMembers(t *testing.T) {
 		f.enqueue(t, Event{Type: "memberJoined", WebhookEventID: "members-joined", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: other}}}}, time.Time{})
 		f.run(t)
 		var name sql.NullString
-		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), UserIdentifier(testChannel, other)).Scan(&name))
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers i WHERE i.participant_id=p.id AND i.identifier_type='line_user_id' AND i.identifier_value=?)`), lineidentity.UserIdentifier(testChannel, other)).Scan(&name))
 		checks.Equal("Example User", name.String)
 		checks.Equal(1, f.api.Count(http.MethodGet, otherPath))
 		var state string

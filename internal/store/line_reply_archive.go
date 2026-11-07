@@ -105,7 +105,8 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		if err != nil {
 			return errors.New("encode LINE push receipt")
 		}
-		return s.setLineMembershipClockTx(ctx, tx, a.SourceID, a.SourceConversationID, lineidentity.UserIdentifier(a.ChannelID, a.BotUserID), true, a.AdmittedAt)
+		_, err = s.setLineMembershipClockTx(ctx, tx, a.SourceID, a.SourceConversationID, lineidentity.UserIdentifier(a.ChannelID, a.BotUserID), true, a.AdmittedAt)
+		return err
 	}
 	build := func([]int64) *MessagePersistData {
 		recipients := []RecipientSet{{Type: meetingSenderRole, ParticipantIDs: []int64{sender}, DisplayNames: []string{senderName}}}

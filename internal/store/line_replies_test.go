@@ -302,7 +302,8 @@ func TestLineReplyCompletionProjectsDirectChatRoster(t *testing.T) {
 			}
 			peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "line_user_id", "channel:2000000001:user:U00000000000000000000000000000002", "Example Peer")
 			require.NoError(err)
-			require.NoError(st.SetLineMembershipContext(t.Context(), draft.ConversationID, peer, "channel:2000000001:user:U00000000000000000000000000000002", true, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)))
+			_, err = st.SetLineMembershipContext(t.Context(), draft.ConversationID, peer, "channel:2000000001:user:U00000000000000000000000000000002", true, time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC))
+			require.NoError(err)
 			require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
 			var count int
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
