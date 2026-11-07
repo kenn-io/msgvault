@@ -1,7 +1,6 @@
 package imessage
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -183,23 +182,6 @@ func TestImportAttachmentSchema(t *testing.T) {
 			assert.Equal(2, summary.MessagesImported)
 		})
 	}
-}
-
-// cancelOnceStored cancels its context as soon as the first message is archived.
-type cancelOnceStored struct {
-	context.Context
-
-	cancel context.CancelFunc
-	db     *sql.DB
-}
-
-func (c cancelOnceStored) Err() error {
-	var n int
-	// Err has no context parameter; this probe only decides when to cancel.
-	if err := c.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM messages`).Scan(&n); err == nil && n > 0 {
-		c.cancel()
-	}
-	return c.Context.Err()
 }
 
 // Unavailable markers must remain visible and recover on an explicit rerun.
