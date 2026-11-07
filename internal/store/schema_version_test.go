@@ -55,6 +55,36 @@ func TestInitSchemaUnlessCurrentPostgreSQLRepairsDefaultCollection(t *testing.T)
 	assert.Equal(t, []int64{f.Source.ID}, collection.SourceIDs)
 }
 
+func TestInitSchemaUnlessCurrentPostgreSQLRepairsAccountIdentityKeys(t *testing.T) {
+	require := require.New(t)
+	if os.Getenv("MSGVAULT_TEST_DB") == "" {
+		t.Skip("requires PostgreSQL")
+	}
+	f := storetest.New(t)
+	require.NoError(f.Store.AddAccountIdentityContext(t.Context(), f.Source.ID, "Alice@Example.com", "manual"))
+	// A previous-release writer omits address_key, leaving its default ''.
+	_, err := f.Store.DB().ExecContext(t.Context(),
+		`INSERT INTO account_identities (source_id, address, source_signal) VALUES ($1, 'alice@example.com', 'header')`, f.Source.ID)
+	require.NoError(err)
+	identities, err := f.Store.ListAccountIdentitiesContext(t.Context(), f.Source.ID)
+	require.NoError(err)
+	require.Len(identities, 2)
+	version, err := f.Store.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	require.Equal(store.SchemaVersion, version)
+
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(t.Context()))
+	identities, err = f.Store.ListAccountIdentitiesContext(t.Context(), f.Source.ID)
+	require.NoError(err)
+	require.Len(identities, 1, "current archives repair case variants left by previous-release writers")
+	assert.Equal(t, "Alice@Example.com", identities[0].Address)
+	assert.Equal(t, "header,manual", identities[0].SourceSignal)
+	var key string
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(),
+		`SELECT address_key FROM account_identities WHERE source_id = $1`, f.Source.ID).Scan(&key))
+	assert.Equal(t, "alice@example.com", key)
+}
+
 func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

@@ -58,8 +58,10 @@ func (s *Store) ValidateSchemaContext(ctx context.Context) error {
 }
 
 // InitSchemaUnlessCurrentContext prepares an archive for writes. Current
-// PostgreSQL archives validate identity and reconcile the default collection
-// without schema DDL. Other archives run the full initializer.
+// PostgreSQL archives validate identity, repair account identity keys, and
+// reconcile the default collection without schema DDL. Seed reconciles and
+// concurrent index retries wait for the full initializer on upgrade,
+// msgvault migrate, or setup. Other archives run the full initializer.
 func (s *Store) InitSchemaUnlessCurrentContext(ctx context.Context) error {
 	if s.IsPostgreSQL() {
 		version, err := s.SchemaVersionContext(ctx)
@@ -68,6 +70,9 @@ func (s *Store) InitSchemaUnlessCurrentContext(ctx context.Context) error {
 		}
 		if version == SchemaVersion {
 			if err := s.validateArchiveUIDContext(ctx); err != nil {
+				return err
+			}
+			if err := s.ensureAccountIdentityAddressKeys(ctx); err != nil {
 				return err
 			}
 			return s.EnsureDefaultCollectionContext(ctx)
