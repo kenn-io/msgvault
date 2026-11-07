@@ -8,7 +8,7 @@
     details?: string;
     actionLabel?: string;
     onaction?: () => void;
-    tone?: 'error' | 'warning' | 'info';
+    tone?: 'error' | 'warning' | 'info' | 'success';
   }
 
   let { message, details = undefined, actionLabel = undefined, onaction = undefined, tone = 'error' }: Props = $props();

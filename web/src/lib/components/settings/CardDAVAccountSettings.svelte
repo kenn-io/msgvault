@@ -242,7 +242,7 @@
 
 <SettingsSection title="CardDAV account">
   {#if error}<InlineNotice message={error} />{/if}
-  {#if status}<InlineNotice tone="info" message={status} />{/if}
+  {#if status}<InlineNotice tone="success" message={status} />{/if}
 
   <form
     onsubmit={(event) => {

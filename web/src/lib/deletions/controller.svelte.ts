@@ -45,7 +45,7 @@ export class DeletionsController {
 
   async cancel(id: string): Promise<void> {
     const { data, error } = await cancelDeletion({ id }, this.#client);
-    if (!data) throw new Error(typeof error?.message === 'string' ? error.message : "Can't cancel the batch.");
+    if (!data) throw new Error(typeof error?.message === 'string' ? error.message : "Can't stop the batch.");
     this.#listController?.abort();
     this.batches = this.batches.map(batch => batch.id === id ? { ...batch, status: data.status } : batch);
   }

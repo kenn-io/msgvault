@@ -460,8 +460,10 @@ body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-
 }
 
 /* A row that holds a status chip beside text lines them up on the text
- * baseline. Removable chips are controls, so their rows center them. */
-:root:root :has(> .kit-chip) {
+ * baseline. An icon has no text baseline, so a row with one (the sidebar's
+ * People item and its count) keeps its own centering. Removable chips are
+ * controls, so their rows center them. */
+:root:root :has(> .kit-chip):not(:has(> svg)) {
   align-items: baseline;
 }
 

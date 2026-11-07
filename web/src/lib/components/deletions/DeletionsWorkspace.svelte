@@ -97,7 +97,7 @@
       confirmCancel = undefined;
       onChanged();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Can't cancel the batch.";
+      error = cause instanceof Error ? cause.message : "Can't stop the batch.";
     } finally { cancelling = false; }
   }
 
@@ -157,7 +157,7 @@
   <Button
     tone="danger"
     surface="soft"
-    label="Cancel batch"
+    label="Stop batch…"
     onclick={() => confirmCancel = batches.find((batch) => batch.id === selectedID)}
   />
 {/snippet}
@@ -216,8 +216,8 @@
 {/if}
 
 {#if confirmCancel}
-  <Dialog title="Cancel deletion batch?" onclose={() => { if (!cancelling) confirmCancel = undefined; }} primaryLabel={cancelling ? 'Cancelling…' : 'Cancel batch'} primaryDisabled={cancelling} onprimary={() => void cancelManifest()}>
-    <p>Cancel deletion of {messageCount(confirmCancel.message_count)} from the source?</p>
+  <Dialog title="Stop deletion batch?" onclose={() => { if (!cancelling) confirmCancel = undefined; }} primaryLabel={cancelling ? 'Stopping…' : 'Stop batch'} primaryDisabled={cancelling} onprimary={() => void cancelManifest()}>
+    <p>Messages not yet deleted stay in the source.</p>
     {#if error}<p role="alert">{error}</p>{/if}
   </Dialog>
 {/if}

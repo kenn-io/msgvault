@@ -241,9 +241,11 @@
           </p>
 
           {#if brief.sentences.length > 0}
+            <!-- Each sentence is its own button, so the word space between them is written out; the markup's
+                 whitespace around a block is dropped. -->
             <p class="paragraph">
-              {#each brief.sentences as sentence (sentence.key)}
-                <button
+              {#each brief.sentences as sentence, index (sentence.key)}
+                {#if index > 0}{' '}{/if}<button
                   type="button"
                   class="sentence"
                   aria-expanded={expandedSentence === sentence.key}

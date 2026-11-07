@@ -93,7 +93,7 @@ describe('DeletionsWorkspace', () => {
       expect(within(alert).getByText("Can't load batch details.")).toBeDefined();
       expect(within(panel).queryByText('Account unavailable')).toBeNull();
       expect(within(panel).getByText('Staged')).toBeDefined();
-      expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
+      expect(within(panel).getByRole('button', { name: 'Stop batch…' })).toBeDefined();
       await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
       expect(await within(panel).findByText('archive@example.com')).toBeDefined();
       expect(within(panel).getByText('1 deleted · 1 failed')).toBeDefined();
@@ -136,20 +136,21 @@ describe('DeletionsWorkspace', () => {
     });
     render(DeletionsWorkspace, { client, controller: new DeletionsController(client), onChanged });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Cancel batch' }));
-    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Cancel deletion batch?' })).getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog', { name: 'Cancel deletion batch?' })).toBeNull();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Stop batch…' }));
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Stop deletion batch?' })).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Stop deletion batch?' })).toBeNull();
     expect(deletes).toBe(0);
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel batch' }));
-    const dialog = screen.getByRole('dialog', { name: 'Cancel deletion batch?' });
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel batch' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop batch…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Stop deletion batch?' });
+    expect(within(dialog).getByText('Messages not yet deleted stay in the source.')).toBeDefined();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Stop batch' }));
     await within(dialog).findByText('Busy');
     expect(onChanged).not.toHaveBeenCalled();
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel batch' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Stop batch' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
     const panel = screen.getByRole('dialog', { name: /^Staged / });
     expect(within(panel).getByText('Cancelled')).toBeDefined();
-    expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
+    expect(within(panel).queryByRole('button', { name: 'Stop batch…' })).toBeNull();
   });
 });
 
@@ -182,7 +183,7 @@ it('opens failed batch details without offering cancellation', async () => {
   render(DeletionsWorkspace, { client, controller: new DeletionsController(client) });
   await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
   await screen.findByText('Old newsletter cleanup');
-  expect(screen.queryByRole('button', { name: 'Cancel batch' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Stop batch…' })).toBeNull();
   expect(screen.getByText('message-a')).toBeDefined();
   expect(screen.getByText('message-b')).toBeDefined();
 });
@@ -228,13 +229,13 @@ it('refreshes execution counts when the open batch completes', async () => {
     await tick();
     const panel = screen.getByRole('dialog', { name: /^Staged / });
     expect(within(panel).getByText('1 deleted · 0 failed')).toBeDefined();
-    expect(within(panel).getByRole('button', { name: 'Cancel batch' })).toBeDefined();
+    expect(within(panel).getByRole('button', { name: 'Stop batch…' })).toBeDefined();
     expect(reads).toBe(1);
     status = 'completed';
     await controller.refresh();
     await tick();
     expect(within(panel).getByText('Deleted')).toBeDefined();
-    expect(within(panel).queryByRole('button', { name: 'Cancel batch' })).toBeNull();
+    expect(within(panel).queryByRole('button', { name: 'Stop batch…' })).toBeNull();
     expect(await within(panel).findByText('2 deleted · 0 failed')).toBeDefined();
     expect(reads).toBe(2);
   } finally { view.unmount(); controller.destroy(); }

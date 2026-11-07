@@ -162,6 +162,7 @@ describe('CardDAVAccountSettings', () => {
       schedule: '0 5 * * *', books: 2
     }));
     expect((await screen.findByRole('status')).textContent).toContain('Connection successful');
+    expect(screen.getByRole('status').getAttribute('data-tone')).toBe('success');
     expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe('https://test.example.test/');
     expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('test-user');
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('test-password');

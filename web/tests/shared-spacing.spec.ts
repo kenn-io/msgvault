@@ -499,6 +499,21 @@ test('selected rows keep one fill and an unbroken accent on stripes and in the r
   await expect(grid.locator('.data-row--selected.data-row--inspected')).toHaveCSS('background-image', /^linear-gradient\(to right, rgb\([^)]+\) 3px, .+ 3px\)$/);
 });
 
+test('the sidebar People item keeps its icon and label centered beside its duplicate count', async ({ page }) => {
+  await page.route('**/api/v1/identity/match-candidates**', (route) => route.fulfill({ json: {
+    candidates: [{ id: 1 }, { id: 2 }, { id: 3 }], limit: 500, offset: 0
+  } }));
+  await page.reload();
+  const item = page.getByRole('button', { name: 'People 3', exact: true });
+  await expect(item.locator('.kit-chip')).toHaveText('3');
+  const offsets = await item.evaluate((element) => {
+    const center = (box: DOMRect) => box.top + box.height / 2;
+    const row = center(element.getBoundingClientRect());
+    return ['svg', '.sidebar__label', '.kit-chip'].map((selector) => Math.abs(center(element.querySelector(selector)!.getBoundingClientRect()) - row));
+  });
+  for (const offset of offsets) expect(offset).toBeLessThanOrEqual(0.5);
+});
+
 test.describe('dark chips', () => {
   test.use({ colorScheme: 'dark' });
 

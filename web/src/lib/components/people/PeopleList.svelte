@@ -367,7 +367,6 @@
   .row [role='gridcell'] {
     display: flex;
     min-height: 52px;
-    box-sizing: border-box;
     align-items: center;
     gap: var(--space-box);
     padding: 0 var(--space-pane);
