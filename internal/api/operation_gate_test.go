@@ -781,6 +781,9 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/relationships",
 		"/api/v1/relationships/7/calendar",
 		"/api/v1/relationships/7/timeline",
+		"/api/v1/meetings/actions",
+		"/api/v1/meetings/context",
+		"/api/v1/meetings/metrics",
 		"/api/v1/search/coverage",
 	}
 	for _, path := range paths {
@@ -863,8 +866,9 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image proxy,
 // CardDAV account test, participant completion, evidence preparation, Saved View
-// run, and message tag endpoints are pinned non-Exploration entries. Message tags
-// acquire the gate in their handler for writes. Each entry must remain a POST route.
+// run, meeting actions, context, and metrics, and message tag endpoints are
+// pinned non-Exploration entries. Message tags acquire the gate in their handler
+// for writes. Each entry must remain a POST route.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
@@ -887,7 +891,11 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(messageTags, "message tags route must exist")
 	require.NotNil(messageTags.Post, "message tags must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath}
+	meetingActionsPath := "/api/v1/meetings/actions"
+	meetingContextPath := "/api/v1/meetings/context"
+	meetingMetricsPath := "/api/v1/meetings/metrics"
+
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
