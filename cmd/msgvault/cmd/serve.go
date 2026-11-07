@@ -211,6 +211,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
 	}
+	if runtime := findAnyDaemonRuntimeContext(cmd.Context(), cfg.Data.DataDir); runtime != nil {
+		return daemonOwnerLockHeldError{url: urlFromDaemonRuntime(runtime)}
+	}
 
 	// Missing provider credentials should not prevent the daemon from serving
 	// read-only HTTP requests against an import-only archive.
