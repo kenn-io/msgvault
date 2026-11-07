@@ -522,13 +522,16 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
-  it.each(['header', 'empty state'])('opens %s source setup and sync history from an empty workspace', async entry => {
+  it.each(['header', 'empty state'])('opens %s source setup without duplicate actions', async entry => {
     const onOpenOperations = vi.fn();
-    render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenOperations });
-    expect(await screen.findByText('No sources yet')).toBeDefined();
-    const emptyState = screen.getByText('No sources yet').parentElement!;
-    if (entry === 'empty state') expect(within(emptyState).getByText('Add an account or import an export to start your archive.')).toBeDefined();
-    const opener = entry === 'header' ? screen.getByRole('heading', { name: 'Sources' }).closest('header')! : emptyState;
+    render(SourcesWorkspace, { client: createCaptureClient(api(entry === 'header' ? [source()] : []), []), onOpenOperations });
+    if (entry === 'header') await screen.findByRole('table', { name: 'Sources' });
+    else {
+      await screen.findByText('No sources yet');
+      expect(screen.getByText('Add an account or import an export to start your archive.')).toBeDefined();
+    }
+    expect(screen.getAllByRole('button', { name: 'Add source' })).toHaveLength(1);
+    const opener = entry === 'header' ? screen.getByRole('heading', { name: 'Sources' }).closest('header')! : screen.getByText('No sources yet').parentElement!;
     await fireEvent.click(within(opener).getByRole('button', { name: 'Add source' }));
     expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByText('msgvault add-account user@example.com')).toBeDefined();
     await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add source' })).getByRole('button', { name: 'Close' }));
