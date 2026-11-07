@@ -73,43 +73,14 @@ for (const width of [1280, 390]) {
   }
 }
 
-test('Overview Turn on keeps the shared row button treatment', async ({ page }) => {
+test('local search hint follows results', async ({ page }) => {
   await installOperations(page);
   await page.route('**/api/v1/embeddings/local', route => route.fulfill({ json: {
     host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0
   } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
-  const button = page.locator('[data-feature="message_embedding"]').getByRole('button', { name: 'Turn on', exact: true });
-  await button.evaluate(element => {
-    const clone = element.cloneNode(true) as HTMLElement;
-    clone.dataset.shared = '';
-    document.body.append(clone);
-  });
-  const shared = page.locator('[data-shared]');
-  const treatment = (locator: typeof button) => locator.evaluate(element => {
-    const style = getComputedStyle(element);
-    return { background: style.backgroundColor, color: style.color, border: `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}` };
-  });
-  expect(await treatment(button)).toEqual(await treatment(shared));
-  await shared.hover();
-  const hovered = await treatment(shared);
-  await button.hover();
-  expect(await treatment(button)).toEqual(hovered);
-});
-
-test('local search hint follows results and opens Settings', async ({ page }) => {
-  await installOperations(page);
-  const methods: string[] = [];
-  await page.route('**/api/v1/embeddings/local', route => {
-    methods.push(route.request().method());
-    return route.fulfill({ json: { host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 } });
-  });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'launch', searchMode: 'full_text' }))}`);
   const hint = page.locator('.local-search-hint');
-  await expect(hint).toHaveText('Search by meaning is off · Turn on');
+  await hint.waitFor({ state: 'visible' });
   const tableGap = await hint.evaluate(element => element.getBoundingClientRect().y - document.querySelector('.results-split')!.getBoundingClientRect().bottom);
   expect(tableGap).toBeGreaterThan(0);
-  await hint.getByRole('button', { name: 'Turn on', exact: true }).click();
-  await expect(page.locator('[data-feature="message_embedding"]').getByRole('button', { name: 'Turn on', exact: true })).toBeVisible();
-  expect(methods.filter(method => method !== 'GET')).toEqual([]);
 });

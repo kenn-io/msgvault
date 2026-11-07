@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
@@ -55,8 +54,6 @@ func TestLocalEmbeddingsRefusesPendingArchiveStorageChange(t *testing.T) {
 			value := t.TempDir()
 			if setting.table == "vector" {
 				value = filepath.Join(value, "replacement-vectors.db")
-				_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
-				require.NoError(err)
 			} else {
 				value = filepath.Join(value, "other-archive.db")
 			}

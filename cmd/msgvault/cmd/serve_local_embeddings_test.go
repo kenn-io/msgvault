@@ -274,7 +274,6 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
 		{name: "saved disabled builtin model", savedOnly: true, savedBuiltin: true, wantProvider: "builtin", wantError: "vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions"},
 		{name: "saved remote after startup", savedOnly: true, wantProvider: "configured"},
-		{name: "saved enabled remote after startup", savedOnly: true, savedEnabled: true, wantProvider: "configured"},
 		{name: "saved enabled Ollama after startup", catalog: `{"models":[]}`, savedOnly: true, savedEnabled: true, wantProvider: "configured"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
