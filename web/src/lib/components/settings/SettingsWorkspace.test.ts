@@ -823,13 +823,16 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
-    if (request.method === 'POST') { phase = 'indexing'; enabled = true; await activation; }
-    else if (phase !== 'idle' && !failed) {
+    if (request.method === 'POST') {
+      phase = 'indexing'; enabled = true;
+      await activation;
+      return Response.json(localStatus({ host: '', download_bytes: 0, running: true }), { status: 202 });
+    } else if (phase !== 'idle' && !failed) {
       failed = true;
       if (failure === 'network') throw new TypeError('Network interrupted');
       return new Response('', { status: 503 });
     }
-    return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }), { status: request.method === 'POST' ? 202 : 200 });
+    return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }));
   });
   render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
   await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
@@ -842,6 +845,7 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();
   await waitFor(() => expect(failed).toBe(true));
+  await screen.findByText(/^Indexing /, {}, { timeout: 3000 });
   phase = 'idle'; enabled = true;
   await screen.findByText('On', {}, { timeout: 3000 });
   expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
