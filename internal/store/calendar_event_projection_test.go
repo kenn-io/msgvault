@@ -159,7 +159,7 @@ func TestCalendarEventBackfillResumesCommittedPagesAfterCancel(t *testing.T) {
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 	requirements.NoError(base.db.QueryRow(`SELECT COUNT(*) FROM calendar_events`).Scan(&count))
 	assertions.Equal(103, count)
-	applied, err = base.IsMigrationAppliedContext(t.Context(), "calendar_event_projection_v1", 1)
+	applied, err = base.IsMigrationAppliedContext(t.Context(), "calendar_event_projection_v1", calendarEventProjectionVersion)
 	requirements.NoError(err)
 	assertions.True(applied)
 	rejectCalendarWrites(t, base)
