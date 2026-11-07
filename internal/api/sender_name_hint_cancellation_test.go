@@ -24,7 +24,7 @@ func TestCLISenderNameHintCancellation(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, path)
 	db, observer := sqlobserve.OpenFile(t, path, nil)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: st, Engine: query.NewSQLiteEngine(db), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	observer.BeforeQuery = func(_ context.Context, statement string) {

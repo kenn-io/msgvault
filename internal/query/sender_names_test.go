@@ -133,9 +133,9 @@ func TestSenderNameHintKnownAddressScope(t *testing.T) {
 	id := env.AddMessage(dbtest.MessageOpts{FromID: sender, Subject: "hintfixture", SourceID: visible, ConversationID: conversation})
 	known := env.AddParticipant(dbtest.ParticipantOpts{Email: new("Al@Example.com"), DisplayName: new("Alex")})
 	otherID := env.AddMessage(dbtest.MessageOpts{FromID: known, Subject: "hintfixture", SourceID: hidden, ConversationID: otherConversation})
-	_, err := env.DB.Exec(`UPDATE messages SET account_address = ?, account_path = 'inbound' WHERE id = ?`, "visible@example.com", id)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET account_address = ?, account_path = 'inbound' WHERE id = ?`, "visible@example.com", id)
 	require.NoError(t, err)
-	_, err = env.DB.Exec(`UPDATE messages SET account_address = ?, account_path = 'inbound' WHERE id = ?`, "hidden@example.com", otherID)
+	_, err = env.DB.ExecContext(t.Context(), `UPDATE messages SET account_address = ?, account_path = 'inbound' WHERE id = ?`, "hidden@example.com", otherID)
 	require.NoError(t, err)
 	nameSender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("visible@example.com"), DisplayName: new("Jordan Lee")})
 	nameID := env.AddMessage(dbtest.MessageOpts{FromID: nameSender, Subject: "hintfixture", SourceID: visible, ConversationID: conversation})
@@ -223,7 +223,7 @@ func TestDuckDBSenderNameHintDelegatesToSQLite(t *testing.T) {
 
 func TestSenderNameHintIndexedParity(t *testing.T) {
 	db := metadataSearchDB(t)
-	_, err := db.Exec(`INSERT INTO participants(id,email_address,display_name) VALUES(2,'alias@example.org','Jordan');
+	_, err := db.ExecContext(t.Context(), `INSERT INTO participants(id,email_address,display_name) VALUES(2,'alias@example.org','Jordan');
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES
  (1,1,'from',NULL),(2,2,'from','ÉCOLE Alias');`)
 	require.NoError(t, err)
