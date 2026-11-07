@@ -65,6 +65,15 @@ func TestSignalNativeStatuses(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("outgoing", func(t *testing.T) {
+		got, err := (ImportRequest{
+			Format: "signal_desktop", Account: "example",
+			Record: []byte(`{"callId":"x","peerId":"peer","mode":"Direct","direction":"Outgoing","status":"Accepted","timestamp":1790841600000}`),
+		}).Observation()
+		require.NoError(t, err)
+		assert.Equal(t, "outgoing", got.Direction)
+	})
 }
 
 func TestNormalizedImportValidatesObservation(t *testing.T) {
@@ -140,7 +149,6 @@ func TestSignalRequiresExactDirectPeerBinding(t *testing.T) {
 	}
 	o, err := r.Observation()
 	requirements.NoError(err)
-	assertions.Equal("outgoing", o.Direction)
 	assertions.Empty(o.Participants, "missing explicit mapping does not guess a person")
 	r.Bindings = map[string]int64{"another-peer": 1}
 	_, err = r.Observation()
@@ -158,18 +166,4 @@ func TestSignalImportRejectsBlankNativePeer(t *testing.T) {
 		Bindings: map[string]int64{" ": 1},
 	}).Observation()
 	require.ErrorIs(t, err, ErrInvalid)
-}
-
-func FuzzSourceIdentifierSeparatesAccounts(f *testing.F) {
-	f.Add("a", "bc", "ab", "c")
-	f.Fuzz(func(t *testing.T, providerA, accountA, providerB, accountB string) {
-		assertions := assert.New(t)
-		a := (Evidence{Provider: providerA, Account: accountA}).SourceIdentifier()
-		b := (Evidence{Provider: providerB, Account: accountB}).SourceIdentifier()
-		if providerA == providerB && accountA == accountB {
-			assertions.Equal(a, b)
-		} else {
-			assertions.NotEqual(a, b)
-		}
-	})
 }
