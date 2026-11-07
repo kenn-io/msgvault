@@ -252,6 +252,12 @@ for (const theme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: 'Display' }).click();
     await expect(page.getByRole('menuitemradio', { name: 'Compact' })).toBeVisible();
     await assertNoViolations(page, `Display menu ${theme}`);
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Save view…' })).toBeFocused();
+    await page.getByRole('button', { name: 'Display' }).click();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeFocused();
+    await page.getByRole('button', { name: 'Display' }).click();
     await expect(page.getByRole('menuitem', { name: /^Size/ })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('menuitem', { name: /^Size/ })).toHaveCount(0);
