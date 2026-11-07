@@ -14,9 +14,10 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 
 export function localSearchLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
   const where = status.host ? ` on ${status.host}` : '';
+  const downloaded = status.provider === 'ollama' ? `Uses Ollama${where}` : where && `Already${where}`;
   return {
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing' } : {}),
-    ...(!status.enabled ? { downloaded: status.provider === 'ollama' ? `Uses Ollama${where}` : where ? `Already${where}` : 'Already downloaded' } : {}),
+    ...(!status.enabled && downloaded ? { downloaded } : {}),
     keepsIndex: '',
   };
 }

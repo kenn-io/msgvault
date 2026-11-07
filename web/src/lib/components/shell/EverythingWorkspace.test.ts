@@ -542,7 +542,7 @@ describe('EverythingWorkspace', () => {
     expect(requests.some((request) => new URL(request.url).pathname.endsWith('/cli/run'))).toBe(false);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
     await screen.findByText('Semantic index: 100% of 2 items.');
 
     expect(coverageCalls).toBe(2);
@@ -577,7 +577,7 @@ describe('EverythingWorkspace', () => {
 
     await screen.findByText('Semantic index is stale.');
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
 
     expect(await screen.findByText('embedding endpoint failed')).toBeDefined();
     expect(screen.getByRole('radio', { name: 'Hybrid' }).getAttribute('aria-checked')).toBe('true');

@@ -770,7 +770,7 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Search by meaning' }));
   try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
     await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
     const row = screen.getByText('Search by meaning').closest('li')!;
     await waitFor(() => {
@@ -824,7 +824,7 @@ it('finishes a first index build interrupted by a daemon restart through Build i
   render(SettingsWorkspace, { client, operationsController });
   const row = (await screen.findByText('Message index')).closest('li')!;
   await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Search by meaning' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
   await waitFor(() => expect(within(row).queryByText('Message index')).toBeNull());
   expect(seen.filter(request => request.path === '/api/v1/cli/run')).toHaveLength(1);
   expect(localPosts(seen)).toEqual([]);
@@ -856,7 +856,7 @@ it.each(['manual', 'scheduled'] as const)('hides the setup failure after a succe
   expect(within(row).getByRole('alert').textContent).toBe('Message index build interrupted.');
   if (recovery === 'manual') {
     await fireEvent.click(await within(row).findByRole('button', { name: 'Build index, Search by meaning' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
   } else {
     running = true;
     await operationsController.refreshStatus();

@@ -47,7 +47,7 @@ describe('SearchCoverage', () => {
     expect(onaction).toHaveBeenCalledWith('retry');
   });
 
-  it('requires explicit confirmation before requesting a full rebuild', async () => {
+  it('requires explicit confirmation before building the index', async () => {
     const onaction = vi.fn();
     render(SearchCoverage, {
       props: { coverage: { ...base, status: 'stale', actions: ['build_index'] }, onaction }
@@ -55,14 +55,14 @@ describe('SearchCoverage', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
     expect(onaction).not.toHaveBeenCalled();
-    expect(screen.getByText('Start a full rebuild of the semantic index?')).toBeDefined();
+    expect(screen.getByText('Build the semantic index?')).toBeDefined();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onaction).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'Confirm full rebuild' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Confirm build' })).toBeNull();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
     expect(onaction).toHaveBeenCalledOnce();
     expect(onaction).toHaveBeenCalledWith('build_index');
   });

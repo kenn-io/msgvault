@@ -10,6 +10,7 @@ describe('local search row', () => {
   it.each<{ name: string; status: LocalEmbeddingsStatus; state: SearchByMeaningState; labels?: Partial<SearchByMeaningLabels> }>([
     { name: 'off on another machine', status: off, state: { kind: 'off', downloadBytes: 290000000, host: 'archive.example.test' } },
     { name: 'off on this machine', status: { ...off, host: '' }, state: { kind: 'off', downloadBytes: 290000000 } },
+    { name: 'downloaded on this machine', labels: { downloaded: undefined }, status: { ...off, host: '', download_bytes: 0 }, state: { kind: 'downloaded' } },
     { name: 'downloaded', labels: { downloaded: 'Already on archive.example.test' }, status: { ...off, download_bytes: 0 }, state: { kind: 'downloaded' } },
     { name: 'Ollama not set up', labels: { downloaded: 'Uses Ollama on archive.example.test' }, status: { ...off, provider: 'ollama' }, state: { kind: 'downloaded' } },
     { name: 'Ollama', labels: { keepsIndex: '' }, status: { ...off, enabled: true, provider: 'ollama' }, state: { kind: 'ollama' } },
