@@ -2319,6 +2319,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		_, err := tx.ExecContext(ctx,
 			`CREATE INDEX IF NOT EXISTS idx_messages_content_changed_at
 			     ON messages(content_changed_at, id)`)
+		if err != nil {
+			return err
+		}
+		// IMAP capture seeks by source so other sources' changes stay out of its apply transaction.
+		// PostgreSQL's planner already bounds the query by source.
+		if !s.IsPostgreSQL() {
+			_, err = tx.ExecContext(ctx,
+				`CREATE INDEX IF NOT EXISTS idx_messages_source_content_changed
+				     ON messages(source_id, content_changed_at)`)
+		}
 		return err
 	}); err != nil {
 		return fmt.Errorf("create content_changed_at index: %w", err)
