@@ -292,13 +292,15 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 	for _, tc := range []struct {
 		name, catalog, wantProvider string
-		savedOnly                   bool
+		savedOnly, savedEnabled     bool
 	}{
 		{name: "local without Ollama API", wantProvider: "configured"},
 		{name: "enabled Ollama", catalog: `{"models":[]}`, wantProvider: "ollama"},
 		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
 		{name: "local with invalid catalog", catalog: `invalid json`, wantProvider: "configured"},
 		{name: "saved remote after startup", savedOnly: true, wantProvider: "configured"},
+		{name: "saved enabled remote after startup", savedOnly: true, savedEnabled: true, wantProvider: "configured"},
+		{name: "saved enabled Ollama after startup", catalog: `{"models":[]}`, savedOnly: true, savedEnabled: true, wantProvider: "configured"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -316,19 +318,31 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			if tc.savedOnly {
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
-				written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embeddings"}, Values: map[string]any{"endpoint": "https://api.example.test/v1"}}})
+				endpoint := "https://api.example.test/v1"
+				if tc.catalog != "" {
+					endpoint = f.cfg.Chat.Server + "/v1"
+				}
+				written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": tc.savedEnabled}}, {Path: []string{"vector", "embeddings"}, Values: map[string]any{"endpoint": endpoint, "model": "custom-model", "dimension": 768}}})
 				require.NoError(err)
 				before = written.Content
 			}
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
-			assert.Equal(tc.wantProvider, status.Provider)
 			if tc.savedOnly {
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=orchard&mode=vector", nil)
+				request.Header.Set("Authorization", "Bearer owner")
+				response := httptest.NewRecorder()
+				f.server.Router().ServeHTTP(response, request)
+				require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+				require.False(status.Enabled, "saved settings cannot enable search before runtime publication")
 				require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 				after, err := os.ReadFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
 				assert.Equal(before, after)
+			} else {
+				assert.True(status.Enabled)
 			}
+			assert.Equal(tc.wantProvider, status.Provider)
 		})
 	}
 }

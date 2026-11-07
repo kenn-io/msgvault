@@ -67,6 +67,9 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	}
 	c.handle.mu.Unlock()
 	configured := cfg.Enabled || cfg.Embeddings.LocalOnly || cfg.Embeddings.Endpoint != "" || cfg.Embeddings.Model != ""
+	if missingRuntime {
+		cfg.Enabled = false
+	}
 	status, err := c.inspect(ctx, embedlocal.Options{DataDir: dir, SkipOllama: configured})
 	if err != nil {
 		return api.LocalEmbeddingsStatus{}, err
@@ -89,7 +92,6 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	select {
 	case <-c.handle.done:
 		if missingRuntime && provider == "builtin" {
-			cfg.Enabled = false
 			if state, detail := c.server.VectorStatus(); state == api.VectorStatusError {
 				startupError = strings.Replace(detail, "local embeddings need setup: run msgvault setup providers --local-embeddings", "Local model files need setup. Turn on to retry.", 1)
 				if startupError == detail {
