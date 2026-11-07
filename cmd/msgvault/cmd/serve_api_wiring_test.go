@@ -447,11 +447,12 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Account", "Your code is 482913")
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Account", "Your code is 482913")
 	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	daemon := httptest.NewServer(srv.Router())
 	t.Cleanup(daemon.Close)
 	// Issue grants through the same HTTP boundary used by the CLI.
@@ -460,7 +461,7 @@ func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
 	t.Cleanup(func() { assertions.NoError(owner.Close()) })
 	issued, err := owner.IssueAgentToken(t.Context(), "masked", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
 	requirements.NoError(err)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages", nil)
 	request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)

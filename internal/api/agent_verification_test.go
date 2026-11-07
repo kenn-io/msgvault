@@ -31,16 +31,17 @@ import (
 func TestAgentVerificationReads(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
+	source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
 
 	requirements.NoError(err)
 	participant, err := st.EnsureParticipant("sender@example.test", "", "example.test")
 	requirements.NoError(err)
 	requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
 	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
 
@@ -54,7 +55,7 @@ func TestAgentVerificationReads(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+path, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
@@ -65,7 +66,7 @@ func TestAgentVerificationReads(t *testing.T) {
 			var masked map[string]json.RawMessage
 			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &masked))
 			for _, credential := range []string{"owner", revealToken} {
-				req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+path, nil)
 				req.RemoteAddr = "127.0.0.1:1234"
 				if credential == "owner" {
 					req.Header.Set("X-Api-Key", credential)
@@ -96,10 +97,11 @@ func TestAgentVerificationReads(t *testing.T) {
 func TestAgentVerificationDetailAlternatives(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "seed", "Seed", "")
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "seed", "Seed", "")
 	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	requestCount := 0
 	tokens := make(map[string]string)
 	for _, mode := range []string{"masked", "reveal"} {
@@ -123,15 +125,15 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			_, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", tc.name, tc.subject, tc.text)
+			_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", tc.name, tc.subject, tc.text)
 			requirements.NoError(err)
 			requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: tc.text, Valid: true}, sql.NullString{String: tc.html, Valid: true}))
 			if tc.name == "read summary" {
-				_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
 				requirements.NoError(err)
 			}
 			if tc.filename != "" {
-				requirements.NoError(st.UpsertAttachment(id, tc.filename, "image/png", tc.url, strings.Repeat("a", 64), 1))
+				requirements.NoError(st.UpsertAttachment(t.Context(), id, tc.filename, "image/png", tc.url, strings.Repeat("a", 64), 1))
 			}
 
 			for _, withEngine := range []bool{true, false} {
@@ -140,7 +142,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 					srv.SetAnalyticsEngine(query.NewEngine(st.DB(), st.IsPostgreSQL()), AnalyticsModeSQL)
 					if tc.filename != "" {
 						var attachmentID int64
-						requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), id).Scan(&attachmentID))
+						requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), id).Scan(&attachmentID))
 						paths = append(paths, fmt.Sprintf("/attachments/%d", attachmentID))
 					}
 				} else {
@@ -150,7 +152,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 				for _, path := range paths {
 					responses := make(map[string]string)
 					for _, mode := range []string{"owner", "masked", "reveal"} {
-						req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
+						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+path, nil)
 						requestCount++
 						req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", requestCount)
 						if mode == "owner" {
@@ -229,15 +231,16 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Your code is 482913", "")
+	source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your code is 482913", "")
 	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	loader := &attachmentBodyLoadCounter{Store: st, loadErr: context.Canceled}
 	srv.store = loader
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
@@ -255,23 +258,24 @@ func TestAgentVerificationFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			st := testutil.NewTestStore(t)
-			source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", tc.subject, tc.text)
+			source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "message", tc.subject, tc.text)
 			requirements.NoError(err)
-			_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet=? WHERE id=?"), tc.snippet, id)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET snippet=? WHERE id=?"), tc.snippet, id)
 			requirements.NoError(err)
 			msg, err := st.GetMessage(id)
 			requirements.NoError(err)
-			_, err = st.DB().Exec(st.Rebind("UPDATE conversations SET title=? WHERE id=?"), tc.title, msg.ConversationID)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title=? WHERE id=?"), tc.title, msg.ConversationID)
 			requirements.NoError(err)
 			if tc.filename != "" {
-				requirements.NoError(st.UpsertAttachment(id, tc.filename, "image/png", "", strings.Repeat("a", 64), 1))
+				requirements.NoError(st.UpsertAttachment(t.Context(), id, tc.filename, "image/png", "", strings.Repeat("a", 64), 1))
 			}
 			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 			srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-			t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+			// Cleanup runs after t.Context() is canceled.
+			t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
@@ -300,11 +304,12 @@ func (s *attachmentBodyLoadCounter) PopulateMessageBodiesContext(ctx context.Con
 func TestAgentVerificationAttachments(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "Ordinary", "Ordinary")
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "message", "Ordinary", "Ordinary")
 	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	counter := &attachmentBodyLoadCounter{Store: st}
 	srv.store = counter
 	requestCount := 0
@@ -358,13 +363,13 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			if tc.parent {
 				subject = "Your verification code is 482913"
 			}
-			_, messageID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", tc.name, subject, "")
+			_, messageID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", tc.name, subject, "")
 			requirements.NoError(err)
-			requirements.NoError(st.UpsertAttachment(messageID, tc.name, tc.mime, "", hash, len(tc.body)))
+			requirements.NoError(st.UpsertAttachment(t.Context(), messageID, tc.name, tc.mime, "", hash, len(tc.body)))
 			if tc.shared {
-				_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-"+tc.name, "Your verification code is 482913", "")
+				_, parentID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "shared-"+tc.name, "Your verification code is 482913", "")
 				requirements.NoError(err)
-				requirements.NoError(st.UpsertAttachment(parentID, tc.name, tc.mime, "", hash, len(tc.body)))
+				requirements.NoError(st.UpsertAttachment(t.Context(), parentID, tc.name, tc.mime, "", hash, len(tc.body)))
 			}
 			backends := []bool{false}
 			endpoints := []string{"/attachments/" + hash + "/content"}
@@ -392,7 +397,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 				}
 				for _, endpoint := range endpoints {
 					for _, mode := range callers {
-						req := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
+						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+endpoint, nil)
 						requestCount++
 						req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", requestCount)
 						if mode == "owner" {
@@ -438,11 +443,12 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-1", "Ordinary", "Ordinary body")
+	source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "shared-1", "Ordinary", "Ordinary body")
 	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	counter := &attachmentBodyLoadCounter{Store: st}
 	srv.store = counter
 	body := "Ordinary shared note"
@@ -451,7 +457,7 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 	requirements.NoError(os.WriteFile(path, []byte(body), 0600))
-	requirements.NoError(st.UpsertAttachment(id, "note.txt", "text/plain", "", hash, len(body)))
+	requirements.NoError(st.UpsertAttachment(t.Context(), id, "note.txt", "text/plain", "", hash, len(body)))
 
 	// Cross a body-loading page boundary; only the last parent is withheld.
 	const total = maxPageSize + 1
@@ -466,15 +472,15 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 		if strings.HasPrefix(statement, "WITH") {
 			args[0] = total
 		}
-		_, err = st.DB().Exec(st.Rebind(statement), args...)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(statement), args...)
 		requirements.NoError(err)
 	}
-	_, err = st.DB().Exec(`UPDATE messages SET subject = 'Your verification code is 482913' WHERE id = (SELECT MAX(id) FROM messages)`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'Your verification code is 482913' WHERE id = (SELECT MAX(id) FROM messages)`)
 	requirements.NoError(err)
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
