@@ -6,10 +6,8 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -91,63 +89,6 @@ func TestInitSchemaContext_FreshSQLiteCommitsTogether(t *testing.T) {
 	require.NoError(t, s.InitSchemaContext(t.Context()))
 	assert.LessOrEqual(t, commits.Load()-before, int64(10), "commit the whole fresh setup together")
 	assert.Equal(t, referenceFreshSchema(t), freshSchemaRows(t, s))
-}
-
-type freshBusyDialect struct {
-	Dialect
-
-	busy chan struct{}
-	once sync.Once
-}
-
-func (d *freshBusyDialect) IsBusyError(err error) bool {
-	busy := d.Dialect.IsBusyError(err)
-	if busy {
-		d.once.Do(func() { close(d.busy) })
-	}
-	return busy
-}
-
-func TestInitSchemaContext_TwoFreshSQLiteInitializers(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	path := filepath.Join(t.TempDir(), "shared.db")
-	locked, busy := make(chan struct{}), make(chan struct{})
-	var once sync.Once
-	a := freshObservedStore(t, path, func(conn *sqlite3.SQLiteConn) error {
-		conn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if action == sqlite3.SQLITE_CREATE_TABLE && table == "communication_services" {
-				once.Do(func() {
-					close(locked)
-					select {
-					case <-busy:
-					case <-ctx.Done():
-					}
-				})
-			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	})
-	b := freshObservedStore(t, path, nil)
-	b.dialect = &freshBusyDialect{Dialect: b.dialect, busy: busy}
-	done := make(chan error, 1)
-	go func() { done <- a.InitSchemaContext(ctx) }()
-	select {
-	case <-locked:
-	case <-ctx.Done():
-		require.NoError(t, ctx.Err())
-	}
-	err := b.InitSchemaContext(ctx)
-	aErr := <-done
-	require.NoError(t, err)
-	require.NoError(t, aErr)
-	select {
-	case <-busy:
-	default:
-		require.FailNow(t, "the second initializer must encounter the first writer")
-	}
-	assert.Equal(t, referenceFreshSchema(t), freshSchemaRows(t, b))
 }
 
 func TestInitSchemaContext_ExistingSQLiteConcurrentWriter(t *testing.T) {

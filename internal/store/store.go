@@ -1506,10 +1506,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			fresh = true
 			return s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx), version)
 		})
-		if err != nil && !s.dialect.IsBusyError(err) {
+		if err != nil {
 			return err
 		}
-		if err == nil && fresh {
+		if fresh {
 			s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
 			return nil
 		}

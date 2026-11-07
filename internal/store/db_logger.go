@@ -186,9 +186,7 @@ func (d *loggedDB) ExecContext(
 ) (sql.Result, error) {
 	query = d.rebind(query)
 	start := time.Now()
-	var executor interface {
-		ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	} = d.DB
+	var executor contextQuerier = d.DB
 	if tx := writableSnapshot(ctx, d.DB); tx != nil {
 		executor = tx.Tx
 	}
