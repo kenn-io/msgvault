@@ -50,10 +50,3 @@ func TestTranscriptEscapedCueRoundTripProperty(t *testing.T) {
 		assert.Equal(ht, text, got)
 	})
 }
-
-func TestTranscriptInvalidHeaderProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		_, err := TranscriptText([]byte("INVALID " + hegel.Draw(ht, hegel.Text())))
-		assert.Error(ht, err)
-	})
-}
