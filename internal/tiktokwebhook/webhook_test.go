@@ -51,7 +51,7 @@ func TestReceiverAcknowledgesDurableRawBytesAndDeduplicates(t *testing.T) {
 	body := []byte("{\"signed\":\"synthetic data\"}\n")
 	h := &Handler{Apps: map[string][]byte{"app-example": []byte("fixture-secret")}, Spool: spool, Now: func() time.Time { return now }}
 	for range 2 {
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/tiktok/app-example", bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhooks/tiktok/app-example", bytes.NewReader(body))
 		req.Header.Set("Tiktok-Signature", signature(now, body))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -99,7 +99,7 @@ func TestReceiverRejectsBeforeAcknowledging(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &Handler{Apps: map[string][]byte{"app-example": []byte("fixture-secret")}, Spool: spool, MaxBodyBytes: tc.maximum, Now: func() time.Time { return now }}
-			req := httptest.NewRequest(http.MethodPost, "/webhooks/tiktok/app-example", bytes.NewReader(body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhooks/tiktok/app-example", bytes.NewReader(body))
 			req.Header.Set("Tiktok-Signature", tc.header)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)

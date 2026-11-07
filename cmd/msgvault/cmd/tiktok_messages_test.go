@@ -86,7 +86,7 @@ func TestTikTokRuntimeRecoversSpoolAndStops(t *testing.T) {
 	})
 	requirements.NoError(err)
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 15*time.Second)
 		defer cancel()
 		assertions.NoError(r.Shutdown(ctx))
 	})

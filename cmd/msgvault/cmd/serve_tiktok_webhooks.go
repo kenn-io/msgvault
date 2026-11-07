@@ -99,7 +99,8 @@ func startTikTokWebhooksWithHandler(ctx context.Context, cfg *config.Config, idl
 		return nil, err
 	}
 	r.spool = spool
-	listener, err := net.Listen("tcp", cfg.TikTokWebhooks.ListenAddr)
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", cfg.TikTokWebhooks.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listen for TikTok webhooks: %w", err)
 	}
