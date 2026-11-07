@@ -43,23 +43,23 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				checks, must := assert.New(t), require.New(t)
 				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
-				defer func() { _ = srv.Shutdown(context.Background()) }()
+				defer func() { _ = srv.Shutdown(t.Context()) }()
 				controller := &localSetupTestController{started: make(chan context.Context, 2), release: make(chan struct{})}
 				srv.SetLocalEmbeddings(controller)
 				post := func(ctx context.Context) *httptest.ResponseRecorder {
-					request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", nil).WithContext(ctx)
+					request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/embeddings/local", nil)
 					response := httptest.NewRecorder()
 					srv.Router().ServeHTTP(response, request)
 					return response
 				}
 				status := func() LocalEmbeddingsStatus {
 					response := httptest.NewRecorder()
-					srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil))
+					srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil))
 					var value LocalEmbeddingsStatus
 					must.NoError(json.Unmarshal(response.Body.Bytes(), &value))
 					return value
 				}
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				must.Equal(http.StatusAccepted, post(ctx).Code)
 				jobCtx := <-controller.started
@@ -96,20 +96,21 @@ func TestLocalEmbeddingsJobLifecycle(t *testing.T) {
 func TestLocalEmbeddingsHostDisplay(t *testing.T) {
 	for _, host := range []string{"localhost:8080", "127.0.0.1:8080", "[::1]:8080", "archive.example.test:8080"} {
 		t.Run(host, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
-			t.Cleanup(func() { require.NoError(t, server.Shutdown(context.Background())) })
+			t.Cleanup(func() { require.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 			server.SetLocalEmbeddings(&localSetupTestController{})
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
 			request.Host = host
 			response := httptest.NewRecorder()
 			server.Router().ServeHTTP(response, request)
-			require.Equal(t, http.StatusOK, response.Code)
+			require.Equal(http.StatusOK, response.Code)
 			var status LocalEmbeddingsStatus
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &status))
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
 			if host == "archive.example.test:8080" {
-				assert.Equal(t, "archive.example.test", status.Host)
+				assert.Equal("archive.example.test", status.Host)
 			} else {
-				assert.Empty(t, status.Host)
+				assert.Empty(status.Host)
 			}
 		})
 	}

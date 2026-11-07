@@ -111,12 +111,9 @@ type localActivationFixture struct {
 	scheduler     *scheduler.Scheduler
 	controller    *localEmbeddingsController
 	runner        *localBuildTestRunner
-	embeddingKey  atomic.Value
 	onEmbedding   func([]string) error
 	inputs        atomic.Int32
 	installs      int
-	refreshes     int
-	runtimeCtx    context.Context
 	ollamaTags    bool
 	ollamaCatalog string
 }
@@ -132,7 +129,7 @@ func writeFakeEmbeddingResponse(w http.ResponseWriter, inputs, dimension int) er
 	return json.MarshalWrite(w, map[string]any{"data": data, "model": "test-model"})
 }
 
-func newLocalActivationFixture(t *testing.T, model, extra string) *localActivationFixture {
+func newLocalActivationFixture(t *testing.T, model string) *localActivationFixture {
 	t.Helper()
 	f := &localActivationFixture{ollamaTags: model != ""}
 	dir := t.TempDir()
@@ -190,7 +187,7 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 	if model != "" {
 		content = "[data]\ndata_dir = " + strconv.Quote(dir) + "\n[vector]\nenabled = true\n[vector.embeddings]\nmodel = " + strconv.Quote(model) + "\ndimension = 768\nendpoint = " + strconv.Quote(endpoint.URL+"/v1") + "\ndocument_prefix = \"document: \"\nquery_prefix = \"query: \"\nmax_input_chars = 1000\n"
 	}
-	content += "\n[chat]\nserver = " + strconv.Quote(endpoint.URL) + "\n" + extra
+	content += "\n[chat]\nserver = " + strconv.Quote(endpoint.URL) + "\n"
 	path := filepath.Join(dir, "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	snapshot, err := config.ReadConfigFile(path)
@@ -212,21 +209,12 @@ func newLocalActivationFixture(t *testing.T, model, extra string) *localActivati
 	f.server = api.NewServerWithOptions(api.ServerOptions{OperationGate: gate, Config: f.cfg, Store: &storeAPIAdapter{store: f.store, config: f.cfg}, OperationHistoryReader: &storeAPIAdapter{store: f.store, config: f.cfg}, Logger: f.state.logger, VectorCfg: f.cfg.Vector})
 	t.Cleanup(func() {
 		<-f.scheduler.Stop().Done()
-		_ = f.server.Shutdown(context.Background())
+		_ = f.server.Shutdown(context.WithoutCancel(t.Context()))
 		if f.handle != nil {
 			f.handle.CloseFeatures(f.state.logger)
 		}
 	})
 	f.controller = &localEmbeddingsController{gate: gate, state: f.state, store: f.store, dbPath: f.cfg.DatabaseDSN(), server: f.server, scheduler: f.scheduler, runner: f.runner,
-		refreshMCP: func(ctx context.Context, state *invocation) error {
-			f.refreshes++
-			f.runtimeCtx = ctx
-			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("refresh MCP context: %w", err)
-			}
-			assert.True(t, state.cfg.Vector.Enabled)
-			return nil
-		},
 		inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 			return embedlocal.Status{DownloadBytes: 290000000}, nil
 		},
@@ -272,7 +260,7 @@ func (f *localActivationFixture) start(t *testing.T) {
 func (f *localActivationFixture) localStatus(t *testing.T) api.LocalEmbeddingsStatus {
 	t.Helper()
 	require := require.New(t)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/embeddings/local", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
 	request.Header.Set("Authorization", "Bearer owner")
 	request.RemoteAddr = "127.0.0.1:1234"
 	response := httptest.NewRecorder()
@@ -286,7 +274,7 @@ func (f *localActivationFixture) localStatus(t *testing.T) api.LocalEmbeddingsSt
 func (f *localActivationFixture) enableThroughAPI(t *testing.T) {
 	t.Helper()
 	f.server.SetLocalEmbeddings(f.controller)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/embeddings/local", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/embeddings/local", nil)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer owner")
 	request.RemoteAddr = "127.0.0.1:1234"
@@ -300,7 +288,7 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 		t.Run(fmt.Sprintf("startup_failed=%t", startupFailed), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			f := newLocalActivationFixture(t, "nomic-embed-text", "")
+			f := newLocalActivationFixture(t, "nomic-embed-text")
 			f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
 				return embedlocal.Status{OllamaAvailable: true, DownloadBytes: 290000000}, nil
 			}
@@ -357,7 +345,7 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			f := newLocalActivationFixture(t, "custom-model", "")
+			f := newLocalActivationFixture(t, "custom-model")
 			f.ollamaTags = tc.catalog != ""
 			f.ollamaCatalog = tc.catalog
 			before, err := os.ReadFile(f.cfg.ConfigFilePath())
@@ -397,7 +385,7 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 		{name: "different build", model: "nomic-embed-text", building: "obsolete-build", changedRecipe: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newLocalActivationFixture(t, tc.model, "")
+			f := newLocalActivationFixture(t, tc.model)
 			f.useBuiltin(t)
 			f.start(t)
 			old, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
@@ -409,7 +397,7 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 				require.NoError(t, err)
 			}
 			var id int64
-			require.NoError(t, f.store.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 			oldVector, err := f.handle.vf.Backend.LoadVector(f.ctx, id)
 			require.NoError(t, err)
 			_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "second", "Pear", "A pear tree is growing.")
@@ -450,7 +438,7 @@ func TestLocalEmbeddingsReusesOrReplacesMessageGeneration(t *testing.T) {
 
 func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
 	require := require.New(t)
-	f := newLocalActivationFixture(t, "", "")
+	f := newLocalActivationFixture(t, "")
 	f.start(t)
 	f.enableThroughAPI(t)
 	require.Eventually(func() bool { return !f.localStatus(t).Running }, 5*time.Second, 10*time.Millisecond)
@@ -462,7 +450,7 @@ func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
 	require.NoError(err)
 	require.Equal(1, result.Succeeded)
 
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/embeddings/plan", strings.NewReader(fmt.Sprintf(`{"operation":"activate","generation_id":%d}`, generation)))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/embeddings/plan", strings.NewReader(fmt.Sprintf(`{"operation":"activate","generation_id":%d}`, generation)))
 	request.Header.Set("Authorization", "Bearer owner")
 	request.Header.Set("Content-Type", "application/json")
 	request.RemoteAddr = "127.0.0.1:1234"
@@ -478,12 +466,11 @@ func TestLocalEmbeddingsActivationPlannerUsesPublishedRecipe(t *testing.T) {
 func TestLocalEmbeddingsBuildFailureKeepsSavedProvider(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	f := newLocalActivationFixture(t, "", "")
+	f := newLocalActivationFixture(t, "")
 	f.start(t)
 	f.runner.failBuild = true
 	err := f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
 	require.EqualError(err, "Message index build interrupted.")
-	assert.Equal(1, f.refreshes, "published MCP capabilities refresh even when the initial build fails")
 	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
 	saved, err := config.LoadConfigFile(snapshot, f.cfg.HomeDir)
@@ -503,7 +490,7 @@ func TestLocalEmbeddingsSetupDeadlineCancelsWaitingInitialization(t *testing.T) 
 		require := require.New(t)
 		controller := &localEmbeddingsController{handle: &vectorInitHandle{done: make(chan struct{})}}
 		finished := make(chan error, 1)
-		go func() { finished <- controller.Enable(context.Background(), func(api.LocalEmbeddingsStatus) {}) }()
+		go func() { finished <- controller.Enable(t.Context(), func(api.LocalEmbeddingsStatus) {}) }()
 		synctest.Wait()
 		time.Sleep(24 * time.Hour)
 		require.ErrorIs(<-finished, context.DeadlineExceeded)
@@ -514,7 +501,7 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 	for _, failure := range []string{"download", "config conflict", "provider conflict"} {
 		t.Run(failure, func(t *testing.T) {
 			require := require.New(t)
-			f := newLocalActivationFixture(t, "", "")
+			f := newLocalActivationFixture(t, "")
 			f.start(t)
 			expected, err := os.ReadFile(f.cfg.ConfigFilePath())
 			require.NoError(err)
@@ -532,6 +519,7 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 				return install(ctx, opts)
 			}
 			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+			require.Nil(f.handle.vf)
 			if failure == "download" {
 				require.ErrorContains(err, "connection interrupted")
 			} else {
@@ -576,7 +564,7 @@ func (f *localActivationFixture) useBuiltin(t *testing.T) {
 
 func TestLocalEmbeddingsPublishesScheduledBuild(t *testing.T) {
 	t.Setenv("VOYAGE_API_KEY", "synthetic-unused-key")
-	f := newLocalActivationFixture(t, "", "")
+	f := newLocalActivationFixture(t, "")
 	f.start(t)
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 	assert.Equal(t, 1, f.installs)
@@ -590,8 +578,8 @@ func TestLocalEmbeddingsPublishesScheduledBuild(t *testing.T) {
 	assert.Len(t, results, 2)
 }
 
-func TestLocalEmbeddingsFailureAfterConfigWriteOffersRetry(t *testing.T) {
-	f := newLocalActivationFixture(t, "", "")
+func TestLocalEmbeddingsFailureBeforeConfigWriteOffersRetry(t *testing.T) {
+	f := newLocalActivationFixture(t, "")
 	f.start(t)
 	endpoint := localEmbeddingEndpoint
 	f.controller.install = func(ctx context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
@@ -615,8 +603,8 @@ func TestLocalEmbeddingsFailureAfterConfigWriteOffersRetry(t *testing.T) {
 	require.NoError(t, err)
 	saved, err := f.cfg.ReloadConfigFile(snapshot)
 	require.NoError(t, err)
-	assert.True(t, saved.Vector.Enabled)
-	assert.True(t, saved.Vector.Embeddings.LocalOnly)
+	assert.False(t, saved.Vector.Enabled)
+	assert.False(t, saved.Vector.Embeddings.LocalOnly)
 	localEmbeddingEndpoint = endpoint
 	f.controller.install = func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error) {
 		return embedlocal.Installation{}, nil
@@ -628,7 +616,7 @@ func TestLocalEmbeddingsFailureAfterConfigWriteOffersRetry(t *testing.T) {
 }
 
 func TestLocalEmbeddingsFirstSetupUsesOllama(t *testing.T) {
-	f := newLocalActivationFixture(t, "", "")
+	f := newLocalActivationFixture(t, "")
 	f.ollamaTags = true
 	f.start(t)
 	f.controller.inspect = func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
@@ -656,7 +644,7 @@ func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
 	for _, setting := range []string{"preprocessing", "account scope"} {
 		t.Run(setting, func(t *testing.T) {
 			require := require.New(t)
-			f := newLocalActivationFixture(t, "", "")
+			f := newLocalActivationFixture(t, "")
 			f.start(t)
 			edit := config.TableEdit{Path: []string{"vector", "preprocess"}, Values: map[string]any{"strip_quotes": false}}
 			if setting == "account scope" {
@@ -677,7 +665,7 @@ func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
 }
 
 func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *testing.T) {
-	f := newLocalActivationFixture(t, "", "")
+	f := newLocalActivationFixture(t, "")
 	f.ollamaTags = true
 	f.start(t)
 	credentials, err := providercredentials.Read(f.cfg.TokensDir())
@@ -691,8 +679,8 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	require.NoError(t, err)
 	saved, err := f.cfg.ReloadConfigFile(snapshot)
 	require.NoError(t, err)
-	require.True(t, saved.Vector.Enabled)
-	require.Equal(t, f.cfg.Chat.Server+"/v1", saved.Vector.Embeddings.Endpoint)
+	require.False(t, saved.Vector.Enabled)
+	require.Empty(t, saved.Vector.Embeddings.Endpoint)
 	_, err = providercredentials.Delete(f.cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID)
 	require.NoError(t, err)
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))

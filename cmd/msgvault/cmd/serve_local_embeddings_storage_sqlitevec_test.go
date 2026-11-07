@@ -18,8 +18,7 @@ import (
 func TestLocalEmbeddingsActivationKeepsBuilderStorage(t *testing.T) {
 	for _, storage := range []string{"separate home and config", "saved path after activation"} {
 		t.Run(storage, func(t *testing.T) {
-			f := newLocalActivationFixture(t, "", "")
-			want := 1
+			f := newLocalActivationFixture(t, "")
 			if storage == "separate home and config" {
 				content, err := os.ReadFile(f.cfg.ConfigFilePath())
 				require.NoError(t, err)
@@ -44,12 +43,19 @@ func TestLocalEmbeddingsActivationKeepsBuilderStorage(t *testing.T) {
 				require.NoError(t, err)
 				_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
 				require.NoError(t, err)
-				want = 2
 			}
-			require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+			installs, builds := f.installs, len(f.runner.calls)
+			err := f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+			if storage == "saved path after activation" {
+				require.ErrorContains(t, err, "Restart msgvault")
+				assert.Equal(t, installs, f.installs)
+				assert.Len(t, f.runner.calls, builds)
+			} else {
+				require.NoError(t, err)
+			}
 			results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 10})
 			require.NoError(t, err)
-			assert.Len(t, results, want)
+			assert.Len(t, results, 1)
 		})
 	}
 }

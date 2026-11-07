@@ -241,34 +241,35 @@ func ValidateConfigTableEdits(snapshot ConfigFile, edits []TableEdit) error {
 	return err
 }
 
-// PreviewConfigTableEdits validates table edits and returns the resulting configuration without publishing it.
-func PreviewConfigTableEdits(snapshot ConfigFile, edits []TableEdit) (*Config, error) {
+// PreviewConfigTableEdits validates table edits and returns the candidate without publishing it.
+func PreviewConfigTableEdits(snapshot ConfigFile, edits []TableEdit) (ConfigFile, error) {
 	if snapshot.LogicalPath == "" || snapshot.Path == "" || snapshot.ETag != configETag(snapshot.Content) {
-		return nil, errors.New("config edit snapshot is invalid")
+		return ConfigFile{}, errors.New("config edit snapshot is invalid")
 	}
 	candidate, err := applyTableEdits(snapshot.Content, edits)
 	if err != nil {
-		return nil, err
+		return ConfigFile{}, err
 	}
 	mode := snapshot.Mode.Perm()
 	if !snapshot.Exists {
 		mode = 0o600
 	}
-	loaded, err := LoadConfigFile(ConfigFile{
+	candidateFile := ConfigFile{
 		LogicalPath: snapshot.LogicalPath,
 		Path:        snapshot.Path,
 		Content:     candidate,
 		ETag:        configETag(candidate),
 		Mode:        mode,
 		Exists:      true,
-	}, "")
+	}
+	loaded, err := LoadConfigFile(candidateFile, "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
+		return ConfigFile{}, fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
 	}
 	if err := validateEditableCandidate(loaded); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
+		return ConfigFile{}, fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
 	}
-	return loaded, nil
+	return candidateFile, nil
 }
 
 // RestoreConfigFile restores before only while the live target is the exact

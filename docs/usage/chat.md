@@ -653,8 +653,10 @@ All `group_by` values return a JSON array of objects with these fields:
 | `AttachmentCount` | Number of attachments |
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
-Embedded MCP servers register vector tools from the backends supplied by their
-caller. Daemon-backed MCP reads one authenticated health response during
+The native daemon MCP listener always registers semantic and similar-message search tools. Before text search is enabled, these tools return the daemon's unavailable response. Turning on search by meaning enables them without restarting MCP.
+
+Other embedded MCP servers register vector tools from the backends supplied by their
+caller. Standalone daemon-backed MCP reads one authenticated health response during
 startup and enables the full text search schema only when the response reports
 `text_enabled: true` with API schema `2.28.0` or newer. It registers
 `search_visual_attachments` only when `visual_enabled: true`, the same lane

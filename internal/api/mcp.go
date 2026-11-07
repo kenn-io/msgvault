@@ -18,20 +18,15 @@ type nativeMCPHandlers struct {
 
 func isNativeMCPPath(path string) bool { return path == "/mcp" || path == "/mcp/writes" }
 
-// InstallMCPHandlers publishes independent catalogs and closes any replaced handlers.
+// InstallMCPHandlers installs independent catalogs once, after the daemon starts.
 // The caller retains cleanup ownership if installation fails.
 func (s *Server) InstallMCPHandlers(read, write http.Handler, closeHandlers func()) error {
 	s.nativeMCP.Lock()
+	defer s.nativeMCP.Unlock()
 	if s.nativeMCP.closed {
-		s.nativeMCP.Unlock()
 		return errors.New("native MCP handlers closed")
 	}
-	previous := s.nativeMCP.close
 	s.nativeMCP.read, s.nativeMCP.write, s.nativeMCP.close = read, write, closeHandlers
-	s.nativeMCP.Unlock()
-	if previous != nil {
-		previous()
-	}
 	return nil
 }
 

@@ -21,18 +21,17 @@ import (
 )
 
 type localEmbeddingsController struct {
-	gate       api.OperationGate
-	state      *invocation
-	store      *store.Store
-	dbPath     string
-	handle     *vectorInitHandle
-	server     *api.Server
-	scheduler  *scheduler.Scheduler
-	runner     api.CLIRunner
-	refreshMCP func(context.Context, *invocation) error
-	openers    []visual.StreamOpener
-	inspect    func(context.Context, embedlocal.Options) (embedlocal.Status, error)
-	install    func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
+	gate      api.OperationGate
+	state     *invocation
+	store     *store.Store
+	dbPath    string
+	handle    *vectorInitHandle
+	server    *api.Server
+	scheduler *scheduler.Scheduler
+	runner    api.CLIRunner
+	openers   []visual.StreamOpener
+	inspect   func(context.Context, embedlocal.Options) (embedlocal.Status, error)
+	install   func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
 }
 
 type localEmbeddingsConflictError struct{ cause error }
@@ -154,9 +153,19 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if lane.Action != planActionEnable {
 		return errors.New(lane.Reason)
 	}
-	nextConfig, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
+	candidate, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
 	if err != nil {
 		return err
+	}
+	nextConfig, err := c.state.cfg.ReloadConfigFile(candidate)
+	if err != nil {
+		return err
+	}
+	c.handle.mu.Lock()
+	live := c.handle.vf
+	c.handle.mu.Unlock()
+	if live != nil && nextConfig.Vector.DBPath != live.Cfg.DBPath {
+		return errors.New("Restart msgvault to use the new vector database path.") //nolint:revive,staticcheck // Displayed directly as a recovery message in Settings.
 	}
 	useOllama := !lane.local
 	var builtinEndpoint string
@@ -193,11 +202,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	}
 	// Apply saved text settings together while preserving the live image lane.
 	runtimeConfig := *c.state.cfg
-	c.handle.mu.Lock()
-	if c.handle.vf != nil {
-		runtimeConfig.Vector = c.handle.vf.Cfg
+	if live != nil {
+		runtimeConfig.Vector = live.Cfg
 	}
-	c.handle.mu.Unlock()
 	multimodal := runtimeConfig.Vector.Multimodal
 	runtimeConfig.Vector = nextConfig.Vector
 	runtimeConfig.Vector.Multimodal = multimodal
@@ -212,20 +219,23 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if !useOllama {
 		vecCfg.Embeddings.Endpoint = builtinEndpoint
 	}
-	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
-		if errors.Is(err, config.ErrConfigConflict) {
-			return localEmbeddingsConflictError{cause: err}
-		}
-		return err
-	}
 	var vf *vectorFeatures
-	freshRuntime := c.handle.vf == nil
+	freshRuntime := live == nil
 	if freshRuntime {
 		vf, err = setupVectorFeaturesForRun(nextCtx, c.store, c.dbPath, false, c.openers...)
 	} else {
-		vf, err = c.handle.vf.configureText(nextCtx, &state, vecCfg)
+		vf, err = live.configureText(nextCtx, &state, vecCfg)
 	}
 	if err != nil {
+		return err
+	}
+	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
+		if freshRuntime {
+			_ = vf.Close()
+		}
+		if errors.Is(err, config.ErrConfigConflict) {
+			return localEmbeddingsConflictError{cause: err}
+		}
 		return err
 	}
 	c.handle.mu.Lock()
@@ -235,12 +245,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if freshRuntime {
 		publishVisualVectorFeatures(c.store, c.server, c.scheduler, vf, &state)
 	}
-	defer func() {
-		if c.refreshMCP != nil {
-			publicationErr = errors.Join(publicationErr, c.refreshMCP(nextCtx, &state))
-		}
-		result = errors.Join(result, publicationErr)
-	}()
+	defer func() { result = errors.Join(result, publicationErr) }()
 
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
 	fingerprint := vf.Cfg.GenerationFingerprint()
