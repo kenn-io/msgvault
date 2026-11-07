@@ -57,17 +57,14 @@ func (r *importRun) responseReadKey(id string) string {
 	return fmt.Sprintf("meta.poll_read:%d:%s", r.source.ID, id)
 }
 
-func (r *importRun) loadResponseRead(ctx context.Context, id string, legacy responseRead) (responseRead, error) {
+func (r *importRun) loadResponseRead(ctx context.Context, id string) (responseRead, error) {
 	blob, found, err := r.imp.store.GetArchiveMarker(ctx, r.responseReadKey(id))
 	if err != nil || !found {
-		return legacy, err
+		return responseRead{}, err
 	}
 	var read responseRead
 	if json.Unmarshal([]byte(blob), &read) != nil || read.SyncID < 0 || read.Request < 0 {
 		return responseRead{}, errors.New("invalid polling response marker")
-	}
-	if legacy.newer(read) {
-		return legacy, nil
 	}
 	return read, nil
 }

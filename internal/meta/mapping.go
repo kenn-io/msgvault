@@ -16,8 +16,6 @@ const rawFormat = "facebook-comment-json"
 const objectMetadataVersion = 1
 
 type objectMetadata struct {
-	BodyReadRequest    int    `json:"body_read_request,omitempty"`
-	BodySyncID         int64  `json:"body_sync_id,omitempty"`
 	Version            int    `json:"version"`
 	AppID              string `json:"app_id"`
 	PageID             string `json:"page_id"`
@@ -86,9 +84,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 			return errors.New("unsupported comment object metadata version")
 		}
 		if r.state != nil {
-			// Read legacy metadata too, so already cached checkpoints retain
-			// their ordering when polling switches to operational markers.
-			recorded, err := r.loadResponseRead(ctx, obj.ID, responseRead{SyncID: storedMeta.BodySyncID, Request: storedMeta.BodyReadRequest})
+			recorded, err := r.loadResponseRead(ctx, obj.ID)
 			if err != nil {
 				return err
 			}
