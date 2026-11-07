@@ -57,7 +57,7 @@ var stableIdentityScoringDefinitions = []toolDefinition{
 
 func (h *handlers) getIdentityScoringStatus(ctx context.Context, _ toolRequest) (*toolResult, error) {
 	result, err := h.identityScoring.GetIdentityScoringStatus(ctx)
-	return mcpIdentityScoringResult(result, err)
+	return mcpDaemonResult(result, err)
 }
 
 func (h *handlers) scoreIdentityMatches(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -94,7 +94,7 @@ func (h *handlers) scoreIdentityMatches(ctx context.Context, req toolRequest) (*
 		return confirmationToolError(err)
 	}
 	result, err := h.identityScoring.ScoreIdentityMatches(ctx, limit)
-	response, responseErr := mcpIdentityScoringResult(result, err)
+	response, responseErr := mcpDaemonResult(result, err)
 	if responseErr == nil && result != nil && result.ErrorData != nil {
 		response.isError = true
 	}
@@ -127,15 +127,5 @@ func (h *handlers) listIdentityJudgments(ctx context.Context, req toolRequest) (
 		beforeID = value
 	}
 	result, err := h.identityScoring.ListIdentityJudgments(ctx, candidateID, limit, beforeID)
-	return mcpIdentityScoringResult(result, err)
-}
-
-func mcpIdentityScoringResult(value any, err error) (*toolResult, error) {
-	if err != nil {
-		return toolErrorResult(daemonclient.SafeMCPError(err).Error()), nil
-	}
-	if value == nil {
-		return nil, newInternalError("identity scoring daemon response", errors.New("empty response"))
-	}
-	return jsonResult(value)
+	return mcpDaemonResult(result, err)
 }

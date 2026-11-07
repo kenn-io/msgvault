@@ -3082,6 +3082,9 @@ account. The optional identity, attribute, profile, and vCard flags can copy
 personal records that have no message in the subset; read the command's
 warning before sharing its output.
 
+Profile copying leaves out delivery policies, their audit rows and the delivery
+revision, so every copied person is `draft_only` in the subset.
+
 ---
 
 ## export-token
@@ -3641,6 +3644,20 @@ it. See [People, Profiles, and Source Identities](/docs/usage/people/) for the
 shipped definitions and complete workflow.
 
 ---
+
+## person delivery policies
+
+On unreleased `main`, owners can read, set, and clear delivery policies with daemon API schema 3.48.0 or newer. Use the canonical `vcard_uid` from `person get` or `person list --json`.
+
+```bash
+msgvault person read-delivery-policy <person-uid> --endpoint alice@example.test --json
+msgvault person set-delivery-policy <person-uid> send_allowed --endpoint alice@example.test --expected-revision 3 --reason "Owner approval" --json
+msgvault person clear-delivery-policy <person-uid> --endpoint alice@example.test --expected-revision 4 --reason "Return to inherited policy" --json
+```
+
+Omit `--endpoint` to manage the person default. Setting that default to `send_allowed` requires `--person-all-routes`, which sends `scope_acknowledgement: "person_all_routes"`. Set accepts `draft_only` or `send_allowed`. Both writes require `--expected-revision` from the latest read and `--reason`; clear also accepts `--person-all-routes`.
+
+Read prints stored and effective policies, source, revision, and any extra reason. Writes print the resulting state. `--json` returns the state for read and the before/after receipt with any audit entry for writes. See [contact delivery policies](api-server.md#contact-delivery-policies) for approval binding and inheritance rules.
 
 ## person agenda
 
@@ -4548,6 +4565,14 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
+On unreleased `main`, contact delivery policy tools require daemon API schema 3.48.0. The owner can
+inspect `get_delivery_policy`. Expose `set_delivery_policy` and
+`clear_delivery_policy` with `msgvault mcp --allow-delivery-policy-writes`. Each MCP edit requires client
+confirmation of its exact scope and revision. Delegated draft credentials do
+not gain these tools. See [contact delivery policies](api-server.md#contact-delivery-policies)
+for inheritance, exact targets, and the admission boundary. These tools do not
+send messages or change existing drafts.
+
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` requires a daemon with API schema 3.9.0 or newer and serves scoped read tools, up to six delegated draft tools, and calendar tools over stdio. Tool selection follows the token's permissions and granted sources. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
@@ -4686,6 +4711,9 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
 auto-started local daemons default to read-only. See the
 [MCP guide](usage/chat.md#native-daemon-endpoints) for client setup and confirmation.
+
+Owner-authenticated HTTP requests can edit [contact delivery policies](api-server.md#contact-delivery-policies).
+MCP policy writes need `msgvault mcp --allow-delivery-policy-writes`.
 
 ---
 

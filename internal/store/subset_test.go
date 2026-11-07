@@ -1740,6 +1740,19 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 	require.NoError(err)
 	person, _, err := source.CreatePersonFromParticipantContext(ctx, 2)
 	require.NoError(err)
+	_, err = source.AddPersonContactPointContext(ctx, person.ID, PersonContactPointInput{
+		AddressKind: ContactAddressEmail, OriginalValue: "approved@example.test",
+		Envelope: ValueEnvelopeInput{Source: ProvenanceUser},
+	})
+	require.NoError(err)
+	state, err := source.GetDeliveryPolicyContext(ctx, DeliveryPolicyQuery{PersonUID: person.VCardUID})
+	require.NoError(err)
+	_, err = source.SetDeliveryPolicyContext(ctx, DeliveryPolicyWrite{
+		PersonUID: person.VCardUID, ExpectedRevision: state.Revision,
+		Policy: DeliverySendAllowed, ScopeAcknowledgement: DeliveryPersonAllRoutes,
+		Actor: "subset-test", Reason: "synthetic approval",
+	})
+	require.NoError(err)
 
 	fingerprint := strings.Repeat("a", 64)
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
@@ -1845,6 +1858,8 @@ func TestCopySubsetExcludesPersonEnrichmentSuppressionAndOperations(t *testing.T
 		"person_enrichment_person_day_counters",
 		"person_enrichment_day_counters",
 		"person_enrichment_profile_accounting",
+		"delivery_policies",
+		"delivery_policy_audit",
 	}
 	sourceDB, err := sql.Open(sqliteutil.DriverName(), srcDB)
 	require.NoError(err)

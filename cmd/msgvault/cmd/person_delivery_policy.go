@@ -1,0 +1,122 @@
+package cmd
+
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"fmt"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
+)
+
+func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
+	var endpoint, reason string
+	var revision int64
+	var jsonOutput, allRoutes bool
+	use := operation + "-delivery-policy <person-uid>"
+	if operation == "set" {
+		use += " <policy>"
+	}
+	command := &cobra.Command{
+		Use: use,
+		Short: map[string]string{
+			"read":  "Read a person's delivery policy",
+			"set":   "Set a person's delivery policy",
+			"clear": "Clear a person's delivery policy override",
+		}[operation],
+		Long: "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\n",
+		Args: cobra.ExactArgs(map[string]int{"read": 1, "set": 2, "clear": 1}[operation]),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, _, err := OpenHTTPStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = client.Close() }()
+			supported, err := client.SupportsAPISchemaVersion(cmd.Context(), deliveryPolicyMinAPISchemaVersion)
+			if err != nil {
+				return fmt.Errorf("check delivery policy capability: %w", err)
+			}
+			if !supported {
+				return fmt.Errorf("delivery policies require daemon API schema %s or newer; upgrade the daemon", deliveryPolicyMinAPISchemaVersion)
+			}
+			var result any
+			var state *store.DeliveryPolicyState
+			if operation == "read" {
+				state, err = client.GetDeliveryPolicy(cmd.Context(), store.DeliveryPolicyQuery{PersonUID: args[0], Endpoint: endpoint})
+				result = state
+			} else {
+				write := store.DeliveryPolicyWrite{PersonUID: args[0], Endpoint: endpoint, ExpectedRevision: revision, Reason: reason}
+				if allRoutes {
+					write.ScopeAcknowledgement = store.DeliveryPersonAllRoutes
+				}
+				var receipt *store.DeliveryPolicyReceipt
+				if operation == "set" {
+					write.Policy = store.DeliveryPolicy(args[1])
+					receipt, err = client.SetDeliveryPolicy(cmd.Context(), write)
+				} else {
+					receipt, err = client.ClearDeliveryPolicy(cmd.Context(), write)
+				}
+				if err == nil {
+					state, result = &receipt.After, receipt
+				}
+			}
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
+			}
+			stored := "-"
+			if state.StoredPolicy != nil {
+				stored = string(*state.StoredPolicy)
+			}
+			source := state.InheritanceSource
+			switch source {
+			case "system_default":
+				source = "Default"
+			case "person_default":
+				source = "Person"
+			case "contact_method":
+				source = "Address"
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			header := "PERSON UID\tENDPOINT\tREVISION\tSTORED POLICY\tEFFECTIVE POLICY\tSOURCE"
+			row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s", textutil.SanitizeTerminal(state.PersonUID), textutil.SanitizeTerminal(state.Endpoint), state.Revision, textutil.SanitizeTerminal(stored), textutil.SanitizeTerminal(string(state.EffectivePolicy)), textutil.SanitizeTerminal(source))
+			reason := state.Reason
+			switch reason {
+			case "draft_required", "explicit_approval", "explicit_person_default":
+				reason = ""
+			case "detached_endpoint":
+				reason = "Address no longer saved"
+			case "ambiguous_endpoint":
+				reason = "Address shared by multiple people"
+			case "binding_changed":
+				reason = "Address changed; approve again"
+			case "approval_predates_address":
+				reason = "Address added after approval"
+			}
+			if reason != "" {
+				header += "\tREASON"
+				row += "\t" + textutil.SanitizeTerminal(reason)
+			}
+			_, _ = fmt.Fprintln(writer, header)
+			_, _ = fmt.Fprintln(writer, row)
+			return writer.Flush()
+		},
+	}
+	command.Flags().StringVar(&endpoint, "endpoint", "", "Saved email address; omit for the person default")
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
+	if operation != "read" {
+		command.Long += "Writes return before/after states."
+		command.Flags().Int64Var(&revision, "expected-revision", 0, "Revision from read-delivery-policy")
+		command.Flags().StringVar(&reason, "reason", "", "Owner's reason for the change")
+		command.Flags().BoolVar(&allRoutes, "person-all-routes", false, "Acknowledge approval of the person default across routes")
+		_ = command.MarkFlagRequired("expected-revision")
+		_ = command.MarkFlagRequired("reason")
+	} else {
+		command.Long += "Writes use the revision from read-delivery-policy."
+	}
+	return command
+}
