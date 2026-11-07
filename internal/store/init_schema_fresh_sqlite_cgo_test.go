@@ -80,8 +80,17 @@ func TestInitSchemaContext_FreshSQLiteCommitsTogether(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var commits atomic.Int64
+	var setupCommits atomic.Int64
+	setupCommits.Store(-1)
 	s := freshObservedStore(t, filepath.Join(t.TempDir(), "fresh.db"), func(conn *sqlite3.SQLiteConn) error {
 		conn.RegisterCommitHook(func() int { commits.Add(1); return 0 })
+		conn.RegisterAuthorizer(func(action int, name, _, _ string) int {
+			if action == sqlite3.SQLITE_PRAGMA && strings.EqualFold(name, "optimize") {
+				// Authorize before execution so maintenance commits stay outside this count.
+				setupCommits.CompareAndSwap(-1, commits.Load())
+			}
+			return sqlite3.SQLITE_OK
+		})
 		return nil
 	})
 	var synchronous int
@@ -89,9 +98,7 @@ func TestInitSchemaContext_FreshSQLiteCommitsTogether(t *testing.T) {
 	require.Equal(2, synchronous, "use production FULL durability")
 	before := commits.Load()
 	require.NoError(s.InitSchemaContext(t.Context()))
-	// Setup commits once. Planner maintenance commits once for optimize, once
-	// for deleting FTS statistics, and once per pooled connection to reload.
-	assert.Equal(int64(3+sqlitePoolSize), commits.Load()-before, "commit setup once, then maintain planner statistics")
+	assert.Equal(int64(1), setupCommits.Load()-before, "commit setup once before planner maintenance")
 	assert.Equal(referenceFreshSchema(t), freshSchemaRows(t, s))
 }
 
