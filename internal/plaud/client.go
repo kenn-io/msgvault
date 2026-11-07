@@ -56,13 +56,17 @@ func Connect(ctx context.Context, endpoint string, handler auth.OAuthHandler) (*
 	if err != nil {
 		return nil, fmt.Errorf("connect to plaud MCP: %w", err)
 	}
+	return newSession(cs), nil
+}
+
+func newSession(cs *mcp.ClientSession) *Session {
 	return &Session{
 		cs:             cs,
 		limiter:        rate.NewLimiter(2, 2),
 		retryDelay:     time.Second,
 		rateLimitDelay: 5 * time.Second,
 		maxRetryDelay:  time.Minute,
-	}, nil
+	}
 }
 
 func (s *Session) Close() error {
@@ -167,16 +171,15 @@ func (s *Session) call(ctx context.Context, name string, args map[string]any) (*
 		if err == nil {
 			return res, nil
 		}
-		attempts, delay := retryAttempts, s.retryDelay
+		attempts := retryAttempts
 		if rateLimited {
 			s.slowDown()
-			attempts, delay = rateLimitAttempts, s.rateLimitDelay
+			attempts = rateLimitAttempts
 		}
 		if !transient || attempt+1 >= attempts {
 			return nil, fmt.Errorf("plaud tool %s: %w", name, err)
 		}
-		delay = min(delay*time.Duration(1<<attempt), s.maxRetryDelay)
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(s.backoff(attempt, rateLimited))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -184,6 +187,14 @@ func (s *Session) call(ctx context.Context, name string, args map[string]any) (*
 		case <-timer.C:
 		}
 	}
+}
+
+func (s *Session) backoff(attempt int, rateLimited bool) time.Duration {
+	delay := s.retryDelay
+	if rateLimited {
+		delay = s.rateLimitDelay
+	}
+	return min(delay*time.Duration(1<<attempt), s.maxRetryDelay)
 }
 
 // slowDown halves the call rate for the rest of the session once Plaud

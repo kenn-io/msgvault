@@ -118,6 +118,21 @@ func TestRateLimitedCallsRetryLongerAndSlowTheSession(t *testing.T) {
 	}
 }
 
+func TestRetryBackoffOutlastsRateLimitWindow(t *testing.T) {
+	s := newSession(nil)
+	var transient, rateLimited []time.Duration
+	for attempt := range retryAttempts - 1 {
+		transient = append(transient, s.backoff(attempt, false))
+	}
+	for attempt := range rateLimitAttempts - 1 {
+		rateLimited = append(rateLimited, s.backoff(attempt, true))
+	}
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, transient)
+	assert.Equal(t, []time.Duration{
+		5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute,
+	}, rateLimited)
+}
+
 func TestRateLimitSlowdownStopsAtFloor(t *testing.T) {
 	s := &Session{limiter: rate.NewLimiter(0.3, 2)}
 	s.slowDown()
