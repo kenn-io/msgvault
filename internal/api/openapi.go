@@ -409,7 +409,8 @@ import (
 // Docbank owns document processing.
 // 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
 // registered service labels to current contact points, and identity keys to observations.
-const APISchemaVersion = "4.1.0"
+// 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
+const APISchemaVersion = "4.2.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

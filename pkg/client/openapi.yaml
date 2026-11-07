@@ -7377,8 +7377,21 @@ components:
       type: object
     MediaAttachmentSearch:
       properties:
+        actual_mode:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/SearchCoverage"
+          description: Coverage of delivered mirrored versions, excluding files awaiting upload
+        degradations:
+          items:
+            type: string
+          type: array
         error:
           $ref: "#/components/schemas/ErrorResponse"
+        partial:
+          type: boolean
+        requested_mode:
+          type: string
         results:
           items:
             $ref: "#/components/schemas/MediaAttachmentResult"
@@ -7386,6 +7399,11 @@ components:
         truncated:
           type: boolean
       required:
+        - requested_mode
+        - actual_mode
+        - coverage
+        - partial
+        - degradations
         - results
         - truncated
       type: object
@@ -24258,7 +24276,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: Lexical mode; semantic and hybrid are unavailable
+        - description: "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only"
           in: query
           name: mode
           schema:

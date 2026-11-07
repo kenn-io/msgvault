@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"time"
@@ -24,26 +25,49 @@ type MediaAttachmentResult struct {
 }
 
 type MediaAttachmentSearch struct {
-	Results   []MediaAttachmentResult `json:"results"`
-	Truncated bool                    `json:"truncated"`
-	Error     *ErrorResponse          `json:"error,omitempty"`
+	RequestedMode string                      `json:"requested_mode"`
+	ActualMode    string                      `json:"actual_mode"`
+	Coverage      docbankmedia.SearchCoverage `json:"coverage" doc:"Coverage of delivered mirrored versions, excluding files awaiting upload"`
+	Partial       bool                        `json:"partial"`
+	Degradations  []string                    `json:"degradations"`
+	Results       []MediaAttachmentResult     `json:"results"`
+	Truncated     bool                        `json:"truncated"`
+	Error         *ErrorResponse              `json:"error,omitempty"`
 }
 
 // SearchAttachments searches delivered attachment versions in bounded batches.
-// Results from each batch of 4,096 are interleaved by their position within
-// that batch, so order across batches is approximate. Versions enter batches
-// newest message first, so equal-rank hits from older batches are dropped first
-// at the result limit. Only visible messages appear.
-// A failed first batch returns an error. A failed later batch logs the failure,
-// keeps earlier batches' hits, and marks the search truncated without an error.
-func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
-	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
+// Batch ranks are interleaved and mapped only to currently visible messages.
+func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query, mode string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
+	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}, RequestedMode: mode, ActualMode: "unavailable", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Degradations: []string{}}
+	fail := func(err error) (MediaAttachmentSearch, error) {
+		response.Error = attachmentSearchError(err)
+		return response, err
+	}
 	versions, err := reader.Store.DocumentSearchVersions(ctx, reader.Destination, scope)
 	if err != nil {
 		response.Error = &ErrorResponse{Error: "server_error", Message: "Attachment search is unavailable."}
 		return response, err
 	}
+	profile := reader.SearchProfile
+	if mode == "lexical" {
+		profile = suppliedTranscriptProfile
+	}
+	actual := mode
+	if profile == "" {
+		// Lexical spans profiles but still requires a registered profile name.
+		profile = suppliedTranscriptProfile
+		if mode == "semantic" {
+			return fail(errMediaSearchMode)
+		}
+		if mode == "hybrid" {
+			actual = "lexical"
+			response.Partial = true
+			response.Degradations = append(response.Degradations, "semantic_unconfigured")
+		}
+	}
+	request := docbankmedia.SearchRequest{Query: query, Mode: actual, ContentFirst: true, Profile: profile, Limit: limit}
 	if len(versions) == 0 {
+		response.Partial = response.Partial || mode != "lexical"
 		return response, nil
 	}
 	fence, err := reader.Client.VaultFence(remoteCtx, versions)
@@ -51,8 +75,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 		response.Error = attachmentSearchError(err)
 		return response, err
 	}
-	// Docbank lexical search spans profiles but requires a registered name.
-	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile, Limit: limit, Fence: &fence}
+	request.Fence = &fence
 	var hits []docbankmedia.SearchHit
 	batchSucceeded := false
 	for chunk := range slices.Chunk(versions, docbankmedia.MaxSearchVersions) {
@@ -65,8 +88,27 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 			}
 			slog.WarnContext(ctx, "search mirrored attachments", "code", attachmentSearchError(err).Error)
 			response.Truncated = true
+			response.Partial = true
+			response.Coverage.State = "incomplete"
 			break
 		}
+		if !batchSucceeded {
+			response.ActualMode = report.ActualMode
+			response.Coverage.State = report.Coverage.State
+		} else {
+			if response.ActualMode != report.ActualMode {
+				response.ActualMode = "lexical"
+			}
+			if response.Coverage.State != report.Coverage.State {
+				response.Coverage.State = "incomplete"
+			}
+		}
+		response.Coverage.BindingRequired = response.Coverage.BindingRequired || report.Coverage.BindingRequired
+		response.Coverage.ScopedDocuments += report.Coverage.ScopedDocuments
+		response.Coverage.CompleteDocuments += report.Coverage.CompleteDocuments
+		response.Degradations = append(response.Degradations, report.Degradations...)
+		response.Partial = response.Partial || mode != report.ActualMode || len(response.Degradations) > 0 ||
+			(report.ActualMode != "lexical" && report.Coverage.State != "complete")
 		batchSucceeded = true
 		hits = append(hits, report.Results...)
 		response.Truncated = response.Truncated || report.Truncated
@@ -117,6 +159,18 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 // Other failures keep Docbank's code.
 func attachmentSearchError(err error) *ErrorResponse {
 	_, failure := mediaSearchFailure(err)
+	if remote, ok := errors.AsType[*docbankmedia.HTTPError](err); ok {
+		switch remote.Reason {
+		case "processing_profile_unavailable":
+			failure.Error = remote.Reason
+		case "processing_consent_required":
+			return &ErrorResponse{Error: remote.Reason, Message: "Attachment search is unavailable."}
+		}
+	}
+	if failure.Error == "media_search_mode_unavailable" || failure.Error == "processing_profile_unavailable" {
+		failure.Message = "Set integrations.docbank.attachment_search_profile to an existing Docbank processing profile with embeddings for semantic attachment search."
+		return &failure
+	}
 	if failure.Error == "invalid_media_search" {
 		return &ErrorResponse{Error: failure.Error, Message: "Attachment search rejected this query."}
 	}

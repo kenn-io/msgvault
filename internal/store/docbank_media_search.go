@@ -100,9 +100,8 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 }
 
 // Docbank detects document formats from bytes, including generic or absent
-// MIME types. Keep images and recordings outside the document fence.
-const documentSearchFormats = `d.mime_type NOT LIKE 'image/%'
- AND d.mime_type NOT LIKE 'audio/%'
+// MIME types. Include image OCR and interpretation renditions, but exclude recordings.
+const documentSearchFormats = `d.mime_type NOT LIKE 'audio/%'
  AND d.mime_type NOT LIKE 'video/%'`
 
 const documentSearchDelivered = `d.state = 'delivered' AND ` + documentSearchFormats
