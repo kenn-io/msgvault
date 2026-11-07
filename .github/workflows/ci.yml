@@ -19,7 +19,7 @@ jobs:
         go-version-file: go.mod
         cache: false
     - name: Restore Go caches (baseline)
-      uses: kenn-io/msgvault/.github/actions/go-cache-restore@main
+      uses: kenn-io/msgvault/.github/actions/go-cache-restore@f2b96b0926d8d23a20bb64d159ee7260295e4856
       with:
         group: linux-test
       if: matrix.variant == 'baseline'
@@ -116,7 +116,7 @@ jobs:
         go-version-file: go.mod
         cache: false
     - name: Restore Go caches (baseline)
-      uses: kenn-io/msgvault/.github/actions/go-cache-restore@main
+      uses: kenn-io/msgvault/.github/actions/go-cache-restore@f2b96b0926d8d23a20bb64d159ee7260295e4856
       with:
         group: linux-test
       if: matrix.variant == 'baseline'
@@ -157,7 +157,7 @@ jobs:
         go-version-file: go.mod
         cache: false
     - name: Restore Go caches (baseline)
-      uses: kenn-io/msgvault/.github/actions/go-cache-restore@main
+      uses: kenn-io/msgvault/.github/actions/go-cache-restore@f2b96b0926d8d23a20bb64d159ee7260295e4856
       with:
         group: linux-test
       if: matrix.variant == 'baseline'
@@ -273,7 +273,7 @@ jobs:
         go-version-file: go.mod
         cache: false
     - name: Restore Go caches (baseline)
-      uses: kenn-io/msgvault/.github/actions/go-cache-restore@main
+      uses: kenn-io/msgvault/.github/actions/go-cache-restore@f2b96b0926d8d23a20bb64d159ee7260295e4856
       with:
         group: windows
       if: matrix.variant == 'baseline'
@@ -359,7 +359,7 @@ jobs:
         go-version-file: go.mod
         cache: false
     - name: Restore Go caches (baseline)
-      uses: kenn-io/msgvault/.github/actions/go-cache-restore@main
+      uses: kenn-io/msgvault/.github/actions/go-cache-restore@f2b96b0926d8d23a20bb64d159ee7260295e4856
       with:
         group: windows
       if: matrix.variant == 'baseline'
@@ -424,7 +424,7 @@ jobs:
         go-version-file: go.mod
         cache: false
     - name: Restore Go caches (baseline)
-      uses: kenn-io/msgvault/.github/actions/go-cache-restore@main
+      uses: kenn-io/msgvault/.github/actions/go-cache-restore@f2b96b0926d8d23a20bb64d159ee7260295e4856
       with:
         group: linux-test
       if: matrix.variant == 'baseline'
