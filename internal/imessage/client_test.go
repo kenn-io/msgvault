@@ -420,7 +420,9 @@ func TestImportCancellationIsNotAnAttachmentFailure(t *testing.T) {
 	conn, err := c.db.Conn(t.Context())
 	require.NoError(err)
 	require.NoError(conn.Raw(func(raw any) error {
-		raw.(*sqlite3.SQLiteConn).RegisterAuthorizer(func(action int, table, _, _ string) int {
+		sqliteConn, ok := raw.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
 			if action == sqlite3.SQLITE_READ && table == "attachment" {
 				cancel()
 			}
