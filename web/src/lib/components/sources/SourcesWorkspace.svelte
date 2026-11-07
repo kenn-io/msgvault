@@ -15,6 +15,7 @@
   import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
   import { EmptyState } from '@kenn-io/kit-ui';
   import { operationStateChip } from '../../operations/labels';
   import CommandLine from './CommandLine.svelte';
@@ -66,6 +67,7 @@
   let statusError = $state('');
   let contactsError = $state('');
   let triggerError = $state('');
+  let triggerTimedOut = $state(false);
   let triggerErrorSourceID = $state<number>();
   let triggering = $state<string>();
   $effect(() => {
@@ -126,9 +128,9 @@
     const statusRevisions = new Map(Array.from(contactControllers.values(), controller => [controller, controller.statusRevision]));
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
-      const { data } = await generatedListCardDAVConnections({ ...client, signal });
+      const { data, error: responseError } = await generatedListCardDAVConnections({ ...client, signal });
       if (signal.aborted || disposed) return;
-      if (!data) throw new Error();
+      if (!data) throw new Error(messageFor(responseError, "Can't load contacts."));
       connections = data.connections.filter((connection) => !connection.orphaned);
       const names = new Set(connections.map(connection => connection.connection));
       for (const [name, controller] of contactControllers) {
@@ -147,8 +149,8 @@
         void controller.refreshFromConnection(connection.status, statusRevisions.get(controller));
       }
       contactsError = '';
-    } catch {
-      if (!request.signal.aborted && !disposed) contactsError = "Can't load contacts.";
+    } catch (cause) {
+      if (!request.signal.aborted && !disposed) contactsError = cause instanceof Error && cause.message ? cause.message : "Can't load contacts.";
     } finally {
       if (contactsRequest === request) {
         contactsRequest = undefined;
@@ -314,6 +316,7 @@
     if (!source.can_sync || triggering) return;
     triggering = source.identifier;
     triggerError = '';
+    triggerTimedOut = false;
     triggerErrorSourceID = source.id;
     const signal = AbortSignal.timeout(requestTimeoutMs);
     try {
@@ -337,7 +340,8 @@
       await load();
     } catch (cause) {
       if (disposed) return;
-      triggerError = signal.aborted
+      triggerTimedOut = signal.aborted;
+      triggerError = triggerTimedOut
         ? 'Starting sync timed out. Check source status before trying again.'
         : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
       schedulePoll(MIN_POLL_MS);
@@ -406,17 +410,11 @@
       {/if}
     {/snippet}
   </PageHeader>
-  {#if statusError}<div class="notice notice--error" role="alert">
-      <span>{statusError}</span>
-      <Button size="sm" surface="soft" label="Retry" onclick={refresh} />
-    </div>{/if}
-  {#if contactsError}<div class="notice notice--error" role="alert"><span>{contactsError}</span><Button size="sm" label="Retry" onclick={refresh} /></div>{/if}
+  {#if statusError}<InlineNotice message="Couldn't load your sources." details={statusError} actionLabel="Retry" onaction={refresh} />{/if}
+  {#if contactsError}<InlineNotice message="Couldn't load your contact accounts." details={contactsError} actionLabel="Retry" onaction={refresh} />{/if}
   {#if lockStatusStale}<div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
-  {#if triggerError}<div class="notice notice--error" role="alert">
-      <span>{triggerError}</span>
-      <Button size="sm" surface="soft" label="Refresh" onclick={refresh} />
-    </div>{/if}
+  {#if triggerError}<InlineNotice message={triggerTimedOut ? triggerError : "Couldn't start the sync."} details={triggerTimedOut ? undefined : triggerError} actionLabel="Refresh" onaction={refresh} />{/if}
   {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
     {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" description="Add an account or import an export to start your archive.">
@@ -642,9 +640,5 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-subtle);
-  }
-  .notice--error {
-    border-color: var(--accent-red);
-    color: var(--text-danger);
   }
 </style>

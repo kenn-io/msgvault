@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Chip } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Chip } from '@kenn-io/kit-ui';
   import { onMount, onDestroy } from 'svelte';
   import { getSettings } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
@@ -114,7 +114,8 @@
           {/each}
         </ul>
         {#if latest?.item_errors?.length}
-          <details class="item-errors"><summary class="muted">{latest.item_errors.length.toLocaleString()} {latest.item_errors.length === 1 ? 'item' : 'items'} failed</summary><ul>{#each latest.item_errors as item (`${item.source_message_id}:${item.phase}:${item.created_at}`)}<li>{item.error_message}</li>{/each}</ul></details>
+          {@const itemErrors = latest.item_errors}
+          <Disclosure variant="plain" class="item-errors">{#snippet summary()}{itemErrors.length.toLocaleString()} {itemErrors.length === 1 ? 'item' : 'items'} failed{/snippet}<ul>{#each itemErrors as item (`${item.source_message_id}:${item.phase}:${item.created_at}`)}<li>{item.error_message}</li>{/each}</ul></Disclosure>
         {/if}
       </section>
     {/if}
@@ -122,11 +123,11 @@
 </SidePanel>
 
 <style>
-  .item-errors summary {
+  :global(.item-errors .kit-disclosure__summary) {
     cursor: pointer;
   }
 
-  .item-errors ul {
+  :global(.item-errors) ul {
     display: grid;
     gap: var(--space-1);
     margin: var(--space-2) 0 0;
