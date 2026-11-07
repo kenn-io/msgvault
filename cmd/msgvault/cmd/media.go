@@ -75,6 +75,9 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 				return fmt.Errorf("render media search status: %w", err)
 			}
 			for _, degradation := range response.Attachments.Degradations {
+				if degradation == "semantic_unconfigured" {
+					degradation = "Semantic search is not configured."
+				}
 				if _, err := fmt.Fprintln(command.OutOrStdout(), textutil.SanitizeTerminal(degradation)); err != nil {
 					return fmt.Errorf("render attachment degradation: %w", err)
 				}

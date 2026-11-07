@@ -1023,6 +1023,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
+		{"MediaAttachmentResult", "excerpt"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},

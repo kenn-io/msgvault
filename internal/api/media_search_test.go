@@ -998,7 +998,7 @@ func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
 	require.NotNil(response.Attachments.Error)
 	assert.Empty(response.Attachments.Results)
 	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
-	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding images, audio, and video")
+	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding audio and video")
 	assert.Contains(response.Attachments.Error.Message, "--person")
 	assert.False(response.Attachments.Truncated)
 	assert.Empty(f.documentRequests)
@@ -1252,6 +1252,7 @@ func TestMediaSearchDocumentModes(t *testing.T) {
 			assert.Empty(response.Attachments.Results[0].Excerpt)
 			require.NotNil(response.RecordingsError)
 			assert.Equal("media_search_mode_unavailable", response.RecordingsError.Error)
+			assert.Equal("Recordings support lexical search only.", response.RecordingsError.Message)
 		})
 	}
 }
