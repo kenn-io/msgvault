@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -51,31 +52,33 @@ func (c *fakeCallCommandClient) SummarizeCalls(_ context.Context, q store.CallQu
 }
 
 func TestCallsCommandThroughDaemon(t *testing.T) {
-	t.Run("continue after rejected Signal row", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		client := &fakeCallCommandClient{importErrorAt: 2, importError: &daemonclient.APIError{
-			Status: 422, Message: "invalid call observation: Signal deleted call",
-		}}
-		command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
-			return client, func() {}, nil
-		}})
-		command.SilenceUsage = true
-		var output, stderr bytes.Buffer
-		command.SetOut(&output)
-		command.SetErr(&stderr)
-		command.SetIn(strings.NewReader(
-			`{"format":"signal_desktop","account":"example","record":{"callId":"one","mode":"Direct","status":"Accepted","timestamp":1790841600000}}` + "\n" +
-				`{"format":"signal_desktop","account":"example","record":{"callId":"deleted","mode":"Direct","status":"Deleted","timestamp":1790841600000}}` + "\n" +
-				`{"format":"signal_desktop","account":"example","record":{"callId":"two","mode":"Direct","status":"Accepted","timestamp":1790841660000}}`))
-		command.SetArgs([]string{"import", "-"})
-		require.ErrorContains(command.ExecuteContext(t.Context()), "1 call import records rejected")
-		assert.Contains(stderr.String(), "call import record 2:")
-		assert.Contains(stderr.String(), "Signal deleted call")
+	for _, status := range []int{422, 413} {
+		t.Run(fmt.Sprintf("continue after record rejected with %d", status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			client := &fakeCallCommandClient{importErrorAt: 2, importError: &daemonclient.APIError{
+				Status: status, Message: "invalid call observation: Signal deleted call",
+			}}
+			command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
+				return client, func() {}, nil
+			}})
+			command.SilenceUsage = true
+			var output, stderr bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(&stderr)
+			command.SetIn(strings.NewReader(
+				`{"format":"signal_desktop","account":"example","record":{"callId":"one","mode":"Direct","status":"Accepted","timestamp":1790841600000}}` + "\n" +
+					`{"format":"signal_desktop","account":"example","record":{"callId":"deleted","mode":"Direct","status":"Deleted","timestamp":1790841600000}}` + "\n" +
+					`{"format":"signal_desktop","account":"example","record":{"callId":"two","mode":"Direct","status":"Accepted","timestamp":1790841660000}}`))
+			command.SetArgs([]string{"import", "-"})
+			require.ErrorContains(command.ExecuteContext(t.Context()), "1 call import records rejected")
+			assert.Contains(stderr.String(), "call import record 2:")
+			assert.Contains(stderr.String(), "Signal deleted call")
 
-		require.Len(client.imports, 3)
-		assert.Equal("{\"message_id\":42,\"source_id\":7}\n{\"message_id\":42,\"source_id\":7}\n", output.String())
-	})
+			require.Len(client.imports, 3)
+			assert.Equal("{\"message_id\":42,\"source_id\":7}\n{\"message_id\":42,\"source_id\":7}\n", output.String())
+		})
+	}
 
 	assertions := assert.New(t)
 	requirements := require.New(t)
