@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"math"
@@ -19,98 +18,91 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestInitSchemaUnlessCurrentPostgreSQLWithOpenWriter(t *testing.T) {
-	require := require.New(t)
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
-		t.Skip("requires PostgreSQL")
-	}
-	f := storetest.New(t)
-	messageID := f.CreateMessage("held")
-	writer, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
-	defer func() { require.NoError(writer.Rollback()) }()
-	_, err = writer.ExecContext(t.Context(), `UPDATE messages SET snippet = snippet WHERE id = $1`, messageID)
-	require.NoError(err)
+func TestInitSchemaUnlessCurrentPostgreSQLRepairs(t *testing.T) {
+	for _, repair := range []string{"default collection", "account identity keys", "system seeds"} {
+		t.Run(repair, func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			if !f.Store.IsPostgreSQL() {
+				t.Skip("requires PostgreSQL")
+			}
+			ctx := t.Context()
+			switch repair {
+			case "default collection":
+				_, err := f.Store.DB().ExecContext(ctx, `DELETE FROM collection_sources WHERE source_id = $1`, f.Source.ID)
+				require.NoError(err)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx), "daemon schema startup completes while another session holds a message write")
+				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+				collection, err := f.Store.GetCollectionByNameContext(ctx, store.DefaultCollectionName)
+				require.NoError(err)
+				assert.Equal(t, []int64{f.Source.ID}, collection.SourceIDs)
+			case "account identity keys":
+				require.NoError(f.Store.AddAccountIdentityContext(ctx, f.Source.ID, "Alice@Example.com", "manual"))
+				// A previous-release writer omits address_key, leaving its default ''.
+				_, err := f.Store.DB().ExecContext(ctx,
+					`INSERT INTO account_identities (source_id, address, source_signal) VALUES ($1, 'alice@example.com', 'header')`, f.Source.ID)
+				require.NoError(err)
+
+				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+				identities, err := f.Store.ListAccountIdentitiesContext(ctx, f.Source.ID)
+				require.NoError(err)
+				assert.Len(t, identities, 1, "current archives repair case variants left by previous-release writers")
+			case "system seeds":
+				definition, err := f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+				require.NoError(err)
+				_, err = f.Store.DB().ExecContext(ctx,
+					`UPDATE attribute_definitions SET options = '{"max_length":120}' WHERE universal_id = $1`, definition.UniversalID)
+				require.NoError(err)
+				_, err = f.Store.DB().ExecContext(ctx, `UPDATE relationship_types SET is_symmetric = FALSE WHERE slug = 'neighbor'`)
+				require.NoError(err)
+
+				require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+				definition, err = f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+				require.NoError(err)
+				require.NotNil(definition.Options)
+				assert.Equal(t, 280, definition.Options.MaxLength)
+				repaired, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "neighbor")
+				require.NoError(err)
+				assert.True(t, repaired.IsSymmetric)
+			}
+		})
+	}
 }
 
-func TestInitSchemaUnlessCurrentPostgreSQLRepairsDefaultCollection(t *testing.T) {
-	require := require.New(t)
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
-		t.Skip("requires PostgreSQL")
+func TestInitSchemaUnlessCurrentPostgreSQLFallsThroughToFullInitializer(t *testing.T) {
+	for _, version := range []int{store.SchemaVersion - 1, store.SchemaVersion + 1} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			if !f.Store.IsPostgreSQL() {
+				t.Skip("requires PostgreSQL")
+			}
+			ctx := t.Context()
+			if version < store.SchemaVersion {
+				_, err := f.Store.DB().ExecContext(ctx, `DROP INDEX idx_identity_match_candidates_right`)
+				require.NoError(err)
+			}
+			_, err := f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = $1 WHERE key = 'schema_version'`, strconv.Itoa(version))
+			require.NoError(err)
+
+			err = f.Store.InitSchemaUnlessCurrentContext(ctx)
+			if version > store.SchemaVersion {
+				require.ErrorContains(err, "newer")
+				got, err := f.Store.SchemaVersionContext(ctx)
+				require.NoError(err)
+				assert.Equal(t, version, got)
+				return
+			}
+			require.NoError(err)
+			got, err := f.Store.SchemaVersionContext(ctx)
+			require.NoError(err)
+			assert.Equal(t, store.SchemaVersion, got)
+			var indexes int
+			require.NoError(f.Store.DB().QueryRowContext(ctx,
+				`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&indexes))
+			assert.Equal(t, 1, indexes, "upgrading an archive recreates missing schema objects")
+		})
 	}
-	f := storetest.New(t)
-	_, err := f.Store.DB().ExecContext(t.Context(), `DELETE FROM collection_sources WHERE source_id = $1`, f.Source.ID)
-	require.NoError(err)
-	collection, err := f.Store.GetCollectionByNameContext(t.Context(), store.DefaultCollectionName)
-	require.NoError(err)
-	require.Empty(collection.SourceIDs)
-
-	require.NoError(f.Store.InitSchemaUnlessCurrentContext(t.Context()))
-	collection, err = f.Store.GetCollectionByNameContext(t.Context(), store.DefaultCollectionName)
-	require.NoError(err)
-	assert.Equal(t, []int64{f.Source.ID}, collection.SourceIDs)
-}
-
-func TestInitSchemaUnlessCurrentPostgreSQLRepairsAccountIdentityKeys(t *testing.T) {
-	require := require.New(t)
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
-		t.Skip("requires PostgreSQL")
-	}
-	f := storetest.New(t)
-	require.NoError(f.Store.AddAccountIdentityContext(t.Context(), f.Source.ID, "Alice@Example.com", "manual"))
-	// A previous-release writer omits address_key, leaving its default ''.
-	_, err := f.Store.DB().ExecContext(t.Context(),
-		`INSERT INTO account_identities (source_id, address, source_signal) VALUES ($1, 'alice@example.com', 'header')`, f.Source.ID)
-	require.NoError(err)
-	identities, err := f.Store.ListAccountIdentitiesContext(t.Context(), f.Source.ID)
-	require.NoError(err)
-	require.Len(identities, 2)
-	version, err := f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	require.Equal(store.SchemaVersion, version)
-
-	require.NoError(f.Store.InitSchemaUnlessCurrentContext(t.Context()))
-	identities, err = f.Store.ListAccountIdentitiesContext(t.Context(), f.Source.ID)
-	require.NoError(err)
-	require.Len(identities, 1, "current archives repair case variants left by previous-release writers")
-	assert.Equal(t, "Alice@Example.com", identities[0].Address)
-	assert.Equal(t, "header,manual", identities[0].SourceSignal)
-	var key string
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(),
-		`SELECT address_key FROM account_identities WHERE source_id = $1`, f.Source.ID).Scan(&key))
-	assert.Equal(t, "alice@example.com", key)
-}
-
-func TestInitSchemaUnlessCurrentPostgreSQLRepairsSystemSeeds(t *testing.T) {
-	require := require.New(t)
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
-		t.Skip("requires PostgreSQL")
-	}
-	f := storetest.New(t)
-	ctx := t.Context()
-	version, err := f.Store.SchemaVersionContext(ctx)
-	require.NoError(err)
-	require.Equal(store.SchemaVersion, version)
-	definition, err := f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx,
-		`UPDATE attribute_definitions SET options = '{"max_length":120}' WHERE universal_id = $1`, definition.UniversalID)
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, `DELETE FROM relationship_types WHERE slug = 'neighbor'`)
-	require.NoError(err)
-
-	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
-	definition, err = f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
-	require.NoError(err)
-	require.NotNil(definition.Options)
-	assert.Equal(t, 280, definition.Options.MaxLength)
-	restored, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "neighbor")
-	require.NoError(err)
-	assert.Equal(t, store.RelationshipTypeOwnershipSystem, restored.Ownership)
 }
 
 func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {

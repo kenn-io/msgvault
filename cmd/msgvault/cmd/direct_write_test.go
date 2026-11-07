@@ -21,10 +21,10 @@ import (
 
 func TestOpenWritableStoreAndInitPostgreSQLWithOpenWriter(t *testing.T) {
 	require := require.New(t)
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL")
 	}
-	f := storetest.New(t)
 	st := f.Store
 	cfg := lifecycleTestConfig(t.TempDir())
 	setMatrixTestDatabaseURL(t, st, cfg)
@@ -44,55 +44,6 @@ func TestOpenWritableStoreAndInitPostgreSQLWithOpenWriter(t *testing.T) {
 	}
 	require.NoError(err, "a current archive opens while another session holds a message write")
 	require.NotNil(opened)
-}
-
-func TestOpenWritableStoreAndInitPostgreSQLUpgradesSchema(t *testing.T) {
-	require := require.New(t)
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
-		t.Skip("requires PostgreSQL")
-	}
-	st := testutil.NewTestStore(t)
-	cfg := lifecycleTestConfig(t.TempDir())
-	setMatrixTestDatabaseURL(t, st, cfg)
-	_, err := st.DB().ExecContext(t.Context(), `DROP INDEX idx_identity_match_candidates_right`)
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = $1 WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion-1))
-	require.NoError(err)
-
-	opened, cleanup, err := openWritableStoreAndInitForInvocation(t.Context(), testInvocationWithConfig(cfg))
-	if cleanup != nil {
-		defer cleanup()
-	}
-	require.NoError(err)
-	version, err := opened.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(t, store.SchemaVersion, version)
-	var indexes int
-	require.NoError(opened.DB().QueryRowContext(t.Context(),
-		`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&indexes))
-	assert.Equal(t, 1, indexes, "upgrading an archive recreates missing schema objects")
-}
-
-func TestOpenWritableStoreAndInitPostgreSQLRefusesFutureSchema(t *testing.T) {
-	require := require.New(t)
-	if os.Getenv("MSGVAULT_TEST_DB") == "" {
-		t.Skip("requires PostgreSQL")
-	}
-	st := testutil.NewTestStore(t)
-	cfg := lifecycleTestConfig(t.TempDir())
-	setMatrixTestDatabaseURL(t, st, cfg)
-	_, err := st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = $1 WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion+1))
-	require.NoError(err)
-
-	opened, cleanup, err := openWritableStoreAndInitForInvocation(t.Context(), testInvocationWithConfig(cfg))
-	if cleanup != nil {
-		defer cleanup()
-	}
-	require.ErrorContains(err, "newer")
-	assert.Nil(t, opened)
-	version, err := st.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(t, store.SchemaVersion+1, version)
 }
 
 func TestAcquireDirectSQLiteWriteLockSkipsPostgreSQL(t *testing.T) {
