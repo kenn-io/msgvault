@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -434,9 +432,6 @@ func (r *run) renumberedChat(ctx context.Context, thread sigThread, archived map
 		return chat, nil
 	}
 	keys, err := r.sharedChats(ctx, chat.ACI, archived)
-	if err == nil && len(keys) == 0 {
-		keys, err = r.chatsHoldingThread(ctx, thread, archived)
-	}
 	if len(keys) > 0 {
 		if pni, isPNI := strings.CutPrefix(keys[0], directPNIPrefix); isPNI {
 			chat.PNI = pni
@@ -467,41 +462,6 @@ func (r *run) sharedChats(ctx context.Context, aci string, archived map[string]b
 		}
 	}
 	return keys, err
-}
-
-// chatsHoldingThread returns the archived PNI or phone chats that no contact
-// in this backup still owns and that hold a message the thread's contact
-// sent, matched the way Signal identifies a message. It finds the chat of a
-// contact whose ACI and number both changed since the last import.
-func (r *run) chatsHoldingThread(ctx context.Context, thread sigThread, archived map[string]bool) ([]string, error) {
-	claimed := make(map[string]bool)
-	for _, recipient := range r.recipients {
-		for _, key := range recipientIDs(recipient, directACIPrefix, directPNIPrefix, directPhonePrefix) {
-			claimed[key] = true
-		}
-	}
-	messages, err := fetchMessages(ctx, r.db, r.schema, thread.ID, 0, -1)
-	if err != nil {
-		return nil, fmt.Errorf("read messages of Signal chat: %w", err)
-	}
-	chatOf := make(map[string]string)
-	for _, m := range messages {
-		for key := range archived {
-			if !isOutgoing(m.Type) && !claimed[key] && renumberable(key, archived) {
-				chatOf[messageID(key, "peer", m.DateSent)] = key
-			}
-		}
-	}
-	existing, err := r.imp.store.MessageExistsBatchContext(ctx, r.sourceID, slices.Collect(maps.Keys(chatOf)))
-	if err != nil {
-		return nil, fmt.Errorf("look up archived Signal messages: %w", err)
-	}
-	var keys []string
-	for id := range existing {
-		keys = append(keys, chatOf[id])
-	}
-	slices.Sort(keys)
-	return keys, nil
 }
 
 func (r *run) skipThread(ctx context.Context, thread sigThread) error {
