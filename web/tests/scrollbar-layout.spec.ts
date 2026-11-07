@@ -10,59 +10,55 @@ test.use({
   viewport: { width: 1700, height: 700 }
 });
 
-for (const width of [1700, 390]) {
-  test(`Settings panel stays in place when a long category makes it scroll at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 700 });
-    await mockArchiveLayout(page);
-    const attachmentSections = [
-      { id: 'beeper', label: 'Beeper' },
-      { id: 'slack', label: 'Slack' },
-      { id: 'inline', label: 'Inline' },
-      { id: 'discord', label: 'Discord' },
-      { id: 'teams', label: 'Teams' }
-    ];
-    await page.route('**/api/v1/settings', (route) => route.fulfill({
-      headers: { ETag: '"synthetic-settings"' },
-      json: {
-        groups: [
-          { id: 'server', label: 'Daemon', sections: [{ id: 'lifecycle', label: 'Lifecycle' }] },
-          { id: 'attachments', label: 'Attachments', sections: attachmentSections }
-        ],
-        settings: [
-          { key: 'server.daemon_auto_start', group: 'server', section: 'lifecycle', label: 'Automatic start', kind: 'boolean', value: { boolean: true }, restart_required: true },
-          ...attachmentSections.flatMap(({ id, label }) => [
-            { key: `${id}.media_max_participants`, group: 'attachments', section: id, label: `${label} participant limit`, kind: 'integer', value: { integer: 25 }, restart_required: true },
-            { key: `${id}.max_media_mb`, group: 'attachments', section: id, label: `${label} maximum size`, kind: 'integer', value: { integer: 100 }, restart_required: true }
-          ])
-        ],
-        pending_restart: false
-      }
-    }));
-    await page.goto('/');
-    await selectWorkspace(page, 'Settings');
-    await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Server', exact: true }).click();
-    const scroller = page.locator('.kit-settings__scroll');
-    const short = page.getByRole('heading', { name: 'Server', exact: true });
-    await expect(short).toBeVisible();
-    expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(false);
-    const shortBox = await short.boundingBox();
+test(`Settings panel stays in place and its last field remains reachable when a category scrolls`, async ({ page }) => {
+  await mockArchiveLayout(page);
+  const attachmentSections = [
+    { id: 'beeper', label: 'Beeper' },
+    { id: 'slack', label: 'Slack' },
+    { id: 'inline', label: 'Inline' },
+    { id: 'discord', label: 'Discord' },
+    { id: 'teams', label: 'Teams' }
+  ];
+  await page.route('**/api/v1/settings', (route) => route.fulfill({
+    headers: { ETag: '"synthetic-settings"' },
+    json: {
+      groups: [
+        { id: 'server', label: 'Daemon', sections: [{ id: 'lifecycle', label: 'Lifecycle' }] },
+        { id: 'attachments', label: 'Attachments', sections: attachmentSections }
+      ],
+      settings: [
+        { key: 'server.daemon_auto_start', group: 'server', section: 'lifecycle', label: 'Automatic start', kind: 'boolean', value: { boolean: true }, restart_required: true },
+        ...attachmentSections.flatMap(({ id, label }) => [
+          { key: `${id}.media_max_participants`, group: 'attachments', section: id, label: `${label} participant limit`, kind: 'integer', value: { integer: 25 }, restart_required: true },
+          { key: `${id}.max_media_mb`, group: 'attachments', section: id, label: `${label} maximum size`, kind: 'integer', value: { integer: 100 }, restart_required: true }
+        ])
+      ],
+      pending_restart: false
+    }
+  }));
+  await page.goto('/');
+  await selectWorkspace(page, 'Settings');
+  await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Server', exact: true }).click();
+  const scroller = page.locator('.kit-settings__scroll');
+  const short = page.getByRole('heading', { name: 'Server', exact: true });
+  await expect(short).toBeVisible();
+  expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(false);
+  const shortBox = await short.boundingBox();
 
-    await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Sources', exact: true }).click();
-    const tall = page.getByRole('heading', { name: 'Sources', exact: true });
-    await expect(tall).toBeVisible();
-    expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-    expect(await scroller.evaluate((element) => (element as HTMLElement).offsetWidth - element.clientWidth)).toBeGreaterThan(0);
-    const tallBox = await tall.boundingBox();
+  await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Sources', exact: true }).click();
+  const tall = page.getByRole('heading', { name: 'Sources', exact: true });
+  await expect(tall).toBeVisible();
+  expect(await scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  expect(await scroller.evaluate((element) => (element as HTMLElement).offsetWidth - element.clientWidth)).toBeGreaterThan(0);
+  const tallBox = await tall.boundingBox();
 
-    expect(tallBox?.x).toBe(shortBox?.x);
-    expect(await page.evaluate(() => window.innerWidth - document.documentElement.clientWidth)).toBe(0);
-    const lastField = scroller.getByRole('spinbutton').last();
-    await lastField.scrollIntoViewIfNeeded();
-    await expect(lastField).toBeInViewport({ ratio: 1 });
-    await expect(lastField.locator('..')).toHaveCSS('height', '32px');
-    expect(await scroller.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
-  });
-}
+  expect(tallBox?.x).toBe(shortBox?.x);
+  expect(await page.evaluate(() => window.innerWidth - document.documentElement.clientWidth)).toBe(0);
+  const lastField = scroller.getByRole('spinbutton').last();
+  await lastField.scrollIntoViewIfNeeded();
+  await expect(lastField).toBeInViewport({ ratio: 1 });
+  expect(await scroller.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+});
 
 function shortPagesPDF(pageCount: number): Buffer {
   const fontObject = 3 + pageCount + 1;

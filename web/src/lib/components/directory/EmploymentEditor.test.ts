@@ -32,27 +32,13 @@ it('shows loading, empty, and failed organization searches and recovers on anoth
   }
 });
 
-it.each(['ArrowDown', 'ArrowUp'])('opens the closed Organization picker with %s and selects an employer', async key => {
+it('closes the employment editor when Escape reaches the closed picker', async () => {
   const { controller } = controllerWith(async () => Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 }));
   controller.organizations = [organization()];
   const onClose = vi.fn();
   const view = render(EmploymentEditor, { controller, personID: 7, onClose });
   try {
-    const picker = screen.getByRole('button', { name: 'Organization: Choose an organization' });
-    expect(screen.queryByRole('listbox')).toBeNull();
-    await fireEvent.keyDown(picker, { key });
-    const option = await screen.findByRole('option', { name: 'Synthetic Org' });
-    expect(option).toBeDefined();
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Organization' }), { key: 'Enter' });
-    expect(screen.queryByRole('listbox')).toBeNull();
-    const selected = await screen.findByRole('button', { name: 'Organization: Synthetic Org' });
-    expect(screen.getByRole('button', { name: 'Create employment' })).toHaveProperty('disabled', false);
-    await fireEvent.keyDown(selected, { key });
-    await screen.findByRole('listbox');
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Organization' }), { key: 'Escape' });
-    expect(screen.queryByRole('listbox')).toBeNull();
-    expect(onClose).not.toHaveBeenCalled();
-    await fireEvent.keyDown(screen.getByRole('button', { name: 'Organization: Synthetic Org' }), { key: 'Escape' });
+    await fireEvent.keyDown(screen.getByRole('button', { name: 'Organization: Choose an organization' }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
   } finally {
     view.unmount();

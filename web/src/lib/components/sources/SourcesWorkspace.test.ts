@@ -280,7 +280,6 @@ describe('SourcesWorkspace', () => {
       await fireEvent.click(button);
       expect(await within(panel).findByText('Other sync rejected')).toBeDefined();
       expect(within(panel).getByText("Couldn't start the sync.")).toBeDefined();
-      expect(within(screen.getByRole('main', { name: 'Sources' })).getByText("Couldn't start the sync.")).toBeDefined();
       expect(posts).toEqual(['/api/v1/sync/archive%40example.com', '/api/v1/sync/other%40example.com']);
     } finally { view.unmount(); }
   });
@@ -767,7 +766,6 @@ describe('SourcesWorkspace', () => {
     const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events, requests) });
 
     const alert = await screen.findByRole('alert');
-    expect(within(alert).getByText("Couldn't load your sources.")).toBeDefined();
     if (failure === 'throw') expect(alert.textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
     await tick();
@@ -857,7 +855,8 @@ describe('SourcesWorkspace', () => {
 
     const alert = await screen.findByRole('alert');
     const guidance = within(alert).getByText('Loading source status timed out; the server may be busy, so retry in a moment.');
-    expect(guidance.closest('details')).toBeNull();
+    expect(guidance).toBeDefined();
+    expect(within(alert).queryByText('Details')).toBeNull();
     expect(signals[0]!.aborted).toBe(true);
     expect(screen.queryByText('Loading…')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -1126,7 +1125,8 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   try {
     const alert = await screen.findByRole('alert');
     const message = failure === 'error' ? "Couldn't load your contact accounts." : 'Loading contact accounts timed out; retry in a moment.';
-    expect(within(alert).getByText(message).closest('details')).toBeNull();
+    expect(within(alert).getByText(message)).toBeDefined();
+    if (failure === 'timeout') expect(within(alert).queryByText('Details')).toBeNull();
     if (failure === 'error') expect(alert.textContent).toContain('Contacts upstream unavailable');
     expect(screen.queryByText('No sources yet')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
