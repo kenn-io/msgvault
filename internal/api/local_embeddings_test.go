@@ -23,7 +23,7 @@ type localSetupTestController struct {
 }
 
 func (c *localSetupTestController) Inspect(context.Context) (LocalEmbeddingsStatus, error) {
-	return LocalEmbeddingsStatus{Host: "system.example.test", Enabled: c.enabled.Load(), Phase: "idle", DownloadBytes: 290000000}, nil
+	return LocalEmbeddingsStatus{Enabled: c.enabled.Load(), Phase: "idle", DownloadBytes: 290000000}, nil
 }
 func (c *localSetupTestController) Enable(ctx context.Context, report func(LocalEmbeddingsStatus)) error {
 	c.calls.Add(1)

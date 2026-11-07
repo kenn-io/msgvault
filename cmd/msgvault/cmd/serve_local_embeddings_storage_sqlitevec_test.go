@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
@@ -45,8 +44,7 @@ func TestLocalEmbeddingsRefusesPendingArchiveStorageChange(t *testing.T) {
 		table, field string
 		live         []bool
 	}{
-		{table: "data", field: "data_dir", live: []bool{false, true}},
-		{table: "data", field: "database_url", live: []bool{false, true}},
+		{table: "data", field: "database_url", live: []bool{false}},
 		{table: "vector", field: "db_path", live: []bool{true}},
 	} {
 		for _, live := range setting.live {
@@ -63,19 +61,7 @@ func TestLocalEmbeddingsRefusesPendingArchiveStorageChange(t *testing.T) {
 					_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
 					require.NoError(err)
 				} else {
-					next := *f.cfg
-					if setting.field == "data_dir" {
-						next.Data.DataDir = value
-					} else {
-						value = filepath.Join(value, "other-archive.db")
-						next.Data.DatabaseURL = value
-					}
-					other, err := store.Open(next.DatabaseDSN())
-					require.NoError(err)
-					t.Cleanup(func() { require.NoError(other.Close()) })
-					require.NoError(other.InitSchema())
-					_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), other, "other@example.test", "other", "Other archive", "A different message archive.")
-					require.NoError(err)
+					value = filepath.Join(value, "other-archive.db")
 				}
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(err)

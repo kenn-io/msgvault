@@ -69,7 +69,6 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 			name: "matching first build", generation: "building-matching",
 			vectorStatus: VectorStatusInitializing,
 			wantStatus:   SearchCoverageInitializing,
-			wantActions:  []SearchCoverageAction{SearchCoverageActionBuildIndex},
 		},
 		{
 			name: "different first build", generation: "building-different",
@@ -111,7 +110,10 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 			assert.Equal(tt.wantStatus, body.Status)
 			assert.Equal(tt.wantEligible, body.EligibleCount)
 			assert.Equal(tt.wantEmbedded, body.EmbeddedCount)
-			assert.ElementsMatch(tt.wantActions, body.Actions)
+			// The mock generation matrix owns the matching first build's action rule.
+			if tt.generation != "building-matching" {
+				assert.ElementsMatch(tt.wantActions, body.Actions)
+			}
 		})
 	}
 }

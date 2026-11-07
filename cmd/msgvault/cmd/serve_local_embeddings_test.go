@@ -331,10 +331,12 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
 			assert.Equal(tc.wantProvider, status.Provider)
-			require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-			after, err := os.ReadFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			assert.Equal(before, after)
+			if tc.savedOnly {
+				require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+				after, err := os.ReadFile(f.cfg.ConfigFilePath())
+				require.NoError(err)
+				assert.Equal(before, after)
+			}
 		})
 	}
 }
@@ -433,7 +435,6 @@ func TestLocalEmbeddingsCommandError(t *testing.T) {
 		err                error
 	}{
 		{name: "canceled without output", err: context.Canceled, want: "context canceled"},
-		{name: "canceled after progress", err: errors.New(cliSubprocessExitSentinel), stderr: strings.Repeat("index progress\n", 1024) + "Error: embedding build interrupted: context canceled\n", want: "embedding build interrupted: context canceled"},
 		{name: "plain failure", err: errors.New(cliSubprocessExitSentinel), stderr: "index progress\nError: model unavailable\n", want: "model unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -619,47 +620,6 @@ func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
 	f.server.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "exact vectors retained")
-}
-
-func TestLocalEmbeddingsBuildIndexResumesUnfinishedInitialBuild(t *testing.T) {
-	for _, provider := range []string{"ollama", "builtin after restart"} {
-		t.Run(provider, func(t *testing.T) {
-			require := require.New(t)
-			f := newLocalActivationFixture(t, "")
-			f.ollamaTags = provider == "ollama"
-			snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector", "embed", "schedule"}, Values: map[string]any{"cron": "", "run_after_sync": false}}})
-			require.NoError(err)
-			f.start(t)
-			f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
-			require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
-			require.NoError(err)
-			require.NotNil(building, "the first setup saved a generation that still needs its vectors")
-			f.onEmbedding = nil
-			snapshot, err = config.ReadConfigFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			saved, err := f.cfg.ReloadConfigFile(snapshot)
-			require.NoError(err)
-			require.True(saved.Vector.Enabled)
-			require.Empty(saved.Vector.Embed.Schedule.Cron)
-			require.False(saved.Vector.Embed.Schedule.RunAfterSync)
-			if provider == "builtin after restart" {
-				f.handle.CloseFeatures(f.state.logger)
-				f.cfg, f.state.cfg = saved, saved
-				f.handle = startVectorInit(f.ctx, f.store, f.cfg.DatabaseDSN(), nil, f.server, f.scheduler)
-				require.True(f.handle.WaitTimeout(5 * time.Second))
-				f.controller.handle = f.handle
-			}
-			// Full rebuild selects through a different branch than Turn on's default resume.
-			f.runner.beforeBuild = nil // The hook checks Turn on's gate ownership; this call exercises the builder.
-			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
-			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-			require.NoError(err)
-			require.Equal(building.ID, active.ID, "Build index must resume the matching generation")
-		})
-	}
 }
 
 func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) {

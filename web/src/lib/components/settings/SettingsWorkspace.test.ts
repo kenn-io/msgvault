@@ -846,9 +846,13 @@ it('finishes a first index build interrupted by a daemon restart through Build i
 it.each(['manual', 'scheduled'] as const)('hides the setup failure after a successful %s index recovery', async recovery => {
   let recovered = false;
   let running = false;
+  let recoveredStatusReads = 0;
   const { client, operationsController } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: 'Message index build interrupted.' }));
+    if (path === '/api/v1/embeddings/local') {
+      if (recovered) recoveredStatusReads++;
+      return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: recovered ? undefined : 'Message index build interrupted.' }));
+    }
     if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'recovery-1', eligible_count: 6, embedded_count: recovered ? 6 : 4, percentage: recovered ? 100 : 66.7, status: recovered ? 'ready' : 'initializing', actions: recovered ? [] : ['build_index'] });
     if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: recovered ? 6 : 4, pending: recovered ? 0 : 2 });
     if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', {
@@ -874,6 +878,7 @@ it.each(['manual', 'scheduled'] as const)('hides the setup failure after a succe
     recovered = true;
     await operationsController.refreshStatus();
   }
+  await waitFor(() => expect(recoveredStatusReads).toBeGreaterThan(0));
   await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
   expect(within(row).queryByRole('button', { name: 'Build index, Search by meaning' })).toBeNull();
 });
