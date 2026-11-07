@@ -26,10 +26,10 @@ runs:
         # Validate all surviving v1 records before deleting any cache entries.
         for entry in entries:
             if entry.name.endswith("-a") and entry.stat().st_mtime_ns > started:
-                record = re.fullmatch(rb"v1 ([0-9a-f]{64}) ([0-9a-f]{64}) ([ 0-9]{20}) ([ 0-9]{20})\n", entry.read_bytes())
-                if record is None or record[1].decode() != entry.name[:-2] or any(not field.strip().isdigit() for field in record.groups()[2:]):
+                version, _, output, _ = entry.read_bytes().split(maxsplit=3)
+                if version != b"v1" or re.fullmatch(rb"[0-9a-f]{64}", output) is None:
                     raise ValueError(f"Unrecognized Go cache action record: {entry}")
-                output = record[2].decode()
+                output = output.decode()
                 retained.update((entry, cache / output[:2] / f"{output}-d"))
         for entry in entries:
             if entry.name.endswith(("-a", "-d")) and entry not in retained:
