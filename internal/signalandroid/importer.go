@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -345,7 +347,7 @@ func (r *run) limitReached() bool {
 }
 
 func (r *run) importThread(ctx context.Context, thread sigThread, archived map[string]bool) error {
-	chat, err := r.renumberedChat(ctx, r.recipients[thread.RecipientID], archived)
+	chat, err := r.renumberedChat(ctx, thread, archived)
 	if err != nil {
 		return err
 	}
@@ -426,28 +428,80 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 }
 
 // renumberedChat retains an archived PNI or phone chat after its contact changes number.
-func (r *run) renumberedChat(ctx context.Context, chat sigRecipient, archived map[string]bool) (sigRecipient, error) {
+func (r *run) renumberedChat(ctx context.Context, thread sigThread, archived map[string]bool) (sigRecipient, error) {
+	chat := r.recipients[thread.RecipientID]
 	if chat.GroupID != "" || chat.ACI == "" || archived[directACIPrefix+chat.ACI] || archived[directPNIPrefix+chat.PNI] {
 		return chat, nil
 	}
-	pid, _, err := r.imp.store.ParticipantByIdentifierContext(ctx, ACIIdentifierType, chat.ACI)
-	if err != nil {
-		return chat, fmt.Errorf("look up Signal chat participant: %w", err)
+	keys, err := r.sharedChats(ctx, chat.ACI, archived)
+	if err == nil && len(keys) == 0 {
+		keys, err = r.chatsHoldingThread(ctx, thread, archived)
 	}
-	shared, err := r.imp.store.SharedConversationsContext(ctx, r.participants[r.selfRecipientID], pid)
-	for _, conversation := range shared {
-		pni, isPNI := strings.CutPrefix(conversation.SourceConversationID, directPNIPrefix)
-		phone, isPhone := strings.CutPrefix(conversation.SourceConversationID, directPhonePrefix)
-		if (isPNI || isPhone) && conversation.SourceID == r.sourceID && archived[conversation.SourceConversationID] {
-			if isPNI {
-				chat.PNI = pni
-			} else {
-				chat.E164 = phone
-			}
-			break
+	if len(keys) > 0 {
+		if pni, isPNI := strings.CutPrefix(keys[0], directPNIPrefix); isPNI {
+			chat.PNI = pni
+		} else {
+			chat.E164 = strings.TrimPrefix(keys[0], directPhonePrefix)
 		}
 	}
 	return chat, err
+}
+
+// renumberable reports whether key is an archived PNI or phone chat.
+func renumberable(key string, archived map[string]bool) bool {
+	return archived[key] && (strings.HasPrefix(key, directPNIPrefix) || strings.HasPrefix(key, directPhonePrefix))
+}
+
+// sharedChats returns the archived PNI or phone chats of this source that the
+// owner shares with the participant holding aci.
+func (r *run) sharedChats(ctx context.Context, aci string, archived map[string]bool) ([]string, error) {
+	pid, _, err := r.imp.store.ParticipantByIdentifierContext(ctx, ACIIdentifierType, aci)
+	if err != nil {
+		return nil, fmt.Errorf("look up Signal chat participant: %w", err)
+	}
+	shared, err := r.imp.store.SharedConversationsContext(ctx, r.participants[r.selfRecipientID], pid)
+	var keys []string
+	for _, conversation := range shared {
+		if conversation.SourceID == r.sourceID && renumberable(conversation.SourceConversationID, archived) {
+			keys = append(keys, conversation.SourceConversationID)
+		}
+	}
+	return keys, err
+}
+
+// chatsHoldingThread returns the archived PNI or phone chats that no contact
+// in this backup still owns and that hold a message the thread's contact
+// sent, matched the way Signal identifies a message. It finds the chat of a
+// contact whose ACI and number both changed since the last import.
+func (r *run) chatsHoldingThread(ctx context.Context, thread sigThread, archived map[string]bool) ([]string, error) {
+	claimed := make(map[string]bool)
+	for _, recipient := range r.recipients {
+		for _, key := range recipientIDs(recipient, directACIPrefix, directPNIPrefix, directPhonePrefix) {
+			claimed[key] = true
+		}
+	}
+	messages, err := fetchMessages(ctx, r.db, r.schema, thread.ID, 0, r.opts.BatchSize)
+	if err != nil {
+		return nil, fmt.Errorf("read messages of Signal chat: %w", err)
+	}
+	chatOf := make(map[string]string)
+	for _, m := range messages {
+		for key := range archived {
+			if !isOutgoing(m.Type) && !claimed[key] && renumberable(key, archived) {
+				chatOf[messageID(key, "peer", m.DateSent)] = key
+			}
+		}
+	}
+	existing, err := r.imp.store.MessageExistsBatchContext(ctx, r.sourceID, slices.Collect(maps.Keys(chatOf)))
+	if err != nil {
+		return nil, fmt.Errorf("look up archived Signal messages: %w", err)
+	}
+	var keys []string
+	for id := range existing {
+		keys = append(keys, chatOf[id])
+	}
+	slices.Sort(keys)
+	return keys, nil
 }
 
 func (r *run) skipThread(ctx context.Context, thread sigThread) error {
