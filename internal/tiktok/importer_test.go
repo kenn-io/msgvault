@@ -61,8 +61,8 @@ func TestCommentSyncResumesDeduplicatesAndLinksReplies(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(rows, 3)
 	var replyParent, commentParent int64
-	requirements.NoError(st.DB().QueryRow("SELECT reply_to_message_id FROM messages WHERE id = ?", rows["9007199254740997"].ID).Scan(&replyParent))
-	requirements.NoError(st.DB().QueryRow("SELECT reply_to_message_id FROM messages WHERE id = ?", rows["9007199254740995"].ID).Scan(&commentParent))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows["9007199254740997"].ID).Scan(&replyParent))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE id = ?", rows["9007199254740995"].ID).Scan(&commentParent))
 	assertions.Equal(rows["9007199254740995"].ID, replyParent)
 	assertions.Equal(rows["video:9007199254740993"].ID, commentParent)
 	assertions.Equal(rows["9007199254740995"].SenderID, rows["9007199254740997"].SenderID)
