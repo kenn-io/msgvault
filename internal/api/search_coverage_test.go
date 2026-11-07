@@ -758,7 +758,7 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			wantAction: []SearchCoverageAction{SearchCoverageActionBuildIndex},
 		},
 		{
-			name: "skipped message after recovery", status: VectorStatusReady,
+			name: "setup error cleared after recovery", status: VectorStatusReady,
 			backend: &filteredCoverageBackend{
 				active: matching, embeddedIDs: map[int64]struct{}{1: {}, 2: {}},
 			},

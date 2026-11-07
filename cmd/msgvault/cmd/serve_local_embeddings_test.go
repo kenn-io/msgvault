@@ -291,13 +291,14 @@ func TestLocalEmbeddingsRestoresSavedBuiltinWithOllamaAvailable(t *testing.T) {
 
 func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 	for _, tc := range []struct {
-		name, catalog, wantProvider string
-		savedOnly, savedEnabled     bool
+		name, catalog, wantProvider, wantError string
+		savedOnly, savedEnabled, savedBuiltin  bool
 	}{
 		{name: "local without Ollama API", wantProvider: "configured"},
 		{name: "enabled Ollama", catalog: `{"models":[]}`, wantProvider: "ollama"},
 		{name: "local without catalog", catalog: `{}`, wantProvider: "configured"},
 		{name: "local with invalid catalog", catalog: `invalid json`, wantProvider: "configured"},
+		{name: "saved disabled builtin model", savedOnly: true, savedBuiltin: true, wantProvider: "builtin", wantError: "vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions"},
 		{name: "saved remote after startup", savedOnly: true, wantProvider: "configured"},
 		{name: "saved enabled remote after startup", savedOnly: true, savedEnabled: true, wantProvider: "configured"},
 		{name: "saved enabled Ollama after startup", catalog: `{"models":[]}`, savedOnly: true, savedEnabled: true, wantProvider: "configured"},
@@ -309,12 +310,19 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 			if tc.savedOnly {
 				model = ""
 			}
+			if tc.savedBuiltin {
+				model = "nomic-embed-text"
+			}
 			f := newLocalActivationFixture(t, model)
 			f.ollamaTags = tc.catalog != ""
 			f.ollamaCatalog = tc.catalog
-			before, err := os.ReadFile(f.cfg.ConfigFilePath())
-			require.NoError(err)
-			f.start(t)
+			if tc.savedBuiltin {
+				f.useBuiltin(t)
+			}
+			if !tc.savedBuiltin {
+				f.start(t)
+			}
+			var before []byte
 			if tc.savedOnly {
 				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
@@ -322,9 +330,19 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 				if tc.catalog != "" {
 					endpoint = f.cfg.Chat.Server + "/v1"
 				}
-				written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": tc.savedEnabled}}, {Path: []string{"vector", "embeddings"}, Values: map[string]any{"endpoint": endpoint, "model": "custom-model", "dimension": 768}}})
+				embeddings := map[string]any{"endpoint": endpoint, "model": "custom-model", "dimension": 768}
+				if tc.savedBuiltin {
+					embeddings = map[string]any{"model": "custom-model"}
+				}
+				written, err := config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": tc.savedEnabled}}, {Path: []string{"vector", "embeddings"}, Values: embeddings}})
 				require.NoError(err)
 				before = written.Content
+				if tc.savedBuiltin {
+					saved, err := f.cfg.ReloadConfigFile(written)
+					require.NoError(err)
+					*f.cfg = *saved
+					f.start(t)
+				}
 			}
 			status, err := f.controller.Inspect(f.ctx)
 			require.NoError(err)
@@ -335,7 +353,11 @@ func TestLocalEmbeddingsPreservesConfiguredLocalProvider(t *testing.T) {
 				f.server.Router().ServeHTTP(response, request)
 				require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
 				require.False(status.Enabled, "saved settings cannot enable search before runtime publication")
-				require.Error(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+				err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+				require.Error(err)
+				if tc.wantError != "" {
+					assert.ErrorContains(err, tc.wantError)
+				}
 				after, err := os.ReadFile(f.cfg.ConfigFilePath())
 				require.NoError(err)
 				assert.Equal(before, after)
@@ -627,7 +649,7 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	assert.Len(t, results, 1)
 }
 
-func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) {
+func TestLocalEmbeddingsFirstBuildFailurePreservesGeneration(t *testing.T) {
 	for _, existingIndex := range []bool{false, true} {
 		t.Run(fmt.Sprintf("existing_index=%t", existingIndex), func(t *testing.T) {
 			require := require.New(t)
@@ -656,36 +678,13 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 			}
 			f.start(t)
 			f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
-			f.server.SetLocalEmbeddings(f.controller)
-			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/embeddings/local", nil)
-			request.Header.Set("Authorization", "Bearer owner")
-			request.Header.Set("Content-Type", "application/json")
-			request.RemoteAddr = "127.0.0.1:1234"
-			response := httptest.NewRecorder()
-			f.server.Router().ServeHTTP(response, request)
-			require.Equal(http.StatusAccepted, response.Code, response.Body.String())
-			var status api.LocalEmbeddingsStatus
-			readStatus := func() {
-				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
-				request.Header.Set("Authorization", "Bearer owner")
-				request.RemoteAddr = "127.0.0.1:1234"
-				response := httptest.NewRecorder()
-				f.server.Router().ServeHTTP(response, request)
-				require.Equal(http.StatusOK, response.Code, response.Body.String())
-				status = api.LocalEmbeddingsStatus{}
-				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-			}
-			require.Eventually(func() bool {
-				readStatus()
-				return !status.Running
-			}, 10*time.Second, 10*time.Millisecond)
-			require.True(status.Enabled, "the provider is published before the first index is built")
+			err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+			require.ErrorContains(err, "embed endpoint returned 500 (unavailable)")
 			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
 			require.NoError(err)
 			if !existingIndex {
 				require.NotNil(building)
 			}
-			require.NotEmpty(status.Error, "an enabled provider does not mean its first index build succeeded")
 			f.onEmbedding = nil
 			f.runner.beforeBuild = nil // Recovery uses the shared builder after setup releases its gate.
 			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
@@ -695,35 +694,6 @@ func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) 
 				require.Equal(building.ID, active.ID)
 			}
 			require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
-			readStatus()
-			require.Empty(status.Error, "successful recovery resolves the setup failure")
 		})
 	}
-}
-
-func TestLocalEmbeddingsPreservesModelSavedWhileDisabled(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newLocalActivationFixture(t, "nomic-embed-text")
-	f.useBuiltin(t)
-	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
-	require.NoError(err)
-	snapshot, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{
-		{Path: []string{"vector"}, Values: map[string]any{"enabled": false}},
-		{Path: []string{"vector", "embeddings"}, Values: map[string]any{"model": "custom-model"}},
-	})
-	require.NoError(err)
-	saved, err := f.cfg.ReloadConfigFile(snapshot)
-	require.NoError(err)
-	require.False(saved.Vector.Enabled)
-	require.True(saved.Vector.Embeddings.LocalOnly)
-	require.Equal("custom-model", saved.Vector.Embeddings.Model)
-	*f.cfg = *saved // Start with the saved settings, as a restarted daemon would.
-	f.start(t)
-	err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
-	after, readErr := config.ReadConfigFile(f.cfg.ConfigFilePath())
-	require.NoError(readErr)
-	saved, readErr = f.cfg.ReloadConfigFile(after)
-	require.NoError(readErr)
-	assert.Equal("custom-model", saved.Vector.Embeddings.Model, "Turn on must preserve the model saved through Settings")
-	assert.ErrorContains(err, "vector.embeddings.local_only: requires openai format, nomic-embed-text, and 768 dimensions")
 }

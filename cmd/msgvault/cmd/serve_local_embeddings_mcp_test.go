@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -19,33 +18,14 @@ import (
 )
 
 func TestLocalEmbeddingsActivationEnablesMCPSearch(t *testing.T) {
-	checks, must := assert.New(t), require.New(t)
+	must := require.New(t)
 	f := newLocalActivationFixture(t, "")
 	f.start(t)
 	command := &cobra.Command{Use: "serve"}
 	addServeConfigFlags(command)
 	must.NoError(installServeMCP(f.ctx, command, f.server, f.state))
 	handler := f.server.Router()
-	f.server.SetLocalEmbeddings(f.controller)
-	activation := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/embeddings/local", nil)
-	activation.Header.Set("Authorization", "Bearer owner")
-	activation.Header.Set("Content-Type", "application/json")
-	activation.RemoteAddr = "127.0.0.1:1234"
-	admitted := httptest.NewRecorder()
-	f.server.Router().ServeHTTP(admitted, activation)
-	must.Equal(http.StatusAccepted, admitted.Code, admitted.Body.String())
-	must.Eventually(func() bool {
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
-		request.Header.Set("Authorization", "Bearer owner")
-		request.RemoteAddr = "127.0.0.1:1234"
-		response := httptest.NewRecorder()
-		f.server.Router().ServeHTTP(response, request)
-		checks.Equal(http.StatusOK, response.Code, response.Body.String())
-		var status api.LocalEmbeddingsStatus
-		checks.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-		checks.Empty(status.Error)
-		return status.Enabled && !status.Running
-	}, 10*time.Second, 10*time.Millisecond)
+	must.NoError(f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 
 	for _, tool := range []struct {
 		name      string

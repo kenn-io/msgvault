@@ -46,8 +46,8 @@ for (const width of [1280, 390]) {
         done_bytes: 0, total_bytes: 0, error: 'Message index build interrupted.'
       } }));
       await page.route('**/api/v1/search/coverage', route => route.fulfill({ json: {
-        eligible_count: 0, embedded_count: 0, percentage: 0, cache_revision: 'cache-1',
-        status: 'initializing', actions: ['build_index']
+        eligible_count: 10, embedded_count: 4, percentage: 40, cache_revision: 'cache-1',
+        status: 'incomplete', actions: ['build_index']
       } }));
       await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
       const row = page.locator('[data-feature="message_embedding"]');
@@ -80,7 +80,7 @@ test('local search hint follows results and groups its setup error with matching
     : route.fulfill({ json: { host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'launch', searchMode: 'full_text' }))}`);
   await page.getByRole('button', { name: 'Turn on', exact: true }).click();
-  await expect(page.locator('.local-search-hint').getByRole('alert')).toBeVisible();
+  await page.locator('.local-search-hint').getByRole('alert').waitFor({ state: 'visible' });
   const geometry = await page.locator('.local-search-hint').evaluate(element => {
     const hint = element.querySelector('.kit-search-by-meaning-hint')!;
     const error = element.querySelector('[role="alert"]')!;
