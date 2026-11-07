@@ -209,6 +209,60 @@ func TestSendStateFollowsSignal(t *testing.T) {
 	assert.True(isSent(), "a later backup shows it sent")
 }
 
+func TestReviewEditedLinkPreviewRemoved(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change string
+		want   int
+	}{
+		{"removed", `DELETE FROM attachment WHERE _id = 500`, 0},
+		{"unchanged", `UPDATE attachment SET message_id = 107 WHERE _id = 500`, 1},
+		{"missing source file", `UPDATE attachment SET _id = 503, message_id = 107 WHERE _id = 500`, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir,
+				`ALTER TABLE message ADD COLUMN link_previews TEXT`,
+				`UPDATE attachment SET message_id = 106, caption = NULL WHERE _id = 500`,
+				`UPDATE message SET link_previews = '[{"attachmentId":{"rowId":500}}]' WHERE _id = 106`)
+			runImport(t, st, dir, storage)
+			var messageID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
+			before, err := st.MessageMIMEAttachmentsContext(t.Context(), messageID)
+			require.NoError(err)
+			require.Len(before, 1)
+			require.Equal(store.AttachmentRolePreview, before[0].Role)
+
+			changeFixture(t, dir,
+				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id, revision_number)
+				 SELECT 107, date_sent + 1000, date_received + 1000, thread_id, from_recipient_id, to_recipient_id, type, 'Edited without preview', 102, 2 FROM message WHERE _id = 106`,
+				`UPDATE message SET latest_revision_id = 107 WHERE _id IN (102, 106)`,
+				tc.change)
+			if tc.name == "unchanged" {
+				changeFixture(t, dir, `UPDATE message SET link_previews = '[{"attachmentId":{"rowId":500}}]' WHERE _id = 107`)
+			}
+			runImport(t, st, dir, storage)
+
+			edited := importedMessages(t, st)["signal:aci:"+signalfixture.AliceACI+":self:"+ms(signalfixture.TEditOld)]
+			assert.Equal("Edited without preview", edited.body)
+			assert.True(edited.edited)
+			after, err := st.MessageMIMEAttachmentsContext(t.Context(), messageID)
+			require.NoError(err)
+			assert.Len(after, tc.want)
+			if tc.want == 1 {
+				assert.Equal(before, after)
+			}
+			var count int
+			var hasAttachments bool
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_count, has_attachments FROM messages WHERE id = ?`), messageID).Scan(&count, &hasAttachments))
+			assert.Equal(tc.want, count)
+			assert.Equal(tc.want > 0, hasAttachments)
+		})
+	}
+}
+
 func TestImportAttachmentReferenceRoles(t *testing.T) {
 	for _, tc := range []struct {
 		name, column, reference string

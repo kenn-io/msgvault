@@ -736,7 +736,8 @@ func (r *run) writeMessage(
 	if err != nil {
 		return 0, err
 	}
-	writes, mediaFound, mediaMissing, err := r.prepareAttachments(ctx, archivedID, attachments)
+	prepared, mediaFound, mediaMissing := r.prepareAttachments(ctx, attachments)
+	writes, err := r.attachmentChanges(ctx, archivedID, prepared)
 	if err != nil {
 		return 0, err
 	}
@@ -803,6 +804,11 @@ func (r *run) writeMessage(
 	messageID, err := st.PersistMessageContext(ctx, &data)
 	if err != nil {
 		return 0, err
+	}
+	if mediaMissing == 0 {
+		if err := r.reconcileAttachments(ctx, messageID, prepared); err != nil {
+			return 0, err
+		}
 	}
 	if err := st.IndexStoredMessageContext(ctx, messageID); err != nil {
 		return 0, err
@@ -897,19 +903,44 @@ func (r *run) resolveReplies(ctx context.Context) error {
 	return nil
 }
 
-// prepareAttachments stores new source parts and refreshes changed metadata.
-func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachments []sigAttachment) ([]store.AttachmentWrite, int64, int64, error) {
-	var writes []store.AttachmentWrite
+// attachmentChanges selects new source parts and changed metadata for persistence.
+func (r *run) attachmentChanges(ctx context.Context, archivedID int64, prepared []store.AttachmentWrite) ([]store.AttachmentWrite, error) {
 	archived := make(map[string]store.AttachmentRef)
 	if archivedID != 0 {
 		refs, err := r.imp.store.MessageMIMEAttachmentsContext(ctx, archivedID)
 		if err != nil {
-			return nil, 0, 0, err
+			return nil, err
 		}
 		for _, ref := range refs {
 			archived[ref.SourcePartKey] = ref
 		}
 	}
+	var writes []store.AttachmentWrite
+	for _, a := range prepared {
+		if ref, ok := archived[a.SourcePartKey]; ok && ref.Filename == a.Filename && ref.MimeType == a.MIMEType &&
+			ref.Width == a.Width && ref.Height == a.Height && ref.MediaType == a.MediaType &&
+			ref.Role == a.Role && ref.RoleSource == a.RoleSource {
+			continue
+		}
+		writes = append(writes, a)
+	}
+	return writes, nil
+}
+
+func (r *run) reconcileAttachments(ctx context.Context, messageID int64, prepared []store.AttachmentWrite) error {
+	keep := make([]string, 0, len(prepared))
+	for _, a := range prepared {
+		keep = append(keep, a.SourcePartKey)
+	}
+	if err := r.imp.store.DeleteMIMEAttachmentsExceptContext(ctx, messageID, keep); err != nil {
+		return fmt.Errorf("remove obsolete Signal attachments: %w", err)
+	}
+	return r.imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID)
+}
+
+// prepareAttachments returns every source part whose file was successfully stored.
+func (r *run) prepareAttachments(ctx context.Context, attachments []sigAttachment) ([]store.AttachmentWrite, int64, int64) {
+	var prepared []store.AttachmentWrite
 	var found, missing int64
 	occurrences := make(map[string]int)
 	for _, a := range attachments {
@@ -941,16 +972,11 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 		if mediaType == "sticker" {
 			role, roleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
 		}
-		if ref, ok := archived[key]; ok && ref.Filename == a.FileName && ref.MimeType == a.ContentType &&
-			ref.Width == a.Width && ref.Height == a.Height && ref.MediaType == mediaType &&
-			ref.Role == role && ref.RoleSource == roleSource {
-			continue
-		}
-		writes = append(writes, store.AttachmentWrite{Filename: a.FileName, MIMEType: a.ContentType, StoragePath: storagePath,
+		prepared = append(prepared, store.AttachmentWrite{Filename: a.FileName, MIMEType: a.ContentType, StoragePath: storagePath,
 			ContentHash: contentHash, Size: size, MediaType: mediaType, Width: a.Width, Height: a.Height,
 			Role: role, RoleSource: roleSource, SourcePartKey: key})
 	}
-	return writes, found, missing, nil
+	return prepared, found, missing
 }
 
 func (r *run) storeAttachment(ctx context.Context, source string) (string, string, int64, error) {
