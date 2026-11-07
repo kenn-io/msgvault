@@ -77,23 +77,26 @@ func referenceFreshSchema(t *testing.T) map[string][][]any {
 }
 
 func TestInitSchemaContext_FreshSQLiteCommitsTogether(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	var commits atomic.Int64
 	s := freshObservedStore(t, filepath.Join(t.TempDir(), "fresh.db"), func(conn *sqlite3.SQLiteConn) error {
 		conn.RegisterCommitHook(func() int { commits.Add(1); return 0 })
 		return nil
 	})
 	var synchronous int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
-	require.Equal(t, 2, synchronous, "use production FULL durability")
+	require.NoError(s.db.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&synchronous))
+	require.Equal(2, synchronous, "use production FULL durability")
 	before := commits.Load()
-	require.NoError(t, s.InitSchemaContext(t.Context()))
+	require.NoError(s.InitSchemaContext(t.Context()))
 	// Setup commits once. Planner maintenance commits once for optimize, once
 	// for deleting FTS statistics, and once per pooled connection to reload.
-	assert.Equal(t, int64(3+sqlitePoolSize), commits.Load()-before, "commit setup once, then maintain planner statistics")
-	assert.Equal(t, referenceFreshSchema(t), freshSchemaRows(t, s))
+	assert.Equal(int64(3+sqlitePoolSize), commits.Load()-before, "commit setup once, then maintain planner statistics")
+	assert.Equal(referenceFreshSchema(t), freshSchemaRows(t, s))
 }
 
 func TestInitSchemaContext_ExistingSQLiteConcurrentWriter(t *testing.T) {
+	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "existing.db")
 	var active, written bool
 	var writer *Store
@@ -108,16 +111,16 @@ func TestInitSchemaContext_ExistingSQLiteConcurrentWriter(t *testing.T) {
 		})
 		return nil
 	})
-	require.NoError(t, s.InitSchemaContext(t.Context()))
+	require.NoError(s.InitSchemaContext(t.Context()))
 	writer = freshObservedStore(t, path, nil)
 	_, err := s.db.ExecContext(t.Context(), "DELETE FROM archive_metadata WHERE key = 'schema_version'")
-	require.NoError(t, err)
+	require.NoError(err)
 	active = true
 	err = s.InitSchemaContext(t.Context())
-	require.NoError(t, writeErr)
-	require.NoError(t, err)
-	require.True(t, written)
+	require.NoError(writeErr)
+	require.NoError(err)
+	require.True(written)
 	var identifier string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT identifier FROM sources").Scan(&identifier))
+	require.NoError(s.db.QueryRowContext(t.Context(), "SELECT identifier FROM sources").Scan(&identifier))
 	assert.Equal(t, "writer@example.com", identifier)
 }
