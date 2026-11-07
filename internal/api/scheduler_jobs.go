@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/twilio"
+	"go.kenn.io/msgvault/internal/youtube"
 )
 
 type sourceScheduleKind uint8
@@ -114,6 +115,12 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return WhatsAppAppleJobName(identifier), true
 	case "apple_messages":
 		return IMessageJobName, true
+	case youtube.SourceType:
+		channelID, ok := youtube.ParseSourceIdentifier(identifier)
+		if !ok {
+			return "", false
+		}
+		return YouTubeJobNameForChannel(channelID)
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {
@@ -174,6 +181,14 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// YouTubeJobNameForChannel is shared by registration and source status/trigger.
+func YouTubeJobNameForChannel(channelID string) (string, bool) {
+	if youtube.SourceIdentifier(channelID) == "" {
+		return "", false
+	}
+	return "youtube:" + channelID, true
 }
 
 // isSourceSyncJobName reports whether a generic scheduler job syncs a source.

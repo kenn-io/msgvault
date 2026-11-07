@@ -13,6 +13,12 @@ All notable changes to msgvault, grouped by release.
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
 - CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
 - Empty sender searches suggest matching addresses and a query you can retry, including incomplete addresses such as `from:alex@exam`. CLI hints stay on stderr, and MCP metadata results carry structured retry hints. Counts keep your search filters and account scope.
+- [YouTube comments](usage/youtube.md) archive one configured owned channel's
+  videos, moderated comments and replies with resumable scheduled polling.
+  Later cycles append comments on older videos.
+- [YouTube transcripts](usage/youtube-captions.md) optionally attach official
+  non-ASR caption text with independent saved progress and quota. The existing
+  consented attachment mirror can submit the text to Docbank.
 
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and

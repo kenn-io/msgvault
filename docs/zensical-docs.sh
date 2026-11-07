@@ -26,8 +26,12 @@ fi
 tmp_docs=""
 tmp_config_base=""
 tmp_config=""
+tmp_archive=""
 
 cleanup() {
+  if [[ -n "$tmp_archive" ]]; then
+    rm -f "$tmp_archive"
+  fi
   if [[ -n "$tmp_docs" ]]; then
     rm -rf "$tmp_docs"
   fi
@@ -89,6 +93,8 @@ for glob in "${credential_globs[@]}"; do
   tar_credential_excludes+=(--exclude "./$glob")
 done
 
+# Finish writing before extraction can close a pipe early on BSD tar.
+tmp_archive="$(mktemp "${TMPDIR:-/tmp}/msgvault-public-docs.XXXXXX")"
 (
   cd "$docs_root"
   tar \
@@ -116,8 +122,11 @@ done
     --exclude './zensical-docs.sh' \
     --exclude './zensical.toml' \
     --exclude './assets/*.sh' \
-    -cf - .
-) | (cd "$tmp_docs" && tar -xf -)
+    -cf "$tmp_archive" .
+)
+(cd "$tmp_docs" && tar -xf "$tmp_archive")
+rm -f "$tmp_archive"
+tmp_archive=""
 
 # The temporary docs tree is the public publishing boundary. Keep ignored local
 # credentials and dotfiles out even if a future tar implementation misses a glob.
