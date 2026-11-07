@@ -72,6 +72,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Backup and Restore](https://msgvault.io/docs/usage/backup.md): snapshot repositories
 - [Verify Integrity](https://msgvault.io/docs/guides/verification.md)
 - [Deduplication](https://msgvault.io/docs/usage/deduplication.md)
+- [Business Reviews](https://msgvault.io/docs/usage/business-reviews.md): live Google owner review management on main; no archive and Facebook unavailable
 - [Deleting Email](https://msgvault.io/docs/usage/deletion.md): staging and gated execution
 - [Remote Deployment](https://msgvault.io/docs/guides/remote-deployment.md)
 - [Daemon Lifecycle](https://msgvault.io/docs/guides/daemon-migration.md)

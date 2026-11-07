@@ -607,7 +607,11 @@ probe, consent, build, and recovery flow.
 
 #### `[oauth.apps.<name>]`
 
-Named OAuth apps for Google Workspace organizations that require their own OAuth credentials. Each entry can define a separate browser OAuth `client_secret.json`, service account key, or both. Use `--oauth-app <name>` with `add-account` to bind an account to a named app.
+Named OAuth apps select separate Google credentials. Each entry can define a
+browser OAuth `client_secret.json`, service account key, or both. Use
+`--oauth-app <name>` with `add-account` to bind an account to a named app.
+Business review targets require an explicit named app for the owner's own
+approved project; they never fall back to the default app or a Gmail token.
 
 | Key | Default | Description |
 |---|---|---|
@@ -667,7 +671,7 @@ Token commands receive these environment variables:
 
 | Variable | Meaning |
 |---|---|
-| `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for a separate Google Contacts authorization, where `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app) |
+| `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for Google Contacts; `business-reviews-google/<hash>` for business reviews. `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app). |
 | `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
 
 Key each record by namespace and account. These values do not depend on the data
@@ -1422,6 +1426,65 @@ Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sourc
 | `include_attachments` | `true` | Import MMS attachments |
 | `stable_after` | `10m` | How long Drive files must remain unchanged before import |
 | `oauth_app` | — | Named Google OAuth app to use |
+
+### `[[business_reviews]]`
+
+Configure live Google Business Profile review targets separately from archive
+sources. Reviews and replies are fetched on demand and never enter message
+storage, search, embeddings, exports, or backups. See
+[Business reviews](usage/business-reviews.md) for project eligibility and setup.
+
+```toml
+[oauth.apps.business]
+client_secrets = "/path/to/own-project-client-secret.json"
+
+[[business_reviews]]
+name = "shop"
+provider = "google"
+email = "owner@example.com"
+oauth_app = "business"
+location = "accounts/123/locations/456"
+enabled = true
+own_project = true
+replies_enabled = false
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `name` | (required) | Unique target name; ASCII letters, digits, `_` or `-`, up to 256 characters |
+| `provider` | (required) | `google`; Facebook reviews remain unavailable pending a verified read and owner-reply contract |
+| `email` | (required) | Google account that owns the separate authorization |
+| `oauth_app` | (required) | Named `[oauth.apps.<name>]` for your own approved Google project |
+| `location` | — | Exact `accounts/ACCOUNT_ID/locations/LOCATION_ID` parent; required when enabled |
+| `enabled` | `false` | Allow live reads for this target |
+| `own_project` | `false` | Owner attestation that this is their own approved project; required when enabled |
+| `replies_enabled` | `false` | Allow owner CLI/Web previews and separate per-reply confirmation |
+
+`own_project` records your attestation; it does not verify Google's approval or
+make a shared or hosted deployment compliant. Authorization requests
+`business.manage` and `userinfo.email`. Google's management scope permits
+writes even when `replies_enabled = false`; msgvault's setting restricts its
+workflow, not the underlying grant.
+
+Run `msgvault business-reviews authorize shop` on the daemon host after
+configuring the target. A disabled setup entry may omit `location` while you
+authorize and find the location parent. Authorization and disconnect require
+an authenticated owner daemon so it can invalidate outstanding previews
+before credentials change. Tokens use the app-specific
+`business-reviews-google/<hash>` namespace, including command-backed token
+stores, and never reuse Gmail or Contacts grants.
+
+Every submission requires a fresh exact preview and separate owner consent.
+Previews expire after five minutes; content-free receipts expire after ten
+minutes. Daemon shutdown clears this memory. Keyless access cannot issue
+actionable previews, confirm replies, or read receipts. Delegated and remote
+client credentials cannot access business reviews. Owner API-key holders share
+one authority; browser sessions have separate consent and receipts.
+
+Use the dedicated authorization and disconnect commands when replacing a
+credential. A credential or configuration change observed at confirmation
+invalidates consent. An external secret-store change restored between checks
+cannot be detected; discard old previews after such changes.
 
 ### Google Calendar Sources
 

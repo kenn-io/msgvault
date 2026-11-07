@@ -10,6 +10,7 @@ import (
 )
 
 func addServeConfigFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("mcp-allow-business-review-content", false, "Expose live business-review content only to clients that do not retain, index, export or embed it")
 	cmd.Flags().Bool("mcp-allow-writes", false, "Expose the independent /mcp/writes catalog for trusted owner bearer clients")
 	addMCPWriteFlags(cmd, "mcp-")
 	cmd.Flags().String("bind", "", "Bind address or iface:NAME (overrides environment and config)")

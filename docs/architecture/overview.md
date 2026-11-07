@@ -84,6 +84,14 @@ write. Successful changes use calendar sync's Store persistence path immediately
 without advancing sync cursors. Remote completion and archive completion are
 reported separately so clients can reconcile a partial failure.
 
+[Business reviews](../usage/business-reviews.md) are a live operational exception
+outside archive ingestion. The daemon's business-review service calls the owner's
+approved Google project and holds bounded previews and receipts in memory. CLI,
+HTTP and Web use that same service; opted-in non-retaining MCP clients can read
+and request non-actionable assistance. Provider content never enters Store,
+search, embeddings, exports, backups, or durable operation records. Confirmation
+is explicit and one-shot; uncertain writes require live reconciliation.
+
 ## Responsibilities
 
 | Component | Owns | Main source locations |

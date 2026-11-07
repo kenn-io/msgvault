@@ -79,3 +79,12 @@ Optional [semantic search and profile automation](../usage/recommended-configura
 have their own provider configuration. Message embeddings are enabled through
 configuration; people, visual, and document features also require their stated
 consent steps.
+
+## Live business reviews
+
+[Business reviews](../usage/business-reviews.md) lets an owner inspect current
+Google Business Profile reviews and explicitly confirm a response through their
+own approved project. It is available on `main` and is a live operational view
+outside the archive: there is no review import, sync, search, or export. Facebook
+Page reviews/recommendations remain unavailable while the official operational
+read and owner-reply contract is unverified.

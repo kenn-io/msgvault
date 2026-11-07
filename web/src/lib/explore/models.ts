@@ -105,6 +105,7 @@ export type ExploreWorkspace =
   | 'everything'
   | 'files'
   | 'relationships'
+  | 'business-reviews'
   | 'sources'
   | 'deletions'
   | 'settings';

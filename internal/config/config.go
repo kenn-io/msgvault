@@ -22,6 +22,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/businessreviews"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/documentindex"
@@ -593,6 +594,7 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
+	BusinessReviews    []businessreviews.Target        `toml:"business_reviews"`
 	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
@@ -1284,6 +1286,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
 	cfg.deferDaemonError(cfg.Sync.Validate())
+	cfg.deferDaemonError(cfg.ValidateBusinessReviews())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
