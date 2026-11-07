@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -345,11 +346,11 @@ func (r *run) limitReached() bool {
 }
 
 func (r *run) importThread(ctx context.Context, thread sigThread, archived map[string]bool) error {
-	chat, err := r.renumberedChat(ctx, thread, archived)
+	chat, chatArchived, err := r.chatArchive(ctx, thread, archived)
 	if err != nil {
 		return err
 	}
-	sourceConvID, convType, ok := conversationIdentity(chat, archived)
+	sourceConvID, convType, ok := conversationIdentity(chat, chatArchived)
 	if !ok {
 		return r.skipThread(ctx, thread)
 	}
@@ -440,6 +441,25 @@ func (r *run) renumberedChat(ctx context.Context, thread sigThread, archived map
 		}
 	}
 	return chat, err
+}
+
+// chatArchive returns the thread's chat and the archived chats it may reuse.
+// A phone chat counts only if the chat's ACI shares it, so an account that
+// takes a recycled number does not inherit the old account's chat.
+func (r *run) chatArchive(ctx context.Context, thread sigThread, archived map[string]bool) (sigRecipient, map[string]bool, error) {
+	chat, err := r.renumberedChat(ctx, thread, archived)
+	if err != nil {
+		return chat, nil, err
+	}
+	if _, _, err := r.participant(ctx, thread.RecipientID); err != nil || chat.ACI == "" || archived[directACIPrefix+chat.ACI] {
+		return chat, archived, err
+	}
+	keys, err := r.sharedChats(ctx, chat.ACI, archived)
+	owned := make(map[string]bool, len(archived))
+	for key := range archived {
+		owned[key] = !strings.HasPrefix(key, directPhonePrefix) || slices.Contains(keys, key)
+	}
+	return chat, owned, err
 }
 
 // renumberable reports whether key is an archived PNI or phone chat.

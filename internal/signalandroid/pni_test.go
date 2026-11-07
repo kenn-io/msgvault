@@ -223,3 +223,32 @@ func TestReimportPhoneOnlyChatGainsACI(t *testing.T) {
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE id = ?`, messageID))
 	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
 }
+
+func TestReviewRecycledPhoneDoesNotReuseOldPhoneChat(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	signalfixture.WritePNIOnly(t, dir, signalfixture.Current)
+	changeFixture(t, dir, `UPDATE recipient SET pni = NULL WHERE _id = 7`)
+	st, attachments := testutil.NewTestStore(t), t.TempDir()
+	runImport(t, st, dir, attachments)
+	oldChat := "signal:tel:" + signalfixture.DanaPhone
+
+	changeFixture(t, dir, `UPDATE recipient SET aci = '0f0f0f0f-0000-4000-8000-000000000006' WHERE _id = 7`)
+	runImport(t, st, dir, attachments)
+
+	const recycledACI = "0f0f0f0f-0000-4000-8000-000000000008"
+	changeFixture(t, dir,
+		`UPDATE recipient SET e164 = '+12025550107' WHERE _id = 7`,
+		`INSERT INTO recipient (_id, aci, e164) VALUES (8, '`+recycledACI+`', '`+signalfixture.DanaPhone+`')`,
+		`INSERT INTO thread (_id, recipient_id) VALUES (15, 8)`,
+		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+		 VALUES (700, 1700000500000, 1700000500001, 15, 8, 1, `+ms(signalfixture.TypeIncoming)+`, 'hello from the new owner')`)
+	runImport(t, st, dir, attachments)
+
+	messages := importedMessages(t, st)
+	newChat := "signal:aci:" + recycledACI
+	assert.Equal(importedMessage{conversation: newChat, body: "hello from the new owner"}, messages[newChat+":peer:1700000500000"])
+	assert.Equal(oldChat, messages[oldChat+":self:1700000400000"].conversation)
+	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM conversations`))
+	require.Len(messages, 2)
+}
