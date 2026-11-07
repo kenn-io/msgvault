@@ -6,7 +6,7 @@
 
   import { getLocalEmbeddings, enableLocalEmbeddings } from '../../api/generated/api/api';
   import type { LocalEmbeddingsStatus } from '../../api/generated/models';
-  import { localSearchHintLabels } from '../../settings/local-embeddings';
+  import { localSearchHintLabels, sentence } from '../../settings/local-embeddings';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
@@ -928,7 +928,7 @@
   {#if localSearchOff && localSetup}
     <div class="local-search-hint">
       <SearchByMeaningHint labels={localSearchHintLabels(localSetup)} onturnon={() => void turnOnSearchByMeaning()} />
-      {#if localSetupError}<p role="alert">{localSetupError}{(/[.!?]$/.test(localSetupError)) ? '' : '.'}</p>{/if}
+      {#if localSetupError}<p role="alert">{sentence(localSetupError)}</p>{/if}
     </div>
   {/if}
 

@@ -19,9 +19,10 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 }
 
 export function localSearchLabels(status: LocalEmbeddingsStatus): Partial<SearchByMeaningLabels> {
+  const where = status.host ? ` on ${status.host}` : '';
   return {
     ...(status.running && status.phase === 'idle' ? { downloading: 'Preparing' } : {}),
-    ...(!status.enabled ? { downloaded: `${status.provider === 'ollama' ? 'Uses Ollama' : 'Already'} on ${status.host || 'this computer'}` } : {}),
+    ...(!status.enabled ? { downloaded: status.provider === 'ollama' ? `Uses Ollama${where}` : where ? `Already${where}` : 'Already downloaded' } : {}),
     keepsIndex: '',
   };
 }
@@ -32,4 +33,8 @@ export function localSearchHintLabels(status: LocalEmbeddingsStatus): Partial<Se
     ? `Downloads ${megabytes(status.download_bytes)} once${status.host ? ` to ${status.host}` : ''}`
     : labels.downloaded;
   return { ...labels, hint: `Search by meaning is off · ${disclosure}` };
+}
+
+export function sentence(message: string): string {
+  return message && !/[.!?]$/.test(message) ? `${message}.` : message;
 }

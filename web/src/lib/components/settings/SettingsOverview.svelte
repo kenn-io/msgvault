@@ -5,6 +5,7 @@
 
   import type { OperationStatusAuthority } from '../../explore/models';
   import type { OverviewAction, OverviewRow } from '../../settings/overview';
+  import { sentence } from '../../settings/local-embeddings';
 
   let {
     rows,
@@ -69,8 +70,7 @@
     {@const local = row.id === 'message_embedding' && localSearch}
     {@const enabled = local && (local.kind === 'on' || local.kind === 'ollama')}
     {@const recovery = enabled && (row.chip.text !== 'On' || action?.kind === 'start' || authority)}
-    {@const shown = local && (local.kind === 'off' || local.kind === 'downloaded' || (enabled && row.chip.text !== 'On')) ? localError : ''}
-    {@const error = shown && !/[.!?]$/.test(shown) ? `${shown}.` : shown}
+    {@const error = local && (local.kind === 'off' || local.kind === 'downloaded' || (enabled && row.chip.text !== 'On')) ? sentence(localError) : ''}
     <li class="row" data-feature={row.id}>
       {#if local}
         <div class="row__local">
