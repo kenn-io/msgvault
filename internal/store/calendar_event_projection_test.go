@@ -116,10 +116,10 @@ func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {
 	assertions.Equal("confirmed", calendarRows(t, st, id)[0].Event.Status)
 }
 
-func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
+func TestCalendarEventBackfillResumesCommittedPagesAfterCancel(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
-	// More than one page, with real raw snapshots and real commits.
+	// Exercise cancellation through the calendar wrapper across a page boundary.
 	for i := range 103 {
 		calendarFixture(t, base, fmt.Sprintf("backfill-%d", i), calendarRaw)
 	}

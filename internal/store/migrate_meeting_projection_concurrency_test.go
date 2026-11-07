@@ -125,7 +125,7 @@ func gatedMeetingProjectionStore(t *testing.T, base *Store, gate *meetingProject
 	return st
 }
 
-func TestMeetingProjectionUpgradeCancellationResumesCommittedRows(t *testing.T) {
+func TestMeetingProjectionUpgradeCancellationResumesCommittedPages(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
