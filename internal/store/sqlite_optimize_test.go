@@ -174,7 +174,8 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 
 func TestOptimizeSQLiteStatisticsSingleTransaction(t *testing.T) {
 	require := require.New(t)
-	s, err := openSQLiteContext(t.Context(), filepath.Join(t.TempDir(), "archive.db"), testSQLiteParams)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	s, err := openSQLiteContext(t.Context(), path, testSQLiteParams)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(s.db.Close()) })
 	require.NoError(s.InitSchema())
@@ -188,7 +189,9 @@ func TestOptimizeSQLiteStatisticsSingleTransaction(t *testing.T) {
 
 	var commits int
 	require.NoError(conn.Raw(func(raw any) error {
-		raw.(*sqlite3.SQLiteConn).RegisterCommitHook(func() int {
+		c, ok := raw.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		c.RegisterCommitHook(func() int {
 			commits++
 			return 0
 		})
@@ -196,44 +199,32 @@ func TestOptimizeSQLiteStatisticsSingleTransaction(t *testing.T) {
 	}))
 	t.Cleanup(func() {
 		require.NoError(conn.Raw(func(raw any) error {
-			raw.(*sqlite3.SQLiteConn).RegisterCommitHook(nil)
+			c, ok := raw.(*sqlite3.SQLiteConn)
+			require.True(ok)
+			c.RegisterCommitHook(nil)
 			return nil
 		}))
 	})
 
+	// The first run must analyze several tables in one commit.
 	require.NoError(optimizeSQLiteStatistics(t.Context(), conn))
-	assert.Equal(t, 1, commits, "statistics maintenance must commit once across all analyzed tables and FTS cleanup")
+	assert.Equal(t, 1, commits, "statistics maintenance must commit once across all analyzed tables")
 	var analyzedTables int
 	require.NoError(conn.QueryRowContext(t.Context(), "SELECT COUNT(DISTINCT tbl) FROM sqlite_stat1 WHERE stat IS NOT NULL").Scan(&analyzedTables))
 	assert.Greater(t, analyzedTables, 1, "maintenance must analyze several tables")
-}
-
-func TestOptimizeSQLiteStatisticsPreservesAnalyzedStatistics(t *testing.T) {
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "archive.db")
-	s, err := openSQLiteContext(t.Context(), path, testSQLiteParams)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(s.db.Close()) })
-	require.NoError(s.InitSchema())
-	seedLiveMessages(t, s, 100)
-	require.NoError(s.optimizeSQLite(t.Context()))
 	require.Positive(messagePlannerStatisticCount(t, s))
-	maintenance, err := s.db.Conn(t.Context())
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(maintenance.Close()) })
-	_, err = maintenance.ExecContext(t.Context(), "PRAGMA analysis_limit=1000")
-	require.NoError(err)
 
+	// A second run must leave the analyzed archive unchanged.
 	observer, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(observer.Close()) })
-	conn, err := observer.Conn(t.Context())
+	observerConn, err := observer.Conn(t.Context())
 	require.NoError(err)
-	t.Cleanup(func() { require.NoError(conn.Close()) })
+	t.Cleanup(func() { require.NoError(observerConn.Close()) })
 	var before, after int
-	require.NoError(conn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&before))
-	require.NoError(optimizeSQLiteStatistics(t.Context(), maintenance))
-	require.NoError(conn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&after))
+	require.NoError(observerConn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&before))
+	require.NoError(optimizeSQLiteStatistics(t.Context(), conn))
+	require.NoError(observerConn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&after))
 	assert.Equal(t, before, after, "maintenance on an analyzed archive must leave its statistics unchanged")
 }
 
