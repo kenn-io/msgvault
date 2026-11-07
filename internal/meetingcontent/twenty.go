@@ -164,8 +164,8 @@ func twentyEntries(raw jsontext.Value) ([]twentyEntry, bool) {
 		var participant struct {
 			Name string `json:"name"`
 		}
-		if json.Unmarshal(fields.Participant, &participant) == nil {
-			entry.speaker = strings.TrimSpace(participant.Name)
+		if json.Unmarshal(fields.Participant, &participant) == nil && strings.TrimSpace(participant.Name) != "" {
+			entry.speaker = participant.Name
 		}
 		entries = append(entries, entry)
 	}
@@ -183,7 +183,7 @@ func twentyWords(values []jsontext.Value) []twentyWord {
 		if json.Unmarshal(fields["text"], &text) != nil || strings.TrimSpace(text) == "" {
 			continue
 		}
-		word := twentyWord{text: strings.TrimSpace(text)}
+		word := twentyWord{text: text}
 		if json.Unmarshal(fields["start_timestamp"], &word.start) != nil {
 			word.start = nil
 		}

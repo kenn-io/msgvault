@@ -87,7 +87,7 @@ func decodeGranolaTranscript(fields map[string]jsontext.Value) ([]Segment, Trans
 		if len(wire.Speaker) > 0 && !isNull(wire.Speaker) && json.Unmarshal(wire.Speaker, &speaker) != nil {
 			return nil, Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
 		}
-		segment := Segment{Speaker: granolaSpeaker(speaker.Name, speaker.DiarizationLabel, speaker.Source), Text: strings.TrimSpace(text)}
+		segment := Segment{Speaker: granolaSpeaker(speaker.Name, speaker.DiarizationLabel, speaker.Source), Text: text}
 		if len(wire.Start) > 0 && !isNull(wire.Start) {
 			started, validTime := rawTime(wire.Start, false)
 			if !validTime {
@@ -111,11 +111,11 @@ func decodeGranolaTranscript(fields map[string]jsontext.Value) ([]Segment, Trans
 }
 
 func granolaSpeaker(name, diarization, source string) string {
-	if value := strings.TrimSpace(name); value != "" {
-		return value
+	if strings.TrimSpace(name) != "" {
+		return name
 	}
-	if value := strings.TrimSpace(diarization); value != "" {
-		return value
+	if strings.TrimSpace(diarization) != "" {
+		return diarization
 	}
 	if source == "microphone" {
 		return "Me"

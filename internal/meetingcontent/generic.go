@@ -49,7 +49,10 @@ func decodeGenericTranscript(fields map[string]jsontext.Value) Transcript {
 			if !speakerOK || !utteranceOK || strings.TrimSpace(utterance) == "" {
 				return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
 			}
-			segment := Segment{Speaker: strings.TrimSpace(speaker), Text: strings.TrimSpace(utterance)}
+			if strings.TrimSpace(speaker) == "" {
+				speaker = ""
+			}
+			segment := Segment{Speaker: speaker, Text: utterance}
 			for name, target := range map[string]**float64{
 				"offset_seconds": &segment.OffsetSeconds,
 				"end_seconds":    &segment.EndOffsetSeconds,

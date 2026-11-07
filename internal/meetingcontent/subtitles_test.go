@@ -99,6 +99,24 @@ func TestRenderSubtitles(t *testing.T) {
 	result, err := Render("archive", []Entry{{Content: Decode("omi_json", raw, nil)}}, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
 	require.ErrorContains(err, "use --format vtt")
 	assert.Nil(result)
+	// Expected text and labels come from retained producer strings, before Decode.
+	for format, raw := range map[string]string{
+		"granola_json": `{"transcript":[{"speaker":{"name":"  Label  "},"text":"  first\n  second  ","start_time":"2026-01-01T00:00:00Z","end_time":"2026-01-01T00:00:01.5Z"}]}`,
+		"omi_json":     `{"transcript_segments":[{"speaker_name":"  Label  ","text":"  first\n  second  ","start":0,"end":1.5}]}`,
+		"plaud_json":   `{"schema_version":2,"transcript_segments":[{"speaker":"  Label  ","text":"  first\n  second  ","offset_seconds":0,"end_seconds":1.5}]}`,
+		"twenty_json":  `{"schema_version":1,"recording":{"transcript":[{"participant":{"name":"  Label  "},"words":[{"text":"  first\n  second  ","start_timestamp":{"relative":0},"end_timestamp":{"relative":1.5}}]}]}}`,
+	} {
+		content := Decode(format, []byte(raw), nil)
+		require.Len(content.Transcript.Segments, 1)
+		assert.Equal("  first\n  second  ", content.Transcript.Segments[0].Text, format)
+		assert.Equal("  Label  ", content.Transcript.Segments[0].Speaker, format)
+		result, err := Render("archive", []Entry{{Content: content}}, PacketOptions{Format: FormatVTT, MaxBytes: 4096})
+		require.NoError(err)
+		assert.Equal("WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.500\n  Label  :   first\n  second  \n\n", result.Content, format)
+		result, err = Render("archive", []Entry{{Content: content}}, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+		require.ErrorContains(err, "use --format vtt")
+		assert.Nil(result)
+	}
 }
 
 func TestSubtitleTiming(t *testing.T) {
@@ -285,6 +303,7 @@ func FuzzSubtitlePayload(f *testing.F) {
 	if parserErr != nil {
 		f.Log("FFmpeg unavailable: portable parsing runs; player semantic fuzz layer skipped")
 	}
+	f.Add("  first\n  second  ", "  Label  ")
 	f.Add("before\n+00:00:03,000 --> 00:00:04,000\nafter", "")
 	f.Add("before\n-00:00:03,000 --> 00:00:04,000\nafter", "")
 	f.Fuzz(func(t *testing.T, text, speaker string) {
@@ -309,7 +328,11 @@ func FuzzSubtitlePayload(f *testing.F) {
 			require.NoError(err)
 			entry := Entry{Content: Decode("omi_json", raw, nil)}
 			require.Len(entry.Content.Transcript.Segments, 1)
-			text, speaker = entry.Content.Transcript.Segments[0].Text, entry.Content.Transcript.Segments[0].Speaker
+			if strings.TrimSpace(speaker) == "" {
+				speaker = "Unknown speaker"
+			}
+			assert.Equal(text, entry.Content.Transcript.Segments[0].Text)
+			assert.Equal(speaker, entry.Content.Transcript.Segments[0].Speaker)
 			normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 			for _, format := range []string{"srt", "vtt"} {
 				got, err := renderSubtitles(entry, format)
@@ -366,8 +389,4 @@ func TestSubtitleContextOutputBudget(t *testing.T) {
 	}
 	_, err = Render("archive", []Entry{entry}, PacketOptions{Format: Format("srt"), MaxBytes: len(want) - 1})
 	require.ErrorIs(err, ErrBudgetTooSmall)
-	for _, entries := range [][]Entry{nil, {entry, entry}} {
-		_, err := Render("archive", entries, PacketOptions{Format: FormatSRT, MaxBytes: len(want)})
-		require.ErrorIs(err, ErrInvalidSubtitles)
-	}
 }

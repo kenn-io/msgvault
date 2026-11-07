@@ -14,9 +14,6 @@ const packetSchemaVersion = 1
 
 func Render(archiveUID string, entries []Entry, options PacketOptions) (*PacketResult, error) {
 	if options.Format == FormatSRT || options.Format == FormatVTT {
-		if len(entries) != 1 {
-			return nil, fmt.Errorf("%w: exactly one meeting is required", ErrInvalidSubtitles)
-		}
 		content, err := renderSubtitles(entries[0], string(options.Format))
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidSubtitles, err)

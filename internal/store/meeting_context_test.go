@@ -74,6 +74,10 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	fixture := newMeetingQueryFixture(t)
+	for _, ids := range [][]int64{nil, fixture.meetingIDs[:2]} {
+		_, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: &ids}, meetingcontent.PacketOptions{Format: meetingcontent.FormatSRT, MaxBytes: 4096})
+		requirements.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+	}
 	result, err := fixture.store.GetMeetingContextContext(t.Context(),
 		MeetingQueryScope{MessageIDs: new([]int64{fixture.meetingIDs[2]})}, meetingcontent.PacketOptions{
 			Format: meetingcontent.FormatJSON, IncludeTranscript: true, MaxBytes: 1 << 20,

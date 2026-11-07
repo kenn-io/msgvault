@@ -21,7 +21,7 @@ var srtTimingHeader = regexp.MustCompile("^" + subtitleClock + `[ \t\r\n\f\x0b]*
 func renderSubtitles(entry Entry, format string) (string, error) {
 	transcript := entry.Content.Transcript
 	if transcript.State != StateAvailable || transcript.Reason != "" || len(transcript.Segments) == 0 {
-		return "", errors.New("Cannot export subtitles: a complete timed transcript is unavailable")
+		return "", errors.New("cannot export subtitles: a complete timed transcript is unavailable")
 	}
 	origin := transcript.recordingOrigin
 	relative, absolute := false, false
@@ -48,7 +48,7 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 				continue
 			}
 			if s.OffsetSeconds == nil || s.EndOffsetSeconds == nil || s.StartedAt == nil || s.EndedAt == nil {
-				return "", errors.New("Cannot align timestamps: the recording start is unknown")
+				return "", errors.New("cannot align timestamps: the recording start is unknown")
 			}
 			startOrigin, err := subtitleOrigin(*s.StartedAt, *s.OffsetSeconds)
 			if err != nil {
@@ -59,7 +59,7 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 				return "", err
 			}
 			if !startOrigin.Equal(endOrigin) || origin != nil && !origin.Equal(startOrigin) {
-				return "", errors.New("Transcript timestamps disagree about when recording began")
+				return "", errors.New("transcript timestamps disagree about when recording began")
 			}
 			origin = &startOrigin
 		}
@@ -108,7 +108,7 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 				end, err = subtitleSeconds(*origin, *s.EndedAt)
 			}
 		default:
-			return "", fmt.Errorf("Segment %d needs start and end times measured from the same starting point", i+1)
+			return "", fmt.Errorf("segment %d needs start and end times measured from the same starting point", i+1)
 		}
 		if err != nil {
 			return "", fmt.Errorf("subtitle timing at segment %d: %w", i+1, err)
@@ -173,12 +173,12 @@ func subtitleTimestamp(ms int64, separator string) string {
 func subtitleOrigin(stamp time.Time, offset float64) (time.Time, error) {
 	nanos := math.Round(offset * float64(time.Second))
 	if !finite(nanos) || nanos < 0 || nanos >= float64(math.MaxInt64) {
-		return time.Time{}, errors.New("Recording start offset exceeds the supported range")
+		return time.Time{}, errors.New("recording start offset exceeds the supported range")
 	}
 	elapsed := time.Duration(nanos)
 	// One division preserves the encoded float coordinate without split rounding.
 	if float64(elapsed)/float64(time.Second) != offset {
-		return time.Time{}, errors.New("Cannot determine the recording's precise start time")
+		return time.Time{}, errors.New("cannot determine the recording's precise start time")
 	}
 	return stamp.Add(-elapsed), nil
 }
