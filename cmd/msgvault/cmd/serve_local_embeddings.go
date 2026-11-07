@@ -122,7 +122,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		return err
 	}
 	loaded, err := c.state.cfg.ReloadConfigFile(snapshot)
-	if err == nil && loaded.Vector.Embeddings.LocalOnly {
+	if err == nil && !loaded.Vector.Enabled && loaded.Vector.Embeddings.LocalOnly {
 		err = loaded.Vector.Embeddings.Validate() // Keep a saved custom model instead of replacing it with Nomic.
 	}
 	if err != nil {

@@ -657,15 +657,17 @@ The native daemon MCP listener always registers semantic search, similar-message
 
 Other embedded MCP servers register vector tools from the backends supplied by their
 caller. Standalone daemon-backed MCP reads one authenticated health response during
-startup and enables the full text search schema only when the response reports
-`text_enabled: true` with API schema `2.28.0` or newer. It registers
+startup. It registers the full semantic and similar-message tools when the daemon
+advertises `enableLocalEmbeddings`, even while text search is disabled. Turning on
+search by meaning makes these tools usable without restarting MCP. Otherwise, it
+requires `text_enabled: true` with API schema `2.28.0` or newer. It registers
 `search_visual_attachments` only when `visual_enabled: true`, the same lane
 fields are available, and the daemon serves the visual route from schema
-`2.4.0` or newer. Disabled or unknown lanes omit their optional searchers. The
+`2.4.0` or newer. Without local activation support, disabled or unknown text lanes omit their optional searchers. The
 reduced `semantic_search_messages` entry remains as discovery guidance and
 returns `vector_not_enabled` until text search is configured.
 
-Standalone daemon-backed MCP also registers `get_embeddings_status` when authenticated health reports a vector lane and API schema `3.21.0` or newer.
+Standalone daemon-backed MCP also registers `get_embeddings_status` when the daemon advertises `enableLocalEmbeddings`, or when authenticated health reports a vector lane and API schema `3.21.0` or newer.
 
 Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
 semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,
