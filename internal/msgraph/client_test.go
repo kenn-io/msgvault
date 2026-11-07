@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -17,6 +18,108 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type graphTestRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f graphTestRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type delayedGraphResponseBody struct {
+	reader     io.Reader
+	delay      time.Duration
+	beforeRead func()
+	read       bool
+}
+
+func (b *delayedGraphResponseBody) Read(p []byte) (int, error) {
+	if !b.read {
+		b.read = true
+		if b.beforeRead != nil {
+			b.beforeRead()
+		}
+		if b.delay > 0 {
+			time.Sleep(b.delay)
+		}
+	}
+	return b.reader.Read(p)
+}
+
+func (b *delayedGraphResponseBody) Close() error { return nil }
+
+type canceledGraphResponseBody struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+func (b canceledGraphResponseBody) Read([]byte) (int, error) {
+	b.cancel()
+	return 0, b.err
+}
+
+func (canceledGraphResponseBody) Close() error { return nil }
+
+func TestGetRawCapturesRetryFloorAtThrottledResponseHeaders(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		c := NewClient("https://graph.example.test", func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
+		c.DeferProviderRetries()
+		var responseAt, floorAtBodyRead time.Time
+		var requests atomic.Int32
+		c.http.Transport = graphTestRoundTripper(func(req *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			responseAt = time.Now()
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Retry-After": []string{"60"}},
+				Body: &delayedGraphResponseBody{
+					reader: strings.NewReader(`{"error":{"code":"throttled"}}`),
+					delay:  10 * time.Second,
+					beforeRead: func() {
+						floorAtBodyRead = c.RetryNotBefore()
+					},
+				},
+			}, nil
+		})
+
+		_, err := c.GetRaw(t.Context(), "/messages")
+		var throttled *ThrottledError
+		require.ErrorAs(err, &throttled)
+		assert.EqualValues(1, requests.Load())
+		assert.True(floorAtBodyRead.After(responseAt), "the provider floor is recorded before body reads begin")
+		assert.Equal(floorAtBodyRead, c.RetryNotBefore())
+		assert.GreaterOrEqual(floorAtBodyRead.Sub(responseAt), 59*time.Second)
+		assert.LessOrEqual(floorAtBodyRead.Sub(responseAt), 61*time.Second,
+			"the absolute floor stays anchored to response receipt")
+		assert.GreaterOrEqual(floorAtBodyRead.Sub(time.Now()), 49*time.Second)
+		assert.LessOrEqual(floorAtBodyRead.Sub(time.Now()), 51*time.Second,
+			"a slow body consumes the original Retry-After interval")
+	})
+}
+
+func TestGetRawPreservesRetryFloorAndCancellationForTruncatedThrottledResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c := NewClient("https://graph.example.test", func(context.Context) (string, error) { return "fixture-token", nil }, 1000)
+	c.DeferProviderRetries()
+	var requests atomic.Int32
+	c.http.Transport = graphTestRoundTripper(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Retry-After": []string{"3600"}},
+			Body:       canceledGraphResponseBody{cancel: cancel, err: io.ErrUnexpectedEOF},
+		}, nil
+	})
+
+	_, err := c.GetRaw(ctx, "/messages")
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.EqualValues(t, 1, requests.Load())
+	assert.True(c.RetryNotBefore().After(time.Now().Add(30*time.Minute)),
+		"a truncated 429 retains its header floor even when body reading cancels the request")
+}
 
 // GetRawMetered charges every response it reads, failed and broken ones
 // included, and an error from charge ends the request.

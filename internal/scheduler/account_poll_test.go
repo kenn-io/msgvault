@@ -15,6 +15,14 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
+func TestAcquisitionFilteredCoverageUsesShortStatusText(t *testing.T) {
+	assert.Equal(t, "Rapid polling: remove folder/date filters or disable poll_interval.",
+		(&AcquisitionError{Reason: AcquisitionFilteredCoverage}).Error())
+	assert.Equal(t, "email acquisition failed; retry scheduled",
+		(&AcquisitionError{Outcome: AcquisitionFailed}).Error(),
+		"the scheduler keeps its safe failure detail for other consumers")
+}
+
 func TestAccountPollingStartupCatchup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
