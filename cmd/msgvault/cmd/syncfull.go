@@ -470,6 +470,7 @@ func applyIMAPMailboxDeltas(
 	syncRunID int64,
 	deltas []imaplib.MailboxDelta,
 	observations []imaplib.MembershipObservation,
+	scannedOnly bool,
 ) error {
 	type membershipKey struct {
 		mailbox     string
@@ -537,12 +538,16 @@ func applyIMAPMailboxDeltas(
 			},
 			Memberships:  byMailbox[delta.Mailbox],
 			VanishedUIDs: vanished,
+			KnownUIDs:    delta.State.KnownUIDs,
 			Reset:        delta.Reset,
 		})
 		delete(byMailbox, delta.Mailbox)
 	}
 	for mailbox := range byMailbox {
 		return fmt.Errorf("IMAP membership observation for mailbox %q has no mailbox delta", mailbox)
+	}
+	if scannedOnly {
+		return s.ApplyIMAPScannedMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 	}
 	return s.ApplyIMAPMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 }
@@ -556,7 +561,7 @@ func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit in
 }
 
 // saveIMAPFolderStates atomically persists mailbox membership and cursor
-// observations only after a clean, unlimited, unfiltered sync.
+// observations only after a clean, unlimited sync with complete mailbox evidence.
 func saveIMAPFolderStates(
 	ctx context.Context,
 	s *store.Store,
@@ -569,7 +574,8 @@ func saveIMAPFolderStates(
 	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
 		return nil
 	}
-	if imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete() {
+	scannedOnly := imapClient.ReconcilesFilteredDeletions()
+	if !scannedOnly && !imapClient.LabelsSnapshotComplete() {
 		return nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()
@@ -577,7 +583,7 @@ func saveIMAPFolderStates(
 		return nil
 	}
 	if err := applyIMAPMailboxDeltas(
-		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(),
+		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(), scannedOnly,
 	); err != nil {
 		return fmt.Errorf("apply IMAP mailbox deltas: %w", err)
 	}
@@ -736,7 +742,9 @@ func imapSyncFolderFilter(ctx context.Context, s *store.Store, identifier string
 	folders = parseFolderFilter(folders)
 	skipFolders = parseFolderFilter(skipFolders)
 	cfg := state.cfg
+	reconcileFilteredDeletions := false
 	if len(folders) == 0 && len(skipFolders) == 0 {
+		reconcileFilteredDeletions = cfg.Sync.IMAPReconcileFilteredDeletions[identifier]
 		if len(cfg.Sync.IMAPSkipFolders) > 0 {
 			state.imapFolderAccounts.Do(func() {
 				sources, err := s.ListSourcesContext(ctx, sourceTypeIMAP)
@@ -753,7 +761,10 @@ func imapSyncFolderFilter(ctx context.Context, s *store.Store, identifier string
 		}
 		skipFolders = parseFolderFilter(cfg.Sync.IMAPSkipFolders[identifier])
 	}
-	return imaplib.WithFolderFilter(folders, skipFolders)
+	return func(c *imaplib.Client) {
+		imaplib.WithFolderFilter(folders, skipFolders)(c)
+		imaplib.WithFilteredDeletionReconciliation(reconcileFilteredDeletions)(c)
+	}
 }
 
 // parseFolderFilter trims whitespace from folder names and removes empty

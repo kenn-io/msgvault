@@ -153,6 +153,20 @@ func TestIMAPRelocationHistoricalNULIdentity(t *testing.T) {
 	assert.Equal([]uint32{1}, known["Sent"])
 }
 
+func TestIMAPScopedRelocationRecoversSent(t *testing.T) {
+	require := require.New(t)
+	f := newRelocationFixture(t)
+	f.final.Mailboxes = append(f.final.Mailboxes, scriptedRFC7162Mailbox{
+		Name: "Trash", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrTrash},
+		UIDValidity: 99, UIDNext: 1, HighestModSeq: 1,
+	})
+	f.server.setSnapshot(f.final)
+	client, err := f.sync(t, imap.WithFolderFilter(nil, []string{"Trash"}), imap.WithFilteredDeletionReconciliation(true))
+	require.NoError(err)
+	require.NoError(client.Close())
+	f.assertSent(t)
+}
+
 func TestIMAPRelocationAfterOverlapVANISHED(t *testing.T) {
 	for _, mode := range []string{"VANISHED", "disappeared mailbox", "new epoch", "fallback", "changed alias"} {
 		t.Run(mode, func(t *testing.T) {

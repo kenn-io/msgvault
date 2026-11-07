@@ -135,6 +135,8 @@ type Client struct {
 	since                       time.Time            // IMAP SINCE date filter (zero = no filter)
 	before                      time.Time            // IMAP BEFORE date filter (zero = no filter)
 
+	mailboxAttrs map[string][]imap.MailboxAttr // LIST attributes by selectable mailbox
+
 	relocationCandidateLoader func(context.Context, []string) ([]RelocationCandidate, error)
 	relocationTargets         map[string]gmailapi.MessageRelocationTarget
 
@@ -146,6 +148,8 @@ type Client struct {
 	// folderFilter overrides which mailboxes are included in the sync.
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
+
+	reconcileFilteredDeletions bool
 
 	forceFullEnumeration  bool
 	priorFolderStates     map[string]FolderState // saved states from the last completed sync
@@ -635,11 +639,13 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 	}
 
 	var names []string
+	c.mailboxAttrs = make(map[string][]imap.MailboxAttr, len(items))
 	for _, item := range items {
 		if hasAttr(item.Attrs, imap.MailboxAttrNoSelect) {
 			continue
 		}
 		names = append(names, item.Mailbox)
+		c.mailboxAttrs[item.Mailbox] = item.Attrs
 		// Received-mail roles deny outgoing trust regardless of how the
 		// mailbox is advertised or configured. RFC 6154 roles describe
 		// intended use, not authorship proof, so this records every LIST
@@ -738,6 +744,7 @@ func (c *Client) listMailboxesLocked(ctx context.Context) ([]string, error) {
 // QRESYNC connection.
 func (c *Client) clearMailboxDiscoveryLocked() {
 	c.mailboxCache = nil
+	c.mailboxAttrs = nil
 	c.trashMailbox = ""
 	c.junkMailbox = ""
 	c.allMailFolder = ""
@@ -1250,13 +1257,14 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 				// Gmail's All Mail contains every message except Trash
 				// and Spam. Enumerate those alongside All Mail to catch
 				// messages only in those folders, but only when each
-				// canonical mailbox remains in the effective folder filter.
+				// mailbox remains in the effective folder filter.
 				listMailboxes = []string{c.allMailFolder}
-				if slices.Contains(allMailboxes, c.trashMailbox) {
-					listMailboxes = append(listMailboxes, c.trashMailbox)
-				}
-				if slices.Contains(allMailboxes, c.junkMailbox) {
-					listMailboxes = append(listMailboxes, c.junkMailbox)
+				for _, mailbox := range allMailboxes {
+					if mailbox == c.trashMailbox || mailbox == c.junkMailbox ||
+						hasAttr(c.mailboxAttrs[mailbox], imap.MailboxAttrTrash) ||
+						hasAttr(c.mailboxAttrs[mailbox], imap.MailboxAttrJunk) {
+						listMailboxes = append(listMailboxes, mailbox)
+					}
 				}
 			}
 		}
@@ -1334,10 +1342,11 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			return c.finalizeMessageListLocked(ctx, allMailboxes, qresyncMessages)
 		}
 	}
-	if trackFolders && !c.labelsSnapshotFilteredLocked() {
-		// A clean full scan publishes the complete current topology. Keep a
-		// non-nil empty slice so zero current mailboxes still reaches the
-		// authoritative store apply and retires the prior topology.
+	scopedSnapshot := c.scannedMailboxSnapshotLocked()
+	authoritativeSnapshot := trackFolders && (!c.labelsSnapshotFilteredLocked() || scopedSnapshot)
+	if authoritativeSnapshot {
+		// Publish every selected mailbox, including a non-nil empty set.
+		// Scoped applies preserve every mailbox outside this set.
 		c.observedMailboxDeltas = make([]MailboxDelta, 0, len(allMailboxes))
 	}
 
@@ -1356,7 +1365,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		len(c.config.Folders) == 0 &&
 		len(c.folderFilterInclude) == 0 &&
 		len(c.folderFilterExclude) == 0
-	buildMembershipMap := c.allMailFolder != "" || fullScanWithoutAll
+	buildMembershipMap := c.allMailFolder != "" || fullScanWithoutAll || scopedSnapshot
 
 	// Resolve every mailbox's enumeration plan up front so the label map and
 	// the listing below agree. Only the no-\All path takes shortcuts; with an
@@ -1520,7 +1529,6 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		}
 	}
 	statusesComplete := folderStatusesCoverMailboxes(allMailboxes, folderStatuses)
-	authoritativeSnapshot := trackFolders && !c.labelsSnapshotFilteredLocked()
 	if authoritativeSnapshot && (!statusesComplete || !labelMapComplete || !enumerationComplete) {
 		labelMapComplete = false
 		c.observedFolderStates = nil

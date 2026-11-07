@@ -896,6 +896,9 @@ type SyncConfig struct {
 	// IMAPSkipFolders maps exact source identifiers from list-accounts to
 	// folders excluded from sync unless command folder flags override them.
 	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
+	// IMAPReconcileFilteredDeletions opts exact source identifiers into source
+	// deletion tracking when only Trash or Junk are excluded and no allow list is set.
+	IMAPReconcileFilteredDeletions map[string]bool `toml:"imap_reconcile_filtered_deletions"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
 	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
 	// "imaps://user@example.com@imap.example.com:993") to that source's
@@ -908,7 +911,8 @@ type SyncConfig struct {
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
 }
 
-// Validate rejects invalid sync limits and blank saved IMAP folder names.
+// Validate rejects invalid sync limits and blank saved IMAP folder names
+// and blank imap_reconcile_filtered_deletions keys.
 func (s *SyncConfig) Validate() error {
 	if s.IMAPMaxCommandsPerMinute < 0 {
 		return errors.New("sync.imap_max_commands_per_minute must be non-negative")
@@ -918,6 +922,11 @@ func (s *SyncConfig) Validate() error {
 			if strings.TrimSpace(folder) == "" {
 				return fmt.Errorf("sync.imap_skip_folders[%q] contains a blank folder name", identifier)
 			}
+		}
+	}
+	for identifier := range s.IMAPReconcileFilteredDeletions {
+		if strings.TrimSpace(identifier) == "" {
+			return errors.New("sync.imap_reconcile_filtered_deletions contains a blank account key")
 		}
 	}
 	return nil
