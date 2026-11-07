@@ -1,6 +1,7 @@
 package meetingcontent
 
 import (
+	"encoding/hex"
 	"encoding/json/v2"
 	"html"
 	"math"
@@ -183,18 +184,26 @@ func TestSubtitleRefusals(t *testing.T) {
 		"unproven mixed": func(e *Entry) {
 			e.Content.Transcript.Segments[0].StartedAt = nil
 			e.Content.Transcript.Segments[0].OffsetSeconds = new(0.0)
+			e.Content.Transcript.Segments = append(e.Content.Transcript.Segments, subtitleEntry().Content.Transcript.Segments[0])
 		},
 		"hex missing origin": func(e *Entry) {
 			e.Meeting.SourceType = "hex"
 			e.Content.Transcript.Segments[0].StartedAt = nil
 			e.Content.Transcript.Segments[0].OffsetSeconds = new(0.0)
 		},
-		"overflow": func(e *Entry) { e.Content.Transcript.Segments[0].OffsetSeconds = new(math.MaxFloat64) },
+		"overflow": func(e *Entry) {
+			e.Content.Transcript.Segments[0].OffsetSeconds = new(0.0)
+			e.Content.Transcript.Segments[0].EndOffsetSeconds = new(math.MaxFloat64)
+		},
 		"reversed": func(e *Entry) { s := &e.Content.Transcript.Segments[0]; s.EndedAt = new(s.StartedAt.Add(-time.Second)) },
 		"zero milliseconds": func(e *Entry) {
 			s := &e.Content.Transcript.Segments[0]
 			s.EndedAt = new(s.StartedAt.Add(time.Microsecond))
 		},
+	}
+	diagnostics := map[string]string{
+		"overflow":       "negative, overflowing, or reversed interval",
+		"unproven mixed": "mixed coordinates have no proven recording origin",
 	}
 	for name, modify := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -203,6 +212,9 @@ func TestSubtitleRefusals(t *testing.T) {
 			for _, format := range []string{"srt", "vtt"} {
 				got, err := renderSubtitles(entry, format)
 				require.Error(t, err)
+				if diagnostic := diagnostics[name]; diagnostic != "" {
+					require.ErrorContains(t, err, diagnostic)
+				}
 				assert.Empty(t, got)
 			}
 		})
@@ -262,55 +274,71 @@ func FuzzSubtitlePayload(f *testing.F) {
 	f.Add("before\n+00:00:03,000 --> 00:00:04,000\nafter", "")
 	f.Add("before\n-00:00:03,000 --> 00:00:04,000\nafter", "")
 	f.Fuzz(func(t *testing.T, text, speaker string) {
-		if len(text)+len(speaker) > 512 || !utf8.ValidString(text) || !utf8.ValidString(speaker) || strings.TrimSpace(text) == "" {
+		if len(text)+len(speaker) > 512 {
 			return
 		}
-		raw, err := json.Marshal(map[string]any{"transcript_segments": []any{map[string]any{"text": text, "speaker_name": speaker, "start": 0, "end": 1.5}}})
-		require.NoError(t, err)
-		entry := Entry{Content: Decode("omi_json", raw, nil)}
-		require.Len(t, entry.Content.Transcript.Segments, 1)
-		text, speaker = entry.Content.Transcript.Segments[0].Text, entry.Content.Transcript.Segments[0].Speaker
-		normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-		for _, format := range []string{"srt", "vtt"} {
-			got, err := renderSubtitles(entry, format)
-			payload := normalized
-			if speaker != "" {
-				payload = speaker + ": " + payload
-			}
-			if err != nil {
-				assert.Empty(t, got)
+		// Hex encoding constructs an independently known-valid text domain. Every fuzz
+		// input must successfully export this case, even if its raw case refuses.
+		for _, input := range []struct {
+			text, speaker string
+			valid         bool
+		}{
+			{text, speaker, false},
+			{"Text:" + hex.EncodeToString([]byte(text)) + "\nNext --> 世界 & done", "R&D:" + hex.EncodeToString([]byte(speaker)), true},
+		} {
+			text, speaker := input.text, input.speaker
+			if !utf8.ValidString(text) || !utf8.ValidString(speaker) || strings.TrimSpace(text) == "" {
 				continue
 			}
+			raw, err := json.Marshal(map[string]any{"transcript_segments": []any{map[string]any{"text": text, "speaker_name": speaker, "start": 0, "end": 1.5}}})
 			require.NoError(t, err)
-			if format == "srt" {
-				parsed, err := mediatranscript.ParseSubRip([]byte(got), "msgvault", "und")
-				require.NoError(t, err)
-				require.Len(t, parsed.Segments, 1)
-				assert.Equal(t, int64(0), parsed.Segments[0].StartMS)
-				assert.Equal(t, int64(1500), parsed.Segments[0].EndMS)
-				assert.Equal(t, payload, parsed.Segments[0].Text)
-				// Players normalize line-edge presentation whitespace. Keep the
-				// byte/portable property above for every input; compare displayed
-				// semantics only within this explicitly bounded domain.
-				displayDomain := true
-				for line := range strings.SplitSeq(payload, "\n") {
-					displayDomain = displayDomain && strings.Trim(line, " \t\r\f\v") == line
+			entry := Entry{Content: Decode("omi_json", raw, nil)}
+			require.Len(t, entry.Content.Transcript.Segments, 1)
+			text, speaker = entry.Content.Transcript.Segments[0].Text, entry.Content.Transcript.Segments[0].Speaker
+			normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+			for _, format := range []string{"srt", "vtt"} {
+				got, err := renderSubtitles(entry, format)
+				payload := normalized
+				if speaker != "" {
+					payload = speaker + ": " + payload
 				}
-				if parserErr == nil && displayDomain {
-					assert.Equal(t, []string{"0:00:00.00,0:00:01.50," + strings.ReplaceAll(payload, "\n", `\N`)}, subtitleDisplay(t, ffmpeg, format, got))
+				if input.valid {
+					require.NoError(t, err)
 				}
+				if err != nil {
+					assert.Empty(t, got)
+					continue
+				}
+				if format == "srt" {
+					parsed, err := mediatranscript.ParseSubRip([]byte(got), "msgvault", "und")
+					require.NoError(t, err)
+					require.Len(t, parsed.Segments, 1)
+					assert.Equal(t, int64(0), parsed.Segments[0].StartMS)
+					assert.Equal(t, int64(1500), parsed.Segments[0].EndMS)
+					assert.Equal(t, payload, parsed.Segments[0].Text)
+					// Players normalize line-edge presentation whitespace. Keep the
+					// byte/portable property above for every input; compare displayed
+					// semantics only within this explicitly bounded domain.
+					displayDomain := true
+					for line := range strings.SplitSeq(payload, "\n") {
+						displayDomain = displayDomain && strings.Trim(line, " \t\r\f\v") == line
+					}
+					if parserErr == nil && displayDomain {
+						assert.Equal(t, []string{"0:00:00.00,0:00:01.50," + strings.ReplaceAll(payload, "\n", `\N`)}, subtitleDisplay(t, ffmpeg, format, got))
+					}
+				}
+				lines := strings.SplitN(strings.TrimPrefix(got, "WEBVTT\n\n"), "\n", 3)
+				require.Len(t, lines, 3)
+				body := strings.TrimSuffix(lines[2], "\n\n")
+				if format == "vtt" {
+					assert.Equal(t, "00:00:00.000 --> 00:00:01.500", lines[1])
+					assert.Equal(t, 1, strings.Count(got, " --> "))
+					assert.NotContains(t, body, "<")
+					body = html.UnescapeString(body)
+				}
+				assert.Equal(t, payload, body)
+				assert.Equal(t, 1, strings.Count(strings.TrimPrefix(got, "WEBVTT\n\n"), "\n\n"))
 			}
-			lines := strings.SplitN(strings.TrimPrefix(got, "WEBVTT\n\n"), "\n", 3)
-			require.Len(t, lines, 3)
-			body := strings.TrimSuffix(lines[2], "\n\n")
-			if format == "vtt" {
-				assert.Equal(t, "00:00:00.000 --> 00:00:01.500", lines[1])
-				assert.Equal(t, 1, strings.Count(got, " --> "))
-				assert.NotContains(t, body, "<")
-				body = html.UnescapeString(body)
-			}
-			assert.Equal(t, payload, body)
-			assert.Equal(t, 1, strings.Count(strings.TrimPrefix(got, "WEBVTT\n\n"), "\n\n"))
 		}
 	})
 }

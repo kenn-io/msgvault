@@ -94,6 +94,9 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	require := require.New(t)
 	st, src := registered(t)
 	f := sourceFixture("f")
+	r := f.recordings["f"]
+	r.Segments[0].StartSeconds, r.Segments[0].EndSeconds = 1.25, 2.75
+	f.recordings["f"] = r
 	imp := NewImporter(st, f)
 	opts := ImportOptions{Identifier: "personal", AccountEmail: "user@example.com"}
 	sum, err := imp.Import(t.Context(), opts)
@@ -106,7 +109,7 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(sum.MeetingsUpdated)
-	r := f.recordings["f"]
+	r = f.recordings["f"]
 	r.Segments[0].Speaker = "Alex Example"
 	r.Notes[0].ID = "regenerated-summary"
 	r.Notes[0].Content = "Updated summary"
@@ -130,6 +133,16 @@ func TestImporterReconcilesEditsAndPreservesMissingEvidence(t *testing.T) {
 	require.Len(c.Transcript.Segments, 1)
 	assert.Equal("Alex Example", c.Transcript.Segments[0].Speaker)
 	assert.Equal("Updated summary", c.Summary.Text)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: c}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		require.NoError(err)
+		want := "00:00:01,250 --> 00:00:02,750"
+		if format == meetingcontent.FormatVTT {
+			want = "00:00:01.250 --> 00:00:02.750"
+		}
+		assert.Contains(result.Content, want)
+		assert.Contains(result.Content, "Alex Example: Ship the searchable release")
+	}
 	body, err := st.GetMessageBodyText(t.Context(), mid)
 	require.NoError(err)
 	assert.Contains(body, "Ship the searchable release")

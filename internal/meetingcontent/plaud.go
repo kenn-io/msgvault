@@ -6,11 +6,11 @@ import (
 )
 
 func decodePlaud(fields map[string]jsontext.Value) Content {
+	if version, ok := rawInteger(fields["schema_version"]); len(fields["schema_version"]) > 0 && (!ok || version != 1) {
+		return unavailableContent("unsupported_schema")
+	}
 	content := decodeGeneric(fields)
 	content.Notes = decodeStringField(fields, "notes")
-	if seconds, ok := rawFiniteFloat(fields["duration_seconds"]); ok {
-		setDuration(&content, seconds, DurationProvider)
-	}
 	var participants []Participant
 	if json.Unmarshal(fields["source_participants"], &participants) == nil {
 		// Speaker labels are display evidence, never verified email identities.

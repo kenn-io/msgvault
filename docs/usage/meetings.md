@@ -74,8 +74,8 @@ formatting, and size errors leave an existing destination untouched.
 
 Export uses retained structured segments, independently of the recorder or
 transcription service. Complete start/end intervals in one coordinate system
-are required. Relative bounds survive from Twenty and Omi. Absolute-only
-transcripts start at their earliest cue; mixing them with relative cues requires
+are required. Relative bounds survive from Twenty, Omi, and Plaud schema-1
+evidence. Absolute-only transcripts start at their earliest cue; mixing them with relative cues requires
 an exact common recording origin. Overlaps survive. Plain text, start-only offsets, incomplete
 transcripts, and ambiguous timing fail instead of acquiring estimated cue ends.
 Subtitle exports automatically load transcript evidence and require exactly one

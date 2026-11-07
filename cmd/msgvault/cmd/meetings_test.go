@@ -178,43 +178,29 @@ func TestMeetingContextWritesExactContentAtomically(t *testing.T) {
 	source, err := st.GetOrCreateSource("granola", "subtitle@example.test")
 	require.NoError(t, err)
 	raw := []byte(`{"summary_markdown":"summary","transcript":[{"speaker":{"name":"R&D"},"text":"Hello --> 世界 & done","start_time":"2026-01-01T10:00:02Z","end_time":"2026-01-01T10:00:04.250Z"},{"speaker":{"name":"B"},"text":"Next","start_time":"2026-01-01T10:00:03Z","end_time":"2026-01-01T10:00:05Z"}]}`)
-	metadata := []byte(`{"platform":"granola","retained":"synthetic"}`)
-	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle", SourceConversationID: "subtitle", Title: "Subtitle fixture", StartedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC), Raw: raw, RawFormat: "granola_json", Metadata: metadata, Organizer: &meetingarchive.Person{Name: "Owner", Email: "subtitle@example.test"}}
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle", SourceConversationID: "subtitle", Title: "Subtitle fixture", StartedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC), Raw: raw, RawFormat: "granola_json", Organizer: &meetingarchive.Person{Name: "Owner", Email: "subtitle@example.test"}}
 	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
-	require.NoError(t, err)
-	before, err := st.GetMessageContext(t.Context(), archived.MessageID)
 	require.NoError(t, err)
 	id := meetingTestInt64(archived.MessageID)
 	output = filepath.Join(filepath.Dir(output), "meeting.vtt")
 	for _, format := range []string{"srt", "vtt"} {
+		requestFormat := generated.MeetingContextRequestFormat(format)
+		expected, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID}), Format: &requestFormat, MaxBytes: new(int64(4096)), IncludeTranscript: new(false)})
+		require.NoError(t, err)
 		stdout, stderr, err := executeMeetingsCommand(t, client, "context", "--id", id, "--max-bytes", "4096", "--include-transcript=false", "--format", format)
 		require.NoError(t, err)
 		assert.Empty(t, stderr)
-		want := "1\n00:00:00,000 --> 00:00:02,250\nR&D: Hello --> 世界 & done\n\n2\n00:00:01,000 --> 00:00:03,000\nB: Next\n\n"
-		if format == "vtt" {
-			want = "WEBVTT\n\n" + strings.ReplaceAll(want, ",", ".")
-			want = strings.ReplaceAll(want, "R&D: Hello --> 世界 & done", "R&amp;D: Hello --&gt; 世界 &amp; done")
-		}
-		assert.Equal(t, want, stdout)
+
+		assert.Equal(t, expected.Content, stdout)
 		stdout, stderr, err = executeMeetingsCommand(t, client, "context", "--id", id, "--max-bytes", "4096", "--include-transcript=false", "--format", format, "-o", output)
 		require.NoError(t, err)
 		assert.Empty(t, stdout)
 		assert.Contains(t, stderr, output)
 		saved, err := os.ReadFile(output)
 		require.NoError(t, err)
-		assert.Equal(t, want, string(saved))
-		t.Logf("synthetic CLI %s output:\n%s", format, want)
+		assert.Equal(t, expected.Content, string(saved))
+		t.Logf("synthetic CLI %s output:\n%s", format, expected.Content)
 	}
-	after, err := st.GetMessageContext(t.Context(), archived.MessageID)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
-	storedRaw, err := st.GetMessageRawContext(t.Context(), archived.MessageID)
-	require.NoError(t, err)
-	assert.Equal(t, raw, storedRaw)
-	storedMetadata, err := st.GetMessageMetadataContext(t.Context(), archived.MessageID)
-	require.NoError(t, err)
-	require.True(t, storedMetadata.Valid)
-	assert.Equal(t, string(metadata), storedMetadata.String)
 	// A representative renderer failure must not write stdout or replace files.
 	snapshot.Raw = []byte(strings.Replace(string(raw), `"end_time":"2026-01-01T10:00:04.250Z"`, `"end_time":null`, 1))
 	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})

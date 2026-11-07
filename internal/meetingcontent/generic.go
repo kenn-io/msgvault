@@ -35,34 +35,32 @@ func decodeGenericTranscript(fields map[string]jsontext.Value) Transcript {
 	segmentsRaw, segmentsPresent := fields["transcript_segments"]
 	segments := []Segment{}
 	if segmentsPresent {
-		if isNull(segmentsRaw) {
-			return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
-		}
 		var items []jsontext.Value
-		if json.Unmarshal(segmentsRaw, &items) != nil {
+		if isNull(segmentsRaw) || json.Unmarshal(segmentsRaw, &items) != nil {
 			return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
 		}
 		for _, item := range items {
-			var wire struct {
-				Speaker jsontext.Value `json:"speaker"`
-				Text    jsontext.Value `json:"text"`
-				Offset  jsontext.Value `json:"offset_seconds"`
-			}
+			var wire map[string]jsontext.Value
 			if json.Unmarshal(item, &wire) != nil {
 				return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
 			}
-			speaker, speakerOK := optionalString(wire.Speaker)
-			utterance, utteranceOK := optionalString(wire.Text)
+			speaker, speakerOK := optionalString(wire["speaker"])
+			utterance, utteranceOK := optionalString(wire["text"])
 			if !speakerOK || !utteranceOK || strings.TrimSpace(utterance) == "" {
 				return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
 			}
 			segment := Segment{Speaker: strings.TrimSpace(speaker), Text: strings.TrimSpace(utterance)}
-			if len(wire.Offset) > 0 && !isNull(wire.Offset) {
-				offset, valid := rawFiniteFloat(wire.Offset)
-				if !valid || offset < 0 {
-					return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
+			for name, target := range map[string]**float64{
+				"offset_seconds": &segment.OffsetSeconds,
+				"end_seconds":    &segment.EndOffsetSeconds,
+			} {
+				if raw := wire[name]; len(raw) > 0 && !isNull(raw) {
+					value, valid := rawFiniteFloat(raw)
+					if !valid || value < 0 {
+						return Transcript{State: StateUnavailable, Reason: reasonInvalidSection}
+					}
+					*target = &value
 				}
-				segment.OffsetSeconds = &offset
 			}
 			segments = append(segments, segment)
 		}

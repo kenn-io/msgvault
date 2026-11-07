@@ -773,6 +773,36 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 			checks.NotContains(raw, privateMessage)
 		})
 	}
+	oldDaemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/health", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": "3.46.0"}))
+	}))
+	t.Cleanup(oldDaemon.Close)
+	oldClient, err := daemonclient.New(daemonclient.Config{URL: oldDaemon.URL, AllowInsecure: true, HTTPClient: oldDaemon.Client()})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, oldClient.Close()) })
+	format := generated.MeetingContextRequestFormat("srt")
+	_, capabilityError := oldClient.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
+	require.Error(t, capabilityError)
+	for _, test := range []struct {
+		err  error
+		want string
+	}{
+		{&daemonclient.APIError{Status: 400, Code: "invalid_meeting_subtitles", Message: "Use VTT for this payload"}, "invalid_meeting_subtitles: Use VTT for this payload"},
+		{&daemonclient.APIError{Status: 400, Code: "context_budget_too_small", Message: "Raise the output budget"}, "context_budget_too_small: Raise the output budget"},
+		{capabilityError, "meeting_subtitles_unsupported: meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon"},
+	} {
+		result, _, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
+			return nil, newInternalError("meeting context", test.err)
+		})(t.Context(), &sdkmcp.CallToolRequest{}, nil)
+		require.NoError(t, err)
+		require.True(t, result.IsError)
+		require.Len(t, result.Content, 1)
+		message, ok := result.Content[0].(*sdkmcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, test.want, message.Text)
+	}
 }
 
 func TestMCPDaemonBodySearchUnknownCodeStaysPrivate(t *testing.T) {

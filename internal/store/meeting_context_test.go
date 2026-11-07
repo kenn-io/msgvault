@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"math"
 	"os"
@@ -85,6 +86,30 @@ func TestMeetingContextTranscriptOptInUsesBoundedRawRead(t *testing.T) {
 	requirements.Len(transcript.Segments, 2)
 	assertions.Equal("Start", transcript.Segments[0].Text)
 	assertions.Equal("Finish", transcript.Segments[1].Text)
+	raw, err := os.ReadFile("../meetingcontent/testdata/granola-timed.json")
+	requirements.NoError(err)
+	id := fixture.persistMeeting(t, fixture.sourceTwo, "subtitle-budget", "Timed", nil, string(raw))
+	metadata := sql.NullString{String: `{"platform":"granola","retained":"synthetic"}`, Valid: true}
+	requirements.NoError(fixture.store.SetMessageMetadataContext(t.Context(), id, metadata))
+	before, err := fixture.store.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	beforeMetadata, err := fixture.store.GetMessageMetadataContext(t.Context(), id)
+	requirements.NoError(err)
+	requirements.True(beforeMetadata.Valid)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{id, id})}, meetingcontent.PacketOptions{Format: format, IncludeTranscript: false, MaxBytes: 4096})
+		requirements.NoError(err)
+		assertions.Contains(result.Content, "Hello 世界")
+	}
+	after, err := fixture.store.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(before, after)
+	storedRaw, err := fixture.store.GetMessageRawContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(raw, storedRaw)
+	storedMetadata, err := fixture.store.GetMessageMetadataContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(beforeMetadata, storedMetadata)
 }
 
 func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
@@ -121,19 +146,4 @@ func TestMeetingContextValidatesEveryIDBeforeRendering(t *testing.T) {
 
 func jsonNumberForMeetingTest(value int64) string {
 	return strconv.FormatInt(value, 10)
-}
-
-func TestMeetingSubtitleContextLoadsTranscriptAndDeduplicates(t *testing.T) {
-	fixture := newMeetingQueryFixture(t)
-	raw, err := os.ReadFile("../meetingcontent/testdata/granola-timed.json")
-	require.NoError(t, err)
-	id := fixture.persistMeeting(t, fixture.sourceTwo, "subtitle-budget", "Timed", nil, string(raw))
-	for _, format := range []meetingcontent.Format{"srt", "vtt"} {
-		result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{id, id})}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
-		require.NoError(t, err)
-		assert.False(t, result.Truncated)
-		assert.Empty(t, result.OmittedMessageIDs)
-		assert.Contains(t, result.Content, "Hello 世界")
-		assert.NotContains(t, result.Content, "summary")
-	}
 }

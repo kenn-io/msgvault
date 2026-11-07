@@ -68,20 +68,6 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 }
 
 func TestRemoteDaemonUnavailableCodeKeepsExistingClassification(t *testing.T) {
-	for _, code := range []string{"invalid_meeting_subtitles", "context_budget_too_small", "meeting_subtitles_unsupported"} {
-		t.Run(code, func(t *testing.T) {
-			err := newInternalError("meeting context", &daemonclient.APIError{Status: 400, Code: code, Message: "Actionable export refusal"})
-			result := translateDaemonRequestError(err)
-			require.NotNil(t, result)
-			assert.True(t, result.isError)
-			want := code + ": Actionable export refusal"
-			if code == "meeting_subtitles_unsupported" {
-				want = code + ": meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon"
-			}
-			assert.Equal(t, want, resultText(t, result))
-		})
-	}
-
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	remote := &daemonclient.APIError{Status: 503, Code: "daemon_unavailable", Message: "remote diagnostic"}
