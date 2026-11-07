@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -673,4 +674,29 @@ func TestLocalEmbeddingsActivationAppliesSavedTextSettings(t *testing.T) {
 			assert.Len(t, results, 1)
 		})
 	}
+}
+
+func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *testing.T) {
+	f := newLocalActivationFixture(t, "", "")
+	f.ollamaTags = true
+	f.start(t)
+	credentials, err := providercredentials.Read(f.cfg.TokensDir())
+	require.NoError(t, err)
+	credentials, err = providercredentials.Put(f.cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID, "https://previous.example.test/v1", "synthetic-previous-key")
+	require.NoError(t, err)
+	err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+	require.ErrorIs(t, err, providercredentials.ErrOriginMismatch)
+	require.Nil(t, f.handle.vf)
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(t, err)
+	saved, err := f.cfg.ReloadConfigFile(snapshot)
+	require.NoError(t, err)
+	require.True(t, saved.Vector.Enabled)
+	require.Equal(t, f.cfg.Chat.Server+"/v1", saved.Vector.Embeddings.Endpoint)
+	_, err = providercredentials.Delete(f.cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID)
+	require.NoError(t, err)
+	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
 }
