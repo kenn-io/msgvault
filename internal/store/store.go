@@ -715,20 +715,29 @@ func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
 // statistics (see dropFTSDataStatistics), so optimize always selects them; once
 // analyzed only to be dropped again, every pass rewrote sqlite_stat1 and could
 // leave free pages behind in an archive VACUUM had just compacted.
-func optimizeSQLiteStatistics(ctx context.Context, db contextStatementQuerier) error {
+func optimizeSQLiteStatistics(ctx context.Context, conn *sql.Conn) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var statements string
-	err := db.QueryRowContext(ctx, `SELECT COALESCE(GROUP_CONCAT(optimize, ';'), '')
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(GROUP_CONCAT(optimize, ';'), '')
 		FROM pragma_optimize(0x10003) WHERE optimize NOT IN (
 			SELECT printf('ANALYZE "main"."%w_data"', name) FROM sqlite_master
 			WHERE `+sqliteFTS5TablePredicate+`
 		)`).Scan(&statements)
 	if err == nil && statements != "" {
-		_, err = db.ExecContext(ctx, statements)
+		_, err = tx.ExecContext(ctx, statements)
 	}
 	if err != nil {
 		return err
 	}
-	return dropFTSDataStatistics(ctx, db)
+	if err := dropFTSDataStatistics(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const sqliteFTS5TablePredicate = `type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'`

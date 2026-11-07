@@ -172,6 +172,42 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 	assert.Equal(actualErr.Error(), records[0]["error"])
 }
 
+func TestOptimizeSQLiteStatisticsSingleTransaction(t *testing.T) {
+	require := require.New(t)
+	s, err := openSQLiteContext(t.Context(), filepath.Join(t.TempDir(), "archive.db"), testSQLiteParams)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(s.db.Close()) })
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 1000)
+
+	conn, err := s.db.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(conn.Close()) })
+	_, err = conn.ExecContext(t.Context(), "PRAGMA analysis_limit=1000")
+	require.NoError(err)
+
+	var commits int
+	require.NoError(conn.Raw(func(raw any) error {
+		raw.(*sqlite3.SQLiteConn).RegisterCommitHook(func() int {
+			commits++
+			return 0
+		})
+		return nil
+	}))
+	t.Cleanup(func() {
+		require.NoError(conn.Raw(func(raw any) error {
+			raw.(*sqlite3.SQLiteConn).RegisterCommitHook(nil)
+			return nil
+		}))
+	})
+
+	require.NoError(optimizeSQLiteStatistics(t.Context(), conn))
+	assert.Equal(t, 1, commits, "statistics maintenance must commit once across all analyzed tables and FTS cleanup")
+	var analyzedTables int
+	require.NoError(conn.QueryRowContext(t.Context(), "SELECT COUNT(DISTINCT tbl) FROM sqlite_stat1 WHERE stat IS NOT NULL").Scan(&analyzedTables))
+	assert.Greater(t, analyzedTables, 1, "maintenance must analyze several tables")
+}
+
 func TestOptimizeSQLiteStatisticsPreservesAnalyzedStatistics(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
