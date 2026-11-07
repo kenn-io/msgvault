@@ -4,7 +4,7 @@
 // The input is database.sqlite with DatabaseVersion.sbf beside it, and optionally
 // the Attachment_*.bin files that signalbackup-tools writes when it unpacks a Signal
 // backup into a directory. The importer reads Signal Android database
-// versions 185 through 330.
+// versions 185 through 331.
 package signalandroid
 
 import (

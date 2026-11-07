@@ -218,7 +218,7 @@ func TestProducerVersionSidecar(t *testing.T) {
 	for _, tc := range []struct {
 		name, data, wantError string
 	}{
-		{"future", "VERSION:uint32:331\n", "database version 331 is newer"},
+		{"future", "VERSION:uint32:332\n", "database version 332 is newer"},
 		{"malformed", "VERSION:uint32:garbage\n", "invalid DatabaseVersion.sbf"},
 		{"missing", "", "read DatabaseVersion.sbf"},
 	} {

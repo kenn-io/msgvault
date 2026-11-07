@@ -203,6 +203,17 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 	}
 }
 
+func TestImportDatabaseVersion331(t *testing.T) {
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	st := testutil.NewTestStore(t)
+
+	summary := runImport(t, st, dir, t.TempDir())
+
+	assert.Equal(t, expectedMessages(), importedMessages(t, st))
+	assert.Equal(t, int64(7), summary.MessagesAdded)
+}
+
 func TestImportDirectChatRecipients(t *testing.T) {
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -344,7 +355,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 	// Each missing column guards its own schema check before creating a source.
 	for _, tc := range []struct{ name, change, want string }{
-		{"message authorship", `ALTER TABLE message DROP COLUMN from_recipient_id`, "message details are missing; msgvault reads Signal Android database versions 185 through 330"},
+		{"message authorship", `ALTER TABLE message DROP COLUMN from_recipient_id`, "message details are missing; msgvault reads Signal Android database versions 185 through 331"},
 		{"account IDs", `ALTER TABLE recipient DROP COLUMN aci`, "account IDs are missing"},
 		{"phone numbers", `ALTER TABLE recipient DROP COLUMN e164`, "phone numbers are missing"},
 		{"chat contacts", `ALTER TABLE thread DROP COLUMN recipient_id`, "chat contacts are missing"},

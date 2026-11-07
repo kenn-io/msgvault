@@ -1,8 +1,8 @@
 # Signal Android fixture
 
-The fixture uses synthetic messages and identities. It contains the columns the reader uses, with their producer names, types, and defaults. `Current` covers database version 330, `V215` covers the attachment table rename, and `V185` covers the older recipient and attachment names.
+The fixture uses synthetic messages and identities. It contains the columns the reader uses, with their producer names, types, and defaults. `Current` covers database version 331, `V215` covers the attachment table rename, and `V185` covers the older recipient and attachment names.
 
-The layout was checked against Signal-Android's [migration registry](https://github.com/signalapp/Signal-Android/blob/515db93fb48206d63406cbfb48c5816f6af1d9e2/app/src/main/java/org/thoughtcrime/securesms/database/helpers/SignalDatabaseMigrations.kt) through version 330 and the current table definitions. Migrations 216 through 330 preserve the reader's columns, with one semantic change: V302 makes `deleted_by` the deletion marker. V306 and V308 restore the obsolete `remote_deleted` column with a zero default, so the reader uses `deleted_by` when present.
+The layout was checked against Signal-Android's [migration registry](https://github.com/signalapp/Signal-Android/blob/v8.35.1/app/src/main/java/org/thoughtcrime/securesms/database/helpers/SignalDatabaseMigrations.kt) through version 331 and the current table definitions. Migrations 216 through 331 preserve the reader's columns, with one semantic change: V302 makes `deleted_by` the deletion marker. V306 and V308 restore the obsolete `remote_deleted` column with a zero default, so the reader uses `deleted_by` when present. V331 only adds an index on `message(thread_id, date_sent)`.
 
 | Reader data | Producer columns and changes |
 |---|---|

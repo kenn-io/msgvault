@@ -2312,7 +2312,7 @@ Source and message type: `signal`. Chats: `signal:{aci|pni}:<UUID>`, `signal:tel
 `signal:{group|group-v1}:<unpadded base64url ID>`. Messages:
 `<chat>:<author>:<original sent ms>`. Authors: `self`/`peer` in direct chats;
 `self`, ACI, `pni:<UUID>`, or `tel:<E.164>` in groups.
-Database versions 185 through 330 import; others fail with an error.
+Database versions 185 through 331 import; others fail with an error.
 
 See [Text Messages](/docs/usage/text-messages/#import-signal) for what is
 imported and usage examples.

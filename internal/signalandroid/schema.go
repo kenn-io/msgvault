@@ -20,8 +20,8 @@ import (
 const MinDatabaseVersion = 185
 
 // MaxDatabaseVersion is the newest layout covered by importer fixtures.
-// Version 330 comes from Signal-Android v8.34.2: https://github.com/signalapp/Signal-Android/blob/v8.34.2/app/src/main/java/org/thoughtcrime/securesms/database/helpers/SignalDatabaseMigrations.kt
-const MaxDatabaseVersion = 330
+// Version 331 comes from Signal-Android v8.35.1: https://github.com/signalapp/Signal-Android/blob/v8.35.1/app/src/main/java/org/thoughtcrime/securesms/database/helpers/SignalDatabaseMigrations.kt
+const MaxDatabaseVersion = 331
 
 // ErrUnsupportedDatabase reports a SQLite file that is not a Signal Android
 // database this importer can read.

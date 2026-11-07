@@ -33,7 +33,7 @@ signalbackup-tools has decrypted into a directory:
 
   signalbackup-tools signal-<date>.backup <passphrase> --output <directory>/
 
-msgvault reads Signal Android database versions 185 through 330. Keep
+msgvault reads Signal Android database versions 185 through 331. Keep
 DatabaseVersion.sbf beside database.sqlite. Run the command again with a newer
 backup to add new messages; messages already in the archive are updated in place.
 Missing or skipped attachment files leave message text available; rerun with the

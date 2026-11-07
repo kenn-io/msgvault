@@ -50,8 +50,8 @@ type Layout struct {
 }
 
 var (
-	// Current matches the reader columns at database version 330.
-	Current = Layout{"aci", "e164", "attachment", "message_id", "content_type", 330}
+	// Current matches the reader columns at database version 331.
+	Current = Layout{"aci", "e164", "attachment", "message_id", "content_type", 331}
 	// V215 covers the attachment-table rename.
 	V215 = Layout{"aci", "e164", "attachment", "message_id", "content_type", 215}
 	// V185 matches database versions 185 to 199.

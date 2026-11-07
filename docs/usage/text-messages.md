@@ -200,7 +200,7 @@ as deleted for everyone, rerunning the import keeps its earlier archived text.
 
 ### Format limits
 
-msgvault reads Signal Android database versions 185 through 330. It refuses
+msgvault reads Signal Android database versions 185 through 331. It refuses
 newer versions before writing to the archive. It reads the version from
 `DatabaseVersion.sbf`; a missing or invalid version file stops the import. Older
 versions and databases missing required tables or columns also stop with an error.
