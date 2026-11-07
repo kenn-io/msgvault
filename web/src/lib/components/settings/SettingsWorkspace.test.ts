@@ -791,17 +791,19 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
 const localStatus = (status: Record<string, unknown> = {}) => ({ host: 'archive.example.test', enabled: false, provider: '', download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, ...status });
 const localPosts = (seen: Seen[]) => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
 
-it('releases setup progress and shows the diagnostic when a status read rejects the configuration', async () => {
-  let rejected = false;
+it('shows the diagnostic when a first or later status read rejects the configuration', async () => {
+  let reads = 0;
   const { client, operationsController } = fixture(settingsDoc(), request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
-    if (!rejected) {
-      rejected = true;
-      return Response.json(localStatus({ phase: 'downloading', running: true, done_bytes: 1000, total_bytes: 290000000 }));
-    }
+    if (++reads === 1) return Response.json({ error: 'unavailable', message: 'sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup' }, { status: 503 });
+    if (reads === 2) return Response.json(localStatus({ phase: 'downloading', running: true, done_bytes: 1000, total_bytes: 290000000 }));
     return Response.json({ error: 'unavailable', message: 'toml: line 3: expected value but found "=" instead' }, { status: 503 });
   });
   render(SettingsWorkspace, { client, operationsController });
+  await screen.findByRole('button', { name: 'Set up Search by meaning' });
+  const generic = screen.getByText('Search by meaning').closest('li')!;
+  expect((await within(generic).findByRole('alert')).textContent).toBe('sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
   const row = screen.getByText('Search by meaning').closest('li')!;
   expect((await within(row).findByRole('alert', {}, { timeout: 3000 })).textContent).toBe('toml: line 3: expected value but found "=" instead.');

@@ -124,8 +124,8 @@
       const { data, response, error } = await getLocalEmbeddings({ ...client, signal: localController.signal });
       if (localController.signal.aborted) return;
       // A rejection with a diagnostic, such as a malformed config, ends what this page can follow.
-      if (!response.ok && error?.message && localStatus) {
-        localStatus = { ...localStatus, running: false, phase: 'idle' };
+      if (!response.ok && error?.message) {
+        if (localStatus) localStatus = { ...localStatus, running: false, phase: 'idle' };
         localError = error.message;
       }
       if (!response.ok || !data) return;
