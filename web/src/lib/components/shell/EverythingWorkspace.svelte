@@ -449,10 +449,13 @@
     localSetup = undefined;
     if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text') return;
     const controller = new AbortController();
-    void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
+    const load = () => void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
       if (!controller.signal.aborted && response.ok) localSetup = data;
     }).catch(() => undefined);
-    return () => controller.abort();
+    load();
+    // Another tab may have turned search on while this one was in the background.
+    window.addEventListener('focus', load);
+    return () => { controller.abort(); window.removeEventListener('focus', load); };
   });
   async function turnOnSearchByMeaning(): Promise<void> {
     if (startingLocalSearch) return;
