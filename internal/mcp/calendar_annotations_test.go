@@ -28,13 +28,14 @@ func TestCalendarToolAnnotations(t *testing.T) {
 		{"calendar_conflicts", true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			tool := tools[test.name]
-			require.NotNil(t, tool)
+			require.NotNil(tool)
 			annotations, ok := tool["annotations"].(map[string]any)
-			require.True(t, ok)
-			assert.Equal(t, true, annotations["openWorldHint"])
-			assert.Equal(t, test.readOnly, annotations["readOnlyHint"])
-			assert.Equal(t, test.destructive, annotations["destructiveHint"])
+			require.True(ok)
+			assert.Equal(true, annotations["openWorldHint"])
+			assert.Equal(test.readOnly, annotations["readOnlyHint"])
+			assert.Equal(test.destructive, annotations["destructiveHint"])
 		})
 	}
 }
