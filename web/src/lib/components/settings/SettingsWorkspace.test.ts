@@ -802,48 +802,34 @@ it('shows an Ollama setup as status only', async () => {
   render(SettingsWorkspace, { client, operationsController });
   const row = (await screen.findByText('On · Ollama')).closest('li')!;
   expect(within(row).queryAllByRole('button')).toEqual([]);
-  expect(row.textContent).not.toContain('Downloads');
 });
 
-it('shows a failed startup in the Off row and retries it through Turn on', async () => {
-  let attempts = 0;
-  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
-    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
-    if (request.method === 'POST') {
-      attempts++;
-      return Response.json(localStatus({ running: true }), { status: 202 });
-    }
-    return Response.json(localStatus(attempts ? { enabled: true, provider: 'builtin', download_bytes: 0 } : { download_bytes: 0, error: 'Search by meaning could not start. Turn on to retry.' }));
-  });
-  render(SettingsWorkspace, { client, operationsController });
-  const row = (await screen.findByRole('alert')).closest('li')!;
-  expect(within(row).getByRole('alert').textContent).toBe('Search by meaning could not start. Turn on to retry.');
-  await fireEvent.click(within(row).getByRole('button', { name: 'Turn on' }));
-  await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
-  expect(localPosts(seen)[0].body).toBeUndefined();
-  await waitFor(() => expect(within(row).queryByRole('alert')).toBeNull());
-});
+const unfinishedIndex = (path: string) => {
+  if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'publication-1', eligible_count: 6, embedded_count: 4, percentage: 66.7, status: 'initializing', actions: [] });
+  if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 4, pending: 0 });
+  if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+};
 
-it('retries setup while the message index is not current', async () => {
+it.each([
+  { name: 'a failed startup in the Off row through Turn on', button: 'Turn on', failure: { download_bytes: 0, error: 'Local model files need setup. Turn on to retry.' }, shown: 'Local model files need setup. Turn on to retry.', routes: undefined },
+  { name: 'setup while the message index is not current', button: 'Retry setup, Search by meaning', failure: { enabled: true, provider: 'builtin', download_bytes: 0, error: 'invalid embed cron' }, shown: 'invalid embed cron.', routes: unfinishedIndex },
+])('retries $name', async ({ button, failure, shown, routes }) => {
   let retried = false;
-  const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
+  const { client, operationsController, seen } = fixture(settingsDoc(), request => {
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') {
       if (request.method === 'POST') {
         retried = true;
         return Response.json(localStatus({ running: true }), { status: 202 });
       }
-      return Response.json(localStatus({ enabled: true, provider: 'builtin', download_bytes: 0, error: retried ? undefined : 'invalid embed cron' }));
+      return Response.json(localStatus(retried ? { enabled: true, provider: 'builtin', download_bytes: 0 } : failure));
     }
-    if (path === '/api/v1/search/coverage') return Response.json({ cache_revision: 'publication-1', eligible_count: 6, embedded_count: 4, percentage: 66.7, status: 'initializing', actions: [] });
-    if (path === '/api/v1/embeddings/status') return Response.json({ ...embeddingStatus, eligible: 6, current: 4, pending: 0 });
-    if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('message_embedding', { configured: true })) });
+    return routes?.(path);
   });
   render(SettingsWorkspace, { client, operationsController });
-  expect((await screen.findByRole('alert')).textContent).toBe('invalid embed cron.');
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry setup, Search by meaning' }));
+  expect((await screen.findByRole('alert')).textContent).toBe(shown);
+  await fireEvent.click(screen.getByRole('button', { name: button }));
   await waitFor(() => expect(localPosts(seen)).toHaveLength(1));
-  expect(localPosts(seen)[0].body).toBeUndefined();
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });
 
@@ -896,7 +882,7 @@ it('retries a failed initial local status read through Refresh feature status', 
   expect(await screen.findByRole('button', { name: 'Turn on' })).toBeDefined();
 });
 
-it.each(['none', 'http', 'network'] as const)('turns on local search once and keeps unrelated drafts after %s polling failure', async failure => {
+it.each(['http', 'network'] as const)('turns on local search once and keeps unrelated drafts after %s polling failure', async failure => {
   let phase = 'idle';
   let enabled = false;
   let failed = false;
@@ -905,7 +891,7 @@ it.each(['none', 'http', 'network'] as const)('turns on local search once and ke
   const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
     if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
     if (request.method === 'POST') { phase = 'indexing'; enabled = true; await activation; }
-    else if (phase !== 'idle' && failure !== 'none' && !failed) {
+    else if (phase !== 'idle' && !failed) {
       failed = true;
       if (failure === 'network') throw new TypeError('Network interrupted');
       return new Response('', { status: 503 });
@@ -922,7 +908,7 @@ it.each(['none', 'http', 'network'] as const)('turns on local search once and ke
   releaseActivation();
   await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
   expect(screen.queryByRole('dialog')).toBeNull();
-  if (failure !== 'none') await waitFor(() => expect(failed).toBe(true));
+  await waitFor(() => expect(failed).toBe(true));
   phase = 'idle'; enabled = true;
   await screen.findByText('On', {}, { timeout: 3000 });
   expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();

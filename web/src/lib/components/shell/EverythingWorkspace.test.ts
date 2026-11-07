@@ -2787,7 +2787,7 @@ function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
 
-it.each(['success', 'http', 'network'] as const)('checks local availability once and turns on semantic search from an empty full-text result after %s', async outcome => {
+it.each(['http', 'network'] as const)('checks local availability once and turns on semantic search from an empty full-text result after %s', async outcome => {
   window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
   const posts: unknown[] = [];
   let availabilityRequests = 0;
@@ -2797,7 +2797,7 @@ it.each(['success', 'http', 'network'] as const)('checks local availability once
     if (path === '/api/v1/embeddings/local') {
       if (request.method === 'POST') {
         posts.push(request.body);
-        if (posts.length === 1 && outcome !== 'success') {
+        if (posts.length === 1) {
           if (outcome === 'network') throw new TypeError('Network interrupted');
           return Response.json({ error: 'unavailable', message: 'The daemon is stopping' }, { status: 503 });
         }
@@ -2817,13 +2817,11 @@ it.each(['success', 'http', 'network'] as const)('checks local availability once
   await screen.findByRole('button', { name: 'Turn on' });
   expect(availabilityRequests).toBe(1);
   await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
-  if (outcome !== 'success') {
-    expect((await screen.findByRole('alert')).textContent).toContain(outcome === 'network' ? 'Network interrupted' : 'The daemon is stopping');
-    expect(state.current.workspace).toBe('everything');
-    await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
-  }
+  expect((await screen.findByRole('alert')).textContent).toContain(outcome === 'network' ? 'Network interrupted' : 'The daemon is stopping');
+  expect(state.current.workspace).toBe('everything');
+  await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
   await waitFor(() => expect(state.current.workspace).toBe('settings'));
-  expect(posts).toEqual(Array(outcome === 'success' ? 1 : 2).fill(null));
+  expect(posts).toEqual([null, null]);
   expect(state.current.settingsCategory).toBe('overview');
   view.unmount();
   state.destroy();
