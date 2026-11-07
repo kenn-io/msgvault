@@ -85,13 +85,15 @@ func TestImportSearchByRecipientEmail(t *testing.T) {
 
 	phoneID, err := st.EnsureParticipantByPhone(t.Context(), signalfixture.AlicePhone, "Alice Example", SourceType)
 	require.NoError(err)
-	emailID, err := st.EnsureParticipant("alice@example.com", "Alice Example", "example.com")
+	emailID, err := st.EnsureParticipant("recipientneedle@example.com", "Alice Example", "example.com")
 	require.NoError(err)
 	require.NoError(st.MergeParticipants(emailID, phoneID))
 
 	runImport(t, st, dir, t.TempDir())
 
-	messages, total, err := st.SearchMessages(`"alice@example.com" Replying`, 0, 10)
+	// PostgreSQL keeps email addresses as single tokens. Use a prefix unique to
+	// the recipient's email so both dialects must index it to find the reply.
+	messages, total, err := st.SearchMessages("recipientneedle Replying", 0, 10)
 	require.NoError(err)
 	assert.Equal(int64(1), total)
 	require.Len(messages, 1)
