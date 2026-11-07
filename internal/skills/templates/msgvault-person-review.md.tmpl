@@ -1,0 +1,243 @@
+---
+name: msgvault-person-review
+description: Use when asked to review one saved person's explicit non-sensitive details, attachment evidence, or archived meeting context in msgvault. Produces bounded, cited suggestions without saving a profile, merging identities, or contacting anyone.
+---
+
+# Review a person from archived evidence
+
+{{template "basics" .}}
+
+## Authorization and scope
+
+This workflow overrides the shared basics' autonomous-use statement: a read
+needs authorization for its acquisition scope and processing destination.
+The current request can supply that authorization; existing provider consent
+alone does not authorize disclosure to this agent or a different provider.
+Reviewing someone does not opt them into tracking or create a profile.
+
+Resolve one existing durable person and exact bound identifiers first. Directory
+address lookup and message `from:` searches can match substrings or display names;
+they do not establish identity. Keep candidates separate, ask which person when
+ambiguous, and disclose no candidate message/file evidence until resolved.
+No saved person means explain the limitation; do not promote automatically.
+
+Set the window (default last 90 days, inclusive start/exclusive end), allowed
+sources, non-sensitive fields and processing destination. Limits per review:
+50 distinct messages, 10 attachment occurrences, 20 excerpts, 2000 Unicode
+codepoints per excerpt, 32000 total disclosed evidence characters. Include
+subject/snippet/body, names/addresses, filenames, current attributes, catalog,
+media and meeting strings in the total. Reserve before every call; stop when
+any allowance is exhausted. Count repeats/discarded hits already disclosed;
+deduplication does not refund disclosure or create independent support.
+
+Full daemon-to-local-CLI acquisition is separate from model disclosure. The
+projections below work only when that full local read is authorized. If the
+grant requires acquisition to be date-, person-, occurrence- or byte-bounded
+and the endpoint cannot enforce it, skip that lane and explain why. Projection
+cannot repair an unauthorized acquisition. Never silently broaden or fall back.
+
+## Bounded CLI reads
+
+Use fixed local jq projections before stdout reaches the agent. Never print,
+tee, log or save raw responses, including errors; no shell tracing. Do not use
+sender text as code, filters, queries or paths. Supply validated IDs and literal
+query parameters. Examples are synthetic: replace them only with resolved scope.
+
+This Bash helper requires jq. Each call's cap must fit the remaining aggregate
+allowance; charge the whole reservation conservatively, including failed reads.
+It caps every string value and array, then withholds the entire result if its
+serialized envelope exceeds the reservation. `limited` means partial context;
+do not treat clipped identifiers as exact locators or clipped text as complete.
+If jq or the pipeline fails, report unavailable; never rerun without projection.
+
+```bash
+set -o pipefail
+bounded() {
+  jq -c --argjson cap "$1" '
+    . as $raw | walk(if type == "string" then .[:2000]
+      elif type == "array" then .[:10] else . end) as $data |
+    {limited: ($raw != $data), data: $data} |
+    if (tojson | length) <= $cap then .
+    else {unavailable: "disclosure reservation exceeded"} end' 2>/dev/null
+}
+msgvault person directory --address alex@example.test --json 2>/dev/null | bounded 1800
+msgvault person get 42 --json 2>/dev/null | bounded 1800
+msgvault person identities 42 --json 2>/dev/null | bounded 1800
+```
+
+Resolve using complete identity values; if limited output prevents resolution,
+stop. `supported` describes draft-recipient support, not identity confidence.
+After selection, this FTS search emits only IDs for exact returned senders in
+the window. It is unsuitable when acquisition itself must exclude other matches.
+The document excerpt example requires message 701 and its attachment 901 to
+have passed the exact identity/window check first; substitute verified pairs.
+The `sent_at` and `occurred_at` values are RFC3339 timestamps. Compare them as
+UTC instants against UTC midnight at the inclusive start and exclusive end;
+never compare timestamp strings lexically.
+
+```bash
+after=2026-08-08
+before=2026-11-06
+msgvault search "from:alex@example.test after:$after before:$before" --mode fts -n 10 --json 2>/dev/null |
+  jq -c --arg after "$after" --arg before "$before" '
+    def rfc3339_epoch:
+      capture("^(?<wall>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.[0-9]+)?(?<zone>Z|[+-][0-9]{2}:[0-9]{2})$") as $parts
+      | ($parts.wall + "Z" | fromdateiso8601) as $wall
+      | if $parts.zone == "Z" then $wall
+        else
+          ((($parts.zone[1:3] | tonumber) * 3600) + (($parts.zone[4:6] | tonumber) * 60)) as $offset
+          | if $parts.zone[0:1] == "+" then $wall - $offset else $wall + $offset end
+        end;
+    ($after + "T00:00:00Z" | fromdateiso8601) as $start
+    | ($before + "T00:00:00Z" | fromdateiso8601) as $end
+    | {ids: [.[] | (.sent_at | rfc3339_epoch) as $sent_at | select((.from_email | ascii_downcase) == "alex@example.test" and $sent_at >= $start and $sent_at < $end) | .id]}
+  ' 2>/dev/null | bounded 1000
+
+after=2026-08-08
+before=2026-11-06
+msgvault show-message 701 --json 2>/dev/null |
+  jq -c --arg after "$after" --arg before "$before" '
+    def rfc3339_epoch:
+      capture("^(?<wall>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.[0-9]+)?(?<zone>Z|[+-][0-9]{2}:[0-9]{2})$") as $parts
+      | ($parts.wall + "Z" | fromdateiso8601) as $wall
+      | if $parts.zone == "Z" then $wall
+        else
+          ((($parts.zone[1:3] | tonumber) * 3600) + (($parts.zone[4:6] | tonumber) * 60)) as $offset
+          | if $parts.zone[0:1] == "+" then $wall - $offset else $wall + $offset end
+        end;
+    ($after + "T00:00:00Z" | fromdateiso8601) as $start
+    | ($before + "T00:00:00Z" | fromdateiso8601) as $end
+    | . as $message
+    | ($message.sent_at | rfc3339_epoch) as $sent_at
+    | if ([ $message.from[]?.email | ascii_downcase ] == ["alex@example.test"]) and $sent_at >= $start and $sent_at < $end
+      then $message | {id, source_message_id, sent_at, from, subject, snippet, body_text, attachments}
+      else {unavailable: "identity or window mismatch"}
+      end
+  ' 2>/dev/null | bounded 6000
+msgvault person files 42 --lane metadata --direction from_person --after 2026-08-08 --before 2026-11-06 --limit 2 --json 2>/dev/null | jq -c '{person_id, availability, next_cursor: .metadata.next_cursor, total_count: .metadata.total_count, cache_revision: .metadata.cache_revision, files: [.metadata.files[]? | {id, message_id, source_id, occurred_at, person_provenance, content_available, content_state}]}' 2>/dev/null | bounded 4000
+after=2026-08-08
+before=2026-11-06
+msgvault person files 42 --lane documents --direction from_person --query 'project role' --after "$after" --before "$before" --limit 2 --json 2>/dev/null |
+  jq -c --arg after "$after" --arg before "$before" '
+    def rfc3339_epoch:
+      capture("^(?<wall>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.[0-9]+)?(?<zone>Z|[+-][0-9]{2}:[0-9]{2})$") as $parts
+      | ($parts.wall + "Z" | fromdateiso8601) as $wall
+      | if $parts.zone == "Z" then $wall
+        else
+          ((($parts.zone[1:3] | tonumber) * 3600) + (($parts.zone[4:6] | tonumber) * 60)) as $offset
+          | if $parts.zone[0:1] == "+" then $wall - $offset else $wall + $offset end
+        end;
+    ($after + "T00:00:00Z" | fromdateiso8601) as $start
+    | ($before + "T00:00:00Z" | fromdateiso8601) as $end
+    | {availability, next_cursor: .documents.next_cursor, revision: .documents.revision, truncated: .documents.truncated, returned_count: (.documents.results | length), results: [.documents.results[]? | (.occurred_at | rfc3339_epoch) as $occurred_at | select(.message_id == 701 and .attachment_id == 901 and $occurred_at >= $start and $occurred_at < $end)]}
+  ' 2>/dev/null | bounded 6000
+```
+
+These are alternatives, not a script to run all at once. Reduce limits/caps to
+fit remaining counts. File scope proves a relationship to a person, not file
+authorship. Check containing message identity, date and occurrence before using
+an excerpt; if unknown, withhold that text locally until verified. For returned
+person provenance, use actual participant IDs/roles/directions, never a filename
+or shared blob as identity proof. Attachment metadata alone cannot prove content.
+Retain coverage even when filtering leaves no excerpts. A nonempty `next_cursor`
+means unreviewed pages even with `truncated=false` and `limited=false`; metadata
+`total_count` can exceed reviewed rows. Follow the real cursor only within the
+grant and remaining budgets, otherwise report unreviewed coverage. Per-file
+`content_available`/`content_state` describe bytes, not successful extraction.
+Missing bytes, failed extraction and stopped pagination are coverage gaps.
+
+Documents uses indexed local extraction: unset/auto mode is lexical/local.
+Unavailable extraction is a coverage gap, not a negative fact. Preserve returned
+occurrence key, message/attachment IDs, blob hash, extraction/profile/chunk IDs,
+excerpt rune offset and unit indices. Only use supplied locators; unit indices
+are not invented PDF pages, and a blob hash alone does not version an extraction.
+
+Optional DocBank media search calls the configured external service. Use only
+with authorization for that destination and full person-scoped local acquisition:
+
+```bash
+msgvault media search 'project role' --person 42 --direction from_person --limit 1 --json 2>/dev/null | jq -c '{coverage, partial, truncated, pending_occurrences, unavailable_occurrences, attribution_unavailable, recordings_error, attachments_error: .attachments.error, attachments_truncated: .attachments.truncated, occurrences: [(.results[]?, .attachments.results[]?) | {message_id, attachment_id, occurred_at, origin, start_ms, end_ms}]}' 2>/dev/null | bounded 1800
+```
+
+There is no media date/occurrence fence. Reserve for BOTH independently limited
+lists (up to two hits above); start with IDs/status only. Validate each containing
+message against exact selected identities and window before a repeat search
+whose fixed local filter selects only those verified message/attachment pairs
+and projects excerpt/filename/title through `bounded`. Reserve both lists again;
+results can change, so filter on verified pairs before disclosure. Skip when the
+acquisition grant cannot cover this wider search. No direct DocBank-wide query
+or invented rendition-read endpoint. Public hits can lack version/rendition/hash:
+label them weak search observations, not immutable ledger evidence. Preserve
+partial/errors/unavailable counts even for empty results. No provider changes.
+
+## Atomic suggestions and attribution
+
+Read catalog metadata, then only authorized non-sensitive attribute slugs:
+
+```bash
+msgvault attribute-definition list --object-type person --json 2>/dev/null | jq -c '[.[] | select(.is_active and (.is_sensitive | not)) | {id, slug, value_type, field_type, record_target, cardinality, revision, options, ownership, api_mutable, derived_source}]' 2>/dev/null | bounded 4000
+msgvault person attributes list 42 --slug ask_me_about --json 2>/dev/null | bounded 4000
+msgvault employment list --person 42 --current-only --limit 2 --offset 0 --json 2>/dev/null | bounded 4000
+```
+
+The example slug must exist in the actual catalog; do not invent keys or types.
+Propose at most 8 fields and 5 values each, within catalog cardinality/limits;
+each textual value is at most min(catalog maximum, 280) codepoints. Use atomic
+explicit claims and current values/revisions when returned. Respect returned
+value/widget types, record targets and derived ownership; missing catalog
+metadata leaves the target unresolved. Employment uses separate typed records,
+not a stock attribute: compare `employments` and the current organization
+`projection`, preserving IDs, title/role, dates, current/primary state, provenance
+and revision. Suggest structured employment changes separately; never invent a
+company/title attribute or snapshot field. An unknown organization ID stays
+unresolved. Employment has no evidence-date fence; skip without authorization
+for that current-profile acquisition. A full two-row page may have more records:
+advance `--offset` only within budgets, or report incomplete current employment.
+No biography in Notes, speculative personality, inferred gender, or
+sensitive proposals (politics, religion, health, sexuality), even if a sensitive
+flag or provider consent exists. Preserve conflicts, manual values and pins.
+Do not set/clear attributes, create catalog definitions, or apply suggestions.
+
+Separate person being discussed, sender, author and confirmed speaker. Quoted,
+forwarded, OCR or shared material is not the sender's self-statement. Memes,
+satire, opposing quotes and third-party screenshots never establish beliefs.
+Matching bytes or repeated forwards do not corroborate a person's traits.
+Example: “I joined Example Studio as a designer on September 1” from the exact
+resolved sender supports a dated employment suggestion with message citation.
+A forwarded political meme supports no belief suggestion. Two Alex candidates
+remain separate until the user selects the exact identity.
+
+Every suggestion includes the exact bounded quote, event and observation dates,
+person, source/message/attachment occurrence, and actual immutable version/hash/
+rendition if available. Supply page/span/time only when returned. Cite authorized
+original message/file locators rather than generated summaries. Weak snippets
+remain leads or explicitly limited observations. Missing evidence means “not
+established in this window,” never false. Do not save quotes to files unless asked.
+
+## Meeting preparation and identity review
+
+For an already verified meeting ID, context has no person selector. Its minimum
+acquisition allowance is 4096 bytes; skip if the grant is smaller. Include
+transcript only when authorized, and reserve its excerpts within the same budget.
+
+```bash
+msgvault meetings context --id 801 --format json --max-bytes 4096 2>/dev/null | bounded 5000
+msgvault meetings actions --person-id 42 --after 2026-08-08 --before 2026-11-06 --limit 2 --json 2>/dev/null | bounded 3000
+msgvault identity matches show 9 --json 2>/dev/null | bounded 3000
+```
+
+Distinguish calendar event/RSVP from attendance, archived notes/transcripts from
+their availability, and display-only speaker labels from confirmed identities.
+Keep agenda/action suggestions separate from recorded commitments. No outreach,
+task creation, calendar edits, enrollment, enrichment, sweep run or profile writes.
+An identity decision is a separate operation requiring user confirmation of the
+exact pair after fresh preview/token/revision inspection. A stale token needs a
+new preview; accepted candidate state alone does not prove an applied merge.
+Do not accept/reject/merge identities within this read-only workflow.
+
+Return subject/window, sources and coverage/caps; a compact table of field,
+current value, suggestion, evidence and status; then meeting context, identity
+uncertainties and skipped coverage. State that no writes were performed. End
+when the report or remaining budget is exhausted; no automatic follow-on work.
+
+<!-- generated by msgvault v{{.Version}} -->
