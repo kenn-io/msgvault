@@ -249,7 +249,7 @@ describe('ExploreAPI routing', () => {
 
   it.each([
     ['stale', ['embeddings', 'build', '--full-rebuild', '--yes']],
-    ['incomplete', ['embeddings', 'build', '--yes']]
+    ['incomplete', ['embeddings', 'build', '--backstop', '--yes']]
   ] as const)('uses a non-interactive build for %s and accepts only a completed NDJSON stream', async (status, args) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

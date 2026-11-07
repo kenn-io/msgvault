@@ -2801,7 +2801,7 @@ it.each(['http', 'network'] as const)('checks local availability once and turns 
           if (outcome === 'network') throw new TypeError('Network interrupted');
           return Response.json({ error: 'unavailable', message: 'The daemon is stopping' }, { status: 503 });
         }
-        return Response.json({ host: 'archive.example.test', enabled: true, provider: 'local', phase: 'downloading', download_bytes: 290000000, done_bytes: 0, total_bytes: 290000000 });
+        return Response.json({ host: '', enabled: false, provider: '', download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0, running: true }, { status: 202 });
       } else availabilityRequests += 1;
       return Response.json({ host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
     }
@@ -2822,10 +2822,10 @@ it.each(['http', 'network'] as const)('checks local availability once and turns 
   expect((await screen.findByRole('alert')).textContent).toContain(outcome === 'network' ? 'Network interrupted' : 'The daemon is stopping');
   expect(state.current.workspace).toBe('everything');
   await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull());
+  await waitFor(() => expect(state.current.workspace).toBe('settings'));
+  expect(state.current.settingsCategory).toBe('overview');
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
   expect(posts).toEqual([null, null]);
-  expect(state.current.workspace).toBe('everything');
-  expect(state.current.query).toBe('pear');
   view.unmount();
   state.destroy();
 });

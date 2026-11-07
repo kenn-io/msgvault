@@ -812,7 +812,7 @@ it.each([
   { recovery: 'manual', provider: 'builtin', error: 'Message index build interrupted.', coverageStatus: 'initializing', wantArgs: ['embeddings', 'build', '--full-rebuild', '--yes'] },
   { recovery: 'scheduled', provider: 'builtin', error: 'Message index build interrupted.', coverageStatus: 'initializing', wantArgs: [] },
   // An unavailable Ollama makes the daemon classify the saved provider as configured.
-  { recovery: 'manual', provider: 'configured', error: 'Message index build interrupted.', coverageStatus: 'incomplete', wantArgs: ['embeddings', 'build', '--yes'] },
+  { recovery: 'manual', provider: 'configured', error: 'Message index build interrupted.', coverageStatus: 'incomplete', wantArgs: ['embeddings', 'build', '--backstop', '--yes'] },
 ] as const)('hides the $provider setup failure ($error) after a successful $recovery index recovery', async ({ recovery, provider, error, coverageStatus, wantArgs }) => {
   let errorCleared = false;
   let recovered = false;
