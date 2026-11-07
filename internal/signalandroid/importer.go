@@ -377,7 +377,7 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 		groupMembers, err := fetchGroupMembers(ctx, r.db, chat.GroupID)
 		if err != nil {
 			r.summary.Errors++
-			r.imp.progress.OnError(fmt.Errorf("group members of %s: %w", sourceConvID, err))
+			r.imp.progress.OnError(fmt.Errorf("members of %s: %w", progressTitle, err))
 			return nil
 		}
 		members = append(members, groupMembers...)
@@ -403,7 +403,7 @@ func (r *run) importThread(ctx context.Context, thread sigThread, archived map[s
 		messages, err := fetchMessages(ctx, r.db, r.schema, thread.ID, afterRowID, r.opts.BatchSize)
 		if err != nil {
 			r.summary.Errors++
-			r.imp.progress.OnError(fmt.Errorf("read messages of %s: %w", sourceConvID, err))
+			r.imp.progress.OnError(fmt.Errorf("messages in %s: %w", progressTitle, err))
 			break
 		}
 		if len(messages) == 0 {
@@ -937,7 +937,7 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 		storagePath, contentHash, size, err := r.storeAttachment(ctx, filepath.Join(r.opts.AttachmentFilesDir, name))
 		if err != nil {
 			r.summary.Errors++
-			r.imp.progress.OnError(fmt.Errorf("store attachment %d: %w", a.ID, err))
+			r.imp.progress.OnError(fmt.Errorf("store %s: %w", name, err))
 		}
 		if err != nil || storagePath == "" {
 			missing++
