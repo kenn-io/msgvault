@@ -14,8 +14,8 @@ import (
 )
 
 func cascadeMaintenanceFixture(t *testing.T) (*Store, int64, int64, int64) {
-	require := require.New(t)
 	t.Helper()
+	require := require.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
 	source, err := st.GetOrCreateSource("gmail", "cascade@example.test")
