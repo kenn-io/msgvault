@@ -212,6 +212,7 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			}
 		}
 	}
+	definitions = slices.DeleteFunc(definitions, func(d toolDefinition) bool { return !opts.Families.allows(d.name) })
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions
 }
@@ -1011,6 +1012,8 @@ type searchMetadataResponse struct {
 
 	IndexState string   `json:"index_state,omitempty"`
 	Warnings   []string `json:"warnings,omitempty"`
+
+	Hints []query.SearchHint `json:"hints,omitempty"`
 }
 type searchInMessageResponse struct {
 	paginatedResponse[messageMatch]

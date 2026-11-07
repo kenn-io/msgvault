@@ -111,7 +111,10 @@ const ToolGetEmbeddingStatus = "get_embeddings_status"
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
-	EmbeddingStatus EmbeddingStatusReader
+	// DiscoverFamilies reads current archive inventory when a catalog is requested.
+	DiscoverFamilies func(context.Context) *ArchiveFamilies
+	Families         *ArchiveFamilies
+	EmbeddingStatus  EmbeddingStatusReader
 	// Operations exposes only fixed, actually supported daemon workflows.
 	Operations            OperationBackend
 	OperationCapabilities []string
@@ -457,6 +460,9 @@ func ServeWithOptions(ctx context.Context, opts ServeOptions) error {
 func ServeTransport(ctx context.Context, opts ServeOptions, transport sdkmcp.Transport) error {
 	opts.downloads = &downloadCache{}
 	defer opts.downloads.close()
+	if opts.DiscoverFamilies != nil {
+		opts.Families = opts.DiscoverFamilies(ctx)
+	}
 	return newMCPServerWithPolicy(opts, true, newStdioInvocationPolicy()).Run(ctx, transport) //nolint:wrapcheck // ServeWithOptions adds transport-specific context.
 }
 
@@ -555,7 +561,10 @@ func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *i
 			server := newMCPServerWithPolicy(requestOpts, httpOpts.AllowWrites, policy, confirmationConfig{
 				manager: confirmations, sessionKey: confirmationKey, requireSessionKey: true,
 			})
-			server.AddReceivingMiddleware(requestCancellationMiddleware(r.Context()))
+			server.AddReceivingMiddleware(
+				requestCancellationMiddleware(r.Context()),
+				familyDiscoveryMiddleware(server, requestOpts, httpOpts.AllowWrites),
+			)
 			return server
 		},
 		&sdkmcp.StreamableHTTPOptions{

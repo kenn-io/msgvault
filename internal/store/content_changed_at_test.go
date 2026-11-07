@@ -481,7 +481,7 @@ func dropContentChangedAtColumn(t *testing.T, st *store.Store) {
 		_, err := st.DB().ExecContext(t.Context(), stmt)
 		require.NoErrorf(t, err, "drop trigger %s", trg.name)
 	}
-	for _, index := range []string{"idx_messages_content_changed_at", "idx_messages_conversation_content_changed"} {
+	for _, index := range []string{"idx_messages_content_changed_at", "idx_messages_conversation_content_changed", "idx_messages_source_content_changed"} {
 		_, err := st.DB().ExecContext(t.Context(), `DROP INDEX IF EXISTS `+index)
 		require.NoErrorf(t, err, "drop %s", index)
 	}

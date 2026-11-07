@@ -160,9 +160,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.47.0**.
+it is separate from the binary release version. The current schema is **3.48.0**.
 
-Schema 3.47.0 adds semantic/hybrid attachment retrieval and per-list mode, coverage and degradation fields to [media search](#media-transcript-search).
+Schema 3.48.0 adds semantic/hybrid attachment retrieval and per-list mode, coverage and degradation fields to [media search](#media-transcript-search).
+
+Schema 3.47.0 adds optional `hints` to CLI and fast-search responses. Each hint contains `code`, `message`, and `retry_with.query`.
 
 Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` and `candidate_limit_reached` to semantic search. `has_more` is true when another ranked hit exists and the next page fits within the configured ranking cap. `candidate_limit_reached` carries `k_per_signal` when hybrid retrieval measures an eligible message outside the combined retained candidates. `ranking_limit_reached` carries the effective page cap when an extra ranked hit exists, or omitted candidates would need a page beyond the cap. Raise each reported server setting above its value, restart the server, then request a larger page. Pool saturation alone sets neither cap field.
 
@@ -1926,7 +1928,7 @@ Recording search requires Docbank's source-selected search contract: `media_sour
 
 Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted, ordered by Docbank rank. A scope with more than 4096 mirrored files excluding audio and video returns `media_search_scope_limit` in `attachments.error`. Add a Person filter to narrow the version scope. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
 
-Schema 3.47.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
+Schema 3.48.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
 `mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
 `actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
 `unavailable` when no search ran or remote retrieval failed. Coverage describes
@@ -2040,6 +2042,8 @@ Search subject, snippet, sender and recipient metadata with the Gmail-style
 query in `q`. The response includes the page in `messages` and the full match
 count in `total_count`; no separate count request is needed. If the count is
 unavailable, `total_count` is `-1`.
+
+An empty first page on SQLite can include `hints` with code `sender_name_requires_address` and a corrected `retry_with.query` for an incomplete sender name or address. CLI search returns the same shape.
 
 Use `limit` and `offset` to page through results. `limit=0` returns the count
 without fetching a page. Aggregate `stats` are omitted by default. Supply
