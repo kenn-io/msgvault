@@ -65,10 +65,13 @@ func TestMCPHTTPConfirmationIsBoundToAuthenticatedListener(t *testing.T) {
 }
 
 func TestDelegatedCatalogHasNoOwnerArchiveToolsOrResources(t *testing.T) {
+	assertions := assert.New(t)
 	opts := ServeOptions{DelegatedOnly: true}
-	assert.Empty(t, rawListTools(t, opts, true))
+	tools := toolsByName(t, rawListTools(t, opts, true))
+	assertions.Len(tools, 1)
+	assertions.Contains(tools, ToolSearchTools)
 	response := rawModernCall(t, opts, HTTPOptions{}, "server/discover", nil)
 	capabilities, ok := response.Result["capabilities"].(map[string]any)
 	require.True(t, ok)
-	assert.NotContains(t, capabilities, "resources")
+	assertions.NotContains(capabilities, "resources")
 }

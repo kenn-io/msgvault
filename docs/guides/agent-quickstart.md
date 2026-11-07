@@ -1,7 +1,7 @@
 ---
 title: Agent quickstart
 description: Connect an agent to msgvault and work safely with an archive.
-last_edited: "2026-11-04"
+last_edited: "2026-11-07"
 ---
 
 Use msgvault's MCP server to find and read conversations, analyze archive
@@ -271,6 +271,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_metadata` | read | — | search.read |
 | `search_people` | read | — | owner-only |
 | `search_person_files` | read | — | owner-only |
+| `search_tools` | read | — | metadata-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |

@@ -215,7 +215,8 @@ func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 	opts.DelegatedOnly = true
 	opts.DraftCommands = []string{"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover"}
 	tools := rawListTools(t, opts, true)
-	assert.Len(tools, 6)
+	assert.Len(tools, 7)
+	assert.Contains(toolsByName(t, tools), ToolSearchTools)
 	assert.NotContains(toolsByName(t, tools), ToolGetStats)
 	response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true}, "resources/templates/list", nil)
 	assert.Empty(response.Result["resourceTemplates"])

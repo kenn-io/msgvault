@@ -422,17 +422,20 @@ func newMCPServerWithPolicy(
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
 	}
 
-	for _, definition := range operationCatalog(opts, h) {
-		if !toolClassAllowed(definition.security, opts, allowWrites) {
-			continue
-		}
+	definitions := authorizedOperationCatalog(opts, allowWrites)
+	operations := operationalCatalog(opts, allowWrites)
+	h.toolDiscovery = toolDiscovery{definitions: definitions, discoverFamilies: opts.DiscoverFamilies}
+	for _, operation := range operations {
+		h.toolDiscovery.definitions = append(h.toolDiscovery.definitions, operation.definition)
+	}
+	for _, definition := range definitions {
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
 	if !opts.DelegatedOnly {
 		registerAttachmentResources(s, h)
 	}
 
-	for _, definition := range operationalCatalog(opts, allowWrites) {
+	for _, definition := range operations {
 		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
 	}
 

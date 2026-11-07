@@ -43,6 +43,7 @@ var task5StableToolNames = []string{
 	ToolSearchMessages,
 	ToolSearchMetadata,
 	ToolSearchPersonFiles,
+	ToolSearchTools,
 	ToolSemanticSearchMessages,
 	ToolStageDeletion,
 	ToolUpdateSavedView,
@@ -347,6 +348,8 @@ func task5ExpectedTools(shape string, allowWrites bool) []string {
 
 func task5ToolArguments(name, shape, exportDir string) (map[string]any, bool) {
 	switch name {
+	case ToolSearchTools:
+		return map[string]any{"query": "read one message", "limit": 3}, true
 	case ToolCreateSavedView:
 		return map[string]any{
 			"name": "Created view", "schema_version": 1,
@@ -476,6 +479,10 @@ func task5AssertRepresentativeResult(
 	must := require.New(t)
 
 	switch toolName {
+	case ToolSearchTools:
+		value := task5StructuredAs[toolDiscoveryResponse](t, result)
+		must.NotEmpty(value.Results)
+		checks.Equal(ToolGetMessage, value.Results[0].Name)
 	case ToolSearchPersonFiles:
 		value := task5StructuredAs[generated.PersonFileSearchHTTPResponse](t, result)
 		must.Len(value.Files, 1)
