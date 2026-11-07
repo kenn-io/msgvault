@@ -401,6 +401,14 @@
   {/if}
 {/snippet}
 
+{#snippet syncErrorNotice()}
+  <InlineNotice message={triggerTimedOut ? triggerError : "Couldn't start the sync."} details={triggerTimedOut ? undefined : triggerError} actionLabel="Refresh" onaction={refresh} />
+{/snippet}
+
+{#snippet statusErrorNotice()}
+  <InlineNotice message="Couldn't load your sources." details={statusError} actionLabel="Retry" onaction={refresh} />
+{/snippet}
+
 <main class="sources" aria-label="Sources">
   <PageHeader title="Sources">
     {#snippet actions()}
@@ -410,11 +418,11 @@
       {/if}
     {/snippet}
   </PageHeader>
-  {#if statusError}<InlineNotice message="Couldn't load your sources." details={statusError} actionLabel="Retry" onaction={refresh} />{/if}
+  {#if statusError}{@render statusErrorNotice()}{/if}
   {#if contactsError}<InlineNotice message="Couldn't load your contact accounts." details={contactsError} actionLabel="Retry" onaction={refresh} />{/if}
   {#if lockStatusStale}<div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
   {#if awaitingState === 'awaiting'}<p role="status">Awaiting accepted sync run…</p>{:else if awaitingState === 'not_observed'}<div class="notice" role="status"><span>The sync was requested, but it hasn't started yet.</span><Button size="sm" label="Refresh" onclick={refresh} /></div>{/if}
-  {#if triggerError}<InlineNotice message={triggerTimedOut ? triggerError : "Couldn't start the sync."} details={triggerTimedOut ? undefined : triggerError} actionLabel="Refresh" onaction={refresh} />{/if}
+  {#if triggerError}{@render syncErrorNotice()}{/if}
   {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
     {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" description="Add an account or import an export to start your archive.">
@@ -531,12 +539,20 @@
       source={selectedSource}
       syncing={syncing(selectedSource)}
       starting={Boolean(triggering)}
-      triggerError={triggerErrorSourceID === selectedSource.id && triggerError ? triggerError : statusError || (lockStatusStale ? STALE_STATUS_MESSAGE : '')}
-      onRefresh={refresh}
       onSync={() => void syncNow(selectedSource)}
       onclose={() => (selected = undefined)}
       onOpenSettings={() => onOpenSettings('sources')}
-    />
+    >
+      {#snippet notice()}
+        {#if triggerErrorSourceID === selectedSource.id && triggerError}
+          {@render syncErrorNotice()}
+        {:else if statusError}
+          {@render statusErrorNotice()}
+        {:else if lockStatusStale}
+          <div class="notice" role="status"><span>{STALE_STATUS_MESSAGE}</span><Button size="sm" label="Refresh" onclick={refresh} /></div>
+        {/if}
+      {/snippet}
+    </SourcePanel>
   {/key}
 {:else if selectedContact}
   <ContactPanel

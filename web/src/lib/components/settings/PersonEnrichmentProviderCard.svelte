@@ -328,7 +328,7 @@
     color: var(--status-error-ink);
     font-size: var(--font-size-sm);
   }
-  :global(.advanced .kit-disclosure__summary) {
+  .provider-card :global(.advanced .kit-disclosure__summary) {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
     cursor: pointer;

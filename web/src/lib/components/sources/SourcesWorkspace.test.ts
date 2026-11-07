@@ -64,6 +64,27 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it('keeps a rejected sync sentence and folded details the same in the page and source panel', async () => {
+    const fetchFn = api([source()], (_url, request) => request.method === 'POST'
+      ? Response.json({ message: 'Synthetic sync rejection' }, { status: 500 }) : undefined);
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
+    const panel = screen.getByRole('dialog', { name: 'Archive' });
+    await fireEvent.click(within(panel).getByRole('button', { name: /^Sync now$/ }));
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+    for (const alert of screen.getAllByRole('alert')) {
+      expect(within(alert).getByText("Couldn't start the sync.")).toBeDefined();
+      const details = within(alert).getByText('Details').closest('details')!;
+      expect(details).toHaveProperty('open', false);
+      expect(details.textContent).toContain('Synthetic sync rejection');
+    }
+    const reads = fetchFn.mock.calls.length;
+    await fireEvent.click(within(panel).getByRole('button', { name: /^Refresh$/ }));
+    await waitFor(() => expect(fetchFn.mock.calls.length).toBeGreaterThan(reads));
+    expect(fetchFn.mock.calls.filter(([request]) => (request as Request).method === 'POST')).toHaveLength(1);
+    view.unmount();
+  });
+
   it.each([
     { path: '/sources/status', message: "Couldn't load your sources." },
     { path: '/carddav/connections', message: "Couldn't load your contact accounts." }
@@ -146,8 +167,11 @@ describe('SourcesWorkspace', () => {
     }
 
     const alert = await within(panel).findByRole('alert');
-    expect(alert.textContent).toContain('Source status unavailable');
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Refresh' }));
+    expect(within(alert).getByText("Couldn't load your sources.")).toBeDefined();
+    const details = within(alert).getByText('Details').closest('details')!;
+    expect(details).toHaveProperty('open', false);
+    expect(details.textContent).toContain('Source status unavailable');
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(statusReads).toBe(3));
     await waitFor(() => expect(within(panel).queryByText('Source status unavailable')).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
@@ -758,7 +782,12 @@ describe('SourcesWorkspace', () => {
     expect(within(alert).getByText('Starting sync timed out. Check source status before trying again.')).toBeDefined();
     expect(archiveButton.disabled).toBe(false);
     expect(otherButton.disabled).toBe(false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Archive' }));
+    const panel = screen.getByRole('dialog', { name: 'Archive' });
+    const panelAlert = within(panel).getByRole('alert');
+    expect(within(panelAlert).getByText('Starting sync timed out. Check source status before trying again.')).toBeDefined();
+    expect(within(panelAlert).queryByText('Details')).toBeNull();
+    await fireEvent.click(within(panelAlert).getByRole('button', { name: 'Refresh' }));
     expect(await screen.findByText('5 processed')).toBeDefined();
     expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(true);
     expect(triggers).toBe(1);
