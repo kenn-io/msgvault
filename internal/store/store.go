@@ -691,7 +691,10 @@ func (s *Store) sqlitePlannerStatisticsWithin(ctx context.Context, timeout time.
 			return errors.Join(result, fmt.Errorf("limit SQLite planner statistics analysis: %w", err))
 		}
 	}
-	result = errors.Join(result, optimizeSQLiteConnection(ctx, connections[0]))
+	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+		result = errors.Join(result, fmt.Errorf("optimize SQLite planner statistics: %w", err))
+	}
+	result = errors.Join(result, dropFTSDataStatistics(ctx, connections[0]))
 	for _, conn := range connections {
 		if err := reloadSQLiteConnection(ctx, conn); err != nil {
 			return errors.Join(result, fmt.Errorf("reload SQLite planner statistics: %w", err))
@@ -700,15 +703,7 @@ func (s *Store) sqlitePlannerStatisticsWithin(ctx context.Context, timeout time.
 	return result
 }
 
-func optimizeSQLiteConnection(ctx context.Context, conn contextStatementQuerier) error {
-	var result error
-	if _, err := conn.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
-		result = fmt.Errorf("optimize SQLite planner statistics: %w", err)
-	}
-	return errors.Join(result, dropFTSDataStatistics(ctx, conn))
-}
-
-func reloadSQLiteConnection(ctx context.Context, conn contextStatementQuerier) error {
+func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
 	_, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema")
 	return err
 }
@@ -1509,22 +1504,13 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 				return nil
 			}
 			fresh = true
-			if err := s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx), version); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, "PRAGMA analysis_limit=1000"); err != nil {
-				return fmt.Errorf("limit SQLite planner statistics analysis: %w", err)
-			}
-			if err := optimizeSQLiteConnection(ctx, tx); err != nil {
-				return err
-			}
-			// Other connections load these statistics when they see the new schema.
-			return reloadSQLiteConnection(ctx, tx)
+			return s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx), version)
 		})
 		if err != nil && !s.dialect.IsBusyError(err) {
 			return err
 		}
 		if err == nil && fresh {
+			s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
 			return nil
 		}
 	}
