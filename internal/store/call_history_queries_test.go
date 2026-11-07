@@ -232,7 +232,7 @@ func TestCallSummaryWindowAndCurrentBindings(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		var conversationID int64
-		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), secondID).Scan(&conversationID))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), secondID).Scan(&conversationID))
 		_, err := st.UpsertMessage(&store.Message{
 			ConversationID: conversationID,
 			SourceID:       src.ID, SourceMessageID: "two", MessageType: "email",
