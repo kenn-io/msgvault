@@ -327,7 +327,7 @@ func TestCodexBridgeFailsClosedWithoutLinkedOrMatchingDigest(t *testing.T) {
 	workRoot := t.TempDir()
 	requireChecks.NoError(os.Chmod(workRoot, 0o700))
 	socketPath := filepath.Join(workRoot, codexProxySocketName)
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	requireChecks.NoError(err)
 	defer func() { require.NoError(t, listener.Close()) }()
 	requireChecks.NoError(os.Chmod(socketPath, 0o600))

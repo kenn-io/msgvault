@@ -324,7 +324,7 @@ func TestWindowsProviderCredentialReparseRejection(t *testing.T) {
 	target := filepath.Join(root, "target")
 	junction := filepath.Join(root, "junction")
 	requirements.NoError(os.Mkdir(target, 0o700))
-	output, err := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", junction, target).CombinedOutput()
+	output, err := exec.CommandContext(t.Context(), "cmd.exe", "/d", "/c", "mklink", "/J", junction, target).CombinedOutput()
 	if err != nil {
 		t.Skipf("create directory junction: %v: %s", err, output)
 	}

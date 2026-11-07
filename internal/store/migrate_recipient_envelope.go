@@ -220,7 +220,7 @@ func rebuildRecipientTableWithoutUniqueSQLite(
 		return recipientOrphanCleanup{}, false, nil
 	}
 
-	if err := dropPersonSweepSQLiteTriggers(tx); err != nil {
+	if err := dropPersonSweepSQLiteTriggers(boundQuerier{ctx: ctx, q: tx}); err != nil {
 		return recipientOrphanCleanup{}, false, err
 	}
 

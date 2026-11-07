@@ -84,7 +84,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 	// Cursors: the last completed run, then any checkpoint of an interrupted
 	// run after it. A delta link is opaque, so the newer checkpoint wins.
 	cursors := map[string]string{}
-	if prev, perr := st.GetLastSuccessfulSync(src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
+	if prev, perr := st.GetLastSuccessfulSyncContext(ctx, src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
 		mergeCursors(cursors, prev.CursorAfter.String)
 	}
 	if cp, cerr := st.GetLatestCheckpointedSync(src.ID); cerr == nil && cp != nil && cp.CursorBefore.Valid {
@@ -219,7 +219,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		}
 	}
 
-	if err = st.RecomputeConversationStats(src.ID); err != nil {
+	if err = st.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		return sum, err
 	}
 	cp := checkpoint()
@@ -337,7 +337,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 		}
 	}
 
-	known, err := s.st.MessageExistsBatch(s.sourceID, append(liveIDs, removedIDs...))
+	known, err := s.st.MessageExistsBatchContext(ctx, s.sourceID, append(liveIDs, removedIDs...))
 	if err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	for _, m := range live {
 		id, ok := known[m.ID]
 		if ok && folderID != s.trash {
-			if err := s.st.ClearMessageDeletedFromSource(s.sourceID, m.ID); err != nil {
+			if err := s.st.ClearMessageDeletedFromSourceContext(ctx, s.sourceID, m.ID); err != nil {
 				return err
 			}
 		}
@@ -380,7 +380,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) error {
 	msgID := m.archiveID
 	if msgID == 0 {
-		ids, err := s.st.MessageExistsBatch(s.sourceID, []string{m.ID})
+		ids, err := s.st.MessageExistsBatchContext(ctx, s.sourceID, []string{m.ID})
 		if err != nil {
 			return err
 		}
@@ -421,7 +421,7 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 	if err := s.st.DeleteMIMEAttachmentsExceptContext(ctx, msgID, keep); err != nil {
 		return err
 	}
-	return s.st.RecomputeMessageAttachmentStats(msgID)
+	return s.st.RecomputeMessageAttachmentStatsContext(ctx, msgID)
 }
 
 // attachmentsStored checks only nonempty parts, since storage skips empty files.
@@ -447,7 +447,7 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 	// leaves it in the checkpoint for the next sync.
 	for _, id := range ids {
 		key := retryPrefix + id
-		known, err := s.st.MessageExistsBatch(s.sourceID, []string{id})
+		known, err := s.st.MessageExistsBatchContext(ctx, s.sourceID, []string{id})
 		if err != nil {
 			return err
 		}
@@ -455,7 +455,7 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 		parent := info.ParentFolderID
 		if errors.Is(err, msgraph.ErrNotFound) || (err == nil && s.deletions != "" && parent == s.deletions) {
 			if known[id] != 0 {
-				if err := s.st.MarkMessagesDeletedBatch(s.sourceID, []string{id}); err != nil {
+				if err := s.st.MarkMessagesDeletedBatch(ctx, s.sourceID, []string{id}); err != nil {
 					return err
 				}
 				s.sum.Deleted++
@@ -542,7 +542,7 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 		}
 	}
 	if len(gone) > 0 {
-		if err := s.st.MarkMessagesDeletedBatch(s.sourceID, gone); err != nil {
+		if err := s.st.MarkMessagesDeletedBatch(ctx, s.sourceID, gone); err != nil {
 			return err
 		}
 		s.sum.Deleted += len(gone)

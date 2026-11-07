@@ -51,12 +51,12 @@ type recoveryCounts struct {
 
 func (state *syncState) durableCheckpoint() *store.Checkpoint {
 	cp := *state.checkpoint
+	cp.HandoffCursor = state.handoffCursor
 	if state.recoveryPhase != "" {
 		encoded, _ := json.Marshal(recoveryCheckpoint{
 			Phase: state.recoveryPhase, PageToken: cp.PageToken, Acquisition: state.acquisition,
 		})
 		cp.PageToken = recoveryCheckpointPrefix + string(encoded)
-		cp.HandoffCursor = state.handoffCursor
 		cp.InheritFromSyncID = state.predecessorID
 	}
 	return &cp

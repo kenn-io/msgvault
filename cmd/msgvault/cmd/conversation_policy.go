@@ -29,7 +29,7 @@ func newPolicyCmd() *cobra.Command {
 			if state == nil || state.cfg == nil {
 				return nil, nil, errors.New("configuration is unavailable")
 			}
-			return openWritableStoreAndInitForIngestInvocation(state)
+			return openWritableStoreAndInitForIngestInvocation(ctx, state)
 		},
 		config: func(ctx context.Context) *config.Config {
 			if state := invocationFromContext(ctx); state != nil {

@@ -251,7 +251,7 @@ func TestPersonSweepProviderPacketExcludesValueRetractedThisRun(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f, worker, catalog := newProjectionFreshnessSweep(t)
-	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(f.sourceID, false, "M1"))
+	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(t.Context(), f.sourceID, false, "M1"))
 	messageID := f.insertMessage(t, "M2", "chat", f.aliceID, worker.Clock().Add(-time.Minute))
 	addSweepBody(t, f, messageID, "I started a new project")
 	runner := emptyFreshnessRunner()
@@ -270,7 +270,7 @@ func TestPersonSweepRetractionRunsBeforeEvidencePacketSizeValidation(t *testing.
 	assert := assert.New(t)
 	require := require.New(t)
 	f, worker, catalog := newProjectionFreshnessSweep(t)
-	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(f.sourceID, false, "M1"))
+	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(t.Context(), f.sourceID, false, "M1"))
 	messageID := f.insertMessage(t, "M2", "chat", f.aliceID, worker.Clock().Add(-time.Minute))
 	addSweepBody(t, f, messageID, "I started a new project")
 	profile, err := worker.Config.Profile()
@@ -333,7 +333,7 @@ func TestPersonSweepRetractionStillSelectsABudgetedSourceLane(t *testing.T) {
 	_, _, err = f.store.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test-owner")
 	require.NoError(err)
 
-	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(f.sourceID, false, "M1"))
+	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(t.Context(), f.sourceID, false, "M1"))
 	messageID := f.insertMessage(t, "M2", "chat", f.aliceID, worker.Clock().Add(-time.Minute))
 	addSweepBody(t, f, messageID, "I started a new project")
 	meetingID := f.insertMessage(t, "M3", "meeting_transcript", f.aliceID, worker.Clock().Add(-30*time.Second))
@@ -389,7 +389,7 @@ func TestPersonSweepBatchNarrowingFailureAfterStatusCommitFinalizesAttempt(t *te
 	worker.Config.EvidenceMaxItems = 1
 	worker.Config.Budgets.MaxRequestsPerPerson = 1
 	worker.Context = emptyFreshnessContext{}
-	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(f.sourceID, false, "M1"))
+	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(t.Context(), f.sourceID, false, "M1"))
 	for _, message := range []struct {
 		id   string
 		body string
@@ -427,7 +427,7 @@ func TestPersonSweepDeletionOnlyRunMakesNoProviderCall(t *testing.T) {
 	require := require.New(t)
 	f, worker, catalog := newProjectionFreshnessSweep(t)
 	before := latestPersonSweepSequence(t, f.store)
-	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(f.sourceID, false, "M1"))
+	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(t.Context(), f.sourceID, false, "M1"))
 	through := latestPersonSweepSequence(t, f.store)
 	require.Greater(through, before)
 	runner := emptyFreshnessRunner()
@@ -471,7 +471,7 @@ func TestPersonSweepDeletionAndBriefWithoutExtractionCommitsOneGeneration(t *tes
 	before, _, _ := freshnessGenerationCounts(t, f)
 	_, err := f.store.SetPersonBriefEnrollmentContext(t.Context(), f.alicePersonID, true, "test-owner", false)
 	require.NoError(err)
-	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(f.sourceID, false, "M1"))
+	require.NoError(f.store.MarkMessageDeletedBySourceMessageID(t.Context(), f.sourceID, false, "M1"))
 	runner := &scriptedBriefRunner{t: t}
 	worker.Runner, worker.Brief, worker.Archive = runner, f.store, f.store
 	result := runFreshnessSweep(t, worker, f.alicePersonID)
@@ -539,7 +539,7 @@ func (failingFreshnessCall) Execute(
 
 func addFreshnessRetractionAndMessage(t *testing.T, f personSweepJournalFixture, now time.Time) int64 {
 	t.Helper()
-	require.NoError(t, f.store.MarkMessageDeletedBySourceMessageID(f.sourceID, false, "M1"))
+	require.NoError(t, f.store.MarkMessageDeletedBySourceMessageID(t.Context(), f.sourceID, false, "M1"))
 	messageID := f.insertMessage(t, "M2", "chat", f.aliceID, now.Add(-time.Minute))
 	addSweepBody(t, f, messageID, "I started a new project")
 	return latestPersonSweepSequence(t, f.store)

@@ -1,7 +1,6 @@
 package granola
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,7 +35,7 @@ func TestListNotes_ParamsAndPagination(t *testing.T) {
 	c := NewClient(srv.URL, "grn_testkey")
 	updatedAfter := time.Date(2026, 5, 1, 0, 0, 0, 123456789, time.UTC)
 
-	page1, err := c.ListNotes(context.Background(), ListNotesParams{UpdatedAfter: updatedAfter, PageSize: 30})
+	page1, err := c.ListNotes(t.Context(), ListNotesParams{UpdatedAfter: updatedAfter, PageSize: 30})
 	require.NoError(err)
 	require.Len(page1.Notes, 1)
 	assert.Equal("not_Ab12Cd34Ef56Gh", page1.Notes[0].ID)
@@ -44,7 +43,7 @@ func TestListNotes_ParamsAndPagination(t *testing.T) {
 	assert.True(page1.HasMore)
 	require.Equal("c2", page1.Cursor)
 
-	page2, err := c.ListNotes(context.Background(), ListNotesParams{UpdatedAfter: updatedAfter, PageSize: 30, Cursor: page1.Cursor})
+	page2, err := c.ListNotes(t.Context(), ListNotesParams{UpdatedAfter: updatedAfter, PageSize: 30, Cursor: page1.Cursor})
 	require.NoError(err)
 	require.Len(page2.Notes, 1)
 	assert.Empty(page2.Notes[0].Title, "null title decodes to empty string")
@@ -64,7 +63,7 @@ func TestListNotes_AcceptsDateOnlyTimestamps(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := NewClient(srv.URL, "grn_testkey").ListNotes(context.Background(), ListNotesParams{})
+	out, err := NewClient(srv.URL, "grn_testkey").ListNotes(t.Context(), ListNotesParams{})
 	require.NoError(err)
 	require.Len(out.Notes, 1)
 	assert.Equal(time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC), out.Notes[0].CreatedAt)
@@ -86,7 +85,7 @@ func TestGetNote_DecodesAndKeepsRaw(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n, err := NewClient(srv.URL, "grn_testkey").GetNote(context.Background(), "not_Ab12Cd34Ef56Gh")
+	n, err := NewClient(srv.URL, "grn_testkey").GetNote(t.Context(), "not_Ab12Cd34Ef56Gh")
 	require.NoError(err)
 
 	assert.Equal("Quarterly Planning Review", n.Title)
@@ -116,7 +115,7 @@ func TestGetNote_AcceptsDateOnlyTimestamps(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	note, err := NewClient(srv.URL, "grn_testkey").GetNote(context.Background(), "note-date-only")
+	note, err := NewClient(srv.URL, "grn_testkey").GetNote(t.Context(), "note-date-only")
 	require.NoError(err)
 	assert.Equal(time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC), note.CreatedAt)
 	assert.Equal(time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC), note.UpdatedAt)
@@ -141,7 +140,7 @@ func TestGetNote_NullCalendarEvent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n, err := NewClient(srv.URL, "grn_testkey").GetNote(context.Background(), "not_Zz98Yy87Xx76Wv")
+	n, err := NewClient(srv.URL, "grn_testkey").GetNote(t.Context(), "not_Zz98Yy87Xx76Wv")
 	require.NoError(err)
 	require.Nil(n.CalendarEvent)
 	require.Empty(n.Title)
@@ -164,7 +163,7 @@ func TestClient_RetriesOn429(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := NewClient(srv.URL, "grn_testkey").ListNotes(context.Background(), ListNotesParams{})
+	out, err := NewClient(srv.URL, "grn_testkey").ListNotes(t.Context(), ListNotesParams{})
 	require.NoError(err)
 	require.Empty(out.Notes)
 	require.Equal(int32(2), hits.Load(), "expected one retry after the 429")
@@ -178,7 +177,7 @@ func TestClient_UnauthorizedIsActionable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewClient(srv.URL, "grn_bad").ListNotes(context.Background(), ListNotesParams{})
+	_, err := NewClient(srv.URL, "grn_bad").ListNotes(t.Context(), ListNotesParams{})
 	require.Error(err)
 	require.Contains(err.Error(), "api_key")
 }

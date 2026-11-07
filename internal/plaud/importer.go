@@ -77,7 +77,7 @@ func ValidateOwner(src *store.Source, email string) error {
 	return nil
 }
 
-func RegisterSource(st *store.Store, identifier, email string) (*store.Source, error) {
+func RegisterSource(ctx context.Context, st *store.Store, identifier, email string) (*store.Source, error) {
 	email, err := normalizeEmail(email)
 	if err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func RegisterSource(st *store.Store, identifier, email string) (*store.Source, e
 		// A selector conflict should not hide an exact existing provider source
 		// during reauthorization. Keep its old display name if the refresh below
 		// is still blocked.
-		existing, lookupErr := st.GetSourceByTypeAndIdentifier(SourceType, identifier)
+		existing, lookupErr := st.GetSourceByTypeAndIdentifier(ctx, SourceType, identifier)
 		if lookupErr == nil {
 			if existing.MergedIntoSourceID != 0 {
 				return nil, fmt.Errorf("plaud source %d: %w", existing.ID, store.ErrSourceRetired)
@@ -107,10 +107,10 @@ func RegisterSource(st *store.Store, identifier, email string) (*store.Source, e
 	}
 	// The local identifier can outlive configuration edits. Reauthorization
 	// must not reassign its archive to another account.
-	if err := st.BindMeetingSourceOwner(src.ID, email); err != nil {
+	if err := st.BindMeetingSourceOwner(ctx, src.ID, email); err != nil {
 		return nil, err
 	}
-	if err := st.UpdateSourceDisplayName(src.ID, identifier); err != nil {
+	if err := st.UpdateSourceDisplayNameContext(ctx, src.ID, identifier); err != nil {
 		if !errors.Is(err, store.ErrSourceSettingsInvalid) {
 			return nil, err
 		}
@@ -118,17 +118,17 @@ func RegisterSource(st *store.Store, identifier, email string) (*store.Source, e
 			"source_id", src.ID,
 		)
 	}
-	if err := st.AddAccountIdentity(src.ID, email, "account-email"); err != nil {
+	if err := st.AddAccountIdentityContext(ctx, src.ID, email, "account-email"); err != nil {
 		return nil, err
 	}
-	return st.GetSourceByTypeAndIdentifier(SourceType, identifier)
+	return st.GetSourceByTypeAndIdentifier(ctx, SourceType, identifier)
 }
 
 func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *ImportSummary, retErr error) {
 	if opts.Limit < 0 {
 		return nil, errors.New("plaud limit cannot be negative")
 	}
-	src, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
+	src, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, opts.Identifier)
 	if err != nil {
 		return nil, fmt.Errorf("plaud source is not registered; run msgvault add-plaud %s: %w", opts.Identifier, err)
 	}
@@ -164,7 +164,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 	}()
 	// Read the current rotation state after acquiring this source's sync run.
-	current, err := scoped.GetSourceByID(src.ID)
+	current, err := scoped.GetSourceByIDContext(ctx, src.ID)
 	if err != nil {
 		return sum, err
 	}
@@ -223,10 +223,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 		e := normalized(rec)
-		existing, err := scoped.MessageExistsBatch(src.ID, []string{f.ID})
+		existing, err := scoped.MessageExistsBatchContext(ctx, src.ID, []string{f.ID})
 		if err == nil && existing[f.ID] != 0 {
 			var raw []byte
-			raw, err = scoped.GetMessageRaw(existing[f.ID])
+			raw, err = scoped.GetMessageRawContext(ctx, existing[f.ID])
 			if err == nil {
 				var old evidence
 				if json.Unmarshal(raw, &old) != nil || old.Version != 1 || old.FileID != f.ID {
@@ -265,7 +265,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return sum, errors.Join(errors.Join(failures...), err)
 	}
 	// Rotation is current source state, not a snapshot to retain in every run.
-	if err := scoped.UpdateSourceSyncState(src.ID, string(raw)); err != nil {
+	if err := scoped.UpdateSourceSyncState(ctx, src.ID, string(raw)); err != nil {
 		return sum, errors.Join(errors.Join(failures...), err)
 	}
 	if len(failures) > 0 {

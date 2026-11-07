@@ -42,14 +42,14 @@ func TestContactRoutesHTTPReadsAndErrors(t *testing.T) {
 	}
 	for _, tt := range paths {
 		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.path, nil))
 		assertions.Equal(tt.want, w.Code, tt.path+" "+w.Body.String())
 		if tt.want == http.StatusOK {
 			assertions.Equal("no-store", w.Header().Get("Cache-Control"))
 		}
 	}
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, paths[0].path, nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, paths[0].path, nil))
 	var page store.ContactCandidatePage
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &page))
 	requirements.Len(page.Candidates, 1)
@@ -57,7 +57,7 @@ func TestContactRoutesHTTPReadsAndErrors(t *testing.T) {
 	_, err = st.RetirePersonUIDAliasContext(t.Context(), "http-gone", nil, "deleted")
 	requirements.NoError(err)
 	gone := httptest.NewRecorder()
-	srv.Router().ServeHTTP(gone, httptest.NewRequest(http.MethodGet, "/api/v1/people/messaging-routes?person_uid=http-gone", nil))
+	srv.Router().ServeHTTP(gone, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/messaging-routes?person_uid=http-gone", nil))
 	assertions.Equal(http.StatusGone, gone.Code)
 }
 
@@ -69,7 +69,7 @@ func TestContactRoutesHTTPDatabaseFailureIsNotNoMatches(t *testing.T) {
 	requirements.NoError(st.Close())
 	for _, path := range []string{"/api/v1/people/contact-candidates?query=Avery", "/api/v1/people/messaging-routes?person_uid=synthetic"} {
 		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 		assertions.Equal(http.StatusServiceUnavailable, w.Code)
 		assertions.Contains(w.Body.String(), "contact_lookup_unavailable")
 	}
@@ -88,7 +88,7 @@ func TestContactRoutesHTTPRequiresOwnerAndAvailableBackend(t *testing.T) {
 			{"delegated", apiprotocol.AgentTokenHeader, secret, http.StatusUnauthorized},
 			{"owner unavailable", "Authorization", "Bearer owner-key", http.StatusServiceUnavailable},
 		} {
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 			req.RemoteAddr = "192.0.2.2:4242"
 			if test.header != "" {
 				req.Header.Set(test.header, test.value)

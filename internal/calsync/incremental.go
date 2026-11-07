@@ -20,7 +20,7 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 	if err := ValidateMinAccessRole(s.opts.MinAccessRole); err != nil {
 		return Result{}, err
 	}
-	sources, err := s.store.GetSourcesByTypeAndAccount(gcal.SourceType, s.opts.AccountEmail)
+	sources, err := s.store.GetSourcesByTypeAndAccountContext(ctx, gcal.SourceType, s.opts.AccountEmail)
 	if err != nil {
 		return Result{}, fmt.Errorf("enumerate calendar sources: %w", err)
 	}
@@ -53,7 +53,7 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 	if s.shouldPersistOAuthApp() {
 		for _, src := range sources {
 			cfg := parseSourceConfig(src.SyncConfig)
-			if err := s.updateCalendarSourceOAuthApp(src.ID, cfg.CalendarID); err != nil {
+			if err := s.updateCalendarSourceOAuthApp(ctx, src.ID, cfg.CalendarID); err != nil {
 				recordErr(err)
 			}
 		}
@@ -162,7 +162,7 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 
 		for i := range page.Items {
 			ev := page.Items[i]
-			added, cancelled, perr := s.persistOne(src.ID, cal, ev, result)
+			added, cancelled, perr := s.persistOne(ctx, src.ID, cal, ev, result)
 			if perr != nil {
 				cp.ErrorsCount++
 				s.recordItemError(syncID, ev.ID, perr)
@@ -202,7 +202,7 @@ func (s *Syncer) incrementalCalendar(ctx context.Context, src *store.Source, cal
 		return fail(fmt.Errorf("%d calendar event(s) failed to persist; sync token not advanced so they retry on the next sync", cp.ErrorsCount))
 	}
 
-	if err := s.store.RecomputeConversationStats(src.ID); err != nil {
+	if err := s.store.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		s.logger.Warn("recompute conversation stats failed", "calendar", cal.ID, "error", err)
 	}
 	var completeErr error

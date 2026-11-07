@@ -27,7 +27,7 @@ func openSQLiteSizeTestDB(t *testing.T) (*sql.DB, string) {
 	})
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	require.NoError(t, db.PingContext(context.Background()), "ping SQLite database")
+	require.NoError(t, db.PingContext(t.Context()), "ping SQLite database")
 	return db, dbPath
 }
 
@@ -35,9 +35,9 @@ func sqliteLogicalMainSize(t *testing.T, db *sql.DB) int64 {
 	t.Helper()
 
 	var pageCount int64
-	require.NoError(t, db.QueryRow("PRAGMA page_count").Scan(&pageCount), "read page count")
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA page_count").Scan(&pageCount), "read page count")
 	var pageSize int64
-	require.NoError(t, db.QueryRow("PRAGMA page_size").Scan(&pageSize), "read page size")
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA page_size").Scan(&pageSize), "read page size")
 	return pageCount * pageSize
 }
 
@@ -45,18 +45,18 @@ func TestSQLiteDatabaseSizeReportsLogicalMainDatabasePages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	db, dbPath := openSQLiteSizeTestDB(t)
-	_, err := db.Exec(`CREATE TABLE payload (value BLOB NOT NULL)`)
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE payload (value BLOB NOT NULL)`)
 	require.NoError(err, "create payload table")
 
 	var busy, logFrames, checkpointedFrames int
-	require.NoError(db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(
+	require.NoError(db.QueryRowContext(t.Context(), "PRAGMA wal_checkpoint(TRUNCATE)").Scan(
 		&busy, &logFrames, &checkpointedFrames,
 	), "checkpoint schema")
 	require.Zero(busy, "checkpoint busy")
-	_, err = db.Exec("PRAGMA wal_autocheckpoint = 0")
+	_, err = db.ExecContext(t.Context(), "PRAGMA wal_autocheckpoint = 0")
 	require.NoError(err, "disable automatic WAL checkpoint")
 
-	_, err = db.Exec(`INSERT INTO payload(value) VALUES (zeroblob(2097152))`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO payload(value) VALUES (zeroblob(2097152))`)
 	require.NoError(err, "insert WAL-resident payload")
 
 	mainInfo, err := os.Stat(dbPath)
@@ -69,7 +69,7 @@ func TestSQLiteDatabaseSizeReportsLogicalMainDatabasePages(t *testing.T) {
 	require.Greater(want, mainInfo.Size(),
 		"logical page allocation must include committed growth not checkpointed into the main file")
 
-	got, err := (&SQLiteDialect{}).DatabaseSize(context.Background(), db, dbPath)
+	got, err := (&SQLiteDialect{}).DatabaseSize(t.Context(), db, dbPath)
 	require.NoError(err, "DatabaseSize")
 	assert.Equal(want, got)
 	assert.NotEqual(mainInfo.Size()+walInfo.Size(), got,
@@ -81,11 +81,11 @@ func TestSQLiteDatabaseSizeContextCancelsConnectionWait(t *testing.T) {
 	require := require.New(t)
 	db, dbPath := openSQLiteSizeTestDB(t)
 
-	held, err := db.Conn(context.Background())
+	held, err := db.Conn(t.Context())
 	require.NoError(err, "hold only SQLite connection")
 	defer func() { _ = held.Close() }()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	type result struct {
 		size int64
@@ -121,7 +121,7 @@ func TestSQLiteDatabaseSizeReportsQueryError(t *testing.T) {
 	db, dbPath := openSQLiteSizeTestDB(t)
 	require.NoError(db.Close(), "close SQLite database")
 
-	got, err := (&SQLiteDialect{}).DatabaseSize(context.Background(), db, dbPath)
+	got, err := (&SQLiteDialect{}).DatabaseSize(t.Context(), db, dbPath)
 	assert.Zero(got)
 	require.Error(err)
 	assert.ErrorContains(err, "query SQLite page count")

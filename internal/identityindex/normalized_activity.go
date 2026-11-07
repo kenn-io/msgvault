@@ -1,6 +1,15 @@
 package identityindex
 
-import "fmt"
+import (
+	"fmt"
+
+	"go.kenn.io/msgvault/internal/calevent"
+)
+
+// RoomDomainSQL matches a normalized domain against calendar resource domains.
+func RoomDomainSQL(col string) string {
+	return fmt.Sprintf("(%s = '%s' OR ends_with(%s, '.%s'))", col, calevent.RoomDomain, col, calevent.RoomDomain)
+}
 
 // CanonicalParticipantsSQL resolves participants through their identity clusters.
 // Its arguments are trusted SQL relations from the cache builder or query engine.
@@ -8,7 +17,8 @@ func CanonicalParticipantsSQL(participants, clusters string) string {
 	return fmt.Sprintf(`SELECT p.id::BIGINT AS participant_id,
 	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
 	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
-	FROM %s p LEFT JOIN %s c ON c.participant_id = p.id`, participants, clusters)
+	FROM %s p LEFT JOIN %s c ON c.participant_id = p.id
+	WHERE NOT %s OR c.canonical_id IN (SELECT hc.canonical_id FROM %s h JOIN %s hc ON hc.participant_id = h.id WHERE NOT %s)`, participants, clusters, RoomDomainSQL("lower(coalesce(p.domain, ''))"), participants, clusters, RoomDomainSQL("lower(coalesce(h.domain, ''))"))
 }
 
 // OwnerCanonicalsSQL projects confirmed owners through a canonical participant relation.

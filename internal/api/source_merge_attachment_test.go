@@ -54,7 +54,7 @@ func TestSourceMergePreservesLegacyAttachmentDownloads(t *testing.T) {
 			hash := hex.EncodeToString(digest[:])
 			var attachmentIDs []int64
 			for _, source := range []*store.Source{into, from} {
-				conversation, err := st.EnsureConversation(source.ID, "!shared:example.test", "Example conversation")
+				conversation, err := st.EnsureConversation(t.Context(), source.ID, "!shared:example.test", "Example conversation")
 				require.NoError(err)
 				id, err := st.UpsertMessage(&store.Message{
 					SourceID: source.ID, ConversationID: conversation, SourceMessageID: "shared-message", MessageType: "beeper",
@@ -72,13 +72,13 @@ func TestSourceMergePreservesLegacyAttachmentDownloads(t *testing.T) {
 					require.NoError(os.MkdirAll(filepath.Dir(filename), 0o700))
 					require.NoError(os.WriteFile(filename, content, 0o600))
 				}
-				require.NoError(st.UpsertAttachment(id, "shared.bin", "application/octet-stream", path, hash, len(content)))
+				require.NoError(st.UpsertAttachment(t.Context(), id, "shared.bin", "application/octet-stream", path, hash, len(content)))
 				if scenario.partKey != "" {
-					_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET source_part_key = ? WHERE message_id = ?`), scenario.partKey, id)
+					_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attachments SET source_part_key = ? WHERE message_id = ?`), scenario.partKey, id)
 					require.NoError(err)
 				}
 				var attachmentID int64
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), id).Scan(&attachmentID))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), id).Scan(&attachmentID))
 				attachmentIDs = append(attachmentIDs, attachmentID)
 			}
 			if scenario.writeCAS {
@@ -90,10 +90,11 @@ func TestSourceMergePreservesLegacyAttachmentDownloads(t *testing.T) {
 			srv := NewServerWithOptions(ServerOptions{
 				Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger(),
 			})
-			t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
+			// Cleanup runs after t.Context() is canceled.
+			t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 			download := func(id int64) *httptest.ResponseRecorder {
 				response := httptest.NewRecorder()
-				srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", id), nil))
+				srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/files/%d/content", id), nil))
 				return response
 			}
 			before := download(attachmentIDs[1])
@@ -125,7 +126,7 @@ func TestSourceMergePreservesLegacyAttachmentDownloads(t *testing.T) {
 				assert.Equal(content, live.Body.Bytes())
 			}
 			byHash := httptest.NewRecorder()
-			srv.Router().ServeHTTP(byHash, httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil))
+			srv.Router().ServeHTTP(byHash, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil))
 			require.Equal(http.StatusOK, byHash.Code, byHash.Body.String())
 			assert.Equal(content, byHash.Body.Bytes())
 		})

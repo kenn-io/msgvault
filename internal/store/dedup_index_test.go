@@ -19,7 +19,7 @@ func TestGetDuplicateGroupMessages_UsesRFC822Index(t *testing.T) {
 	assert := assert.New(t)
 
 	dir := t.TempDir()
-	s, err := OpenForTest(filepath.Join(dir, "dedup_index.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(dir, "dedup_index.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -89,7 +89,7 @@ func TestFindDuplicatesByRFC822ID_UsesCanonicalExpressionIndex(t *testing.T) {
 	assert := assert.New(t)
 
 	dir := t.TempDir()
-	s, err := OpenForTest(filepath.Join(dir, "dedup_canonical_index.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(dir, "dedup_canonical_index.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -147,7 +147,7 @@ func TestFindDuplicatesByRFC822ID_UsesCanonicalExpressionIndex(t *testing.T) {
 			assert.NotContains(plan, "idx_messages_source (source_id=?)",
 				"the source-only index cannot serve canonical grouping:\n%s", plan)
 
-			groups, err := s.FindDuplicatesByRFC822ID(tc.sourceIDs...)
+			groups, err := s.FindDuplicatesByRFC822ID(t.Context(), tc.sourceIDs...)
 			require.NoError(err, "FindDuplicatesByRFC822ID")
 			byKey := make(map[string]int, len(groups))
 			for _, g := range groups {

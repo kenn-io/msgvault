@@ -1,7 +1,6 @@
 package daemonclient
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -64,7 +63,7 @@ func TestSearchDocumentsUsesGeneratedDaemonContract(t *testing.T) {
 	require.NoError(err)
 	after := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
-	response, err := client.SearchDocuments(context.Background(), store.DocumentSearchRequest{
+	response, err := client.SearchDocuments(t.Context(), store.DocumentSearchRequest{
 		Query: "damaged carton", SourceIDs: []int64{3, 7}, AttachmentID: 22, PageSize: 5,
 		PersonID: 40, Directions: []personscope.Direction{personscope.FromPerson, personscope.Group},
 		After: &after, Before: &before,
@@ -127,7 +126,7 @@ func TestDocumentIndexStatusUsesGeneratedDaemonContract(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(err)
-	response, err := client.GetDocumentIndexStatus(context.Background(), store.DocumentIndexStatusRequest{
+	response, err := client.GetDocumentIndexStatus(t.Context(), store.DocumentIndexStatusRequest{
 		ProfileID: "profile", ExtractionInputKey: "original",
 		AllowedMediaTypes:   []string{"application/pdf", "application/epub+zip"},
 		AllowedMessageTypes: []string{"email", "mms"},

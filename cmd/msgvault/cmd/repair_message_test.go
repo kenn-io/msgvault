@@ -120,7 +120,8 @@ func TestRepairMessageCommandRunsProductionRepairAndPrintsStableResult(t *testin
 	assert.Equal([]string{"gmail-42"}, mock.GetMessageCalls)
 	assert.Equal([]string{"store closed", "cache refreshed"}, lifecycle)
 	var subject string
-	require.NoError(fixture.Store.DB().QueryRow(
+	require.NoError(fixture.Store.DB().QueryRowContext(
+		t.Context(),
 		fixture.Store.Rebind(`SELECT subject FROM messages WHERE id = ?`), messageID,
 	).Scan(&subject))
 	assert.Equal("Repaired subject", subject)
@@ -357,7 +358,7 @@ func TestRepairMessageCommandResolvesOmittedLocalSourceBeforeScopedOAuthPrefligh
 	fixture := storetest.New(t)
 	targetSource, err := fixture.Store.GetOrCreateSource("gmail", "target@example.com")
 	require.NoError(err)
-	targetConversation, err := fixture.Store.EnsureConversation(targetSource.ID, "target-thread", "")
+	targetConversation, err := fixture.Store.EnsureConversation(t.Context(), targetSource.ID, "target-thread", "")
 	require.NoError(err)
 	_, err = fixture.Store.UpsertMessage(&store.Message{
 		ConversationID:  targetConversation,
@@ -434,7 +435,7 @@ func TestRepairMessageCommandLocalResolutionFailsBeforeOAuthOrRepair(t *testing.
 	fixture := storetest.New(t)
 	otherSource, err := fixture.Store.GetOrCreateSource("gmail", "other@example.com")
 	requirements.NoError(err)
-	otherConversation, err := fixture.Store.EnsureConversation(otherSource.ID, "other-thread", "")
+	otherConversation, err := fixture.Store.EnsureConversation(t.Context(), otherSource.ID, "other-thread", "")
 	requirements.NoError(err)
 	_, err = fixture.Store.UpsertMessage(&store.Message{
 		ConversationID: otherConversation, SourceID: otherSource.ID,
@@ -444,7 +445,7 @@ func TestRepairMessageCommandLocalResolutionFailsBeforeOAuthOrRepair(t *testing.
 	fixture.CreateMessage("shared")
 	imap, err := fixture.Store.GetOrCreateSource("imap", "imap@example.com")
 	requirements.NoError(err)
-	imapConversation, err := fixture.Store.EnsureConversation(imap.ID, "imap-thread", "")
+	imapConversation, err := fixture.Store.EnsureConversation(t.Context(), imap.ID, "imap-thread", "")
 	requirements.NoError(err)
 	_, err = fixture.Store.UpsertMessage(&store.Message{
 		ConversationID: imapConversation, SourceID: imap.ID,
@@ -510,7 +511,8 @@ func TestRepairMessageCommandAuditUsesReadOnlyStoreAndExactJSON(t *testing.T) {
 	require := require.New(t)
 	fixture := storetest.New(t)
 	messageID := fixture.CreateMessage("gmail-audit")
-	_, err := fixture.Store.DB().Exec(
+	_, err := fixture.Store.DB().ExecContext(
+		t.Context(),
 		fixture.Store.Rebind(`UPDATE messages SET subject = 'stored subject' WHERE id = ?`), messageID)
 	require.NoError(err)
 	require.NoError(fixture.Store.UpsertMessageRaw(messageID,
@@ -547,7 +549,7 @@ func TestRepairMessageCommandSurfacesAmbiguousAndNonGmailTargetsBeforeProviderAc
 	fixture := storetest.New(t)
 	otherSource, err := fixture.Store.GetOrCreateSource("gmail", "other@example.com")
 	requirements.NoError(err)
-	otherConversation, err := fixture.Store.EnsureConversation(otherSource.ID, "other-thread", "")
+	otherConversation, err := fixture.Store.EnsureConversation(t.Context(), otherSource.ID, "other-thread", "")
 	requirements.NoError(err)
 	_, err = fixture.Store.UpsertMessage(&store.Message{
 		ConversationID: otherConversation, SourceID: otherSource.ID,
@@ -557,7 +559,7 @@ func TestRepairMessageCommandSurfacesAmbiguousAndNonGmailTargetsBeforeProviderAc
 	fixture.CreateMessage("shared")
 	imap, err := fixture.Store.GetOrCreateSource("imap", "imap@example.com")
 	requirements.NoError(err)
-	imapConversation, err := fixture.Store.EnsureConversation(imap.ID, "imap-thread", "")
+	imapConversation, err := fixture.Store.EnsureConversation(t.Context(), imap.ID, "imap-thread", "")
 	requirements.NoError(err)
 	_, err = fixture.Store.UpsertMessage(&store.Message{
 		ConversationID: imapConversation, SourceID: imap.ID,

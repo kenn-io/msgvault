@@ -79,8 +79,8 @@ func newMeetingImportTestServer(t *testing.T, importer MeetingImporter) *Server 
 	)
 }
 
-func meetingImportRequest(body string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/import/meeting", strings.NewReader(body))
+func meetingImportRequest(ctx context.Context, body string) *http.Request {
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/import/meeting", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 	return req
@@ -95,7 +95,7 @@ func TestMeetingImportRequiresAuthentication(t *testing.T) {
 	srv := newMeetingImportTestServer(t, store)
 
 	for _, key := range []string{"", "wrong-key"} {
-		req := meetingImportRequest(validMeetingImportBody)
+		req := meetingImportRequest(t.Context(), validMeetingImportBody)
 		if key == "" {
 			req.Header.Del("X-Api-Key")
 		} else {
@@ -135,7 +135,7 @@ func TestMeetingImportReturnsCreatedAndUpdated(t *testing.T) {
 				},
 			}
 			srv := newMeetingImportTestServer(t, store)
-			req := meetingImportRequest(validMeetingImportBody)
+			req := meetingImportRequest(t.Context(), validMeetingImportBody)
 			req.Header.Set("Content-Type", "application/json; charset=utf-8")
 			resp := httptest.NewRecorder()
 
@@ -193,7 +193,7 @@ func TestMeetingImportRejectsInvalidRequests(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
-			req := meetingImportRequest(tt.body)
+			req := meetingImportRequest(t.Context(), tt.body)
 			req.Header.Set("Content-Type", tt.mediaType)
 			resp := httptest.NewRecorder()
 
@@ -219,7 +219,7 @@ func TestMeetingImportValidationNamesFieldWithoutEchoingValue(t *testing.T) {
 		`"phone": "(604) 555-0100"`, 1)
 	require.NotEqual(validMeetingImportBody, body, "fixture must contain the attendee email")
 
-	req := meetingImportRequest(body)
+	req := meetingImportRequest(t.Context(), body)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 
@@ -239,7 +239,7 @@ func TestMeetingImportRejectsOversizedBody(t *testing.T) {
 
 	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := newMeetingImportTestServer(t, store)
-	req := meetingImportRequest(strings.Repeat("x", int(meetingimport.MaxRequestBytes)+1))
+	req := meetingImportRequest(t.Context(), strings.Repeat("x", int(meetingimport.MaxRequestBytes)+1))
 	resp := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(resp, req)
@@ -259,7 +259,7 @@ func TestMeetingImportReturnsUnavailableWithoutCapability(t *testing.T) {
 	srv := newMeetingImportTestServer(t, nil)
 	resp := httptest.NewRecorder()
 
-	srv.Router().ServeHTTP(resp, meetingImportRequest(validMeetingImportBody))
+	srv.Router().ServeHTTP(resp, meetingImportRequest(t.Context(), validMeetingImportBody))
 
 	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
 	var body ErrorResponse
@@ -279,7 +279,7 @@ func TestMeetingImportSanitizesInternalErrors(t *testing.T) {
 	srv := newMeetingImportTestServer(t, store)
 	resp := httptest.NewRecorder()
 
-	srv.Router().ServeHTTP(resp, meetingImportRequest(validMeetingImportBody))
+	srv.Router().ServeHTTP(resp, meetingImportRequest(t.Context(), validMeetingImportBody))
 
 	require.Equal(http.StatusInternalServerError, resp.Code, "body: %s", resp.Body.String())
 	var body ErrorResponse
@@ -295,7 +295,7 @@ func TestMeetingImportOpenAPIDocument(t *testing.T) {
 
 	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := newMeetingImportTestServer(t, store)
-	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil)
 	resp := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(resp, req)
@@ -339,7 +339,7 @@ func TestMeetingImportBodyLimitDoesNotReadPastBoundary(t *testing.T) {
 	store := &fakeMeetingImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := newMeetingImportTestServer(t, store)
 	body := bytes.NewReader(bytes.Repeat([]byte("x"), int(meetingimport.MaxRequestBytes)+1))
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/import/meeting", body)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/meeting", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 	resp := httptest.NewRecorder()
@@ -381,13 +381,13 @@ func testMeetingImportReadsBodyBeforeWaitingOnOperationGate(t *testing.T) {
 		Logger:        testLogger(),
 		OperationGate: gate,
 	})
-	defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+	defer func() { require.NoError(srv.Shutdown(t.Context())) }()
 
 	reader, writer := io.Pipe()
 	defer func() { _ = reader.Close() }()
 	defer func() { _ = writer.Close() }()
 	body := io.MultiReader(strings.NewReader(validMeetingImportBody[:len(validMeetingImportBody)-1]), reader)
-	req := httptest.NewRequest(http.MethodPost, meetingImportEndpointPath, body)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, meetingImportEndpointPath, body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
 	resp := &deadlineClearingRecorder{ResponseRecorder: httptest.NewRecorder()}
@@ -436,7 +436,7 @@ func TestMeetingImportValidatesBodyBeforeWaitingOnOperationGate(t *testing.T) { 
 	})
 
 	resp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(resp, meetingImportRequest(`{}`))
+	srv.Router().ServeHTTP(resp, meetingImportRequest(t.Context(), `{}`))
 
 	require.Equal(http.StatusUnprocessableEntity, resp.Code, "body: %s", resp.Body.String())
 	require.False(gate.HasRequestWaiters(), "invalid body must not queue on the mutation gate")
@@ -451,7 +451,7 @@ func TestMeetingImportReturnsBusyWithinBoundAfterValidation(t *testing.T) { //no
 	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
 
 	gate := NewSerialOperationGate()
-	releaseGate, ok := gate.BeginLabeledWorkContext(context.Background(), "scheduled source sync")
+	releaseGate, ok := gate.BeginLabeledWorkContext(t.Context(), "scheduled source sync")
 	require.True(ok, "hold operation gate")
 	defer releaseGate()
 
@@ -466,7 +466,7 @@ func TestMeetingImportReturnsBusyWithinBoundAfterValidation(t *testing.T) { //no
 	})
 
 	resp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(resp, meetingImportRequest(validMeetingImportBody))
+	srv.Router().ServeHTTP(resp, meetingImportRequest(t.Context(), validMeetingImportBody))
 
 	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
 	var body ErrorResponse
@@ -498,7 +498,7 @@ func TestMeetingImportUnavailableDoesNotWaitOnOperationGate(t *testing.T) { //no
 	})
 
 	resp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(resp, meetingImportRequest(validMeetingImportBody))
+	srv.Router().ServeHTTP(resp, meetingImportRequest(t.Context(), validMeetingImportBody))
 
 	require.Equal(http.StatusServiceUnavailable, resp.Code, "body: %s", resp.Body.String())
 	require.Contains(resp.Body.String(), `"error":"service_unavailable"`)

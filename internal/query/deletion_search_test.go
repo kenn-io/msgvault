@@ -52,11 +52,11 @@ func TestBoundedDeletionSearchCountsOnlyExecutableSources(t *testing.T) {
 			})
 			t.Run("IMAP targets", func(t *testing.T) {
 				env := newTestEnv(t)
-				_, err := env.DB.Exec(`UPDATE sources SET source_type = 'imap' WHERE id = 1`)
+				_, err := env.DB.ExecContext(t.Context(), `UPDATE sources SET source_type = 'imap' WHERE id = 1`)
 				require.NoError(t, err)
 				for i := range 3 {
 					id := env.AddMessage(dbtest.MessageOpts{Subject: "imapneedle"})
-					_, err := env.DB.Exec(`UPDATE messages SET source_message_id = ? WHERE id = ?`, fmt.Sprintf("INBOX|%d", i+1), id)
+					_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET source_message_id = ? WHERE id = ?`, fmt.Sprintf("INBOX|%d", i+1), id)
 					require.NoError(t, err)
 				}
 				env.EnableFTS()

@@ -49,7 +49,7 @@ func filenameLocation(t *testing.T, s *store.Store) string {
 	var location string
 	if s.IsPostgreSQL() {
 		var database, schema string
-		require.NoError(t, s.DB().QueryRow(`SELECT current_database(), current_schema()`).Scan(&database, &schema))
+		require.NoError(t, s.DB().QueryRowContext(t.Context(), `SELECT current_database(), current_schema()`).Scan(&database, &schema))
 		u, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 		require.NoError(t, err)
 		u.Path = "/" + database
@@ -60,7 +60,7 @@ func filenameLocation(t *testing.T, s *store.Store) string {
 	} else {
 		var seq int
 		var name string
-		require.NoError(t, s.DB().QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &location))
+		require.NoError(t, s.DB().QueryRowContext(t.Context(), `PRAGMA database_list`).Scan(&seq, &name, &location))
 		require.Equal(t, "main", name)
 	}
 	return location
@@ -70,7 +70,7 @@ func filenameReopen(t *testing.T, s *store.Store) *store.Store {
 	t.Helper()
 	location := filenameLocation(t, s)
 	require.NoError(t, s.Close())
-	reopened, err := store.OpenForTest(location)
+	reopened, err := store.OpenForTest(t.Context(), location)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
 	return reopened
@@ -95,7 +95,7 @@ func filenameReady(t *testing.T, s *store.Store) store.FilenameDiscoveryStatus {
 func filenameEntries(t *testing.T, s *store.Store, generation int64) int {
 	t.Helper()
 	var count int
-	require.NoError(t, s.DB().QueryRow(s.Rebind(`SELECT count(*)
+	require.NoError(t, s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT count(*)
 		FROM filename_discovery_entries WHERE generation=?`), generation).Scan(&count))
 	return count
 }
@@ -103,7 +103,7 @@ func filenameEntries(t *testing.T, s *store.Store, generation int64) int {
 func filenameEntryName(t *testing.T, s *store.Store, generation, id int64) string {
 	t.Helper()
 	var name string
-	require.NoError(t, s.DB().QueryRow(s.Rebind(`SELECT normalized_name
+	require.NoError(t, s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT normalized_name
 		FROM filename_discovery_entries WHERE generation=? AND attachment_id=?`), generation, id).Scan(&name))
 	return name
 }
@@ -180,7 +180,7 @@ func TestFilenameDiscoveryBatchUsesSetBasedWrites(t *testing.T) {
 	ids := make([]int64, 0, 500)
 	for i := range 500 {
 		var id int64
-		err = insert.QueryRow(f.Store.Rebind(`INSERT INTO attachments
+		err = insert.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
 			(message_id, filename, storage_path) VALUES(?,?, '') RETURNING id`),
 			message, fmt.Sprintf("report-%04d.pdf", i)).Scan(&id)
 		require.NoError(err)
@@ -191,7 +191,7 @@ func TestFilenameDiscoveryBatchUsesSetBasedWrites(t *testing.T) {
 	// The authorizer counts compilations, so disable statement reuse while counting writes.
 	location := filenameLocation(t, f.Store)
 	require.NoError(f.Store.Close())
-	f.Store, err = store.OpenForTest(location + "?_stmt_cache_size=0")
+	f.Store, err = store.OpenForTest(t.Context(), location+"?_stmt_cache_size=0")
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(f.Store.Close()) })
 
@@ -220,7 +220,7 @@ func TestFilenameDiscoveryBatchUsesSetBasedWrites(t *testing.T) {
 	update, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	for i, id := range ids {
-		_, err = update.Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`),
+		_, err = update.ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`),
 			fmt.Sprintf("renamed-%04d.pdf", i), id)
 		require.NoError(err)
 	}
@@ -252,7 +252,7 @@ func TestFilenameDiscoveryBootstrapResume(t *testing.T) {
 	var initialMax, firstID int64
 	for i := range 1201 {
 		var id int64
-		require.NoError(tx.QueryRow(f.Store.Rebind(`INSERT INTO attachments
+		require.NoError(tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
 			(message_id, filename, storage_path) VALUES(?,?, '') RETURNING id`),
 			message, fmt.Sprintf("report-%04d.pdf", i)).Scan(&id))
 		initialMax = max(initialMax, id)
@@ -268,7 +268,7 @@ func TestFilenameDiscoveryBootstrapResume(t *testing.T) {
 	assert.Equal("bootstrap", first.Status.Phase)
 	assert.True(first.More)
 	assert.Equal(500, filenameEntries(t, f.Store, first.Status.Generation))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "changed.pdf", firstID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "changed.pdf", firstID)
 	require.NoError(err)
 	later := createJournalAttachment(t, f, message, "part:later", "a")
 	f.Store = filenameReopen(t, f.Store)
@@ -311,16 +311,16 @@ func TestFilenameDiscoveryApplyAckAtomic(t *testing.T) {
 	before := filenameReady(t, f.Store)
 	consumer, err := f.Store.GetAttachmentChangeConsumer(t.Context(), "filename-discovery/v1")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "updated.pdf", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "updated.pdf", id)
 	require.NoError(err)
 	if f.Store.IsPostgreSQL() {
-		_, err = f.Store.DB().Exec(`CREATE FUNCTION filename_test_fail_ack() RETURNS trigger LANGUAGE plpgsql AS $$
+		_, err = f.Store.DB().ExecContext(t.Context(), `CREATE FUNCTION filename_test_fail_ack() RETURNS trigger LANGUAGE plpgsql AS $$
 			BEGIN IF NEW.consumer_key='filename-discovery/v1' AND NEW.last_sequence>OLD.last_sequence
 			THEN RAISE EXCEPTION 'synthetic filename ack fault'; END IF; RETURN NEW; END $$;
 			CREATE TRIGGER filename_test_fail_ack BEFORE UPDATE ON attachment_change_consumers
 			FOR EACH ROW EXECUTE FUNCTION filename_test_fail_ack()`)
 	} else {
-		_, err = f.Store.DB().Exec(`CREATE TRIGGER filename_test_fail_ack BEFORE UPDATE ON attachment_change_consumers
+		_, err = f.Store.DB().ExecContext(t.Context(), `CREATE TRIGGER filename_test_fail_ack BEFORE UPDATE ON attachment_change_consumers
 			WHEN NEW.consumer_key='filename-discovery/v1' AND NEW.last_sequence>OLD.last_sequence
 			BEGIN SELECT RAISE(ABORT, 'synthetic filename ack fault'); END`)
 	}
@@ -339,7 +339,7 @@ func TestFilenameDiscoveryApplyAckAtomic(t *testing.T) {
 	if f.Store.IsPostgreSQL() {
 		statement += ` ON attachment_change_consumers`
 	}
-	_, err = f.Store.DB().Exec(statement)
+	_, err = f.Store.DB().ExecContext(t.Context(), statement)
 	require.NoError(err)
 	batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)
@@ -350,7 +350,7 @@ func TestFilenameDiscoveryApplyAckAtomic(t *testing.T) {
 	assert.Greater(advanced.LastSequence, consumer.LastSequence)
 	assert.Equal(advanced.LastSequence, batch.Status.LastSequence)
 	var sequence sql.NullInt64
-	require.NoError(f.Store.DB().QueryRow(`SELECT max(sequence) FROM attachment_change_log`).Scan(&sequence))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT max(sequence) FROM attachment_change_log`).Scan(&sequence))
 	assert.False(sequence.Valid, "sole consumer prunes only after successful apply+ack")
 }
 
@@ -375,7 +375,7 @@ func TestFilenameDiscoveryBootstrapFiniteCatchup(t *testing.T) {
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	for i := range 501 {
-		_, err = tx.Exec(f.Store.Rebind(`INSERT INTO attachments
+		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
 			(message_id, filename, storage_path) VALUES (?, ?, '')`), message, fmt.Sprintf("later-%04d.pdf", i))
 		require.NoError(err)
 	}
@@ -406,7 +406,7 @@ func TestFilenameDiscoveryAttachmentLifecycle(t *testing.T) {
 	f := storetest.New(t)
 	message := f.CreateMessage("filename-lifecycle")
 	id := createJournalAttachment(t, f, message, "part:stable", "a")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages
 		SET deleted_at=CURRENT_TIMESTAMP, deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), message)
 	require.NoError(err)
 	other, _, err := f.Store.RegisterAttachmentChangeConsumer(t.Context(), "synthetic-other/v1")
@@ -414,7 +414,7 @@ func TestFilenameDiscoveryAttachmentLifecycle(t *testing.T) {
 	require.NoError(f.Store.CompleteAttachmentChangeReconciliation(t.Context(), other.ConsumerKey, other.BaselineSequence))
 	ready := filenameReady(t, f.Store)
 	assert.Equal("synthetic.pdf", filenameEntryName(t, f.Store, ready.Generation, id), "bootstrap includes hidden/source-deleted occurrences")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=NULL WHERE id=?`), message)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=NULL WHERE id=?`), message)
 	require.NoError(err)
 	_, err = f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)
@@ -429,21 +429,21 @@ func TestFilenameDiscoveryAttachmentLifecycle(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("replacement.pdf", filenameEntryName(t, f.Store, ready.Generation, id), "stable source part retains identity across byte replacement")
 	assert.Equal(1, filenameEntries(t, f.Store, ready.Generation))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), strings.Repeat("a", 65), id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), strings.Repeat("a", 65), id)
 	require.NoError(err)
 	batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)
 	assert.Equal(int64(1), batch.Status.Skipped)
 	var postings int
-	require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM filename_discovery_tokens`).Scan(&postings))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM filename_discovery_tokens`).Scan(&postings))
 	assert.Zero(postings, "oversized name is excluded as a whole")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "short.pdf", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "short.pdf", id)
 	require.NoError(err)
 	batch, err = f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)
 	assert.Zero(batch.Status.Skipped)
 	assert.Equal("short.pdf", filenameEntryName(t, f.Store, ready.Generation, id))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM attachments WHERE id=?`), id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM attachments WHERE id=?`), id)
 	require.NoError(err)
 	batch, err = f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)
@@ -475,12 +475,12 @@ func TestFilenameDiscoveryBootstrapConcurrentAndResetGC(t *testing.T) {
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	for i := range 1201 {
-		_, err = tx.Exec(f.Store.Rebind(`INSERT INTO attachments
+		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
 			(message_id, filename, storage_path) VALUES(?,?, '')`), message, fmt.Sprintf("report-%04d.pdf", i))
 		require.NoError(err)
 	}
 	require.NoError(tx.Commit())
-	second, err := store.OpenForTest(filenameLocation(t, f.Store))
+	second, err := store.OpenForTest(t.Context(), filenameLocation(t, f.Store))
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(second.Close()) })
 	start := make(chan struct{})
@@ -541,8 +541,8 @@ func TestFilenameDiscoveryBootstrapConcurrentAndResetGC(t *testing.T) {
 	// Interleave a ready event with old-generation GC and require both to make
 	// progress through bounded invocations, without wall-clock thresholds.
 	var id int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT min(id) FROM attachments`).Scan(&id))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "current.pdf", id)
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT min(id) FROM attachments`).Scan(&id))
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "current.pdf", id)
 	require.NoError(err)
 	previous := 1201
 	for range 8 {
@@ -566,9 +566,9 @@ func TestFilenameDiscoveryMissingConsumerRecovery(t *testing.T) {
 	f := storetest.New(t)
 	id := createJournalAttachment(t, f, f.CreateMessage("filename-consumer-recovery"), "part:1", "a")
 	ready := filenameReady(t, f.Store)
-	_, err := f.Store.DB().Exec(`DELETE FROM attachment_change_consumers WHERE consumer_key='filename-discovery/v1'`)
+	_, err := f.Store.DB().ExecContext(t.Context(), `DELETE FROM attachment_change_consumers WHERE consumer_key='filename-discovery/v1'`)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "recovered.pdf", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "recovered.pdf", id)
 	require.NoError(err)
 	batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)
@@ -593,9 +593,9 @@ func TestFilenameDiscoverySurvivingConsumerEmptyState(t *testing.T) {
 	f := storetest.New(t)
 	id := createJournalAttachment(t, f, f.CreateMessage("filename-state-recovery"), "part:1", "a")
 	ready := filenameReady(t, f.Store)
-	_, err := f.Store.DB().Exec(`DELETE FROM filename_discovery_state`)
+	_, err := f.Store.DB().ExecContext(t.Context(), `DELETE FROM filename_discovery_state`)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "current.pdf", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "current.pdf", id)
 	require.NoError(err)
 	batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)
@@ -621,12 +621,12 @@ func TestFilenameDiscoveryAttachmentLifecycleAllRoles(t *testing.T) {
 	var ids []int64
 	for i, role := range roles {
 		var id int64
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
    (message_id, filename, storage_path, attachment_role) VALUES (?, ?, '', ?) RETURNING id`),
 			message, fmt.Sprintf("role-%d.pdf", i), string(role)).Scan(&id))
 		ids = append(ids, id)
 	}
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP,
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP,
   deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), message)
 	require.NoError(err)
 	ready := filenameReady(t, f.Store)
@@ -634,7 +634,7 @@ func TestFilenameDiscoveryAttachmentLifecycleAllRoles(t *testing.T) {
 	for i, id := range ids {
 		assert.Equal(fmt.Sprintf("role-%d.pdf", i), filenameEntryName(t, f.Store, ready.Generation, id))
 	}
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM messages WHERE id=?`), message)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM messages WHERE id=?`), message)
 	require.NoError(err)
 	batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
 	require.NoError(err)

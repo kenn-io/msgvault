@@ -6,6 +6,7 @@
 package dbtest
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -62,7 +63,7 @@ type schemaTemplate struct {
 	err  error
 }
 
-func buildSchemaTemplate(schemaPath string) (*sql.DB, error) {
+func buildSchemaTemplate(ctx context.Context, schemaPath string) (*sql.DB, error) {
 	schema, err := os.ReadFile(schemaPath)
 	if err != nil {
 		return nil, fmt.Errorf("read schema.sql: %w", err)
@@ -72,11 +73,11 @@ func buildSchemaTemplate(schemaPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open template: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(string(schema)); err != nil {
+	if _, err := db.ExecContext(ctx, string(schema)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("create template schema: %w", err)
 	}
-	if _, err := db.Exec(`DROP TABLE IF EXISTS messages_fts`); err != nil {
+	if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS messages_fts`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("drop template FTS: %w", err)
 	}
@@ -93,7 +94,7 @@ func NewTestDB(tb testing.TB, schemaPath string) *TestDB {
 	template, ok := value.(*schemaTemplate)
 	require.True(tb, ok, "schema template type")
 	template.once.Do(func() {
-		template.db, template.err = buildSchemaTemplate(schemaPath)
+		template.db, template.err = buildSchemaTemplate(tb.Context(), schemaPath)
 	})
 	require.NoError(tb, template.err, "build schema template")
 
@@ -215,7 +216,7 @@ func (tdb *TestDB) SeedStandardDataSet() {
 			(3, 4, 'report.xlsx', 'application/xlsx', 20000, 'hash3', 'ef/hash3');
 	`
 
-	_, err := tdb.DB.Exec(testData)
+	_, err := tdb.DB.ExecContext(tdb.T.Context(), testData)
 	require.NoError(tdb.T, err, "SeedStandardDataSet")
 }
 
@@ -224,7 +225,7 @@ func (tdb *TestDB) SeedStandardDataSet() {
 func (tdb *TestDB) MustLookupParticipant(email string) int64 {
 	tdb.T.Helper()
 	var id int64
-	err := tdb.DB.QueryRow("SELECT id FROM participants WHERE email_address = ?", email).Scan(&id)
+	err := tdb.DB.QueryRowContext(tdb.T.Context(), "SELECT id FROM participants WHERE email_address = ?", email).Scan(&id)
 	require.NoErrorf(tdb.T, err, "MustLookupParticipant(%q)", email)
 	return id
 }
@@ -252,7 +253,8 @@ func (tdb *TestDB) AddSource(opts SourceOpts) int64 {
 	if opts.DisplayName == "" {
 		opts.DisplayName = "Other Account"
 	}
-	res, err := tdb.DB.Exec(
+	res, err := tdb.DB.ExecContext(
+		tdb.T.Context(),
 		`INSERT INTO sources (source_type, identifier, display_name) VALUES (?, ?, ?)`,
 		opts.Type, opts.Identifier, opts.DisplayName,
 	)
@@ -278,7 +280,8 @@ func (tdb *TestDB) AddConversation(opts ConversationOpts) int64 {
 	}
 	tdb.nextConversationSeq++
 	sourceConvID := fmt.Sprintf("thread_%d_%d", opts.SourceID, tdb.nextConversationSeq)
-	res, err := tdb.DB.Exec(
+	res, err := tdb.DB.ExecContext(
+		tdb.T.Context(),
 		`INSERT INTO conversations (source_id, source_conversation_id, conversation_type, title) VALUES (?, ?, 'email_thread', ?)`,
 		opts.SourceID, sourceConvID, opts.Title,
 	)
@@ -308,7 +311,8 @@ func (tdb *TestDB) AddLabel(opts LabelOpts) int64 {
 	if opts.SourceLabelID == "" {
 		opts.SourceLabelID = opts.Name
 	}
-	res, err := tdb.DB.Exec(
+	res, err := tdb.DB.ExecContext(
+		tdb.T.Context(),
 		`INSERT INTO labels (source_id, source_label_id, name, label_type) VALUES (?, ?, ?, ?)`,
 		opts.SourceID, opts.SourceLabelID, opts.Name, opts.Type,
 	)
@@ -320,7 +324,8 @@ func (tdb *TestDB) AddLabel(opts LabelOpts) int64 {
 // AddMessageLabel associates a message with a label.
 func (tdb *TestDB) AddMessageLabel(messageID, labelID int64) {
 	tdb.T.Helper()
-	_, err := tdb.DB.Exec(
+	_, err := tdb.DB.ExecContext(
+		tdb.T.Context(),
 		`INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`,
 		messageID, labelID,
 	)
@@ -356,7 +361,8 @@ func (tdb *TestDB) AddParticipant(opts ParticipantOpts) int64 {
 		phone = *opts.Phone
 	}
 
-	_, err := tdb.DB.Exec(
+	_, err := tdb.DB.ExecContext(
+		tdb.T.Context(),
 		`INSERT INTO participants (id, email_address, display_name, phone_number, domain) VALUES (?, ?, ?, ?, ?)`,
 		id, email, displayName, phone, opts.Domain,
 	)
@@ -408,7 +414,7 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 	if srcID == 0 {
 		// Look up the conversation's source_id to stay consistent.
 		// Fall back to 1 if the conversation doesn't exist yet (e.g. FK checks off).
-		err := tdb.DB.QueryRow(`SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&srcID)
+		err := tdb.DB.QueryRowContext(tdb.T.Context(), `SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&srcID)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			srcID = 1
@@ -418,7 +424,7 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 	} else {
 		// Verify the provided SourceID matches the conversation's source_id.
 		var convSourceID int64
-		err := tdb.DB.QueryRow(`SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&convSourceID)
+		err := tdb.DB.QueryRowContext(tdb.T.Context(), `SELECT source_id FROM conversations WHERE id = ?`, convID).Scan(&convSourceID)
 		require.NoErrorf(tdb.T, err, "AddMessage: lookup source_id for conversation %d", convID)
 		require.Equalf(tdb.T, srcID, convSourceID,
 			"AddMessage: SourceID %d does not match conversation %d source_id %d", srcID, convID, convSourceID)
@@ -429,14 +435,16 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 		messageType = "email"
 	}
 
-	_, err := tdb.DB.Exec(
+	_, err := tdb.DB.ExecContext(
+		tdb.T.Context(),
 		`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments) VALUES (?, ?, ?, ?, ?, ?, ?, 'test', ?, ?)`,
 		id, convID, srcID, sourceMessageID, messageType, sentAt, opts.Subject, size, opts.HasAttachments,
 	)
 	require.NoError(tdb.T, err, "AddMessage")
 
 	if opts.FromID != 0 {
-		_, err = tdb.DB.Exec(
+		_, err = tdb.DB.ExecContext(
+			tdb.T.Context(),
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')`,
 			id, opts.FromID,
 		)
@@ -444,7 +452,8 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 	}
 
 	for _, toID := range opts.ToIDs {
-		_, err = tdb.DB.Exec(
+		_, err = tdb.DB.ExecContext(
+			tdb.T.Context(),
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'to')`,
 			id, toID,
 		)
@@ -452,7 +461,8 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 	}
 
 	for _, ccID := range opts.CcIDs {
-		_, err = tdb.DB.Exec(
+		_, err = tdb.DB.ExecContext(
+			tdb.T.Context(),
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'cc')`,
 			id, ccID,
 		)
@@ -460,7 +470,8 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 	}
 
 	for _, bccID := range opts.BccIDs {
-		_, err = tdb.DB.Exec(
+		_, err = tdb.DB.ExecContext(
+			tdb.T.Context(),
 			`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'bcc')`,
 			id, bccID,
 		)
@@ -474,16 +485,16 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 // Skips the test if FTS5 is not available in this SQLite build.
 func (tdb *TestDB) EnableFTS() {
 	tdb.T.Helper()
-	_, _ = tdb.DB.Exec(`DROP TABLE IF EXISTS messages_fts`)
+	_, _ = tdb.DB.ExecContext(tdb.T.Context(), `DROP TABLE IF EXISTS messages_fts`)
 
-	_, err := tdb.DB.Exec(`
+	_, err := tdb.DB.ExecContext(tdb.T.Context(), `
 		CREATE VIRTUAL TABLE messages_fts USING fts5(message_id UNINDEXED, subject, body, from_addr, to_addr, cc_addr, tokenize='unicode61 remove_diacritics 1');
 	`)
 	if err != nil {
 		tdb.T.Skipf("FTS5 not available in this SQLite build: %v", err)
 	}
 
-	_, err = tdb.DB.Exec(`
+	_, err = tdb.DB.ExecContext(tdb.T.Context(), `
 		INSERT INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
 		SELECT m.id, m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''),
 			COALESCE((SELECT p.email_address FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), ''),
@@ -498,7 +509,7 @@ func (tdb *TestDB) EnableFTS() {
 // MarkDeletedByID marks a message as deleted by its internal ID.
 func (tdb *TestDB) MarkDeletedByID(id int64) {
 	tdb.T.Helper()
-	_, err := tdb.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE id = ?", id)
+	_, err := tdb.DB.ExecContext(tdb.T.Context(), "UPDATE messages SET deleted_from_source_at = datetime('now') WHERE id = ?", id)
 	require.NoErrorf(tdb.T, err, "mark deleted by id %d", id)
 }
 
@@ -507,13 +518,13 @@ func (tdb *TestDB) MarkDeletedByID(id int64) {
 // User-facing read paths must always exclude these.
 func (tdb *TestDB) MarkDedupLoserByID(id int64) {
 	tdb.T.Helper()
-	_, err := tdb.DB.Exec("UPDATE messages SET deleted_at = datetime('now') WHERE id = ?", id)
+	_, err := tdb.DB.ExecContext(tdb.T.Context(), "UPDATE messages SET deleted_at = datetime('now') WHERE id = ?", id)
 	require.NoErrorf(tdb.T, err, "mark dedup loser by id %d", id)
 }
 
 // MarkDeletedBySourceID marks a message as deleted by its source message ID.
 func (tdb *TestDB) MarkDeletedBySourceID(sourceID string) {
 	tdb.T.Helper()
-	_, err := tdb.DB.Exec("UPDATE messages SET deleted_from_source_at = datetime('now') WHERE source_message_id = ?", sourceID)
+	_, err := tdb.DB.ExecContext(tdb.T.Context(), "UPDATE messages SET deleted_from_source_at = datetime('now') WHERE source_message_id = ?", sourceID)
 	require.NoErrorf(tdb.T, err, "mark deleted by source id %s", sourceID)
 }

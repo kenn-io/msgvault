@@ -88,7 +88,7 @@ func assertCardDAVConflictPendingUpgrade(t *testing.T, st *store.Store) {
 
 	require.NoError(t, recreateE7CardDAVConflicts(t, st))
 	var conflictID int64
-	err = st.DB().QueryRow(st.Rebind(`INSERT INTO carddav_conflicts (
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO carddav_conflicts (
 		address_book_id, href, base_local_hash, local_hash, base_remote_hash,
 		base_remote_etag, remote_etag, mapping_revision, local_body, remote_body,
 		local_tombstone, remote_tombstone
@@ -107,7 +107,7 @@ func assertCardDAVConflictPendingUpgrade(t *testing.T, st *store.Store) {
 	assert.Empty(t, conflict.PendingOperation)
 	assertCardDAVConflictIndexes(t, st)
 
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts
 		SET pending_operation = 'delete' WHERE id = ?`), conflictID)
 	require.Error(t, err, "the upgraded table must enforce the complete pending-intent invariant")
 
@@ -141,7 +141,7 @@ func assertCardDAVConflictPendingUpgrade(t *testing.T, st *store.Store) {
 func recreateE7CardDAVConflicts(t *testing.T, st *store.Store) error {
 	t.Helper()
 	drop := `DROP TABLE carddav_conflicts`
-	if _, err := st.DB().Exec(drop); err != nil {
+	if _, err := st.DB().ExecContext(t.Context(), drop); err != nil {
 		return err
 	}
 	id := "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -178,7 +178,7 @@ func recreateE7CardDAVConflicts(t *testing.T, st *store.Store) error {
 		CHECK ((status = 'unresolved' AND resolution IS NULL AND resolved_at IS NULL) OR
 		       (status = 'resolved' AND resolution IS NOT NULL AND resolved_at IS NOT NULL))
 	)`
-	if _, err := st.DB().Exec(ddl); err != nil {
+	if _, err := st.DB().ExecContext(t.Context(), ddl); err != nil {
 		return err
 	}
 	for _, statement := range []string{
@@ -187,7 +187,7 @@ func recreateE7CardDAVConflicts(t *testing.T, st *store.Store) error {
 		`CREATE INDEX idx_carddav_conflicts_resolved_at
 		 ON carddav_conflicts(status, resolved_at)`,
 	} {
-		if _, err := st.DB().Exec(statement); err != nil {
+		if _, err := st.DB().ExecContext(t.Context(), statement); err != nil {
 			return err
 		}
 	}
@@ -207,7 +207,7 @@ func assertCardDAVConflictIndexes(t *testing.T, st *store.Store) {
 				'idx_carddav_one_unresolved_conflict', 'idx_carddav_conflicts_resolved_at'
 			)`
 	}
-	require.NoError(t, st.DB().QueryRow(query).Scan(&count))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), query).Scan(&count))
 	assert.Equal(t, 2, count)
 }
 
@@ -226,7 +226,7 @@ func assertCardDAVRoleReconcileUpgrade(t *testing.T, st *store.Store) {
 	require.NoError(t, err)
 	require.Len(t, books, 1)
 
-	_, err = st.DB().Exec(`ALTER TABLE carddav_address_books DROP COLUMN needs_full_reconcile`)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_address_books DROP COLUMN needs_full_reconcile`)
 	require.NoError(t, err, "recreate the pre-role-reconcile address book schema")
 	require.NoError(t, st.InitSchema(), "upgrade legacy CardDAV role state")
 
@@ -251,7 +251,7 @@ func assertCardDAVSyncTokenUpgrade(t *testing.T, st *store.Store) {
 	require.NoError(t, err)
 	require.Len(t, books, 1)
 
-	_, err = st.DB().Exec(`ALTER TABLE carddav_address_books DROP COLUMN sync_token`)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_address_books DROP COLUMN sync_token`)
 	require.NoError(t, err, "recreate the pre-sync-token address book schema")
 	require.NoError(t, st.InitSchema(), "upgrade legacy CardDAV address books")
 

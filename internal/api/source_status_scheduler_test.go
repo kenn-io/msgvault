@@ -16,7 +16,7 @@ import (
 
 func sourceStatusFor(t *testing.T, srv *Server) SourceStatus {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

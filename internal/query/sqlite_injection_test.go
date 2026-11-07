@@ -95,7 +95,7 @@ func TestSQLInjection_FilterStringsAreSafelyParameterized(t *testing.T) {
 
 	// Verify the database is still intact after all injection attempts
 	var count int
-	err := env.DB.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count)
+	err := env.DB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count)
 	require.NoError(t, err, "failed to count messages after injection tests")
 	assert.Equal(t, 5, count, "expected 5 messages in database after injection tests (standard seed data)")
 }
@@ -104,7 +104,7 @@ func TestListMessagesFiltersByMessageType(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`
+	_, err := env.DB.ExecContext(t.Context(), `
 		INSERT INTO participants (id, phone_number, display_name) VALUES (99, '+15551234567', 'SMS Sender');
 		INSERT INTO participants (id, phone_number, display_name) VALUES (100, '+15557654321', 'Me');
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments, attachment_count)

@@ -656,7 +656,7 @@ func TestPersonWorkerPreservesVectorWhenSourceProjectionCannotRender(t *testing.
 	must := require.New(t)
 	f := storetest.New(t)
 	var personID int64
-	err := f.Store.DB().QueryRow(f.Store.Rebind(`
+	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)
 		RETURNING id`),
 		"urn:uuid:00000000-0000-4000-8000-000000000099", "Broken Projection").Scan(&personID)
@@ -668,7 +668,7 @@ func TestPersonWorkerPreservesVectorWhenSourceProjectionCannotRender(t *testing.
 		Source: store.ProvenanceUser,
 	})
 	must.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attribute_definitions
 		SET value_type = 'record_reference', field_type = 'person', record_target = 'person'
 		WHERE universal_id = ?

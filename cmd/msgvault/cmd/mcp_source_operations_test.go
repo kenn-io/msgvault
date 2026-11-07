@@ -92,7 +92,7 @@ func mcpSQLiteStoreWithPath(t *testing.T) (*store.Store, string) {
 	st := testutil.NewSQLiteTestStore(t)
 	var sequence int
 	var name, path string
-	requirements.NoError(st.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &path))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
 	requirements.NotEmpty(path)
 	return st, path
 }
@@ -273,7 +273,7 @@ func TestMCPPersonNameClearAndStaleRevisionUseOwnerCAS(t *testing.T) {
 	result, err = backend.ExecuteOperation(t.Context(), "set_person_display_name", map[string]any{"person_id": person.ID, "etag": edit.ETag, "display_name": "Stale Example"})
 	requirements.NoError(err)
 	assertions.True(result.IsError)
-	current, err := st.GetPersonContext(context.Background(), person.ID)
+	current, err := st.GetPersonContext(t.Context(), person.ID)
 	requirements.NoError(err)
 	assertions.Nil(current.DisplayName)
 }
@@ -470,15 +470,15 @@ func TestMCPParticipantIdentityRetainsRealLinkedCluster(t *testing.T) {
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "sender@example.com")
 	requirements.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "synthetic-thread", "Synthetic Thread")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "synthetic-thread", "Synthetic Thread")
 	requirements.NoError(err)
 	for index, participant := range []int64{primary, secondary} {
 		_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: []string{"synthetic-primary", "synthetic-secondary"}[index], MessageType: "email", SenderID: sql.NullInt64{Int64: participant, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 9, index+1, 12, 0, 0, 0, time.UTC), Valid: true}, Subject: sql.NullString{String: "Synthetic subject", Valid: true}})
 		requirements.NoError(err)
 	}
-	_, err = buildCache(dbPath, analytics, true)
+	_, err = buildCache(t.Context(), dbPath, analytics, true)
 	requirements.NoError(err)
-	engine, err := query.NewDuckDBEngine(analytics, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() {
 		assertions.NoError(engine.Close())
@@ -574,7 +574,7 @@ func TestMCPCacheJobStatusRetainsRealLifecycle(t *testing.T) {
 		started <- struct{}{}
 		select {
 		case <-release:
-			_, err := buildCache(dbPath, filepath.Join(directory, "analytics"), true)
+			_, err := buildCache(ctx, dbPath, filepath.Join(directory, "analytics"), true)
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
@@ -616,7 +616,7 @@ func TestMCPCacheJobStatusRetainsRealLifecycle(t *testing.T) {
 		assertions.NotNil(status.FinishedAt)
 	}
 	failedJobs := newCacheBuildJobs(t.Context(), nil, func(context.Context, buildCacheMode) error {
-		_, err := buildCache(filepath.Join(directory, "missing", "archive.db"), filepath.Join(directory, "failed-analytics"), true)
+		_, err := buildCache(t.Context(), filepath.Join(directory, "missing", "archive.db"), filepath.Join(directory, "failed-analytics"), true)
 		return err
 	})
 	failedJobs.logger = slog.New(slog.DiscardHandler)

@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,7 +20,7 @@ import (
 func TestEnrichIdentityContextInParticipantDetail(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	root, err := st.EnsureParticipant("root@example.com", "Root Example", "example.com")
 	require.NoError(err)
@@ -58,7 +57,7 @@ func TestEnrichIdentityContextInParticipantDetail(t *testing.T) {
 	}}
 	srv := newPeopleAPIServerWithStore(engine, st)
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		fmt.Sprintf("/api/v1/participants/%d", root), nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var body query.PersonSummary
@@ -106,7 +105,7 @@ func TestParticipantDetailContinuesWhenIdentityContextFails(t *testing.T) {
 	var logs bytes.Buffer
 	srv.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/42", nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/participants/42", nil))
 
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var body query.PersonSummary

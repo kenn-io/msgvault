@@ -220,16 +220,16 @@ func historicalPersonProviderProfileWithMutation(
 	disclosedFields, err := json.Marshal(historical.DisclosedPacketFields)
 	require.NoError(t, err)
 	if withCheck {
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`), profile.Fingerprint)
 		require.NoError(t, err)
 	}
 	if withActiveConsent {
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			DELETE FROM provider_consents WHERE purpose = 'people_inference' AND fingerprint = ?`), profile.Fingerprint)
 		require.NoError(t, err)
 	}
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_inference_profiles
 		SET fingerprint = ?, provider_kind = ?, endpoint = ?, model = ?,
 			api_key_env = ?, allow_anonymous = ?, auth_scheme = ?,
@@ -252,7 +252,7 @@ func historicalPersonProviderProfileWithMutation(
 		profile.Fingerprint)
 	require.NoError(t, err)
 	if withCheck {
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO person_inference_checks
 				(profile_fingerprint, checked_at, driver_version, output_mode, model_version)
 			VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)`), historical.Fingerprint,
@@ -260,7 +260,7 @@ func historicalPersonProviderProfileWithMutation(
 		require.NoError(t, err)
 	}
 	if withActiveConsent {
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO provider_consents (purpose, id, fingerprint, granted_by)
 			SELECT 'people_inference', COALESCE(MAX(id), 0) + 1, ?, ?
 			FROM provider_consents WHERE purpose = 'people_inference'`), historical.Fingerprint, "cli")

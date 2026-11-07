@@ -42,7 +42,7 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 		},
 	})
 
-	result, err := importer.Import(context.Background(), validImportRequest(t))
+	result, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 
 	assert.Equal(StatusCreated, result.Status)
@@ -53,7 +53,7 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 	assert.Equal([]string{"meeting_import:local-meetings"}, cacheLabels)
 
 	var sourceType, identifier, displayName string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT source_type, identifier, display_name
 		FROM sources WHERE id = ?
 	`), result.SourceID).Scan(&sourceType, &identifier, &displayName))
@@ -75,7 +75,7 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 		body, rawFormat, metadataJSON         string
 		messageCount, participantCount        int
 	)
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.message_type, m.source_message_id, m.subject, m.is_from_me,
 		       p.email_address, c.conversation_type, c.source_conversation_id,
 		       mb.body_text, mr.raw_format, m.metadata,
@@ -114,15 +114,15 @@ func TestImporterCreatesCanonicalMeetingAndSyncRun(t *testing.T) {
 	assert.Contains(string(raw), `"external_id":"42"`)
 
 	var fromCount, toCount, memberCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients
 		WHERE message_id = ? AND recipient_type = 'from'
 	`), result.MessageID).Scan(&fromCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients
 		WHERE message_id = ? AND recipient_type = 'to'
 	`), result.MessageID).Scan(&toCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN messages m ON m.conversation_id = cp.conversation_id
 		WHERE m.id = ?
@@ -279,10 +279,10 @@ func TestImporterRetriesUpdateSameMessageAndReplacePeople(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
 
-	first, err := importer.Import(context.Background(), validImportRequest(t))
+	first, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 
-	second, err := importer.Import(context.Background(), validImportRequest(t))
+	second, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 	assert.Equal(StatusUpdated, second.Status)
 	assert.Equal(first.MessageID, second.MessageID)
@@ -297,18 +297,18 @@ func TestImporterRetriesUpdateSameMessageAndReplacePeople(t *testing.T) {
 	changed.Meeting.Organizer = nil
 	changed.Meeting.Attendees = nil
 
-	third, err := importer.Import(context.Background(), changed)
+	third, err := importer.Import(t.Context(), changed)
 	require.NoError(err)
 	assert.Equal(StatusUpdated, third.Status)
 	assert.Equal(first.MessageID, third.MessageID)
 
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
 
 	var subject, body, displayName string
 	var senderID sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.subject, mb.body_text, m.sender_id, s.display_name
 		FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
@@ -326,7 +326,7 @@ func TestImporterRetriesUpdateSameMessageAndReplacePeople(t *testing.T) {
 		`SELECT COUNT(*) FROM conversation_participants cp
 		 JOIN messages m ON m.conversation_id = cp.conversation_id WHERE m.id = ?`,
 	} {
-		require.NoError(st.DB().QueryRow(st.Rebind(tableQuery), first.MessageID).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(tableQuery), first.MessageID).Scan(&count))
 		assert.Equal(0, count)
 	}
 
@@ -354,26 +354,26 @@ func TestImporterUnchangedRetryDoesNotPersistOrCountUpdate(t *testing.T) {
 		},
 	})
 
-	first, err := importer.Import(context.Background(), validImportRequest(t))
+	first, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 
 	sentinel := time.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET last_modified = ? WHERE id = ?
 	`), sentinel, first.MessageID)
 	require.NoError(err)
 	var watermarkBefore string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?
 	`), first.MessageID).Scan(&watermarkBefore))
 
-	retry, err := importer.Import(context.Background(), validImportRequest(t))
+	retry, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 	assert.Equal(StatusUpdated, retry.Status)
 	assert.Equal(first.MessageID, retry.MessageID)
 
 	var watermarkAfter string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?
 	`), first.MessageID).Scan(&watermarkAfter))
 	assert.Equal(watermarkBefore, watermarkAfter)
@@ -394,7 +394,7 @@ func TestImporterUnchangedRetryRepairsStatsAfterPostPersistFailure(t *testing.T)
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject a stats failure")
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_meeting_import_stats
 		BEFORE UPDATE OF message_count ON conversations
 		BEGIN
@@ -403,14 +403,14 @@ func TestImporterUnchangedRetryRepairsStatsAfterPostPersistFailure(t *testing.T)
 	`)
 	require.NoError(err)
 
-	_, err = importer.Import(context.Background(), validImportRequest(t))
+	_, err = importer.Import(t.Context(), validImportRequest(t))
 	require.Error(err)
 	assert.Contains(err.Error(), "recompute meeting conversation stats")
 
 	var messageID, sourceID int64
 	var messageCount, participantCount int
 	var preview sql.NullString
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT m.id, m.source_id, c.message_count, c.participant_count,
 		       c.last_message_preview
 		FROM messages m
@@ -421,16 +421,16 @@ func TestImporterUnchangedRetryRepairsStatsAfterPostPersistFailure(t *testing.T)
 	assert.Zero(participantCount)
 	assert.False(preview.Valid)
 
-	_, err = st.DB().Exec(`DROP TRIGGER fail_meeting_import_stats`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_meeting_import_stats`)
 	require.NoError(err)
 
-	retry, err := importer.Import(context.Background(), validImportRequest(t))
+	retry, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 	assert.Equal(StatusUpdated, retry.Status)
 	assert.Equal(messageID, retry.MessageID)
 
 	var messagePreview sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT c.message_count, c.participant_count, c.last_message_preview,
 		       m.snippet
 		FROM messages m
@@ -468,7 +468,7 @@ func TestImporterStatsRecomputeDoesNotTouchSiblingConversations(t *testing.T) {
 			normalized, err := req.Normalize()
 			require.NoError(err)
 			if tc.unchanged {
-				_, err = importer.Import(context.Background(), req)
+				_, err = importer.Import(t.Context(), req)
 				require.NoError(err)
 			}
 
@@ -481,7 +481,7 @@ func TestImporterStatsRecomputeDoesNotTouchSiblingConversations(t *testing.T) {
 				"Sibling meeting",
 			)
 			require.NoError(err)
-			_, err = st.DB().Exec(st.Rebind(`
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 				UPDATE conversations
 				SET message_count = 71,
 				    participant_count = 72,
@@ -490,13 +490,13 @@ func TestImporterStatsRecomputeDoesNotTouchSiblingConversations(t *testing.T) {
 			`), siblingID)
 			require.NoError(err)
 
-			result, err := importer.Import(context.Background(), req)
+			result, err := importer.Import(t.Context(), req)
 			require.NoError(err)
 			assert.Equal(tc.want, result.Status)
 
 			var messageCount, participantCount int
 			var preview sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT message_count, participant_count, last_message_preview
 				FROM conversations
 				WHERE id = ?
@@ -516,12 +516,12 @@ func TestImporterRetryRepairsUnreadableCanonicalSnapshot(t *testing.T) {
 	importer := NewImporter(st, Hooks{})
 	req := validImportRequest(t)
 
-	first, err := importer.Import(context.Background(), req)
+	first, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 	wantRaw, err := st.GetMessageRaw(first.MessageID)
 	require.NoError(err)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE message_raw
 		SET raw_data = ?, compression = 'zlib'
 		WHERE message_id = ?
@@ -530,7 +530,7 @@ func TestImporterRetryRepairsUnreadableCanonicalSnapshot(t *testing.T) {
 	_, err = st.GetMessageRaw(first.MessageID)
 	require.Error(err, "corrupt fixture must be unreadable")
 
-	retry, err := importer.Import(context.Background(), req)
+	retry, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 	assert.Equal(StatusUpdated, retry.Status)
 	assert.Equal(first.MessageID, retry.MessageID)
@@ -553,13 +553,13 @@ func TestImporterPreservesDisplayNameWhenRetryOmitsIt(t *testing.T) {
 	initial := validImportRequest(t)
 	initial.Source.DisplayName = "Named Meeting Source"
 
-	created, err := importer.Import(context.Background(), initial)
+	created, err := importer.Import(t.Context(), initial)
 	require.NoError(err)
 	assert.Equal(StatusCreated, created.Status)
 
 	retry := validImportRequest(t)
 	retry.Source.DisplayName = ""
-	updated, err := importer.Import(context.Background(), retry)
+	updated, err := importer.Import(t.Context(), retry)
 	require.NoError(err)
 	assert.Equal(StatusUpdated, updated.Status)
 
@@ -578,7 +578,7 @@ func TestImporterDefaultsDisplayNameOnFirstImport(t *testing.T) {
 	req := validImportRequest(t)
 	req.Source.DisplayName = ""
 
-	result, err := importer.Import(context.Background(), req)
+	result, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 	assert.Equal(StatusCreated, result.Status)
 
@@ -598,9 +598,9 @@ func TestImporterScopesExternalIDsBySource(t *testing.T) {
 	secondRequest := validImportRequest(t)
 	secondRequest.Source.Identifier = "second-stream"
 
-	first, err := importer.Import(context.Background(), firstRequest)
+	first, err := importer.Import(t.Context(), firstRequest)
 	require.NoError(err)
-	second, err := importer.Import(context.Background(), secondRequest)
+	second, err := importer.Import(t.Context(), secondRequest)
 	require.NoError(err)
 
 	assert.NotEqual(first.SourceID, second.SourceID)
@@ -614,11 +614,11 @@ func TestImporterMarksOrganizerFromConfirmedAccountAsFromMe(t *testing.T) {
 	req := validImportRequest(t)
 	req.Source.AccountEmail = "organizer@example.com"
 
-	result, err := importer.Import(context.Background(), req)
+	result, err := importer.Import(t.Context(), req)
 	require.NoError(t, err)
 
 	var isFromMe bool
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_from_me FROM messages WHERE id = ?
 	`), result.MessageID).Scan(&isFromMe))
 	assert.True(t, isFromMe)
@@ -632,22 +632,22 @@ func TestImporterAccountEmailOnlyRetryUpdatesAttribution(t *testing.T) {
 	importer := NewImporter(st, Hooks{})
 	req := validImportRequest(t)
 
-	first, err := importer.Import(context.Background(), req)
+	first, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 
 	var isFromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_from_me FROM messages WHERE id = ?
 	`), first.MessageID).Scan(&isFromMe))
 	assert.False(isFromMe)
 
 	req.Source.AccountEmail = req.Meeting.Organizer.Email
-	retry, err := importer.Import(context.Background(), req)
+	retry, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 	assert.Equal(StatusUpdated, retry.Status)
 	assert.Equal(first.MessageID, retry.MessageID)
 
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_from_me FROM messages WHERE id = ?
 	`), first.MessageID).Scan(&isFromMe))
 	assert.True(isFromMe)
@@ -668,35 +668,35 @@ func TestImporterNewAccountEmailRefreshesEarlierMeetingAttributionForSource(t *t
 	importer := NewImporter(st, Hooks{})
 	req := validImportRequest(t)
 
-	first, err := importer.Import(context.Background(), req)
+	first, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 
 	req.Meeting.ExternalID = "43"
-	second, err := importer.Import(context.Background(), req)
+	second, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 
 	otherSourceReq := req
 	otherSourceReq.Source.Identifier = "other-meetings"
 	otherSourceReq.Meeting.ExternalID = "44"
-	otherSource, err := importer.Import(context.Background(), otherSourceReq)
+	otherSource, err := importer.Import(t.Context(), otherSourceReq)
 	require.NoError(err)
 
 	req.Source.AccountEmail = req.Meeting.Organizer.Email
 	req.Meeting.ExternalID = "45"
-	confirmation, err := importer.Import(context.Background(), req)
+	confirmation, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 	assert.Equal(StatusCreated, confirmation.Status)
 
 	for _, messageID := range []int64{first.MessageID, second.MessageID, confirmation.MessageID} {
 		var isFromMe bool
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT is_from_me FROM messages WHERE id = ?
 		`), messageID).Scan(&isFromMe))
 		assert.True(isFromMe, "message %d in the confirmed source", messageID)
 	}
 
 	var otherSourceIsFromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_from_me FROM messages WHERE id = ?
 	`), otherSource.MessageID).Scan(&otherSourceIsFromMe))
 	assert.False(otherSourceIsFromMe)
@@ -717,7 +717,7 @@ func TestImporterPreconfirmedAccountEmailKeepsEarlierMeetingAttributionCurrent(t
 	importer := NewImporter(st, Hooks{})
 	req := validImportRequest(t)
 
-	first, err := importer.Import(context.Background(), req)
+	first, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(
 		first.SourceID,
@@ -727,11 +727,11 @@ func TestImporterPreconfirmedAccountEmailKeepsEarlierMeetingAttributionCurrent(t
 
 	req.Source.AccountEmail = req.Meeting.Organizer.Email
 	req.Meeting.ExternalID = "43"
-	_, err = importer.Import(context.Background(), req)
+	_, err = importer.Import(t.Context(), req)
 	require.NoError(err)
 
 	var earlierIsFromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_from_me FROM messages WHERE id = ?
 	`), first.MessageID).Scan(&earlierIsFromMe))
 	assert.True(earlierIsFromMe)
@@ -753,11 +753,11 @@ func TestImporterCompletesSyncAndSafelyRetriesAfterCacheFailure(t *testing.T) {
 		},
 	})
 
-	_, err := importer.Import(context.Background(), validImportRequest(t))
+	_, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 
 	var messageID, sourceID int64
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT id, source_id FROM messages WHERE source_message_id = 'meeting:42'
 	`).Scan(&messageID, &sourceID))
 	assert.NotZero(messageID, "message remains durable after cache failure")
@@ -769,7 +769,7 @@ func TestImporterCompletesSyncAndSafelyRetriesAfterCacheFailure(t *testing.T) {
 	assert.Equal(int64(1), completed.MessagesAdded)
 
 	failCache = false
-	result, err := importer.Import(context.Background(), validImportRequest(t))
+	result, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 	assert.Equal(StatusUpdated, result.Status)
 	assert.Equal(messageID, result.MessageID)
@@ -788,7 +788,7 @@ func TestImporterRefreshCacheDoesNotLogShutdownCancellation(t *testing.T) {
 		},
 	}).WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))
 
-	importer.refreshCache(context.Background(), "meeting_import:local-meetings", 1, "meeting:42")
+	importer.refreshCache(t.Context(), "meeting_import:local-meetings", 1, "meeting:42")
 	assert.Empty(t, logs.String())
 }
 
@@ -802,27 +802,27 @@ func TestImporterSourceHookFailureStopsBeforeSync(t *testing.T) {
 		AfterSourceSetup: func() error { return hookErr },
 	})
 
-	_, err := importer.Import(context.Background(), validImportRequest(t))
+	_, err := importer.Import(t.Context(), validImportRequest(t))
 	require.ErrorIs(err, hookErr)
 
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&count))
 	assert.Equal(0, count)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(0, count)
 }
 
 func TestImporterCancellationStopsBeforeSourceSetup(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := importer.Import(ctx, validImportRequest(t))
 	require.ErrorIs(t, err, context.Canceled)
 
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'meeting_import'`).Scan(&count))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources WHERE source_type = 'meeting_import'`).Scan(&count))
 	assert.Equal(t, 0, count)
 }
 
@@ -834,10 +834,10 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 	st.DB().SetMaxOpenConns(1)
 	importer := NewImporter(st, Hooks{})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	participantStarted := make(chan struct{})
-	conn, err := st.DB().Conn(context.Background())
+	conn, err := st.DB().Conn(t.Context())
 	require.NoError(err, "get SQLite connection")
 	err = conn.Raw(func(driverConn any) error {
 		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
@@ -850,7 +850,7 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 	})
 	require.NoError(err, "register cancellation function")
 	require.NoError(conn.Close(), "return SQLite connection to pool")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER wait_before_meeting_participant
 		BEFORE INSERT ON participants
 		WHEN NEW.email_address = 'attendee@example.com'
@@ -887,7 +887,7 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 	require.ErrorIs(err, context.Canceled)
 
 	var participantCount int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*)
 		FROM participants
 		WHERE email_address IN ('organizer@example.com', 'attendee@example.com')
@@ -897,7 +897,7 @@ func TestImporterCancellationDuringParticipantResolutionRollsBackParticipants(t 
 		"organizer and attendee inserts must roll back with canceled message persistence",
 	)
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Zero(messageCount)
 }
 
@@ -913,7 +913,7 @@ func TestImporterCancellationAtCheckpointLeavesFailedSync(t *testing.T) {
 		<-releaseCheckpoint
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	req := validImportRequest(t)
 	done := make(chan error, 1)
@@ -938,7 +938,7 @@ func TestImporterCancellationAtCheckpointLeavesFailedSync(t *testing.T) {
 	}
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(1, messageCount, "canonical message is committed before checkpointing")
 
 	sources, err := st.ListSources(SourceType)
@@ -960,7 +960,7 @@ func TestImporterRawFailureRollsBackCanonicalSnapshot(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
 	require.True(st.FTS5Available())
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_meeting_import_raw
 		BEFORE INSERT ON message_raw
 		WHEN NEW.raw_format = 'meeting_json'
@@ -970,7 +970,7 @@ func TestImporterRawFailureRollsBackCanonicalSnapshot(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	_, err = importer.Import(context.Background(), validImportRequest(t))
+	_, err = importer.Import(t.Context(), validImportRequest(t))
 	require.Error(err)
 	assert.Contains(err.Error(), "persist meeting")
 
@@ -983,7 +983,7 @@ func TestImporterRawFailureRollsBackCanonicalSnapshot(t *testing.T) {
 		"messages_fts":       0,
 	} {
 		var got int
-		require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got), table)
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&got), table)
 		assert.Equal(want, got, table)
 	}
 
@@ -1004,11 +1004,11 @@ func TestImporterIndexesSubjectBodyAndAddresses(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, Hooks{})
 
-	result, err := importer.Import(context.Background(), validImportRequest(t))
+	result, err := importer.Import(t.Context(), validImportRequest(t))
 	require.NoError(err)
 
 	var subject, body, fromAddr, toAddrs string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT subject, body, from_addr, to_addr
 		FROM messages_fts WHERE rowid = ?
 	`, result.MessageID).Scan(&subject, &body, &fromAddr, &toAddrs))

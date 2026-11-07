@@ -169,7 +169,8 @@ func TestSearchMessagesQuery_MessageTypeFilter(t *testing.T) {
 		WithSubject("lunch plans").
 		WithSnippet("grab sushi").
 		Create(t, f.Store)
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`),
 		"sms", smsMsg)
 	require.NoError(err, "mark sms")
@@ -215,7 +216,8 @@ func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyBlankRows(t *testing.
 		Create(t, f.Store)
 
 	for id, value := range map[int64]string{legacyBlank: "", sms: "sms"} {
-		_, err := f.Store.DB().Exec(
+		_, err := f.Store.DB().ExecContext(
+			t.Context(),
 			f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), value, id)
 		require.NoError(err, "set message_type for %d", id)
 	}
@@ -256,7 +258,7 @@ func TestSearchMessagesQuery_MessageTypeEmailIncludesLegacyNullRows(t *testing.T
 		Snippet:         sql.NullString{String: "legacy null", Valid: true}, MessageType: store.MessageTypeEmail,
 	})
 	require.NoError(err, "create legacy email")
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET message_type = NULL WHERE id = ?`), legacyNull)
 	require.NoError(err, "clear legacy message type")
 	_, err = st.BackfillFTS(nil)
@@ -340,7 +342,7 @@ func TestSearchMessagesQueryPagesKeepRankAndDetails(t *testing.T) {
 	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	require.NoError(f.Store.ReplaceMessageRecipients(subjectHit, "from", []int64{sender}, []string{"Sender"}))
 	labels := f.EnsureLabels(map[string]string{"project-label": "Project"}, "user")
-	require.NoError(f.Store.AddMessageLabels(subjectHit, []int64{labels["project-label"]}))
+	require.NoError(f.Store.AddMessageLabels(t.Context(), subjectHit, []int64{labels["project-label"]}))
 
 	q := &search.Query{TextTerms: []string{"project"}}
 	want := []int64{subjectHit, tiedHit, bodyHit}

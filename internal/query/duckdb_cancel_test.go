@@ -19,11 +19,11 @@ func TestQuerySQLHonorsContextCancellation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	engine, err := NewDuckDBEngine("", "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", "", nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	// Cancel shortly after the query starts. Uncancelled, the cross join
 	// below (1e6 x 1e6 rows) would run for many minutes.
 	go func() {
@@ -56,16 +56,16 @@ func TestDuckDBQueryConcurrencyCap(t *testing.T) {
 	assert := assert.New(t)
 	require.Equal(1, duckDBQueryConcurrency, "test assumes a cap of 1")
 
-	engine, err := NewDuckDBEngine("", "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", "", nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	release1, err := engine.acquireQuerySlot(context.Background())
+	release1, err := engine.acquireQuerySlot(t.Context())
 	require.NoError(err)
 
 	// The slot is held: a second acquirer must wait, and its context deadline
 	// must free it rather than block forever.
-	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held query slot keeps the second acquirer waiting
+	waitCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held query slot keeps the second acquirer waiting
 	defer cancel()
 	start := time.Now()
 	_, err = engine.acquireQuerySlot(waitCtx)
@@ -76,7 +76,7 @@ func TestDuckDBQueryConcurrencyCap(t *testing.T) {
 
 	// Freeing a slot lets a new acquirer through.
 	release1()
-	release2, err := engine.acquireQuerySlot(context.Background())
+	release2, err := engine.acquireQuerySlot(t.Context())
 	require.NoError(err, "acquire must succeed after a slot is released")
 	release2()
 }

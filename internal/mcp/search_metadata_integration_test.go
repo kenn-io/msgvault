@@ -28,9 +28,9 @@ func seedMetadataSearch(t *testing.T, db *sql.DB) {
 	t.Helper()
 	schema, err := os.ReadFile("../store/schema.sql")
 	require.NoError(t, err)
-	_, err = db.Exec(string(schema))
+	_, err = db.ExecContext(t.Context(), string(schema))
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO sources (id,source_type,identifier) VALUES (1,'gmail','reader@example.test');
+	_, err = db.ExecContext(t.Context(), `INSERT INTO sources (id,source_type,identifier) VALUES (1,'gmail','reader@example.test');
  INSERT INTO conversations (id,source_id,source_conversation_id,conversation_type) VALUES (1,1,'thread','email_thread');
  INSERT INTO messages (id,conversation_id,source_id,source_message_id,message_type,sent_at,subject,snippet) VALUES
  (1,1,1,'one','email','2024-01-01','first note','preview'),
@@ -135,7 +135,7 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 	const total = 1501
 	db, _ := sqlobserve.Open(t, nil)
 	seedMetadataSearch(t, db)
-	_, err := db.Exec(`WITH RECURSIVE n(i) AS (SELECT 4 UNION ALL SELECT i+1 FROM n WHERE i < ?)
+	_, err := db.ExecContext(t.Context(), `WITH RECURSIVE n(i) AS (SELECT 4 UNION ALL SELECT i+1 FROM n WHERE i < ?)
  INSERT INTO messages (id,conversation_id,source_id,source_message_id,message_type,sent_at,subject,snippet)
  SELECT i,1,1,'m'||i,'email',datetime('2024-02-01', '+'||i||' seconds'),'note '||i,'preview' FROM n;
  INSERT INTO participants (id,email_address,domain) VALUES (1,'peer@example.com','example.com');
@@ -184,8 +184,8 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 	t.Cleanup(func() { _ = tx.Rollback() })
 	persist := func(key, subject, body string) {
 		var id int64
-		req.NoError(tx.QueryRow(st.Rebind(`INSERT INTO messages (conversation_id, source_id, source_message_id, message_type, subject) VALUES (?, ?, ?, 'email', ?) RETURNING id`), f.ConvID, f.Source.ID, key, subject).Scan(&id))
-		_, err = tx.Exec(st.Rebind(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`), id, body)
+		req.NoError(tx.QueryRowContext(t.Context(), st.Rebind(`INSERT INTO messages (conversation_id, source_id, source_message_id, message_type, subject) VALUES (?, ?, ?, 'email', ?) RETURNING id`), f.ConvID, f.Source.ID, key, subject).Scan(&id))
+		_, err = tx.ExecContext(t.Context(), st.Rebind(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`), id, body)
 		req.NoError(err)
 	}
 	var metadataIDs, bodyIDs []string
@@ -235,4 +235,20 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assert.Equal(before+2, boundedRequests.Load())
 		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
+}
+
+func TestSearchMetadataSenderNameHintRoundTrip(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	db, _ := sqlobserve.Open(t, nil)
+	seedMetadataSearch(t, db)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim');
+ INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from');`)
+	require.NoError(err)
+	var requests atomic.Int32
+	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
+	response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": "from:alex@exam subject:first"})
+	assert.Equal(int32(1), requests.Load(), "hints must ride the single fast-search request")
+	require.Len(response.Hints, 1)
+	assert.Equal("sender_name_requires_address", response.Hints[0].Code)
+	assert.NotEmpty(response.Hints[0].RetryWith.Query)
 }

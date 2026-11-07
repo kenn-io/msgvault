@@ -394,18 +394,20 @@ type SearchResult struct {
 // PoolSaturated is always emitted so clients can read "pool not
 // saturated" as a positive signal rather than an absent field.
 type hybridSearchResponse struct {
-	Query            string                  `json:"query"`
-	Mode             string                  `json:"mode"`
-	Returned         int                     `json:"returned"`
-	PoolSaturated    bool                    `json:"pool_saturated"`
-	Accelerator      string                  `json:"accelerator,omitempty"`
-	HasMore          bool                    `json:"has_more"`
-	Generation       hybridGenerationSummary `json:"generation"`
-	TookMS           int64                   `json:"took_ms"`
-	Timings          hybridSearchTimings     `json:"timings"`
-	ScopeLabel       string                  `json:"scope_label,omitempty"`
-	ScopeSourceCount int                     `json:"scope_source_count,omitzero"`
-	Results          []hybridSearchItem      `json:"results"`
+	Query                 string                  `json:"query"`
+	Mode                  string                  `json:"mode"`
+	Returned              int                     `json:"returned"`
+	PoolSaturated         bool                    `json:"pool_saturated"`
+	Accelerator           string                  `json:"accelerator,omitempty"`
+	HasMore               bool                    `json:"has_more"`
+	RankingLimitReached   int                     `json:"ranking_limit_reached,omitzero"`
+	CandidateLimitReached int                     `json:"candidate_limit_reached,omitzero"`
+	Generation            hybridGenerationSummary `json:"generation"`
+	TookMS                int64                   `json:"took_ms"`
+	Timings               hybridSearchTimings     `json:"timings"`
+	ScopeLabel            string                  `json:"scope_label,omitempty"`
+	ScopeSourceCount      int                     `json:"scope_source_count,omitzero"`
+	Results               []hybridSearchItem      `json:"results"`
 }
 
 type hybridSearchTimings struct {
@@ -902,7 +904,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var err error
-		scope, err = resolveCLIStatsScope(bindCLIStoreContext(r.Context(), cliStore), account, collection)
+		scope, err = resolveCLIStatsScope(r.Context(), bindCLIStoreContext(r.Context(), cliStore), account, collection)
 		if err != nil {
 			writeAPIHTTPError(w, s.cliScopeError(err))
 			return
@@ -1143,9 +1145,7 @@ func (s *Server) handleHybridSearch(
 	}
 
 	fetchLimit := offset + pageSize + 1
-	if maxPage := vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && fetchLimit > maxPage {
-		fetchLimit = maxPage
-	}
+	maxPage := vectorCfg.Search.MaxPageSizeHybridClamp()
 	req := hybrid.SearchRequest{
 		Mode:         hybrid.Mode(mode),
 		FreeText:     freeText,
@@ -1181,7 +1181,18 @@ func (s *Server) handleHybridSearch(
 	hydrationStarted := time.Now()
 	pageStart := min(offset, len(hits))
 	pageEnd := min(pageStart+pageSize, len(hits))
+	rankingLimitReached := 0
+	candidateLimitReached := 0
+	if meta.CandidatePoolOmitted {
+		candidateLimitReached = vectorCfg.Search.KPerSignal
+	}
 	hasMore := pageEnd < len(hits)
+	if maxPage > 0 && pageEnd >= maxPage {
+		if hasMore || candidateLimitReached > 0 {
+			rankingLimitReached = maxPage
+		}
+		hasMore = false
+	}
 	pageHits := hits[pageStart:pageEnd]
 
 	// Bulk-hydrate to avoid the per-hit GetMessage N+1: a single
@@ -1251,14 +1262,16 @@ func (s *Server) handleHybridSearch(
 	hydrationDuration := time.Since(hydrationStarted)
 
 	writeJSON(w, http.StatusOK, hybridSearchResponse{
-		Query:            q,
-		Mode:             mode,
-		Returned:         len(items),
-		PoolSaturated:    meta.PoolSaturated,
-		Accelerator:      meta.Accelerator,
-		HasMore:          hasMore,
-		ScopeLabel:       scope.displayName(),
-		ScopeSourceCount: len(scope.sourceIDs()),
+		Query:                 q,
+		Mode:                  mode,
+		Returned:              len(items),
+		PoolSaturated:         meta.PoolSaturated,
+		Accelerator:           meta.Accelerator,
+		HasMore:               hasMore,
+		RankingLimitReached:   rankingLimitReached,
+		CandidateLimitReached: candidateLimitReached,
+		ScopeLabel:            scope.displayName(),
+		ScopeSourceCount:      len(scope.sourceIDs()),
 		Generation: hybridGenerationSummary{
 			ID:          int64(meta.Generation.ID),
 			Model:       meta.Generation.Model,
@@ -1458,7 +1471,7 @@ func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPEr
 		if apiErr != nil {
 			return filter, apiErr
 		}
-		scope, err := resolveCLIStatsScope(cliStore, account, "")
+		scope, err := resolveCLIStatsScope(r.Context(), cliStore, account, "")
 		if err != nil {
 			return filter, s.cliScopeError(err)
 		}
@@ -1600,7 +1613,7 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		status, err := s.sourceStatus(r.Context(), statusStore, source)
+		status, err := s.sourceStatus(r.Context(), statusStore, source, sources)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return
@@ -1620,7 +1633,26 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SourceStatusResponse{Sources: statuses})
 }
 
-func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source) (SourceStatus, error) {
+// sourceScheduling restricts the singleton Messages job to its import target.
+func (s *Server) sourceScheduling(sourceType, identifier string, sources []*store.Source) sourceScheduleClassification {
+	scheduling := classifySourceScheduling(sourceType, identifier)
+	if sourceType != "apple_messages" {
+		return scheduling
+	}
+	var messagesSources []*store.Source
+	for _, source := range sources {
+		if source.SourceType == "apple_messages" {
+			messagesSources = append(messagesSources, source)
+		}
+	}
+	selected := store.SelectImessageSource(messagesSources)
+	if selected != nil && selected.Identifier == identifier || selected == nil && identifier == "local" {
+		return scheduling
+	}
+	return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+}
+
+func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source, sources []*store.Source) (SourceStatus, error) {
 	status := SourceStatus{
 		ID:         source.ID,
 		SourceType: source.SourceType,
@@ -1642,7 +1674,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
-	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
+	scheduling := s.sourceScheduling(source.SourceType, source.Identifier, sources)
 	schedulerRunning := false
 	if s.scheduler != nil {
 		switch scheduling.kind {
@@ -1809,7 +1841,22 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	security, _ := securityFromRequest(r)
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
-	scheduling := classifySourceScheduling(sourceType, account)
+	var sources []*store.Source
+	if sourceType == "apple_messages" {
+		statusStore, ok := s.store.(SourceStatusStore)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
+			return
+		}
+		var err error
+		sources, err = statusStore.ListSourcesContext(r.Context(), sourceType)
+		if err != nil {
+			s.logger.Error("failed to select scheduled source", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
+			return
+		}
+	}
+	scheduling := s.sourceScheduling(sourceType, account, sources)
 	switch scheduling.kind {
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
@@ -2246,6 +2293,7 @@ type SearchFastResponse struct {
 	TotalCount       int64               `json:"total_count"`
 	Stats            *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
 	AppliedSourceIDs []int64             `json:"applied_source_ids,omitempty"`
+	Hints            []query.SearchHint  `json:"hints,omitempty"`
 }
 
 type TextConversationRow struct {
@@ -3924,6 +3972,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, SearchFastResponse{
+		Hints:            result.Hints,
 		Warnings:         search.LiteralORWarnings(queryStr),
 		IndexState:       indexState,
 		Query:            queryStr,

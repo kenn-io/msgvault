@@ -414,6 +414,16 @@ func (c CardDAVConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
 	return origin, addresses, nil
 }
 
+// WhatsAppAppleSource schedules imports from a native macOS WhatsApp store.
+type WhatsAppAppleSource struct {
+	Name        string `toml:"name"`
+	Enabled     bool   `toml:"enabled"`
+	Path        string `toml:"path"`
+	Phone       string `toml:"phone"`
+	DisplayName string `toml:"display_name"`
+	Schedule    string `toml:"schedule"`
+}
+
 type SynctechSMSConfig struct {
 	Sources []SynctechSMSSource `toml:"sources"`
 }
@@ -602,6 +612,7 @@ type Config struct {
 	CardDAV            CardDAVConfig                   `toml:"carddav"`
 	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
 	Accounts           []AccountSchedule               `toml:"accounts"`
+	WhatsAppApple      []WhatsAppAppleSource           `toml:"whatsapp_apple"`
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
@@ -1187,6 +1198,16 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.OAuth.ServiceAccountKey = expandPath(cfg.OAuth.ServiceAccountKey)
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
 	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
+	cfg.IMessage.DBPath = expandPath(cfg.IMessage.DBPath)
+	for i := range cfg.WhatsAppApple {
+		cfg.WhatsAppApple[i].Path = expandPath(cfg.WhatsAppApple[i].Path)
+		if !cfg.WhatsAppApple[i].Enabled {
+			continue
+		}
+		if !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
+			cfg.deferDaemonError(fmt.Errorf("whatsapp_apple[%d].phone must start with +", i))
+		}
+	}
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for i := range cfg.Muesli {
 		cfg.Muesli[i].DBPath = expandPath(cfg.Muesli[i].DBPath)
@@ -1208,6 +1229,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.OAuth.ServiceAccountKey = resolveRelative(cfg.OAuth.ServiceAccountKey, cfg.HomeDir)
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
 		cfg.Vector.Multimodal.CapabilitiesFile = resolveRelative(cfg.Vector.Multimodal.CapabilitiesFile, cfg.HomeDir)
+		cfg.IMessage.DBPath = resolveRelative(cfg.IMessage.DBPath, cfg.HomeDir)
+		for i := range cfg.WhatsAppApple {
+			cfg.WhatsAppApple[i].Path = resolveRelative(cfg.WhatsAppApple[i].Path, cfg.HomeDir)
+		}
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
 		for i := range cfg.Muesli {
 			cfg.Muesli[i].DBPath = resolveRelative(cfg.Muesli[i].DBPath, cfg.HomeDir)
@@ -1830,12 +1855,15 @@ type TeamsConfig struct {
 	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
-// IMessageConfig configures media limits for import-imessage ([imessage]
-// table). MediaMaxParticipants follows the same omitted-versus-explicit-zero
-// rule as the other providers.
+// IMessageConfig configures scheduled imports and media limits for Messages.
+// MediaMaxParticipants distinguishes omitted values from explicit zero.
 type IMessageConfig struct {
-	MediaMaxParticipants int `toml:"media_max_participants"`
-	MaxMediaMB           int `toml:"max_media_mb"`
+	Enabled              bool   `toml:"enabled"`
+	Schedule             string `toml:"schedule"`
+	DBPath               string `toml:"db_path"`
+	Me                   string `toml:"me"`
+	MediaMaxParticipants int    `toml:"media_max_participants"`
+	MaxMediaMB           int    `toml:"max_media_mb"`
 }
 
 // MediaEnabled reports whether file download is on (default true).
@@ -2648,6 +2676,17 @@ func (c *Config) GetSynctechSMSSource(name string) *SynctechSMSSource {
 func (c *Config) ScheduledSynctechSMSSources() []SynctechSMSSource {
 	var out []SynctechSMSSource
 	for _, src := range c.SynctechSMS.Sources {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+// ScheduledWhatsAppAppleSources returns enabled stores with a cron schedule.
+func (c *Config) ScheduledWhatsAppAppleSources() []WhatsAppAppleSource {
+	var out []WhatsAppAppleSource
+	for _, src := range c.WhatsAppApple {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}

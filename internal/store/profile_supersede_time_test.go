@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -73,7 +72,8 @@ func TestSupersedeDefaultsFutureDatedProfileCloseToActiveFrom(t *testing.T) {
 	for _, value := range values {
 		require.NoError(value.close(), value.table)
 		var activeUntil sql.NullTime
-		err := st.DB().QueryRow(
+		err := st.DB().QueryRowContext(
+			t.Context(),
 			st.Rebind("SELECT active_until FROM "+value.table+" WHERE id = ?"), value.id,
 		).Scan(&activeUntil)
 		require.NoError(err, value.table)
@@ -86,7 +86,7 @@ func TestSupersedeRejectsCloseBeforeStoredActiveFrom(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	activeFrom := time.Date(2025, 6, 2, 12, 0, 0, 0, time.UTC)
 	tooEarly := activeFrom.Add(-time.Second)
@@ -148,7 +148,7 @@ func TestSupersedeObservationRejectsCloseBeforeStoredActiveFrom(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier("example", "participant-1", "Test User")
 	require.NoError(err)
 	activeFrom := time.Date(2025, 6, 2, 12, 0, 0, 0, time.UTC)

@@ -635,9 +635,9 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err, "create source 2")
-	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
+	conv1, err := s.EnsureConversation(t.Context(), src1.ID, "c1", "")
 	require.NoError(err, "create conv 1")
-	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
+	conv2, err := s.EnsureConversation(t.Context(), src2.ID, "c2", "")
 	require.NoError(err, "create conv 2")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,
@@ -703,7 +703,7 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
-	emailConv, err := s.EnsureConversation(src.ID, "email-thread", "")
+	emailConv, err := s.EnsureConversation(t.Context(), src.ID, "email-thread", "")
 	require.NoError(err, "create email conversation")
 	calendarConv, err := s.EnsureConversationWithType(src.ID, "calendar-thread", "calendar_event", "")
 	require.NoError(err, "create calendar conversation")
@@ -795,7 +795,7 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
-	conv, err := s.EnsureConversation(src.ID, "c1", "")
+	conv, err := s.EnsureConversation(t.Context(), src.ID, "c1", "")
 	require.NoError(err, "create conv")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv,
@@ -896,9 +896,9 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err, "create source 2")
-	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
+	conv1, err := s.EnsureConversation(t.Context(), src1.ID, "c1", "")
 	require.NoError(err, "create conv 1")
-	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
+	conv2, err := s.EnsureConversation(t.Context(), src2.ID, "c2", "")
 	require.NoError(err, "create conv 2")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,
@@ -1118,6 +1118,38 @@ func TestSearchCmd_JSONEmptyResultsEmitEmptyArray(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(out), &results),
 		"--json output must be valid JSON with zero results, got: %q", out)
 	assert.Empty(results)
+}
+
+func TestSearchCmd_EmptyResultsPrintHintsToStderr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/cli/search", r.URL.Path)
+		assert.Equal(t, "from:alex", r.URL.Query().Get("q"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[],"hints":[{"code":"sender_name_requires_address","message":"try from:alex@example.com","retry_with":{"query":"from:alex@example.com"}}]}`))
+	}))
+	defer srv.Close()
+	for _, tc := range []struct {
+		name, stdout string
+		args         []string
+	}{
+		{"text", "No messages found.\n", []string{"search", "from:alex"}},
+		{"json", "[]\n", []string{"search", "from:alex", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetSearchFlags()
+			cfg := &config.Config{Remote: config.RemoteConfig{URL: srv.URL, AllowInsecure: true}}
+			root := newTestRootCmd()
+			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			root.AddCommand(searchCmd)
+			root.SetArgs(tc.args)
+			doneOut, doneErr := captureStdout(t), captureStderr(t)
+			err := root.Execute()
+			stdout, stderr := doneOut(), doneErr()
+			require.NoError(t, err)
+			assert.Equal(t, tc.stdout, stdout)
+			assert.Contains(t, stderr, "Hint: try from:alex@example.com\n")
+		})
+	}
 }
 
 func TestOutputSearchResultsJSONIncludesBrowserURL(t *testing.T) {
