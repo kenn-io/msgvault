@@ -32,24 +32,30 @@ func assertParticipantIdentifierClassification(
 	assert.Equal(t, scopeValue != "", gotScopeValue.Valid, "scope-value presence")
 }
 
+func TestSignalPhoneParticipantIdentifierHasService(t *testing.T) {
+	st := storetest.New(t).Store
+	_, err := st.EnsureParticipantByPhone("+15550100004", "Test User", "signal")
+	require.NoError(t, err)
+	assertParticipantIdentifierClassification(t, st, "signal", "+15550100004", "signal", "", "")
+}
+
 func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
-	requires := require.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 
-	for _, service := range []string{"whatsapp", "signal"} {
-		t.Run(service, func(t *testing.T) {
-			require := require.New(t)
-			_, err := st.EnsureParticipantByPhone("+15550100001", "Test User", service)
-			require.NoError(err)
-			assertParticipantIdentifierClassification(t, st, service, "+15550100001", service, "", "")
-		})
-	}
+	_, err := st.EnsureParticipantByPhone(
+		"+15550100001", "Test User", "whatsapp",
+	)
+	require.NoError(err)
+	assertParticipantIdentifierClassification(
+		t, st, "whatsapp", "+15550100001", "whatsapp", "", "",
+	)
 
-	_, err := st.EnsureParticipantByIdentifier(
+	_, err = st.EnsureParticipantByIdentifier(
 		"discord_user_id", "discord-user-1", "Test User",
 	)
-	requires.NoError(err)
+	require.NoError(err)
 	assertParticipantIdentifierClassification(
 		t, st, "discord_user_id", "discord-user-1", "discord", "", "",
 	)
@@ -57,7 +63,7 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 	participantID := f.EnsureParticipant(
 		"slack-user@example.com", "Test User", "example.com",
 	)
-	requires.NoError(st.SetParticipantIdentifier(
+	require.NoError(st.SetParticipantIdentifier(
 		participantID, "slack", "T-SYNTHETIC:U-SYNTHETIC",
 	))
 	assertParticipantIdentifierClassification(
@@ -88,7 +94,7 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 		_, err = st.EnsureParticipantByIdentifier(
 			tc.identifierType, tc.identifierValue, "Test User",
 		)
-		requires.NoError(err)
+		require.NoError(err)
 		assertParticipantIdentifierClassification(
 			t, st, tc.identifierType, tc.identifierValue,
 			tc.serviceSlug, tc.scopeKind, tc.scopeValue,
