@@ -689,6 +689,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 				"hint", `set a cron schedule on the [[chatwoot]] profile`)
 		}
 	}
+	registerTikTokCommentJobs(sched, state, s, attachmentMaint)
+	registerTikTokMessageJobs(sched, state, s, attachmentMaint)
 	for _, source := range cfg.ScheduledChatwootSources() {
 		if err := registerScheduledChatwootJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
 			return runConfiguredChatwootSync(ctx, s, source)
@@ -1050,6 +1052,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 	var serverStartupErr error
+	var tikTokWebhooks *tikTokWebhookRuntime
+	var tikTokWebhookErrors <-chan error
 	startErr := apiServer.WaitStarted(ctx)
 	if startErr != nil {
 		if ctx.Err() == nil {
@@ -1068,6 +1072,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	} else {
 		listenerReserved = false
 		analyticsServerStarted = true
+		tikTokWebhooks, err = startTikTokWebhooks(ctx, cfg, s, idleTracker, operationGate, attachmentMaint)
+		if err != nil {
+			serverStartupErr = fmt.Errorf("start TikTok webhooks: %w", err)
+			cancel()
+		} else {
+			tikTokWebhookErrors = tikTokWebhooks.errors
+			if tikTokWebhooks.disabledReason != "" && tikTokWebhooks.disabledReason != "not configured" {
+				logger.Warn("TikTok webhook receiver disabled", "reason", tikTokWebhooks.disabledReason)
+			}
+		}
 		resourceCleanupSafe = false
 		if analyticsAsync {
 			analyticsInit = startDaemonAnalyticsInitializer(
@@ -1130,6 +1144,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("API server error", "error", err)
 			fmt.Printf("\nAPI server error: %v\n", err)
 			serverStartupErr = err
+		case err := <-tikTokWebhookErrors:
+			logger.Error("TikTok webhook receiver error", "error", err)
+			serverStartupErr = fmt.Errorf("TikTok webhook receiver: %w", err)
+			cancel()
 		case err := <-analyticsInit.Fatal():
 			if ctx.Err() == nil {
 				logger.Error("analytics initialization error", "error", err)
@@ -1148,6 +1166,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serveOperationDrainTimeout)
 	defer shutdownCancel()
+	// Stop accepting webhooks and finish in-flight deliveries before draining
+	// the API and releasing resources they may still be reading.
+	webhookShutdownErr := tikTokWebhooks.Shutdown(shutdownCtx)
 	// Stop the in-process capability probes before draining the API and
 	// releasing resources they may still be reading.
 	var mcpInitErr error
@@ -1158,7 +1179,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			mcpInitErr = errors.New("native MCP initialization did not stop during shutdown")
 		}
 	}
-	shutdownErr := errors.Join(mcpInitErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
+	shutdownErr := errors.Join(webhookShutdownErr, mcpInitErr,
+		shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))

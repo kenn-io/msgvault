@@ -613,18 +613,19 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
-	"export-messages":   true,
-	"export-discord":    true,
-	"list-folders":      true,
-	"policy list":       true,
-	"draft-get":         true,
-	"draft-send-as":     true,
-	"logs":              true,
-	"list-deletions":    true,
-	"show-deletion":     true,
-	"embeddings list":   true,
-	"embeddings status": true,
-	"documents search":  true,
+	"export-messages":               true,
+	"export-discord":                true,
+	"list-folders":                  true,
+	"policy list":                   true,
+	"source tiktok-messages status": true,
+	"draft-get":                     true,
+	"draft-send-as":                 true,
+	"logs":                          true,
+	"list-deletions":                true,
+	"show-deletion":                 true,
+	"embeddings list":               true,
+	"embeddings status":             true,
+	"documents search":              true,
 	// Tier previews only read.
 	"person tiers preview": true,
 	"person tiers explain": true,
@@ -699,6 +700,9 @@ var cliRunCommandGroups = map[string]bool{
 // cliRunCommandWords extracts the command path while consuming supported flags and their values.
 func cliRunCommandWords(args []string) string {
 	first := args[0]
+	if first == "source" && len(args) >= 3 && (args[1] == "tiktok-comments" || args[1] == "tiktok-messages") {
+		return first + " " + args[1] + " " + args[2]
+	}
 	if strings.HasPrefix(first, "-") {
 		return ""
 	}
