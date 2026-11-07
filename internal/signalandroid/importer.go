@@ -269,27 +269,7 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	switch {
 	case !found || recipient.GroupID != "":
 	case recipient.E164 != "":
-		pid, err = r.imp.store.EnsureParticipantByPhone(ctx, recipient.E164, recipient.Name, SourceType)
-		if err == nil && recipient.ACI != "" {
-			identity, lookupErr := r.imp.store.GetParticipantIdentityContext(ctx, []int64{pid})
-			if lookupErr != nil {
-				err = lookupErr
-				break
-			}
-			conflictingACI := false
-			for _, identifier := range identity.Identifiers {
-				if identifier.Type == ACIIdentifierType && identifier.Value != recipient.ACI {
-					conflictingACI = true
-					break
-				}
-			}
-			if conflictingACI {
-				// A recycled number must keep the two accounts' histories separate.
-				pid, err = r.imp.store.EnsureParticipantByIdentifierContext(ctx, ACIIdentifierType, recipient.ACI, recipient.Name)
-			} else {
-				err = r.bindACI(ctx, pid, recipient.ACI)
-			}
-		}
+		pid, err = r.phoneParticipant(ctx, recipient)
 	case recipient.ACI != "":
 		pid, err = r.imp.store.EnsureParticipantByIdentifierContext(ctx, ACIIdentifierType, recipient.ACI, recipient.Name)
 	}
@@ -304,6 +284,35 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	}
 	r.participants[recipientID] = pid
 	return pid, pid != 0, err
+}
+
+func (r *run) phoneParticipant(ctx context.Context, recipient sigRecipient) (int64, error) {
+	pid, err := r.imp.store.EnsureParticipantByPhone(ctx, recipient.E164, "", SourceType)
+	if err != nil {
+		return 0, err
+	}
+	if recipient.ACI != "" {
+		identity, err := r.imp.store.GetParticipantIdentityContext(ctx, []int64{pid})
+		if err != nil {
+			return 0, err
+		}
+		for _, identifier := range identity.Identifiers {
+			if identifier.Type == ACIIdentifierType && identifier.Value != recipient.ACI {
+				// A recycled number must keep the former owner's name and history.
+				return r.imp.store.EnsureParticipantByIdentifierContext(ctx, ACIIdentifierType, recipient.ACI, recipient.Name)
+			}
+		}
+	}
+	if recipient.Name != "" {
+		pid, err = r.imp.store.EnsureParticipantByPhone(ctx, recipient.E164, recipient.Name, SourceType)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if recipient.ACI != "" {
+		return pid, r.bindACI(ctx, pid, recipient.ACI)
+	}
+	return pid, nil
 }
 
 // tokens returns a recipient's identity tokens, preferred first, followed by
