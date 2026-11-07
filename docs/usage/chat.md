@@ -178,6 +178,14 @@ these tools do not complete tasks or infer new ones.
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
+### Tools available for your archive
+
+MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
+
+Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
+
+The complete default stdio `tools/list` response, including output schemas, measures 173,598 bytes for an mbox-only archive and 226,314 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, rounded up from the measured sizes plus 10%. Optional write flags are off in both measurements.
+
 ### Claude Desktop Configuration
 
 Add the following to your Claude Desktop config file:
