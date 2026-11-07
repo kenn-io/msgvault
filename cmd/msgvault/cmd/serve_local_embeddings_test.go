@@ -623,45 +623,117 @@ func TestLocalEmbeddingsOptimizeAfterActivation(t *testing.T) {
 }
 
 func TestLocalEmbeddingsFirstBuildFailureRemainsVisibleThroughAPI(t *testing.T) {
-	require := require.New(t)
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
-	f.server.SetLocalEmbeddings(f.controller)
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/embeddings/local", nil)
+	for _, existingIndex := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing_index=%t", existingIndex), func(t *testing.T) {
+			require := require.New(t)
+			model := ""
+			if existingIndex {
+				model = "nomic-embed-text"
+			}
+			f := newLocalActivationFixture(t, model)
+			if existingIndex {
+				f.useBuiltin(t)
+				f.runner.beforeBuild = nil
+				require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
+				snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+				require.NoError(err)
+				_, err = config.EditConfigTables(f.cfg.ConfigFilePath(), snapshot.ETag, []config.TableEdit{{Path: []string{"vector"}, Values: map[string]any{"enabled": false}}})
+				require.NoError(err)
+				f.cfg.Vector.Enabled = false
+				_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
+				require.NoError(err)
+			}
+			f.start(t)
+			f.onEmbedding = func([]string) error { return errors.New("provider temporarily unavailable") }
+			f.server.SetLocalEmbeddings(f.controller)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/embeddings/local", nil)
+			request.Header.Set("Authorization", "Bearer owner")
+			request.Header.Set("Content-Type", "application/json")
+			request.RemoteAddr = "127.0.0.1:1234"
+			response := httptest.NewRecorder()
+			f.server.Router().ServeHTTP(response, request)
+			require.Equal(http.StatusAccepted, response.Code, response.Body.String())
+			var status api.LocalEmbeddingsStatus
+			readStatus := func() {
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
+				request.Header.Set("Authorization", "Bearer owner")
+				request.RemoteAddr = "127.0.0.1:1234"
+				response := httptest.NewRecorder()
+				f.server.Router().ServeHTTP(response, request)
+				require.Equal(http.StatusOK, response.Code, response.Body.String())
+				status = api.LocalEmbeddingsStatus{}
+				require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
+			}
+			require.Eventually(func() bool {
+				readStatus()
+				return !status.Running
+			}, 10*time.Second, 10*time.Millisecond)
+			require.True(status.Enabled, "the provider is published before the first index is built")
+			building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
+			require.NoError(err)
+			if existingIndex {
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/status", nil)
+				request.Header.Set("Authorization", "Bearer owner")
+				request.RemoteAddr = "127.0.0.1:1234"
+				response := httptest.NewRecorder()
+				f.server.Router().ServeHTTP(response, request)
+				require.Equal(http.StatusOK, response.Code, response.Body.String())
+				var coverage vector.EmbeddingStatus
+				require.NoError(json.Unmarshal(response.Body.Bytes(), &coverage))
+				require.Equal(int64(2), coverage.Eligible)
+				require.Equal(int64(1), coverage.Current)
+				require.Equal(int64(1), coverage.Pending)
+			} else {
+				require.NotNil(building)
+			}
+			require.NotEmpty(status.Error, "an enabled provider does not mean its first index build succeeded")
+			f.onEmbedding = nil
+			f.runner.beforeBuild = nil // Recovery uses the shared builder after setup releases its gate.
+			require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
+			active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+			require.NoError(err)
+			if building != nil {
+				require.Equal(building.ID, active.ID)
+			}
+			require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
+			readStatus()
+			require.Empty(status.Error, "a matching usable index resolves the old setup failure")
+		})
+	}
+}
+
+func TestLocalEmbeddingsPreservesModelSavedWhileDisabled(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newLocalActivationFixture(t, "nomic-embed-text")
+	f.useBuiltin(t)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/settings", nil)
 	request.Header.Set("Authorization", "Bearer owner")
-	request.Header.Set("Content-Type", "application/json")
 	request.RemoteAddr = "127.0.0.1:1234"
 	response := httptest.NewRecorder()
 	f.server.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusAccepted, response.Code, response.Body.String())
-	var status api.LocalEmbeddingsStatus
-	readStatus := func() {
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/embeddings/local", nil)
-		request.Header.Set("Authorization", "Bearer owner")
-		request.RemoteAddr = "127.0.0.1:1234"
-		response := httptest.NewRecorder()
-		f.server.Router().ServeHTTP(response, request)
-		require.Equal(http.StatusOK, response.Code, response.Body.String())
-		status = api.LocalEmbeddingsStatus{}
-		require.NoError(json.Unmarshal(response.Body.Bytes(), &status))
-	}
-	require.Eventually(func() bool {
-		readStatus()
-		return !status.Running
-	}, 10*time.Second, 10*time.Millisecond)
-	require.True(status.Enabled, "the provider is published before the first index is built")
-	building, err := f.handle.vf.Backend.BuildingGeneration(f.ctx)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/settings", strings.NewReader(`{"updates":[{"key":"vector.enabled","value":{"boolean":false}},{"key":"vector.embeddings.model","value":{"string":"custom-model"}}]}`))
+	request.Header.Set("Authorization", "Bearer owner")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("If-Match", response.Header().Get("ETag"))
+	request.RemoteAddr = "127.0.0.1:1234"
+	response = httptest.NewRecorder()
+	f.server.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
 	require.NoError(err)
-	require.NotNil(building)
-	require.NotEmpty(status.Error, "an enabled provider does not mean its first index build succeeded")
-	f.onEmbedding = nil
-	f.runner.beforeBuild = nil // Recovery uses the shared builder after setup releases its gate.
-	require.NoError(f.runner.RunCLICommand(f.ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil))
-	active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+	saved, err := f.cfg.ReloadConfigFile(snapshot)
 	require.NoError(err)
-	require.Equal(building.ID, active.ID)
-	require.Equal(f.handle.vf.Cfg.GenerationFingerprint(), active.Fingerprint)
-	readStatus()
-	require.Empty(status.Error, "a matching usable index resolves the old setup failure")
+	require.False(saved.Vector.Enabled)
+	require.True(saved.Vector.Embeddings.LocalOnly)
+	require.Equal("custom-model", saved.Vector.Embeddings.Model)
+	*f.cfg = *saved // Start with the saved settings, as a restarted daemon would.
+	f.start(t)
+	err = f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+	after, readErr := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	require.NoError(readErr)
+	saved, readErr = f.cfg.ReloadConfigFile(after)
+	require.NoError(readErr)
+	assert.Equal("custom-model", saved.Vector.Embeddings.Model, "Turn on must preserve the model saved through Settings")
+	assert.Error(err, "a conflicting saved recipe needs an explicit decision")
 }
