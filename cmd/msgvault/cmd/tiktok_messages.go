@@ -73,7 +73,7 @@ func newTikTokMessagesAction(operation string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ func newTikTokMessagesAction(operation string) *cobra.Command {
 			}
 		}
 		if operation == tikTokAddCommandName {
-			errs = append(errs, runPostSourceCreateMigrationsForInvocation(st, state))
+			errs = append(errs, runPostSourceCreateMigrationsForInvocation(ctx, st, state))
 		}
 		if writes {
 			errs = append(errs, rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state))
