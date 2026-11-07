@@ -165,7 +165,8 @@ func subtitleOrigin(stamp time.Time, offset float64) (time.Time, error) {
 		return time.Time{}, errors.New("subtitle timing invalid: recording origin offset overflows")
 	}
 	elapsed := time.Duration(nanos)
-	if elapsed.Seconds() != offset {
+	// One division preserves the encoded float coordinate without split rounding.
+	if float64(elapsed)/float64(time.Second) != offset {
 		return time.Time{}, errors.New("subtitle timing insufficient: recording origin is not exact")
 	}
 	return stamp.Add(-elapsed), nil

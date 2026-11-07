@@ -233,7 +233,10 @@ func TestMeetingSubtitleCapabilityIsSharedAndFormatSpecific(t *testing.T) {
 				before := posts
 				_, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
 				if (format == "srt" || format == "vtt") && version != "3.47.0" {
-					require.ErrorContains(t, err, "upgrade")
+					require.EqualError(t, err, "meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon")
+					var coded interface{ APIErrorCode() string }
+					require.ErrorAs(t, err, &coded)
+					assert.Equal(t, "meeting_subtitles_unsupported", coded.APIErrorCode())
 					assert.Equal(t, before, posts)
 				} else {
 					require.NoError(t, err)

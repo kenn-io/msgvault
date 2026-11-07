@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -204,7 +205,8 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	require.NoError(t, err)
 	raw, err := os.ReadFile("../meetingcontent/testdata/granola-timed.json")
 	require.NoError(t, err)
-	archived, err := meetingarchive.New(st).Upsert(t.Context(), meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle-mcp", SourceConversationID: "subtitle-mcp", Title: "Synthetic", Raw: raw, RawFormat: "granola_json", Organizer: &meetingarchive.Person{Email: "subtitle@example.test"}}, meetingarchive.UpsertOptions{})
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "subtitle@example.test", SourceMessageID: "subtitle-mcp", SourceConversationID: "subtitle-mcp", Title: "Synthetic", Raw: raw, RawFormat: "granola_json", Organizer: &meetingarchive.Person{Email: "subtitle@example.test"}}
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
 	require.NoError(t, err)
 	for _, format := range []string{"srt", "vtt"} {
 		result, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{archived.MessageID}, "format": format, "max_bytes": 4096, "include_transcript": false}})
@@ -217,6 +219,17 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 		assert.Equal(t, expected.Content, structured["content"])
 		assert.Equal(t, false, structured["truncated"])
 	}
+	snapshot.Raw = []byte(strings.Replace(string(raw), "Hello 世界", "Hello <b>", 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(t, err)
+	refused, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{archived.MessageID}, "format": "srt", "max_bytes": 4096}})
+	require.NoError(t, err)
+	require.True(t, refused.IsError)
+	require.Len(t, refused.Content, 1)
+	message, ok := refused.Content[0].(*sdkmcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, message.Text, "invalid_meeting_subtitles:")
+	assert.Contains(t, message.Text, "use --format vtt")
 }
 
 func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[string]any {

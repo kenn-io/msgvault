@@ -131,10 +131,24 @@ func TestSubtitleTiming(t *testing.T) {
 	got, err = renderSubtitles(entry, "vtt")
 	require.NoError(t, err)
 	assert.Contains(t, got, "00:00:02.250 --> 00:00:04.000")
-	content := Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"First","start_timestamp":{"relative":1.25,"absolute":"2026-01-01T00:00:01.250Z"},"end_timestamp":{"relative":2.75,"absolute":"2026-01-01T00:00:02.750Z"}}]},{"words":[{"text":"Second","start_timestamp":{"relative":4,"absolute":"2026-01-01T00:00:04.000Z"},"end_timestamp":{"relative":4.5,"absolute":"2026-01-01T00:00:04.500Z"}}]},{"words":[{"text":"Absolute","start_timestamp":{"absolute":"2026-01-01T00:00:02.250Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:02.750Z"}}]}]}}`), nil)
-	got, err = renderSubtitles(Entry{Content: content}, "srt")
-	require.NoError(t, err)
-	assert.Equal(t, "1\n00:00:01,250 --> 00:00:02,750\nUnknown speaker: First\n\n2\n00:00:02,250 --> 00:00:02,750\nUnknown speaker: Absolute\n\n3\n00:00:04,000 --> 00:00:04,500\nUnknown speaker: Second\n\n", got)
+	raw := `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"First","start_timestamp":{"relative":1.118,"absolute":"2026-01-01T00:00:01.118Z"},"end_timestamp":{"relative":2.75,"absolute":"2026-01-01T00:00:02.750Z"}}]},{"words":[{"text":"Second","start_timestamp":{"relative":4,"absolute":"2026-01-01T00:00:04.000Z"},"end_timestamp":{"relative":4.5,"absolute":"2026-01-01T00:00:04.500Z"}}]},{"words":[{"text":"Absolute","start_timestamp":{"absolute":"2026-01-01T00:00:02.250Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:02.750Z"}}]}]}}`
+	content := Decode("twenty_json", []byte(raw), nil)
+	// A fraction below native nanosecond precision still cannot prove an origin.
+	unrepresentable := Decode("twenty_json", []byte(strings.Replace(raw, `"relative":1.118`, `"relative":1.1180000001`, 1)), nil)
+	for _, format := range []Format{FormatSRT, FormatVTT} {
+		t.Run("exact_origin_"+string(format), func(t *testing.T) {
+			result, err := Render("archive", []Entry{{Content: content}}, PacketOptions{Format: format, MaxBytes: 4096})
+			require.NoError(t, err)
+			want := "1\n00:00:01,118 --> 00:00:02,750\nUnknown speaker: First\n\n2\n00:00:02,250 --> 00:00:02,750\nUnknown speaker: Absolute\n\n3\n00:00:04,000 --> 00:00:04,500\nUnknown speaker: Second\n\n"
+			if format == FormatVTT {
+				want = "WEBVTT\n\n" + strings.ReplaceAll(want, ",", ".")
+			}
+			assert.Equal(t, want, result.Content)
+			result, err = Render("archive", []Entry{{Content: unrepresentable}}, PacketOptions{Format: format, MaxBytes: 4096})
+			require.ErrorContains(t, err, "recording origin is not exact")
+			assert.Nil(t, result)
+		})
+	}
 
 	content = Decode("twenty_json", []byte(`{"schema_version":1,"recording":{"transcript":[{"participant":{"name":"Example"},"words":[{"text":"Hello","start_timestamp":{"relative":1.2,"absolute":"2026-06-12T10:00:01Z"},"end_timestamp":{"relative":1.6,"absolute":"2026-06-12T10:00:01Z"}},{"text":"there","start_timestamp":{"relative":1.7,"absolute":"2026-06-12T10:00:02Z"},"end_timestamp":{"relative":2.1,"absolute":"2026-06-12T10:00:02Z"}}]}]}}`), nil)
 	for _, format := range []string{"srt", "vtt"} {
