@@ -85,6 +85,34 @@ func TestInitSchemaUnlessCurrentPostgreSQLRepairsAccountIdentityKeys(t *testing.
 	assert.Equal(t, "alice@example.com", key)
 }
 
+func TestInitSchemaUnlessCurrentPostgreSQLRepairsSystemSeeds(t *testing.T) {
+	require := require.New(t)
+	if os.Getenv("MSGVAULT_TEST_DB") == "" {
+		t.Skip("requires PostgreSQL")
+	}
+	f := storetest.New(t)
+	ctx := t.Context()
+	version, err := f.Store.SchemaVersionContext(ctx)
+	require.NoError(err)
+	require.Equal(store.SchemaVersion, version)
+	definition, err := f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx,
+		`UPDATE attribute_definitions SET options = '{"max_length":120}' WHERE universal_id = $1`, definition.UniversalID)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `DELETE FROM relationship_types WHERE slug = 'neighbor'`)
+	require.NoError(err)
+
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+	definition, err = f.Store.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
+	require.NoError(err)
+	require.NotNil(definition.Options)
+	assert.Equal(t, 280, definition.Options.MaxLength)
+	restored, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "neighbor")
+	require.NoError(err)
+	assert.Equal(t, store.RelationshipTypeOwnershipSystem, restored.Ownership)
+}
+
 func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
