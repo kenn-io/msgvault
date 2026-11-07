@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,44 +30,6 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
 	assert.Equal(t, 1, count)
-}
-
-func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	profile, hash := seedDocumentPublicationAuthority(t, f)
-	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
-		ExtractionID: "pre-range-upload", ProfileID: profile.ID, CanonicalBlobHash: hash,
-		ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
-	})
-	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
-	require.NoError(err)
-	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
-		Claim: claim, ReasonCode: "provider_timeout", Terminal: true, RequestCount: 2, UploadCount: 1,
-	}))
-	_, err = f.Store.DB().ExecContext(t.Context(), "ALTER TABLE document_extractions DROP COLUMN upload_count")
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "DROP TABLE document_extraction_ranges")
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value='16' WHERE key='schema_version'")
-	require.NoError(err)
-	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
-	version, err := f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(16, version)
-	var count int
-	require.Error(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	require.NoError(f.Store.InitSchemaContext(t.Context()))
-	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
-	version, err = f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(store.SchemaVersion, version)
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	assert.Zero(count)
-	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
-	require.NoError(err)
-	assert.Equal(int64(128), status.VerifiedUploadBytes)
 }
 
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
@@ -282,6 +243,7 @@ var (
 		31: "cad2b896394a3b1df1cb8b71cc2db52e893623272d87e1ede64ad757e6aba500",
 		32: "67195ce591cb53fde19ccf89d46f57a8d1cba7fcb96efd0b1d120dcde4c0dceb",
 		33: "bba58fcd196cf788307bb1739e11ec82798c138903ca556481843c0dfaff5dc7",
+		34: "cb9c57c7ed9f1513bf6c096cd920d01b5b75dfad4e7fc613ef564ae2cbd9ef01",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -312,6 +274,7 @@ var (
 		31: "f4b83986f7def2d4f1f49dce1074b828bb0bb2a3ff042ced1a512b8443407c90",
 		32: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
 		33: "1df8bfb3382063ad0e5daca07f55c2a2955b6924db1b0ab282d3e7dd3623ccac",
+		34: "7a32da44913f8dcf680ea96cb140eeb1e073fcdcd59d356ac36d24aa58fcc5de",
 	}
 )
 

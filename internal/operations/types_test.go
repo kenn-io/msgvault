@@ -24,14 +24,14 @@ func TestOperationEnumsRejectUnknownValues(t *testing.T) {
 			name: "kind",
 			valid: []string{
 				"source_sync", "person_sweep", "carddav_sync", "message_embedding",
-				"person_embedding", "document_extraction", "document_embedding",
+				"person_embedding",
 				"visual_embedding", "person_enrichment",
 			},
 			validate: func(value string) error { return Kind(value).Validate() },
 		},
 		{
 			name:     "lane",
-			valid:    []string{"messages", "person_facts", "contacts", "documents", "visual_attachments"},
+			valid:    []string{"messages", "person_facts", "contacts", "visual_attachments"},
 			validate: func(value string) error { return Lane(value).Validate() },
 		},
 		{
@@ -55,7 +55,7 @@ func TestOperationEnumsRejectUnknownValues(t *testing.T) {
 		},
 		{
 			name:     "counter unit",
-			valid:    []string{"messages", "people", "writes", "books", "contacts", "documents", "chunks", "attachments"},
+			valid:    []string{"messages", "people", "writes", "books", "contacts", "attachments"},
 			validate: func(value string) error { return CounterUnit(value).Validate() },
 		},
 		{
@@ -71,7 +71,7 @@ func TestOperationEnumsRejectUnknownValues(t *testing.T) {
 		{
 			name: "related status",
 			valid: []string{
-				"listSourceStatus", "getDocumentIndexStatus", "getDocumentVectorStatus",
+				"listSourceStatus",
 				"getVisualAttachmentStatus", "getCardDAVStatus",
 			},
 			validate: func(value string) error { return RelatedStatusID(value).Validate() },
@@ -105,8 +105,8 @@ func TestOperationPublicEnumDomainsEnumerateEveryRuntimeValue(t *testing.T) {
 		CounterSuppressed, CounterTruncated, CounterUpdated,
 	}, CounterNames())
 	assert.Equal(t, []CounterUnit{
-		CounterUnitAttachments, CounterUnitBooks, CounterUnitChunks, CounterUnitContacts,
-		CounterUnitDocuments, CounterUnitMessages, CounterUnitPeople, CounterUnitWrites,
+		CounterUnitAttachments, CounterUnitBooks, CounterUnitContacts,
+		CounterUnitMessages, CounterUnitPeople, CounterUnitWrites,
 	}, CounterUnits())
 	assert.Equal(t, []PublicErrorCode{
 		PublicErrorArchiveGap, PublicErrorAuthenticationFailed, PublicErrorBudget,
@@ -131,8 +131,6 @@ func TestOperationLaneRegistryIsClosedAndSorted(t *testing.T) {
 
 	want := []LaneDefinition{
 		{Kind: KindCardDAVSync, Lane: LaneContacts, HistoryAvailability: HistoryAvailable},
-		{Kind: KindDocumentEmbedding, Lane: LaneDocuments, HistoryAvailability: HistoryUnavailable, UnavailableCode: "document_embedding_history_unavailable"},
-		{Kind: KindDocumentExtraction, Lane: LaneDocuments, HistoryAvailability: HistoryUnavailable, UnavailableCode: "document_extraction_history_unavailable"},
 		{Kind: KindMessageEmbedding, Lane: LaneMessages, HistoryAvailability: HistoryUnavailable, UnavailableCode: "message_embedding_history_unavailable"},
 		{Kind: KindPersonEmbedding, Lane: LanePersonFacts, HistoryAvailability: HistoryUnavailable, UnavailableCode: "person_embedding_history_unavailable"},
 		{Kind: KindPersonEnrichment, Lane: LanePersonFacts, HistoryAvailability: HistoryUnavailable, UnavailableCode: "person_enrichment_history_unavailable"},
@@ -351,16 +349,6 @@ func TestOperationCounterMatricesAreClosedForEveryKind(t *testing.T) {
 			{Name: CounterFailed, Unit: CounterUnitPeople, Value: 1},
 			{Name: CounterTruncated, Unit: CounterUnitPeople, Value: 1},
 		}},
-		{KindDocumentExtraction, []PublicCounter{
-			{Name: CounterAttempted, Unit: CounterUnitDocuments, Value: 1},
-			{Name: CounterSucceeded, Unit: CounterUnitDocuments, Value: 1},
-			{Name: CounterFailed, Unit: CounterUnitDocuments, Value: 1},
-		}},
-		{KindDocumentEmbedding, []PublicCounter{
-			{Name: CounterAttempted, Unit: CounterUnitChunks, Value: 1},
-			{Name: CounterSucceeded, Unit: CounterUnitChunks, Value: 1},
-			{Name: CounterFailed, Unit: CounterUnitChunks, Value: 1},
-		}},
 		{KindVisualEmbedding, []PublicCounter{
 			{Name: CounterAttempted, Unit: CounterUnitAttachments, Value: 1},
 			{Name: CounterSucceeded, Unit: CounterUnitAttachments, Value: 1},
@@ -431,7 +419,7 @@ func TestInvocationContractValidatesKeysCheckpointsAndFinalOutcomes(t *testing.T
 	assert.Equal(StateCancelled, state)
 	_, err = DeriveInvocationState(KindMessageEmbedding, previous, FixedPublicError(PublicErrorProviderHTTP))
 	require.Error(err, "a people-sweep error must not enter an invocation ledger")
-	_, err = DeriveInvocationState(KindDocumentExtraction, previous, &PublicError{
+	_, err = DeriveInvocationState(KindMessageEmbedding, previous, &PublicError{
 		Code: "not_registered", Message: "Not registered.",
 	})
 	require.Error(err, "an unknown error must not enter an invocation ledger")
@@ -453,8 +441,7 @@ func TestOperationRunQueuedStateIsLimitedToPersonEnrichment(t *testing.T) {
 	require.NoError(queued.Validate())
 
 	for _, kind := range []Kind{
-		KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
-		KindDocumentEmbedding, KindVisualEmbedding,
+		KindMessageEmbedding, KindPersonEmbedding, KindVisualEmbedding,
 	} {
 		id, idErr := NewInt64ID(kind, 1)
 		require.NoError(idErr)
@@ -470,8 +457,7 @@ func TestOperationRunQueuedStateIsLimitedToPersonEnrichment(t *testing.T) {
 func TestInvocationPublicErrorKindCodeMatrix(t *testing.T) {
 	t.Parallel()
 	kinds := []Kind{
-		KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
-		KindDocumentEmbedding, KindVisualEmbedding, KindPersonEnrichment,
+		KindMessageEmbedding, KindPersonEmbedding, KindVisualEmbedding, KindPersonEnrichment,
 	}
 	allowed := []PublicErrorCode{
 		PublicErrorInvocationCancelled, PublicErrorInvocationTimeout,

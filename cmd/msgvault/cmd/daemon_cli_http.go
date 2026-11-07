@@ -57,12 +57,12 @@ func runDaemonCLICommandHTTPFromCobraWithGrantDecision(
 	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, nil, false, grantDecided)
 }
 
-func runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd *cobra.Command, args []string, env map[string]string) error {
+func runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd *cobra.Command, args []string) error {
 	runArgs, err := daemonCLIArgsFromCobra(cmd, args)
 	if err != nil {
 		return err
 	}
-	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, env, true, false)
+	return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, nil, true, false)
 }
 
 func runDaemonCLICommandHTTPWithEnv(

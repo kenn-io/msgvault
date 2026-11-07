@@ -33,8 +33,8 @@ for (const theme of ['light', 'dark'] as const) {
     await openHistory();
     await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
     await assertNoViolations(page, `Past runs ${theme}`);
-    await page.getByRole('button', { name: 'Open Document extraction run' }).click();
-    await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Operation archive input changed.');
+    await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
+    await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('CardDAV sync failed.');
     await assertNoViolations(page, `Run detail ${theme}`);
     await page.setViewportSize({ width: 390, height: 844 });
     await assertNoViolations(page, `Narrow run detail ${theme}`);
@@ -45,13 +45,13 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('dialog', { name: 'Past runs' }).getByRole('alert').filter({ hasText: 'Unable to load operation history.' })).toBeVisible();
     await assertNoViolations(page, `History failure ${theme}`);
     await page.keyboard.press('Escape');
-    fixture.setOperationConfigured('document_extraction', false);
+    fixture.setOperationConfigured('visual_embedding', false);
     await page.reload();
     await openHistory();
-    await page.getByRole('button', { name: 'Open Document extraction run' }).click();
-    await page.getByRole('button', { name: 'Open Document index status' }).click();
-    await expect(page.getByRole('link', { name: 'Document indexing setup' })).toBeVisible();
-    await assertNoViolations(page, `Document setup ${theme}`);
+    await page.getByRole('button', { name: 'Open Visual embedding run' }).click();
+    await page.getByRole('button', { name: 'Open Visual attachment status' }).click();
+    await expect(page.getByRole('button', { name: 'Open visual attachment settings' })).toBeVisible();
+    await assertNoViolations(page, `Visual setup ${theme}`);
   });
 }
 

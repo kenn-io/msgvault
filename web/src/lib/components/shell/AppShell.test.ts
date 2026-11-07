@@ -1,6 +1,6 @@
 import { directoryPerson, person, mergeResult } from '../../directory/entity-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { documentStatus, lanes } from '../../../test/operations';
+import { lanes, visualStatus } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,7 +50,7 @@ const sourceRun = canonical.runs.find(run => run.kind === 'source_sync')!;
 const OPERATION_RUN = sourceRun.id;
 
 function operationAuthorityResponse(path: string): Response | undefined {
-  if (path.endsWith('/documents/status/current')) return Response.json(documentStatus);
+  if (path.endsWith('/multimodal/status')) return Response.json(visualStatus);
   return undefined;
 }
 
@@ -2869,10 +2869,10 @@ it.each([
   { kind: 'source_sync', authority: undefined, status: 'Needs attention',
     lane: undefined, sources: [sourceStatus({ display_name: 'Source sync', scheduler_last_error: 'Sync failed' })],
     action: { role: 'menuitem', name: /Source sync/ }, expected: { workspace: 'sources', operationHistory: false } },
-  { kind: 'document_extraction', authority: 'getDocumentIndexStatus', status: 'Running',
-    lane: jobLane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
-    action: { role: 'menuitem', name: /Document extraction/ },
-    expected: { workspace: 'everything', operationHistory: true, operationStatus: 'getDocumentIndexStatus' } },
+  { kind: 'visual_embedding', authority: 'getVisualAttachmentStatus', status: 'Running',
+    lane: jobLane('visual_embedding', { active: { ...jobRun('visual_embedding'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
+    action: { role: 'menuitem', name: /Visual embedding/ },
+    expected: { workspace: 'everything', operationHistory: true, operationStatus: 'getVisualAttachmentStatus' } },
   { kind: 'person_sweep', authority: undefined, status: 'Needs attention',
     lane: jobLane('person_sweep'), sources: [],
     action: { role: 'menuitem', name: /Person fact sweep/ },

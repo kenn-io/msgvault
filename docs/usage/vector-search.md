@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-10-08"
 title: Vector Search
-description: Find messages by meaning and set up separate people, visual, and document search indexes.
+description: Find messages by meaning and set up separate people and visual search indexes.
 ---
 
 Semantic search finds messages by meaning:
@@ -39,10 +39,11 @@ Choose the index for the thing you want to find:
 | Messages, chats, and meeting transcripts | `search --mode vector` or `--mode hybrid` | This page |
 | Curated people | `person search` | [People](/docs/usage/people/#find-a-person-by-what-you-remember) |
 | Image and video content | `multimodal search` | [Visual attachment search](#visual-attachment-search) |
-| Extracted document text | `documents search --mode semantic` or `--mode hybrid` | [Document indexing](/docs/usage/document-indexing/#semantic-and-hybrid-document-search) |
+| Mirrored document text | `media search <query>` | [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
 
 Message embeddings do not include attachment pixels or extracted document
-text. Those indexes have separate builds and consent. For a guided setup using
+text. Visual indexing has its own build and consent; Docbank manages document
+processing. For a guided setup using
 the provider keys you have, start with
 [Recommended Configuration](/docs/usage/recommended-configuration/).
 
@@ -113,9 +114,7 @@ go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 
 Use `msgvault setup providers` to select defaults. Without a hosted key, setup uses Ollama with `nomic-embed-text` or offers the shared local server. It asks once before downloading missing model and runtime files.
 
-Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. The switch changes document-vector and semantic-person consent identities once, so renew those consents. Later local server port changes preserve the local generation and consent identities. Configured providers remain tied to their endpoints.
-
-The switch also changes the separate document-vector generation: renew its consents, restart the daemon, and build the matching generation to restore document semantic search.
+Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. The switch changes semantic-person consent identities once, so renew those consents. Later local server port changes preserve the local generation and consent identities. Configured providers remain tied to their endpoints.
 
 For manual configuration, add a `[vector]` block
 to `~/.msgvault/config.toml`.
@@ -284,9 +283,7 @@ and a fixed tokenizer, pooling, precision and output recipe. An alias is an
 operator convention; msgvault does not verify the loaded checkpoint through
 HTTP. Give a changed serving recipe a new alias. Changing `model`, `dimension`
 or either prefix separates message generations and requires a full rebuild.
-Extracted document vectors have their own generation and consent policy;
-those settings change that identity too. Follow the separate
-[document setup](document-indexing.md#semantic-and-hybrid-document-search).
+Docbank owns document processing and embeddings. See [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased).
 
 The [model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
 specifies mean pooling including prompts, L2-normalized output, and
@@ -388,8 +385,8 @@ msgvault embeddings build --full-rebuild --yes
 For message embeddings, enabling `[vector]` is the opt-in. The command does not
 create a separate stored provider-consent record; `--yes` only skips the full
 rebuild confirmation. If the endpoint is hosted, both indexed message text and
-semantic query text leave the archive as described above. People, visual, and
-document vectors use separate consent gates.
+semantic query text leave the archive as described above. People and visual vectors use separate consent gates. Docbank manages
+document processing consent.
 
 This creates a new **building generation**, scans every non-deleted
 message in the configured scope, embeds missing rows in batches through your
@@ -928,9 +925,9 @@ and `multimodal resume` to continue processing. `multimodal retire
 Original attachments remain in the archive.
 
 MCP clients use `search_visual_attachments` for visual queries,
-`search_document_attachments` for document text, and `search_person_files` for
-attachment metadata. The CLI `person files --lane all` combines those search
-paths for one person. The Web UI's [Past runs](/docs/web-ui/#background-jobs-and-past-runs) shows
+`search_media` for document text, and `search_person_files` for
+attachment metadata. The CLI `person files --lane all` combines metadata and
+visual results for one person. The Web UI's [Past runs](/docs/web-ui/#background-jobs-and-past-runs) shows
 visual coverage and the build or resume actions the daemon currently allows.
 
 ## See Also

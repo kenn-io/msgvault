@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -24,7 +25,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
@@ -41,6 +41,8 @@ import (
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/vector"
 )
+
+var warnedRemovedDocuments atomic.Bool
 
 const (
 	AnalyticsEngineAuto   = "auto"
@@ -594,53 +596,52 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
-	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
-	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
-	Data               DataConfig                      `toml:"data"`
-	Log                LogConfig                       `toml:"log"`
-	OAuth              OAuthConfig                     `toml:"oauth"`
-	Microsoft          MicrosoftConfig                 `toml:"microsoft"`
-	Sync               SyncConfig                      `toml:"sync"`
-	Chat               ChatConfig                      `toml:"chat"`
-	Server             ServerConfig                    `toml:"server"`
-	Analytics          AnalyticsConfig                 `toml:"analytics"`
-	Web                WebConfig                       `toml:"web"`
-	Integrations       IntegrationsConfig              `toml:"integrations"`
-	Remote             RemoteConfig                    `toml:"remote"`
-	Vector             vector.Config                   `toml:"vector"`
-	Identity           IdentityConfig                  `toml:"identity"`
-	Fastmail           []FastmailSource                `toml:"fastmail"`
-	CardDAV            CardDAVConfig                   `toml:"carddav"`
-	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
-	Accounts           []AccountSchedule               `toml:"accounts"`
-	WhatsAppApple      []WhatsAppAppleSource           `toml:"whatsapp_apple"`
-	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
-	GCal               []GCalSource                    `toml:"gcal"`
-	Beeper             BeeperConfig                    `toml:"beeper"`
-	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
-	Matrix             MatrixConfig                    `toml:"matrix"`
-	Slack              SlackConfig                     `toml:"slack"`
-	Inline             InlineConfig                    `toml:"inline"`
-	Omi                []OmiSource                     `toml:"omi"`
-	Granola            []GranolaSource                 `toml:"granola"`
-	Plaud              []PlaudSource                   `toml:"plaud"`
-	Circleback         []CirclebackSource              `toml:"circleback"`
-	Pocket             []PocketSource                  `toml:"pocket"`
-	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
-	Twilio             []TwilioSource                  `toml:"twilio"`
-	Muesli             []MuesliSource                  `toml:"muesli"`
-	Twenty             []TwentySource                  `toml:"twenty"`
-	Backup             BackupConfig                    `toml:"backup"`
-	Discord            DiscordConfig                   `toml:"discord"`
-	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
-	Activity           ActivityConfig                  `toml:"activity"`
-	People             PeopleConfig                    `toml:"people"`
-	Teams              TeamsConfig                     `toml:"teams"`
-	IMessage           IMessageConfig                  `toml:"imessage"`
-	Deletion           DeletionConfig                  `toml:"deletion"`
-	IMAP               IMAPConfig                      `toml:"imap"`
-	Gmail              GmailConfig                     `toml:"gmail"`
-	Telemetry          TelemetryConfig                 `toml:"telemetry"`
+	SenderAuth         SenderAuthConfig         `toml:"sender_auth"`
+	ConversationPolicy ConversationPolicyConfig `toml:"conversation_policy"`
+	Data               DataConfig               `toml:"data"`
+	Log                LogConfig                `toml:"log"`
+	OAuth              OAuthConfig              `toml:"oauth"`
+	Microsoft          MicrosoftConfig          `toml:"microsoft"`
+	Sync               SyncConfig               `toml:"sync"`
+	Chat               ChatConfig               `toml:"chat"`
+	Server             ServerConfig             `toml:"server"`
+	Analytics          AnalyticsConfig          `toml:"analytics"`
+	Web                WebConfig                `toml:"web"`
+	Integrations       IntegrationsConfig       `toml:"integrations"`
+	Remote             RemoteConfig             `toml:"remote"`
+	Vector             vector.Config            `toml:"vector"`
+	Identity           IdentityConfig           `toml:"identity"`
+	Fastmail           []FastmailSource         `toml:"fastmail"`
+	CardDAV            CardDAVConfig            `toml:"carddav"`
+	CardDAVConnections map[string]CardDAVConfig `toml:"carddav_connections,omitempty"`
+	Accounts           []AccountSchedule        `toml:"accounts"`
+	WhatsAppApple      []WhatsAppAppleSource    `toml:"whatsapp_apple"`
+	SynctechSMS        SynctechSMSConfig        `toml:"synctech_sms"`
+	GCal               []GCalSource             `toml:"gcal"`
+	Beeper             BeeperConfig             `toml:"beeper"`
+	Chatwoot           []ChatwootSource         `toml:"chatwoot"`
+	Matrix             MatrixConfig             `toml:"matrix"`
+	Slack              SlackConfig              `toml:"slack"`
+	Inline             InlineConfig             `toml:"inline"`
+	Omi                []OmiSource              `toml:"omi"`
+	Granola            []GranolaSource          `toml:"granola"`
+	Plaud              []PlaudSource            `toml:"plaud"`
+	Circleback         []CirclebackSource       `toml:"circleback"`
+	Pocket             []PocketSource           `toml:"pocket"`
+	NotionMeetings     []NotionMeetingsSource   `toml:"notion_meetings"`
+	Twilio             []TwilioSource           `toml:"twilio"`
+	Muesli             []MuesliSource           `toml:"muesli"`
+	Twenty             []TwentySource           `toml:"twenty"`
+	Backup             BackupConfig             `toml:"backup"`
+	Discord            DiscordConfig            `toml:"discord"`
+	Activity           ActivityConfig           `toml:"activity"`
+	People             PeopleConfig             `toml:"people"`
+	Teams              TeamsConfig              `toml:"teams"`
+	IMessage           IMessageConfig           `toml:"imessage"`
+	Deletion           DeletionConfig           `toml:"deletion"`
+	IMAP               IMAPConfig               `toml:"imap"`
+	Gmail              GmailConfig              `toml:"gmail"`
+	Telemetry          TelemetryConfig          `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir            string `toml:"-"`
@@ -990,7 +991,6 @@ func NewDefaultConfig() *Config {
 		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		IMessage: IMessageConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
-	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
 	cfg.resolveCredentialPaths()
 	cfg.Server.ApplyDefaults()
@@ -1161,6 +1161,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
+	if metadata.IsDefined("attachments", "documents") && !warnedRemovedDocuments.Swap(true) {
+		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
+	}
 	for _, key := range metadata.Undecoded() {
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
@@ -1254,16 +1257,6 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.Vector.ApplyDefaults()
-	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(field string) bool {
-		return metadata.IsDefined("attachments", "documents", field)
-	})
-	cfg.Attachments.Documents.ApplyDefaults()
-	if err := cfg.Attachments.Documents.Validate(); err != nil {
-		return nil, err
-	}
-	if cfg.Attachments.Documents.Index.Embeddings.Enabled && !cfg.Vector.Enabled {
-		return nil, errors.New("attachments.documents.index.embeddings.enabled: requires [vector] enabled = true")
-	}
 	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {
 			return nil, fmt.Errorf("vector config: %w", err)
