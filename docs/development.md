@@ -326,6 +326,26 @@ each report as a `vitest-<suite>-attempt-<n>` or
 `playwright-<suite>-attempt-<n>` artifact. `MSGVAULT_PLAYWRIGHT_SUITE` names a
 Playwright run's report.
 
+### CI and the merge queue
+
+Pull requests and `main` run the full CI suite. A pull request must pass it
+before it can join the merge queue. The merge queue runs a smaller suite that
+looks for breakage between separately green pull requests:
+
+- `checks`: Linux lint, API contract, generated artifact, and vulnerability checks.
+- The Linux SQLite test suite: `test` and the three `test-sharded` jobs.
+- `frontend` and `web-e2e`.
+- `release-linux-smoke` for amd64 only.
+- `test-postgres-sharded (store)`, which runs the PostgreSQL schema, migration,
+  and upgrade tests. The SQLite suite covers the same tests on SQLite, including
+  `TestSchemaVersionContract`.
+
+Windows, arm64, pgvector, and the other PostgreSQL jobs skip merge groups. The
+PostgreSQL CLI and API shards, the follow-up checks for the PostgreSQL library
+without CGO, and the store concurrency repetitions skip them too. The skipped
+jobs still run on every push to `main`. Only `CI gate` is a required check, so
+this split needs no branch protection change.
+
 ## Lint & Format
 
 ```bash
