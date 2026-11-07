@@ -954,15 +954,15 @@ func (r *imapMembershipResolver) retireMailboxKeys(ctx context.Context, mailbox 
 }
 
 func decodeIMAPSourceKey(key string) (mailbox string, uid uint32, ok bool) {
-	separator := strings.LastIndexByte(key, '|')
-	if separator < 0 {
+	mailbox, text, found := strings.CutLast(key, "|")
+	if !found {
 		return "", 0, false
 	}
-	value, err := strconv.ParseUint(key[separator+1:], 10, 32)
-	if err != nil || value == 0 || key[separator+1:] != strconv.FormatUint(value, 10) {
+	value, err := strconv.ParseUint(text, 10, 32)
+	if err != nil || value == 0 || text != strconv.FormatUint(value, 10) {
 		return "", 0, false
 	}
-	return key[:separator], uint32(value), true
+	return mailbox, uint32(value), true
 }
 
 // captureScannedUntracked marks live rows without memberships whose source key

@@ -41,7 +41,7 @@ func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedAndAbsentMailboxes(t *tes
 		scannedIMAPDelta("INBOX", 11, "INBOX|1", "INBOX|2"),
 		scannedIMAPDelta("Trash", 22, "Trash|1", "Trash|2", "INBOX|2"),
 	}))
-	_, err := f.store.DB().Exec(f.store.Rebind(`UPDATE messages
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE messages
 		SET deleted_from_source_at = '2026-01-01 00:00:00' WHERE id = ?`), skippedDeleted)
 	require.NoError(err)
 	deletedBefore, err := f.store.GetMessage(skippedDeleted)
@@ -92,7 +92,7 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 			archiveMoved := f.createMessage(t, "Archive|Projects|1", "")
 			archiveRetained := f.createMessage(t, "Archive|Projects|2", "")
 			malformed := f.createMessage(t, "INBOX|01", "")
-			_, err := f.store.DB().Exec(f.store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), archiveOnly)
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), archiveOnly)
 			require.NoError(err)
 			label, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "system")
 			require.NoError(err)
