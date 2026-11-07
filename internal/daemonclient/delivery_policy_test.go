@@ -12,10 +12,11 @@ import (
 
 func TestDeliveryPolicyClientPreservesStateAndReceipts(t *testing.T) {
 	inheritedJSON := `{"person_uid":"person-7","revision":2,"effective_policy":"draft_only","inheritance_source":"system_default","reason":"draft_required"}`
+	assert, require := assert.New(t), require.New(t)
 	addressDraftJSON := `{"person_uid":"person-7","revision":2,"effective_policy":"draft_only","inheritance_source":"system_default","reason":"draft_required","endpoint":"peer@example.test"}`
 	approvedJSON := `{"person_uid":"person-7","revision":3,"stored_policy":"send_allowed","effective_policy":"send_allowed","inheritance_source":"contact_method","reason":"explicit_approval","endpoint":"peer@example.test"}`
 	client := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(http.MethodPost, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		var body string
 		switch r.URL.Path {
@@ -30,7 +31,7 @@ func TestDeliveryPolicyClientPreservesStateAndReceipts(t *testing.T) {
 			return
 		}
 		_, err := w.Write([]byte(body))
-		assert.NoError(t, err)
+		assert.NoError(err)
 	})
 
 	inherited := store.DeliveryPolicyState{
@@ -38,15 +39,15 @@ func TestDeliveryPolicyClientPreservesStateAndReceipts(t *testing.T) {
 		InheritanceSource: "system_default", Reason: "draft_required",
 	}
 	state, err := client.GetDeliveryPolicy(t.Context(), store.DeliveryPolicyQuery{PersonUID: "person-7"})
-	require.NoError(t, err)
-	assert.Equal(t, &inherited, state)
+	require.NoError(err)
+	assert.Equal(&inherited, state)
 
 	receipt, err := client.SetDeliveryPolicy(t.Context(), store.DeliveryPolicyWrite{
 		PersonUID: "person-7", Endpoint: "peer@example.test", ExpectedRevision: 2,
 		Policy: store.DeliverySendAllowed, Reason: "Approved address",
 	})
-	require.NoError(t, err)
-	assert.Equal(t, &store.DeliveryPolicyReceipt{
+	require.NoError(err)
+	assert.Equal(&store.DeliveryPolicyReceipt{
 		Before: store.DeliveryPolicyState{
 			PersonUID: "person-7", Revision: 2, EffectivePolicy: store.DeliveryDraftOnly,
 			InheritanceSource: "system_default", Reason: "draft_required", Endpoint: "peer@example.test",
@@ -64,6 +65,6 @@ func TestDeliveryPolicyClientPreservesStateAndReceipts(t *testing.T) {
 	receipt, err = client.ClearDeliveryPolicy(t.Context(), store.DeliveryPolicyWrite{
 		PersonUID: "person-7", ExpectedRevision: 2, Reason: "Already inherited",
 	})
-	require.NoError(t, err)
-	assert.Equal(t, &store.DeliveryPolicyReceipt{Before: inherited, After: inherited}, receipt)
+	require.NoError(err)
+	assert.Equal(&store.DeliveryPolicyReceipt{Before: inherited, After: inherited}, receipt)
 }

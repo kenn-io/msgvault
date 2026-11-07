@@ -181,7 +181,7 @@ func TestDeliveryPolicyUnchangedWritesKeepRevisionAndAudit(t *testing.T) {
 	}
 	assert.Equal(allowed.Revision, readDelivery(t, f.Store, p.VCardUID, addresses[0]).Revision)
 	var audits int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=?`), p.VCardUID).Scan(&audits))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=?`), p.VCardUID).Scan(&audits))
 	assert.Equal(1, audits)
 
 	setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
@@ -194,7 +194,7 @@ func TestDeliveryPolicyUnchangedWritesKeepRevisionAndAudit(t *testing.T) {
 	unchanged := setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
 	assert.Nil(unchanged.Audit)
 	assert.Equal(before.Revision, unchanged.After.Revision)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=?`), p.VCardUID).Scan(&audits))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=?`), p.VCardUID).Scan(&audits))
 	assert.Equal(2, audits)
 }
 
@@ -204,7 +204,7 @@ func TestDeliveryPolicyRemovingAndReaddingTheAddress(t *testing.T) {
 	p, addresses := deliveryPerson(t, f)
 	audits := func() int {
 		var n int
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=?`), p.VCardUID).Scan(&n))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=?`), p.VCardUID).Scan(&n))
 		return n
 	}
 	resave := func(address string, readd bool) {
@@ -418,7 +418,7 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 			absorbed, err = f.Store.GetPersonContext(t.Context(), absorbed.ID)
 			require.NoError(err)
 			var absorbedDelivery int64
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT delivery_revision FROM persons WHERE id=?`), absorbed.ID).Scan(&absorbedDelivery))
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT delivery_revision FROM persons WHERE id=?`), absorbed.ID).Scan(&absorbedDelivery))
 
 			_, err = f.Store.MergePersonsContext(t.Context(), store.PersonMergeRequest{
 				SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
@@ -427,8 +427,8 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 			})
 			require.NoError(err)
 			var rows, audits int
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policies WHERE person_id IN (?, ?)`), survivor.ID, absorbed.ID).Scan(&rows))
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND reason='person_merged' AND actor='merger' AND after_policy IS NULL`), owner.VCardUID).Scan(&audits))
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policies WHERE person_id IN (?, ?)`), survivor.ID, absorbed.ID).Scan(&rows))
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND reason='person_merged' AND actor='merger' AND after_policy IS NULL`), owner.VCardUID).Scan(&audits))
 			if test.keeps {
 				assert.Equal(1, rows)
 				if test.onSurv {
@@ -442,10 +442,10 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 			assert.Zero(rows)
 			assert.Equal(1, audits, "one audit row for the ended policy")
 			var audited int64
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT revision FROM delivery_policy_audit WHERE person_uid=? AND reason='person_merged'`), owner.VCardUID).Scan(&audited))
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT revision FROM delivery_policy_audit WHERE person_uid=? AND reason='person_merged'`), owner.VCardUID).Scan(&audited))
 			committed := absorbed.Revision + 1 + absorbedDelivery
 			if test.onSurv {
-				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT revision + delivery_revision FROM persons WHERE vcard_uid=?`), owner.VCardUID).Scan(&committed))
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT revision + delivery_revision FROM persons WHERE vcard_uid=?`), owner.VCardUID).Scan(&committed))
 			}
 			assert.Equal(committed, audited, "the audit row carries the committed revision")
 			if policy == store.DeliverySendAllowed {
@@ -483,7 +483,7 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		assert.Equal(store.DeliverySendAllowed, readDelivery(t, f.Store, survivor.VCardUID, addresses[0]).EffectivePolicy)
 
 		var audits int
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND scope=? AND reason='person_merged' AND actor='merger' AND before_policy='send_allowed' AND after_policy='draft_only'`), survivor.VCardUID, address).Scan(&audits))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND scope=? AND reason='person_merged' AND actor='merger' AND before_policy='send_allowed' AND after_policy='draft_only'`), survivor.VCardUID, address).Scan(&audits))
 		assert.Equal(1, audits, "the survivor's replaced approval has a merge audit row")
 	})
 
@@ -496,7 +496,7 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		require.NoError(err)
 		require.NoError(f.Store.DeletePersonContext(t.Context(), current.ID, current.Revision))
 		var audits int
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND reason='person_deleted' AND before_policy='send_allowed' AND after_policy IS NULL`), p.VCardUID).Scan(&audits))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM delivery_policy_audit WHERE person_uid=? AND reason='person_deleted' AND before_policy='send_allowed' AND after_policy IS NULL`), p.VCardUID).Scan(&audits))
 		assert.Equal(1, audits, "the cascade drops the default, with an audit row")
 	})
 
@@ -516,7 +516,7 @@ func TestDeliveryPolicyEndsOnPersonMergeOrDelete(t *testing.T) {
 		})
 		require.NoError(err)
 		var audits int
-		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM delivery_policy_audit`).Scan(&audits))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM delivery_policy_audit`).Scan(&audits))
 		assert.Zero(audits, "a merge without policies writes no audit row")
 	})
 }
@@ -686,7 +686,7 @@ func TestDeliveryPolicyRestrictionNeedsAnAddressThePersonHolds(t *testing.T) {
 		}
 	}
 	var stored int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM delivery_policies`).Scan(&stored))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM delivery_policies`).Scan(&stored))
 	assert.Zero(stored)
 
 	// A held but undeclared row can still be restricted.
@@ -706,7 +706,7 @@ func TestDeliveryPolicyWritesLeaveThePersonRevisionAlone(t *testing.T) {
 	f := storetest.New(t)
 	p, addresses := deliveryPerson(t, f)
 	personRevision := func() (revision int64) {
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT revision FROM persons WHERE id=?`), p.ID).Scan(&revision))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT revision FROM persons WHERE id=?`), p.ID).Scan(&revision))
 		return revision
 	}
 	before := personRevision()
@@ -742,7 +742,7 @@ func TestDeliveryPolicyBindsTheLowestDuplicateContactPoint(t *testing.T) {
 	p, addresses := deliveryPerson(t, f)
 	deliveryContactPoint(t, f, p.ID, addresses[0])
 	var lowest, count int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT MIN(id), COUNT(*) FROM person_contact_points WHERE person_id=? AND normalized_value=?`), p.ID, addresses[0]).Scan(&lowest, &count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT MIN(id), COUNT(*) FROM person_contact_points WHERE person_id=? AND normalized_value=?`), p.ID, addresses[0]).Scan(&lowest, &count))
 	require.EqualValues(2, count)
 
 	receipt := setDelivery(t, f.Store, p.VCardUID, addresses[0], store.DeliverySendAllowed)
