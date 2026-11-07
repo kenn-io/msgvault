@@ -202,7 +202,7 @@ func TestVisualWorkerDiscardsLateResultAfterSourceChange(t *testing.T) {
 	assert := assert.New(t)
 	f, generation, work := workerFixture(t, 1)
 	provider := &fakeVisualProvider{callback: func([]DocumentInput) {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET subject = ? WHERE id = ?`),
 			"changed during provider request", work[0].Candidate.Owner.MessageID)
 		require.NoError(err)

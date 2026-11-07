@@ -27,12 +27,12 @@ func TestDocbankAttachmentStatusCounts(t *testing.T) {
 	}
 
 	var checkpoints int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM archive_metadata WHERE key='beeper_media_scan:dest'`).Scan(&checkpoints))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM archive_metadata WHERE key='beeper_media_scan:dest'`).Scan(&checkpoints))
 	require.Zero(checkpoints)
 	status, err := f.Store.DocbankAttachmentStatus(t.Context(), "dest")
 	require.NoError(err)
 	assert.Equal(store.DocbankAttachmentSummary{Remaining: 1, Reasons: map[string]int64{}}, status)
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM archive_metadata WHERE key='beeper_media_scan:dest'`).Scan(&checkpoints))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM archive_metadata WHERE key='beeper_media_scan:dest'`).Scan(&checkpoints))
 	assert.Zero(checkpoints, "status must leave an absent checkpoint in memory")
 	require.NoError(f.Store.QueueDocbankAttachmentIntents(t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash}))
 	status, err = f.Store.DocbankAttachmentStatus(t.Context(), "dest")
@@ -63,7 +63,7 @@ func TestDocbankAttachmentDiscoveryBoundsConcurrentImports(t *testing.T) {
 	}
 	add(0)
 	hash := strings.Repeat("a", 64)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET content_hash=?,storage_path=?,attachment_state='stored' WHERE source_part_key='part:500'`), strings.ToUpper(hash), "aa/"+hash)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash=?,storage_path=?,attachment_state='stored' WHERE source_part_key='part:500'`), strings.ToUpper(hash), "aa/"+hash)
 	require.NoError(err)
 	page, err := f.Store.NextDocbankAttachmentPage(t.Context(), "dest")
 	require.NoError(err)
@@ -146,14 +146,14 @@ func TestDocbankAttachmentPagesAndBackfill(t *testing.T) {
 	assert.Equal(store.DocbankAttachmentSummary{Delivered: 1, Reasons: map[string]int64{}}, status)
 	before, err = f.Store.LoadDocbankAttachmentScan(t.Context(), "dest")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP`)
 	require.NoError(err)
-	_, err = f.Store.MergeDuplicates(f.CreateMessage("survivor"), []int64{mid}, "hidden")
+	_, err = f.Store.MergeDuplicates(t.Context(), f.CreateMessage("survivor"), []int64{mid}, "hidden")
 	require.NoError(err)
 	consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(t.Context(), "other-consumer")
 	require.NoError(err)
 	require.NoError(f.Store.CompleteAttachmentChangeReconciliation(t.Context(), consumer.ConsumerKey, consumer.BaselineSequence))
-	restored, err := f.Store.UndoDedup("hidden")
+	restored, err := f.Store.UndoDedup(t.Context(), "hidden")
 	require.NoError(err)
 	assert.Equal(int64(1), restored)
 	after, err = f.Store.LoadDocbankAttachmentScan(t.Context(), "dest")
@@ -180,7 +180,7 @@ func TestDocbankAttachmentReceiptsBeyondChunk(t *testing.T) {
 	prefix := "main."
 	if f.Store.IsPostgreSQL() {
 		var schema string
-		require.NoError(f.Store.DB().QueryRow(`SELECT current_schema()`).Scan(&schema))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT current_schema()`).Scan(&schema))
 		prefix = schema + "."
 	}
 	uppercaseHash := hashes[10]
@@ -228,14 +228,14 @@ func TestDocbankAttachmentDiscoveryEligibility(t *testing.T) {
 			hash := strings.Repeat("a", 64)
 			mid := f.CreateMessage("discovery")
 			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "file.pdf", MIMEType: "application/pdf", StoragePath: "aa/" + hash, Size: 10, State: "stored"}))
-			_, err := f.Store.DB().Exec(`UPDATE attachments SET ` + tc.change)
+			_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE attachments SET `+tc.change)
 			require.NoError(err)
 			if tc.name == "hidden message" {
-				_, err = f.Store.DB().Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP`)
+				_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_at=CURRENT_TIMESTAMP`)
 				require.NoError(err)
 			}
 			if tc.name == "source deleted message" {
-				_, err = f.Store.DB().Exec(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP`)
+				_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP`)
 				require.NoError(err)
 			}
 			page, err := f.Store.NextDocbankAttachmentPage(t.Context(), "dest")
@@ -372,7 +372,7 @@ func TestDocbankAttachmentConsumerRemovalLocksOnlyRetiredConsumers(t *testing.T)
 	require.NoError(f.Store.AdvanceAttachmentChangeConsumer(t.Context(), consumer.ConsumerKey, changes[len(changes)-1].Sequence))
 	require.NoError(f.Store.RemoveInactiveDocbankAttachmentConsumers(t.Context(), "dest"))
 	var retained int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachment_change_log`).Scan(&retained))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachment_change_log`).Scan(&retained))
 	assert.Zero(retained)
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL table locks")
@@ -381,10 +381,10 @@ func TestDocbankAttachmentConsumerRemovalLocksOnlyRetiredConsumers(t *testing.T)
 	require.NoError(err)
 	_, _, err = f.Store.RegisterAttachmentChangeConsumer(t.Context(), "other-consumer")
 	require.NoError(err)
-	tx, err := f.Store.DB().Begin()
+	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(`LOCK TABLE attachments IN ROW EXCLUSIVE MODE`)
+	_, err = tx.ExecContext(t.Context(), `LOCK TABLE attachments IN ROW EXCLUSIVE MODE`)
 	require.NoError(err)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -392,10 +392,10 @@ func TestDocbankAttachmentConsumerRemovalLocksOnlyRetiredConsumers(t *testing.T)
 	require.NoError(tx.Rollback())
 	_, _, err = f.Store.RegisterAttachmentChangeConsumer(t.Context(), store.DocbankAttachmentConsumerKey("retired"))
 	require.NoError(err)
-	tx, err = f.Store.DB().Begin()
+	tx, err = f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(`LOCK TABLE attachments IN ROW EXCLUSIVE MODE`)
+	_, err = tx.ExecContext(t.Context(), `LOCK TABLE attachments IN ROW EXCLUSIVE MODE`)
 	require.NoError(err)
 	ctx, cancelLock := context.WithTimeout(t.Context(), time.Second)
 	defer cancelLock()
@@ -417,9 +417,9 @@ func TestDocbankAttachmentRetryPagesAtScale(t *testing.T) {
 	if f.Store.IsPostgreSQL() {
 		hashSQL = "lpad(to_hex(i),64,'0')"
 	}
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`WITH RECURSIVE ids(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM ids WHERE i<5000) INSERT INTO attachments(message_id,content_hash,storage_path,attachment_state) SELECT ?,`+hashSQL+`,SUBSTR(`+hashSQL+`,1,2)||'/'||`+hashSQL+`,'stored' FROM ids`), mid)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`WITH RECURSIVE ids(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM ids WHERE i<5000) INSERT INTO attachments(message_id,content_hash,storage_path,attachment_state) SELECT ?,`+hashSQL+`,SUBSTR(`+hashSQL+`,1,2)||'/'||`+hashSQL+`,'stored' FROM ids`), mid)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,endpoint,folder,attempts) SELECT 'dest',content_hash,'file.pdf','application/pdf','sending','','',1 FROM attachments ORDER BY id LIMIT 5000`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,endpoint,folder,attempts) SELECT 'dest',content_hash,'file.pdf','application/pdf','sending','','',1 FROM attachments ORDER BY id LIMIT 5000`)
 	require.NoError(err)
 	seen := make(map[string]bool)
 	for range 10 {
@@ -432,7 +432,7 @@ func TestDocbankAttachmentRetryPagesAtScale(t *testing.T) {
 			seen[d.ContentHash] = true
 			args = append(args, d.ContentHash)
 		}
-		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE docbank_attachment_deliveries SET attempts=attempts+1 WHERE content_hash IN (?`+strings.Repeat(",?", len(args)-1)+`)`), args...)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE docbank_attachment_deliveries SET attempts=attempts+1 WHERE content_hash IN (?`+strings.Repeat(",?", len(args)-1)+`)`), args...)
 		require.NoError(err)
 	}
 	assert.Len(seen, 5000)
@@ -447,7 +447,7 @@ func TestDocbankAttachmentDeletedAfterIntent(t *testing.T) {
 			hash := strings.Repeat("a", 64)
 			require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), f.CreateMessage("deleted"), store.AttachmentWrite{ContentHash: hash, StoragePath: "aa/" + hash, State: "stored"}))
 			if beforeIntent {
-				_, err := f.Store.DB().Exec(`DELETE FROM attachments`)
+				_, err := f.Store.DB().ExecContext(t.Context(), `DELETE FROM attachments`)
 				require.NoError(err)
 				_, err = f.Store.SaveDocbankAttachmentIntent(t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash})
 				require.ErrorIs(err, sql.ErrNoRows)
@@ -458,7 +458,7 @@ func TestDocbankAttachmentDeletedAfterIntent(t *testing.T) {
 			}
 			_, err := f.Store.SaveDocbankAttachmentIntent(t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash})
 			require.NoError(err)
-			_, err = f.Store.DB().Exec(`DELETE FROM attachments`)
+			_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM attachments`)
 			require.NoError(err)
 			status, err := f.Store.DocbankAttachmentStatus(t.Context(), "dest")
 			require.NoError(err)
@@ -500,7 +500,7 @@ func TestDocbankAttachmentRetryDelay(t *testing.T) {
 	before := time.Now().UTC().Truncate(time.Second).Add(5 * time.Minute)
 	require.NoError(f.Store.RecordDocbankAttachmentRetry(t.Context(), "dest", d, "forbidden"))
 	var retryAt time.Time
-	require.NoError(f.Store.DB().QueryRow(`SELECT next_action_at FROM docbank_attachment_deliveries`).Scan(&retryAt))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT next_action_at FROM docbank_attachment_deliveries`).Scan(&retryAt))
 	assert.False(retryAt.Before(before))
 	intents, err = f.Store.SendingDocbankAttachments(t.Context(), "dest")
 	require.NoError(err)
@@ -511,7 +511,7 @@ func TestDocbankAttachmentRetryDelay(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), status.Sending)
 	assert.Equal(int64(1), status.Reasons["forbidden"])
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE docbank_attachment_deliveries SET next_action_at=?`), time.Now().UTC().Add(-time.Minute))
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE docbank_attachment_deliveries SET next_action_at=?`), time.Now().UTC().Add(-time.Minute))
 	require.NoError(err)
 	intents, err = f.Store.SendingDocbankAttachments(t.Context(), "dest")
 	require.NoError(err)

@@ -58,18 +58,18 @@ func TestInitSchemaBackfillsLegacyIdentityDerivedAttribution(t *testing.T) {
 	nativeMessageID, err := st.UpsertMessage(nativeMessage)
 	require.NoError(err, "persist source-native control")
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET source_is_from_me = NULL, identity_is_from_me = FALSE
 		WHERE id IN (?, ?, ?)
 	`), migrated[0].messageID, migrated[1].messageID, nativeMessageID)
 	require.NoError(err, "simulate rows written before attribution provenance")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
 	`), "message_attribution_provenance_v3")
 	require.NoError(err, "reset attribution migration sentinel")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO applied_migrations (name)
 		VALUES ('message_attribution_provenance_v1')
 		ON CONFLICT (name) DO NOTHING
@@ -82,7 +82,7 @@ func TestInitSchemaBackfillsLegacyIdentityDerivedAttribution(t *testing.T) {
 		var sourceDerived sql.NullBool
 		var identityDerived bool
 		require.NoError(
-			st.DB().QueryRow(st.Rebind(`
+			st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT source_is_from_me, identity_is_from_me
 				FROM messages
 				WHERE id = ?
@@ -97,14 +97,14 @@ func TestInitSchemaBackfillsLegacyIdentityDerivedAttribution(t *testing.T) {
 		removed, removeErr := st.RemoveAccountIdentity(message.sourceID, "owner@example.com")
 		require.NoError(removeErr, "remove migrated identity")
 		require.Equal(int64(1), removed)
-		isFromMe, attributionErr := st.GetMessageIsFromMe(message.messageID)
+		isFromMe, attributionErr := st.GetMessageIsFromMe(t.Context(), message.messageID)
 		require.NoError(attributionErr, "read attribution after identity removal")
 		assert.False(isFromMe, "identity removal must clear migrated attribution")
 	}
 
 	var nativeSourceDerived sql.NullBool
 	require.NoError(
-		st.DB().QueryRow(st.Rebind(`
+		st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT source_is_from_me
 			FROM messages
 			WHERE id = ?
@@ -141,13 +141,13 @@ func TestInitSchemaClearsLegacyAttributionWithoutRemainingIdentity(t *testing.T)
 	})
 	require.NoError(err, "persist stale legacy attribution")
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET source_is_from_me = NULL, identity_is_from_me = FALSE
 		WHERE id = ?
 	`), messageID)
 	require.NoError(err, "simulate message written before attribution provenance")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
 	`), "message_attribution_provenance_v3")
@@ -157,7 +157,7 @@ func TestInitSchemaClearsLegacyAttributionWithoutRemainingIdentity(t *testing.T)
 
 	var sourceDerived, identityDerived, isFromMe bool
 	require.NoError(
-		st.DB().QueryRow(st.Rebind(`
+		st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT source_is_from_me, identity_is_from_me, is_from_me
 			FROM messages
 			WHERE id = ?
@@ -185,7 +185,7 @@ func TestInitSchemaReconcilesConfirmedIdentityForEverySource(t *testing.T) {
 	messageID, err := st.UpsertMessage(message)
 	require.NoError(err, "persist matching Gmail message")
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET is_from_me = FALSE,
 		    source_is_from_me = NULL,
@@ -193,7 +193,7 @@ func TestInitSchemaReconcilesConfirmedIdentityForEverySource(t *testing.T) {
 		WHERE id = ?
 	`), messageID)
 	require.NoError(err, "simulate stale legacy Gmail attribution")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
 	`), "message_attribution_provenance_v3")
@@ -205,7 +205,7 @@ func TestInitSchemaReconcilesConfirmedIdentityForEverySource(t *testing.T) {
 
 	var sourceDerived, identityDerived, isFromMe bool
 	require.NoError(
-		st.DB().QueryRow(st.Rebind(`
+		st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT source_is_from_me, identity_is_from_me, is_from_me
 			FROM messages
 			WHERE id = ?
@@ -258,18 +258,18 @@ func TestInitSchemaReconcilesEnvelopeAuthorityForUpgradedArchives(t *testing.T) 
 	})
 	require.NoError(err, "persist message with non-owner envelope")
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET identity_is_from_me = TRUE, is_from_me = TRUE
 		WHERE id = ?
 	`), messageID)
 	require.NoError(err, "simulate attribution reconciled under the v2 predicate")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
 	`), "message_attribution_provenance_v3")
 	require.NoError(err, "reset v3 migration sentinel")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO applied_migrations (name)
 		VALUES ('message_attribution_provenance_v2')
 		ON CONFLICT (name) DO NOTHING
@@ -280,7 +280,7 @@ func TestInitSchemaReconcilesEnvelopeAuthorityForUpgradedArchives(t *testing.T) 
 	require.NoError(err, "read account identity revision before upgrade")
 	require.NoError(st.InitSchema(), "upgrade archive")
 
-	isFromMe, err := st.GetMessageIsFromMe(messageID)
+	isFromMe, err := st.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err, "read attribution after upgrade")
 	assert.False(isFromMe,
 		"v3 must re-reconcile envelope-authoritative attribution on v2 archives")
@@ -339,7 +339,7 @@ func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
 		`{"organizer":{"email":"owner@example.com","self":true}}`,
 	)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET source_is_from_me = NULL,
 		    identity_is_from_me = FALSE,
@@ -347,7 +347,7 @@ func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
 		WHERE id IN (?, ?)
 	`), identityMessageID, nativeMessageID)
 	require.NoError(err, "simulate calendar rows written before attribution provenance")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM applied_migrations
 		WHERE name = ?
 	`), "message_attribution_provenance_v3")
@@ -357,7 +357,7 @@ func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
 
 	var identitySourceDerived, identityDerived bool
 	require.NoError(
-		st.DB().QueryRow(st.Rebind(`
+		st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT source_is_from_me, identity_is_from_me
 			FROM messages
 			WHERE id = ?
@@ -369,7 +369,7 @@ func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
 
 	var nativeSourceDerived bool
 	require.NoError(
-		st.DB().QueryRow(st.Rebind(`
+		st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT source_is_from_me
 			FROM messages
 			WHERE id = ?
@@ -382,10 +382,10 @@ func TestInitSchemaBackfillsLegacyCalendarAttributionProvenance(t *testing.T) {
 	require.NoError(err, "remove configured calendar identity")
 	require.Equal(int64(1), removed)
 
-	identityIsFromMe, err := st.GetMessageIsFromMe(identityMessageID)
+	identityIsFromMe, err := st.GetMessageIsFromMe(t.Context(), identityMessageID)
 	require.NoError(err, "read configured-account attribution after identity removal")
 	assert.False(identityIsFromMe, "identity removal must clear configured-account attribution")
-	nativeIsFromMe, err := st.GetMessageIsFromMe(nativeMessageID)
+	nativeIsFromMe, err := st.GetMessageIsFromMe(t.Context(), nativeMessageID)
 	require.NoError(err, "read Organizer.Self attribution after identity removal")
 	assert.True(nativeIsFromMe, "identity removal must preserve Organizer.Self attribution")
 }

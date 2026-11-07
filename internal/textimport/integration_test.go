@@ -1,7 +1,6 @@
 package textimport_test
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -31,7 +30,7 @@ func TestNormalizeAddressClassifiesPhoneAndRaw(t *testing.T) {
 func TestIntegration(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a temporary on-disk DB (store.Open does MkdirAll, WAL, etc.)
 	dbPath := filepath.Join(t.TempDir(), "integration.db")
@@ -51,9 +50,9 @@ func TestIntegration(t *testing.T) {
 	// Both sources reference the same phone +15551234567.
 	// EnsureParticipantByPhone deduplicates by phone, so both calls should
 	// return the same participant ID.
-	participantID1, err := s.EnsureParticipantByPhone("+15551234567", "Alice", "whatsapp")
+	participantID1, err := s.EnsureParticipantByPhone(t.Context(), "+15551234567", "Alice", "whatsapp")
 	require.NoError(err, "EnsureParticipantByPhone(src1)")
-	participantID2, err := s.EnsureParticipantByPhone("+15551234567", "Alice", "imessage")
+	participantID2, err := s.EnsureParticipantByPhone(t.Context(), "+15551234567", "Alice", "imessage")
 	require.NoError(err, "EnsureParticipantByPhone(src2)")
 	assert.Equal(participantID1, participantID2, "same phone across sources: participant IDs differ")
 	phoneParticipantID := participantID1
@@ -182,18 +181,20 @@ func TestIntegration(t *testing.T) {
 	}
 
 	// --- Labels ---
-	labelID, err := s.EnsureLabel(src1.ID, "important", "Important", "user")
+	labelID, err := s.EnsureLabel(t.Context(), src1.ID, "important", "Important", "user")
 	require.NoError(err, "EnsureLabel")
 	// Fetch the first WhatsApp message ID to link a label.
 	var wa1MsgID int64
-	require.NoError(s.DB().QueryRow(
+	require.NoError(s.DB().QueryRowContext(
+		t.Context(),
 		`SELECT id FROM messages WHERE source_message_id = ?`, "wa-1",
 	).Scan(&wa1MsgID), "lookup wa-1 message")
-	require.NoError(s.LinkMessageLabel(wa1MsgID, labelID), "LinkMessageLabel")
+	require.NoError(s.LinkMessageLabel(t.Context(), wa1MsgID, labelID), "LinkMessageLabel")
 
 	// Verify label is linked.
 	var labelCount int
-	require.NoError(s.DB().QueryRow(
+	require.NoError(s.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM message_labels WHERE message_id = ?`, wa1MsgID,
 	).Scan(&labelCount), "count labels")
 	assert.Equal(1, labelCount, "label count for wa-1")
@@ -204,7 +205,8 @@ func TestIntegration(t *testing.T) {
 
 	// Verify conversation stats for conv1.
 	var msgCount int64
-	require.NoError(s.DB().QueryRow(
+	require.NoError(s.DB().QueryRowContext(
+		t.Context(),
 		`SELECT message_count FROM conversations WHERE id = ?`, conv1ID,
 	).Scan(&msgCount), "read conv1 stats")
 	assert.Equal(int64(4), msgCount, "conv1 message_count")

@@ -92,7 +92,7 @@ func (s *Store) ApplyMessageDateRepairs(
 		  AND CAST(last_modified AS TEXT) = ?
 	`, s.messageDateOutsideBoundsPredicate("sent_at"))
 
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		for _, repair := range repairs {
 			result, err := tx.ExecContext(
 				ctx,

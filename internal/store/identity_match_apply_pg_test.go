@@ -46,9 +46,11 @@ func TestPostgreSQLSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing
 	systemFinished := make(chan struct{})
 	rejectionDone := make(chan error, 1)
 	systemDone := make(chan error, 1)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if locked {
-			_, _ = holder.ExecContext(context.Background(),
+			_, _ = holder.ExecContext(
+				context.WithoutCancel(t.Context()),
 				`SELECT pg_advisory_unlock($1)`, advisoryKey)
 		}
 		if rejectionStarted {
@@ -156,9 +158,11 @@ func TestPostgreSQLAcceptedMatchApplicationRechecksStateAfterLock(t *testing.T) 
 	applicationFinished := make(chan struct{})
 	decisionStarted := false
 	applicationStarted := false
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if locked {
-			_, _ = holder.ExecContext(context.Background(),
+			_, _ = holder.ExecContext(
+				context.WithoutCancel(t.Context()),
 				`SELECT pg_advisory_unlock($1)`, advisoryKey)
 		}
 		if decisionStarted {
@@ -271,9 +275,11 @@ func TestPostgreSQLAppliedMatchBlocksConcurrentConflictDecision(t *testing.T) {
 	decisionFinished := make(chan struct{})
 	applicationStarted := false
 	decisionStarted := false
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if locked {
-			_, _ = holder.ExecContext(context.Background(),
+			_, _ = holder.ExecContext(
+				context.WithoutCancel(t.Context()),
 				`SELECT pg_advisory_unlock($1)`, advisoryKey)
 		}
 		if applicationStarted {
@@ -412,9 +418,11 @@ func testPostgreSQLAcceptedApplicationDuringParticipantMerge(
 	applicationFinished := make(chan struct{})
 	mergeStarted := false
 	applicationStarted := false
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if locked {
-			_, _ = holder.ExecContext(context.Background(),
+			_, _ = holder.ExecContext(
+				context.WithoutCancel(t.Context()),
 				`SELECT pg_advisory_unlock($1)`, advisoryKey)
 		}
 		if mergeStarted {

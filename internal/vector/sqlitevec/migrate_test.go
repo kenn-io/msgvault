@@ -3,7 +3,6 @@
 package sqlitevec
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,7 @@ import (
 )
 
 func TestMigrate_FreshAndIdempotent(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vectors.db")
 
@@ -29,7 +28,7 @@ func TestMigrate_FreshAndIdempotent(t *testing.T) {
 		"embed_watermark", "vectors_vec_d768", "vector_accelerators", "schema_version",
 	} {
 		var name string
-		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
+		err := db.QueryRowContext(t.Context(), `SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name)
 		require.NoErrorf(t, err, "table %s missing", tbl)
 	}
 
@@ -42,25 +41,25 @@ func TestMigrate_EmbeddingTriggersMaintainCountAndRevision(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	require.NoError(t, Migrate(t.Context(), db, 4))
 
-	result, err := db.Exec(`INSERT INTO index_generations
+	result, err := db.ExecContext(t.Context(), `INSERT INTO index_generations
 		(model, dimension, fingerprint, started_at, state)
 		VALUES ('model', 4, 'fingerprint', 1, 'active')`)
 	require.NoError(t, err)
 	generationID, err := result.LastInsertId()
 	require.NoError(t, err)
 
-	_, err = db.Exec(`INSERT INTO embeddings
+	_, err = db.ExecContext(t.Context(), `INSERT INTO embeddings
 		(generation_id, message_id, chunk_index, embedded_at, source_char_len)
 		VALUES (?, 10, 0, 1, 4), (?, 10, 1, 1, 4)`, generationID, generationID)
 	require.NoError(t, err)
 	assertGenerationVectorState(t, db, generationID, 2, 2)
 
-	_, err = db.Exec(`UPDATE embeddings SET message_id = 11
+	_, err = db.ExecContext(t.Context(), `UPDATE embeddings SET message_id = 11
 		WHERE generation_id = ? AND chunk_index = 1`, generationID)
 	require.NoError(t, err)
 	assertGenerationVectorState(t, db, generationID, 2, 3)
 
-	_, err = db.Exec(`DELETE FROM embeddings
+	_, err = db.ExecContext(t.Context(), `DELETE FROM embeddings
 		WHERE generation_id = ? AND chunk_index = 0`, generationID)
 	require.NoError(t, err)
 	assertGenerationVectorState(t, db, generationID, 1, 4)
@@ -69,7 +68,7 @@ func TestMigrate_EmbeddingTriggersMaintainCountAndRevision(t *testing.T) {
 func TestMigrateAcceleratorMetadataRollsBackFailedBackfill(t *testing.T) {
 	db := openTestDB(t, filepath.Join(t.TempDir(), "vectors.db"))
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err := db.Exec(`CREATE TABLE index_generations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE index_generations (
 		id INTEGER PRIMARY KEY,
 		model TEXT NOT NULL,
 		dimension INTEGER NOT NULL,
@@ -98,7 +97,7 @@ func assertGenerationVectorState(
 ) {
 	t.Helper()
 	var count, revision int64
-	require.NoError(t, db.QueryRow(`SELECT embedding_count, vector_revision
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embedding_count, vector_revision
 		FROM index_generations WHERE id = ?`, generationID).Scan(&count, &revision))
 	assert.Equal(t, wantCount, count)
 	assert.Equal(t, wantRevision, revision)
@@ -121,7 +120,7 @@ func assertGenerationVectorState(
 func TestMigrate_LegacyToChunked(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
 	t.Cleanup(func() { _ = db.Close() })
@@ -271,7 +270,7 @@ func TestMigrate_LegacyToChunked(t *testing.T) {
 func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db := openTestDB(t, path)
 	t.Cleanup(func() { _ = db.Close() })
@@ -381,14 +380,15 @@ func TestMigrate_LegacyToChunked_MultiGenerationCollision(t *testing.T) {
 }
 
 func TestMigrate_CreatesDimensionSpecificVecTable(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openTestDB(t, filepath.Join(t.TempDir(), "v.db"))
 	t.Cleanup(func() { _ = db.Close() })
 
 	require.NoError(t, Migrate(ctx, db, 768), "migrate 768")
 	require.NoError(t, EnsureVectorTable(ctx, db, 1024), "ensure 1024")
 	var name string
-	err := db.QueryRow(
+	err := db.QueryRowContext(
+		t.Context(),
 		`SELECT name FROM sqlite_master WHERE name = 'vectors_vec_d1024'`).Scan(&name)
 	assert.NoError(t, err, "vectors_vec_d1024 not created")
 }
@@ -406,7 +406,7 @@ func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 	require := require.
 		New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	db := openTestDB(t, path)
 	t.Cleanup(func() { _ = db.Close() })
@@ -461,7 +461,7 @@ func openTestDB(t *testing.T, path string) *sql.DB {
 func TestForeignKeys_PerConnection(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vectors.db")
 

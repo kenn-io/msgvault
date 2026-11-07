@@ -28,9 +28,9 @@ func TestImportedMeetingRosterExcludesRoomGroups(t *testing.T) {
 	}, meetingarchive.UpsertOptions{})
 	requirements.NoError(err)
 	analyticsDir := filepath.Join(root, "analytics")
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(engine.Close()) })
 	for _, dimension := range []string{"participant", "domain"} {

@@ -82,13 +82,13 @@ func defaultRepairMessageCommandDepsForContext(ctx context.Context) repairMessag
 			return preflightReauth(ctx, buildSyncPreflight(client, info, state), "", sourceID)
 		},
 		openWritableStore: func() (*store.Store, func(), error) {
-			return openWritableStoreAndInitForInvocation(state)
+			return openWritableStoreAndInitForInvocation(ctx, state)
 		},
 		openReadOnlyStore: func() (*store.Store, func(), error) {
 			if currentCfg == nil {
 				return nil, nil, errors.New("configuration is unavailable")
 			}
-			st, err := store.OpenReadOnly(currentCfg.DatabaseDSN())
+			st, err := store.OpenReadOnlyContext(ctx, currentCfg.DatabaseDSN())
 			if err != nil {
 				return nil, nil, fmt.Errorf("open database read-only: %w", err)
 			}
@@ -101,7 +101,7 @@ func defaultRepairMessageCommandDepsForContext(ctx context.Context) repairMessag
 			if currentCfg == nil {
 				return errors.New("configuration is unavailable")
 			}
-			return rebuildCacheAfterWrite(currentCfg.DatabaseDSN(), state)
+			return rebuildCacheAfterWrite(ctx, currentCfg.DatabaseDSN(), state)
 		},
 		attachmentsDir: func() string {
 			if currentCfg == nil {

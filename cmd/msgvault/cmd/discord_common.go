@@ -30,7 +30,7 @@ type discordCommandDeps struct {
 	databaseDSN          func() string
 	rebuildCache         func(string) error
 	postSourceMigrations func(*store.Store) error
-	registerGuild        func(*store.Store, discord.Guild, string) error
+	registerGuild        func(context.Context, *store.Store, discord.Guild, string) error
 }
 
 func defaultDiscordCommandDeps() discordCommandDeps {
@@ -52,7 +52,7 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 			if state == nil || currentCfg == nil {
 				return nil, nil, errors.New("configuration is unavailable")
 			}
-			return openWritableStoreAndInitForIngestInvocation(state)
+			return openWritableStoreAndInitForIngestInvocation(ctx, state)
 		},
 		tokenManager: func() *discord.TokenManager {
 			if currentCfg == nil {
@@ -86,7 +86,7 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 			return rebuildCacheAfterManualSync(dbPath, state)
 		},
 		postSourceMigrations: func(st *store.Store) error {
-			return runPostSourceCreateMigrationsForInvocation(st, state)
+			return runPostSourceCreateMigrationsForInvocation(ctx, st, state)
 		},
 		registerGuild: registerDiscordGuild,
 	}

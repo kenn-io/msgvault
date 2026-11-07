@@ -39,7 +39,7 @@ func TestLibraryHandlerGatesAuthorizedMutations(t *testing.T) { //nolint:paralle
 	handler := srv.Handler(func(http.ResponseWriter, *http.Request, Operation) bool { return true })
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil))
+	handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/rebuild-fts", nil))
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Contains(t, w.Body.String(), "operation_in_progress")
@@ -56,7 +56,7 @@ func TestLibraryHandlerAuthorizesBeforeGate(t *testing.T) { //nolint:paralleltes
 	})
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil))
+	handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/rebuild-fts", nil))
 
 	assert.Equal(t, http.StatusForbidden, w.Code, "rejected requests must not wait on or observe the gate")
 	assert.NotContains(t, w.Body.String(), "host maintenance")
@@ -92,9 +92,10 @@ func TestLibraryHandlerClientClassDoesNotLiftTimeout(t *testing.T) {
 					Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-key"}},
 					Store:  st, Logger: testLogger(), RequestTimeout: time.Second,
 				})
-				t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+				// Cleanup runs after t.Context() is canceled.
+				t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 				handler := srv.Handler(func(http.ResponseWriter, *http.Request, Operation) bool { return true })
-				r := httptest.NewRequest(http.MethodGet, "https://archive.example/api/v1/cli/stats", nil)
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://archive.example/api/v1/cli/stats", nil)
 				r.RemoteAddr = "192.0.2.10:1234"
 				if tc.cli {
 					r.Header.Set("X-Msgvault-Client", "cli")
@@ -125,7 +126,8 @@ func TestLibraryHandlerOwnsAuthentication(t *testing.T) {
 			assertions := assert.New(t)
 			srv, _ := newAgentTokenTestServer(t)
 			srv.peopleCodexLogins = newPeopleCodexLogins(completedCodexLoginClient{}, time.Now)
-			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+			// Cleanup runs after t.Context() is canceled.
+			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 			for _, allowed := range []bool{true, false} {
 				handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, _ Operation) bool {
 					if !allowed {
@@ -134,7 +136,7 @@ func TestLibraryHandlerOwnsAuthentication(t *testing.T) {
 					return allowed
 				})
 				// Even an invalid daemon credential must not override caller policy.
-				r := httptest.NewRequest(http.MethodGet, "https://archive.example"+tc.path, nil)
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://archive.example"+tc.path, nil)
 				r.Header.Set("X-Msgvault-Agent-Token", "invalid-daemon-token")
 				w := httptest.NewRecorder()
 				handler.ServeHTTP(w, r)
@@ -156,10 +158,11 @@ func TestLibraryHandlerOwnsDaemonControls(t *testing.T) {
 	srv.operationGate = NewSerialOperationGate()
 	stopped := make(chan struct{})
 	srv.shutdownFunc = func() { close(stopped) }
-	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	handler := srv.Handler(func(http.ResponseWriter, *http.Request, Operation) bool { return true })
 	begin := httptest.NewRecorder()
-	handler.ServeHTTP(begin, httptest.NewRequest(http.MethodPost, backupFreezeBeginPath, nil))
+	handler.ServeHTTP(begin, httptest.NewRequestWithContext(t.Context(), http.MethodPost, backupFreezeBeginPath, nil))
 	require.Equal(http.StatusOK, begin.Code, begin.Body.String())
 	var frozen backupFreezeBeginResponse
 	require.NoError(json.Unmarshal(begin.Body.Bytes(), &frozen))
@@ -167,12 +170,12 @@ func TestLibraryHandlerOwnsDaemonControls(t *testing.T) {
 	body, err := json.Marshal(backupFreezeEndRequest(frozen))
 	require.NoError(err)
 	end := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, backupFreezeEndPath, bytes.NewReader(body))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, backupFreezeEndPath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(end, request)
 	require.Equal(http.StatusOK, end.Code, end.Body.String())
 	shutdown := httptest.NewRecorder()
-	handler.ServeHTTP(shutdown, httptest.NewRequest(http.MethodPost, DaemonShutdownPath, nil))
+	handler.ServeHTTP(shutdown, httptest.NewRequestWithContext(t.Context(), http.MethodPost, DaemonShutdownPath, nil))
 	require.Equal(http.StatusAccepted, shutdown.Code, shutdown.Body.String())
 	select {
 	case <-stopped:

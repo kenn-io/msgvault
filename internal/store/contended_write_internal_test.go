@@ -26,7 +26,7 @@ func TestRetryContendedWriteErrRetriesTransientBusyOnly(t *testing.T) {
 	busy := sqlite3.Error{Code: sqlite3.ErrBusy}
 
 	attempts := 0
-	require.NoError(retryContendedWriteErr(context.Background(), s, "probe", func() error {
+	require.NoError(retryContendedWriteErr(t.Context(), s, "probe", func() error {
 		attempts++
 		if attempts < 3 {
 			return busy
@@ -37,7 +37,7 @@ func TestRetryContendedWriteErrRetriesTransientBusyOnly(t *testing.T) {
 
 	permanent := errors.New("not busy")
 	attempts = 0
-	err = retryContendedWriteErr(context.Background(), s, "probe", func() error {
+	err = retryContendedWriteErr(t.Context(), s, "probe", func() error {
 		attempts++
 		return permanent
 	})
@@ -45,7 +45,7 @@ func TestRetryContendedWriteErrRetriesTransientBusyOnly(t *testing.T) {
 	assert.Equal(1, attempts)
 
 	attempts = 0
-	err = retryContendedWriteErr(context.Background(), s, "probe", func() error {
+	err = retryContendedWriteErr(t.Context(), s, "probe", func() error {
 		attempts++
 		return busy
 	})
@@ -61,7 +61,7 @@ func TestRetryContendedWriteStopsWaitingWhenContextIsCancelled(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = s.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	attempts := 0
 	started := time.Now()
 	err = retryContendedWriteErr(ctx, s, "probe", func() error {

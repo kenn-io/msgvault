@@ -61,7 +61,7 @@ func TestResolveEmbedScopeSourceIDs_ConfiguredAccounts(t *testing.T) {
 	f, accountID, _ := setupScopeFixture(t)
 	testCtx := withEmbedScopeContext(t, cfg, []string{accountID})
 
-	require.NoError(t, resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx)))
+	require.NoError(t, resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx)))
 	assert.Equal(t, []int64{f.Source.ID}, cfg.Vector.Embed.Scope.SourceIDs,
 		"configured account resolves to its source ID")
 }
@@ -74,7 +74,7 @@ func TestResolveEmbedScopeSourceIDs_UnknownAccountFails(t *testing.T) {
 	f, _, _ := setupScopeFixture(t)
 	testCtx := withEmbedScopeContext(t, cfg, []string{"nobody@example.com"})
 
-	err := resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx))
+	err := resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx))
 	require.Error(err, "unknown configured account must fail loudly")
 	assert.Contains(err.Error(), "[vector.embed.scope] accounts")
 	assert.Contains(err.Error(), "nobody@example.com")
@@ -87,7 +87,7 @@ func TestResolveEmbedScopeSourceIDs_NoScopeLeavesCorpusWide(t *testing.T) {
 	f, _, _ := setupScopeFixture(t)
 	testCtx := withEmbedScopeContext(t, cfg, nil)
 
-	require.NoError(t, resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx)))
+	require.NoError(t, resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx)))
 	assert.Nil(t, cfg.Vector.Embed.Scope.SourceIDs)
 }
 
@@ -102,7 +102,7 @@ func TestResolveEmbedScopeSourceIDs_AccountFlagOverridesConfig(t *testing.T) {
 	require.NoError(err, "GetOrCreateSource")
 	embedAccounts = []string{other.Identifier}
 
-	require.NoError(resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx)))
+	require.NoError(resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx)))
 	assert.Equal(t, []int64{other.ID}, cfg.Vector.Embed.Scope.SourceIDs,
 		"--account replaces the configured accounts for the run")
 }
@@ -121,7 +121,7 @@ func TestResolveEmbedScopeSourceIDs_CollectionFlagExpands(t *testing.T) {
 	// The fixture collection covers only f.Source; "both" covers both.
 	embedCollections = []string{collectionName, "both"}
 
-	require.NoError(resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx)))
+	require.NoError(resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx)))
 	assert.ElementsMatch(t, []int64{f.Source.ID, other.ID}, cfg.Vector.Embed.Scope.SourceIDs,
 		"--collection expands to the union of member sources")
 }
@@ -138,7 +138,7 @@ func TestResolveEmbedScopeSourceIDs_EmptyCollectionFailsClosed(t *testing.T) {
 	require.NoError(f.Store.RemoveSourcesFromCollection("empty", []int64{f.Source.ID}), "empty collection")
 	embedCollections = []string{"empty"}
 
-	err = resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx))
+	err = resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx))
 	require.Error(err, "an explicit empty collection must not widen to the full archive")
 	assert.Contains(t, err.Error(), "has no accounts")
 	assert.Nil(t, cfg.Vector.Embed.Scope.SourceIDs)
@@ -179,12 +179,12 @@ func TestConfiguredEmbedBuildScope_ClassifiesResolutionFailures(t *testing.T) {
 	f, accountID, _ := setupScopeFixture(t)
 
 	testCtx := withEmbedScopeContext(t, cfg, []string{accountID})
-	scope, err := configuredEmbedBuildScope(f.Store, invocationFromContext(testCtx))
+	scope, err := configuredEmbedBuildScope(t.Context(), f.Store, invocationFromContext(testCtx))
 	require.NoError(err)
 	assert.Equal([]int64{f.Source.ID}, scope.SourceIDs)
 
 	cfg.Vector.Embed.Scope.Accounts = []string{"gone@example.com"}
-	_, err = configuredEmbedBuildScope(f.Store, invocationFromContext(testCtx))
+	_, err = configuredEmbedBuildScope(t.Context(), f.Store, invocationFromContext(testCtx))
 	require.ErrorIs(err, vector.ErrScopeUnresolvable,
 		"a configured account that no longer exists is a deterministic failure")
 	assert.Contains(err.Error(), "gone@example.com")
@@ -202,22 +202,23 @@ func TestDurableEmbedScopeRejectsDisplayNames(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f, accountID, _ := setupScopeFixture(t)
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`UPDATE sources SET display_name = 'Work Mail' WHERE id = ?`), f.Source.ID)
 	require.NoError(err, "set display name")
 
 	testCtx := withEmbedScopeContext(t, cfg, []string{"Work Mail"})
-	_, err = configuredEmbedBuildScope(f.Store, invocationFromContext(testCtx))
+	_, err = configuredEmbedBuildScope(t.Context(), f.Store, invocationFromContext(testCtx))
 	require.ErrorIs(err, vector.ErrScopeUnresolvable,
 		"a display name in durable config must fail closed")
 	assert.Contains(err.Error(), accountID, "the error names the canonical identifier to use")
 
-	err = resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx))
+	err = resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx))
 	require.Error(err, "startup resolution must reject the display name too")
 
 	// The one-run --account flag still accepts the display name.
 	embedAccounts = []string{"Work Mail"}
-	require.NoError(resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx)))
+	require.NoError(resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx)))
 	assert.Equal([]int64{f.Source.ID}, cfg.Vector.Embed.Scope.SourceIDs)
 }
 
@@ -236,19 +237,19 @@ func TestEmbedScopeDriftCheck(t *testing.T) {
 	initialized := vector.NewBuildScope(nil, []int64{f.Source.ID})
 	check := embedScopeDriftCheck(f.Store, initialized, state)
 
-	detail, err := check(context.Background())
+	detail, err := check(t.Context())
 	require.NoError(err)
 	assert.Empty(detail, "a matching scope must not latch")
 
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err, "GetOrCreateSource")
 	cfg.Vector.Embed.Scope.Accounts = []string{other.Identifier}
-	detail, err = check(context.Background())
+	detail, err = check(t.Context())
 	require.NoError(err)
 	assert.Contains(detail, "src-", "a drifted scope latches with both fingerprints")
 
 	cfg.Vector.Embed.Scope.Accounts = []string{"gone@example.com"}
-	detail, err = check(context.Background())
+	detail, err = check(t.Context())
 	require.NoError(err, "an unresolvable account is drift, not a retryable error")
 	assert.Contains(detail, "gone@example.com")
 	assert.Contains(detail, "[vector.embed.scope]")
@@ -261,7 +262,7 @@ func TestResolveEmbedScopeSourceIDs_ConfiguredNumericIDFails(t *testing.T) {
 	f, _, _ := setupScopeFixture(t)
 	testCtx := withEmbedScopeContext(t, cfg, []string{strconv.FormatInt(f.Source.ID, 10)})
 
-	err := resolveEmbedScopeSourceIDs(f.Store, invocationFromContext(testCtx))
+	err := resolveEmbedScopeSourceIDs(t.Context(), f.Store, invocationFromContext(testCtx))
 	require.Error(err, "durable account configuration must not accept source IDs")
 	assert.Nil(t, cfg.Vector.Embed.Scope.SourceIDs)
 }

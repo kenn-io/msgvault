@@ -15,23 +15,23 @@ func TestRecordingReferencePointerChangeWatermark(t *testing.T) {
 	f := storetest.New(t)
 	id := f.CreateMessage("recording")
 	refs := []store.AttachmentRef{{SourceAttachmentID: "teams:recording:abc", StoragePath: "https://teams.example.test/play?token=one"}}
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
 	require.NoError(err)
 	require.NoError(f.Store.ReplaceMessageLinkAttachments(id, refs))
 	var before, after string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&before))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&before))
 	assert.NotContains(before, "2000-01-01")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
 	require.NoError(err)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&before))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&before))
 	require.NoError(f.Store.ReplaceMessageLinkAttachments(id, refs))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&after))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&after))
 	assert.Equal(before, after)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
 	require.NoError(err)
 	refs[0].StoragePath = "https://teams.example.test/play?token=two"
 	require.NoError(f.Store.ReplaceMessageLinkAttachments(id, refs))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&after))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT content_changed_at FROM messages WHERE id=?`), id).Scan(&after))
 	assert.NotContains(after, "2000-01-01")
 }
 
@@ -128,7 +128,7 @@ func TestRecordingReferenceOccurrenceCorrection(t *testing.T) {
 			assert.Zero(corrected.RetryCount)
 			assert.Empty(corrected.ErrorCode)
 			var source, occurrence, outcome, coverage string
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT source_id,occurrence_id,outcome,coverage_state FROM recording_references WHERE message_id=?`), id).Scan(&source, &occurrence, &outcome, &coverage))
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT source_id,occurrence_id,outcome,coverage_state FROM recording_references WHERE message_id=?`), id).Scan(&source, &occurrence, &outcome, &coverage))
 			assert.Empty(source)
 			assert.Empty(occurrence)
 			assert.Empty(outcome)

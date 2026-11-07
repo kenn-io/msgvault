@@ -20,7 +20,7 @@ func TestGetParticipantIdentityContext(t *testing.T) {
 	const key = "beeper:8:whatsapp:9:@user:x.y"
 	alias, err := st.EnsureParticipantByIdentifier("beeper", key, "Alias Example")
 	require.NoError(err)
-	phone, err := st.EnsureParticipantByPhone("+15550100001", "Phone Example", "sms")
+	phone, err := st.EnsureParticipantByPhone(t.Context(), "+15550100001", "Phone Example", "sms")
 	require.NoError(err)
 	service, err := st.ResolveCommunicationServiceContext(ctx, "whatsapp")
 	require.NoError(err)

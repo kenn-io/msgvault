@@ -54,7 +54,7 @@ func TestPersonAgendaHTTP(t *testing.T) {
 	server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(), PersonAgendaOperations: operations})
 
 	get := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/people/42/agenda", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/42/agenda", nil)
 	server.router.ServeHTTP(get, request)
 	require.Equal(http.StatusOK, get.Code, get.Body.String())
 	var result PersonAgendaResult
@@ -69,7 +69,7 @@ func TestPersonAgendaHTTP(t *testing.T) {
 	assert.Equal("msgvault#one", result.Items[0].QualifiedRef)
 	assert.Equal("Agenda item", result.Items[0].Title)
 
-	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/people/42/agenda", strings.NewReader(`{"title":"Send notes","body":"Context","list":"follow up","priority":0}`))
+	createRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/people/42/agenda", strings.NewReader(`{"title":"Send notes","body":"Context","list":"follow up","priority":0}`))
 	createRequest.Header.Set("Content-Type", "application/json")
 	createRequest.Header.Set("Idempotency-Key", "request-1")
 	created := httptest.NewRecorder()

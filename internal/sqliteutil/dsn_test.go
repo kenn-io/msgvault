@@ -47,7 +47,7 @@ func TestQueryOnlyDSNRejectsWritesAndKeepsCallerBusyTimeout(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "archive.db")
 			writer, err := sql.Open(DriverName(), path)
 			require.NoError(err)
-			_, err = writer.Exec("CREATE TABLE messages (id INTEGER PRIMARY KEY)")
+			_, err = writer.ExecContext(t.Context(), "CREATE TABLE messages (id INTEGER PRIMARY KEY)")
 			require.NoError(err)
 			require.NoError(writer.Close())
 
@@ -59,9 +59,9 @@ func TestQueryOnlyDSNRejectsWritesAndKeepsCallerBusyTimeout(t *testing.T) {
 			t.Cleanup(func() { _ = reader.Close() })
 
 			var busyTimeout int
-			require.NoError(reader.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout))
+			require.NoError(reader.QueryRowContext(t.Context(), "PRAGMA busy_timeout").Scan(&busyTimeout))
 			assert.Equal(tt.busyTimeout, busyTimeout)
-			_, err = reader.Exec("INSERT INTO messages (id) VALUES (1)")
+			_, err = reader.ExecContext(t.Context(), "INSERT INTO messages (id) VALUES (1)")
 			assert.ErrorContains(err, "readonly")
 		})
 	}

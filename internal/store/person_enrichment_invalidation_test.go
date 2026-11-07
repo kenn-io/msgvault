@@ -77,12 +77,14 @@ func TestPersonEnrichmentParticipantIdentityChangeFencesAttemptAndPublishesRepla
 			switch identity {
 			case "display_name":
 				require.NoError(t, f.store.RepairParticipantDisplayNames(
+					t.Context(),
 					[]ParticipantDisplayNameRepair{{
 						ParticipantID: participantID,
 						DisplayName:   "Updated Participant",
 					}}))
 			case "email":
 				require.NoError(t, f.store.RepairParticipantEmailAddresses(
+					t.Context(),
 					[]ParticipantEmailRepair{{
 						ParticipantID: participantID,
 						EmailAddress:  "updated-participant@example.test",

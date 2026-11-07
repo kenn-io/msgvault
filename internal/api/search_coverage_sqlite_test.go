@@ -3,7 +3,6 @@
 package api
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -38,7 +37,7 @@ func TestHandleSearchReportsAcceleratorPath(t *testing.T) {
 		VectorCfg: vectorCfg, VectorStatus: VectorStatusReady, Logger: testLogger(),
 	})
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hello&mode=vector", nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=hello&mode=vector", nil))
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var body hybridSearchResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
@@ -118,7 +117,7 @@ func TestSearchCoverageRealGenerationStateMatrix(t *testing.T) {
 
 func newRealCoverageBackend(t *testing.T, cfg vector.Config, generationState string) *sqlitevec.Backend {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "coverage@example.com")
 	require.NoError(t, err)

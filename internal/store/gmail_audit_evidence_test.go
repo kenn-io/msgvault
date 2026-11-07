@@ -25,7 +25,7 @@ func TestGmailAuditEvidenceExcludesPreservedMergeAttachments(t *testing.T) {
 	historyID := emailMergeFixtureMessage(t, st, history.ID, "history-message", recipients, true)
 	const rfc822MessageID = "<shared@example.test>"
 	for _, messageID := range []int64{survivorID, historyID} {
-		_, err := st.DB().Exec(st.Rebind(
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(
 			`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), rfc822MessageID, messageID)
 		require.NoError(err)
 	}
@@ -41,7 +41,7 @@ func TestGmailAuditEvidenceExcludesPreservedMergeAttachments(t *testing.T) {
 	}
 
 	// A distinct historical filename requires a preserved occurrence.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET filename = 'historical.txt' WHERE message_id = ?`), historyID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attachments SET filename = 'historical.txt' WHERE message_id = ?`), historyID)
 	require.NoError(err)
 	merged, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 		FromSourceID: history.ID, IntoSourceID: live.ID,
@@ -51,7 +51,7 @@ func TestGmailAuditEvidenceExcludesPreservedMergeAttachments(t *testing.T) {
 	require.Equal(int64(1), merged.AttachmentsCopied)
 
 	var preservedCopies int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*)
 		FROM attachments a
 		JOIN source_merge_preserved_attachments marker ON marker.attachment_id = a.id

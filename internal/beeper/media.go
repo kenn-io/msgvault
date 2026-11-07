@@ -178,7 +178,7 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 	if imp.mediaFailures == nil {
 		imp.mediaFailures = make(map[mediaAttemptKey]store.AttachmentRef)
 	}
-	existing, err := imp.store.MessageBeeperAttachments(messageID)
+	existing, err := imp.store.MessageBeeperAttachments(ctx, messageID)
 	if err != nil {
 		sum.Errors++
 		return
@@ -381,7 +381,9 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 		sum.Errors++
 		return
 	}
-	if err := imp.store.RecomputeMessageAttachmentStats(messageID); err != nil {
+	// The rows above are already replaced; refresh the message's attachment
+	// flags even after a cancel so they match those rows.
+	if err := imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
 		sum.Errors++
 	}
 }
@@ -450,14 +452,14 @@ func (imp *Importer) refreshChatContext(
 		membership:       chatMembershipOf(chat, !chat.Participants.HasMore),
 		found:            true,
 	}
-	convID, err := imp.store.EnsureConversationWithType(sourceID, chatID, refresh.conversationType, chat.Title)
+	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, chatID, refresh.conversationType, chat.Title)
 	if err != nil {
 		return nil, err
 	}
 	if refresh.membership.known {
-		err = imp.store.SetConversationMemberCount(convID, refresh.membership.count)
+		err = imp.store.SetConversationMemberCountContext(ctx, convID, refresh.membership.count)
 	} else {
-		err = imp.store.MarkConversationMemberCountUnknown(convID)
+		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, convID)
 	}
 	if err != nil {
 		return nil, err
@@ -468,8 +470,8 @@ func (imp *Importer) refreshChatContext(
 // clearPendingMarkers removes a message's pending Beeper markers while
 // preserving its downloaded (content-hashed) attachment rows and the terminal
 // record of media the source reported as permanently unavailable.
-func (imp *Importer) clearPendingMarkers(messageID int64) error {
-	existing, err := imp.store.MessageBeeperAttachments(messageID)
+func (imp *Importer) clearPendingMarkers(ctx context.Context, messageID int64) error {
+	existing, err := imp.store.MessageBeeperAttachments(ctx, messageID)
 	if err != nil {
 		return err
 	}
@@ -482,7 +484,9 @@ func (imp *Importer) clearPendingMarkers(messageID int64) error {
 	if err := imp.store.ReplaceMessageBeeperAttachments(messageID, keep); err != nil {
 		return err
 	}
-	return imp.store.RecomputeMessageAttachmentStats(messageID)
+	// The markers are already gone, so a later run will not revisit this
+	// message. Refresh its attachment flags even after a cancel.
+	return imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID)
 }
 
 // BackfillMedia retries eligible Beeper attachment downloads for one account:
@@ -503,7 +507,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	// Import loads its cursor_after as the resume baseline — so carry the
 	// existing sync state forward verbatim or the next sync would restart
 	// from scratch.
-	state := imp.loadResumeState(src.ID)
+	state := imp.loadResumeState(ctx, src.ID)
 	syncID, err := imp.store.StartSync(src.ID, "beeper_media")
 	if err != nil {
 		return nil, err
@@ -515,7 +519,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		}
 	}()
 	// Preserve the carried-forward state even if this run is interrupted.
-	imp.checkpointNow(syncID, state, sum)
+	imp.checkpointNow(ctx, syncID, state, sum)
 
 	policy := opts.MediaPolicy
 	if policy.MaxBytes <= 0 {
@@ -533,7 +537,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	sum.AttachmentsOverCap += policyResult.AttachmentsOverCap
 	sum.AttachmentsOverCapBytes += policyResult.AttachmentsOverCapBytes
 	sum.AttachmentsOverCapUnknownSize += policyResult.AttachmentsOverCapUnknownSize
-	pending, err := imp.store.ListBeeperRetryableAttachmentMessages(src.ID, policy)
+	pending, err := imp.store.ListBeeperRetryableAttachmentMessages(ctx, src.ID, policy)
 	if err != nil {
 		return sum, err
 	}
@@ -593,7 +597,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 			// never be fetched. Clear the markers — but keep the message's
 			// already-downloaded rows, which remain valid archived media.
 			imp.recordItem(syncID, item.SourceMessageID, "attachment", store.SyncRunItemStatusSkipped, "beeper_media_source_gone", gerr)
-			if rerr := imp.clearPendingMarkers(item.MessageID); rerr != nil {
+			if rerr := imp.clearPendingMarkers(ctx, item.MessageID); rerr != nil {
 				sum.Errors++
 			}
 			continue
@@ -623,7 +627,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	// The initial checkpoint carries resume state, but its counters predate
 	// all media work. Persist the final summary before completing the run so
 	// diagnostics and monitoring agree with the returned result.
-	imp.checkpointNow(syncID, state, sum)
+	imp.checkpointNow(ctx, syncID, state, sum)
 	if err = imp.store.CompleteSync(syncID, stateBlob); err != nil {
 		return sum, err
 	}

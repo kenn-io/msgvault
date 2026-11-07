@@ -162,9 +162,9 @@ func backfillDiscordSourceMedia(
 	}
 	var messages []store.DiscordAttachmentMessage
 	if onlyIncomplete {
-		messages, err = st.ListDiscordRetryableAttachmentMessages(source.ID, policy)
+		messages, err = st.ListDiscordRetryableAttachmentMessages(ctx, source.ID, policy)
 	} else {
-		messages, err = st.ListDiscordAttachmentMessages(source.ID)
+		messages, err = st.ListDiscordAttachmentMessages(ctx, source.ID)
 	}
 	if err != nil {
 		return summary, fmt.Errorf("list Discord media messages: %w", err)

@@ -13,7 +13,7 @@ func TestCardDAVReviewSourceTransactionRetainsAllFences(t *testing.T) {
 	reader, id, _ := newPersonFactProjectionStore(t)
 	book := inferenceMigrationBook(t, reader)
 	inferenceNote(t, reader, id, ProvenanceExtraction, "Before")
-	writer, err := OpenForTest(reader.dbPath)
+	writer, err := OpenForTest(t.Context(), reader.dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(writer.Close()) })
 	before, err := reader.LoadCardDAVPublicationReviewSourceContext(t.Context(), id)

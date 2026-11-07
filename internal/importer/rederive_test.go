@@ -40,11 +40,11 @@ func TestImportMboxHealsPendingAccountAttribution(t *testing.T) {
 	opts := MboxImportOptions{SourceType: "mbox", Identifier: "archive@example.net", NoResume: true}
 	_, err := ImportMbox(t.Context(), st, write("one.mbox", "one"), opts)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier("mbox", "archive@example.net")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "mbox", "archive@example.net")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "work@example.org", "manual"))
 	pending := func() {
-		_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`), source.ID)
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`), source.ID)
 		require.NoError(err)
 	}
 	pending()

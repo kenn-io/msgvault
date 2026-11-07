@@ -36,7 +36,8 @@ func TestLibraryHandlerCallerPolicy(t *testing.T) {
 			cfg := &archive.Config{}
 			cfg.Server.APIKey = tc.apiKey
 			srv := archive.NewServer(archive.ServerOptions{Config: cfg, Store: st})
-			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+			// Cleanup runs after t.Context() is canceled.
+			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 			handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, op archive.Operation) bool {
 				assert.Equal("GET", op.Method)
 				assert.Equal("/api/v1/messages/changes", op.Path)
@@ -48,7 +49,7 @@ func TestLibraryHandlerCallerPolicy(t *testing.T) {
 				}
 				return tc.allowed
 			})
-			r := httptest.NewRequest(http.MethodGet, "https://archive.example/api/v1/messages/changes", nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://archive.example/api/v1/messages/changes", nil)
 			if tc.origin != "" {
 				r.Header.Set("Origin", tc.origin)
 			}

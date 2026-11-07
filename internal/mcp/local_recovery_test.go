@@ -22,7 +22,7 @@ func (s unavailablePersonFiles) SearchPersonFiles(context.Context, PersonFileSea
 
 func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 	requirements := require.New(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	requirements.NoError(err)
 	endpoint := "http://" + listener.Addr().String()
 	requirements.NoError(listener.Close())

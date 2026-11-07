@@ -24,7 +24,7 @@ func TestProviderConsentSurvivesRestore(t *testing.T) {
 	attachmentsDir := filepath.Join(dataDir, "attachments")
 	require.NoError(os.MkdirAll(attachmentsDir, 0o700))
 
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
@@ -71,7 +71,7 @@ func TestProviderConsentSurvivesRestore(t *testing.T) {
 		BeforePublication: backupapp.InvalidateRestoredDocumentVectors,
 	})
 	require.NoError(err)
-	restored, err := store.OpenForTest(restoreResult.DBPath)
+	restored, err := store.OpenForTest(t.Context(), restoreResult.DBPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = restored.Close() })
 

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -24,7 +23,7 @@ func TestSearchMessagesQueryImpl_NoFTS_TokenlessTerms(t *testing.T) {
 	st := openTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "noftstokenless@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-nofts", "Thread NoFTS")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-nofts", "Thread NoFTS")
 	require.NoError(err, "EnsureConversation")
 
 	for i, sub := range []string{"invoice attached", "project update"} {
@@ -42,7 +41,7 @@ func TestSearchMessagesQueryImpl_NoFTS_TokenlessTerms(t *testing.T) {
 
 	// Baseline: a real term still matches via LIKE, proving the setup is wired.
 	_, total, err := st.searchMessagesQueryImpl(
-		context.Background(), &search.Query{TextTerms: []string{"invoice"}}, 0, 50, false)
+		t.Context(), &search.Query{TextTerms: []string{"invoice"}}, 0, 50, false)
 	require.NoError(err, "baseline LIKE search")
 	require.GreaterOrEqual(total, int64(1), "baseline LIKE term must match")
 
@@ -58,7 +57,7 @@ func TestSearchMessagesQueryImpl_NoFTS_TokenlessTerms(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			msgs, total, err := st.searchMessagesQueryImpl(
-				context.Background(), &search.Query{TextTerms: tc.terms}, 0, 50, false)
+				t.Context(), &search.Query{TextTerms: tc.terms}, 0, 50, false)
 			require.NoError(err, "searchMessagesQueryImpl(%v)", tc.terms)
 			assert.Equal(t, int64(0), total, "tokenless terms must match nothing on the LIKE path")
 			assert.Empty(t, msgs)

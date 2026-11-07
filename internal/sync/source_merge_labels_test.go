@@ -39,7 +39,7 @@ func TestSyncLabelsPreservesArchivedRoles(t *testing.T) {
 			}
 			st := testutil.NewTestStore(t)
 			if test.upgrade {
-				_, err := st.DB().Exec(`DROP TABLE IF EXISTS source_merge_preserved_labels`)
+				_, err := st.DB().ExecContext(t.Context(), `DROP TABLE IF EXISTS source_merge_preserved_labels`)
 				require.NoError(err)
 				require.NoError(st.InitSchemaContext(t.Context()))
 				require.NoError(st.InitSchemaContext(t.Context()))
@@ -73,9 +73,9 @@ func TestSyncLabelsPreservesArchivedRoles(t *testing.T) {
 			if test.historyRole == "" {
 				historyDescriptors["Other Sent"] = store.LabelInfo{Name: "Other Sent", Type: "system", SystemRole: store.LabelSystemRoleSent}
 			}
-			historyLabels, err := st.EnsureLabelsBatch(history.ID, historyDescriptors)
+			historyLabels, err := st.EnsureLabelsBatch(t.Context(), history.ID, historyDescriptors)
 			require.NoError(err)
-			conversation, err := st.EnsureConversation(history.ID, "historical-thread", "Historical thread")
+			conversation, err := st.EnsureConversation(t.Context(), history.ID, "historical-thread", "Historical thread")
 			require.NoError(err)
 			sender, err := st.EnsureParticipant("history@example.test", "", "example.test")
 			require.NoError(err)
@@ -103,17 +103,17 @@ func TestSyncLabelsPreservesArchivedRoles(t *testing.T) {
 				require.Equal(historyLabels[test.historyName], archiveID)
 			}
 			var roleBefore sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT system_role FROM labels WHERE id = ?`), archiveID).Scan(&roleBefore))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT system_role FROM labels WHERE id = ?`), archiveID).Scan(&roleBefore))
 			require.Equal(test.historyRole, roleBefore.String)
 
 			if test.subset {
 				var sequence int
 				var database, sourcePath string
-				require.NoError(st.DB().QueryRow(`PRAGMA database_list`).Scan(&sequence, &database, &sourcePath))
+				require.NoError(st.DB().QueryRowContext(t.Context(), `PRAGMA database_list`).Scan(&sequence, &database, &sourcePath))
 				destination := filepath.Join(t.TempDir(), "subset")
-				_, err = store.CopySubset(sourcePath, destination, 1, false)
+				_, err = store.CopySubset(t.Context(), sourcePath, destination, 1, false)
 				require.NoError(err)
-				subset, err := store.OpenForTest(filepath.Join(destination, "msgvault.db"))
+				subset, err := store.OpenForTest(t.Context(), filepath.Join(destination, "msgvault.db"))
 				require.NoError(err)
 				t.Cleanup(func() { require.NoError(subset.Close()) })
 				st = subset
@@ -154,7 +154,7 @@ func TestSyncLabelsPreservesArchivedRoles(t *testing.T) {
 			}
 			if test.repeatCollision {
 				var archiveName string
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT name FROM labels WHERE id = ?`), archiveID).Scan(&archiveName))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT name FROM labels WHERE id = ?`), archiveID).Scan(&archiveName))
 				api.labels = append(api.labels, &gmail.Label{ID: archiveName, Name: archiveName, Type: "user"})
 				nextLabels, err = syncer.syncLabels(t.Context(), live.ID)
 				require.NoError(err)
@@ -164,7 +164,7 @@ func TestSyncLabelsPreservesArchivedRoles(t *testing.T) {
 			require.NoError(err)
 			assert.Equal([]int64{archiveID}, labelIDs, "historical membership keeps its meaning")
 			var providerAfter, roleAfter sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_label_id, system_role FROM labels WHERE id = ?`), archiveID).Scan(&providerAfter, &roleAfter))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_label_id, system_role FROM labels WHERE id = ?`), archiveID).Scan(&providerAfter, &roleAfter))
 			if preserved {
 				assert.False(providerAfter.Valid)
 				assert.Equal(test.historyRole, roleAfter.String)
@@ -174,7 +174,7 @@ func TestSyncLabelsPreservesArchivedRoles(t *testing.T) {
 				assert.Equal(nextID, providerAfter.String)
 			}
 			var providerRole sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT system_role FROM labels WHERE id = ?`), nextLabels[nextID]).Scan(&providerRole))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT system_role FROM labels WHERE id = ?`), nextLabels[nextID]).Scan(&providerRole))
 			assert.Equal(test.nextRole, providerRole.String, "provider role remains authoritative on its row")
 			results, _, err := st.SearchMessagesQuery(search.Parse("received:"+live.Identifier), 0, 100)
 			require.NoError(err)

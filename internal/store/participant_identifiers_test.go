@@ -102,20 +102,20 @@ func TestSetParticipantIdentifierRepointRefreshesSenderAttribution(t *testing.T)
 
 	require.NoError(st.SetParticipantIdentifier(second, "phone", "+15550100"), "repoint owner evidence")
 
-	firstIsFromMe, err := st.GetMessageIsFromMe(firstMessageID)
+	firstIsFromMe, err := st.GetMessageIsFromMe(t.Context(), firstMessageID)
 	require.NoError(err, "read former owner attribution")
 	assert.False(firstIsFromMe, "reassignment must clear attribution from the former identifier owner")
-	secondIsFromMe, err := st.GetMessageIsFromMe(secondMessageID)
+	secondIsFromMe, err := st.GetMessageIsFromMe(t.Context(), secondMessageID)
 	require.NoError(err, "read new owner attribution")
 	assert.True(secondIsFromMe, "reassignment must attribute messages from the new identifier owner")
 
 	var firstIdentityDerived, secondIdentityDerived bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT identity_is_from_me
 		FROM messages
 		WHERE id = ?
 	`), firstMessageID).Scan(&firstIdentityDerived))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT identity_is_from_me
 		FROM messages
 		WHERE id = ?
@@ -183,47 +183,47 @@ func TestEnsureParticipantByPhoneBumpsRevisionOnlyForIdentifierChanges(t *testin
 	const phone = "+1555010199"
 
 	_, _, before := readRevisions(t, f)
-	participantID, err := st.EnsureParticipantByPhone(phone, "Revision User", "whatsapp")
+	participantID, err := st.EnsureParticipantByPhone(t.Context(), phone, "Revision User", "whatsapp")
 	require.NoError(err)
 	_, _, afterCreate := readRevisions(t, f)
 	assert.Equal(before+1, afterCreate, "new phone identifier must invalidate derived identity data")
 
-	againID, err := st.EnsureParticipantByPhone(phone, "Revision User", "whatsapp")
+	againID, err := st.EnsureParticipantByPhone(t.Context(), phone, "Revision User", "whatsapp")
 	require.NoError(err)
 	assert.Equal(participantID, againID)
 	_, _, afterRetry := readRevisions(t, f)
 	assert.Equal(afterCreate, afterRetry, "idempotent ensure must not advance the revision")
 
-	_, err = st.DB().Exec(st.Rebind(`UPDATE participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participant_identifiers
 		SET service_id = NULL, scope_kind = NULL, scope_value = NULL
 		WHERE identifier_type = ? AND identifier_value = ?`), "whatsapp", phone)
 	require.NoError(err)
 	_, _, beforeRepair := readRevisions(t, f)
-	_, err = st.EnsureParticipantByPhone(phone, "Revision User", "whatsapp")
+	_, err = st.EnsureParticipantByPhone(t.Context(), phone, "Revision User", "whatsapp")
 	require.NoError(err)
 	_, _, afterRepair := readRevisions(t, f)
 	assert.Equal(beforeRepair+1, afterRepair,
 		"service metadata repair must invalidate derived identity data")
 
-	_, err = st.EnsureParticipantByPhone(phone, "Revision User", "whatsapp")
+	_, err = st.EnsureParticipantByPhone(t.Context(), phone, "Revision User", "whatsapp")
 	require.NoError(err)
 	_, _, afterRepairRetry := readRevisions(t, f)
 	assert.Equal(afterRepair, afterRepairRetry,
 		"idempotent metadata ensure must not advance the revision")
 
-	_, err = st.DB().Exec(st.Rebind(`UPDATE participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participant_identifiers
 		SET scope_kind = '', scope_value = ''
 		WHERE identifier_type = ? AND identifier_value = ?`), "whatsapp", phone)
 	require.NoError(err)
 	_, _, beforeNullRepair := readRevisions(t, f)
-	_, err = st.EnsureParticipantByPhone(phone, "Revision User", "whatsapp")
+	_, err = st.EnsureParticipantByPhone(t.Context(), phone, "Revision User", "whatsapp")
 	require.NoError(err)
 	_, _, afterNullRepair := readRevisions(t, f)
 	assert.Equal(beforeNullRepair+1, afterNullRepair,
 		"empty scope normalization must invalidate derived identity data")
 
 	var nullScopes int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*)
 		FROM participant_identifiers
 		WHERE identifier_type = ? AND identifier_value = ?
 		  AND scope_kind IS NULL AND scope_value IS NULL`),

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -65,22 +64,22 @@ func TestTUICodexAdapterUsesGeneratedLoginAndProfileRoutes(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	login, err := backend.StartCodexLogin(context.Background(), "codex-custom")
+	login, err := backend.StartCodexLogin(t.Context(), "codex-custom")
 	require.NoError(err)
 	assert.Equal("session-1", login.SessionID)
 	assert.Equal("https://example.test/device", login.URL)
 	assert.Equal("ABCD-EFGH", login.Code)
 	assert.Equal(time.Date(2026, 9, 23, 12, 5, 0, 0, time.UTC), login.Deadline)
-	poll, err := backend.PollCodexLogin(context.Background(), login.SessionID)
+	poll, err := backend.PollCodexLogin(t.Context(), login.SessionID)
 	require.NoError(err)
 	assert.False(poll.Complete)
-	poll, err = backend.PollCodexLogin(context.Background(), login.SessionID)
+	poll, err = backend.PollCodexLogin(t.Context(), login.SessionID)
 	require.NoError(err)
 	assert.True(poll.Complete)
-	models, err := backend.ListCodexModels(context.Background(), login.SessionID)
+	models, err := backend.ListCodexModels(t.Context(), login.SessionID)
 	require.NoError(err)
 	assert.Equal([]tui.CodexModelChoice{{ID: "codex-model-a", DefaultReasoningEffort: "medium", ReasoningEfforts: []string{"low", "medium"}}}, models)
-	profile, err := backend.SaveCodexProfile(context.Background(), login.SessionID, tui.CodexProfileRequest{
+	profile, err := backend.SaveCodexProfile(t.Context(), login.SessionID, tui.CodexProfileRequest{
 		Name: "codex-custom", Model: models[0].ID, ReasoningEffort: "low",
 		RetentionPosture: "operator assertion: no retention", TrainingPosture: "operator assertion: no training",
 		AllowedSources: []string{"conversation_text"}, SourceSince: "2025-01-01", SourceUntil: "2025-12-31",
@@ -88,7 +87,7 @@ func TestTUICodexAdapterUsesGeneratedLoginAndProfileRoutes(t *testing.T) {
 	})
 	require.NoError(err)
 	assert.Equal("codex-custom", profile)
-	require.NoError(backend.CancelCodexLogin(context.Background(), login.SessionID))
+	require.NoError(backend.CancelCodexLogin(t.Context(), login.SessionID))
 	assert.Equal([]string{
 		"POST /api/v1/settings/people-inference/codex/login",
 		"GET /api/v1/settings/people-inference/codex/login/session-1",
@@ -120,7 +119,7 @@ func TestTUICodexProfileSaveReportsConfigConflict(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
-	_, err := backend.SaveCodexProfile(context.Background(), "session-1", tui.CodexProfileRequest{
+	_, err := backend.SaveCodexProfile(t.Context(), "session-1", tui.CodexProfileRequest{
 		Name: "codex-custom", Model: "codex-model-a", ReasoningEffort: "low",
 		RetentionPosture: "operator assertion", TrainingPosture: "operator assertion",
 		AllowedSources: []string{"conversation_text"}, SourceSince: "2025-01-01",
@@ -149,7 +148,7 @@ func TestTUIPeopleInferenceBackendUsesGeneratedStatusRoute(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	status, err := backend.LoadPeopleInferenceStatus(context.Background())
+	status, err := backend.LoadPeopleInferenceStatus(t.Context())
 	require.NoError(err)
 	assert.Equal(2, status.ProfileCount)
 	assert.Equal("old", status.Configured)
@@ -185,7 +184,7 @@ func TestTUIPeopleInferenceBackendCheckUsesExactProfile(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	disclosure, err := backend.CheckCodexProfile(context.Background(), "codex-profile")
+	disclosure, err := backend.CheckCodexProfile(t.Context(), "codex-profile")
 	require.NoError(err)
 	assert.Equal("codex-profile", disclosure.Profile)
 	assert.Equal("fp-1", disclosure.Fingerprint)
@@ -215,7 +214,7 @@ func TestTUIPeopleInferenceBackendCheckRejectsChangedFingerprint(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	_, err := backend.CheckCodexProfile(context.Background(), "codex-profile")
+	_, err := backend.CheckCodexProfile(t.Context(), "codex-profile")
 	require.Error(err)
 	assert.Contains(err.Error(), "changed")
 }
@@ -248,7 +247,7 @@ func TestTUIPeopleInferenceBackendConsentSendsExactConfirmation(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	require.NoError(backend.ConsentCodexProfile(context.Background(), "codex-profile", "fp-1"))
+	require.NoError(backend.ConsentCodexProfile(t.Context(), "codex-profile", "fp-1"))
 	assert.Equal([]string{
 		"GET /api/v1/settings/people-inference",
 		"POST /api/v1/settings/people-inference/providers/codex-profile/consent",
@@ -269,7 +268,7 @@ func TestTUIPeopleInferenceBackendConsentRejectsStaleFingerprint(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	err := backend.ConsentCodexProfile(context.Background(), "codex-profile", "fp-old")
+	err := backend.ConsentCodexProfile(t.Context(), "codex-profile", "fp-old")
 	require.Error(err)
 	assert.Contains(err.Error(), "changed")
 	assert.Equal([]string{"GET /api/v1/settings/people-inference"}, calls)
@@ -297,7 +296,7 @@ func TestTUIPeopleInferenceBackendRevokeUsesExactFingerprint(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	status, err := backend.RevokePeopleInferenceConsent(context.Background(), "codex-profile", "fp-1")
+	status, err := backend.RevokePeopleInferenceConsent(t.Context(), "codex-profile", "fp-1")
 	require.NoError(err)
 	assert.Equal("fp-1", status.ConfiguredFingerprint)
 	assert.Equal([]string{
@@ -328,7 +327,7 @@ func TestTUIPeopleInferenceBackendDisableUsesExactFingerprint(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	status, err := backend.DisablePeopleInference(context.Background(), "fp-1")
+	status, err := backend.DisablePeopleInference(t.Context(), "fp-1")
 	require.NoError(err)
 	assert.False(status.ConfiguredEnabled)
 	assert.True(status.PendingRestart)
@@ -360,7 +359,7 @@ func TestTUIPeopleInferenceBackendRemoveUsesExactFingerprint(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	status, err := backend.RemovePeopleInferenceProfile(context.Background(), "router", "fp-router")
+	status, err := backend.RemovePeopleInferenceProfile(t.Context(), "router", "fp-router")
 	require.NoError(err)
 	assert.Equal("backup", status.Configured)
 	assert.True(status.PendingRestart)
@@ -384,7 +383,7 @@ func TestTUIPeopleInferenceBackendRemoveRejectsChangedFingerprint(t *testing.T) 
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	_, err := backend.RemovePeopleInferenceProfile(context.Background(), "router", "fp-old")
+	_, err := backend.RemovePeopleInferenceProfile(t.Context(), "router", "fp-old")
 	require.Error(err)
 	assert.Contains(err.Error(), "changed")
 	assert.Equal([]string{"GET /api/v1/settings/people-inference"}, calls)
@@ -409,7 +408,7 @@ func TestTUIPeopleInferenceBackendRemoveReportsConflict(t *testing.T) {
 			t.Cleanup(server.Close)
 			backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-			_, err := backend.RemovePeopleInferenceProfile(context.Background(), "router", "fp-router")
+			_, err := backend.RemovePeopleInferenceProfile(t.Context(), "router", "fp-router")
 			require.Error(err)
 			if status == http.StatusPreconditionFailed {
 				var conflict *tui.SettingsConflictError
@@ -439,9 +438,9 @@ func TestTUIPeopleInferenceBackendRevokeAndDisableRejectStaleFingerprint(t *test
 			backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 			var err error
 			if operation == "revoke" {
-				_, err = backend.RevokePeopleInferenceConsent(context.Background(), "codex-profile", "fp-old")
+				_, err = backend.RevokePeopleInferenceConsent(t.Context(), "codex-profile", "fp-old")
 			} else {
-				_, err = backend.DisablePeopleInference(context.Background(), "fp-old")
+				_, err = backend.DisablePeopleInference(t.Context(), "fp-old")
 			}
 			require.Error(err)
 			assert.Contains(err.Error(), "changed")
@@ -471,9 +470,9 @@ func TestTUIPeopleInferenceBackendRevokeAndDisablePreserveConfigConflict(t *test
 			backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 			var err error
 			if operation == "revoke" {
-				_, err = backend.RevokePeopleInferenceConsent(context.Background(), "codex-profile", "fp-1")
+				_, err = backend.RevokePeopleInferenceConsent(t.Context(), "codex-profile", "fp-1")
 			} else {
-				_, err = backend.DisablePeopleInference(context.Background(), "fp-1")
+				_, err = backend.DisablePeopleInference(t.Context(), "fp-1")
 			}
 			var conflict *tui.SettingsConflictError
 			require.ErrorAs(err, &conflict)
@@ -516,9 +515,9 @@ func TestTUIPeopleInferenceBackendCheckAndConsentConflicts(t *testing.T) {
 			backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 			var err error
 			if test.operation == "check" {
-				_, err = backend.CheckCodexProfile(context.Background(), "codex-profile")
+				_, err = backend.CheckCodexProfile(t.Context(), "codex-profile")
 			} else {
-				err = backend.ConsentCodexProfile(context.Background(), "codex-profile", "fp-1")
+				err = backend.ConsentCodexProfile(t.Context(), "codex-profile", "fp-1")
 			}
 			require.Error(err)
 			if test.conflict {
@@ -559,7 +558,7 @@ func TestTUIPeopleInferenceBackendSelectPreservesConfigConflict(t *testing.T) {
 	t.Cleanup(server.Close)
 	backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-	err := backend.SelectCodexProfile(context.Background(), "codex-profile")
+	err := backend.SelectCodexProfile(t.Context(), "codex-profile")
 	var conflict *tui.SettingsConflictError
 	require.ErrorAs(err, &conflict)
 	assert.Equal(tui.SettingsConflictConfig, conflict.Scope)
@@ -590,7 +589,7 @@ func TestTUIPeopleInferenceBackendSelectReportsDaemonGate(t *testing.T) {
 			t.Cleanup(server.Close)
 			backend := newTUISettingsBackend(newTUISettingsDaemonClient(t, server))
 
-			err := backend.SelectCodexProfile(context.Background(), "codex-profile")
+			err := backend.SelectCodexProfile(t.Context(), "codex-profile")
 			require.Error(err)
 			assert.Equal(test.want, err.Error())
 		})
@@ -618,9 +617,9 @@ func TestTUIPeopleInferenceBackendRejectsServerFailure(t *testing.T) {
 			var err error
 			switch operation {
 			case "status":
-				_, err = backend.LoadPeopleInferenceStatus(context.Background())
+				_, err = backend.LoadPeopleInferenceStatus(t.Context())
 			case "select":
-				err = backend.SelectCodexProfile(context.Background(), "codex-profile")
+				err = backend.SelectCodexProfile(t.Context(), "codex-profile")
 			}
 			require.Error(err)
 			assert.Contains(err.Error(), "500")

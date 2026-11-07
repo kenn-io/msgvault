@@ -22,16 +22,16 @@ func (a *storeAPIAdapter) LoopMarksContext(ctx context.Context) (map[int64]store
 	return a.store.LoopMarksContext(ctx)
 }
 
-func (a *storeAPIAdapter) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
-	return a.store.GetMessageBodyTextContext(ctx, messageID)
+func (a *storeAPIAdapter) GetMessageBodyText(ctx context.Context, messageID int64) (string, error) {
+	return a.store.GetMessageBodyText(ctx, messageID)
 }
 
 func (a *storeAPIAdapter) LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (mime.AutomationSignals, bool, bool, error) {
 	return a.store.LoopOriginalEvidenceContext(ctx, messageID)
 }
 
-func (a *storeAPIAdapter) MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error) {
-	return a.store.MessageConversationContext(ctx, messageID)
+func (a *storeAPIAdapter) MessageConversation(ctx context.Context, messageID int64) (store.MessageConversationRef, error) {
+	return a.store.MessageConversation(ctx, messageID)
 }
 
 func (a *storeAPIAdapter) MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error) {

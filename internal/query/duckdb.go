@@ -192,8 +192,8 @@ func NewArchiveDuckDBEngine(ctx context.Context, analyticsDir string, opts ...Du
 // If sqlitePath is empty, only aggregate queries and GetTotalStats will work.
 // If sqliteDB is nil, Search will fall back to LIKE queries and body extraction
 // from raw MIME may be slower.
-func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
-	return newDuckDBEngine(context.Background(), analyticsDir, sqlitePath, sqliteDB, false, opts...)
+func NewDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
+	return newDuckDBEngine(ctx, analyticsDir, sqlitePath, sqliteDB, false, opts...)
 }
 
 func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string, sqliteDB *sql.DB, archiveOnly bool, opts ...DuckDBOptions) (*DuckDBEngine, error) {

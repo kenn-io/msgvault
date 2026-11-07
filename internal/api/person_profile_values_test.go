@@ -409,7 +409,7 @@ func doRequest(
 	headers map[string]string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	request := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

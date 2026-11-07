@@ -38,7 +38,7 @@ func TestEffectiveAcceleratorIneligibleStoredReadyReportsStale(t *testing.T) {
 			// Fires the embeddings_vector_identity_update maintenance trigger,
 			// which bumps the generation's vector_revision past the
 			// accelerator's stored source_revision.
-			_, err := backend.db.Exec(`UPDATE embeddings
+			_, err := backend.db.ExecContext(t.Context(), `UPDATE embeddings
 				SET message_id = message_id WHERE generation_id = ?`, generationID)
 			return err
 		},
@@ -46,17 +46,17 @@ func TestEffectiveAcceleratorIneligibleStoredReadyReportsStale(t *testing.T) {
 			// Fires the embeddings_vector_delete maintenance trigger, which
 			// decrements the generation's embedding_count below the
 			// accelerator's indexed_count.
-			_, err := backend.db.Exec(`DELETE FROM embeddings
+			_, err := backend.db.ExecContext(t.Context(), `DELETE FROM embeddings
 				WHERE generation_id = ? AND message_id = 1`, generationID)
 			return err
 		},
 		"vec1_version_mismatch": func(backend *Backend, generationID int, _ string) error {
-			_, err := backend.db.Exec(`UPDATE vector_accelerators
+			_, err := backend.db.ExecContext(t.Context(), `UPDATE vector_accelerators
 				SET vec1_version = '0.0' WHERE generation_id = ?`, generationID)
 			return err
 		},
 		"missing_physical_table": func(backend *Backend, _ int, tableName string) error {
-			_, err := backend.db.Exec(`DROP TABLE ` + tableName)
+			_, err := backend.db.ExecContext(t.Context(), `DROP TABLE `+tableName)
 			return err
 		},
 	}
@@ -99,7 +99,7 @@ func TestEffectiveAcceleratorNonReadyStatesPassThrough(t *testing.T) {
 			backend := openOptimizeBackend(t, 4)
 			generationID := seedOptimizeVectors(t, backend, 2, 4)
 			installReadyFlatAccelerator(t, backend, generationID, 4)
-			_, err := backend.db.Exec(`UPDATE vector_accelerators SET state = ?
+			_, err := backend.db.ExecContext(t.Context(), `UPDATE vector_accelerators SET state = ?
 				WHERE generation_id = ?`, string(stored), int64(generationID))
 			require.NoError(t, err)
 

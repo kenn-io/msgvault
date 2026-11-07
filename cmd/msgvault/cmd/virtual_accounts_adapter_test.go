@@ -23,7 +23,7 @@ func TestStoreAPIAdapterListsVirtualAccounts(t *testing.T) {
 	src, err := st.GetOrCreateSource("mbox", "archive-1")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
-	conv, err := st.EnsureConversation(src.ID, "thread", "")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "")
 	require.NoError(err)
 	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
 		Message: &store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "work", MessageType: "email"},
@@ -37,7 +37,7 @@ func TestStoreAPIAdapterListsVirtualAccounts(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var body struct {
 		Accounts []struct {
