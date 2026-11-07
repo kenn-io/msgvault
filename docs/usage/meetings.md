@@ -57,7 +57,7 @@ msgvault meetings context --id 42 --format srt
 msgvault meetings context --id 42 --format vtt -o meeting.vtt
 ```
 
-Subtitle formats require daemon API schema 3.47.0 or newer; the default context
+Subtitle formats require daemon API schema 3.48.0 or newer; the default context
 format remains Markdown. Output goes to stdout unless `-o FILE` is
 specified; `-o -` also uses stdout. Both formats show available speakers as
 `Speaker: text`. Nonblank line breaks survive. WebVTT escapes text and labels.

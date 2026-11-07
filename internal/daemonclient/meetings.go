@@ -14,7 +14,7 @@ import (
 type meetingSubtitlesUnsupportedError struct{}
 
 func (meetingSubtitlesUnsupportedError) Error() string {
-	return "meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon"
+	return "meeting subtitles require daemon API schema 3.48.0 or newer; upgrade the daemon"
 }
 
 func (meetingSubtitlesUnsupportedError) APIErrorCode() string {

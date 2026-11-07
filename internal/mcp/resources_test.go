@@ -794,7 +794,7 @@ func TestMCPDaemonRequestErrorsBecomeSafeToolResults(t *testing.T) {
 	}{
 		{&daemonclient.APIError{Status: 400, Code: "invalid_meeting_subtitles", Message: "Use VTT for this payload"}, "invalid_meeting_subtitles: Use VTT for this payload"},
 		{&daemonclient.APIError{Status: 400, Code: "context_budget_too_small", Message: "Raise the output budget"}, "context_budget_too_small: Raise the output budget"},
-		{capabilityError, "meeting_subtitles_unsupported: meeting subtitles require daemon API schema 3.47.0 or newer; upgrade the daemon"},
+		{capabilityError, "meeting_subtitles_unsupported: meeting subtitles require daemon API schema 3.48.0 or newer; upgrade the daemon"},
 	} {
 		result, _, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
 			return nil, newInternalError("meeting context", test.err)

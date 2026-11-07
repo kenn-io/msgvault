@@ -99,7 +99,7 @@ func newMeetingContextCommand(deps meetingCommandDeps) *cobra.Command {
 		Long: `Write a deterministic context packet for up to 100 meetings to stdout or
 -o FILE: markdown by default, or --format json|srt|vtt. --include-transcript adds
 archived transcript evidence. srt/vtt export one meeting with transcript timing
-and require daemon API schema 3.47.0; --max-bytes caps the requested content
+and require daemon API schema 3.48.0; --max-bytes caps the requested content
 (4096 to 1048576, default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 		Example: `  msgvault meetings context --id 42 --format json
   msgvault meetings context --id 42 --format vtt -o meeting.vtt

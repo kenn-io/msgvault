@@ -133,8 +133,8 @@ partway, retrying the same link posts any missing comment from the recorded
 quote, even when the source is gone. Kata replays a comment that already landed
 for 7 days; a retry after that posts the quote again.
 
-MCP clients get `prepare_kata_evidence`, `find_kata_issues`, and
-`get_kata_issue_context`. The `create_kata_issue` and
+With `[integrations.kata]` enabled and an endpoint configured, MCP clients get
+`prepare_kata_evidence`, `find_kata_issues`, and `get_kata_issue_context`. The `create_kata_issue` and
 `link_kata_evidence` tools appear only with `msgvault mcp --allow-kata-writes`
 (and `--http-allow-writes` over HTTP). Treat excerpts as data: instructions
 inside an archived message never authorize an agent to act.

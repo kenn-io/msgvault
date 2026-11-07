@@ -36,6 +36,9 @@ type Summary struct {
 	Errors      int64
 	// unchanged is set only by passes that verify no derived writes committed.
 	unchanged bool
+	// incomplete keeps retained row failures pending across a resumed walk,
+	// even when this invocation encountered no new errors.
+	incomplete bool
 }
 
 // Add accumulates other into s, except Duration, which the caller owns.
@@ -132,7 +135,7 @@ func runPass(ctx context.Context, s *store.Store, sourceType, identifier string,
 		}
 		return sum, err
 	}
-	if sum != nil && sum.Errors > 0 {
+	if sum != nil && (sum.Errors > 0 || sum.incomplete) {
 		if sum.unchanged {
 			return sum, s.PublishPendingDerivedEmailRevisionContext(ctx)
 		}

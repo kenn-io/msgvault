@@ -423,10 +423,11 @@ var operationGateExemptPaths = map[string]bool{
 // registerSearchCoverageRoute (the OpenAPI "Exploration" tag), so a new
 // analytical route forces a conscious classification decision here.
 //
-// The remote-image proxy and CardDAV account test are the non-Exploration
+// The remote-image proxy and CardDAV account test are non-Exploration
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
-// while a long archive operation holds the gate. Kata evidence preparation
+// while a long archive operation holds the gate. Meeting actions, context,
+// and metrics are also non-Exploration read routes. Kata evidence preparation
 // only reads message bodies and extracted document text. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
@@ -463,6 +464,10 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/relationships",
 	"/api/v1/relationships/{id}/calendar",
 	"/api/v1/relationships/{id}/timeline",
+	// Meeting actions, context, and metrics read archived meeting rows in a read snapshot.
+	"/api/v1/meetings/actions",
+	"/api/v1/meetings/context",
+	"/api/v1/meetings/metrics",
 	"/api/v1/search/coverage",
 }
 

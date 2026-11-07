@@ -207,7 +207,7 @@ func getMeetingContextDefinition(_ *handlers) toolDefinition {
 		"Render deterministic, size-bounded context for archived meetings; srt/vtt require one meeting and include timed transcript evidence automatically.",
 		closedObject(map[string]*jsonschema.Schema{
 			"message_ids":        meetingIDArraySchema("Meeting message IDs", true),
-			"format":             stringSchema("Context format; srt/vtt budget covers subtitle output only (daemon API 3.47.0+)", "json", "markdown", "srt", "vtt"),
+			"format":             stringSchema("Context format; srt/vtt budget covers subtitle output only (daemon API 3.48.0+)", "json", "markdown", "srt", "vtt"),
 			"include_transcript": booleanSchema("Include archived transcript evidence"),
 			"max_bytes":          boundedIntegerWithDefault("Maximum UTF-8 content bytes", meetingMinMaxBytes, meetingMaxMaxBytes, meetingDefaultMaxBytes),
 		}, "message_ids"),

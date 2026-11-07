@@ -500,7 +500,7 @@ func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
 	if incremental {
 		changed = " AND messages.content_changed_at >= ?"
 		if sqlite {
-			index = " INDEXED BY idx_messages_content_changed_at"
+			index = " INDEXED BY idx_messages_source_content_changed"
 		}
 	}
 	return `
