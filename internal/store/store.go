@@ -715,6 +715,8 @@ func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
 // a full scan, so ingest time grows with the square of the index size. FTS5
 // reaches these tables only through rowid and primary-key statements, so
 // statistics never improve their plans.
+// SQLite ignores NULL statistics. Retaining the rows avoids splitting and
+// collapsing sqlite_stat1 during close-time cleanup after VACUUM.
 func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) error {
 	var analyzed bool
 	err := db.QueryRowContext(ctx,
@@ -726,7 +728,7 @@ func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) erro
 	if !analyzed {
 		return nil
 	}
-	_, err = db.ExecContext(ctx, `DELETE FROM sqlite_stat1 WHERE tbl IN (
+	_, err = db.ExecContext(ctx, `UPDATE sqlite_stat1 SET stat = NULL WHERE stat IS NOT NULL AND tbl IN (
 		SELECT name || '_data' FROM sqlite_master
 		WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'
 	)`)
@@ -2375,6 +2377,16 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 		_, err := tx.ExecContext(ctx,
 			`CREATE INDEX IF NOT EXISTS idx_messages_content_changed_at
 			     ON messages(content_changed_at, id)`)
+		if err != nil {
+			return err
+		}
+		// IMAP capture seeks by source so other sources' changes stay out of its apply transaction.
+		// PostgreSQL's planner already bounds the query by source.
+		if !s.IsPostgreSQL() {
+			_, err = tx.ExecContext(ctx,
+				`CREATE INDEX IF NOT EXISTS idx_messages_source_content_changed
+				     ON messages(source_id, content_changed_at)`)
+		}
 		return err
 	}); err != nil {
 		return fmt.Errorf("create content_changed_at index: %w", err)
