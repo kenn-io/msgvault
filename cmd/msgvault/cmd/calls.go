@@ -82,7 +82,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 				result, err := client.ImportCallObservation(cmd.Context(), data)
 				if err != nil {
 					var apiErr *daemonclient.APIError
-					if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnprocessableEntity {
+					if errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnprocessableEntity || apiErr.Status == http.StatusRequestEntityTooLarge) {
 						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "call import record %d: %v\n", record, err)
 						rejected++
 						continue
