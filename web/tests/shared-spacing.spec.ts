@@ -138,7 +138,15 @@ for (const width of [1280, 420]) {
       await open.click();
       const label = page.locator('.context-chips .kit-chip__label').filter({ hasText: query });
       await expect(label).toBeVisible();
-      expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight)).toBe(true);
+      // The label is trimmed to its capital letters, which Chromium counts as
+      // vertical scroll overflow; the text's own box inside the label's clip
+      // box is what shows nothing is cut off.
+      expect(await label.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const text = range.getBoundingClientRect(), box = element.getBoundingClientRect();
+        return element.scrollWidth <= element.clientWidth && text.top >= box.top && text.bottom <= box.bottom;
+      })).toBe(true);
     });
   });
 }
@@ -366,6 +374,21 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
       right: box.right - border - icon.right };
   }));
   expect(geometry).toEqual([{ height: 26, left: 8, right: 8 }, { height: 26, left: 8, right: 8 }]);
+  // The label's box is trimmed to its capitals and centered in the chip, and its padding keeps the glyphs unclipped.
+  const centering = await chips.evaluateAll((elements) => elements.map((element) => {
+    const label = element.querySelector('.kit-chip__label')!;
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const chip = element.getBoundingClientRect();
+    const box = label.getBoundingClientRect();
+    const text = range.getBoundingClientRect();
+    return { offset: Math.abs((box.top + box.bottom) / 2 - (chip.top + chip.bottom) / 2),
+      clipped: text.top < box.top - 0.5 || text.bottom > box.bottom + 0.5 };
+  }));
+  for (const chip of centering) {
+    expect(chip.offset).toBeLessThanOrEqual(0.5);
+    expect(chip.clipped).toBe(false);
+  }
   for (const chip of await chips.all()) {
     const shape = await chip.evaluate((element) => ({ radius: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius), height: element.getBoundingClientRect().height }));
     expect.soft(shape.radius).toBeGreaterThanOrEqual(shape.height / 2);
@@ -375,7 +398,11 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   const queryChip = chips.filter({ hasText: longQuery });
   const wrapping = await queryChip.locator('.kit-chip__label').evaluate((element) => ({
     clipped: element.scrollWidth > element.clientWidth,
-    wrapped: element.getBoundingClientRect().height > Number.parseFloat(getComputedStyle(element).lineHeight)
+    wrapped: (() => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return new Set(Array.from(range.getClientRects(), (rect) => Math.round(rect.top))).size > 1;
+    })()
   }));
   expect(wrapping).toEqual({ clipped: false, wrapped: true });
   await expect(queryChip.getByRole('button', { name: 'Remove search', exact: true })).toBeVisible();
@@ -443,7 +470,7 @@ test.describe('touch reading', () => {
   });
 });
 
-test('selected rows keep their fill and accent on stripes and in the reader', async ({ page }) => {
+test('selected rows keep one fill and an unbroken accent on stripes and in the reader', async ({ page }) => {
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
     rows: [1, 2].map(id => ({ ...row, key: `message:${id}`, title: `Example ${id}` })), total_count: 2, cache_revision: 'spacing', search_provenance: {}
   } }));
@@ -451,15 +478,17 @@ test('selected rows keep their fill and accent on stripes and in the reader', as
   const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.focus();
   await page.keyboard.press('Space');
-  await expect(grid.locator('.data-row--selected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+  await expect(grid.locator('.data-row--selected')).toHaveCSS('background-image', /^linear-gradient\(to right, rgb\([^)]+\) 3px, .+ 3px\)$/);
   await page.keyboard.press('Space');
   await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
   const selected = grid.locator('.data-row--selected');
   await expect(selected).toHaveCount(2);
+  // No divider is drawn between selected rows; the fill runs under it.
   for (const selectedRow of await selected.all()) {
-    await expect(selectedRow).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+    await expect(selectedRow).toHaveCSS('background-image', /^linear-gradient\(to right, rgb\([^)]+\) 3px, .+ 3px\)$/);
+    await expect(selectedRow).toHaveCSS('border-bottom-color', 'rgba(0, 0, 0, 0)');
   }
-  const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundColor));
+  const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundImage));
   expect((await colors())[0]).toBe((await colors())[1]);
   await grid.getByText('Example 1', { exact: true }).click();
   await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
@@ -467,9 +496,55 @@ test('selected rows keep their fill and accent on stripes and in the reader', as
   await grid.focus();
   await page.keyboard.press('Space');
   await page.keyboard.press('Space');
-  await expect(grid.locator('.data-row--selected.data-row--inspected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+  await expect(grid.locator('.data-row--selected.data-row--inspected')).toHaveCSS('background-image', /^linear-gradient\(to right, rgb\([^)]+\) 3px, .+ 3px\)$/);
 });
 
+test.describe('dark chips', () => {
+  test.use({ colorScheme: 'dark' });
+
+  test('a neutral status chip draws a 1px edge in dark mode', async ({ page }) => {
+    await selectWorkspace(page, 'Sources');
+    const status = page.locator('.kit-chip.kit-chip--tone-neutral, .kit-chip.kit-chip--tone-muted').filter({ hasText: 'Never synced' });
+    await expect(status).toBeVisible();
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+    await expect(status).toHaveCSS('border-top-width', '1px');
+    await expect(status).toHaveCSS('border-top-style', 'solid');
+  });
+});
+
+test('People rows center one-line names on a 32 avatar and the selection bar uses toolbar insets', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.route('**/api/v1/people/directory*', (route) => route.fulfill({ json: { people: [
+    { id: 1, revision: 1, display_name: 'Alex Example', primary_channel: 'email', contact_state: 'active', categories: [], organizations: [] },
+    { id: 2, revision: 1, display_name: 'Blake Example', primary_channel: 'email', contact_state: 'active', categories: [], organizations: ['Example Org'] }
+  ] } }));
+  await page.goto('/?workspace=directory');
+  const grid = page.getByRole('grid').filter({ hasText: 'Alex Example' });
+  const oneLine = grid.locator('.row').filter({ hasText: 'Alex Example' });
+  await expect(oneLine).toBeVisible();
+  const geometry = await oneLine.evaluate((element) => {
+    const center = (box: DOMRect) => box.top + box.height / 2;
+    const avatar = element.querySelector('.avatar-slot')!.getBoundingClientRect();
+    const name = element.querySelector('.name')!.getBoundingClientRect();
+    const cell = element.querySelector('[role="gridcell"]')!.getBoundingClientRect();
+    return { avatar: avatar.width, offset: Math.abs(center(name) - center(avatar)), height: cell.height, detail: element.querySelector('.detail') === null };
+  });
+  expect(geometry.avatar).toBe(32);
+  expect(geometry.offset).toBeLessThanOrEqual(0.5);
+  expect(geometry.height).toBeGreaterThanOrEqual(52);
+  expect(geometry.detail).toBe(true);
+  const twoLine = grid.locator('.row').filter({ hasText: 'Blake Example' });
+  await expect(twoLine.locator('.detail')).toHaveText('Example Org');
+  expect(await twoLine.locator('[role="gridcell"]').evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(52);
+  await oneLine.hover();
+  await grid.getByRole('checkbox', { name: 'Select Alex Example' }).check();
+  const bar = page.locator('.selection-bar[data-toolbar]');
+  await expect(bar).toBeVisible();
+  for (const button of await bar.locator('.kit-button').all()) {
+    await expect(button).toHaveCSS('padding-left', '8px');
+    await expect(button).toHaveCSS('padding-right', '8px');
+  }
+});
 
 async function mockMeetingSelection(page: Page, {
   meetingCount, selectedCount, totalCount = meetingCount, extraRows = [],

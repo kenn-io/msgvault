@@ -75,21 +75,26 @@ it('keeps all-matching exclusions and its token through failed review load and f
   ]);
 });
 
-it('handles a pending stage when the review stays mounted', async () => {
+it('handles a pending stage when the review stays mounted, with Cancel until it is done', async () => {
   let finish!: (response: Response) => void;
   const onclose = vi.fn(), onStaged = vi.fn();
   const client = createAPIClient(async input => (input as Request).url.endsWith('/preflight')
     ? Response.json(preflight())
     : new Promise<Response>(resolve => { finish = resolve; }));
   render(DeletionReview, { client, selection, onclose, onStaged });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
+  const stage = await screen.findByRole('button', { name: 'Stage 2 messages' });
+  const cancel = screen.getByRole('button', { name: 'Cancel' });
+  expect(cancel.compareDocumentPosition(stage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await fireEvent.click(stage);
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   await fireEvent.keyDown(document, { key: 'Escape' });
+  await fireEvent.click(cancel);
   expect(onclose).not.toHaveBeenCalled();
   finish(Response.json({ id: 'batch-pending', message_count: 2, matched_count: 3, dry_run: false }, { status: 201 }));
   await screen.findByText('batch-pending');
   expect(onStaged).toHaveBeenCalledExactlyOnceWith('batch-pending');
   expect(screen.getByText('Staged: Matched: 3 · Staged: 2 · Skipped: 1')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   expect(onclose).toHaveBeenCalledOnce();
 });

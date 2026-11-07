@@ -15,6 +15,8 @@
     primaryLabel?: string;
     onprimary?: () => void;
     primaryDisabled?: boolean;
+    /** Show Cancel before the primary. It calls onclose. */
+    cancellable?: boolean;
   }
 
   let {
@@ -24,11 +26,13 @@
     primaryLabel = undefined,
     onprimary = undefined,
     primaryDisabled = false,
+    cancellable = true,
   }: Props = $props();
 </script>
 
 {#snippet footer()}
   {#if primaryLabel}
+    {#if cancellable}<Button label="Cancel" onclick={onclose} />{/if}
     <Button
       surface="solid"
       tone="info"

@@ -218,7 +218,6 @@
 {#if confirmCancel}
   <Dialog title="Cancel deletion batch?" onclose={() => { if (!cancelling) confirmCancel = undefined; }} primaryLabel={cancelling ? 'Cancelling…' : 'Cancel batch'} primaryDisabled={cancelling} onprimary={() => void cancelManifest()}>
     <p>Cancel deletion of {messageCount(confirmCancel.message_count)} from the source?</p>
-    <Button label="Keep staged" disabled={cancelling} onclick={() => confirmCancel = undefined} />
     {#if error}<p role="alert">{error}</p>{/if}
   </Dialog>
 {/if}

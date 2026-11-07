@@ -11,6 +11,8 @@ describe('MeetingMetrics', () => {
     expect(screen.getByLabelText('Total known meeting time').textContent).toContain('1h 40m');
     expect(screen.getByLabelText('Average known duration').textContent).toContain('33m 20s');
     expect(screen.queryByText(/recorded hours/i)).toBeNull();
+    const note = screen.getByText(/^Time includes provider duration/);
+    expect(note.closest('.inline-notice [role="status"]')).not.toBeNull();
     const bases = screen.getByRole('table', { name: 'Duration evidence' });
     expect(within(bases).getByRole('row', { name: /Scheduled.*1.*1h/ })).toBeDefined();
     expect(within(bases).getByRole('row', { name: /Transcript span.*1.*10m/ })).toBeDefined();

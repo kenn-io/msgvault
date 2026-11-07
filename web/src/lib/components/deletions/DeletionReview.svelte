@@ -134,6 +134,7 @@
     primaryLabel={result ? 'Done' : `Stage ${deletable.toLocaleString()} ${noun(deletable)}`}
     primaryDisabled={!result && (pending || !review || deletable === 0 || Boolean(blocked))}
     onprimary={() => result ? onclose() : void stage()}
+    cancellable={!result}
   >
     {#if result}
       <p role="status">{resultSummary(result)}</p>

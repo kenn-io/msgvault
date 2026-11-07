@@ -19,3 +19,21 @@ it('leaves Escape to a child picker, then closes the dialog', async () => {
   await fireEvent.keyDown(picker, { key: 'Escape' });
   expect(onclose).toHaveBeenCalledOnce();
 });
+
+it('puts Cancel before the primary action and closes with it', async () => {
+  const onclose = vi.fn();
+  const onprimary = vi.fn();
+  render(Dialog, { title: 'Describe view', onclose, onprimary, primaryLabel: 'Save', children: createRawSnippet(() => ({ render: () => '<p>Body</p>' })) });
+  const cancel = screen.getByRole('button', { name: 'Cancel' });
+  const save = screen.getByRole('button', { name: 'Save' });
+  expect(cancel.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await fireEvent.click(cancel);
+  expect(onclose).toHaveBeenCalledOnce();
+  expect(onprimary).not.toHaveBeenCalled();
+});
+
+it('shows the primary alone when the dialog is not cancellable', () => {
+  render(Dialog, { title: 'Review deletion', onclose: vi.fn(), primaryLabel: 'Done', cancellable: false, children: createRawSnippet(() => ({ render: () => '<p>Body</p>' })) });
+  expect(screen.getByRole('button', { name: 'Done' })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+});

@@ -8,14 +8,15 @@
     details?: string;
     actionLabel?: string;
     onaction?: () => void;
+    tone?: 'error' | 'warning' | 'info';
   }
 
-  let { message, details = undefined, actionLabel = undefined, onaction = undefined }: Props = $props();
+  let { message, details = undefined, actionLabel = undefined, onaction = undefined, tone = 'error' }: Props = $props();
 </script>
 
-<!-- The sentence and the error tone say what happened, so Notice's tone heading ("Error") is hidden below. -->
+<!-- The sentence and the tone say what happened, so Notice's tone heading ("Error", "Warning") is hidden below. -->
 <div class="inline-notice">
-  <Notice tone="error" {actionLabel} {onaction}>
+  <Notice {tone} {actionLabel} {onaction}>
     <p>{message}</p>
     {#if details}<Disclosure variant="plain" title="Details"><pre>{details}</pre></Disclosure>{/if}
   </Notice>

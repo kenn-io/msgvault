@@ -436,11 +436,44 @@ body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-
 }
 
 /* Kit gives each chip size its own side padding (6px, 6px, and 8px), and
- * xs also pads the top and bottom. One chip padding keeps the text centered
- * in every chip; the height comes from min-height and flex centering. */
+ * xs also pads the top and bottom. One chip padding keeps the text in the
+ * same place in every chip; the height comes from min-height and flex
+ * centering. An inline chip sits on the text baseline, so its words stay
+ * level with the words beside it. */
 :root:root .kit-chip {
   max-width: 100%;
   padding: 0 var(--chip-pad-x);
+  vertical-align: baseline;
+}
+
+/* The label's box is trimmed to its capital letters, so flex centering puts
+ * the caps mid-chip: the fill above the caps matches the fill below the
+ * baseline, which leaves more room above the line than below it. The label
+ * clips for its ellipsis, so its padding gives ascenders and descenders room;
+ * the negative margin cancels all but a quarter em of it, which keeps a
+ * wrapped label's first and last lines off the chip's edge. */
+/* kit-ui-check-ignore: kit centers the label's line box, which leaves capitals high; only the label can be trimmed to them. */
+:root:root .kit-chip .kit-chip__label {
+  text-box: trim-both cap alphabetic;
+  padding-block: 0.5em;
+  margin-block: -0.25em;
+}
+
+/* A row that holds a status chip beside text lines them up on the text
+ * baseline. Removable chips are controls, so their rows center them. */
+:root:root :has(> .kit-chip) {
+  align-items: baseline;
+}
+
+:root:root :has(> .kit-chip > .kit-chip__trailing) {
+  align-items: center;
+}
+
+/* In dark mode a chip on the inset fill gets a 1px edge one step lighter,
+ * so it stands apart on the page, on a surface, and on a hovered row whose
+ * fill matches its own. */
+:root.dark .kit-chip:is(.kit-chip--tone-neutral, .kit-chip--tone-muted) {
+  border: var(--border-width, 1px) solid var(--border-muted);
 }
 
 :root:root .kit-chip:has(> .kit-chip__trailing) {

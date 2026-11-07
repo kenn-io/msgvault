@@ -137,7 +137,8 @@ describe('DeletionsWorkspace', () => {
     render(DeletionsWorkspace, { client, controller: new DeletionsController(client), onChanged });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open batch from/ }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Cancel batch' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep staged' }));
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Cancel deletion batch?' })).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Cancel deletion batch?' })).toBeNull();
     expect(deletes).toBe(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel batch' }));
     const dialog = screen.getByRole('dialog', { name: 'Cancel deletion batch?' });

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Table } from '@kenn-io/kit-ui';
 
+  import InlineNotice from '../common/InlineNotice.svelte';
   import { formatMeetingDuration } from '../../meetings/format';
   import type { Metrics } from '../../api/generated/models';
 
@@ -29,7 +30,7 @@
       <dd aria-label="Average known duration">{formatMeetingDuration(metrics.totals.average_known_seconds)}</dd>
     </div>
   </dl>
-  <p class="note">Time includes provider duration, scheduled, and transcript span evidence where available. Unknown durations are excluded from the average.</p>
+  <InlineNotice tone="info" message="Time includes provider duration, scheduled, and transcript span evidence where available. Unknown durations are excluded from the average." />
   {#if metrics.duration_by_basis.length > 0}
     <section class="evidence-section" aria-labelledby={`${headingID}-duration-evidence`}>
       <h4 id={`${headingID}-duration-evidence`}>Duration evidence</h4>

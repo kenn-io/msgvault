@@ -201,9 +201,10 @@
 
   .connection-picker label {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-tight);
     color: var(--text-secondary);
-    font-size: var(--font-size-sm);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
     font-weight: 500;
   }
 

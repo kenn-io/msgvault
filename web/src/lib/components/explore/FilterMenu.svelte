@@ -149,7 +149,7 @@
   <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" data-form bind:this={panelElement} style={panelStyle}>
     {#if kinds.length > 0}
       <fieldset class="field">
-        <legend>Kind</legend>
+        <legend class="kit-sr-only">Kind</legend>
         <div class="kinds">
           {#each kinds as option (option.name)}
             <Checkbox
@@ -184,8 +184,10 @@
 {/if}
 
 <style>
-  .dates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-  .dates label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
+  /* A Meta label 4 above each date field, the two dates as a pair 12 apart.
+   * The form rule in tokens.css sets the field's height and inset. */
+  .dates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-box); }
+  .dates label { display: grid; gap: var(--space-tight); color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .dates input { min-width: 0; width: 100%; box-sizing: border-box; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font: inherit; }
   .filter-trigger {
     display: inline-flex;
@@ -216,8 +218,10 @@
 
   legend {
     padding: 0;
+    margin-bottom: var(--space-tight);
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
   }
 
   .kinds {
