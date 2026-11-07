@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -204,7 +205,11 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		if lane.local {
 			vecCfg.Embeddings.Endpoint = builtinEndpoint
 		}
-		vf, err = live.configureText(nextCtx, &state, vecCfg)
+		credentialSnapshot, credentialErr := providercredentials.Read(state.cfg.TokensDir())
+		if credentialErr != nil {
+			return fmt.Errorf("load text embedding credentials: %w", credentialErr)
+		}
+		vf, err = live.configureText(nextCtx, &state, vecCfg, credentialSnapshot)
 	}
 	if err != nil {
 		return err

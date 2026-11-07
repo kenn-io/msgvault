@@ -617,7 +617,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		Backend: backend, DocumentBackend: documentBackend, Cfg: vecCfg, Close: closeFn,
 	}
 
-	features.configureText = func(ctx context.Context, nextState *invocation, vecCfg vector.Config) (*vectorFeatures, error) {
+	features.configureText = func(ctx context.Context, nextState *invocation, vecCfg vector.Config, credentialSnapshot providercredentials.Snapshot) (*vectorFeatures, error) {
 		backend := backend.WithBuildScope(vecCfg.Embed.Scope.BuildScope())
 		state := nextState
 		cfg := state.cfg
@@ -626,10 +626,6 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		features.Backend = backend
 		features.Cfg = vecCfg
 		features.DocumentSearch = nil
-		credentialSnapshot, err := providercredentials.Read(cfg.TokensDir())
-		if err != nil {
-			return nil, fmt.Errorf("load text embedding credentials: %w", err)
-		}
 		embeddingAPIKey, err := resolveTextEmbeddingCredential(credentialSnapshot, vecCfg)
 		if err != nil {
 			return nil, err
@@ -721,7 +717,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 		return features, nil
 	}
 	if vecCfg.Enabled {
-		configured, err := features.configureText(ctx, state, vecCfg)
+		configured, err := features.configureText(ctx, state, vecCfg, credentialSnapshot)
 		if err != nil {
 			_ = closeFn()
 			return nil, err
