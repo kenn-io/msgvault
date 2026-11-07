@@ -13,7 +13,7 @@ type GeneratedTarget = GeneratedTargetDescriptor;
 export type PersonTrackingState = Pick<GeneratedTracking, 'person_id' | 'tracked' | 'tracked_at'>;
 export type PersonTrackingTarget = Pick<
   GeneratedTarget,
-  'kind' | 'description' | 'value_type' | 'cardinality' | 'sensitive'
+  'kind' | 'slug' | 'sensitive'
 >;
 export type PersonTrackingOutcome =
   | {
@@ -284,17 +284,13 @@ function safeTargets(values: GeneratedTarget[] | null): PersonTrackingTarget[] |
   for (const value of values) {
     if (
       typeof value.kind !== 'string' ||
-      typeof value.description !== 'string' ||
-      typeof value.value_type !== 'string' ||
-      typeof value.cardinality !== 'string' ||
+      typeof value.slug !== 'string' ||
       typeof value.sensitive !== 'boolean'
     )
       return undefined;
     targets.push({
       kind: value.kind,
-      description: value.description,
-      value_type: value.value_type,
-      cardinality: value.cardinality,
+      slug: value.slug,
       sensitive: value.sensitive,
     });
   }

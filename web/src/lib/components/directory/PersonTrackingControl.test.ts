@@ -21,7 +21,7 @@ function catalog(sensitive: boolean) {
     fingerprint: forbidden.fingerprint,
     targets: [{
       kind: 'attribute', key: forbidden.key, revision: forbidden.revision,
-      slug: sensitive ? 'private-note' : 'timezone', universal_id: forbidden.universal_id,
+      slug: sensitive ? 'private_note' : 'time_zone', universal_id: forbidden.universal_id,
       description: sensitive ? 'Private note' : 'Time zone', value_type: 'text',
       cardinality: 'single', sensitive, choices: null, fields: null,
       href: forbidden.href, credential: forbidden.credential
@@ -40,20 +40,55 @@ describe('PersonTrackingControl', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
-    expect(await screen.findByRole('heading', { name: 'Profile maintenance' })).toBeDefined();
-    const toggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }) as HTMLInputElement;
+    expect(await screen.findByRole('heading', { name: 'Fields it updates' })).toBeDefined();
+    const toggle = await screen.findByRole('switch', { name: 'Update automatically — Off' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(false);
-    expect(screen.getByText(/eligible for future automatic profile maintenance/i)).toBeDefined();
+    expect(screen.getByText('Updates run while People sweep is on in Settings.')).toBeDefined();
     expect(screen.getByText('Time zone')).toBeDefined();
-    expect(screen.getByText('Attribute · text · single')).toBeDefined();
-    expect(screen.queryByText('Tracked since')).toBeNull();
+    expect(screen.queryByText('Since')).toBeNull();
     expect(document.body.textContent).not.toMatch(/forbidden/i);
     expect(document.body.innerHTML).not.toMatch(/forbidden\.example/i);
+  });
+
+  it('uses asynchronously loaded labels, slug fallbacks, and a compact Work history row', async () => {
+    const definitions = deferredResponse();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/attribute-definitions')) return definitions.promise;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: true, tracked_at: null });
+      const target = catalog(false).targets[0]!;
+      return Response.json({ targets: [target, { ...target, slug: 'favorites_food' }, { ...target, slug: 'interests_fun_growing_up' }, { ...target, slug: 'favorites_place' }, { ...target, kind: 'employment', slug: 'employment' }] });
+    });
+    const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    expect(await screen.findByText('Time zone')).toBeDefined();
+    expect(screen.getByText('Favorites food')).toBeDefined();
+    expect(screen.getByText('Interests fun growing up')).toBeDefined();
+    expect(screen.getByText('Favorites place')).toBeDefined();
+    expect(screen.getByText('Work history')).toBeDefined();
+    expect(screen.getByText('Employer, title, and dates')).toBeDefined();
+    definitions.resolve(Response.json({ definitions: [
+      { slug: 'favorites_food', label: 'Favorite food' },
+      { slug: 'interests_fun_growing_up', label: 'Fun growing up' },
+      { slug: 'favorites_place', label: 'Favorite place' }
+    ] }));
+    expect(await screen.findByText('Favorite food')).toBeDefined();
+    expect(screen.getByText('Fun growing up')).toBeDefined();
+    expect(screen.getByText('Favorite place')).toBeDefined();
+
+    view.unmount();
+    render(PersonTrackingControl, { client: createAPIClient(vi.fn<typeof fetch>(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/attribute-definitions')) return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 });
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [{ ...catalog(false).targets[0], slug: 'favorites_food' }] });
+    })), personID: 7 });
+    expect(await screen.findByText('Favorites food')).toBeDefined();
   });
 
   it('submits once, announces once, shows tracked time, and returns focus to the connected toggle', async () => {
@@ -68,11 +103,12 @@ describe('PersonTrackingControl', () => {
         return Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T01:00:00Z' });
       }
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
 
-    const toggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' });
+    const toggle = await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ });
     toggle.focus();
     await fireEvent.click(toggle);
 
@@ -81,8 +117,9 @@ describe('PersonTrackingControl', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('switch')));
     expect(puts).toBe(1);
     expect(onAnnounce).toHaveBeenCalledWith('Profile maintenance tracking enabled.');
-    expect(screen.getByText('Tracked since')).toBeDefined();
+    expect(screen.getByText('Since')).toBeDefined();
     expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-29T01:00:00Z');
+    expect(document.querySelector('time')?.textContent).not.toBe('2026-08-29T01:00:00Z');
   });
 
   it('locks an unknown mutation result behind a GET-only retry', async () => {
@@ -100,12 +137,13 @@ describe('PersonTrackingControl', () => {
         if (gets === 2) throw new TypeError('synthetic reconciliation failure');
         return Response.json({ person_id: 7, tracked: gets > 2, tracked_at: gets > 2 ? '2026-08-29T01:00:00Z' : null });
       }
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
-    await fireEvent.click(await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }));
-    const retry = await screen.findByRole('button', { name: 'Retry profile maintenance state' }) as HTMLButtonElement;
+    await fireEvent.click(await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ }));
+    const retry = await screen.findByRole('button', { name: 'Retry' }) as HTMLButtonElement;
     expect(screen.queryByRole('switch')).toBeNull();
     await waitFor(() => expect(retry.disabled).toBe(false));
     await fireEvent.click(retry);
@@ -120,6 +158,7 @@ describe('PersonTrackingControl', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const url = new URL(request.url);
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       if (url.pathname.endsWith('/tracking')) {
         const id = Number(url.pathname.split('/').at(-2));
         return Response.json({ person_id: id, tracked: false, tracked_at: null });
@@ -130,12 +169,13 @@ describe('PersonTrackingControl', () => {
     const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
     expect(await screen.findByText('Time zone')).toBeDefined();
-    const reveal = await screen.findByRole('button', { name: 'Show sensitive eligible fields' });
+    const reveal = await screen.findByRole('button', { name: 'Show sensitive fields' });
     expect((reveal as HTMLButtonElement).disabled).toBe(false);
     reveal.focus();
     await fireEvent.click(reveal);
     expect(await screen.findByText('Private note')).toBeDefined();
     expect(screen.getByText('Sensitive')).toBeDefined();
+    expect(screen.getByText('Sensitive fields are shown.')).toBeDefined();
     expect(queries).toEqual(['?include_sensitive=false', '?include_sensitive=true']);
 
     await view.rerender({ client: createAPIClient(fetchFn), personID: 9 });
@@ -147,6 +187,7 @@ describe('PersonTrackingControl', () => {
   it('keeps a loaded tracking toggle usable when catalog loading fails', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
+      if (new URL(request.url).pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       if (new URL(request.url).pathname.endsWith('/tracking')) {
         return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       }
@@ -154,9 +195,10 @@ describe('PersonTrackingControl', () => {
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
-    expect((await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }) as HTMLInputElement).disabled).toBe(false);
+    expect((await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ }) as HTMLInputElement).disabled).toBe(false);
     expect((await screen.findByRole('alert')).textContent).toContain('Unable to load eligible profile fields.');
     expect(document.body.textContent).not.toContain(forbidden.credential);
+    expect(screen.queryByRole('button', { name: 'Show sensitive fields' })).toBeNull();
   });
 
   it('keeps pending focus connected and blocks stale focus or announcement after person replacement', async () => {
@@ -174,12 +216,13 @@ describe('PersonTrackingControl', () => {
         const id = Number(url.pathname.split('/').at(-2));
         return Response.json({ person_id: id, tracked: false, tracked_at: null });
       }
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     const view = render(PersonTrackingControl, {
       client: createAPIClient(fetchFn), personID: 7, onAnnounce
     });
-    const oldToggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' });
+    const oldToggle = await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ });
     oldToggle.focus();
     await fireEvent.click(oldToggle);
 
@@ -189,7 +232,7 @@ describe('PersonTrackingControl', () => {
     expect(puts).toBe(1);
 
     await view.rerender({ client: createAPIClient(fetchFn), personID: 9, onAnnounce });
-    const currentToggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' });
+    const currentToggle = await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ });
     currentToggle.focus();
     mutation.resolve(Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T01:00:00Z' }));
     await Promise.resolve();
@@ -198,6 +241,50 @@ describe('PersonTrackingControl', () => {
     expect(document.activeElement).toBe(currentToggle);
     expect((currentToggle as HTMLInputElement).checked).toBe(false);
     expect(onAnnounce).not.toHaveBeenCalled();
+  });
+
+  it('shows the pending change in the switch status until saving finishes', async () => {
+    let mutation = deferredResponse();
+    let tracked = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'PUT') return mutation.promise;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      return Response.json(catalog(false));
+    });
+    const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    await fireEvent.click(await screen.findByRole('switch'));
+    expect(screen.getByText('Turning on…')).toBeDefined();
+    expect(screen.getByRole('switch', { name: 'Update automatically — Off' })).toBeDefined();
+    mutation.resolve(Response.json({ person_id: 7, tracked: true, tracked_at: null }));
+    expect(await screen.findByRole('switch', { name: 'Update automatically — On' })).toBeDefined();
+    expect(document.querySelector('.tracked-time')).toBeNull();
+    view.unmount();
+
+    tracked = true;
+    mutation = deferredResponse();
+    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    await fireEvent.click(await screen.findByRole('switch'));
+    expect(screen.getByText('Turning off…')).toBeDefined();
+    mutation.resolve(Response.json({ person_id: 7, tracked: false, tracked_at: null }));
+    expect(await screen.findByRole('switch', { name: 'Update automatically — Off' })).toBeDefined();
+  });
+
+  it('offers sensitive disclosure only after a catalog has loaded and keeps the empty state compact', async () => {
+    const fields = deferredResponse();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      return fields.promise;
+    });
+    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    expect(await screen.findByText('Loading profile fields…')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Show sensitive fields' })).toBeNull();
+    fields.resolve(Response.json({ targets: [] }));
+    expect(await screen.findByText('No fields are set up for automatic updates.')).toBeDefined();
   });
 
   it('suppresses mutation announcement and focus when the person changes after controller settlement', async () => {
@@ -215,6 +302,7 @@ describe('PersonTrackingControl', () => {
       if (url.pathname.endsWith('/tracking')) {
         return Response.json({ person_id: id, tracked: false, tracked_at: null });
       }
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     let view!: ReturnType<typeof render>;
@@ -231,7 +319,7 @@ describe('PersonTrackingControl', () => {
     });
     try {
       view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
-      await fireEvent.click(await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }));
+      await fireEvent.click(await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ }));
       await waitFor(() => expect(replaced).toBe(true));
       await Promise.resolve();
       await Promise.resolve();
@@ -253,6 +341,7 @@ describe('PersonTrackingControl', () => {
         return Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T01:00:00Z' });
       }
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     let destroyed = false;
@@ -267,7 +356,7 @@ describe('PersonTrackingControl', () => {
     });
     try {
       render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
-      await fireEvent.click(await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }));
+      await fireEvent.click(await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ }));
       await waitFor(() => expect(destroyed).toBe(true));
       await Promise.resolve();
       await Promise.resolve();
@@ -291,6 +380,7 @@ describe('PersonTrackingControl', () => {
         if (trackingReads === 1) return Response.json({ error: 'unavailable' }, { status: 503 });
         return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       }
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     let replaced = false;
@@ -305,7 +395,7 @@ describe('PersonTrackingControl', () => {
     });
     try {
       render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
-      const retry = await screen.findByRole('button', { name: 'Retry profile maintenance state' });
+      const retry = await screen.findByRole('button', { name: 'Retry' });
       await fireEvent.click(retry);
       await waitFor(() => expect(replaced).toBe(true));
       await Promise.resolve();

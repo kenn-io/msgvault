@@ -142,14 +142,37 @@
   />
 {/if}
 
-{#if maintenance}
-  <Modal ariaLabel={maintenance === 'tracking' ? 'Keep this profile updated' : 'Publish to address book'} onclose={() => maintenance = undefined}>
-    {#if maintenance === 'tracking'}<PersonTrackingControl {client} {personID} {onAnnounce} />
-    {:else}<CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />{/if}
+{#if maintenance === 'tracking'}
+  <div class="profile-updates">
+  <Modal
+    title={controller.person?.display_name ? `Keep ${controller.person.display_name}'s profile updated` : 'Keep this profile updated'}
+    closeLabel="Close profile updates"
+    closable
+    width="min(560px, calc(100vw - 32px))"
+    maxWidth="min(560px, calc(100vw - 32px))"
+    maxHeight="min(720px, calc(100svh - 64px))"
+    onclose={() => maintenance = undefined}
+  >
+    <PersonTrackingControl {client} {personID} {onAnnounce} />
+    {#snippet footer()}<Button label="Close" onclick={() => maintenance = undefined} />{/snippet}
+  </Modal>
+  </div>
+{:else if maintenance === 'publication'}
+  <Modal ariaLabel="Publish to address book" onclose={() => maintenance = undefined}>
+    <CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />
   </Modal>
 {/if}
 
 <style>
+  .profile-updates :global(.kit-modal-title) {
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+
   /* Full width, so inside the person header's wrapping row each group drops below the actions. */
   .person-action {
     flex: 1 0 100%;

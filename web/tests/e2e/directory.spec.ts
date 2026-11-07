@@ -2,7 +2,9 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import { parseExploreURLState } from '../../src/lib/explore/state.svelte';
+import type { Catalog } from '../../src/lib/api/generated/models';
 import { installMixedArchive } from './fixtures/mixed-archive';
+import { person } from '../../src/lib/directory/person-fixtures.test-support';
 
 function directoryURL(personID?: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({
@@ -123,6 +125,7 @@ test('Directory opens an accessible narrow People page and returns to its list',
 
 test('Directory profile maintenance uses exact safe requests and GET-only ambiguity recovery', async ({ page }) => {
   const archive = await installMixedArchive(page);
+  const catalogResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/person-fact-targets');
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL(42));
   await page.getByRole('button', { name: 'More actions' }).click();
@@ -131,11 +134,12 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
   await expect(maintenance).toBeVisible();
   await expect(maintenance).toContainText('Time zone');
+  const catalog: Catalog = await (await catalogResponse).json();
   await expectNoAxeViolations(page, 'Directory profile maintenance desktop');
   const forbidden = /forbidden-/i;
   expect(await page.locator('body').innerHTML()).not.toMatch(forbidden);
 
-  const toggle = maintenance.getByRole('switch', { name: 'Track this person for profile maintenance' });
+  const toggle = maintenance.getByRole('switch', { name: /Update automatically — (On|Off)/ });
   await toggle.focus();
   await page.keyboard.press('Space');
   await expect(toggle).toBeChecked();
@@ -145,7 +149,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   archive.failNextTrackingMutation();
   archive.failNextTrackingRead();
   await page.keyboard.press('Space');
-  const retry = maintenance.getByRole('button', { name: 'Retry profile maintenance state' });
+  const retry = maintenance.getByRole('button', { name: 'Retry' });
   await expect(retry).toBeVisible();
   await retry.focus();
   await page.keyboard.press('Enter');
@@ -153,7 +157,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await expect(toggle).toBeEnabled();
   await expect(toggle).toBeFocused();
 
-  const reveal = maintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  const reveal = maintenance.getByRole('button', { name: 'Show sensitive fields' });
   await expect(reveal).toBeEnabled();
   await reveal.focus();
   await page.keyboard.press('Enter');
@@ -171,27 +175,79 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
     { method: 'GET', path: '/api/v1/person-fact-targets', includeSensitive: true }
   ]);
 
-  await page.getByRole('dialog', { name: 'Keep this profile updated' }).getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('dialog', { name: "Keep Archive Person's profile updated" }).getByRole('button', { name: 'Close', exact: true }).click();
   await expect(maintenance).toBeHidden();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/v1/person-fact-targets*', (route) => route.fulfill({ json: {
+    ...catalog,
+    targets: [
+      ['employment', 'Employer, title, and dates'],
+      ['favorite_foods', 'Favorite foods'],
+      ['hometown', 'Hometown'],
+      ['contact_every_n_days', 'Contact frequency'],
+      ['time_zone', 'Time zone'],
+      ['languages', 'Languages'],
+      ['interests', 'Interests'],
+      ['education', 'Education'],
+      ['skills', 'Skills'],
+      ['birthday', 'Birthday'],
+      ['pronouns', 'Pronouns'],
+      ['preferred_name', 'Preferred name'],
+      ['private_note', 'Private note']
+    ].map(([slug, description]) => ({
+      ...catalog.targets[0],
+      key: `forbidden-${slug}-key`, universal_id: `forbidden-${slug}-universal-id`,
+      kind: slug === 'employment' ? 'employment' : 'attribute', slug, description, sensitive: slug === 'private_note'
+    })).filter((target) => !target.sensitive || new URL(route.request().url()).searchParams.get('include_sensitive') === 'true')
+  } }));
+  await page.setViewportSize({ width: 390, height: 600 });
   const drawer = page.getByRole('group', { name: 'Person page' });
   await drawer.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
   const drawerMaintenance = page.getByRole('region', { name: 'Profile maintenance' });
   await expect(drawerMaintenance.getByText('Time zone')).toBeVisible();
-  const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive fields' });
   await expect(drawerReveal).toBeEnabled();
   await drawerReveal.focus();
   await expect(drawerReveal).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(maintenance.getByText('Private note')).toBeVisible();
+  await expect(drawerMaintenance.getByText('Private note')).toBeAttached();
   const targetCards = maintenance.locator('li');
   const first = await targetCards.nth(0).boundingBox();
   const second = await targetCards.nth(1).boundingBox();
   expect(first).not.toBeNull();
   expect(second).not.toBeNull();
   expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height - 1);
+  const geometry = await page.getByRole('dialog').evaluate((dialog) => {
+    const body = dialog.querySelector('.kit-modal-body')!;
+    const rows = [...dialog.querySelectorAll('li')].map((row) => row.getBoundingClientRect());
+    return { height: dialog.getBoundingClientRect().height, overflow: body.scrollWidth > body.clientWidth, scrolls: body.scrollHeight > body.clientHeight, lefts: rows.map((row) => row.left), heights: rows.map((row) => row.height) };
+  });
+  expect(geometry.height).toBeLessThanOrEqual(720);
+  expect(geometry.overflow).toBe(false);
+  expect(geometry.scrolls).toBe(true);
+  expect(new Set(geometry.lefts).size).toBe(1);
+  expect(Math.max(...geometry.heights)).toBeLessThanOrEqual(60);
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
   await expectNoAxeViolations(page, 'Directory profile maintenance narrow');
+});
+
+test('Directory profile maintenance wraps long names within a narrow dialog', async ({ page }) => {
+  await installMixedArchive(page);
+  const name = 'long'.repeat(256);
+  await page.route('**/api/v1/people/42', route => route.fulfill({ json: person(42, 1, [12], name) }));
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.goto(directoryURL(42));
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
+  const dialog = page.getByRole('dialog', { name: `Keep ${name}'s profile updated` });
+  await expect(dialog).toBeVisible();
+  const bounds = await dialog.evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
+  expect(bounds.content).toBeLessThanOrEqual(bounds.width + 1);
+  await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
+  const close = dialog.getByRole('button', { name: 'Close profile updates' });
+  await expect(close).toBeInViewport();
+  await close.click();
+  await expect(dialog).toBeHidden();
 });
 
 test('Directory retains rows after an invalid cursor and reloads page one', async ({ page }) => {
