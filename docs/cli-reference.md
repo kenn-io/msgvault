@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2062,6 +2062,51 @@ receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
 
+## import-ics
+
+Import a local iCalendar file as separate calendar event messages:
+
+```bash
+msgvault import-ics calendar.ics --identifier personal-calendar
+```
+
+Choose a stable `--identifier` for each calendar. Each VEVENT becomes its own
+event, identified by UID and original recurrence identity, and keeps its own
+VEVENT with the calendar's time zone definitions. A single-VEVENT file stays
+byte-identical. Re-importing updates events: higher SEQUENCE wins, equal
+sequences use DTSTAMP, and a cancellation wins an exact tie. A malformed
+component rejects the whole file. A series with unsupported recurrence stays
+archived and is reported as unexpandable by `calendar events`. The import command
+reports updated and unchanged counts. Floating times use UTC. The daemon
+reads the file locally; importing files through a remote daemon is unavailable.
+
+A cancellation keeps the event's last accepted title, times, participants, and
+raw, and only marks it cancelled.
+
+### Invitations in email
+
+Archiving email extracts decoded `text/calendar` MIME parts into event messages
+in the same source. Attached forwarded emails and iTIP messages with the ADD,
+REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+
+An invitation, its updates, and its cancellation share one event. Every
+contributing email keeps its full MIME and attachments, and the event survives
+deletion of any of them. A later email applies only when its `ORGANIZER`
+address matches the organizer of the email that created the event, ignoring
+case. An event with no organizer accepts a revision that sets its organizer.
+An organizer mismatch leaves the event unchanged and logs a warning with the email message ID. Organizer addresses are unauthenticated: a
+sender who copies the `ORGANIZER` address can update or cancel the event.
+Invalid calendar parts leave the email intact and log a warning with its message ID.
+
+The next email re-derivation extracts invites from archived MIME automatically
+after a sync or import. To run it on demand, use
+[`repair-derived`](#repair-derived). It works from stored MIME without a provider
+connection:
+
+```bash
+msgvault repair-derived --source-type mbox
+```
+
 ## import-eml
 
 Import RFC 5322 `.eml` files inside MailMate-style `.mailbox` directories.
@@ -3108,8 +3153,8 @@ msgvault export-token <email> [flags]
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The command streams the daemon's stdout/stderr back to the
-terminal.
+local daemon. The provider-message counts used by `verify` and `remove-account` exclude calendar events extracted from invitations.
+The command streams the daemon's stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]
@@ -5244,6 +5289,7 @@ repair's error output for diagnosis.
 Recompute derived text and metadata from retained provider payloads without
 contacting the provider. The command writes immediately and refreshes analytics;
 it leaves raw payloads, downloaded media, and sync cursors in place.
+It also extracts calendar invites from archived email MIME.
 
 ```bash
 msgvault repair-derived

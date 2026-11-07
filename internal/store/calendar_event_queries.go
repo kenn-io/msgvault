@@ -45,11 +45,11 @@ var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.mess
 func calendarEventVisibility(event, message string) string {
 	return fmt.Sprintf(`NOT EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages am
- WHERE am.message_id = %[2]s.id AND EXISTS (
+ WHERE am.message_id = %[2]s.id AND am.original_source_message_id <> '' AND EXISTS (
   SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
   WHERE other.provider_event_id = %[1]s.provider_event_id
   AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
-  AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id)
+  AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id AND oa.original_source_message_id <> '')
    OR other.message_id < %[1]s.message_id)))`, event, message)
 }
 
@@ -285,9 +285,16 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 // Only sparse cancellations inherit omitted details from the master.
 func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, error) {
 	var stored []byte
-	var compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
+	var compression, format sql.NullString
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression, &format); err != nil {
 		return row, fmt.Errorf("read cancellation evidence: %w", err)
+	}
+	if format.String == rawFormatICS {
+		// An ICS cancellation keeps its own details unless it omits the times.
+		if row.Event.Start != nil {
+			return row, nil
+		}
+		return inheritSparseCalendarCancellation(row, master, nil), nil
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
