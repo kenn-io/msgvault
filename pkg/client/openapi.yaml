@@ -834,6 +834,166 @@ components:
         - dimension
         - progress
       type: object
+    BusinessReviewsCapability:
+      properties:
+        available:
+          type: boolean
+        provider:
+          type: string
+        read:
+          type: boolean
+        reason:
+          type: string
+        reply:
+          type: boolean
+      required:
+        - provider
+        - available
+        - read
+        - reply
+      type: object
+    BusinessReviewsPreview:
+      properties:
+        comment:
+          type: string
+        confirmation_token:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        receipt_id:
+          type: string
+        review:
+          $ref: "#/components/schemas/BusinessReviewsReview"
+      required:
+        - review
+        - comment
+      type: object
+    BusinessReviewsReceipt:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        status:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - status
+        - created_at
+        - updated_at
+      type: object
+    BusinessReviewsReply:
+      properties:
+        comment:
+          type: string
+        policyViolation:
+          type: string
+        reviewReplyState:
+          type: string
+        updateTime:
+          type: string
+      required:
+        - comment
+      type: object
+    BusinessReviewsRequest:
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+        comment:
+          type: string
+        confirmation_token:
+          type: string
+        confirmed:
+          type: boolean
+        page_size:
+          format: int64
+          type: integer
+        page_token:
+          type: string
+        receipt_id:
+          type: string
+        review_id:
+          type: string
+        target:
+          type: string
+      required:
+        - action
+      type: object
+    BusinessReviewsResult:
+      properties:
+        capabilities:
+          items:
+            $ref: "#/components/schemas/BusinessReviewsCapability"
+          type: array
+        next_page_token:
+          type: string
+        preview:
+          $ref: "#/components/schemas/BusinessReviewsPreview"
+        receipt:
+          $ref: "#/components/schemas/BusinessReviewsReceipt"
+        review:
+          $ref: "#/components/schemas/BusinessReviewsReview"
+        reviews:
+          items:
+            $ref: "#/components/schemas/BusinessReviewsReview"
+          type: array
+        targets:
+          items:
+            $ref: "#/components/schemas/BusinessReviewsTargetInfo"
+          type: array
+      type: object
+    BusinessReviewsReview:
+      properties:
+        comment:
+          type: string
+        createTime:
+          type: string
+        name:
+          type: string
+        reviewId:
+          type: string
+        reviewReply:
+          $ref: "#/components/schemas/BusinessReviewsReply"
+        reviewer:
+          $ref: "#/components/schemas/BusinessReviewsReviewer"
+        starRating:
+          type: string
+        updateTime:
+          type: string
+      required:
+        - reviewer
+      type: object
+    BusinessReviewsReviewer:
+      properties:
+        displayName:
+          type: string
+        isAnonymous:
+          type: boolean
+        profilePhotoUrl:
+          type: string
+      type: object
+    BusinessReviewsTargetInfo:
+      properties:
+        enabled:
+          type: boolean
+        name:
+          type: string
+        provider:
+          type: string
+        replies_enabled:
+          type: boolean
+      required:
+        - name
+        - provider
+        - enabled
+        - replies_enabled
+      type: object
     CLIAddCalendarPlanRequest:
       additionalProperties: false
       properties:
@@ -17066,7 +17226,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.48.0
+  version: 3.49.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -18001,6 +18161,99 @@ paths:
       summary: End a backup freeze window
       tags:
         - API
+  /api/v1/business-reviews/control:
+    post:
+      operationId: controlBusinessReviews
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BusinessReviewsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessReviewsResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Inspect live business reviews or confirm an exact owner reply
+      tags:
+        - Business reviews
   /api/v1/cache-builds/{job_id}:
     get:
       operationId: getCacheBuildStatus

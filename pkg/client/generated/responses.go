@@ -137,6 +137,32 @@ type EndBackupFreezeResponse = BackupFreezeEndResponse
 
 type EndBackupFreezeErrorResponse = ErrorResponse
 
+type ControlBusinessReviewsResponse = BusinessReviewsResult
+
+type ControlBusinessReviewsErrorResponse = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON403 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON404 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON409 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON413 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON415 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON429 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON500 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON502 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSON503 = ErrorResponse
+
+type ControlBusinessReviewsErrorResponseJSONDefault = ErrorResponse
+
 type GetCacheBuildStatusResponse = CacheBuildStatus
 
 type GetCacheBuildStatusErrorResponse = ErrorResponse
@@ -4352,6 +4378,25 @@ type EndBackupFreezeResp struct {
 	StatusCode   int
 	JSON200      *EndBackupFreezeResponse
 	JSONDefault  *EndBackupFreezeErrorResponse
+}
+
+type ControlBusinessReviewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ControlBusinessReviewsResponse
+	JSON400      *ControlBusinessReviewsErrorResponse
+	JSON401      *ControlBusinessReviewsErrorResponseJSON
+	JSON403      *ControlBusinessReviewsErrorResponseJSON403
+	JSON404      *ControlBusinessReviewsErrorResponseJSON404
+	JSON409      *ControlBusinessReviewsErrorResponseJSON409
+	JSON413      *ControlBusinessReviewsErrorResponseJSON413
+	JSON415      *ControlBusinessReviewsErrorResponseJSON415
+	JSON429      *ControlBusinessReviewsErrorResponseJSON429
+	JSON500      *ControlBusinessReviewsErrorResponseJSON500
+	JSON502      *ControlBusinessReviewsErrorResponseJSON502
+	JSON503      *ControlBusinessReviewsErrorResponseJSON503
+	JSONDefault  *ControlBusinessReviewsErrorResponseJSONDefault
 }
 
 type GetCacheBuildStatusResp struct {

@@ -775,6 +775,188 @@ func (b BuildingSummary) Validate() error {
 	return errors
 }
 
+type BusinessReviewsCapability struct {
+	Available bool    `json:"available"`
+	Provider  string  `json:"provider" validate:"required"`
+	Read      bool    `json:"read"`
+	Reason    *string `json:"reason,omitzero"`
+	Reply     bool    `json:"reply"`
+}
+
+func (b BusinessReviewsCapability) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BusinessReviewsPreview struct {
+	Comment           string                `json:"comment" validate:"required"`
+	ConfirmationToken *string               `json:"confirmation_token,omitzero"`
+	ExpiresAt         *time.Time            `json:"expires_at,omitempty"`
+	ReceiptID         *string               `json:"receipt_id,omitzero"`
+	Review            BusinessReviewsReview `json:"review"`
+}
+
+func (b BusinessReviewsPreview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(b.Comment, "required"); err != nil {
+		errors = errors.Append("Comment", err)
+	}
+	if v, ok := any(b.Review).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Review", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type BusinessReviewsReceipt struct {
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	ID        string    `json:"id" validate:"required"`
+	Status    string    `json:"status" validate:"required"`
+	UpdatedAt time.Time `json:"updated_at" validate:"required"`
+}
+
+func (b BusinessReviewsReceipt) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BusinessReviewsReply struct {
+	Comment          string  `json:"comment" validate:"required"`
+	PolicyViolation  *string `json:"policyViolation,omitzero"`
+	ReviewReplyState *string `json:"reviewReplyState,omitzero"`
+	UpdateTime       *string `json:"updateTime,omitzero"`
+}
+
+func (b BusinessReviewsReply) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BusinessReviewsRequest struct {
+	Action            string  `json:"action" validate:"required"`
+	Comment           *string `json:"comment,omitzero"`
+	ConfirmationToken *string `json:"confirmation_token,omitzero"`
+	Confirmed         *bool   `json:"confirmed,omitempty"`
+	PageSize          *int64  `json:"page_size,omitempty"`
+	PageToken         *string `json:"page_token,omitzero"`
+	ReceiptID         *string `json:"receipt_id,omitzero"`
+	ReviewID          *string `json:"review_id,omitzero"`
+	Target            *string `json:"target,omitzero"`
+}
+
+func (b BusinessReviewsRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BusinessReviewsResult struct {
+	Capabilities  []BusinessReviewsCapability `json:"capabilities,omitempty"`
+	NextPageToken *string                     `json:"next_page_token,omitzero"`
+	Preview       *BusinessReviewsPreview     `json:"preview,omitempty"`
+	Receipt       *BusinessReviewsReceipt     `json:"receipt,omitempty"`
+	Review        *BusinessReviewsReview      `json:"review,omitempty"`
+	Reviews       []BusinessReviewsReview     `json:"reviews,omitempty"`
+	Targets       []BusinessReviewsTargetInfo `json:"targets,omitempty"`
+}
+
+func (b BusinessReviewsResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range b.Capabilities {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Capabilities[%d]", i), err)
+			}
+		}
+	}
+	if b.Preview != nil {
+		if v, ok := any(b.Preview).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Preview", err)
+			}
+		}
+	}
+	if b.Receipt != nil {
+		if v, ok := any(b.Receipt).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Receipt", err)
+			}
+		}
+	}
+	if b.Review != nil {
+		if v, ok := any(b.Review).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Review", err)
+			}
+		}
+	}
+	for i, item := range b.Reviews {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Reviews[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range b.Targets {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Targets[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type BusinessReviewsReview struct {
+	Comment     *string                 `json:"comment,omitzero"`
+	CreateTime  *string                 `json:"createTime,omitzero"`
+	Name        *string                 `json:"name,omitzero"`
+	ReviewID    *string                 `json:"reviewId,omitzero"`
+	ReviewReply *BusinessReviewsReply   `json:"reviewReply,omitempty"`
+	Reviewer    BusinessReviewsReviewer `json:"reviewer"`
+	StarRating  *string                 `json:"starRating,omitzero"`
+	UpdateTime  *string                 `json:"updateTime,omitzero"`
+}
+
+func (b BusinessReviewsReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if b.ReviewReply != nil {
+		if v, ok := any(b.ReviewReply).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReviewReply", err)
+			}
+		}
+	}
+	if v, ok := any(b.Reviewer).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reviewer", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type BusinessReviewsReviewer struct {
+	DisplayName     *string `json:"displayName,omitzero"`
+	IsAnonymous     *bool   `json:"isAnonymous,omitempty"`
+	ProfilePhotoURL *string `json:"profilePhotoUrl,omitzero"`
+}
+
+type BusinessReviewsTargetInfo struct {
+	Enabled        bool   `json:"enabled"`
+	Name           string `json:"name" validate:"required"`
+	Provider       string `json:"provider" validate:"required"`
+	RepliesEnabled bool   `json:"replies_enabled"`
+}
+
+func (b BusinessReviewsTargetInfo) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
 type CLIAddCalendarPlanRequest struct {
 	Email            string  `json:"email" validate:"required"`
 	Headless         *bool   `json:"headless,omitempty"`
