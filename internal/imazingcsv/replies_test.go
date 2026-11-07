@@ -1,7 +1,6 @@
 package imazingcsv
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -23,23 +22,23 @@ func TestRepliesLinkUniqueEarlierMessageAndClearLaterAmbiguity(t *testing.T) {
 	exportDir := newTestExport(t, [][]string{parent, child})
 	importer := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"})
 
-	summary, err := importer.ImportPath(context.Background(), exportDir)
+	summary, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Equal(1, summary.RepliesLinked)
 	assert.Zero(summary.RepliesUnresolved)
 	parentID := messageIDByBody(t, st, "original body")
 	childID := messageIDByBody(t, st, "my reply")
 	var linkedParent sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linkedParent))
 	assert.Equal(sql.NullInt64{Int64: parentID, Valid: true}, linkedParent)
 
 	writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), [][]string{parent, child, parent})
-	summary, err = importer.ImportPath(context.Background(), exportDir)
+	summary, err = importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Zero(summary.RepliesLinked)
 	assert.Equal(1, summary.RepliesUnresolved)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linkedParent))
 	assert.False(linkedParent.Valid)
 }
@@ -65,7 +64,7 @@ func TestRepliesContractedExportPreservesLinkToRetainedArchivedParent(t *testing
 	assert.Equal(1, contracted.RepliesLinked)
 	assert.Zero(contracted.RepliesUnresolved)
 	var linkedParent sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linkedParent))
 	assert.Equal(sql.NullInt64{Int64: parentID, Valid: true}, linkedParent)
 }
@@ -83,7 +82,7 @@ func TestRepliesContractedExportDoesNotScanUnrelatedArchivedConversation(t *test
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	unrelatedID := messageIDByBody(t, st, "unrelated body")
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`),
 		[]byte("not json"), unrelatedID)
 	require.NoError(err)
@@ -115,7 +114,7 @@ func TestRepliesContractedExportClearsLinkWhenEvidenceChanges(t *testing.T) {
 	assert.Zero(contracted.RepliesLinked)
 	assert.Equal(1, contracted.RepliesUnresolved)
 	var linkedParent sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linkedParent))
 	assert.False(linkedParent.Valid)
 }
@@ -141,7 +140,7 @@ func TestRepliesContractedExportKeepsRetainedParentAmbiguity(t *testing.T) {
 	assert.Equal(1, contracted.RepliesUnresolved,
 		"the omitted indistinguishable parent must still make the reply ambiguous")
 	var linkedParent sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linkedParent))
 	assert.False(linkedParent.Valid)
 }
@@ -159,13 +158,13 @@ func TestRepliesAmbiguousSameDateParentsStayUnresolved(t *testing.T) {
 	exportDir := newTestExport(t, [][]string{firstParent, secondParent, child})
 
 	summary, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"}).
-		ImportPath(context.Background(), exportDir)
+		ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Zero(summary.RepliesLinked)
 	assert.Equal(1, summary.RepliesUnresolved)
 	childID := messageIDByBody(t, st, "my reply")
 	var linkedParent sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linkedParent))
 	assert.False(linkedParent.Valid)
 }
@@ -210,7 +209,7 @@ func TestRepliesLinkSparseCandidatesInLargeConversation(t *testing.T) {
 	exportDir := newTestExport(t, rows)
 
 	summary, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"}).
-		ImportPath(context.Background(), exportDir)
+		ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Equal(len(expected), summary.RepliesLinked)
 	assert.Zero(summary.RepliesUnresolved)
@@ -218,7 +217,7 @@ func TestRepliesLinkSparseCandidatesInLargeConversation(t *testing.T) {
 		childID := messageIDByBody(t, st, link.childBody)
 		parentID := messageIDByBody(t, st, link.parentBody)
 		var linkedParent sql.NullInt64
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT reply_to_message_id FROM messages WHERE id = ?`), childID).Scan(&linkedParent))
 		require.True(linkedParent.Valid)
 		assert.Equal(parentID, linkedParent.Int64)
@@ -420,7 +419,7 @@ func TestReplyCandidateIndexEnumeratesOnlyMatchedDateBuckets(t *testing.T) {
 func messageIDByBody(t *testing.T, st *store.Store, body string) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT message_id FROM message_bodies WHERE body_text = ?`), body).Scan(&id))
 	return id
 }

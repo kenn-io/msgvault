@@ -67,7 +67,7 @@ func TestDoclingStatusDisclosesRangePlaintext(t *testing.T) {
 		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1",
 	}))
 	var attachmentID int64
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&attachmentID))
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind("SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&attachmentID))
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(ctx, attachmentID, 1)
 	requirements.NoError(err)
 	requirements.True(eligible)
@@ -170,9 +170,9 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 		_, err = run(args...)
 		requirements.ErrorContains(err, "requires nonempty environment variable SYNTHETIC_DOCLING_BUILD_KEY")
 		var claims, rebuilds int
-		requirements.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extractions").Scan(&claims))
+		requirements.NoError(fixture.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extractions").Scan(&claims))
 		assertions.Zero(claims, "missing credentials must not claim or suppress attachments")
-		requirements.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_rebuilds").Scan(&rebuilds))
+		requirements.NoError(fixture.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_rebuilds").Scan(&rebuilds))
 		assertions.Zero(rebuilds, "missing credentials must not leave a rebuild behind")
 		assertions.Zero(uploads.Load())
 	}
@@ -197,7 +197,7 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	}
 	assertions.Equal(wantUnitKind, normalized.UnitKind)
 	var receipts int
-	requirements.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
+	requirements.NoError(fixture.Store.DB().QueryRowContext(t.Context(), fixture.Store.Rebind(
 		"SELECT COUNT(*) FROM document_extraction_conversions WHERE extraction_id = ?"),
 		response.Results[0].ExtractionID).Scan(&receipts))
 	assertions.Zero(receipts, "native Docling uploads must not invent conversion provenance")

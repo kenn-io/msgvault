@@ -99,7 +99,7 @@ func (s *Store) CreatePersonFromParticipantWithDisplayNameContext(
 			return fmt.Errorf("participant %d: %w", participantID, ErrParticipantNotFound)
 		}
 
-		edges, err := s.loadLinkEdgesTx(tx)
+		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}

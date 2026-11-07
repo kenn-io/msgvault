@@ -424,7 +424,7 @@ func (s *Store) mergePersonsOnce(
 		if err != nil {
 			return err
 		}
-		accountRevision, err := readAccountIdentityRevision(tx)
+		accountRevision, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}

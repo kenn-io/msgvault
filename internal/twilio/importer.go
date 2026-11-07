@@ -201,7 +201,7 @@ func (r *importRun) persistRecordings(ctx context.Context, messageID int64, reco
 	if len(recordings) == 0 {
 		return nil, nil
 	}
-	rows, err := r.St.MessageProviderAttachments(messageID, spec.RowPrefix)
+	rows, err := r.St.MessageProviderAttachments(ctx, messageID, spec.RowPrefix)
 	if err != nil {
 		return nil, err
 	}

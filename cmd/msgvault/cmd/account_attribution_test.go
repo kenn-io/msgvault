@@ -45,7 +45,7 @@ func TestAccountAttributionCacheParity(t *testing.T) {
 			require.NoError(err)
 			require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
 			require.NoError(st.AddAccountIdentity(src.ID, "mask@example.org", "manual"))
-			conv, err := st.EnsureConversation(src.ID, "thread", "synthetic thread")
+			conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "synthetic thread")
 			require.NoError(err)
 			for _, header := range []string{"X-Delivered-To: work@example.org", "X-Delivered-To: mask@example.org", "X-Delivered-To: work@example.org, mask@example.org"} {
 				_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
@@ -56,18 +56,18 @@ func TestAccountAttributionCacheParity(t *testing.T) {
 			}
 			calendar, err := st.GetOrCreateSource("gcal", "calendar-login@example.net")
 			require.NoError(err)
-			require.NoError(st.UpdateSourceSyncConfig(calendar.ID, `{"account_email":"work@example.org","calendar_id":"primary"}`))
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), calendar.ID, `{"account_email":"work@example.org","calendar_id":"primary"}`))
 			require.NoError(st.AddAccountIdentity(calendar.ID, "work@example.org", "manual"))
-			calendarConv, err := st.EnsureConversation(calendar.ID, "event", "Synthetic calendar")
+			calendarConv, err := st.EnsureConversation(t.Context(), calendar.ID, "event", "Synthetic calendar")
 			require.NoError(err)
 			_, err = st.UpsertMessage(&store.Message{SourceID: calendar.ID, ConversationID: calendarConv, SourceMessageID: "event", MessageType: "calendar_event", SentAt: attributionSentAt})
 			require.NoError(err)
 
 			cache := filepath.Join(t.TempDir(), "analytics")
 			// Both snapshot paths must work at the adaptive builder's minimum budget.
-			_, err = buildCache(path, cache, true, duckdbutil.BuilderOverrides{MemoryLimit: "256MiB"})
+			_, err = buildCache(t.Context(), path, cache, true, duckdbutil.BuilderOverrides{MemoryLimit: "256MiB"})
 			require.NoError(err)
-			duck, err := query.NewDuckDBEngine(cache, path, nil)
+			duck, err := query.NewDuckDBEngine(t.Context(), cache, path, nil)
 			require.NoError(err)
 			defer func() { require.NoError(duck.Close()) }()
 			live := query.NewSQLiteEngine(st.DB())
@@ -112,7 +112,7 @@ func TestAccountAttributionAppendKeepsCacheIncremental(t *testing.T) {
 	for _, address := range []string{"work@example.org", "mask@example.org"} {
 		require.NoError(st.AddAccountIdentity(src.ID, address, "manual"))
 	}
-	conv, err := st.EnsureConversation(src.ID, "thread", "synthetic thread")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "synthetic thread")
 	require.NoError(err)
 	persist := func(key string) int64 {
 		id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
@@ -123,7 +123,7 @@ func TestAccountAttributionAppendKeepsCacheIncremental(t *testing.T) {
 		return id
 	}
 	first := persist("first")
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
 
 	persist("appended")
@@ -131,7 +131,7 @@ func TestAccountAttributionAppendKeepsCacheIncremental(t *testing.T) {
 	require.NoError(err)
 	assert.True(stale.HasNew)
 	assert.False(stale.FullRebuild, "a message carrying X-Delivered-To appends: %s", stale.Reason)
-	built, err := buildCacheAuto(c.DatabaseDSN(), c.AnalyticsDir())
+	built, err := buildCacheAuto(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 	require.NoError(err)
 	assert.Equal(int64(1), built.StagedCount)
 
@@ -153,7 +153,7 @@ func TestAccountScopeCacheParity(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
 	require.NoError(st.AddAccountIdentity(src.ID, "mask@example.org", "manual"))
-	conv, err := st.EnsureConversation(src.ID, "thread", "synthetic thread")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "synthetic thread")
 	require.NoError(err)
 	for _, header := range []string{"X-Delivered-To: work@example.org", "X-Delivered-To: mask@example.org", "X-Original-To: work@example.org, mask@example.org"} {
 		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
@@ -163,9 +163,9 @@ func TestAccountScopeCacheParity(t *testing.T) {
 		require.NoError(err)
 	}
 	cache := filepath.Join(t.TempDir(), "analytics")
-	_, err = buildCache(path, cache, true)
+	_, err = buildCache(t.Context(), path, cache, true)
 	require.NoError(err)
-	duck, err := query.NewDuckDBEngine(cache, path, nil)
+	duck, err := query.NewDuckDBEngine(t.Context(), cache, path, nil)
 	require.NoError(err)
 	defer func() { require.NoError(duck.Close()) }()
 	live := query.NewSQLiteEngine(st.DB())

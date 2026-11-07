@@ -408,7 +408,7 @@ func TestDocumentBuildRepairsHistoricalMIMERolesBeforePreflight(t *testing.T) {
 	require.NoError(err)
 	require.Len(parsed.Attachments, 1)
 	attachment := parsed.Attachments[0]
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(`
 		INSERT INTO attachments
 			(message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`),
@@ -434,7 +434,7 @@ func TestDocumentBuildRepairsHistoricalMIMERolesBeforePreflight(t *testing.T) {
 
 	var role, roleSource string
 	var partKey *string
-	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(`
+	require.NoError(fixture.Store.DB().QueryRowContext(t.Context(), fixture.Store.Rebind(`
 		SELECT attachment_role, role_source, source_part_key
 		FROM attachments WHERE message_id = ?`), messageID).Scan(&role, &roleSource, &partKey))
 	assert.Equal("unknown", role, "declining build must not mutate historical attachment roles")
@@ -453,7 +453,7 @@ func TestDocumentBuildRepairsHistoricalMIMERolesBeforePreflight(t *testing.T) {
 	command.SetArgs([]string{documentBuildSubcommand, "--capabilities", manifestPath, "--yes"})
 	require.ErrorContains(command.ExecuteContext(testCtx), "synthetic stop after repair")
 
-	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(`
+	require.NoError(fixture.Store.DB().QueryRowContext(t.Context(), fixture.Store.Rebind(`
 		SELECT attachment_role, role_source, source_part_key
 		FROM attachments WHERE message_id = ?`), messageID).Scan(&role, &roleSource, &partKey))
 	assert.Equal("standalone", role)
@@ -998,10 +998,10 @@ func TestScheduledDocumentFullReconcileRepairsMissedLifecycleEvent(t *testing.T)
 	require.NoError(err)
 	assert.Equal(t, 1, commandDocumentOccurrenceCount(t, fixture.Store))
 
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
-	_, err = fixture.Store.DB().Exec(`DELETE FROM attachment_change_log`)
+	_, err = fixture.Store.DB().ExecContext(t.Context(), `DELETE FROM attachment_change_log`)
 	require.NoError(err)
 
 	sched := scheduler.New(func(context.Context, string) error { return nil })
@@ -1085,7 +1085,7 @@ func TestScheduledDocumentCleanupRunsWithoutActiveConsent(t *testing.T) {
 		SourcePartKey: "part:cleanup",
 	}))
 	var attachmentID int64
-	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
+	require.NoError(fixture.Store.DB().QueryRowContext(t.Context(), fixture.Store.Rebind(
 		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&attachmentID))
 	_, eligible, err := fixture.Store.ReconcileDocumentOccurrence(ctx, attachmentID, 1)
 	require.NoError(err)
@@ -1106,7 +1106,7 @@ func TestScheduledDocumentCleanupRunsWithoutActiveConsent(t *testing.T) {
 	retired, err := fixture.Store.RetireDocumentExtractionProfile(ctx, profile.ID)
 	require.NoError(err)
 	require.True(retired)
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(
+	_, err = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(
 		"UPDATE document_extractions SET updated_at = ? WHERE id = ?"),
 		time.Now().UTC().Add(-2*documentDerivativeRecoveryWindow), claim.ExtractionID)
 	require.NoError(err)
@@ -1117,7 +1117,7 @@ func TestScheduledDocumentCleanupRunsWithoutActiveConsent(t *testing.T) {
 	assert.True(sched.IsJobScheduled(documentFullReconcileJob))
 	require.NoError(sched.TriggerJob(documentFullReconcileJob))
 	var count int
-	require.NoError(fixture.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	require.NoError(fixture.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 	assert.Zero(count)
 }
 
@@ -1296,7 +1296,7 @@ func commandCapabilityManifest(t *testing.T, maxUnits int) mistral.CapabilityMan
 func commandDocumentOccurrenceCount(t *testing.T, st *store.Store) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM document_occurrences`).Scan(&count))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM document_occurrences`).Scan(&count))
 	return count
 }
 
@@ -1368,7 +1368,7 @@ func TestInlineDocumentConsentRescansAndReportsMalformedSource(t *testing.T) {
 	_, err := run("consent-mistral", "--capabilities", manifestPath, "--yes")
 	require.NoError(err)
 	// Simulate an old completed journal bootstrap that never retained inline rows.
-	_, err = fixture.Store.DB().Exec("DELETE FROM document_occurrences")
+	_, err = fixture.Store.DB().ExecContext(t.Context(), "DELETE FROM document_occurrences")
 	require.NoError(err)
 	cfg.Attachments.Documents.Scope.IncludeInline = true
 	disclosure, err := run("consent-mistral", "--capabilities", manifestPath)

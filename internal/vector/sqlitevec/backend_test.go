@@ -21,7 +21,7 @@ import (
 
 func newBackendForTest(t *testing.T) (*Backend, context.Context) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	main := openMainDBWithOneMessage(t)
 	b, err := Open(ctx, Options{
@@ -67,7 +67,7 @@ func TestBackend_ActivateGenerationIfConvergedRejectsStaleJournal(t *testing.T) 
 	mainDB, err := sql.Open("sqlite3", mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mainDB.Close() })
-	_, err = mainDB.Exec(`
+	_, err = mainDB.ExecContext(t.Context(), `
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
 			deleted_at DATETIME,
@@ -90,12 +90,12 @@ func TestBackend_ActivateGenerationIfConvergedRejectsStaleJournal(t *testing.T) 
 	t.Cleanup(func() { _ = b.Close() })
 	gen, err := b.CreateGeneration(t.Context(), "m", 4, "")
 	require.NoError(t, err)
-	_, err = mainDB.Exec(`UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
+	_, err = mainDB.ExecContext(t.Context(), `UPDATE messages SET embed_gen = ? WHERE id = 1`, int64(gen))
 	require.NoError(t, err)
 	require.NoError(t, b.AdvanceDocumentChangeWatermark(t.Context(), gen, 4))
 	require.NoError(t, b.SetDocumentReconcileCursor(t.Context(), gen, "done:4"))
 
-	_, err = mainDB.Exec(`UPDATE embedding_change_clock SET sequence = 5 WHERE singleton = 1`)
+	_, err = mainDB.ExecContext(t.Context(), `UPDATE embedding_change_clock SET sequence = 5 WHERE singleton = 1`)
 	require.NoError(t, err)
 	err = b.ActivateGenerationIfConverged(t.Context(), gen, 4)
 	require.ErrorIs(t, err, vector.ErrGenerationNotConverged)
@@ -123,7 +123,7 @@ func TestBackend_ActivateGenerationIfConvergedRefusesEmptySourceScope(t *testing
 	mainDB, err := sql.Open("sqlite3", mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mainDB.Close() })
-	_, err = mainDB.Exec(`
+	_, err = mainDB.ExecContext(t.Context(), `
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER NOT NULL DEFAULT 0,
@@ -159,7 +159,7 @@ func TestBackend_ActivateGenerationIfConvergedRefusesEmptySourceScope(t *testing
 
 	// A live in-scope message (stamped, so coverage stays complete) lifts
 	// the guard and the converged activation proceeds.
-	_, err = mainDB.Exec(`INSERT INTO messages (id, source_id, message_type, embed_gen) VALUES (2, 99, 'beeper', ?)`, int64(gen))
+	_, err = mainDB.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, message_type, embed_gen) VALUES (2, 99, 'beeper', ?)`, int64(gen))
 	require.NoError(t, err)
 	require.NoError(t, b.ActivateGenerationIfConverged(t.Context(), gen, 0))
 	assert.Equal(t, vector.GenerationActive, genStateSV(t, b, gen))
@@ -170,7 +170,7 @@ func TestBackend_ActivateGenerationIfConvergedRefusesEmptySourceScope(t *testing
 // the scan-and-fill coverage count that replaced pending_embeddings.
 func missingCountSV(t *testing.T, b *Backend, gen vector.GenerationID) int {
 	t.Helper()
-	missing, err := b.hasMissingForGen(context.Background(), gen)
+	missing, err := b.hasMissingForGen(t.Context(), gen)
 	require.NoError(t, err, "hasMissingForGen")
 	if missing {
 		return 1
@@ -182,7 +182,8 @@ func missingCountSV(t *testing.T, b *Backend, gen vector.GenerationID) int {
 func genStateSV(t *testing.T, b *Backend, gen vector.GenerationID) vector.GenerationState {
 	t.Helper()
 	var s vector.GenerationState
-	require.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(
+		t.Context(),
 		`SELECT state FROM index_generations WHERE id = ?`, int64(gen)).Scan(&s),
 		"read state for generation %d", gen)
 	return s
@@ -413,7 +414,8 @@ func TestBackend_SingleTargetRebuild(t *testing.T) {
 func singleRetiredGenSV(t *testing.T, b *Backend) vector.GenerationID {
 	t.Helper()
 	var id int64
-	require.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(
+		t.Context(),
 		`SELECT id FROM index_generations WHERE state = 'retired'`).Scan(&id),
 		"expected exactly one retired generation")
 	return vector.GenerationID(id)
@@ -477,13 +479,13 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 	require := require.
 		New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	main, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(
 		err, "open main")
 
 	t.Cleanup(func() { _ = main.Close() })
-	_, err = main.Exec(`CREATE TABLE messages (
+	_, err = main.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		message_type TEXT NOT NULL,
 		embed_gen INTEGER,
@@ -493,7 +495,7 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 	require.NoError(
 		err, "create messages")
 
-	_, err = main.Exec(`
+	_, err = main.ExecContext(t.Context(), `
 		INSERT INTO messages (id, message_type, deleted_from_source_at) VALUES
 		(1, 'email', NULL),
 		(2, 'sms', NULL),
@@ -529,7 +531,7 @@ func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
 
 	assert.True(missing, "scoped messages still need embeddings")
 
-	_, err = main.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(gid))
+	_, err = main.ExecContext(t.Context(), `UPDATE messages SET embed_gen = ? WHERE id IN (2, 3)`, int64(gid))
 	require.NoError(
 		err, "stamp scoped messages")
 
@@ -621,7 +623,7 @@ func TestBackend_CoverageGate_SkipsDeletedMessages(t *testing.T) {
 
 	b := openBackendWithOneDeletedMessage(t)
 	t.Cleanup(func() { _ = b.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	gid, err := b.CreateGeneration(ctx, "m", 768, "")
 	require.NoError(
 		err, "Create")
@@ -641,21 +643,21 @@ func TestBackend_CoverageGate_SkipsDeletedMessages(t *testing.T) {
 func TestBackend_CoverageGate_SkipsDedupHidden(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE messages (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME,
 		embed_gen INTEGER
 	)`)
 	require.NoError(err, "create messages")
-	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(err, "insert live")
-	_, err = db.Exec(`INSERT INTO messages (id, deleted_at) VALUES (2, CURRENT_TIMESTAMP)`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, deleted_at) VALUES (2, CURRENT_TIMESTAMP)`)
 	require.NoError(err, "insert dedup-hidden")
 
 	b, err := Open(ctx, Options{
@@ -1815,19 +1817,20 @@ func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Minimal main DB: two messages, one dedup-hidden. No FTS5 required.
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE messages (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
 	)`)
 	require.NoError(err, "create messages")
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		`INSERT INTO messages (id, deleted_at) VALUES (1, NULL), (2, '2026-01-01 00:00:00')`)
 	require.NoError(err, "insert messages")
 
@@ -1864,13 +1867,13 @@ func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Minimal main DB with source_id for SourceIDs filter.
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err, "open main")
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE messages (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		source_id INTEGER,
 		deleted_at DATETIME,
@@ -1878,7 +1881,7 @@ func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
 	)`)
 	require.NoError(err, "create messages")
 	// Three messages: 1 live, 2 dedup-hidden, 3 source-deleted.
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, deleted_at, deleted_from_source_at) VALUES
 		(1, 1, NULL, NULL),
 		(2, 1, '2026-01-01 00:00:00', NULL),
@@ -1916,11 +1919,11 @@ func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
 
 func TestFilteredMessageIDsRejectsLegacyListIDSchemaWithUpgradeGuidance(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
-	ctx := context.Background()
+	ctx := t.Context()
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open legacy main db")
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE messages (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE messages (
 		id INTEGER PRIMARY KEY,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME

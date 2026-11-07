@@ -326,12 +326,12 @@ func runReplayMode(ctx context.Context, parent string, events []replayEvent, mod
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	mainPath := filepath.Join(dir, "main.db")
-	st, err := store.OpenForTest(mainPath)
+	st, err := store.OpenForTest(ctx, mainPath)
 	if err != nil {
 		return replayPathStats{}, replayTrace{}, err
 	}
 	defer func() { _ = st.Close() }()
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		return replayPathStats{}, replayTrace{}, err
 	}
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: filepath.Join(dir, "vectors.db"),
@@ -352,15 +352,15 @@ func runReplayMode(ctx context.Context, parent string, events []replayEvent, mod
 	if err != nil {
 		return replayPathStats{}, replayTrace{}, err
 	}
-	conversation, err := st.EnsureConversationWithType(source.ID, "replay-chat", "beeper", "Synthetic chat")
+	conversation, err := st.EnsureConversationWithTypeContext(ctx, source.ID, "replay-chat", "beeper", "Synthetic chat")
 	if err != nil {
 		return replayPathStats{}, replayTrace{}, err
 	}
-	participant, err := st.EnsureParticipant("synthetic-replay", "Synthetic Speaker", "")
+	participant, err := st.EnsureParticipantContext(ctx, "synthetic-replay", "Synthetic Speaker", "")
 	if err != nil {
 		return replayPathStats{}, replayTrace{}, err
 	}
-	if err := st.EnsureConversationParticipant(conversation, participant, "member"); err != nil {
+	if err := st.EnsureConversationParticipantContext(ctx, conversation, participant, "member"); err != nil {
 		return replayPathStats{}, replayTrace{}, err
 	}
 	policy := evaluationAssemblyPolicy()
@@ -405,14 +405,14 @@ func runReplayMode(ctx context.Context, parent string, events []replayEvent, mod
 		if event.Kind != replayMutationEvent {
 			return replayPathStats{}, replayTrace{}, fmt.Errorf("unknown replay event kind %q", event.Kind)
 		}
-		messageID, err := st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID,
+		messageID, err := st.UpsertMessageContext(ctx, &store.Message{ConversationID: conversation, SourceID: source.ID,
 			SourceMessageID: event.SourceMessageID, MessageType: "beeper",
 			SentAt:   sql.NullTime{Time: event.SentAt, Valid: true},
 			SenderID: sql.NullInt64{Int64: participant, Valid: true}})
 		if err != nil {
 			return replayPathStats{}, replayTrace{}, err
 		}
-		if err := st.UpsertMessageBody(messageID, sql.NullString{String: event.Body, Valid: true}, sql.NullString{}); err != nil {
+		if err := st.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: event.Body, Valid: true}, sql.NullString{}); err != nil {
 			return replayPathStats{}, replayTrace{}, err
 		}
 		trace.MessageIDs = append(trace.MessageIDs, messageID)
@@ -787,7 +787,7 @@ func assembleStructuredCorpus(ctx context.Context, dir string, corpus Corpus) ([
 		return nil, nil, "", func() {}, err
 	}
 	path := filepath.Join(dir, "source.db")
-	st, err := store.OpenForTest(path)
+	st, err := store.OpenForTest(ctx, path)
 	if err != nil {
 		return nil, nil, "", func() {}, fmt.Errorf("open evaluator source store: %w", err)
 	}
@@ -795,7 +795,7 @@ func assembleStructuredCorpus(ctx context.Context, dir string, corpus Corpus) ([
 		_ = st.Close()
 		_ = os.RemoveAll(dir)
 	}
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		cleanup()
 		return nil, nil, "", func() {}, fmt.Errorf("initialize evaluator source store: %w", err)
 	}
@@ -994,7 +994,7 @@ func seedScenarioRows(ctx context.Context, st *store.Store, scenarios []Scenario
 	slices.Sort(messageIDs)
 	for _, id := range messageIDs {
 		seed := ftsSeeds[id]
-		if err := st.UpsertFTS(id, seed.subject, seed.body, "", "", ""); err != nil {
+		if err := st.UpsertFTSContext(ctx, id, seed.subject, seed.body, "", "", ""); err != nil {
 			return nil, nil, fmt.Errorf("seed evaluator FTS for message %d: %w", id, err)
 		}
 	}

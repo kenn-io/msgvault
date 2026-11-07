@@ -12,7 +12,7 @@ import (
 
 func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.T) {
 	backend, _, db := newBackendForTest(t)
-	_, err := db.Exec(`INSERT INTO messages (id) VALUES (2), (3)`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (2), (3)`)
 	require.NoError(t, err)
 
 	active, err := backend.CreateGeneration(t.Context(), "active-model", 4, "active:4")
@@ -32,7 +32,7 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 		{MessageID: 3, ChunkIndex: 0, Vector: unitVec(5, 1)},
 	}))
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 2;
 		DELETE FROM messages WHERE id = 3;`)
 	require.NoError(t, err)
@@ -44,12 +44,13 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 	assert.Equal(t, int64(2), pruned, "generation/message pairs pruned")
 
 	var embeddings int64
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM embeddings`).Scan(&embeddings))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings`).Scan(&embeddings))
 	assert.Equal(t, int64(3), embeddings, "live and soft-deleted chunks remain")
 
 	for _, generation := range []vector.GenerationID{active, building} {
 		var messageCount int64
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(
+			t.Context(),
 			`SELECT message_count FROM index_generations WHERE id = $1`, generation,
 		).Scan(&messageCount))
 		assert.Equal(t, int64(1), messageCount, "generation %d message_count", generation)

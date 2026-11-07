@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -20,40 +21,40 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: smoke-fixture DATA_DIR")
 		os.Exit(2)
 	}
-	if err := seed(os.Args[1]); err != nil {
+	if err := seed(context.Background(), os.Args[1]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func seed(dataDir string) error {
+func seed(ctx context.Context, dataDir string) error {
 	// #nosec G703 -- this validation-only helper writes solely beneath the
 	// explicit scratch data directory supplied by smoke-web-release.sh.
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("create fixture data directory: %w", err)
 	}
-	st, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
+	st, err := store.OpenContext(ctx, filepath.Join(dataDir, "msgvault.db"))
 	if err != nil {
 		return fmt.Errorf("open fixture archive: %w", err)
 	}
 	defer func() { _ = st.Close() }()
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		return fmt.Errorf("initialize fixture archive: %w", err)
 	}
 	source, err := st.GetOrCreateSource("gmail", "release-smoke@example.com")
 	if err != nil {
 		return fmt.Errorf("create fixture source: %w", err)
 	}
-	conversationID, err := st.EnsureConversation(source.ID, "release-smoke-thread", "Release smoke")
+	conversationID, err := st.EnsureConversation(ctx, source.ID, "release-smoke-thread", "Release smoke")
 	if err != nil {
 		return fmt.Errorf("create fixture conversation: %w", err)
 	}
-	senderID, err := st.EnsureParticipant("sender@example.com", "Synthetic Sender", "example.com")
+	senderID, err := st.EnsureParticipantContext(ctx, "sender@example.com", "Synthetic Sender", "example.com")
 	if err != nil {
 		return fmt.Errorf("create fixture participant: %w", err)
 	}
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	messageID, err := st.UpsertMessage(&store.Message{
+	messageID, err := st.UpsertMessageContext(ctx, &store.Message{
 		ConversationID: conversationID, SourceID: source.ID, SourceMessageID: "release-smoke-message",
 		MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true},
 		SenderID:     sql.NullInt64{Int64: senderID, Valid: true},
@@ -64,7 +65,7 @@ func seed(dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("create fixture message: %w", err)
 	}
-	if err := st.ReplaceMessageRecipients(messageID, "from", []int64{senderID}, []string{"Synthetic Sender"}); err != nil {
+	if err := st.ReplaceMessageRecipientsContext(ctx, messageID, "from", []int64{senderID}, []string{"Synthetic Sender"}); err != nil {
 		return fmt.Errorf("create fixture sender: %w", err)
 	}
 	content := []byte("msgvault release smoke attachment\n")
@@ -88,10 +89,10 @@ func seed(dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("make fixture attachment path relative: %w", err)
 	}
-	if err := st.UpsertAttachment(messageID, "release-smoke.txt", "text/plain", storagePath, hash, len(content)); err != nil {
+	if err := st.UpsertAttachment(ctx, messageID, "release-smoke.txt", "text/plain", storagePath, hash, len(content)); err != nil {
 		return fmt.Errorf("create fixture attachment record: %w", err)
 	}
-	if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+	if err := st.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 		return fmt.Errorf("refresh fixture attachment stats: %w", err)
 	}
 	fmt.Println(hash)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -11,8 +12,8 @@ import (
 	"time"
 )
 
-func run() error {
-	files, err := exec.Command("git", "ls-files", "-z").Output()
+func run(ctx context.Context) error {
+	files, err := exec.CommandContext(ctx, "git", "ls-files", "-z").Output()
 	if err != nil {
 		return fmt.Errorf("list tracked files: %w", err)
 	}
@@ -58,7 +59,7 @@ func run() error {
 }
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

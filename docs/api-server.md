@@ -160,9 +160,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.46.0**.
+it is separate from the binary release version. The current schema is **3.48.0**.
 
-Schema 3.46.0 adds owner-only contact delivery policy read/set/clear routes.
+Schema 3.48.0 adds owner-only contact delivery policy read/set/clear routes.
+
+Schema 3.47.0 adds optional `hints` to CLI and fast-search responses. Each hint contains `code`, `message`, and `retry_with.query`.
+
+Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` and `candidate_limit_reached` to semantic search. `has_more` is true when another ranked hit exists and the next page fits within the configured ranking cap. `candidate_limit_reached` carries `k_per_signal` when hybrid retrieval measures an eligible message outside the combined retained candidates. `ranking_limit_reached` carries the effective page cap when an extra ranked hit exists, or omitted candidates would need a page beyond the cap. Raise each reported server setting above its value, restart the server, then request a larger page. Pool saturation alone sets neither cap field.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
@@ -266,7 +270,7 @@ conflict when one UID resolves to multiple people. Person responses expose
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
 filter, and the virtual account catalog on `/cli/accounts`.
 
-Schema 3.46.0 adds the unreleased [contact delivery policy](#contact-delivery-policies) routes.
+Schema 3.48.0 adds the unreleased [contact delivery policy](#contact-delivery-policies) routes.
 
 Schema 3.1.0 adds [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -2026,6 +2030,8 @@ query in `q`. The response includes the page in `messages` and the full match
 count in `total_count`; no separate count request is needed. If the count is
 unavailable, `total_count` is `-1`.
 
+An empty first page on SQLite can include `hints` with code `sender_name_requires_address` and a corrected `retry_with.query` for an incomplete sender name or address. CLI search returns the same shape.
+
 Use `limit` and `offset` to page through results. `limit=0` returns the count
 without fetching a page. Aggregate `stats` are omitted by default. Supply
 `view_type=senders` (or another aggregate view) to request them. The TUI
@@ -3313,7 +3319,7 @@ first. It does not send anything, disable drafting, change existing drafts, or
 replace provider credentials and platform confirmation. Policies are managed
 over HTTP, MCP, and the owner CLI commands [person read-delivery-policy, set-delivery-policy, and clear-delivery-policy](cli-reference.md#person-delivery-policies).
 
-These owner-only routes require API schema 3.46.0:
+These owner-only routes require API schema 3.48.0:
 
 | Operation | POST path | Request |
 | --- | --- | --- |

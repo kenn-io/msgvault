@@ -920,6 +920,8 @@ export * from "./searchCoverageResponseStatus";
 export * from "./searchDocumentsParams";
 export * from "./searchDomainFilesPathParameters";
 export * from "./searchFastResponse";
+export * from "./searchHint";
+export * from "./searchHintRetryWithStruct";
 export * from "./searchIntegrationTasksParams";
 export * from "./searchMediaParams";
 export * from "./searchMessagesByDomainsParams";

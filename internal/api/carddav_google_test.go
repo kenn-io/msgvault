@@ -225,7 +225,7 @@ func TestGoogleCardDAVKnownFailuresStillNeedAPerson(t *testing.T) {
 		required.NoError(err)
 		assertions.Equal("google_authorization_required", status.RepairReason)
 		srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
-		request := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Origin", "https://archive.example")
 		response := httptest.NewRecorder()
@@ -247,7 +247,7 @@ func TestGoogleCardDAVAuthorizeClassifiesTokenInspectionFailure(t *testing.T) {
 	controller, err := NewCardDAVController(cfg, st, testLogger())
 	required.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
-	request := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://archive.example")
 	response := httptest.NewRecorder()
@@ -260,7 +260,7 @@ func TestGoogleCardDAVAuthorizeClassifiesTokenInspectionFailure(t *testing.T) {
 	// A failing client secrets command is the same storage outage.
 	cfg.OAuth.Tokens = config.OAuthTokenCommands{}
 	cfg.OAuth.ClientSecrets, cfg.OAuth.ClientSecretsCommand = "", testutil.SecretCommand(t, "fail")
-	request = httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://archive.example")
 	response = httptest.NewRecorder()
@@ -274,7 +274,7 @@ func TestGoogleCardDAVAuthorizeClassifiesTokenInspectionFailure(t *testing.T) {
 	cfg.OAuth.ClientSecrets, cfg.OAuth.ClientSecretsCommand = clientSecrets, nil
 	token := fmt.Sprintf(`{"access_token":"synthetic-access","refresh_token":"synthetic-refresh","client_id":"synthetic-client","scopes":[%q]}`, oauth.ScopeCardDAV)
 	required.NoError(oauth.NewTokenStore(cfg.TokensDir(), commands).Write(t.Context(), "person@example.com", []byte(token)))
-	request = httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://archive.example")
 	response = httptest.NewRecorder()
@@ -532,7 +532,7 @@ func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) { //noli
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})}
 	begin := func() CardDAVGoogleAuthorizeResponse {
-		start := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
+		start := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
 		start.Header.Set("Content-Type", "application/json")
 		start.Header.Set("Origin", "https://archive.example")
 		started := httptest.NewRecorder()
@@ -544,7 +544,7 @@ func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) { //noli
 	}
 	older := begin()
 	flow := begin()
-	callback := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, flow.State)))
+	callback := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, flow.State)))
 	callback.Header.Set("Content-Type", "application/json")
 	callback = callback.WithContext(context.WithValue(callback.Context(), oauth2.HTTPClient, provider))
 	completed := httptest.NewRecorder()
@@ -557,7 +557,7 @@ func TestGoogleAuthorizationCompletesWhileArchiveGateHeld(t *testing.T) { //noli
 	assertions.True(mgr.HasScope(t.Context(), "person@example.com", oauth.ScopeCardDAV))
 	saved, err := os.ReadFile(mgr.TokenPath("person@example.com"))
 	required.NoError(err)
-	callback = httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, older.State)))
+	callback = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, older.State)))
 	callback.Header.Set("Content-Type", "application/json")
 	callback = callback.WithContext(context.WithValue(callback.Context(), oauth2.HTTPClient, provider))
 	stale := httptest.NewRecorder()
@@ -619,7 +619,7 @@ func TestGoogleAuthorizationCallbackReportsTransientProviderFailures(t *testing.
 				return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})}
 
-			start := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
+			start := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize", strings.NewReader(`{"email":"person@example.com","redirect_uri":"https://archive.example/"}`))
 			start.Header.Set("Content-Type", "application/json")
 			start.Header.Set("Origin", "https://archive.example")
 			started := httptest.NewRecorder()
@@ -628,7 +628,7 @@ func TestGoogleAuthorizationCallbackReportsTransientProviderFailures(t *testing.
 			var flow CardDAVGoogleAuthorizeResponse
 			required.NoError(json.Unmarshal(started.Body.Bytes(), &flow))
 
-			callback := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, flow.State)))
+			callback := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/callback", strings.NewReader(fmt.Sprintf(`{"state":%q,"code":"synthetic-code"}`, flow.State)))
 			callback.Header.Set("Content-Type", "application/json")
 			callback = callback.WithContext(context.WithValue(callback.Context(), oauth2.HTTPClient, provider))
 			response := httptest.NewRecorder()

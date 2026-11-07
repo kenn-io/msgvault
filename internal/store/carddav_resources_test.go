@@ -143,7 +143,7 @@ func TestCardDAVImportMintsUIDWhenRemoteUIDIsAlreadyUsed(t *testing.T) {
 		store.CardDAVBookRoles{IsLookupSource: true}))
 	const takenUID = "77822e26-3cd5-40d0-a0fd-6f0ff63b204b"
 	var existingPersonID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 		VALUES (?, ?) RETURNING id`), takenUID, "Existing Person").Scan(&existingPersonID))
 	resource := remoteResource(book.CanonicalURL+"contact.vcf", "unbound-remote-uid", "New Person", "", `"one"`)
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -238,7 +238,7 @@ func TestDeletePersonRetiresUIDForLaterCardDAVImports(t *testing.T) {
 	st, account, book := newCardDAVResourceStore(t)
 	const retiredUID = "77822e26-3cd5-40d0-a0fd-6f0ff63b204b"
 	var personID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 		VALUES (?, ?) RETURNING id`), retiredUID, "Deleted Person").Scan(&personID))
 	deleted, err := st.GetPersonContext(t.Context(), personID)
 	require.NoError(err)
@@ -521,7 +521,7 @@ func TestCardDAVDisplayNameRevisionTracksRebaseAndRetirement(t *testing.T) {
 		require.NotNil(resource.PersonID)
 		participantID, err := st.EnsureParticipantByIdentifier("email", input.Emails[0], input.DisplayName)
 		require.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 			`INSERT INTO person_participants (person_id, participant_id) VALUES (?, ?)`),
 			*resource.PersonID, participantID)
 		require.NoError(err)
@@ -572,9 +572,9 @@ func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
 	assert.Equal(before.Revision, afterETag.Revision, "ETag churn must not rewrite the person projection")
 
 	var noteID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO daily_note_entries (local_date, ordinal, body)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO daily_note_entries (local_date, ordinal, body)
 		VALUES ('2026-08-19', 1, 'synthetic note') RETURNING id`).Scan(&noteID))
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO daily_note_entry_persons (entry_id, person_id) VALUES (?, ?)`), noteID, personID)
 	require.NoError(err)
 	remoteEdit := remoteResource(href, "remote-alice", "Alice Remote", "remote@example.test", `"three"`)
@@ -589,7 +589,7 @@ func TestCardDAVApplyDoesNotRebaseOnETagOnlyOrUserOwnedState(t *testing.T) {
 	require.NotNil(afterUserState.DisplayName)
 	assert.Equal("Alice Initial", *afterUserState.DisplayName)
 	var links int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM daily_note_entry_persons
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM daily_note_entry_persons
 		WHERE entry_id = ? AND person_id = ?`), noteID, personID).Scan(&links))
 	assert.Equal(1, links)
 	envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), "carddav:1", href)
@@ -604,7 +604,7 @@ func TestCardDAVETagRefreshPreservesLocallyDeletedMapping(t *testing.T) {
 
 	st, account, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`),
 		"local-deleted-mapping").Scan(&personID))
 	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
@@ -639,7 +639,7 @@ func TestCardDAVETagRefreshPreservesLocallyDeletedMapping(t *testing.T) {
 	assert.Equal(store.CardDAVMappingMapped, refreshed.MappingStatus)
 	assert.Nil(refreshed.PersonID)
 	var people int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM persons`).Scan(&people))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM persons`).Scan(&people))
 	assert.Zero(people, "an ETag-only refresh must not recreate the locally deleted contact")
 }
 
@@ -656,7 +656,7 @@ func TestCardDAVApplyBindsExactCanonicalUIDBeforeContactPoints(t *testing.T) {
 
 	st, account, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid) VALUES ('remote-alice') RETURNING id`).Scan(&personID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('remote-alice') RETURNING id`).Scan(&personID))
 	input := remoteResource(book.CanonicalURL+"alice.vcf", "remote-alice", "Remote Name", "new@example.test", `"one"`)
 
 	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
@@ -677,7 +677,7 @@ func TestCardDAVApplyNeverRebasesLocalGovernedProjection(t *testing.T) {
 
 	st, account, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('remote-alice', 'Local Name') RETURNING id`).Scan(&personID))
 	href := book.CanonicalURL + "alice.vcf"
 	initial := remoteResource(href, "remote-alice", "Remote Initial", "initial@example.test", `"one"`)
@@ -733,7 +733,7 @@ func TestCardDAVEmailBindingStoresLocalCanonicalUIDInEnvelope(t *testing.T) {
 
 	st, account, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid) VALUES ('local-person-uid') RETURNING id`).Scan(&personID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('local-person-uid') RETURNING id`).Scan(&personID))
 	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "alice@example.test",
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
@@ -757,7 +757,7 @@ func TestCardDAVLookupOnlyResourceRetainsBytesWithoutCreatingPerson(t *testing.T
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 		SET is_write_target = FALSE, is_subscribed = FALSE, is_lookup_source = TRUE
 		WHERE id = ?`), book.ID)
 	require.NoError(err)
@@ -785,7 +785,7 @@ func TestCardDAVAmbiguousContactMatchCreatesReviewCandidateWithoutMerging(t *tes
 	st, account, book := newCardDAVResourceStore(t)
 	personIDs := make([]int64, 2)
 	for index := range personIDs {
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`),
 			"local-uid-"+string(rune('a'+index))).Scan(&personIDs[index]))
 		_, err := st.AddPersonContactPointContext(t.Context(), personIDs[index], store.PersonContactPointInput{
@@ -821,12 +821,12 @@ func TestCardDAVCandidateAcceptanceBindsPersonAndPreservesReviewedDecisions(t *t
 	require := require.New(t)
 
 	st, account, book := newCardDAVResourceStore(t)
-	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 		SET is_write_target = FALSE WHERE id = ?`), book.ID)
 	require.NoError(err)
 	personIDs := make([]int64, 2)
 	for index := range personIDs {
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`),
 			"local-uid-"+string(rune('a'+index))).Scan(&personIDs[index]))
 		_, err := st.AddPersonContactPointContext(t.Context(), personIDs[index], store.PersonContactPointInput{
@@ -917,7 +917,7 @@ func TestCardDAVReconciliationPreservesRejectedCandidate(t *testing.T) {
 	st, account, book := newCardDAVResourceStore(t)
 	for index := range 2 {
 		var personID int64
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`),
 			"local-uid-"+string(rune('a'+index))).Scan(&personID))
 		_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
@@ -971,7 +971,7 @@ func TestCardDAVResourceRefreshReconcilesAmbiguousCandidatesToUniqueMatch(t *tes
 	st, account, book := newCardDAVResourceStore(t)
 	personIDs := make([]int64, 2)
 	for index := range personIDs {
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`),
 			"local-uid-"+string(rune('a'+index))).Scan(&personIDs[index]))
 		_, err := st.AddPersonContactPointContext(t.Context(), personIDs[index], store.PersonContactPointInput{
@@ -1031,7 +1031,7 @@ func TestCardDAVResourceRefreshReplacesThenRemovesAmbiguousCandidates(t *testing
 	st, account, book := newCardDAVResourceStore(t)
 	personIDs := make([]int64, 4)
 	for index := range personIDs {
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`),
 			"local-uid-"+string(rune('a'+index))).Scan(&personIDs[index]))
 		email := "shared@example.test"
@@ -1250,7 +1250,7 @@ func TestCardDAVTombstoneDeletesOnlyUntouchedRemoteGovernedPerson(t *testing.T) 
 
 	// A canonical UID match is locally governed and is only unmapped.
 	var curatedID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid) VALUES ('curated-uid') RETURNING id`).Scan(&curatedID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('curated-uid') RETURNING id`).Scan(&curatedID))
 	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
 	require.NoError(err)
 	curated := remoteResource(book.CanonicalURL+"curated.vcf", "curated-uid", "Curated", "curated@example.test", `"two"`)
@@ -1423,9 +1423,9 @@ func TestCardDAVTombstoneRetainsImportedProjectionForUserEditedPerson(t *testing
 	require.NotNil(resource.PersonID)
 	personID := *resource.PersonID
 	var noteID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO daily_note_entries (local_date, ordinal, body)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO daily_note_entries (local_date, ordinal, body)
 		VALUES ('2026-08-20', 1, 'retain normal tombstone projection') RETURNING id`).Scan(&noteID))
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO daily_note_entry_persons (entry_id, person_id) VALUES (?, ?)`), noteID, personID)
 	require.NoError(err)
 	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
@@ -1449,7 +1449,7 @@ func TestCardDAVTombstoneRetainsImportedProjectionForUserEditedPerson(t *testing
 	require.NoError(err)
 	assert.Equal([]string{input.Emails[0]}, contactPointValues(points))
 	var noteLinks int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM daily_note_entry_persons
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM daily_note_entry_persons
 		WHERE entry_id = ? AND person_id = ?`), noteID, personID).Scan(&noteLinks))
 	assert.Equal(1, noteLinks)
 	_, err = st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
@@ -1534,7 +1534,7 @@ func TestCardDAVTombstoneRemovesIdentityCandidatesReferencingImportedPerson(t *t
 	_, err = st.GetIdentityMatchCandidateContext(t.Context(), candidate.ID)
 	require.ErrorIs(err, store.ErrIdentityMatchNotFound)
 	var dangling int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM identity_match_candidates
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM identity_match_candidates
 		WHERE (left_kind = 'person' AND left_id = ?)
 		   OR (right_kind = 'person' AND right_id = ?)`), personID, personID).Scan(&dangling))
 	assert.Zero(t, dangling)

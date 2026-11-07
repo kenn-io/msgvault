@@ -47,7 +47,7 @@ func TestVoiceRejectsUnsafePageAndForeignAccount(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := testClient(t, func(w http.ResponseWriter, r *http.Request) { writeJSON(t, w, tc.value) }, nil)
-			_, _, err := c.ListRecordingsPage(context.Background(), time.Time{}, 1000, "")
+			_, _, err := c.ListRecordingsPage(t.Context(), time.Time{}, 1000, "")
 			require.Error(t, err)
 		})
 	}
@@ -158,7 +158,7 @@ func TestClassicAndLegacyTranscripts(t *testing.T) {
 					w.WriteHeader(http.StatusNotFound)
 				}
 			}, nil)
-			evidence, err := c.Transcripts(context.Background(), []Recording{{SID: testRE, AccountSID: testAC, CallSID: testCA}})
+			evidence, err := c.Transcripts(t.Context(), []Recording{{SID: testRE, AccountSID: testAC, CallSID: testCA}})
 			require.NoError(err)
 			tc.check(assert, require, evidence)
 		})
@@ -178,7 +178,7 @@ func TestUnsupportedRegionsDoNotFallback(t *testing.T) {
 					assert.NotEqual("/v2/Transcripts", r.URL.Path, "Intelligence is read in US1 only")
 					writeJSON(t, w, map[string]any{"transcriptions": []any{}})
 				}, func(options *Options) { options.Region = tc.region })
-				evidence, err := c.Transcripts(context.Background(), []Recording{{SID: testRE, CallSID: testCA}})
+				evidence, err := c.Transcripts(t.Context(), []Recording{{SID: testRE, CallSID: testCA}})
 				require.NoError(err)
 				assert.Empty(evidence.Diagnostics, "a region fact isn't stored per call")
 			}
@@ -213,7 +213,7 @@ func TestTranscriptAuthFailures(t *testing.T) {
 					options.IntelligenceServiceSID = "GAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 				}
 			})
-			evidence, err := c.Transcripts(context.Background(), []Recording{{SID: testRE, CallSID: testCA}})
+			evidence, err := c.Transcripts(t.Context(), []Recording{{SID: testRE, CallSID: testCA}})
 			if tc.status == http.StatusOK {
 				require.Error(t, err)
 			} else {
@@ -238,11 +238,11 @@ func TestRetry429AndCancellation(t *testing.T) {
 		}
 		writeJSON(t, w, map[string]any{"sid": testCA, "account_sid": testAC})
 	}, nil)
-	call, err := c.GetCall(context.Background(), testCA)
+	call, err := c.GetCall(t.Context(), testCA)
 	require.NoError(err)
 	assert.Equal(testCA, call.SID)
 	assert.Equal(3, requests)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = c.GetCall(ctx, testCA)
 	require.ErrorIs(err, context.Canceled)
@@ -280,13 +280,13 @@ func TestListRecordingsPageResumesWithItsFilterWindow(t *testing.T) {
 		}
 	}, nil)
 
-	first, cursor, err := c.ListRecordingsPage(context.Background(), after, 1000, "")
+	first, cursor, err := c.ListRecordingsPage(t.Context(), after, 1000, "")
 	require.NoError(err)
 	require.Len(first, 1, "a recording listed twice is kept once")
 	assert.Equal(2, first[0].Channels)
 	require.NotEmpty(cursor)
 	assert.Equal(1, requests, "a page read should stop after one provider response")
-	second, cursor, err := c.ListRecordingsPage(context.Background(), after, 1000, cursor)
+	second, cursor, err := c.ListRecordingsPage(t.Context(), after, 1000, cursor)
 	require.NoError(err)
 	require.Len(second, 1)
 	assert.Empty(cursor)
@@ -332,7 +332,7 @@ func TestLegacyDetailFallbackValidatesIdentityAndPreservesRaw(t *testing.T) {
 				}
 				writeJSON(t, w, map[string]any{"sid": detailID, "account_sid": testAC, "recording_sid": testRE, "status": "completed", "transcription_text": "Existing text", "provider_detail_evidence": "preserved"})
 			}, nil)
-			transcripts, err := c.legacy(context.Background(), testRE)
+			transcripts, err := c.legacy(t.Context(), testRE)
 			if foreign {
 				require.Error(err)
 				assert.Empty(transcripts)

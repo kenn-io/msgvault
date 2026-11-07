@@ -26,14 +26,14 @@ func TestRunOnceMigrationAtVersionRerunsReshapedMigration(t *testing.T) {
 		runs++
 		return nil
 	}
-	require.NoError(st.runOnceMigration(context.Background(), name, 1, false, body))
-	require.NoError(st.runOnceMigration(context.Background(), name, 2, false, body))
-	require.NoError(st.runOnceMigration(context.Background(), name, 1, false, body))
-	require.NoError(st.runOnceMigration(context.Background(), name, 1, true, body))
+	require.NoError(st.runOnceMigration(t.Context(), name, 1, false, body))
+	require.NoError(st.runOnceMigration(t.Context(), name, 2, false, body))
+	require.NoError(st.runOnceMigration(t.Context(), name, 1, false, body))
+	require.NoError(st.runOnceMigration(t.Context(), name, 1, true, body))
 	assert.Equal(3, runs, "version 2 must rerun once and force must still run")
 
 	var version int
-	require.NoError(st.db.QueryRow(`SELECT version FROM applied_migrations WHERE name = ?`, name).Scan(&version))
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT version FROM applied_migrations WHERE name = ?`, name).Scan(&version))
 	assert.Equal(2, version, "forced lower version must not downgrade the ledger")
 }
 
@@ -48,35 +48,35 @@ func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
 	const name = "retryable_migration"
 	require.NoError(st.MarkMigrationApplied(name), "seed the prior migration version")
 	failure := errors.New("migration body failed")
-	err = st.runOnceMigration(context.Background(), name, 2, false, func(context.Context) error {
+	err = st.runOnceMigration(t.Context(), name, 2, false, func(context.Context) error {
 		return failure
 	})
 	require.ErrorIs(err, failure)
-	applied, err := st.IsMigrationAppliedContext(context.Background(), name, 2)
+	applied, err := st.IsMigrationAppliedContext(t.Context(), name, 2)
 	require.NoError(err)
 	assert.False(applied, "a failed body must not be marked")
-	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 1)
+	applied, err = st.IsMigrationAppliedContext(t.Context(), name, 1)
 	require.NoError(err)
 	assert.True(applied, "a failed higher-version body must preserve version 1")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	err = st.runOnceMigration(ctx, name, 2, false, func(ctx context.Context) error {
 		cancel()
 		return ctx.Err()
 	})
 	cancel()
 	require.ErrorIs(err, context.Canceled)
-	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 2)
+	applied, err = st.IsMigrationAppliedContext(t.Context(), name, 2)
 	require.NoError(err)
 	assert.False(applied, "a cancelled body must not be marked")
-	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 1)
+	applied, err = st.IsMigrationAppliedContext(t.Context(), name, 1)
 	require.NoError(err)
 	assert.True(applied, "a cancelled higher-version body must preserve version 1")
 
-	require.NoError(st.runOnceMigration(context.Background(), name, 2, false, func(context.Context) error {
+	require.NoError(st.runOnceMigration(t.Context(), name, 2, false, func(context.Context) error {
 		return nil
 	}))
-	applied, err = st.IsMigrationAppliedContext(context.Background(), name, 2)
+	applied, err = st.IsMigrationAppliedContext(t.Context(), name, 2)
 	require.NoError(err)
 	assert.True(applied, "a retry after failure or cancellation must run")
 }
@@ -84,38 +84,38 @@ func TestMigrationLedgerVersionFailureAndCancellation(t *testing.T) {
 func TestInitSchemaAddsVersionToLegacyLedger(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "legacy-ledger.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "legacy-ledger.db"))
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(), "initialize current schema")
 
 	const appliedAt = "2020-01-02 03:04:05"
-	_, err = st.db.Exec(`
+	_, err = st.db.ExecContext(t.Context(), `
 		CREATE TABLE applied_migrations_legacy (
 			name TEXT PRIMARY KEY,
 			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`)
 	require.NoError(err, "create legacy ledger")
-	_, err = st.db.Exec(
+	_, err = st.db.ExecContext(t.Context(),
 		`INSERT INTO applied_migrations_legacy (name, applied_at) VALUES (?, ?)`,
 		migrationPersonInferenceProviderV2, appliedAt)
 	require.NoError(err, "seed legacy ledger")
-	_, err = st.db.Exec(`INSERT INTO applied_migrations_legacy (name, applied_at)
+	_, err = st.db.ExecContext(t.Context(), `INSERT INTO applied_migrations_legacy (name, applied_at)
 		SELECT name, applied_at FROM applied_migrations
 		WHERE name != ?`, migrationPersonInferenceProviderV2)
 	require.NoError(err, "copy legacy ledger rows")
-	_, err = st.db.Exec(`DROP TABLE applied_migrations`)
+	_, err = st.db.ExecContext(t.Context(), `DROP TABLE applied_migrations`)
 	require.NoError(err, "replace current ledger")
-	_, err = st.db.Exec(`ALTER TABLE applied_migrations_legacy RENAME TO applied_migrations`)
+	_, err = st.db.ExecContext(t.Context(), `ALTER TABLE applied_migrations_legacy RENAME TO applied_migrations`)
 	require.NoError(err, "install legacy ledger")
 	var legacyAppliedAt string
-	require.NoError(st.db.QueryRow(`SELECT applied_at FROM applied_migrations WHERE name = ?`,
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT applied_at FROM applied_migrations WHERE name = ?`,
 		migrationPersonInferenceProviderV2).Scan(&legacyAppliedAt), "read legacy timestamp")
 
 	require.NoError(st.InitSchema(), "upgrade legacy ledger")
 	var version int
 	var gotAppliedAt string
-	require.NoError(st.db.QueryRow(`
+	require.NoError(st.db.QueryRowContext(t.Context(), `
 		SELECT version, applied_at FROM applied_migrations WHERE name = ?`,
 		migrationPersonInferenceProviderV2).Scan(&version, &gotAppliedAt))
 	assert.Equal(1, version, "legacy ledger rows must default to version 1")
@@ -124,21 +124,21 @@ func TestInitSchemaAddsVersionToLegacyLedger(t *testing.T) {
 
 func TestHiddenTextBackfillCancellation(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "hidden-text.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "hidden-text.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "thread", "")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "hidden-html", MessageType: "email",
 	})
 	require.NoError(err)
-	_, err = st.db.Exec(`INSERT INTO message_bodies (message_id, body_html) VALUES (?, ?)`, id, `<div hidden>Hidden text</div>`)
+	_, err = st.db.ExecContext(t.Context(), `INSERT INTO message_bodies (message_id, body_html) VALUES (?, ?)`, id, `<div hidden>Hidden text</div>`)
 	require.NoError(err)
-	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMessagesHiddenTextBackfill)
+	_, err = st.db.ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = ?`, migrationMessagesHiddenTextBackfill)
 	require.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -153,7 +153,7 @@ func TestHiddenTextBackfillCancellation(t *testing.T) {
 	assert.False(applied, "a cancelled backfill must remain retryable")
 	require.NoError(st.InitSchemaContext(t.Context()))
 	var hidden bool
-	require.NoError(st.db.QueryRow(`SELECT hidden_text_present FROM messages WHERE id = ?`, id).Scan(&hidden))
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT hidden_text_present FROM messages WHERE id = ?`, id).Scan(&hidden))
 	assert.True(hidden)
 }
 
@@ -244,7 +244,7 @@ func TestInitSchemaContext_MigrationLedgerStopsWhenTheContextIsCancelled(t *test
 				// The content_changed_at backfill is the last gated step, so
 				// clearing only its sentinel makes its mark the first ledger
 				// write of the re-run.
-				_, err := st.db.Exec(st.Rebind(
+				_, err := st.db.ExecContext(t.Context(), st.Rebind(
 					`DELETE FROM applied_migrations WHERE name = ?`),
 					migrationMessagesContentChangedAtBackfill)
 				require.NoError(t, err, "clear the content_changed_at sentinel")
@@ -268,7 +268,7 @@ func TestInitSchemaContext_MigrationLedgerStopsWhenTheContextIsCancelled(t *test
 				tc.prepare(t, st)
 			}
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			t.Cleanup(cancel)
 			trigger := tc.trigger
 			trigger.cancel = cancel
@@ -296,7 +296,7 @@ func TestInitSchemaContext_RelationshipSeedHonoursContext(t *testing.T) {
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	trigger := cancelAtStatement{
 		stop:   "FROM relationship_types WHERE universal_id = ?",
@@ -310,8 +310,8 @@ func TestInitSchemaContext_RelationshipSeedHonoursContext(t *testing.T) {
 	require.Error(err, "a cancelled relationship seed must stop schema initialisation")
 	require.ErrorIs(err, context.Canceled, "and report it as cancellation")
 	var count int
-	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM relationship_types`).Scan(&count))
-	assert.Zero(count, "a cancelled relationship seed must roll back its transaction")
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'relationship_types'`).Scan(&count))
+	assert.Zero(count, "a cancelled relationship seed must roll back the fresh schema")
 }
 
 // TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled covers
@@ -335,19 +335,19 @@ func TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled(t *tes
 	// A legacy archive: the phone index is not UNIQUE, so two participants can
 	// share a phone number — which is what the migration merges. Clearing the
 	// sentinel is what an archive that has never run it looks like.
-	_, err = st.db.Exec(`DROP INDEX IF EXISTS idx_participants_phone`)
+	_, err = st.db.ExecContext(t.Context(), `DROP INDEX IF EXISTS idx_participants_phone`)
 	require.NoError(err, "drop the unique phone index a legacy archive never had")
 	for _, name := range []string{"winner", "loser"} {
-		_, err = st.db.Exec(st.Rebind(
+		_, err = st.db.ExecContext(t.Context(), st.Rebind(
 			`INSERT INTO participants (phone_number, display_name) VALUES (?, ?)`),
 			"+15550000001", name)
 		require.NoError(err, "seed duplicate phone participant %q", name)
 	}
-	_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
 		migrationPhoneUniqueIndex)
 	require.NoError(err, "clear the phone-unique sentinel")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	trigger := cancelAtStatement{stop: "JOIN participant_links", cancel: cancel}
 	trigger.install(st.db)
@@ -405,16 +405,16 @@ func TestInitSchemaContext_LegacyCalendarAttributionStopsWhenTheContextIsCancell
 
 	// A row written before attribution provenance existed, with the migration
 	// sentinel cleared so the walk runs again.
-	_, err = st.db.Exec(st.Rebind(`
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET source_is_from_me = NULL, identity_is_from_me = FALSE, is_from_me = TRUE
 		WHERE id = ?`), messageID)
 	require.NoError(err, "simulate a row written before attribution provenance")
-	_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
 		migrationMessageAttributionProvenance)
 	require.NoError(err, "clear the attribution sentinel")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	trigger := cancelAtStatement{
 		after:  "AND s.source_type = 'gcal'",
@@ -433,7 +433,7 @@ func TestInitSchemaContext_LegacyCalendarAttributionStopsWhenTheContextIsCancell
 			"LATER statement means it ran with the context already cancelled")
 
 	var provenance sql.NullBool
-	require.NoError(st.db.QueryRow(st.Rebind(
+	require.NoError(st.db.QueryRowContext(t.Context(), st.Rebind(
 		`SELECT source_is_from_me FROM messages WHERE id = ?`), messageID).Scan(&provenance),
 		"read the row the cancelled stamp would have written")
 	assert.False(provenance.Valid,
@@ -493,7 +493,7 @@ type cancelDuringFTSProbeDialect struct {
 }
 
 func (d cancelDuringFTSProbeDialect) FTSAvailable(
-	ctx context.Context, db *sql.DB,
+	ctx context.Context, db SQLReader,
 ) (bool, error) {
 	d.cancel()
 	return d.Dialect.FTSAvailable(ctx, db)
@@ -520,7 +520,7 @@ func TestInitSchemaContext_FTSIndexBuildRunsOnTheBoundTransaction(t *testing.T) 
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	wrapped := &cancelDuringFTSIndexDialect{Dialect: st.dialect, cancel: cancel}
 	st.dialect = wrapped
@@ -552,7 +552,7 @@ func TestInitSchemaContext_FTSAvailabilityProbeStopsWhenTheContextIsCancelled(t 
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	st.dialect = cancelDuringFTSProbeDialect{Dialect: st.dialect, cancel: cancel}
 
@@ -645,7 +645,7 @@ func TestInitSchemaContext_DDLStopsWhenTheContextIsCancelled(t *testing.T) {
 			require.NoError(err, "open store")
 			t.Cleanup(func() { _ = st.Close() })
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			t.Cleanup(cancel)
 			wrapped := cancelAtDialectStepDialect{Dialect: st.dialect, cancel: cancel}
 			tc.step(&wrapped)
@@ -686,11 +686,11 @@ func TestEnsureParticipantsPhoneUniqueIndex_HonoursItsContext(t *testing.T) {
 
 	// Re-run it from scratch: clearing the ledger entry is what an archive that
 	// has never had this migration looks like.
-	_, err = st.db.Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
 		migrationPhoneUniqueIndex)
 	require.NoError(err, "clear the migration ledger entry")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err = st.ensureParticipantsPhoneUniqueIndex(ctx)

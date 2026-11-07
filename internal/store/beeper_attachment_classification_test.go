@@ -16,7 +16,7 @@ func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *
 	f := storetest.New(t)
 	require := require.New(t)
 	assert := assert.New(t)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type = 'beeper' WHERE id = ?`), f.Source.ID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE sources SET source_type = 'beeper' WHERE id = ?`), f.Source.ID)
 	require.NoError(err)
 	messageID := f.CreateMessage("beeper-message")
 	firstHash := strings.Repeat("a", 64)
@@ -43,36 +43,36 @@ func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *
 	require.NoError(err)
 
 	var beforeRevision, afterRevision int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&beforeRevision))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&beforeRevision))
 	var beforeDerivedRevision int64
-	require.NoError(f.Store.DB().QueryRow(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`).Scan(&beforeDerivedRevision))
-	changed, err := f.Store.SetBeeperAttachmentClassifications(messageID, map[string]store.BeeperAttachmentClassification{
+	changed, err := f.Store.SetBeeperAttachmentClassifications(t.Context(), messageID, map[string]store.BeeperAttachmentClassification{
 		"beeper:voice": {Metadata: `{"source_transcript":{"provider":"beeper","text":"hello"}}`, IsPreview: true},
 	})
 	require.NoError(err)
 	assert.EqualValues(2, changed)
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
 	assert.Equal(beforeRevision, afterRevision, "attachment classification leaves occurrence reconciliation to its journal owner")
 	var afterDerivedRevision int64
-	require.NoError(f.Store.DB().QueryRow(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'`).Scan(&afterDerivedRevision))
 	assert.Equal(beforeDerivedRevision+1, afterDerivedRevision)
 
 	var metadata, role, roleSource string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COALESCE(CAST(attachment_metadata AS TEXT), ''), attachment_role, role_source
 		FROM attachments WHERE source_attachment_id = ?`), "beeper:voice").Scan(&metadata, &role, &roleSource))
 	assert.JSONEq(`{"source_transcript":{"provider":"beeper","text":"hello"}}`, metadata)
 	assert.Equal("preview", role)
 	assert.Equal("importer_semantics", roleSource)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COALESCE(CAST(attachment_metadata AS TEXT), ''), attachment_role, role_source
 		FROM attachments WHERE source_attachment_id = ?`), "beeper:removed").Scan(&metadata, &role, &roleSource))
 	assert.Empty(metadata)
 	assert.Equal("unknown", role)
 	assert.Equal("unknown", roleSource)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COALESCE(CAST(attachment_metadata AS TEXT), ''), attachment_role, role_source
 		FROM attachments WHERE source_attachment_id = ?`), "slack:other").Scan(&metadata, &role, &roleSource))
 	assert.JSONEq(`{"shared_url":"https://other.example"}`, metadata)
@@ -82,21 +82,21 @@ func TestSetBeeperAttachmentClassificationsReconcilesStaleRowsAndOccurrences(t *
 	require.NoError(err)
 	assert.Positive(result.ChangesConsumed)
 	var occurrenceCount int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*) FROM document_occurrences WHERE message_id = ?`), messageID).Scan(&occurrenceCount))
 	assert.Zero(occurrenceCount, "the existing reconciler removes the now-ineligible preview occurrence")
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
 	assert.Greater(afterRevision, beforeRevision)
 	reconciledRevision := afterRevision
 
-	changed, err = f.Store.SetBeeperAttachmentClassifications(messageID, map[string]store.BeeperAttachmentClassification{
+	changed, err = f.Store.SetBeeperAttachmentClassifications(t.Context(), messageID, map[string]store.BeeperAttachmentClassification{
 		"beeper:voice": {Metadata: `{"source_transcript":{"provider":"beeper","text":"hello"}}`, IsPreview: true},
 	})
 	require.NoError(err)
 	assert.Zero(changed)
-	require.NoError(f.Store.DB().QueryRow(`SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT revision FROM document_index_state WHERE singleton = 1`).Scan(&afterRevision))
 	assert.Equal(reconciledRevision, afterRevision)
-	require.NoError(f.Store.DB().QueryRow(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'`).Scan(&afterDerivedRevision))
 	assert.Equal(beforeDerivedRevision+1, afterDerivedRevision)
 }
@@ -117,7 +117,8 @@ func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForExistingMetadata(t *t
 	}
 	readRevision := func() int64 {
 		var revision int64
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			`SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`).Scan(&revision))
 		return revision
 	}
@@ -155,7 +156,8 @@ func TestReplaceMessageBeeperAttachmentsAdvancesRevisionForAddedMetadata(t *test
 	}
 	readRevision := func() int64 {
 		var revision int64
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			`SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`).Scan(&revision))
 		return revision
 	}
@@ -200,22 +202,22 @@ func TestReplaceMessageBeeperAttachmentsRollsBackRevisionAndMetadata(t *testing.
 			FOR EACH ROW WHEN (NEW.key = 'derived_data_revision')
 			EXECUTE FUNCTION fail_derived_revision()`
 	}
-	_, err := f.Store.DB().Exec(triggerSQL)
+	_, err := f.Store.DB().ExecContext(t.Context(), triggerSQL)
 	require.NoError(err)
 	ref.Metadata = `{"source_transcript":{"provider":"beeper","text":"new"}}`
 	require.Error(f.Store.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{ref}))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COALESCE(CAST(attachment_metadata AS TEXT), '')
 		FROM attachments WHERE source_attachment_id = ?`), "beeper:voice").Scan(&ref.Metadata))
 	require.JSONEq(`{"source_transcript":{"provider":"beeper","text":"old"}}`, ref.Metadata)
 	var revision int64
-	require.NoError(f.Store.DB().QueryRow(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`).Scan(&revision))
 	require.Equal(int64(1), revision)
 	dropSQL := `DROP TRIGGER fail_derived_revision`
 	if f.Store.IsPostgreSQL() {
 		dropSQL = `DROP TRIGGER fail_derived_revision ON archive_metadata; DROP FUNCTION fail_derived_revision()`
 	}
-	_, err = f.Store.DB().Exec(dropSQL)
+	_, err = f.Store.DB().ExecContext(t.Context(), dropSQL)
 	require.NoError(err)
 }

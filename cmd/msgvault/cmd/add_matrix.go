@@ -190,7 +190,7 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 			return err
 		}
 	}
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 		if err != nil {
 			return fmt.Errorf("encode Matrix key backup preference: %w", err)
 		}
-		if err := s.UpdateSourceSyncConfig(source.ID, string(encoded)); err != nil {
+		if err := s.UpdateSourceSyncConfig(ctx, source.ID, string(encoded)); err != nil {
 			return fmt.Errorf("save Matrix key backup preference: %w", err)
 		}
 	}
@@ -219,9 +219,9 @@ func addMatrixAccount(cmd *cobra.Command, state *invocation, tokensDir, loginSec
 		return fmt.Errorf("set Matrix source name: %w", err)
 	}
 	if !noDefaultIdentityAddMatrix {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, creds.UserID, creds.UserID, "account-identifier", state.logger)
+		confirmDefaultIdentity(ctx, cmd.OutOrStdout(), s, source.ID, creds.UserID, creds.UserID, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	if resumed || (exists && previous.DeviceID != creds.DeviceID) {

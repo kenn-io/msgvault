@@ -130,7 +130,7 @@ func TestMediaRefreshMetadataOnlyAttachments(t *testing.T) {
 					refreshFrom = conversation.Artifacts["601"]
 				}
 				assert.Equal(tc.waiting, refreshFrom > 0)
-				refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "601"), "chatwoot:")
+				refs, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, "601"), "chatwoot:")
 				require.NoError(err)
 				require.Len(refs, 1)
 				ref := refs["chatwoot:attachment:701"]
@@ -143,7 +143,7 @@ func TestMediaRefreshMetadataOnlyAttachments(t *testing.T) {
 
 func readMediaRefreshBytes(t *testing.T, st *store.Store, messageID int64, dir string) (map[string]store.AttachmentRef, []string) {
 	t.Helper()
-	refs, err := st.MessageProviderAttachments(messageID, "chatwoot:")
+	refs, err := st.MessageProviderAttachments(t.Context(), messageID, "chatwoot:")
 	require.NoError(t, err)
 	var payloads []string
 	for _, ref := range refs {
@@ -199,7 +199,7 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 			media.failures["/recording-a.ogg"] = tc.initialFailure
 			summary, err := importer.Import(t.Context(), opts)
 			require.NoError(err)
-			before, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "call:901"), "chatwoot:")
+			before, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, "call:901"), "chatwoot:")
 			require.NoError(err)
 			path := "/recording-a.ogg"
 			if tc.replacementFailure || tc.name == "successful_same_key_replacement" {
@@ -220,7 +220,7 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 				assert.Equal(1, summary.MediaFailures, "one failed resource is counted once per import")
 				for _, id := range []string{"901", "call:901"} {
 					archivedID := contractArchivedMessageID(t, st, id)
-					refs, err := st.MessageProviderAttachments(archivedID, "chatwoot:")
+					refs, err := st.MessageProviderAttachments(t.Context(), archivedID, "chatwoot:")
 					require.NoError(err)
 					require.Len(refs, 1)
 					assert.Equal(attachmentpolicy.StateFailed, refs["chatwoot:attachment:2001"].State)
@@ -241,7 +241,7 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 					require.NoError(err)
 					assert.Equal(1, media.requestCount(path), "an absent URL makes no download request")
 					for _, providerID := range []string{"901", "call:901"} {
-						refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, providerID), "chatwoot:")
+						refs, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, providerID), "chatwoot:")
 						require.NoError(err)
 						for _, ref := range refs {
 							assert.Equal(attachmentpolicy.StateFailed, ref.State)
@@ -313,7 +313,7 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 			if tc.name == "distinct_recordings" {
 				var count int
 				var has bool
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count, has_attachments FROM messages WHERE id = ?`), meetingID).Scan(&count, &has))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_count, has_attachments FROM messages WHERE id = ?`), meetingID).Scan(&count, &has))
 				assert.Equal(2, count)
 				assert.True(has)
 				trigger := fmt.Sprintf(`CREATE TRIGGER reject_chatwoot_stats BEFORE UPDATE OF attachment_count ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'synthetic stats failure'); END`, meetingID)
@@ -322,34 +322,34 @@ func TestMediaRefreshCallKeepsDistinctRecordingsAndDeduplicatesSameURL(t *testin
 					trigger = fmt.Sprintf(`CREATE FUNCTION reject_chatwoot_stats() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = %d THEN RAISE EXCEPTION 'synthetic stats failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_chatwoot_stats BEFORE UPDATE OF attachment_count ON messages FOR EACH ROW EXECUTE FUNCTION reject_chatwoot_stats()`, meetingID)
 					drop += ` ON messages`
 				}
-				_, err = st.DB().Exec(trigger)
+				_, err = st.DB().ExecContext(t.Context(), trigger)
 				require.NoError(err)
 				err = st.ReplaceMessageChatwootAttachments(meetingID, []store.AttachmentRef{refs["chatwoot:attachment:2001"]})
 				require.ErrorContains(err, "synthetic stats failure")
-				retained, err := st.MessageProviderAttachments(meetingID, "chatwoot:")
+				retained, err := st.MessageProviderAttachments(t.Context(), meetingID, "chatwoot:")
 				require.NoError(err)
 				assert.Len(retained, 2, "failed statistics update rolls back replacement rows")
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), meetingID).Scan(&count))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), meetingID).Scan(&count))
 				assert.Equal(2, count)
-				_, err = st.DB().Exec(drop)
+				_, err = st.DB().ExecContext(t.Context(), drop)
 				require.NoError(err)
 				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 				require.NoError(err)
 				_, payloads := readMediaRefreshBytes(t, st, meetingID, opts.AttachmentsDir)
 				assert.ElementsMatch(tc.want, payloads)
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), meetingID).Scan(&count))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_count FROM messages WHERE id = ?`), meetingID).Scan(&count))
 				assert.Equal(2, count, "identical replay keeps committed rows and counts aligned")
 			}
 			if tc.name == "same_recording" {
 				var baseline, changes int64
 				postgres := store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB"))
 				if !postgres {
-					require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+					require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
 				}
 				_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 				require.NoError(err)
 				if !postgres {
-					require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'attachments'`, baseline).Scan(&changes))
+					require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'attachments'`, baseline).Scan(&changes))
 					assert.Zero(changes, "unchanged chat and meeting recordings create no cache repair work")
 				}
 			}
@@ -539,7 +539,7 @@ func TestDeferredMediaRetriesAndAccountPolicyDisablesMedia(t *testing.T) {
 			}
 			_, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
-			refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "901"), "chatwoot:")
+			refs, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, "901"), "chatwoot:")
 			require.NoError(err)
 			for _, ref := range refs {
 				if disabled {
@@ -615,7 +615,7 @@ func TestStreamOversizeRetainsMimeAndSizeEvidence(t *testing.T) {
 			for range 2 {
 				_, err := NewImporter(st, api.client(t)).Import(t.Context(), opts)
 				require.NoError(err)
-				refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "901"), "chatwoot:")
+				refs, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, "901"), "chatwoot:")
 				require.NoError(err)
 				ref := refs["chatwoot:attachment:2001"]
 				assert.Equal(attachmentpolicy.SkipSizeCap, ref.SkipReason)
@@ -742,7 +742,7 @@ func TestReconcileDoesNotRenewFailedDownload(t *testing.T) {
 	opts.Full = true
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
-	refs, err := st.MessageProviderAttachments(contractArchivedMessageID(t, st, "901"), "chatwoot:")
+	refs, err := st.MessageProviderAttachments(t.Context(), contractArchivedMessageID(t, st, "901"), "chatwoot:")
 	require.NoError(err)
 	assert.Empty(refs)
 	old["attachments"] = []any{attachment}

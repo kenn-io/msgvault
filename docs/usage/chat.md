@@ -178,6 +178,14 @@ these tools do not complete tasks or infer new ones.
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
+### Tools available for your archive
+
+MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
+
+Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
+
+The complete default stdio `tools/list` response, including output schemas, measures 173,598 bytes for an mbox-only archive and 226,314 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, rounded up from the measured sizes plus 10%. Optional write flags are off in both measurements.
+
 ### Claude Desktop Configuration
 
 Add the following to your Claude Desktop config file:
@@ -414,7 +422,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `address` requires API schema 3.29.0 or newer and matches a literal, case-insensitive substring of current bound participant addresses and identifiers or curated contact points on saved people. Sparse or absent address matches can scan all saved people; combine a known `query` to narrow candidates. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `address`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
-| `get_delivery_policy` | Inspect the stored and effective contact delivery policy for a person or one saved email address, with inheritance, revision and reason. Archive evidence never grants send permission. Needs API schema 3.46.0. | `person_uid` (string, required), `endpoint` (string, omit for the person default) |
+| `get_delivery_policy` | Inspect the stored and effective contact delivery policy for a person or one saved email address, with inheritance, revision and reason. Archive evidence never grants send permission. Needs API schema 3.48.0. | `person_uid` (string, required), `endpoint` (string, omit for the person default) |
 | `set_delivery_policy` | Approve or restrict sending to a person or one saved email address after client confirmation. Needs `--allow-delivery-policy-writes`. | `person_uid` (string, required), `endpoint` (string), `policy` (string: `draft_only`/`send_allowed`), `expected_revision` (int, required), `reason` (string, required), `scope_acknowledgement` (string: `person_all_routes` for a person-wide `send_allowed`) |
 | `clear_delivery_policy` | Clear one address policy, or the person default, back to inheritance after client confirmation. Needs `--allow-delivery-policy-writes`. | `person_uid` (string, required), `endpoint` (string), `expected_revision` (int, required), `reason` (string, required) |
 
@@ -474,6 +482,8 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
   "has_more": true
 }
 ```
+
+On SQLite, an empty first page for an incomplete `from:` name or address can include `hints`, for example `{"code":"sender_name_requires_address","message":"…","retry_with":{"query":"from:alex@example.com"}}`. Retry with that query and keep the other tool arguments, including `account`, `limit`, and `offset`. The legacy `search_messages` metadata mode returns the same hints.
 
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and

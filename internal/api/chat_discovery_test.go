@@ -19,7 +19,7 @@ func TestChatDiscoveryHTTPReadsRealArchive(t *testing.T) {
 	assertions := assert.New(t)
 	srv, id, _ := seedConversation(t, "beeper", 2)
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/search?q=synthetic&limit=1", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/conversations/search?q=synthetic&limit=1", nil))
 	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	var page store.ChatDiscoveryPage
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &page))
@@ -35,12 +35,12 @@ func TestChatDiscoveryHTTPReadsRealArchive(t *testing.T) {
 		"/api/v1/conversations/search?q=name&limit=",
 	} {
 		w = httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 		assertions.Equal(http.StatusBadRequest, w.Code, path)
 	}
 	for _, parameter := range []string{"source_id=%GG", "source_id=1;2", "limit=%GG", "limit=1;2"} {
 		w = httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/search?q=synthetic&"+parameter, nil))
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/conversations/search?q=synthetic&"+parameter, nil))
 		assertions.Equal(http.StatusBadRequest, w.Code, parameter)
 		var response ErrorResponse
 		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
@@ -51,7 +51,7 @@ func TestChatDiscoveryHTTPReadsRealArchive(t *testing.T) {
 func TestChatDiscoveryHTTPDeniesMissingOwnerAuthentication(t *testing.T) {
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}, nil, nil, testLogger())
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -67,7 +67,7 @@ func TestChatDiscoveryHTTPDirtyMembershipCannotWriteDuringBackupFreeze(t *testin
 	srv.operationGate = NewSerialOperationGate()
 	dirtyCount := func() int {
 		var count int
-		require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM chat_members_dirty").Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM chat_members_dirty").Scan(&count))
 		return count
 	}
 	require.Equal(1, dirtyCount())
@@ -77,7 +77,7 @@ func TestChatDiscoveryHTTPDirtyMembershipCannotWriteDuringBackupFreeze(t *testin
 		srv.Router().ServeHTTP(w, endBackupFreeze(t, token))
 	})
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
 	require.Equal(http.StatusServiceUnavailable, w.Code, w.Body.String())
 	var response ErrorResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
@@ -88,7 +88,7 @@ func TestChatDiscoveryHTTPDirtyMembershipCannotWriteDuringBackupFreeze(t *testin
 	srv.Router().ServeHTTP(w, endBackupFreeze(t, token))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	w = httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	var page store.ChatDiscoveryPage
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &page))
@@ -119,6 +119,6 @@ func TestChatDiscoveryHTTPReleasesGateBeforeMetadataScan(t *testing.T) {
 	require.True(t, ok)
 	srv.store = &chatDiscoveryScanStore{MessageStore: st, ChatDiscoveryStore: st, gate: gate, t: t}
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/conversations/search?q=synthetic", nil))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }

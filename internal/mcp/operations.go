@@ -57,7 +57,7 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 	}
 	definitions := make([]operationalDefinition, 0)
 	for _, definition := range fixedOperationalDefinitions() {
-		if !slices.Contains(opts.OperationCapabilities, definition.definition.name) {
+		if !opts.Families.allows(definition.definition.name) || !slices.Contains(opts.OperationCapabilities, definition.definition.name) {
 			continue
 		}
 		if definition.writes && (!allowWrites || !slices.Contains(opts.OperationWriteFamilies, definition.family)) {

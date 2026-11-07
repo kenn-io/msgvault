@@ -172,10 +172,10 @@ const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
-const deliveryPolicyMinAPISchemaVersion = "3.46.0"
+const deliveryPolicyMinAPISchemaVersion = "3.48.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
-// Draft tools are the floor, so an older daemon fails instead of serving an empty msgvault.
+// Source inventory is required to select tools within the grant.
 func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
 	health, err := st.Health(ctx)
 	if err != nil {
@@ -185,23 +185,21 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
 	}
-	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
-		return mcpserver.ServeOptions{}, fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
+	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
+		return mcpserver.ServeOptions{}, fmt.Errorf("delegated MCP requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon", daemonclient.AgentReadMinAPISchemaVersion, schemaVersion)
+	}
+	grant, err := st.AgentTokenSelf(ctx)
+	if err != nil {
+		return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
+	}
+	families := &mcpserver.ArchiveFamilies{}
+	for _, source := range grant.Sources {
+		addMCPSourceFamilies(families, source.Type)
 	}
 	opts := mcpserver.ServeOptions{
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
-	}
-	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
-		grant, err := st.AgentTokenSelf(ctx)
-		if err != nil {
-			return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
-		}
-		opts.Engine = daemonclient.NewEngineAdapter(st)
-		opts.AttachmentReader = st
-		opts.GrantPermissions = grant.Permissions
-	}
-	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
-		opts.Calendar = st
+		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
+		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
 	}
 	return opts, nil
 }
@@ -251,6 +249,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
+		DiscoverFamilies:   func(ctx context.Context) *mcpserver.ArchiveFamilies { return discoverMCPFamilies(ctx, st, log) },
 		Engine:             engine,
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},

@@ -142,7 +142,7 @@ func Generate(ctx context.Context, opts Options) (*Summary, error) {
 	if err := checkTargetState(dbPath, opts.Append); err != nil {
 		return nil, err
 	}
-	if err := initSchema(dbPath); err != nil {
+	if err := initSchema(ctx, dbPath); err != nil {
 		return nil, err
 	}
 	db, err := sql.Open(sqliteutil.DriverName(), dbPath+"?_journal_mode=WAL&_synchronous=OFF&_foreign_keys=ON")
@@ -241,12 +241,12 @@ func checkTargetState(dbPath string, appendMode bool) error {
 // initSchema creates or migrates the database through the real store layer,
 // so generated vaults always carry the schema shipped msgvault binaries
 // expect — including index and trigger definitions.
-func initSchema(dbPath string) error {
-	st, err := store.Open(dbPath)
+func initSchema(ctx context.Context, dbPath string) error {
+	st, err := store.OpenContext(ctx, dbPath)
 	if err != nil {
 		return fmt.Errorf("fakevault: opening store: %w", err)
 	}
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		_ = st.Close()
 		return fmt.Errorf("fakevault: initializing schema: %w", err)
 	}

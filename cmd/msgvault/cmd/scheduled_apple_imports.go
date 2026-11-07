@@ -38,8 +38,11 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	if err != nil {
 		return fmt.Errorf("whatsapp apple source %q: %w", src.Name, err)
 	}
-	confirmDefaultIdentity(io.Discard, s, summary.SourceID, src.Phone, src.Phone, "phone-e164", state.logger)
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	// The import committed; record its owner and finish the migration even
+	// when a stop request arrives now.
+	post := context.WithoutCancel(ctx)
+	confirmDefaultIdentity(post, io.Discard, s, summary.SourceID, src.Phone, src.Phone, "phone-e164", state.logger)
+	if err := runPostSourceCreateMigrationsForInvocation(post, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	state.logger.Info("whatsapp apple import finished", "source", src.Name, "added", summary.MessagesAdded, "updated", summary.MessagesUpdated, "skipped", summary.MessagesSkipped)
@@ -65,7 +68,7 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 			return err
 		}
 	}
-	client, err := imessage.NewClient(path, opts...)
+	client, err := imessage.NewClient(ctx, path, opts...)
 	if err != nil {
 		return fmt.Errorf("open iMessage database: %w", err)
 	}
@@ -74,7 +77,7 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	if err != nil {
 		return fmt.Errorf("get or create source: %w", err)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	summary, err := importImessageRecorded(ctx, s, client, src.ID)
@@ -84,7 +87,8 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 		return fmt.Errorf("imessage import: %w", err)
 	}
 	state.logger.Info("imessage import finished", "imported", summary.MessagesImported, "added", summary.MessagesAdded, "updated", summary.MessagesUpdated)
-	if count, err := s.RetitleImessageChats(); err != nil {
+	// The import committed; refresh titles even when a stop request arrives now.
+	if count, err := s.RetitleImessageChats(context.WithoutCancel(ctx)); err != nil {
 		state.logger.Warn("could not refresh iMessage chat titles", "error", err)
 	} else if count > 0 {
 		state.logger.Info("imessage chat titles refreshed", "count", count)

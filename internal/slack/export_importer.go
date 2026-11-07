@@ -144,7 +144,8 @@ func ImportSlackdump(
 		}
 		conversation := &conversations[index]
 		var conversationID int64
-		conversationID, err = scopedStore.EnsureConversationWithType(
+		conversationID, err = scopedStore.EnsureConversationWithTypeContext(
+			ctx,
 			source.ID,
 			conversation.ID,
 			conversationType(conversation),
@@ -186,7 +187,7 @@ func ImportSlackdump(
 			}
 			if message.Type == "message" && message.TS != "" {
 				var messageIDs map[string]int64
-				messageIDs, err = scopedStore.MessageExistsBatch(source.ID, []string{
+				messageIDs, err = scopedStore.MessageExistsBatchContext(ctx, source.ID, []string{
 					sourceMessageID(conversation.ID, message.TS),
 				})
 				if err != nil {
@@ -197,6 +198,7 @@ func ImportSlackdump(
 					return fmt.Errorf("imported Slackdump message %s was not persisted", sourceMessageID(conversation.ID, message.TS))
 				}
 				if err = persistSlackdumpAttachments(
+					ctx,
 					scopedStore,
 					export,
 					*conversation,
@@ -229,7 +231,7 @@ func ImportSlackdump(
 		}
 	}
 
-	if err = scopedStore.RecomputeConversationStats(source.ID); err != nil {
+	if err = scopedStore.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
 		return summary, err
 	}
 	if err = scopedStore.UpdateSyncCheckpoint(syncID, slackdumpCheckpoint(summary)); err != nil {
@@ -286,12 +288,12 @@ func ensureSlackdumpMembership(ctx context.Context,
 		userIDs = []string{conversation.User, meUserID}
 	} else if len(userIDs) == 0 {
 		if conversation.NumMembers > 0 {
-			if err := st.SetConversationMemberCount(conversationID, conversation.NumMembers); err != nil {
+			if err := st.SetConversationMemberCountContext(ctx, conversationID, conversation.NumMembers); err != nil {
 				return nil, 0, err
 			}
 			return nil, conversation.NumMembers, nil
 		}
-		if err := st.MarkConversationMemberCountUnknown(conversationID); err != nil {
+		if err := st.MarkConversationMemberCountUnknownContext(ctx, conversationID); err != nil {
 			return nil, 0, err
 		}
 		return nil, unknownMembershipCount(mediaPolicy), nil
@@ -325,11 +327,11 @@ func ensureSlackdumpMembership(ctx context.Context,
 			})
 		}
 	}
-	if err := st.ReplaceConversationParticipants(conversationID, participants); err != nil {
+	if err := st.ReplaceConversationParticipantsContext(ctx, conversationID, participants); err != nil {
 		return nil, 0, err
 	}
 	participantCount := max(len(participants), conversation.NumMembers)
-	if err := st.SetConversationMemberCount(conversationID, participantCount); err != nil {
+	if err := st.SetConversationMemberCountContext(ctx, conversationID, participantCount); err != nil {
 		return nil, 0, err
 	}
 	return toRecipients, participantCount, nil
@@ -345,6 +347,7 @@ func slackdumpCheckpoint(summary *SlackdumpImportSummary) *store.Checkpoint {
 }
 
 func persistSlackdumpAttachments(
+	ctx context.Context,
 	st *store.Store,
 	dump *slackdumpExport,
 	conversation Conversation,
@@ -354,7 +357,7 @@ func persistSlackdumpAttachments(
 	opts SlackdumpImportOptions,
 	summary *SlackdumpImportSummary,
 ) error {
-	existing, err := st.MessageSlackAttachments(messageID)
+	existing, err := st.MessageSlackAttachmentsContext(ctx, messageID)
 	if err != nil {
 		return fmt.Errorf("read existing attachments: %w", err)
 	}
@@ -459,10 +462,10 @@ func persistSlackdumpAttachments(
 	for _, sourceAttachmentID := range omitted {
 		refs = append(refs, existing[sourceAttachmentID])
 	}
-	if err := st.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
+	if err := st.ReplaceMessageSlackAttachmentsContext(ctx, messageID, refs); err != nil {
 		return fmt.Errorf("replace attachment rows: %w", err)
 	}
-	if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+	if err := st.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
 		return fmt.Errorf("recompute attachment stats: %w", err)
 	}
 	return nil

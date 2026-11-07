@@ -17,10 +17,10 @@ func TestLimitedImportRecordsSuccessfulSourceSyncWithoutReplacingCursor(t *testi
 	checks := assert.New(t)
 	must := require.New(t)
 	imp, client, opts := importerFixture(t)
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Account.Identifier())
+	source, err := imp.store.GetSourceByTypeAndIdentifier(t.Context(), SourceType, opts.Account.Identifier())
 	must.NoError(err)
 	const cursor = "opaque-source-cursor"
-	must.NoError(imp.store.UpdateSourceSyncState(source.ID, cursor))
+	must.NoError(imp.store.UpdateSourceSyncState(t.Context(), source.ID, cursor))
 	source, err = imp.store.GetSourceByID(source.ID)
 	must.NoError(err)
 	must.False(source.LastSyncAt.Valid)
@@ -50,10 +50,10 @@ func TestMediaBackfillRecordsSuccessfulSourceSyncAndPreservesResumeState(t *test
 	checks := assert.New(t)
 	must := require.New(t)
 	imp, client, opts := importerFixture(t)
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Account.Identifier())
+	source, err := imp.store.GetSourceByTypeAndIdentifier(t.Context(), SourceType, opts.Account.Identifier())
 	must.NoError(err)
 	const cursor = "opaque-source-cursor"
-	must.NoError(imp.store.UpdateSourceSyncState(source.ID, cursor))
+	must.NoError(imp.store.UpdateSourceSyncState(t.Context(), source.ID, cursor))
 	message := syntheticMessage(1, 1, "deferred photo")
 	message.Media = []Media{{ID: "photo:9", ChatID: 1, MessageID: 1, Role: "photo", URL: "https://api.inline.chat/file"}}
 	client.messages[1] = []Message{message}
@@ -66,7 +66,7 @@ func TestMediaBackfillRecordsSuccessfulSourceSyncAndPreservesResumeState(t *test
 	must.True(run.CursorAfter.Valid)
 	resumeBlob := run.CursorAfter.String
 	oldSync := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-	_, err = imp.store.DB().Exec(imp.store.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), oldSync, source.ID)
+	_, err = imp.store.DB().ExecContext(t.Context(), imp.store.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), oldSync, source.ID)
 	must.NoError(err)
 	content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
 	imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
@@ -89,7 +89,7 @@ func TestMediaBackfillRecordsSuccessfulSourceSyncAndPreservesResumeState(t *test
 	checks.Equal(int64(1), run.MessagesUpdated)
 	checks.Equal(resumeBlob, run.CursorAfter.String, "media work preserves the message-sync resume blob")
 	messageID := archivedMessage(t, imp.store, source.ID, 1, 1)
-	refs, err := imp.store.MessageInlineProviderAttachments(messageID)
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), messageID)
 	must.NoError(err)
 	must.Len(refs, 1)
 	checks.Equal(attachmentpolicy.StateStored, refs["inline:photo:9"].State)

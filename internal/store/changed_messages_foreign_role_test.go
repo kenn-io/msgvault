@@ -77,7 +77,8 @@ func newForeignRoleFeed(t *testing.T) *foreignRoleFeed {
 	t.Cleanup(func() { _ = admin.Close() })
 
 	var mayCreateRoles bool
-	require.NoError(t, admin.QueryRow(
+	require.NoError(t, admin.QueryRowContext(
+		t.Context(),
 		`SELECT rolsuper OR rolcreaterole FROM pg_roles WHERE rolname = current_user`,
 	).Scan(&mayCreateRoles), "check whether this connection can create roles")
 	if !mayCreateRoles {
@@ -100,14 +101,17 @@ func newForeignRoleFeed(t *testing.T) *foreignRoleFeed {
 
 	// Register teardown before creating anything, so a failure part-way through
 	// setup still leaves the container clean.
-	t.Cleanup(f.teardown)
+	t.Cleanup(func() {
+		// Cleanup runs after t.Context() is canceled.
+		f.teardown(context.WithoutCancel(t.Context()))
+	})
 	for _, stmt := range []string{
 		fmt.Sprintf(`CREATE ROLE %s LOGIN PASSWORD '%s'`, f.appRole, feedProbeRolePassword),
 		fmt.Sprintf(`CREATE ROLE %s LOGIN PASSWORD '%s'`, f.peer, feedProbeRolePassword),
 		fmt.Sprintf(`CREATE SCHEMA %s AUTHORIZATION %s`, f.schema, f.appRole),
 		fmt.Sprintf(`GRANT USAGE ON SCHEMA %s TO %s`, f.schema, f.peer),
 	} {
-		_, err := admin.Exec(stmt)
+		_, err := admin.ExecContext(t.Context(), stmt)
 		require.NoErrorf(t, err, "set up the foreign-role arrangement: %s", stmt)
 	}
 
@@ -116,7 +120,7 @@ func newForeignRoleFeed(t *testing.T) *foreignRoleFeed {
 	// The peer stands in for something else that reaches the same database. It
 	// gets exactly what such a thing would have: the ability to read, and (for
 	// the writer cases) to write.
-	_, err = admin.Exec(fmt.Sprintf(
+	_, err = admin.ExecContext(t.Context(), fmt.Sprintf(
 		`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s`, f.schema, f.peer))
 	require.NoError(t, err, "grant the peer role table access")
 	return f
@@ -140,24 +144,26 @@ func (f *foreignRoleFeed) peerConn(t *testing.T) *sql.Conn {
 	db, err := sql.Open("pgx", f.peerDSN)
 	require.NoError(t, err, "open a connection as the peer role")
 	db.SetMaxOpenConns(1)
-	conn, err := db.Conn(context.Background())
+	conn, err := db.Conn(t.Context())
 	require.NoError(t, err, "pin the peer connection to one backend")
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		// Roll back anything still open: the schema drop that follows would
 		// otherwise wait on it forever.
-		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		_, _ = conn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK")
 		_ = conn.Close()
 		_ = db.Close()
 	})
 	return conn
 }
 
-func (f *foreignRoleFeed) teardown() {
+func (f *foreignRoleFeed) teardown(ctx context.Context) {
 	if f.store != nil {
 		_ = f.store.Close()
 	}
 	// Any backend still logged in as either role would block the drops.
-	_, _ = f.admin.Exec(
+	_, _ = f.admin.ExecContext(
+		ctx,
 		`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = ANY($1)`,
 		"{"+f.appRole+","+f.peer+"}")
 	for _, stmt := range []string{
@@ -167,7 +173,7 @@ func (f *foreignRoleFeed) teardown() {
 		`DROP ROLE IF EXISTS ` + f.peer,
 		`DROP ROLE IF EXISTS ` + f.appRole,
 	} {
-		_, _ = f.admin.Exec(stmt)
+		_, _ = f.admin.ExecContext(ctx, stmt)
 	}
 }
 
@@ -188,7 +194,7 @@ func roleDSN(t *testing.T, adminDSN, role, schema string) string {
 // uncommitted: exactly the thing the bound must not publish past.
 func peerBeginWrite(t *testing.T, conn *sql.Conn, id int64, subject string) time.Time {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := conn.ExecContext(ctx, "BEGIN")
 	require.NoError(t, err, "begin the peer's write transaction")
 	_, err = conn.ExecContext(ctx,
@@ -213,7 +219,7 @@ func peerBeginWrite(t *testing.T, conn *sql.Conn, id int64, subject string) time
 func TestListChangedMessages_BenignForeignConnectionsDoNotHoldTheFeedBack(t *testing.T) {
 	require := require.New(t)
 	f := newForeignRoleFeed(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	seedFeedMessage(t, f.store, 1, time.Time{})
 	settleFeedClock(t, f.store)
@@ -278,7 +284,7 @@ func TestListChangedMessages_ForeignRoleWriterStillHoldsTheBound(t *testing.T) {
 	assert.NotEqual(byStore, consumer.subject(later),
 		"a change stamped above an invisible writer's stamp must wait, not be published")
 
-	_, err := peer.ExecContext(context.Background(), "COMMIT")
+	_, err := peer.ExecContext(t.Context(), "COMMIT")
 	require.NoError(err, "the peer commits")
 	// The peer's CONNECTION stays open and idle from here on: recovery must
 	// follow the transaction, not the connection.
@@ -316,7 +322,8 @@ func TestListChangedMessages_UntrustedBoundIsRefusedOnAFreshProcess(t *testing.T
 	// A restarted server: a new store, so a new dialect with no remembered
 	// reading from a time when every backend was visible.
 	fresh := f.openStore(t)
-	_, err := fresh.ListChangedMessages(context.Background(),
+	_, err := fresh.ListChangedMessages(
+		t.Context(),
 		store.ChangedMessagesFrom(stamp.Add(-time.Microsecond)), 100)
 	require.Error(err,
 		"with an invisible writer holding a stamp and no earlier fully-visible reading "+
@@ -326,7 +333,7 @@ func TestListChangedMessages_UntrustedBoundIsRefusedOnAFreshProcess(t *testing.T
 		"the error must name the grant that fixes it, so an operator is not left "+
 			"guessing at a feed that refuses to serve")
 
-	_, commitErr := peer.ExecContext(context.Background(), "COMMIT")
+	_, commitErr := peer.ExecContext(t.Context(), "COMMIT")
 	require.NoError(commitErr, "the peer commits")
 	consumer := newChangeFeedConsumer()
 	consumer.cursor = store.ChangedMessagesFrom(stamp.Add(-time.Microsecond))

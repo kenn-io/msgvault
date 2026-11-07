@@ -44,7 +44,7 @@ func TestLimitedSelectedChannelsRotateSweepsAcrossRestarts(t *testing.T) {
 	}
 	for _, id := range []string{"C01", "C02"} {
 		var count int
-		require.NoError(imp.store.DB().QueryRow(imp.store.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), id+":"+lateTS).Scan(&count))
+		require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), id+":"+lateTS).Scan(&count))
 		assert.Equal(t, 1, count, "late reply in %s must be discovered under a standing limit", id)
 	}
 }
@@ -71,7 +71,7 @@ func TestLimitedSelectedDMAdvancesIncrementalHistory(t *testing.T) {
 		require.NoError(err)
 	}
 	var count int
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), "D01:"+newTS).Scan(&count))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), "D01:"+newTS).Scan(&count))
 	assert.Equal(t, 1, count, "canonical thread walks must let incremental history archive new top-level messages")
 }
 
@@ -101,7 +101,7 @@ func TestSelectedDMDiscoversLateReplies(t *testing.T) {
 		require.NoError(err)
 	}
 	var count int
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), "D01:"+lateTS).Scan(&count))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind("SELECT count(*) FROM messages WHERE source_message_id = ?"), "D01:"+lateTS).Scan(&count))
 	assert.Equal(t, 1, count, "a selected DM must discover late thread replies")
 }
 

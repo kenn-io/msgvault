@@ -125,7 +125,7 @@ func TestPeopleSearchResolvesCanonicalFullTextCandidatesAndReturnsAuthority(t *t
 		CacheRevision: "cache-people", SearchProvenance: query.SearchProvenance{LexicalIndexRevision: "resolved"},
 	}}
 	store := &mockStore{messages: []APIMessage{{ID: 42}}, total: 1}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{
 		"predicate":{"query":"needle","search_mode":"full_text"},
 		"identity_query":"Shared Name","limit":25
 	}`))
@@ -190,7 +190,7 @@ func TestPeopleSearchNamesUnavailableSemanticAuthorityWithoutFallback(t *testing
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleResult: &query.PersonSearchResponse{
 		Rows: []query.PersonSummary{{ID: 11}}, TotalCount: 1, CacheRevision: "cache",
 	}}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{
 		"predicate":{"query":"needle","search_mode":"semantic"},"limit":25
 	}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -215,7 +215,7 @@ func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.
 	body := `{"query":"needle","search_mode":"full_text","filters":[{"dimension":"source","values":["7"]}]}`
 
 	person := httptest.NewRecorder()
-	personRequest := httptest.NewRequest(http.MethodPost, "/api/v1/participants/11/summary", bytes.NewBufferString(body))
+	personRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/11/summary", bytes.NewBufferString(body))
 	personRequest.Header.Set("Content-Type", "application/json")
 	srv.Router().ServeHTTP(person, personRequest)
 	requirements.Equal(http.StatusOK, person.Code, person.Body.String())
@@ -228,7 +228,7 @@ func TestContextualSummaryPOSTsCarryCanonicalSearchAndReturnNamed404(t *testing.
 	assertions.Equal(query.SearchProvenance{LexicalIndexRevision: "person-rev"}, personBody.SearchProvenance)
 
 	domain := httptest.NewRecorder()
-	domainRequest := httptest.NewRequest(http.MethodPost, "/api/v1/domains/example.com/summary", bytes.NewBufferString(body))
+	domainRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/domains/example.com/summary", bytes.NewBufferString(body))
 	domainRequest.Header.Set("Content-Type", "application/json")
 	srv.Router().ServeHTTP(domain, domainRequest)
 	assertions.Equal(http.StatusNotFound, domain.Code, domain.Body.String())
@@ -246,7 +246,7 @@ func TestPeopleSearchForwardsCanonicalContextAndNeverAcceptsNameAsIdentity(t *te
 			{ID: 12, DisplayLabel: "Shared Name", ActivityCount: 1, FirstAt: when, LastAt: when},
 		}, TotalCount: 2, CacheRevision: "cache-people",
 	}}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{
 		"predicate":{"filters":[{"dimension":"source","values":["7"]}]},
 		"identity_query":" Shared Name ","sort":{"field":"display_label","direction":"asc"},"limit":25
 	}`))
@@ -278,7 +278,7 @@ func TestPeopleSearchSerializesRelationshipTemperatureSummary(t *testing.T) {
 			FirstAt:                        when, LastAt: when,
 		}}, TotalCount: 1, CacheRevision: "cache-people",
 	}}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/search",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/search",
 		bytes.NewBufferString(`{"identity_query":"Person","limit":25}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -305,11 +305,11 @@ func TestPersonDetailAndTimelineRequireDurablePositiveID(t *testing.T) {
 	srv := newPeopleAPIServerWithStore(engine, &mockStore{messages: []APIMessage{{ID: 42}}, total: 1})
 
 	detail := httptest.NewRecorder()
-	srv.Router().ServeHTTP(detail, httptest.NewRequest(http.MethodGet, "/api/v1/participants/11", nil))
+	srv.Router().ServeHTTP(detail, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/participants/11", nil))
 	requirements.Equal(http.StatusOK, detail.Code, detail.Body.String())
 
 	timeline := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/11/timeline", bytes.NewBufferString(`{"query":"needle","search_mode":"full_text","limit":25}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/11/timeline", bytes.NewBufferString(`{"query":"needle","search_mode":"full_text","limit":25}`))
 	request.Header.Set("Content-Type", "application/json")
 	srv.Router().ServeHTTP(timeline, request)
 	requirements.Equal(http.StatusOK, timeline.Code, timeline.Body.String())
@@ -327,7 +327,7 @@ func TestPersonDetailAndTimelineRequireDurablePositiveID(t *testing.T) {
 			body = bytes.NewBuffer(nil)
 		}
 		response := httptest.NewRecorder()
-		req := httptest.NewRequest(method, path, body)
+		req := httptest.NewRequestWithContext(t.Context(), method, path, body)
 		req.Header.Set("Content-Type", "application/json")
 		srv.Router().ServeHTTP(response, req)
 		assertions.Equal(http.StatusBadRequest, response.Code, path)
@@ -347,11 +347,11 @@ func TestDomainEndpointsNormalizeExactDomainAndRejectAmbiguousOrSQLLikeValues(t 
 	srv := newPeopleAPIServer(engine)
 
 	detail := httptest.NewRecorder()
-	srv.Router().ServeHTTP(detail, httptest.NewRequest(http.MethodGet, "/api/v1/domains/EXAMPLE.COM", nil))
+	srv.Router().ServeHTTP(detail, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/domains/EXAMPLE.COM", nil))
 	requirements.Equal(http.StatusOK, detail.Code, detail.Body.String())
 
 	timeline := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/domains/EXAMPLE.COM/timeline", bytes.NewBufferString(`{}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/domains/EXAMPLE.COM/timeline", bytes.NewBufferString(`{}`))
 	request.Header.Set("Content-Type", "application/json")
 	srv.Router().ServeHTTP(timeline, request)
 	requirements.Equal(http.StatusOK, timeline.Code, timeline.Body.String())
@@ -359,7 +359,7 @@ func TestDomainEndpointsNormalizeExactDomainAndRejectAmbiguousOrSQLLikeValues(t 
 
 	for _, path := range []string{"/api/v1/domains/%20", "/api/v1/domains/example.com%20OR%201=1"} {
 		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 		assertions.Equal(http.StatusBadRequest, response.Code, path)
 	}
 }
@@ -395,7 +395,7 @@ func TestGetPersonComposesClusterBlockFromStoreForLinkedParticipant(t *testing.T
 	})
 
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/participants/%d", primary), nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/participants/%d", primary), nil))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	assertions.ElementsMatch([]int64{primary, secondary}, engine.personClusterMembers,
 		"the handler must resolve cluster membership from the store and forward it to the query layer")
@@ -437,7 +437,7 @@ func TestGetPersonOmitsClusterBlockForUnlinkedParticipant(t *testing.T) {
 	})
 
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/participants/%d", solo), nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/participants/%d", solo), nil))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	assertions.Nil(engine.personClusterMembers)
 
@@ -478,7 +478,7 @@ func TestGetPersonAttachesDurableProfileFromStore(t *testing.T) {
 	})
 
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/participants/%d", secondary), nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/participants/%d", secondary), nil))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 
 	var body query.PersonSummary
@@ -516,7 +516,7 @@ func TestPersonTimelineWidensScopeToIdentityCluster(t *testing.T) {
 		Store:  st, Engine: engine, Logger: testLogger(),
 	})
 	timeline := func(participantID int64) {
-		request := httptest.NewRequest(http.MethodPost,
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 			fmt.Sprintf("/api/v1/participants/%d/timeline", participantID), bytes.NewBufferString(`{}`))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -565,7 +565,7 @@ func TestPersonContextSummaryWidensScopeToIdentityCluster(t *testing.T) {
 		Store:  st, Engine: engine, Logger: testLogger(),
 	})
 	summary := func(participantID int64) {
-		request := httptest.NewRequest(http.MethodPost,
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 			fmt.Sprintf("/api/v1/participants/%d/summary", participantID), bytes.NewBufferString(`{}`))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -590,7 +590,7 @@ func TestPeopleEndpointsNameUnavailableCacheInsteadOfReturningEmpty(t *testing.T
 	t.Parallel()
 	assertions := assert.New(t)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, peopleErr: &query.CacheUnavailableError{Readiness: query.CacheStaleSchema}}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/participants/search", bytes.NewBufferString(`{}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	newPeopleAPIServer(engine).Router().ServeHTTP(response, request)
@@ -603,7 +603,7 @@ func TestParticipantDetailUsesParticipantNotFoundError(t *testing.T) {
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}}
 	response := httptest.NewRecorder()
 	newPeopleAPIServer(engine).Router().ServeHTTP(response,
-		httptest.NewRequest(http.MethodGet, "/api/v1/participants/7", nil))
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/participants/7", nil))
 
 	require.Equal(t, http.StatusNotFound, response.Code)
 	var body ErrorResponse
@@ -622,7 +622,7 @@ func TestParticipantDetailReturnsDraftOnlyPerson(t *testing.T) {
 	server := newTestServerWithEngine(t, engine)
 
 	response := httptest.NewRecorder()
-	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/2", nil))
+	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/participants/2", nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var person map[string]any
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &person))

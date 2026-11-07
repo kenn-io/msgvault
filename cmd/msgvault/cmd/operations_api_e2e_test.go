@@ -45,7 +45,9 @@ func TestOperationHistoryAPIServesThroughProductionAdapter(t *testing.T) {
 	httpSrv := httptest.NewServer(srv.Router())
 	t.Cleanup(httpSrv.Close)
 
-	response, err := http.Get(httpSrv.URL + "/api/v1/operations/runs?kind=source_sync")
+	listRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, httpSrv.URL+"/api/v1/operations/runs?kind=source_sync", nil)
+	require.NoError(err)
+	response, err := http.DefaultClient.Do(listRequest)
 	require.NoError(err)
 	defer func() { _ = response.Body.Close() }()
 	require.Equal(http.StatusOK, response.StatusCode)
@@ -64,7 +66,9 @@ func TestOperationHistoryAPIServesThroughProductionAdapter(t *testing.T) {
 	assert.True(strings.HasPrefix(page.Runs[0].ID, "op2."))
 	assert.NotContains(page.Runs[0].ID, "source_sync")
 
-	detailResponse, err := http.Get(httpSrv.URL + "/api/v1/operations/runs/" + page.Runs[0].ID)
+	detailRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, httpSrv.URL+"/api/v1/operations/runs/"+page.Runs[0].ID, nil)
+	require.NoError(err)
+	detailResponse, err := http.DefaultClient.Do(detailRequest)
 	require.NoError(err)
 	defer func() { _ = detailResponse.Body.Close() }()
 	require.Equal(http.StatusOK, detailResponse.StatusCode)

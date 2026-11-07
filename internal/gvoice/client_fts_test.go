@@ -2,7 +2,6 @@ package gvoice
 
 import (
 	"bytes"
-	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,7 +39,7 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			summary := importVoice(t, st, voice, t.TempDir())
 			assert.Equal(imported, summary.MessagesImported)
 			assert.Zero(summary.Skipped)
-			ids, total, err := st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{token}}, 10)
+			ids, total, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{token}}, 10)
 			require.NoError(err)
 			assert.Equal(int64(1), total)
 			require.Len(ids, 1)
@@ -49,10 +48,10 @@ func TestImportIndexesMessageBodies(t *testing.T) {
 			// Keep the text identity's first 50 body bytes fixed and use a fresh parser cache.
 			require.NoError(os.WriteFile(htmlPath, []byte(strings.ReplaceAll(content, token, "replacementmarker")), 0o600))
 			importVoice(t, st, voice, t.TempDir())
-			ids, _, err = st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{"replacementmarker"}}, 10)
+			ids, _, err = st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"replacementmarker"}}, 10)
 			require.NoError(err)
 			assert.Equal([]int64{id}, ids)
-			ids, _, err = st.SearchMessageIDsQueryContext(context.Background(), &search.Query{TextTerms: []string{token}}, 10)
+			ids, _, err = st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{token}}, 10)
 			require.NoError(err)
 			assert.Empty(ids)
 		})
@@ -67,7 +66,7 @@ func TestImportFTSFailureContinues(t *testing.T) {
 	if !st.FTS5Available() {
 		t.Skip("FTS5 not available")
 	}
-	_, err := st.DB().Exec(`DROP TABLE messages_fts`)
+	_, err := st.DB().ExecContext(t.Context(), `DROP TABLE messages_fts`)
 	require.NoError(err)
 	var logs bytes.Buffer
 	client := newVoiceClient(t, voice, t.TempDir(), WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
@@ -77,8 +76,8 @@ func TestImportFTSFailureContinues(t *testing.T) {
 	assert.Zero(summary.Skipped)
 	assert.Contains(logs.String(), "failed to index message for search")
 	var id int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
-	body, err := st.GetMessageBodyText(id)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.NotEmpty(body)
 	raw, err := st.GetMessageRaw(id)

@@ -1,5 +1,9 @@
 package main
 
-import "go.kenn.io/msgvault/internal/testutil/secretcommand"
+import (
+	"context"
 
-func main() { secretcommand.Run() }
+	"go.kenn.io/msgvault/internal/testutil/secretcommand"
+)
+
+func main() { secretcommand.Run(context.Background()) }

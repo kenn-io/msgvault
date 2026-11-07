@@ -2770,6 +2770,8 @@ free text has zero results and a usable embedding generation. Non-active
 source-deletion searches do not receive that suggestion. JSON stdout stays
 machine-readable.
 
+Search prints a stderr hint when another full-text result exists, with the next `--offset`. Vector and hybrid text print one hint at a time; their JSON objects gain a `hints` array containing that hint's `code` and `message`. Full-text JSON stays a bare array. Complete pages add no hint. At the semantic page cap, the hint asks you to raise `vector.search.max_page_size_hybrid`. When hybrid retrieval measures messages omitted by its per-method limits, the hint names `vector.search.k_per_signal`. If both limits apply, it names both settings. Raise the named settings above their reported values on the server and restart the daemon before raising `--limit`.
+
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,
 with terminal controls removed and whitespace collapsed. Terminal tables fit the
@@ -3645,7 +3647,7 @@ shipped definitions and complete workflow.
 
 ## person delivery policies
 
-On unreleased `main`, owners can read, set, and clear delivery policies with daemon API schema 3.46.0 or newer. Use the canonical `vcard_uid` from `person get` or `person list --json`.
+On unreleased `main`, owners can read, set, and clear delivery policies with daemon API schema 3.48.0 or newer. Use the canonical `vcard_uid` from `person get` or `person list --json`.
 
 ```bash
 msgvault person read-delivery-policy <person-uid> --endpoint alice@example.test --json
@@ -4017,6 +4019,8 @@ msgvault list-senders [flags]
 | `--after YYYY-MM-DD` | Only messages after this date |
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
+
+`list-senders`, `list-domains`, and `list-labels` print a stderr hint to raise `-n` when more rows match, including with `--json`. Their JSON stdout stays a bare array.
 
 ---
 
@@ -4561,7 +4565,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-On unreleased `main`, contact delivery policy tools require daemon API schema 3.46.0. The owner can
+On unreleased `main`, contact delivery policy tools require daemon API schema 3.48.0. The owner can
 inspect `get_delivery_policy`. Expose `set_delivery_policy` and
 `clear_delivery_policy` with `msgvault mcp --allow-delivery-policy-writes`. Each MCP edit requires client
 confirmation of its exact scope and revision. Delegated draft credentials do
@@ -4571,7 +4575,7 @@ send messages or change existing drafts.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
-With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` requires a daemon with API schema 3.9.0 or newer and serves scoped read tools, up to six delegated draft tools, and calendar tools over stdio. Tool selection follows the token's permissions and granted sources. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
 ```bash
 msgvault mcp [flags]

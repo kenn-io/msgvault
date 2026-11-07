@@ -13,7 +13,8 @@ func TestPersonSweepSchemaParity(t *testing.T) {
 	f := newPersonSweepJournalFixture(t, true, false)
 
 	var clockRows int
-	requirements.NoError(f.store.DB().QueryRow(
+	requirements.NoError(f.store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM person_sweep_change_clock WHERE singleton = TRUE AND sequence >= 0 AND enabled = TRUE`,
 	).Scan(&clockRows))
 	checks.Equal(1, clockRows)
@@ -25,12 +26,12 @@ func TestPersonSweepSchemaParity(t *testing.T) {
 	} {
 		var count int
 		if f.store.IsPostgreSQL() {
-			requirements.NoError(f.store.DB().QueryRow(`
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), `
 				SELECT COUNT(*) FROM pg_indexes
 				WHERE schemaname = current_schema() AND tablename = 'person_sweep_changes' AND indexname = $1`,
 				indexName).Scan(&count))
 		} else {
-			requirements.NoError(f.store.DB().QueryRow(`
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), `
 				SELECT COUNT(*) FROM sqlite_master
 				WHERE type = 'index' AND tbl_name = 'person_sweep_changes' AND name = ?`,
 				indexName).Scan(&count))
@@ -47,7 +48,7 @@ func TestPersonSweepSchemaParity(t *testing.T) {
 		{column: "evidence_effect", value: "guessed-effect"},
 	}
 	for i, invalid := range invalidValues {
-		_, err := f.store.DB().Exec(f.store.Rebind(`
+		_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 			INSERT INTO person_sweep_changes
 				(sequence, person_id, source_lane, change_kind, evidence_effect, recorded_at)
 			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`),

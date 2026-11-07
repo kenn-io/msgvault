@@ -86,7 +86,7 @@ func TestMessageVectorsReadsAcrossPages(t *testing.T) {
 }
 
 func TestMessageVectorsEmptyIDs(t *testing.T) {
-	got, err := (&Backend{}).MessageVectors(context.Background(), vector.Generation{}, nil, 0)
+	got, err := (&Backend{}).MessageVectors(t.Context(), vector.Generation{}, nil, 0)
 	require.NoError(t, err)
 	assert.NotNil(t, got)
 	assert.Empty(t, got)

@@ -10,7 +10,7 @@ import (
 
 func TestInitSchemaUpgradesBeforeSourceResourceIdentityIndexes(t *testing.T) {
 	require := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "pre-source-resource.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "pre-source-resource.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())

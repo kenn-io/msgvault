@@ -89,7 +89,8 @@ func Build(
 
 	b := builder{db: db, opts: opts}
 	defer func() {
-		resultErr = errors.Join(resultErr, b.dropBuildTables())
+		// Drop the build tables even when ctx was canceled mid-build.
+		resultErr = errors.Join(resultErr, b.dropBuildTables(context.WithoutCancel(ctx)))
 	}()
 
 	for _, dataset := range baseIdentityDatasets {
@@ -398,14 +399,14 @@ func (b builder) materializeBuildTable(
 	return nil
 }
 
-func (b builder) dropBuildTables() error {
+func (b builder) dropBuildTables(ctx context.Context) error {
 	var result error
 	for _, table := range []string{
 		logicalBuildRelation, temperatureBuildRelation, directoryBuildRelation,
 		activityBuildRelation, deltaActivityBuildRelation,
 	} {
 		if _, err := b.db.ExecContext(
-			context.Background(),
+			ctx,
 			"DROP TABLE IF EXISTS "+table,
 		); err != nil {
 			result = errors.Join(result, fmt.Errorf("drop %s: %w", table, err))

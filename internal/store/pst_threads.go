@@ -228,5 +228,5 @@ func (s *Store) applyPstThreadGroups(ctx context.Context, tx *loggedTx, sourceID
 			}
 		}
 	}
-	return s.bumpDerivedDataRevision(tx)
+	return s.bumpDerivedDataRevisionContext(ctx, tx)
 }
