@@ -205,6 +205,81 @@ func TestRecordingInsertDrainsBeforeMaintenance(t *testing.T) {
 	})
 }
 
+// Unscoped attachment updates must drain before maintenance locks the parents
+// their visual invalidation triggers still need for foreign-key checks.
+func TestAttachmentInvalidationDrainsBeforeMaintenance(t *testing.T) {
+	st, _, messageID, attachmentID := cascadeMaintenanceFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	removable, err := st.GetOrCreateSource("gmail", "unrelated@example.test")
+	require.NoError(t, err)
+	generation, err := st.EnsureVisualGeneration(ctx, VisualGenerationSpec{
+		Fingerprint: "cascade-generation", Model: "synthetic-model", Dimension: 1024,
+	})
+	require.NoError(t, err)
+	fence, err := st.AttachmentChangeHighWater(ctx)
+	require.NoError(t, err)
+	claim, acquired, err := st.ClaimVisualWork(ctx, VisualClaimRequest{
+		GenerationID:     generation.ID,
+		Owner:            VisualOwner{MessageID: messageID, BlobHash: strings.Repeat("a", 64), MediaInputKey: "original"},
+		ProposedRevision: "revision", LeaseOwner: "synthetic-worker",
+		Now: time.Now().UTC(), LeaseDuration: time.Hour, SourceFence: fence,
+	})
+	require.NoError(t, err)
+	require.True(t, acquired)
+	_, err = st.PrepareVisualPublication(ctx, PreparedVisualPublication{
+		Claim: claim, RepresentativeAttachmentID: attachmentID,
+		Role: AttachmentRoleStandalone, RoleSource: AttachmentRoleSourceImporterSemantics,
+	})
+	require.NoError(t, err)
+	blocker, err := st.DB().Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = blocker.Close() }()
+	_, err = blocker.ExecContext(ctx, "SELECT pg_advisory_lock(678902)")
+	require.NoError(t, err)
+	// Release the session lock even if an assertion fails.
+	defer func() { _, _ = blocker.ExecContext(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(678902)") }()
+	var blockerPID int
+	require.NoError(t, blocker.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID))
+	// Run after the FK check (RI_ConstraintTrigger...) and before visual
+	// invalidation (trg_visual_publication...), isolating the trigger lock order.
+	_, err = st.DB().ExecContext(ctx, `CREATE FUNCTION pause_attachment_update() RETURNS trigger AS $$
+		BEGIN PERFORM pg_advisory_xact_lock(678902); RETURN NEW; END; $$ LANGUAGE plpgsql;
+		CREATE TRIGGER pause_attachment_update AFTER UPDATE ON attachments
+		FOR EACH ROW EXECUTE FUNCTION pause_attachment_update()`)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() {
+		done <- st.UpdateAttachmentMediaMetadataContext(ctx, messageID, strings.Repeat("a", 64),
+			"image", sql.NullInt64{Int64: 640, Valid: true}, sql.NullInt64{Int64: 480, Valid: true}, sql.NullInt64{})
+	}()
+	writerPID := waitForPostgresBlocker(t, st.DB(), blockerPID)
+	removeDone := make(chan error, 1)
+	go func() {
+		_, _, err := st.RemoveSourceSerialized(ctx, removable.ID)
+		removeDone <- err
+	}()
+	maintenancePID := waitForPostgresBlocker(t, st.DB(), writerPID)
+	var waitingAtGate, lockedPublication bool
+	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND relation='sync_runs'::regclass
+			AND mode='ExclusiveLock' AND NOT granted),
+		EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND relation='visual_publications'::regclass
+			AND mode='ExclusiveLock' AND granted)`, maintenancePID).Scan(&waitingAtGate, &lockedPublication))
+	assert.True(t, waitingAtGate, "maintenance must drain the attachment writer before locking parents")
+	assert.False(t, lockedPublication, "attachment triggers still need to update publications")
+	_, err = blocker.ExecContext(ctx, "SELECT pg_advisory_unlock(678902)")
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	require.NoError(t, <-removeDone)
+	var state string
+	var pendingToken sql.NullString
+	require.NoError(t, st.DB().QueryRowContext(ctx,
+		"SELECT state, pending_vector_token FROM visual_publications WHERE message_id=$1", messageID).Scan(&state, &pendingToken))
+	assert.Equal(t, "stale", state)
+	assert.False(t, pendingToken.Valid, "attachment invalidation clears the pending publication")
+}
+
 func TestRecordingBatchDrainsBeforeMaintenanceProperty(t *testing.T) {
 	skipUnlessPostgresInternal(t)
 	hegel.Test(t, func(ht *hegel.T) {
