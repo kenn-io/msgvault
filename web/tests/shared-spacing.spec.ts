@@ -170,6 +170,38 @@ test('a long sidebar saved view list keeps every row at its full height and scro
 });
 
 for (const width of [1280, 390]) {
+  for (const workspace of ['Messages', 'Files']) {
+    test(`${workspace} Filter fields use the shared scale at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.route('**/api/v1/cli/accounts', route => route.fulfill({ json: { accounts: [{
+        email: 'archive@example.com', virtual_accounts: [{ key: 'account:1', source_id: 1, account_address: 'archive@example.com', message_count: 1, source_deleted_count: 0 }]
+      }] } }));
+      await page.route('**/api/v1/sources/1/identities', route => route.fulfill({ json: { identities: [] } }));
+      await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({
+        workspace: workspace === 'Messages' ? 'everything' : 'files', filters: [{ dimension: 'source', values: ['1'] }]
+      })));
+      await page.getByRole('button', { name: 'Filter', exact: true }).click();
+      const panel = page.getByRole('dialog', { name: 'Filter', exact: true });
+      const font = width === 390 ? '16px' : '14px';
+      for (const label of ['From', 'To']) {
+        await expect(panel.getByLabel(label, { exact: true })).toHaveCSS('height', '32px');
+        await expect(panel.getByLabel(label, { exact: true })).toHaveCSS('font-size', font);
+      }
+      for (const name of ['Account:', 'Identity:']) {
+        const picker = panel.getByRole('combobox', { name: new RegExp(`^${name}`) });
+        await expect(picker).toHaveCSS('height', '32px');
+        await expect(picker).toHaveCSS('font-size', font);
+      }
+      if (workspace === 'Files') {
+        await expect(panel.locator('.kit-text-input')).toHaveCSS('height', '32px');
+        await expect(panel.getByRole('searchbox', { name: 'Filter filename' })).toHaveCSS('font-size', font);
+      }
+      const search = page.getByRole('search');
+      await expect(search.locator('.kit-text-input')).toHaveCSS('height', '28px');
+      await expect(search.getByRole('searchbox')).toHaveCSS('font-size', '13px');
+    });
+  }
+
   test(`save-view dialog shares header and field insets at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/?workspace=everything');
