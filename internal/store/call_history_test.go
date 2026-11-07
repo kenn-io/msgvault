@@ -73,7 +73,7 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 		require.NoError(err)
 		var title string
 		var subject, snippet sql.NullString
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
 		assert.Equal(tc.text, subject.String)
 		assert.False(snippet.Valid)
 		assert.Equal(tc.text, title)
@@ -108,7 +108,7 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 		id, err := st.PutCallObservationContext(t.Context(), sourceID, o)
 		require.NoError(err)
 		var isFromMe bool
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&isFromMe))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&isFromMe))
 		assert.Equal(direction == "outgoing", isFromMe, direction)
 	}
 	o.RecordID, o.Direction = "call", "incoming"
@@ -117,7 +117,7 @@ func TestCallObservationSearchAndMessageProjections(t *testing.T) {
 		require.NoError(err)
 		var count int
 		var latest sql.NullTime
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT c.message_count, c.last_message_at FROM conversations c JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), id).Scan(&count, &latest))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT c.message_count, c.last_message_at FROM conversations c JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), id).Scan(&count, &latest))
 		assert.Equal(1, count)
 		assert.True(latest.Valid)
 		assert.True(o.OccurredAt.Equal(latest.Time))
@@ -206,7 +206,7 @@ func TestCallObservationReplacement(t *testing.T) {
 	_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
 	requirements.ErrorIs(err, callhistory.ErrInvalid)
 	var outcome string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT metadata ->> 'outcome' FROM messages WHERE id = ?`), id).Scan(&outcome))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata ->> 'outcome' FROM messages WHERE id = ?`), id).Scan(&outcome))
 	assertions.Equal("unknown", outcome, "participant validation rejects the update before scalar writes")
 	unchangedRaw, err := st.GetMessageRawContext(t.Context(), id)
 	requirements.NoError(err)
