@@ -1257,13 +1257,14 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 				// Gmail's All Mail contains every message except Trash
 				// and Spam. Enumerate those alongside All Mail to catch
 				// messages only in those folders, but only when each
-				// canonical mailbox remains in the effective folder filter.
+				// mailbox remains in the effective folder filter.
 				listMailboxes = []string{c.allMailFolder}
-				if slices.Contains(allMailboxes, c.trashMailbox) {
-					listMailboxes = append(listMailboxes, c.trashMailbox)
-				}
-				if slices.Contains(allMailboxes, c.junkMailbox) {
-					listMailboxes = append(listMailboxes, c.junkMailbox)
+				for _, mailbox := range allMailboxes {
+					if mailbox == c.trashMailbox || mailbox == c.junkMailbox ||
+						hasAttr(c.mailboxAttrs[mailbox], imap.MailboxAttrTrash) ||
+						hasAttr(c.mailboxAttrs[mailbox], imap.MailboxAttrJunk) {
+						listMailboxes = append(listMailboxes, mailbox)
+					}
 				}
 			}
 		}
