@@ -7822,6 +7822,9 @@ components:
           type: integer
         excerpt:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         filename:
           type: string
           x-oapi-codegen-extra-tags:

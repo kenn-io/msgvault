@@ -129,6 +129,7 @@ func TestPersonPhotosOnlyLiveConfirmedImages(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person", nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	require.Contains(response.Body.String(), `"excerpt":""`, "face-photo occurrences keep the required excerpt key even without text")
 	var result PersonPhotosResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 	require.Len(result.Photos, 1)
