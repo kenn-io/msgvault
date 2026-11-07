@@ -517,7 +517,6 @@ func TestLocalEmbeddingsSetupFailureKeepsSavedSettings(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("VOYAGE_API_KEY", "synthetic-unused-key")
 			require := require.New(t)
 			f := newLocalActivationFixture(t, "")
 			f.start(t)
