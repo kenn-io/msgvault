@@ -57,9 +57,17 @@ func TestPersistMessageAttachmentsAndReactions(t *testing.T) {
 	// A reaction failure must roll back text and attachment additions together.
 	data.BodyText.String = "Failed replacement"
 	data.Attachments = []store.AttachmentWrite{{Filename: "new.jpg", MIMEType: "image/jpeg", StoragePath: "new.jpg", SourcePartKey: "signal:attachment:new:0"}}
-	reactions = []store.ReactionRef{{ParticipantID: -1, Type: "emoji", Value: "x"}}
+	query := `CREATE TRIGGER fail_reaction_snapshot BEFORE INSERT ON reactions BEGIN SELECT RAISE(ABORT, 'reaction failure'); END`
+	if f.Store.IsPostgreSQL() {
+		_, err := f.Store.DB().Exec(`CREATE FUNCTION fail_reaction_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'reaction failure'; END $$`)
+		require.NoError(err)
+		query = `CREATE TRIGGER fail_reaction_snapshot BEFORE INSERT ON reactions FOR EACH ROW EXECUTE FUNCTION fail_reaction_snapshot()`
+	}
+	_, err = f.Store.DB().Exec(query)
+	require.NoError(err)
+	reactions = []store.ReactionRef{{ParticipantID: pid, Type: "emoji", Value: "x"}}
 	_, err = f.Store.PersistMessageContext(t.Context(), data)
-	require.Error(err)
+	require.ErrorContains(err, "reaction failure")
 	body, err := f.Store.GetMessageBodyText(id)
 	require.NoError(err)
 	assert.Equal("Original text", body)

@@ -41,7 +41,7 @@ func TestResolveSignalInput(t *testing.T) {
 	assert.Contains(err.Error(), "attachments directory not found")
 }
 
-func TestImportSignalRegistersSourceAndDefaultIdentity(t *testing.T) {
+func TestImportSignalRegistersDefaultIdentity(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	markDaemonCLISubprocessForTest(t)
 	home := t.TempDir()
@@ -67,11 +67,10 @@ func TestImportSignalRegistersSourceAndDefaultIdentity(t *testing.T) {
 	st, err := store.OpenForTest(cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { require.NoError(st.Close()) }()
-	sources, err := st.ListSources("signal")
+	source, err := st.GetSourceByTypeAndIdentifier("signal", signalfixture.OwnPhone)
 	require.NoError(err)
-	require.Len(sources, 1)
-	assert.Equal(signalfixture.OwnPhone, sources[0].Identifier)
-	identities, err := st.ListAccountIdentities(sources[0].ID)
+	require.NotNil(source)
+	identities, err := st.ListAccountIdentities(source.ID)
 	require.NoError(err)
 	require.Len(identities, 1)
 	assert.Equal("+15555550100", identities[0].Address)

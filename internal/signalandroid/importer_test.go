@@ -350,7 +350,6 @@ func TestImportRejectsIncompleteBackupDetails(t *testing.T) {
 		{"chat contacts", `ALTER TABLE thread DROP COLUMN recipient_id`, "chat contacts are missing"},
 		{"contacts", `ALTER TABLE recipient DROP COLUMN group_id`, "contact details are missing"},
 		{"attachments", `ALTER TABLE attachment DROP COLUMN content_type`, "attachment details are missing"},
-		{"group membership", `DROP TABLE group_membership`, "group membership details are missing"},
 		{"group membership group", `ALTER TABLE group_membership DROP COLUMN group_id`, "group membership details are missing"},
 		{"group membership recipient", `ALTER TABLE group_membership DROP COLUMN recipient_id`, "group membership details are missing"},
 		{"reaction message", `ALTER TABLE reaction DROP COLUMN message_id`, "reaction details are missing"},

@@ -322,10 +322,29 @@ func TestUnresolvedRepliesCountOnlyThisRun(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `UPDATE message SET quote_id = 1700000999999, quote_author = 2 WHERE _id = 300`)
+	changeFixture(t, dir, `UPDATE message SET quote_id = 1700000290000, quote_author = 4 WHERE _id = 300`)
 	summary := runImport(t, st, dir, t.TempDir())
 	assert.Equal(t, int64(1), summary.RepliesUnresolved)
-	changeFixture(t, dir, `DELETE FROM message WHERE _id = 300`)
+	changeFixture(t, dir, `INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
+		VALUES (301, 1700000290000, 1700000290001, 12, 4, 1, `+ms(signalfixture.TypeIncoming)+`, 'Earlier message')`)
 	summary = runImport(t, st, dir, t.TempDir())
 	assert.Zero(t, summary.RepliesUnresolved)
+	assert.Equal(t, "signal:aci:"+signalfixture.CarolACI+":peer:1700000290000", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":peer:"+ms(signalfixture.TCarol)].replyTo)
+}
+
+func TestSignalRerunPreservesArchiveLabels(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewTestStore(t), t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	storage := t.TempDir()
+	first := runImport(t, st, dir, storage)
+	labelID, err := st.EnsureLabel(first.SourceID, "kept", "Kept", "user")
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRow(`SELECT id FROM messages ORDER BY id LIMIT 1`).Scan(&messageID))
+	require.NoError(st.AddMessageLabels(messageID, []int64{labelID}))
+	runImport(t, st, dir, storage)
+	labels, err := st.MessageLabelIDsContext(t.Context(), messageID)
+	require.NoError(err)
+	assert.Equal([]int64{labelID}, labels)
 }
