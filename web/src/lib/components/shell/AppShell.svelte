@@ -267,7 +267,7 @@
 
   async function addSource(): Promise<void> {
     commitWorkspace('sources');
-    await tick();
+    await tick().then(() => navigationFocusTarget()?.focus());
     sourcesPage?.openAddSource();
   }
   const runHistory = $derived(exploreState.current.operationHistory

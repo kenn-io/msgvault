@@ -1122,7 +1122,7 @@ func TestEmptyArchiveSourceSetup(t *testing.T) {
 		message accountsLoadedMsg
 		want    string
 	}{
-		{name: "no sources", want: "No mail yet. Run `msgvault setup` for source setup instructions."},
+		{name: "no sources", want: "No mail yet. Run `msgvault setup` to see how to add a source."},
 		{name: "existing source", message: accountsLoadedMsg{accounts: []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "archive@example.com"}}}, want: "No data"},
 		{name: "failed source read", message: accountsLoadedMsg{err: errors.New("source read failed")}, want: "No data"},
 	}

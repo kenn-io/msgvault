@@ -4,7 +4,7 @@ import { expectKitTheme, selectKitOption, selectWorkspace, setKitTheme, setTempo
 import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/carddav';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
 import { installOperations } from './fixtures/operations';
-import type { SourceStatus } from '../../src/lib/api/generated/models';
+import { sourceStatus } from '../../src/lib/jobs/fixtures.test-support';
 
 async function openPersonFacts(page: Page): Promise<void> {
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 42 })));
@@ -520,7 +520,7 @@ for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
     test(`${theme}/${density} login, loading, empty, error, and degraded states have no axe violations`, async ({ page }) => {
       await stubOperationStatus(page);
-      let sources: SourceStatus[] = [];
+      let sources: ReturnType<typeof sourceStatus>[] = [];
       await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources } }));
       let sessionRequired = true;
       let exploreMode: 'loading' | 'empty' | 'error' | 'degraded' = 'loading';
@@ -573,12 +573,14 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.getByText('No mail yet')).toBeVisible();
       await assertNoViolations(page, `empty archive ${theme}/${density}`);
 
-      sources = [{
-        id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Example archive',
-        updated_at: '2026-08-30T11:00:00Z', last_sync_at: null, active_sync: null, latest_sync: null,
-        last_successful_sync: null, can_sync: false, scheduled: false, next_sync_at: null
-      }];
-      await page.reload();
+      await page.getByRole('button', { name: 'Add source', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('dialog', { name: 'Add source' })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('button', { name: 'Sources', exact: true })).toBeFocused();
+
+      sources = [sourceStatus({ scheduled: false })];
+      await page.goto('/?workspace=everything');
       await expect(page.getByText('No items match this view')).toBeVisible();
       await assertNoViolations(page, `empty view with a source ${theme}/${density}`);
 
