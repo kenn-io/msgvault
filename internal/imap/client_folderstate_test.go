@@ -978,6 +978,8 @@ func TestGmailAllMailFullScanPublishesDeltaForLabelOnlyMailbox(t *testing.T) {
 }
 
 func TestGmailAllMailEnumeratesSelectedTrashRoleMailbox(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	addr, user := testutil.StartIMAPMemServerWithSpecialUse(t,
 		map[string]int{"[Gmail]/All Mail": 0, "Trash A": 0, "Trash B": 0},
 		map[string][]imapv2.MailboxAttr{
@@ -990,14 +992,14 @@ func TestGmailAllMailEnumeratesSelectedTrashRoleMailbox(t *testing.T) {
 	client := newTestClient(t, addr, WithFolderFilter(nil, []string{"Trash A"}))
 
 	ids := listAllMessages(t, client)
-	require.Equal(t, "Trash A", client.trashMailbox)
-	require.Equal(t, []string{"Trash B|1"}, ids)
+	require.Equal("Trash A", client.trashMailbox)
+	require.Equal([]string{"Trash B|1"}, ids)
 	results, err := client.GetMessagesRawBatchWithErrors(t.Context(), ids)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.NoError(t, results[0].Err)
-	require.NotNil(t, results[0].Message)
-	assert.NotEmpty(t, results[0].Message.Raw)
+	require.NoError(err)
+	require.Len(results, 1)
+	require.NoError(results[0].Err)
+	require.NotNil(results[0].Message)
+	assert.NotEmpty(results[0].Message.Raw)
 }
 
 func TestGmailAllMailStatusFailureSuppressesIncrementalPublication(t *testing.T) {
