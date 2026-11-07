@@ -121,7 +121,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 	})
 }
 
-func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing.T) {
+func TestDocumentSearchVersionsTextFormatsExcludeRecordingsFromScopeLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -150,9 +150,10 @@ func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing
 		"00000000-0000-4000-8000-000000000008",
 		"00000000-0000-4000-8000-000000000009",
 		"00000000-0000-4000-8000-00000000000a",
+		"00000000-0000-4000-8000-00000000000b",
 	}
 	for i := range 4100 {
-		formats = append(formats, storetest.DocumentAttachment{MIMEType: "image/png", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+100)})
+		formats = append(formats, storetest.DocumentAttachment{MIMEType: "audio/mpeg", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+100)})
 	}
 	f.SeedDocumentAttachments(mid, formats)
 	ids, exceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)

@@ -103,10 +103,10 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 // A larger scope returns no versions and reports that the scope limit was exceeded.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
 	// Docbank detects document formats from bytes, including generic or absent
-	// MIME types. Keep images and recordings outside the document fence.
+	// MIME types. Images can have OCR or interpretation renditions; keep
+	// recordings outside this fence because they use the media source lane.
 	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
  WHERE d.destination_key = ? AND d.state = 'delivered'
- AND d.mime_type NOT LIKE 'image/%'
  AND d.mime_type NOT LIKE 'audio/%'
  AND d.mime_type NOT LIKE 'video/%'`
 	distinct := "DISTINCT"

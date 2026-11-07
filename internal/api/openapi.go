@@ -402,7 +402,8 @@ import (
 // 3.45.0 adds sender labels to message and file search rows.
 // 3.46.0 adds measured CLI full-text pagination and semantic ranking cap overflow.
 // 3.47.0 adds retry hints to CLI and fast search.
-const APISchemaVersion = "3.47.0"
+// 3.48.0 adds attachment retrieval modes, coverage, and degradations to media search.
+const APISchemaVersion = "3.48.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1023,6 +1024,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
+		{"MediaAttachmentResult", "excerpt"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},

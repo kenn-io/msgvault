@@ -111,11 +111,10 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, errors.New("direction must be from_person, to_person, or group"))
 		return
 	}
-	if mode == "semantic" || mode == "hybrid" {
-		writeError(w, http.StatusServiceUnavailable, "media_search_mode_unavailable", "Media search supports lexical mode")
-		return
+	if mode == "" {
+		mode = "lexical"
 	}
-	if mode != "" && mode != "lexical" {
+	if mode != "lexical" && mode != "semantic" && mode != "hybrid" {
 		s.rejectBadParam(w, errors.New("mode must be lexical, semantic, or hybrid"))
 		return
 	}
@@ -150,11 +149,15 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	var attachmentErr error
 	var searches sync.WaitGroup
 	searches.Go(func() {
+		if mode != "lexical" {
+			err = errMediaSearchMode
+			return
+		}
 		response, err = reader.search(r.Context(), searchCtx, q, limit, scope, resolve)
 	})
 	if s.docbankAttachments != nil {
 		searches.Go(func() {
-			attachments, attachmentErr = s.docbankAttachments.SearchAttachments(r.Context(), searchCtx, q, limit, scope, resolve)
+			attachments, attachmentErr = s.docbankAttachments.SearchAttachments(r.Context(), searchCtx, q, mode, limit, scope, resolve)
 		})
 	}
 	searches.Wait()
@@ -175,6 +178,14 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	if s.writeIfContextError(w, r.Context().Err()) {
 		return
 	}
+	if mode != "lexical" && attachmentErr != nil {
+		if s.writeIfContextError(w, attachmentErr) {
+			return
+		}
+		status, _ := mediaSearchFailure(attachmentErr)
+		writeError(w, status, attachments.Error.Error, attachments.Error.Message)
+		return
+	}
 	if err != nil {
 		status, failure := mediaSearchFailure(err)
 		if failure.Error == "invalid_media_search" || response.Attachments == nil || response.Attachments.Error != nil {
@@ -192,7 +203,9 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 			Coverage:        docbankmedia.SearchCoverage{State: "unknown"},
 			Partial:         true,
 		}
-		s.logger.Warn("search media transcripts", "code", docbankmedia.ErrorCode(err))
+		if !errors.Is(err, errMediaSearchMode) {
+			s.logger.Warn("search media transcripts", "code", docbankmedia.ErrorCode(err))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, response)
@@ -201,6 +214,8 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 func mediaSearchFailure(err error) (int, ErrorResponse) {
 	httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
 	switch {
+	case errors.Is(err, errMediaSearchMode):
+		return http.StatusServiceUnavailable, ErrorResponse{Error: "media_search_mode_unavailable", Message: "Recordings support lexical search only."}
 	case errors.Is(err, errMediaSearchScope):
 		return http.StatusBadRequest, ErrorResponse{Error: "media_search_scope_limit", Message: "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"}
 	case httpError && httpErr.Status == http.StatusBadRequest:
@@ -209,6 +224,8 @@ func mediaSearchFailure(err error) (int, ErrorResponse) {
 		return http.StatusServiceUnavailable, ErrorResponse{Error: "media_search_unavailable", Message: "Docbank transcript search is unavailable"}
 	}
 }
+
+var errMediaSearchMode = errors.New("media search mode unavailable")
 
 var errMediaSearchScope = errors.New("media search scope exceeds the supported fence")
 

@@ -27,6 +27,7 @@ type mediaSearchFixture struct {
 	documentReport       *docbankmedia.SearchReport
 	documentRequests     []docbankmedia.SearchRequest
 	documentStatus       int
+	documentReason       string
 	duringDocumentSearch func()
 	report               docbankmedia.SearchReport
 	requests             []docbankmedia.SearchRequest
@@ -103,11 +104,14 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
 				return
 			}
-			assert.Equal(t, "lexical", request.Mode)
+			if len(request.MediaSources) > 0 || r.URL.Path == "/api/v1/search/validate" {
+				assert.Equal(t, "lexical", request.Mode)
+			}
 			assert.True(t, request.ContentFirst)
 			if r.URL.Path == "/api/v1/search/validate" {
 				assert.Nil(t, request.Fence)
 				f.validated++
+
 				_, _ = w.Write([]byte(`{"valid":true}`))
 				return
 			}
@@ -116,12 +120,18 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 					assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`, id)
 				}
 				f.documentRequests = append(f.documentRequests, request)
-				assert.Equal(t, suppliedTranscriptProfile, request.Profile)
+				if request.Mode == "lexical" {
+					assert.Equal(t, suppliedTranscriptProfile, request.Profile)
+				}
+
 				if f.duringDocumentSearch != nil {
 					f.duringDocumentSearch()
 				}
 				if f.documentStatus != 0 {
 					w.WriteHeader(f.documentStatus)
+					if f.documentReason != "" {
+						_ = json.NewEncoder(w).Encode(map[string]any{"title": http.StatusText(f.documentStatus), "status": f.documentStatus, "code": f.documentReason, "detail": "synthetic private detail"})
+					}
 					return
 				}
 				_ = json.NewEncoder(w).Encode(f.documentReport)
@@ -988,7 +998,7 @@ func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
 	require.NotNil(response.Attachments.Error)
 	assert.Empty(response.Attachments.Results)
 	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
-	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding images, audio, and video")
+	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding audio and video")
 	assert.Contains(response.Attachments.Error.Message, "--person")
 	assert.False(response.Attachments.Truncated)
 	assert.Empty(f.documentRequests)
@@ -1037,25 +1047,41 @@ func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
 }
 
 func TestMediaSearchDocumentsEmptyScope(t *testing.T) {
-	for _, name := range []string{"no versions in scope", "no Docbank hits"} {
+	for _, name := range []string{"no versions in scope", "no Docbank hits", "semantic no versions"} {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newMediaSearchFixture(t)
 			f.match(t, "audio")
 			server := f.server(false)
-			if name == "no versions in scope" {
+			if name != "no Docbank hits" {
 				server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
 			} else {
 				f.document(t, server)
 				f.documentReport.Results = []docbankmedia.SearchHit{}
 			}
-			status, response, raw := searchMediaFor(t, server, "q=quartz")
+			query := "q=quartz"
+			if name == "semantic no versions" {
+				server.docbankAttachments.SearchProfile = "existing-profile"
+				query += "&mode=semantic"
+			}
+			status, response, raw := searchMediaFor(t, server, query)
 			require.Equal(http.StatusOK, status, raw)
 			require.NotNil(response.Attachments)
 			assert.Nil(response.Attachments.Error)
 			assert.Empty(response.Attachments.Results)
 			assert.False(response.Attachments.Truncated)
+			if name != "no Docbank hits" {
+				assert.Equal("unavailable", response.Attachments.ActualMode)
+				assert.Empty(f.documentRequests)
+			}
+			if name == "semantic no versions" {
+				assert.Equal("unavailable", response.Attachments.ActualMode)
+				assert.True(response.Attachments.Partial)
+				assert.Equal("unknown", response.Attachments.Coverage.State)
+				assert.Empty(f.documentRequests)
+				assert.Empty(f.requests)
+			}
 		})
 	}
 }
@@ -1184,7 +1210,7 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 			} else {
 				first, second := f.document(t, server)
 				f.duringDocumentSearch = slow
-				response, err := server.docbankAttachments.SearchAttachments(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
+				response, err := server.docbankAttachments.SearchAttachments(t.Context(), remoteCtx, "quartz", "lexical", 20, nil, resolve)
 				require.NoError(err)
 				assert.Nil(response.Error)
 				var messages []int64
@@ -1192,6 +1218,125 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 					messages = append(messages, hit.MessageID)
 				}
 				assert.ElementsMatch([]int64{first, second}, messages)
+			}
+		})
+	}
+}
+
+func TestMediaSearchDocumentModes(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			server := f.server(false)
+			first, second := f.document(t, server)
+			_, imageErr := f.f.Store.DB().ExecContext(t.Context(), `UPDATE docbank_attachment_deliveries SET mime_type='image/png' WHERE destination_key='attachments'`)
+			require.NoError(imageErr)
+			server.docbankAttachments.SearchProfile = "existing-profile"
+			f.documentReport.RequestedMode, f.documentReport.ActualMode = mode, mode
+			f.documentReport.Coverage = docbankmedia.SearchCoverage{State: "complete", BindingRequired: true, ScopedDocuments: 1, CompleteDocuments: 1}
+			f.documentReport.Results[0].Evidence = []docbankmedia.SearchEvidence{{Kind: "embedding"}}
+			f.documentReport.Results[0].Excerpt = ""
+			status, response, raw := searchMediaFor(t, server, "q=related+ideas&mode="+mode)
+			require.Equal(http.StatusOK, status, raw)
+			require.NotNil(response.Attachments)
+			require.Nil(response.Attachments.Error, raw)
+			require.Len(response.Attachments.Results, 2)
+			assert.ElementsMatch([]int64{first, second}, []int64{response.Attachments.Results[0].MessageID, response.Attachments.Results[1].MessageID})
+			assert.Equal(mode, response.Attachments.RequestedMode)
+			assert.Equal(mode, response.Attachments.ActualMode)
+			assert.False(response.Attachments.Partial)
+			require.Len(f.documentRequests, 1)
+			assert.Equal("existing-profile", f.documentRequests[0].Profile)
+			assert.Empty(response.Attachments.Results[0].Excerpt)
+			require.NotNil(response.RecordingsError)
+			assert.Equal("media_search_mode_unavailable", response.RecordingsError.Error)
+			assert.Equal("Recordings support lexical search only.", response.RecordingsError.Message)
+		})
+	}
+}
+
+func TestMediaSearchDocumentFallbackAndCoverage(t *testing.T) {
+	for _, scenario := range []string{"unconfigured hybrid", "unconfigured semantic", "remote downgrade", "incomplete empty", "lexical unknown", "semantic consent denied"} {
+		t.Run(scenario, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			server := f.server(false)
+			f.match(t, "audio")
+			f.document(t, server)
+			mode := "hybrid"
+			switch scenario {
+			case "unconfigured semantic":
+				mode = "semantic"
+			case "remote downgrade":
+				server.docbankAttachments.SearchProfile = "existing-profile"
+				f.documentReport.RequestedMode = "hybrid"
+			case "incomplete empty":
+				server.docbankAttachments.SearchProfile = "existing-profile"
+				f.documentReport.RequestedMode, f.documentReport.ActualMode = "hybrid", "hybrid"
+				f.documentReport.Results = []docbankmedia.SearchHit{}
+				f.documentReport.Coverage = docbankmedia.SearchCoverage{State: "incomplete", ScopedDocuments: 1}
+			case "lexical unknown":
+				mode = "lexical"
+				server.docbankAttachments.SearchProfile = "existing-profile"
+			}
+			if scenario == "semantic consent denied" {
+				mode = "semantic"
+				server.docbankAttachments.SearchProfile = "existing-profile"
+				f.documentStatus, f.documentReason = http.StatusPreconditionRequired, "processing_consent_required"
+			}
+			status, response, raw := searchMediaFor(t, server, "q=quartz&mode="+mode)
+			if scenario == "semantic consent denied" {
+				assert.Equal(http.StatusServiceUnavailable, status, raw)
+				assert.NotContains(raw, "media_search_mode_unavailable")
+				var failure ErrorResponse
+				require.NoError(json.Unmarshal([]byte(raw), &failure))
+				assert.Equal("processing_consent_required", failure.Error)
+				assert.Contains(failure.Message, "Attachment search")
+				assert.Len(f.documentRequests, 1, "no retry or fallback on remote failure")
+				// Reuse the refused-request case for a misspelled configured profile.
+				f.documentStatus, f.documentReason = http.StatusUnprocessableEntity, "processing_profile_unavailable"
+				status, _, raw = searchMediaFor(t, server, "q=quartz&mode=semantic")
+				require.Equal(http.StatusServiceUnavailable, status)
+				require.NoError(json.Unmarshal([]byte(raw), &failure))
+				assert.Equal("processing_profile_unavailable", failure.Error)
+				assert.Contains(failure.Message, "integrations.docbank.attachment_search_profile")
+				assert.NotContains(raw, "synthetic private detail")
+				return
+			}
+			if scenario == "unconfigured semantic" {
+				require.Equal(http.StatusServiceUnavailable, status, raw)
+				assert.Contains(raw, "media_search_mode_unavailable")
+				assert.Contains(raw, "integrations.docbank.attachment_search_profile")
+				assert.Empty(f.documentRequests)
+				return
+			}
+			require.Equal(http.StatusOK, status, raw)
+			require.NotNil(response.Attachments)
+			attachment := response.Attachments
+			assert.Equal(mode, attachment.RequestedMode)
+			switch scenario {
+			case "unconfigured hybrid", "remote downgrade":
+				require.Nil(attachment.Error)
+				assert.Equal("lexical", attachment.ActualMode)
+				assert.True(attachment.Partial)
+				switch scenario {
+				case "unconfigured hybrid":
+					assert.Equal([]string{"semantic_unconfigured"}, attachment.Degradations)
+				default:
+					assert.Empty(attachment.Degradations)
+				}
+			case "incomplete empty":
+				require.Nil(attachment.Error)
+				assert.Empty(attachment.Results)
+				assert.Equal("incomplete", attachment.Coverage.State)
+				assert.True(attachment.Partial)
+				assert.False(attachment.Truncated)
+			case "lexical unknown":
+				assert.False(attachment.Partial)
+				assert.Equal("unknown", attachment.Coverage.State)
 			}
 		})
 	}
