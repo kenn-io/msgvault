@@ -3,15 +3,12 @@ package daemonclient
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
-
-var errDeliveryPolicyResponse = errors.New("daemon returned no delivery policy response")
 
 // GetDeliveryPolicy uses the generated contract. The daemon independently
 // rejects delegated credentials; a client header cannot confer owner authority.
@@ -23,9 +20,6 @@ func (c *Client) GetDeliveryPolicy(ctx context.Context, q store.DeliveryPolicyQu
 	})
 	if err != nil {
 		return nil, err
-	}
-	if response.JSON200 == nil {
-		return nil, errDeliveryPolicyResponse
 	}
 	state := &store.DeliveryPolicyState{}
 	if err := json.Unmarshal(response.Body, state); err != nil {
@@ -41,9 +35,6 @@ func (c *Client) SetDeliveryPolicy(ctx context.Context, w store.DeliveryPolicyWr
 	if err != nil {
 		return nil, err
 	}
-	if response.JSON200 == nil {
-		return nil, errDeliveryPolicyResponse
-	}
 	receipt := &store.DeliveryPolicyReceipt{}
 	if err := json.Unmarshal(response.Body, receipt); err != nil {
 		return nil, fmt.Errorf("decode set delivery policy response: %w", err)
@@ -57,9 +48,6 @@ func (c *Client) ClearDeliveryPolicy(ctx context.Context, w store.DeliveryPolicy
 	})
 	if err != nil {
 		return nil, err
-	}
-	if response.JSON200 == nil {
-		return nil, errDeliveryPolicyResponse
 	}
 	receipt := &store.DeliveryPolicyReceipt{}
 	if err := json.Unmarshal(response.Body, receipt); err != nil {
