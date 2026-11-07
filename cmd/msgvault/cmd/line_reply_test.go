@@ -129,7 +129,7 @@ func TestLineReplyEmitsPendingArchiveReceipt(t *testing.T) {
 	require := require.New(t)
 	a, draft, _ := lineReplyAdapterFixture(t)
 	trigger := `CREATE TRIGGER fail_line_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`
-	_, err := a.store.DB().Exec(trigger)
+	_, err := a.store.DB().ExecContext(t.Context(), trigger)
 	require.NoError(err)
 	req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
 	var out strings.Builder

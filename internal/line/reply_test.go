@@ -549,16 +549,16 @@ func TestReplyExpiryCommitFailureKeepsPendingState(t *testing.T) {
 	require.NoError(err)
 	_, err = f.st.StartLineReplyRequestContext(t.Context(), f.draft.DraftID, f.now(), f.now().Add(30*time.Second))
 	require.NoError(err)
-	_, err = f.st.DB().Exec(`CREATE TABLE line_reply_expiry_guard (source_id BIGINT REFERENCES sources(id) DEFERRABLE INITIALLY DEFERRED)`)
+	_, err = f.st.DB().ExecContext(t.Context(), `CREATE TABLE line_reply_expiry_guard (source_id BIGINT REFERENCES sources(id) DEFERRABLE INITIALLY DEFERRED)`)
 	require.NoError(err)
 	dropTrigger := `DROP TRIGGER fail_line_reply_expiry`
 	if f.st.IsPostgreSQL() {
-		_, err = f.st.DB().Exec(`CREATE FUNCTION fail_line_reply_expiry() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN INSERT INTO line_reply_expiry_guard(source_id) VALUES(-1); RETURN NEW; END; $$`)
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_line_reply_expiry() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN INSERT INTO line_reply_expiry_guard(source_id) VALUES(-1); RETURN NEW; END; $$`)
 		require.NoError(err)
-		_, err = f.st.DB().Exec(`CREATE TRIGGER fail_line_reply_expiry AFTER UPDATE ON line_reply_attempts FOR EACH ROW WHEN (NEW.state = 'expired') EXECUTE FUNCTION fail_line_reply_expiry()`)
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_line_reply_expiry AFTER UPDATE ON line_reply_attempts FOR EACH ROW WHEN (NEW.state = 'expired') EXECUTE FUNCTION fail_line_reply_expiry()`)
 		dropTrigger += ` ON line_reply_attempts`
 	} else {
-		_, err = f.st.DB().Exec(`CREATE TRIGGER fail_line_reply_expiry AFTER UPDATE ON line_reply_attempts WHEN NEW.state = 'expired' BEGIN INSERT INTO line_reply_expiry_guard(source_id) VALUES(-1); END`)
+		_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_line_reply_expiry AFTER UPDATE ON line_reply_attempts WHEN NEW.state = 'expired' BEGIN INSERT INTO line_reply_expiry_guard(source_id) VALUES(-1); END`)
 	}
 	require.NoError(err)
 	f.setNow(f.now().Add(23 * time.Hour))
@@ -570,7 +570,7 @@ func TestReplyExpiryCommitFailureKeepsPendingState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(store.LineReplyRemoteUnknown, durable.State)
 	assert.Equal(0, f.fake.Count("POST", "/v2/bot/message/push"))
-	_, err = f.st.DB().Exec(dropTrigger)
+	_, err = f.st.DB().ExecContext(t.Context(), dropTrigger)
 	require.NoError(err)
 	expired, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
