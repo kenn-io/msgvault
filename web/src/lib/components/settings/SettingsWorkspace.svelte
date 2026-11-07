@@ -241,14 +241,6 @@
     return () => controller.abort();
   });
 
-  // A completed message build can settle a failed setup and its stale coverage.
-  let messageIndexBusy = false;
-  $effect(() => {
-    const busy = Boolean(building.messages || lanes.find(lane => lane.kind === 'message_embedding')?.active);
-    if (messageIndexBusy && !busy) untrack(() => { coverage = undefined; statusRevision += 1; void loadLocalSearch(); });
-    messageIndexBusy = busy;
-  });
-
   function refreshFeatureStatus(): void {
     statusRevision += 1;
     void operationsController.refreshStatus();
@@ -287,7 +279,7 @@
   }
   function startFeature(action: Extract<OverviewAction, { kind: 'start' }>): void {
     void build(action.id, async () => {
-      if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', coverage?.status ?? 'initializing');
+      if (action.id === 'messages') return createExploreAPI(client).runCoverageAction('build_index', 'initializing');
       const result = await runOperationAction(action.id, client);
       if (result.outcome !== 'succeeded') throw new Error(result.message);
     });

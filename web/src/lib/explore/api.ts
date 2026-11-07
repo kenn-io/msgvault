@@ -272,10 +272,10 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
         canonicalQueryHash: data.canonical_query_hash,
       };
     },
-    async runCoverageAction(action, status, signal) {
+    async runCoverageAction(action, _status, signal) {
       if (action === 'retry') return;
       const { data, error, response } = await generatedRunCLI(
-        { args: status === 'incomplete' ? ['embeddings', 'build', '--backstop', '--yes'] : ['embeddings', 'build', '--full-rebuild', '--yes'] },
+        { args: ['embeddings', 'build', '--full-rebuild', '--yes'] },
         {
           ...client,
           signal,

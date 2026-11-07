@@ -15,7 +15,7 @@ test('Build index confirmation preserves feature labels at 768px', async ({ page
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
   await page.getByRole('button', { name: 'Build index, Search by meaning' }).click();
-  await expect(page.getByRole('button', { name: 'Confirm build' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm full rebuild' })).toBeVisible();
   const rows = page.getByRole('list', { name: 'Features' }).locator('li');
   for (const row of await rows.all()) {
     const geometry = await row.evaluate(element => {
@@ -32,7 +32,7 @@ test('Build index confirmation preserves feature labels at 768px', async ({ page
 
 for (const width of [1280, 390]) {
   for (const provider of width === 1280 ? ['builtin', 'ollama'] : ['ollama']) {
-    test(`index recovery groups status and error for ${provider} at ${width}px`, async ({ page }) => {
+    test(`failed setup groups index status and error for ${provider} at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 1020 });
       await installOperations(page);
       await page.route('**/api/v1/operations/status', route => route.fulfill({ json: {
@@ -43,7 +43,7 @@ for (const width of [1280, 390]) {
       } }));
       await page.route('**/api/v1/embeddings/local', route => route.fulfill({ json: {
         host: 'archive.example.test', enabled: true, provider, download_bytes: 0, phase: 'idle',
-        done_bytes: 0, total_bytes: 0, error: 'Message index build interrupted.'
+        done_bytes: 0, total_bytes: 0, error: 'embedding endpoint failed'
       } }));
       await page.route('**/api/v1/search/coverage', route => route.fulfill({ json: {
         eligible_count: 10, embedded_count: 4, percentage: 40, cache_revision: 'cache-1',
@@ -97,27 +97,19 @@ test('Overview Turn on keeps the shared row button treatment', async ({ page }) 
   expect(await treatment(button)).toEqual(hovered);
 });
 
-test('local search hint follows results and groups its setup error with matching note type', async ({ page }) => {
+test('local search hint follows results and opens Settings', async ({ page }) => {
   await installOperations(page);
-  await page.route('**/api/v1/embeddings/local', route => route.request().method() === 'POST'
-    ? route.fulfill({ status: 503, json: { error: 'unavailable', message: 'Local search setup is unavailable' } })
-    : route.fulfill({ json: { host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'launch', searchMode: 'full_text' }))}`);
-  await page.getByRole('button', { name: 'Turn on', exact: true }).click();
-  await page.locator('.local-search-hint').getByRole('alert').waitFor({ state: 'visible' });
-  const geometry = await page.locator('.local-search-hint').evaluate(element => {
-    const hint = element.querySelector('.kit-search-by-meaning-hint')!;
-    const error = element.querySelector('[role="alert"]')!;
-    const table = document.querySelector('.results-split')!;
-    return {
-      hintFont: getComputedStyle(hint).fontSize, errorFont: getComputedStyle(error).fontSize,
-      hintLineHeight: getComputedStyle(hint).lineHeight, errorLineHeight: getComputedStyle(error).lineHeight,
-      relatedGap: error.getBoundingClientRect().y - hint.getBoundingClientRect().bottom,
-      tableGap: element.getBoundingClientRect().y - table.getBoundingClientRect().bottom
-    };
+  const methods: string[] = [];
+  await page.route('**/api/v1/embeddings/local', route => {
+    methods.push(route.request().method());
+    return route.fulfill({ json: { host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 } });
   });
-  expect(geometry.tableGap).toBeGreaterThan(0);
-  expect(geometry.hintFont).toBe(geometry.errorFont);
-  expect(geometry.hintLineHeight).toBe(geometry.errorLineHeight);
-  expect(geometry.relatedGap).toBeLessThanOrEqual(geometry.tableGap / 2);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'launch', searchMode: 'full_text' }))}`);
+  const hint = page.locator('.local-search-hint');
+  await expect(hint).toHaveText('Search by meaning is off · Turn on');
+  const tableGap = await hint.evaluate(element => element.getBoundingClientRect().y - document.querySelector('.results-split')!.getBoundingClientRect().bottom);
+  expect(tableGap).toBeGreaterThan(0);
+  await hint.getByRole('button', { name: 'Turn on', exact: true }).click();
+  await expect(page.locator('[data-feature="message_embedding"]').getByRole('button', { name: 'Turn on', exact: true })).toBeVisible();
+  expect(methods.filter(method => method !== 'GET')).toEqual([]);
 });

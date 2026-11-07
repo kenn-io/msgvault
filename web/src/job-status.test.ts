@@ -77,6 +77,6 @@ it.each([
   const trigger = await screen.findByRole('button', { name: action });
   await waitFor(() => expect(trigger.matches(':disabled')).toBe(false));
   await fireEvent.click(trigger);
-  if (build) await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
+  if (build) await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
   await screen.findByRole('button', { name: 'Sync status: Needs attention' });
 });

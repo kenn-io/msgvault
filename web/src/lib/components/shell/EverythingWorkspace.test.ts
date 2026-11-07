@@ -542,7 +542,7 @@ describe('EverythingWorkspace', () => {
     expect(requests.some((request) => new URL(request.url).pathname.endsWith('/cli/run'))).toBe(false);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
     await screen.findByText('Semantic index: 100% of 2 items.');
 
     expect(coverageCalls).toBe(2);
@@ -577,7 +577,7 @@ describe('EverythingWorkspace', () => {
 
     await screen.findByText('Semantic index is stale.');
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm build' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
 
     expect(await screen.findByText('embedding endpoint failed')).toBeDefined();
     expect(screen.getByRole('radio', { name: 'Hybrid' }).getAttribute('aria-checked')).toBe('true');
@@ -2787,22 +2787,13 @@ function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
 
-it.each(['http', 'network'] as const)('checks local availability once and turns on semantic search from an empty full-text result after %s', async outcome => {
+it('checks local availability once and opens Settings from the full-text results hint', async () => {
   window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
-  const posts: unknown[] = [];
-  let availabilityRequests = 0;
+  const methods: string[] = [];
   const fetchFn: typeof fetch = async input => {
     const request = input as Request;
-    const path = new URL(request.url).pathname;
-    if (path === '/api/v1/embeddings/local') {
-      if (request.method === 'POST') {
-        posts.push(request.body);
-        if (posts.length === 1) {
-          if (outcome === 'network') throw new TypeError('Network interrupted');
-          return Response.json({ error: 'unavailable', message: 'The daemon is stopping' }, { status: 503 });
-        }
-        return Response.json({ host: '', enabled: false, provider: '', download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0, running: true }, { status: 202 });
-      } else availabilityRequests += 1;
+    if (new URL(request.url).pathname === '/api/v1/embeddings/local') {
+      methods.push(request.method);
       return Response.json({ host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
     }
     return Response.json(exploreResponse());
@@ -2810,22 +2801,21 @@ it.each(['http', 'network'] as const)('checks local availability once and turns 
   const client = createAPIClient(fetchFn, fetchFn);
   const state = new ExploreState(window);
   const view = render(AppShell, { client, state });
-  await waitFor(() => expect(availabilityRequests).toBe(1));
+  await waitFor(() => expect(methods).toEqual(['GET']));
   expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
   state.replaceSearchDraft('orchard', 'full_text');
   const hint = (await screen.findByRole('button', { name: 'Turn on' })).closest('p')!;
   expect(hint.textContent!.replace(/\s+/g, ' ').trim()).toBe('Search by meaning is off · Turn on');
   state.replaceSearchDraft('pear', 'full_text');
+  // The hint steps aside while the new query loads.
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull());
   await screen.findByRole('button', { name: 'Turn on' });
-  expect(availabilityRequests).toBe(1);
-  await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
-  expect((await screen.findByRole('alert')).textContent).toContain(outcome === 'network' ? 'Network interrupted' : 'The daemon is stopping');
-  expect(state.current.workspace).toBe('everything');
+  expect(methods).toEqual(['GET']);
   await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
   await waitFor(() => expect(state.current.workspace).toBe('settings'));
   expect(state.current.settingsCategory).toBe('overview');
   expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
-  expect(posts).toEqual([null, null]);
+  expect(methods.filter(method => method !== 'GET')).toEqual([]);
   view.unmount();
   state.destroy();
 });

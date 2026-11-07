@@ -4,9 +4,8 @@
   import { onDestroy, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
 
-  import { getLocalEmbeddings, enableLocalEmbeddings } from '../../api/generated/api/api';
+  import { getLocalEmbeddings } from '../../api/generated/api/api';
   import type { LocalEmbeddingsStatus } from '../../api/generated/models';
-  import { sentence } from '../../settings/local-embeddings';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
@@ -444,8 +443,6 @@
   }
 
   let localSetup = $state<LocalEmbeddingsStatus>();
-  let localSetupError = $state('');
-  let startingLocalSearch = $state(false);
   const localSearchOff = $derived(localSetup && localSetup.provider !== 'configured' && !localSetup.enabled && !localSetup.running && localSetup.phase === 'idle' && !loader.loading && Boolean(loader.result) && Boolean(exploreState.current.query.trim()));
   $effect(() => {
     localSetup = undefined;
@@ -459,16 +456,9 @@
     window.addEventListener('focus', load);
     return () => { controller.abort(); window.removeEventListener('focus', load); };
   });
-  async function turnOnSearchByMeaning(): Promise<void> {
-    if (startingLocalSearch) return;
-    startingLocalSearch = true;
-    localSetupError = '';
-    try {
-      const { response, error } = await enableLocalEmbeddings(client);
-      if (!response.ok) throw new Error(error?.message || 'Could not turn on search by meaning.');
-      commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
-    } catch (cause) { localSetupError = cause instanceof Error ? cause.message : 'Could not turn on search by meaning.'; }
-    finally { startingLocalSearch = false; }
+  // Settings runs and follows the setup; the hint only opens it.
+  function openSearchSettings(): void {
+    commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
   }
 
   const coverageFiltersFingerprint = $derived(canonicalFingerprint(exploreState.current.filters));
@@ -930,8 +920,7 @@
 
   {#if localSearchOff && localSetup}
     <div class="local-search-hint">
-      <SearchByMeaningHint onturnon={() => void turnOnSearchByMeaning()} />
-      {#if localSetupError}<p role="alert">{sentence(localSetupError)}</p>{/if}
+      <SearchByMeaningHint onturnon={openSearchSettings} />
     </div>
   {/if}
 
@@ -941,7 +930,6 @@
   .local-search-hint { margin: 0; line-height: 1.45; }
   .local-search-hint :global(.kit-search-by-meaning-hint) { font-size: var(--font-size-xs); text-wrap: balance; }
   .local-search-hint :global(button) { text-decoration: underline; }
-  .local-search-hint p { margin: calc(var(--control-gap) / 2) 0 0; color: var(--text-danger); font-size: var(--font-size-xs); }
   .everything-workspace {
     display: flex;
     width: 100%;
