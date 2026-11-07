@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"io"
 	"path/filepath"
 	"testing"
@@ -19,7 +18,7 @@ func TestImportSlackdumpCommandRequiresIdentity(t *testing.T) {
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{"export.zip"})
 
-	err := command.ExecuteContext(context.Background())
+	err := command.ExecuteContext(t.Context())
 	require.Error(t, err)
 	assert.ErrorContains(t, err, `required flag(s) "me" not set`)
 }
@@ -30,7 +29,7 @@ func TestImportSlackdumpCommandRejectsNegativeLimitBeforeRouting(t *testing.T) {
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{"--me", "UALICE", "--limit", "-1", "export.zip"})
 
-	err := command.ExecuteContext(context.Background())
+	err := command.ExecuteContext(t.Context())
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "--limit must be non-negative")
 }
@@ -59,7 +58,7 @@ func TestImportSlackdumpCommandForwardsFlagsAndPath(t *testing.T) {
 
 func TestRunImportSlackdumpRejectsMissingSourcePath(t *testing.T) {
 	command := &cobra.Command{Use: "import-slackdump"}
-	command.SetContext(testInvocationContext(context.Background(), config.NewDefaultConfig(), invocationOptions{}))
+	command.SetContext(testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{}))
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 

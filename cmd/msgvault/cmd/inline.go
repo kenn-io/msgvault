@@ -105,7 +105,7 @@ Examples:
 			if _, err := config.EditInlineAccount(state.cfg.ConfigFilePath(), snapshot.ETag, entry); err != nil {
 				return fmt.Errorf("save Inline selection: %w", err)
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -118,9 +118,9 @@ Examples:
 				return err
 			}
 			if !noDefaultIdentity {
-				confirmDefaultIdentity(cmd.OutOrStdout(), s, src.ID, account.Identifier(), account.Identifier(), "account-identifier", state.logger)
+				confirmDefaultIdentity(cmd.Context(), cmd.OutOrStdout(), s, src.ID, account.Identifier(), account.Identifier(), "account-identifier", state.logger)
 			}
-			if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 				return err
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Added Inline account %s. Run msgvault sync-inline %s. Restart the daemon after changing scheduled accounts.\n", account.Identifier(), account.Identifier()); err != nil {
@@ -252,7 +252,7 @@ func newInlineReadCommand(backfill bool) *cobra.Command {
 				}
 				return errors.Join(errs...)
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 			if err != nil {
 				return err
 			}
@@ -302,7 +302,7 @@ func inlineImportOptions(cfg *config.Config, account config.InlineAccount) (inli
 }
 
 func runInlineAccount(ctx context.Context, state *invocation, s *store.Store, account config.InlineAccount, full, noMedia, backfill bool, limit int) (*inline.ImportSummary, error) {
-	registered, err := s.GetSourceByTypeAndIdentifier(sourceTypeInline, account.Identifier)
+	registered, err := s.GetSourceByTypeAndIdentifier(ctx, sourceTypeInline, account.Identifier)
 	if errors.Is(err, store.ErrSourceNotFound) || registered == nil && err == nil {
 		return nil, errors.New("inline account is not registered; run add-inline")
 	}

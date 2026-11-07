@@ -35,7 +35,7 @@ func TestMatrixSyncSummaryBackupFailureAndKeyHint(t *testing.T) {
 		s := testutil.NewTestStore(t)
 		source, err := s.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 		req.NoError(err)
-		convID, err := s.EnsureConversation(source.ID, "!room:example.org", "Room")
+		convID, err := s.EnsureConversation(t.Context(), source.ID, "!room:example.org", "Room")
 		req.NoError(err)
 		_, err = s.PersistMatrixMessageContext(t.Context(), &store.MessagePersistData{
 			Message: &store.Message{SourceID: source.ID, ConversationID: convID, SourceMessageID: "$pending", MessageType: "matrix", Snippet: sql.NullString{String: store.MatrixEncryptedPlaceholder, Valid: true}},
@@ -50,9 +50,9 @@ func TestMatrixSyncSummaryBackupFailureAndKeyHint(t *testing.T) {
 	t.Run("saved backup key overrides skip preference", func(t *testing.T) {
 		req := require.New(t)
 		s, cfg, creds := setup(t)
-		source, err := s.GetSourceByTypeAndIdentifier(sourceTypeMatrix, creds.UserID)
+		source, err := s.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeMatrix, creds.UserID)
 		req.NoError(err)
-		req.NoError(s.UpdateSourceSyncConfig(source.ID, `{"skip_key_backup":true}`))
+		req.NoError(s.UpdateSourceSyncConfig(t.Context(), source.ID, `{"skip_key_backup":true}`))
 		creds.BackupKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 		req.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), creds))
 		var out bytes.Buffer
@@ -66,7 +66,7 @@ func TestMatrixSyncSummaryBackupFailureAndKeyHint(t *testing.T) {
 		var out bytes.Buffer
 		second, err := s.GetOrCreateSource(sourceTypeMatrix, "@second:example.org")
 		req.NoError(err)
-		secondRoom, err := s.EnsureConversation(second.ID, "!room:example.org", "Room")
+		secondRoom, err := s.EnsureConversation(t.Context(), second.ID, "!room:example.org", "Room")
 		req.NoError(err)
 		_, err = s.PersistMatrixMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: second.ID, ConversationID: secondRoom, SourceMessageID: "$second", MessageType: "matrix", Snippet: sql.NullString{String: store.MatrixEncryptedPlaceholder, Valid: true}}, RawMIME: []byte(`{"type":"m.room.encrypted"}`), RawFormat: "matrix_json"}, store.MatrixPersist{SessionID: "session"})
 		req.NoError(err)
@@ -79,7 +79,7 @@ func TestMatrixSyncSummaryBackupFailureAndKeyHint(t *testing.T) {
 		s, cfg, creds := setup(t)
 		sources, err := s.ListSources(sourceTypeMatrix)
 		req.NoError(err)
-		req.NoError(s.UpdateSourceSyncConfig(sources[0].ID, `"invalid JSON"`))
+		req.NoError(s.UpdateSourceSyncConfig(t.Context(), sources[0].ID, `"invalid JSON"`))
 		req.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), creds))
 		var out bytes.Buffer
 		req.NoError(runMatrixSync(t.Context(), s, cfg, "", false, nil, &out))
@@ -90,7 +90,7 @@ func TestMatrixSyncSummaryBackupFailureAndKeyHint(t *testing.T) {
 		s, cfg, creds := setup(t)
 		sources, err := s.ListSources(sourceTypeMatrix)
 		req.NoError(err)
-		req.NoError(s.UpdateSourceSyncConfig(sources[0].ID, `{"skip_key_backup":true}`))
+		req.NoError(s.UpdateSourceSyncConfig(t.Context(), sources[0].ID, `{"skip_key_backup":true}`))
 		req.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), creds))
 		var out bytes.Buffer
 		req.NoError(runMatrixSync(t.Context(), s, cfg, "", false, nil, &out))

@@ -26,7 +26,7 @@ func TestSQLiteListThreadUsesExpressionIndex(t *testing.T) {
 	f.CreateMessage("indexed-thread-page")
 	// Most messages belong to another thread, so the conversation filter
 	// selects fewer rows than the source filter after ANALYZE.
-	otherConv, err := f.Store.EnsureConversation(f.Source.ID, "other-thread", "Other thread")
+	otherConv, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "other-thread", "Other thread")
 	must.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), `
 		WITH RECURSIVE n(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM n WHERE id < 1000)

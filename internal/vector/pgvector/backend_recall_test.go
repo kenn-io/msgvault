@@ -3,7 +3,6 @@
 package pgvector
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"math"
@@ -56,7 +55,7 @@ func midQueryVec(axis int) []float32 {
 // Returns the generation id and the query vector (axis 0).
 func seedRecallCorpus(t *testing.T, b *Backend, db *sql.DB, multiChunks, singles int) (vector.GenerationID, []float32) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert message rows: id 1 is the multi-chunk message; 2..singles+1 are
 	// the single-chunk messages.
@@ -241,7 +240,7 @@ func TestBackend_FusedSearch_MultiChunkCorpus_ReturnsKDistinct(t *testing.T) {
 // Returns the generation id and the query vector (axis 0).
 func seedDistinctNearQueryCorpus(t *testing.T, b *Backend, db *sql.DB, count int) (vector.GenerationID, []float32) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for id := 1; id <= count; id++ {
 		_, err := db.ExecContext(ctx,
@@ -320,7 +319,7 @@ func emptyFilterANNSQL() string {
 // so the executed plan is byte-identical to the one explainInnerANN inspects.
 func innerANNDistinctCount(t *testing.T, conn *sql.Conn, gen vector.GenerationID, query []float32, innerLimit int) int {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, emptyFilterANNSQL(), vectorLiteral(query), int64(gen), innerLimit)
 	require.NoError(t, err, "inner ANN query")
 	defer func() { _ = rows.Close() }()
@@ -474,7 +473,7 @@ func TestBackend_Search_HNSWIndexPath_EfSearchContrast(t *testing.T) {
 // pinned connection so the session SETs apply.
 func explainInnerANN(t *testing.T, conn *sql.Conn, gen vector.GenerationID, query []float32, innerLimit int) string {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	stmt := "EXPLAIN (ANALYZE, COSTS OFF)" + emptyFilterANNSQL()
 	rows, err := conn.QueryContext(ctx, stmt, vectorLiteral(query), int64(gen), innerLimit)
 	require.NoError(t, err, "EXPLAIN inner ANN")

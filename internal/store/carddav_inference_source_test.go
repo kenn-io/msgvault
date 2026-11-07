@@ -13,7 +13,7 @@ import (
 func inferenceReviewPerson(t *testing.T, st *store.Store) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name) VALUES ('review-person', 'Review Person') RETURNING id`).Scan(&id))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('review-person', 'Review Person') RETURNING id`).Scan(&id))
 	return id
 }
 
@@ -64,7 +64,7 @@ func TestCardDAVReviewSourceMappedEnvelopeAndConflict(t *testing.T) {
 	source, err = st.LoadCardDAVPublicationReviewSourceContext(t.Context(), *mapping.PersonID)
 	require.NoError(err)
 	assert.Equal(conflict, source.Conflict)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET status = 'resolved', resolution = 'keep_local', resolved_at = CURRENT_TIMESTAMP WHERE id = ?`), conflict.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET status = 'resolved', resolution = 'keep_local', resolved_at = CURRENT_TIMESTAMP WHERE id = ?`), conflict.ID)
 	require.NoError(err)
 	source, err = st.LoadCardDAVPublicationReviewSourceContext(t.Context(), *mapping.PersonID)
 	require.NoError(err)
@@ -84,7 +84,7 @@ func TestCardDAVReviewSourcePendingRetainsCapturedTarget(t *testing.T) {
 	})
 	require.NoError(err)
 	// Legacy artifacts can outlive a target role change; review retains the exact target.
-	_, err = st.DB().Exec(`UPDATE carddav_address_books SET is_write_target = FALSE, is_subscribed = FALSE`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE carddav_address_books SET is_write_target = FALSE, is_subscribed = FALSE`)
 	require.NoError(err)
 	source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), id)
 	require.NoError(err)
@@ -100,13 +100,13 @@ func TestCardDAVReviewSourcePropagatesBrokenOptionalRecords(t *testing.T) {
 			var err error
 			switch broken {
 			case "resource":
-				_, err = st.DB().Exec(`ALTER TABLE carddav_resources RENAME COLUMN remote_etag TO broken_etag`)
+				_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_resources RENAME COLUMN remote_etag TO broken_etag`)
 			case "envelope":
-				_, err = st.DB().Exec(`UPDATE vcard_resource_envelopes SET resource_metadata = '{}'`)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE vcard_resource_envelopes SET resource_metadata = '{}'`)
 			case "conflict":
-				_, err = st.DB().Exec(`ALTER TABLE carddav_conflicts RENAME COLUMN status TO broken_status`)
+				_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_conflicts RENAME COLUMN status TO broken_status`)
 			case "missing envelope":
-				_, err = st.DB().Exec(st.Rebind(`DELETE FROM vcard_resource_envelopes WHERE source_ref = ?`), fmt.Sprintf("carddav:%d", book.ID))
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM vcard_resource_envelopes WHERE source_ref = ?`), fmt.Sprintf("carddav:%d", book.ID))
 			}
 			require.NoError(t, err)
 			_, err = st.LoadCardDAVPublicationReviewSourceContext(t.Context(), *mapping.PersonID)
@@ -125,7 +125,7 @@ func TestCardDAVInferenceApprovalClearedWhenDiscoveryDeletesBook(t *testing.T) {
 			assert := assert.New(t)
 			st, account, book := newCardDAVResourceStore(t)
 			id := inferenceReviewPerson(t, st)
-			_, err := st.DB().Exec(st.Rebind(`INSERT INTO person_carddav_inference_state
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_carddav_inference_state
  (person_id,inference_revision,approved_revision,approved_connection_generation,approved_address_book_id)
  VALUES (?,7,7,?,?)`), id, account.ConnectionGeneration, book.ID)
 			require.NoError(err)
@@ -142,7 +142,7 @@ func TestCardDAVInferenceApprovalClearedWhenDiscoveryDeletesBook(t *testing.T) {
 			}
 			var revision, approved int64
 			var generation, bookID *int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT inference_revision, approved_revision,
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT inference_revision, approved_revision,
  approved_connection_generation, approved_address_book_id FROM person_carddav_inference_state WHERE person_id=?`), id).Scan(&revision, &approved, &generation, &bookID))
 			assert.Equal(int64(7), revision)
 			assert.Zero(approved)
@@ -156,7 +156,7 @@ func TestCardDAVInferenceApprovalClearedWhenDiscoveryDeletesBook(t *testing.T) {
 			require.NoError(err)
 			require.Len(books, 1)
 			assert.NotEqual(book.ID, books[0].ID)
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT approved_revision, approved_address_book_id FROM person_carddav_inference_state WHERE person_id=?`), id).Scan(&approved, &bookID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT approved_revision, approved_address_book_id FROM person_carddav_inference_state WHERE person_id=?`), id).Scan(&approved, &bookID))
 			assert.Zero(approved)
 			assert.Nil(bookID)
 		})
@@ -176,7 +176,7 @@ func TestCardDAVReviewSourceSettledPublicationRequiresUsableTarget(t *testing.T)
 	assert.True(source.Publication.Desired)
 	// Model role drift from a legacy writer. Only captured pending artifacts may
 	// still be reviewed at an unavailable ordinary publication target.
-	_, err = st.DB().Exec(`UPDATE carddav_address_books SET is_write_target=FALSE`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE carddav_address_books SET is_write_target=FALSE`)
 	require.NoError(err)
 	_, err = st.LoadCardDAVPublicationReviewSourceContext(t.Context(), id)
 	assert.ErrorIs(err, store.ErrCardDAVNoWriteTarget)
@@ -187,7 +187,7 @@ func TestCardDAVReviewSourceRejectsPublicationMissingCapturedBook(t *testing.T) 
 	id, _ := settleCardDAVTestPublication(t, st, book, "review-missing-book")
 	// Settled legacy rows allow NULL scope, but cannot authorize choosing a new
 	// target on behalf of a publication that still claims to be desired.
-	_, err := st.DB().Exec(`UPDATE carddav_publications SET address_book_id=NULL`)
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE carddav_publications SET address_book_id=NULL`)
 	require.NoError(t, err)
 	_, err = st.LoadCardDAVPublicationReviewSourceContext(t.Context(), id)
 	assert.ErrorIs(t, err, store.ErrCardDAVAddressBookNotFound)

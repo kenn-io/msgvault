@@ -38,7 +38,7 @@ func TestChunkDownloadsThroughDaemon(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	must.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "download-thread", "Download")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "download-thread", "Download")
 	must.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "download-message", MessageType: "email"})
 	must.NoError(err)
@@ -59,7 +59,7 @@ func TestChunkDownloadsThroughDaemon(t *testing.T) {
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(client.Close()) })
 	server := newMCPHTTPServer(ServeOptions{Engine: daemonclient.NewEngineAdapter(client), AttachmentReader: client}, HTTPOptions{})
-	t.Cleanup(func() { checks.NoError(server.Shutdown(t.Context())) })
+	t.Cleanup(func() { checks.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 	chunk := func(t *testing.T, name string, args map[string]any) exportChunkResp {
 		t.Helper()
 		must := require.New(t)

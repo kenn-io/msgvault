@@ -538,7 +538,7 @@ func TestWaitForStartupCacheBuildOutcomeWaitsAfterHTTPReadiness(t *testing.T) {
 		}()
 
 		gotRT, outcome, err := waitForStartupCacheBuildOutcome(
-			context.Background(), dataDir, &backgroundServeProcess{}, rt, time.Second,
+			t.Context(), dataDir, &backgroundServeProcess{}, rt, time.Second,
 		)
 		require.NoError(err)
 		require.NotNil(gotRT)
@@ -550,7 +550,7 @@ func TestWaitForStartupCacheBuildOutcomeReportsProcessExit(t *testing.T) {
 	waitCh := make(chan error, 1)
 	waitCh <- errors.New("server exited")
 	_, _, err := waitForStartupCacheBuildOutcome(
-		context.Background(), t.TempDir(), &backgroundServeProcess{Wait: waitCh},
+		t.Context(), t.TempDir(), &backgroundServeProcess{Wait: waitCh},
 		&DaemonRuntime{}, time.Second,
 	)
 	require.Error(t, err)
@@ -562,7 +562,7 @@ func TestWaitForStartupCacheBuildOutcomeConsumesFatalResultAfterDaemonExit(t *te
 	require := require.New(t)
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
-	owner, err := claimServeOwnership(context.Background(), c, "127.0.0.1", 8123, "v-test")
+	owner, err := claimServeOwnership(t.Context(), c, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "claim serve ownership")
 	record := owner.record
 	require.NoError(
@@ -574,7 +574,7 @@ func TestWaitForStartupCacheBuildOutcomeConsumesFatalResultAfterDaemonExit(t *te
 	waitCh := make(chan error, 1)
 	waitCh <- errors.New("server exited")
 	gotRT, outcome, err := waitForStartupCacheBuildOutcome(
-		context.Background(), dataDir, &backgroundServeProcess{Wait: waitCh},
+		t.Context(), dataDir, &backgroundServeProcess{Wait: waitCh},
 		&DaemonRuntime{Record: record}, time.Second,
 	)
 	require.NoError(err,
@@ -1141,7 +1141,7 @@ func TestProbeLocalDaemonAuthDoesNotWaitForStats(t *testing.T) {
 	c.Server.APIKey = "secret"
 
 	start := time.Now()
-	require.NoError(t, probeLocalDaemonAuth(context.Background(), rt, c))
+	require.NoError(t, probeLocalDaemonAuth(t.Context(), rt, c))
 	assert.Less(t, time.Since(start), localDaemonAuthProbeTimeout)
 	assert.False(t, statsCalled.Load(), "auth probe never performs archive statistics")
 }
@@ -1177,7 +1177,7 @@ func TestProbeLocalDaemonAuthDoesNotSendAPIKeyToUnprovenEndpoint(t *testing.T) {
 			c := lifecycleTestConfig(t.TempDir())
 			c.Server.APIKey = "configured-api-key"
 
-			err := probeLocalDaemonAuth(context.Background(), rt, c)
+			err := probeLocalDaemonAuth(t.Context(), rt, c)
 
 			require.Error(t, err, "unconfirmed process identity requires endpoint proof")
 			assert.Positive(t, proofRequests.Load(), "unconfirmed endpoint is challenged")
@@ -1202,7 +1202,7 @@ func TestProbeLocalDaemonAuthRespectsParentDeadline(t *testing.T) {
 	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint("secret"))
 	c := lifecycleTestConfig(t.TempDir())
 	c.Server.APIKey = "secret"
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the health handler blocks until the request ends
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the health handler blocks until the request ends
 	t.Cleanup(cancel)
 
 	err := probeLocalDaemonAuth(ctx, rt, c)
@@ -1361,7 +1361,7 @@ func TestWaitForUsableBackgroundRuntimeReturnsLockWhenNoDaemon(t *testing.T) {
 	dataDir := t.TempDir()
 
 	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-		context.Background(), dataDir, config.DaemonAutoRestartNewer, time.Second,
+		t.Context(), dataDir, config.DaemonAutoRestartNewer, time.Second,
 	)
 	require.NoError(err, "wait should not error when no daemon is running")
 	assert.Nil(rt, "no runtime")
@@ -1393,7 +1393,7 @@ func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T)
 	require.NoError(err, "write runtime record")
 
 	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-		context.Background(), dataDir, config.DaemonAutoRestartNewer, 750*time.Millisecond, //nolint:kennlint // deadlinetest: the wait must expire while the live child has no usable endpoint
+		t.Context(), dataDir, config.DaemonAutoRestartNewer, 750*time.Millisecond, //nolint:kennlint // deadlinetest: the wait must expire while the live child has no usable endpoint
 	)
 	require.NoError(err, "wait should reach the timeout path without error")
 	assert.Nil(rt, "initializing child is not yet usable")
@@ -1410,7 +1410,7 @@ func TestDaemonStartInProgressDetectsInitializingChild(t *testing.T) {
 	require := require.New(t)
 
 	empty := t.TempDir()
-	inProgress, err := daemonStartInProgress(context.Background(), empty)
+	inProgress, err := daemonStartInProgress(t.Context(), empty)
 	require.NoError(err, "no records should not error")
 	assert.False(inProgress, "no runtime records means no start in progress")
 
@@ -1430,7 +1430,7 @@ func TestDaemonStartInProgressDetectsInitializingChild(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	inProgress, err = daemonStartInProgress(context.Background(), dataDir)
+	inProgress, err = daemonStartInProgress(t.Context(), dataDir)
 	require.NoError(err, "live-but-unready record should not error")
 	assert.True(inProgress, "an initializing child must report a start in progress")
 }
@@ -1462,7 +1462,7 @@ func TestWaitForUsableBackgroundRuntimeTakesOverUpgradeEligibleDaemon(t *testing
 	require.NoError(err, "write runtime record")
 
 	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-		context.Background(), dataDir, config.DaemonAutoRestartNewer, time.Second,
+		t.Context(), dataDir, config.DaemonAutoRestartNewer, time.Second,
 	)
 	require.NoError(err, "wait should not error")
 	assert.Nil(rt, "upgrade-eligible daemon must not be returned as usable")

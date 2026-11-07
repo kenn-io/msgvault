@@ -109,7 +109,7 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 	if err := ValidateMinAccessRole(s.opts.MinAccessRole); err != nil {
 		return Result{}, err
 	}
-	if err := s.updateExistingCalendarSourceOAuthApps(); err != nil {
+	if err := s.updateExistingCalendarSourceOAuthApps(ctx); err != nil {
 		return Result{}, err
 	}
 	cals, err := s.listCalendars(ctx)
@@ -152,7 +152,7 @@ func (s *Syncer) RegisterCalendars(ctx context.Context) ([]gcal.Calendar, error)
 	if err := ValidateMinAccessRole(s.opts.MinAccessRole); err != nil {
 		return nil, err
 	}
-	if err := s.updateExistingCalendarSourceOAuthApps(); err != nil {
+	if err := s.updateExistingCalendarSourceOAuthApps(ctx); err != nil {
 		return nil, err
 	}
 	cals, err := s.listCalendars(ctx)
@@ -168,10 +168,10 @@ func (s *Syncer) RegisterCalendars(ctx context.Context) ([]gcal.Calendar, error)
 		if err != nil {
 			return nil, fmt.Errorf("get/create source for %s: %w", cal.ID, err)
 		}
-		if err := s.store.UpdateSourceSyncConfig(src.ID, s.sourceConfigJSON(cal)); err != nil {
+		if err := s.store.UpdateSourceSyncConfig(ctx, src.ID, s.sourceConfigJSON(cal)); err != nil {
 			return nil, fmt.Errorf("write sync config for %s: %w", cal.ID, err)
 		}
-		if err := s.updateCalendarSourceOAuthApp(src.ID, cal.ID); err != nil {
+		if err := s.updateCalendarSourceOAuthApp(ctx, src.ID, cal.ID); err != nil {
 			return nil, err
 		}
 		registered = append(registered, cal)
@@ -218,10 +218,10 @@ func (s *Syncer) syncCalendarFull(
 	defer func() {
 		retErr = errors.Join(retErr, execution.Release())
 	}()
-	if err := s.store.UpdateSourceSyncConfig(src.ID, s.sourceConfigJSON(cal)); err != nil {
+	if err := s.store.UpdateSourceSyncConfig(ctx, src.ID, s.sourceConfigJSON(cal)); err != nil {
 		return fmt.Errorf("write sync config: %w", err)
 	}
-	if err := s.updateCalendarSourceOAuthApp(src.ID, cal.ID); err != nil {
+	if err := s.updateCalendarSourceOAuthApp(ctx, src.ID, cal.ID); err != nil {
 		return err
 	}
 	// Heal events an older msgvault archived before its config and confirmed
@@ -235,7 +235,7 @@ func (s *Syncer) syncCalendarFull(
 	var priorProcessed, priorAdded, priorUpdated int64
 	resumeEligible := s.fullSyncResumeEligible()
 	if resumeEligible {
-		if prior, _ := s.store.GetLatestCheckpointedSyncByType(src.ID, "full"); prior != nil {
+		if prior, _ := s.store.GetLatestCheckpointedSyncByType(ctx, src.ID, "full"); prior != nil {
 			if pageToken, ok := decodeCalendarFullCheckpoint(prior.CursorBefore); ok {
 				resumePageToken = pageToken
 				priorProcessed = prior.MessagesProcessed
@@ -293,7 +293,7 @@ func (s *Syncer) syncCalendarFull(
 				break
 			}
 			ev := page.Items[i]
-			added, cancelled, err := s.persistOne(src.ID, cal, ev, result)
+			added, cancelled, err := s.persistOne(ctx, src.ID, cal, ev, result)
 			if err != nil {
 				return fail(fmt.Errorf("persist event %s: %w", ev.ID, err))
 			}
@@ -307,6 +307,11 @@ func (s *Syncer) syncCalendarFull(
 			}
 		}
 
+		// persistOne logs a failed index write, so a cancellation may have
+		// skipped one; stop before the checkpoint moves past this page.
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
 		if page.NextSyncToken != "" {
 			finalToken = page.NextSyncToken
 		}
@@ -334,7 +339,7 @@ func (s *Syncer) syncCalendarFull(
 	if limitHit || s.opts.TimeMin != "" || s.opts.TimeMax != "" {
 		finalToken = ""
 	}
-	if err := s.store.RecomputeConversationStats(src.ID); err != nil {
+	if err := s.store.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		s.logger.Warn("recompute conversation stats failed", "calendar", cal.ID, "error", err)
 	}
 	var completeErr error
@@ -394,9 +399,9 @@ func decodeCalendarFullCheckpoint(raw sql.NullString) (string, bool) {
 
 // persistOne routes an event to ingest or cancellation handling and updates the
 // run result. Returns (added, cancelled).
-func (s *Syncer) persistOne(sourceID int64, cal gcal.Calendar, ev gcal.Event, result *Result) (bool, bool, error) {
+func (s *Syncer) persistOne(ctx context.Context, sourceID int64, cal gcal.Calendar, ev gcal.Event, result *Result) (bool, bool, error) {
 	if ev.IsCancelled() {
-		id, inserted, err := s.flagCancelled(sourceID, cal, ev)
+		id, inserted, err := s.flagCancelled(ctx, sourceID, cal, ev)
 		if err != nil {
 			return false, false, err
 		}
@@ -406,7 +411,7 @@ func (s *Syncer) persistOne(sourceID int64, cal gcal.Calendar, ev gcal.Event, re
 		}
 		return inserted, true, nil
 	}
-	id, err := s.ingestEvent(sourceID, cal, ev)
+	id, err := s.ingestEvent(ctx, sourceID, cal, ev)
 	if err != nil {
 		return false, false, err
 	}
@@ -495,7 +500,7 @@ func (s *Syncer) getOrCreateCalendarSource(
 ) (*store.Source, error) {
 	identifier := s.sourceIdentifier(cal)
 
-	sources, err := s.store.GetSourcesByTypeAndAccount(gcal.SourceType, s.opts.AccountEmail)
+	sources, err := s.store.GetSourcesByTypeAndAccountContext(ctx, gcal.SourceType, s.opts.AccountEmail)
 	if err != nil {
 		return nil, fmt.Errorf("find existing calendar sources: %w", err)
 	}
@@ -524,7 +529,7 @@ func (s *Syncer) getOrCreateCalendarSource(
 		return nil, fmt.Errorf("calendar source %q is retired: %w", identifier, store.ErrSourceRetired)
 	}
 	if source == nil && migrate != nil {
-		if err := s.store.UpdateSourceIdentifier(migrate.ID, identifier); err != nil {
+		if err := s.store.UpdateSourceIdentifier(ctx, migrate.ID, identifier); err != nil {
 			return nil, fmt.Errorf("migrate calendar source identifier: %w", err)
 		}
 		migrate.Identifier = identifier
@@ -587,22 +592,22 @@ func (s *Syncer) confirmCalendarSourceIdentity(ctx context.Context, source *stor
 	return nil
 }
 
-func (s *Syncer) updateCalendarSourceOAuthApp(sourceID int64, calendarID string) error {
+func (s *Syncer) updateCalendarSourceOAuthApp(ctx context.Context, sourceID int64, calendarID string) error {
 	if !s.shouldPersistOAuthApp() {
 		return nil
 	}
 	binding := sql.NullString{String: s.opts.OAuthApp, Valid: s.opts.OAuthApp != ""}
-	if err := s.store.UpdateSourceOAuthApp(sourceID, binding); err != nil {
+	if err := s.store.UpdateSourceOAuthApp(ctx, sourceID, binding); err != nil {
 		return fmt.Errorf("write oauth app for %s: %w", calendarID, err)
 	}
 	return nil
 }
 
-func (s *Syncer) updateExistingCalendarSourceOAuthApps() error {
+func (s *Syncer) updateExistingCalendarSourceOAuthApps(ctx context.Context) error {
 	if !s.shouldPersistOAuthApp() {
 		return nil
 	}
-	sources, err := s.store.GetSourcesByTypeAndAccount(gcal.SourceType, s.opts.AccountEmail)
+	sources, err := s.store.GetSourcesByTypeAndAccountContext(ctx, gcal.SourceType, s.opts.AccountEmail)
 	if err != nil {
 		return fmt.Errorf("enumerate calendar sources: %w", err)
 	}
@@ -611,7 +616,7 @@ func (s *Syncer) updateExistingCalendarSourceOAuthApps() error {
 			continue
 		}
 		cfg := parseSourceConfig(src.SyncConfig)
-		if err := s.updateCalendarSourceOAuthApp(src.ID, cfg.CalendarID); err != nil {
+		if err := s.updateCalendarSourceOAuthApp(ctx, src.ID, cfg.CalendarID); err != nil {
 			return err
 		}
 	}

@@ -22,7 +22,7 @@ func TestSQLite_BackfillFTS_ColumnsizeZero(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(`DROP TABLE messages_fts;
+	_, err := f.Store.DB().ExecContext(t.Context(), `DROP TABLE messages_fts;
 		CREATE VIRTUAL TABLE messages_fts USING fts5(
 			message_id UNINDEXED, subject, body, from_addr, to_addr, cc_addr, columnsize=0)`)
 	require.NoError(err)
@@ -33,7 +33,7 @@ func TestSQLite_BackfillFTS_ColumnsizeZero(t *testing.T) {
 	}
 	_, err = f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid = ?", ids[0])
+	_, err = f.Store.DB().ExecContext(t.Context(), "DELETE FROM messages_fts WHERE rowid = ?", ids[0])
 	require.NoError(err)
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
@@ -59,9 +59,9 @@ func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 	require.NoError(err)
 	assertFTSContains(t, f.Store, "orchard", 2)
 	if isPostgresTestDB() {
-		_, err = f.Store.DB().Exec("UPDATE messages SET search_fts = NULL WHERE id IN ($1, $2)", first, second)
+		_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET search_fts = NULL WHERE id IN ($1, $2)", first, second)
 	} else {
-		_, err = f.Store.DB().Exec("DELETE FROM messages_fts WHERE rowid IN (?, ?)", first, second)
+		_, err = f.Store.DB().ExecContext(t.Context(), "DELETE FROM messages_fts WHERE rowid IN (?, ?)", first, second)
 	}
 	require.NoError(err)
 
@@ -97,7 +97,7 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	ids := f.CreateMessages(2)
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`UPDATE messages
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages
 		SET search_fts = to_tsvector('simple', 'obsolete'), indexing_version = $1
 		WHERE id = $2`, store.CurrentFTSIndexingVersion-1, ids[1])
 	require.NoError(err)
@@ -202,10 +202,12 @@ func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
 	// so any MAX-based heuristic would wrongly report "complete".
 	lowest := slices.Min(ids)
 	if isPostgresTestDB() {
-		_, err = f.Store.DB().Exec(
+		_, err = f.Store.DB().ExecContext(
+			t.Context(),
 			"UPDATE messages SET search_fts = NULL WHERE id = $1", lowest)
 	} else {
-		_, err = f.Store.DB().Exec(
+		_, err = f.Store.DB().ExecContext(
+			t.Context(),
 			"DELETE FROM messages_fts WHERE rowid = ?", lowest)
 	}
 	require.NoError(err, "punch a hole at the lowest id")

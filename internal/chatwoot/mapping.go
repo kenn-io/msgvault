@@ -80,7 +80,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	}
 	if m.Private || m.MessageType == 0 {
 		inboxKey := SourceIdentifier(imp.client.baseURL, imp.client.accountID, opts.InboxID)
-		inboxParticipant, resolveErr := imp.store.EnsureParticipantByIdentifier(SourceType, inboxKey, "Chatwoot inbox "+strconv.FormatInt(opts.InboxID, 10))
+		inboxParticipant, resolveErr := imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, inboxKey, "Chatwoot inbox "+strconv.FormatInt(opts.InboxID, 10))
 		if resolveErr != nil {
 			return 0, resolveErr
 		}
@@ -120,7 +120,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		}
 	}
 	sourceMessageID := strconv.FormatInt(m.ID, 10)
-	existing, err := imp.store.MessageMetadataBatch(sourceID, []string{sourceMessageID})
+	existing, err := imp.store.MessageMetadataBatch(ctx, sourceID, []string{sourceMessageID})
 	if err != nil {
 		return 0, err
 	}
@@ -191,11 +191,11 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 		}
 		if unchanged {
 			messageID = row.ID
-			if err = imp.store.SetConversationTitle(sourceID, row.ConversationID, title); err != nil {
+			if err = imp.store.SetConversationTitle(ctx, sourceID, row.ConversationID, title); err != nil {
 				return 0, err
 			}
 			for _, member := range members {
-				if err = imp.store.EnsureConversationParticipant(row.ConversationID, member.ParticipantID, member.Role); err != nil {
+				if err = imp.store.EnsureConversationParticipantContext(ctx, row.ConversationID, member.ParticipantID, member.Role); err != nil {
 					return 0, err
 				}
 			}
@@ -215,7 +215,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 	}
 	var callMedia map[string]store.AttachmentRef
 	if m.ContentType == "voice_call" {
-		chatMedia, mediaErr := imp.store.MessageProviderAttachments(messageID, "chatwoot:")
+		chatMedia, mediaErr := imp.store.MessageProviderAttachments(ctx, messageID, "chatwoot:")
 		if mediaErr != nil {
 			return 0, mediaErr
 		}
@@ -224,7 +224,7 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID int64, c Conve
 			return 0, callErr
 		}
 		refreshFrom = max(refreshFrom, callRefreshFrom)
-		callMedia, err = imp.store.MessageProviderAttachments(meetingID, "chatwoot:")
+		callMedia, err = imp.store.MessageProviderAttachments(ctx, meetingID, "chatwoot:")
 		if err != nil {
 			return 0, err
 		}

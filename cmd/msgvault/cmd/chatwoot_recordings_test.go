@@ -82,7 +82,7 @@ func TestChatwootPurgePreservesRecordingsBetweenMediaAndRecordingCaps(t *testing
 			require.NoError(err)
 			if tc.storedMediaType != "" {
 				// Earlier imports kept the provider's file type even when the MIME type was audio.
-				result, err := st.DB().Exec(st.Rebind(`UPDATE attachments SET media_type = ? WHERE source_attachment_id = ?`),
+				result, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attachments SET media_type = ? WHERE source_attachment_id = ?`),
 					tc.storedMediaType, "chatwoot:attachment:1")
 				require.NoError(err)
 				changed, err := result.RowsAffected()

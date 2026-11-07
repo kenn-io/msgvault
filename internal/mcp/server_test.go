@@ -164,7 +164,7 @@ func (e *listAccountsTrackingEngine) ListAccounts(ctx context.Context) ([]query.
 func callToolDirect(t *testing.T, name string, fn toolHandler, args map[string]any) *toolResult {
 	t.Helper()
 	req := toolRequest{arguments: args}
-	result, err := fn(context.Background(), req)
+	result, err := fn(t.Context(), req)
 	require.NoError(t, err, "%s handler returned error", name)
 	return result
 }
@@ -199,7 +199,7 @@ func TestToolErrorHasNoStructuredOutput(t *testing.T) {
 	localResult := toolErrorResult("test failure")
 	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
 		return localResult, nil
-	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+	})(t.Context(), &sdkmcp.CallToolRequest{}, map[string]any{})
 	must.NoError(err)
 	checks.Nil(output)
 	wireJSON, err := json.Marshal(wireResult)
@@ -214,7 +214,7 @@ func TestOfficialToolHandlerSanitizesInternalErrors(t *testing.T) {
 	checks := assert.New(t)
 	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
 		return nil, &internalError{operation: "load private archive", cause: errors.New("secret filesystem path")}
-	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+	})(t.Context(), &sdkmcp.CallToolRequest{}, map[string]any{})
 
 	checks.Nil(wireResult)
 	checks.Nil(output)
@@ -242,7 +242,7 @@ func TestErrorIsolationMiddlewarePreservesWrappedJSONRPCErrors(t *testing.T) {
 		return nil, wrappedErr
 	})
 
-	result, err := handler(context.Background(), "tools/call", nil)
+	result, err := handler(t.Context(), "tools/call", nil)
 
 	checks.Nil(result)
 	must.Same(wrappedErr, err)
@@ -1238,7 +1238,7 @@ func TestSearchMessageBodies_HonorsBackendCancellation(t *testing.T) {
 		},
 	}
 	h := newTestHandlers(engine)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	req := toolRequest{arguments: map[string]any{"query": "needle"}}
 
@@ -1538,7 +1538,7 @@ func TestAttachVectorChunkMatches_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
 	}
 	items := []searchMessageItem{{ID: messageID}}
 
-	require.NoError(t, h.attachVectorChunkMatches(context.Background(), 1, []float32{1}, items, 0))
+	require.NoError(t, h.attachVectorChunkMatches(t.Context(), 1, []float32{1}, items, 0))
 
 	require.Len(t, items[0].Matches, 1)
 	assert.Equal(t, "semantic needle", items[0].Matches[0].Snippet)
@@ -2071,7 +2071,7 @@ func TestGetMessage(t *testing.T) {
 			42: testutil.NewMessageDetail(42).WithBodyText("New\n> Old\n").BuildPtr(),
 			43: testutil.NewMessageDetail(43).WithBodyText("New\n> Old\n>> Older\n-- \nSender\nBegin forwarded message:\nOld").BuildPtr(),
 		}}
-		ctx := context.Background()
+		ctx := t.Context()
 		session := task5ConnectClient(t, ServeOptions{Engine: eng}, false)
 		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMessage, Arguments: map[string]any{"id": 42, "include_segments": true}})
 		require.NoError(err)
@@ -2136,7 +2136,7 @@ func TestGetMessage(t *testing.T) {
 				require.NoError(t, f.Store.UpsertMessageBody(messageID,
 					sql.NullString{String: "Previously archived text", Valid: true},
 					sql.NullString{String: tc.html, Valid: true}))
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, messageID)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, messageID)
 				require.NoError(t, err)
 				handlers := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
 				msg := runTool[map[string]any](t, "get_message", handlers.getMessage, map[string]any{"id": float64(messageID)})
@@ -2153,7 +2153,7 @@ func TestGetMessage(t *testing.T) {
 			WithSourceMessageID("beeper-sender-only").
 			WithSubject("Synthetic Beeper message").
 			Create(t, f.Store)
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET message_type = 'beeper', sender_id = ? WHERE id = ?`,
 		), senderID, messageID)
 		require.NoError(t, err, "set direct sender")
@@ -2523,7 +2523,7 @@ func TestAggregate(t *testing.T) {
 	t.Run("list uses mailing-list dimension", func(t *testing.T) {
 		f := storetest.New(t)
 		messageID := f.NewMessage().WithSourceMessageID("mcp-list-aggregate").Create(t, f.Store)
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
 			"<announce.example.test>", messageID)
 		require.NoError(t, err)
 		realHandlers := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
@@ -3143,7 +3143,7 @@ func TestSearchInMessageHiddenHTMLText(t *testing.T) {
 			require.NoError(f.Store.UpsertMessageBody(id,
 				sql.NullString{String: "semantic body", Valid: true},
 				sql.NullString{String: tc.html, Valid: true}))
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, id)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, id)
 			require.NoError(err)
 			h := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
 			if tc.mode == searchModeVector {
@@ -4182,7 +4182,7 @@ func TestSearchByDomains(t *testing.T) {
 // down and returning ctx.Err(). Regression-guards a roborev #299
 // finding where Start was called without ever consulting ctx.
 func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	// Bind on :0 so we don't conflict with anything on the host.
 	opts := ServeOptions{
@@ -4215,12 +4215,12 @@ func TestServeHTTPWithOptionsLiveListenerRequiresBearerAuth(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	addr := probe.Addr().String()
 	require.NoError(probe.Close())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	stopped := make(chan struct{})
 	attachmentsDir := t.TempDir()
@@ -4247,7 +4247,7 @@ func TestServeHTTPWithOptionsLiveListenerRequiresBearerAuth(t *testing.T) {
 	var responseChallenge string
 	var responseCloseErr error
 	require.Eventually(func() bool {
-		req, requestErr := http.NewRequest(http.MethodPatch, "http://"+addr+"/mcp", nil)
+		req, requestErr := http.NewRequestWithContext(t.Context(), http.MethodPatch, "http://"+addr+"/mcp", nil)
 		if requestErr != nil {
 			return false
 		}
@@ -4322,7 +4322,7 @@ func TestBearerAuthHandler(t *testing.T) {
 					w.WriteHeader(http.StatusNoContent)
 				})
 				handler := bearerAuthHandler(apiKey, next)
-				req := httptest.NewRequest(method, "/mcp", nil)
+				req := httptest.NewRequestWithContext(t.Context(), method, "/mcp", nil)
 				req.Header.Set("Mcp-Session-Id", "test-session")
 				if tt.addAuth != nil {
 					tt.addAuth(req)
@@ -4356,7 +4356,7 @@ func TestBearerAuthHandlerRejectsMalformedCredentials(t *testing.T) {
 			handler := bearerAuthHandler("test-api-key", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				called = true
 			}))
-			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
 			for _, header := range tt.headers {
 				req.Header.Add("Authorization", header)
 			}
@@ -4380,7 +4380,7 @@ func TestBearerAuthHandlerCompatibilityAndSchemeCase(t *testing.T) {
 		}))
 		resp := httptest.NewRecorder()
 
-		handler.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+		handler.ServeHTTP(resp, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil))
 
 		assert.Equal(t, http.StatusAccepted, resp.Code)
 		assert.True(t, called)
@@ -4392,7 +4392,7 @@ func TestBearerAuthHandlerCompatibilityAndSchemeCase(t *testing.T) {
 			called = true
 			w.WriteHeader(http.StatusAccepted)
 		}))
-		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
 		req.Header.Set("Authorization", "bEaReR test-api-key")
 		resp := httptest.NewRecorder()
 
@@ -4414,13 +4414,13 @@ func TestMCPHTTPServerMountsProtectedEndpoint(t *testing.T) {
 	checks.Equal(120*time.Second, stdlibServer.IdleTimeout)
 
 	missing := httptest.NewRecorder()
-	missingRequest := httptest.NewRequest(http.MethodPatch, "/mcp", nil)
+	missingRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/mcp", nil)
 	missingRequest.Header.Set("Mcp-Session-Id", "test-session")
 	stdlibServer.Handler.ServeHTTP(missing, missingRequest)
 	checks.Equal(http.StatusUnauthorized, missing.Code)
 
 	authorized := httptest.NewRecorder()
-	authorizedRequest := httptest.NewRequest(http.MethodPatch, "/mcp", nil)
+	authorizedRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/mcp", nil)
 	authorizedRequest.Header.Set("Authorization", "Bearer test-api-key")
 	stdlibServer.Handler.ServeHTTP(authorized, authorizedRequest)
 	checks.Equal(http.StatusMethodNotAllowed, authorized.Code)

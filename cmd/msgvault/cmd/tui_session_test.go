@@ -66,7 +66,7 @@ func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
 					return nil
 				}}
 				root.SetArgs([]string{})
-				require.NoError(executeRootContext(context.Background(), root))
+				require.NoError(executeRootContext(t.Context(), root))
 				synctest.Wait()
 				if tc.configOff {
 					invocationFromCommand(root).sends.Wait(time.Second)

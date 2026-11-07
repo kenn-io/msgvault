@@ -464,7 +464,7 @@ type IMAPDraftServerOptions struct {
 // capabilities so APPEND and UIDPLUS paths can be tested together.
 func StartIMAPMemServerForDrafts(t *testing.T, opts IMAPDraftServerOptions) (string, *imapmemserver.User) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := serveIMAPMemServerWithCaps(t, ln, opts.MessagesPerMailbox, nil, "", 0, opts.StatusErrorMailbox, nil, nil, opts.Caps, opts.ReceiptlessAppend, opts.AppendLimit, opts.StatusAppendLimit, opts.StatusAppendMailbox)
 	return ln.Addr().String(), user
@@ -542,7 +542,7 @@ func startIMAPMemServer(
 	missingUID *missingUIDConfig,
 ) (string, *imapmemserver.User) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := serveIMAPMemServer(
 		t, ln, messagesPerMailbox, specialUse, selectErrorMailbox,

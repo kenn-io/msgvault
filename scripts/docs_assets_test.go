@@ -120,7 +120,7 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 	writeAssetFile(t, filepath.Join(docsAssetsDir, "generated"), "stale-generated.svg", "stale generated extra")
 
 	scriptPath := installScript(t, localRepo, filepath.Join("docs", "assets", "hydrate-assets.sh"))
-	cmd := exec.Command("bash", scriptPath)
+	cmd := exec.CommandContext(t.Context(), "bash", scriptPath)
 	cmd.Dir = localRepo
 	output, err := cmd.CombinedOutput()
 	require.NoError(err, string(output))
@@ -152,7 +152,7 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 			beforeRef, beforeExists := gitRef(t, repo, tc.branch)
 
 			scriptPath := installScript(t, repo, tc.scriptRel)
-			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd := exec.CommandContext(t.Context(), "bash", scriptPath, "--source", sourceDir)
 			cmd.Dir = repo
 			output, err := cmd.CombinedOutput()
 
@@ -187,7 +187,7 @@ func TestAssetPublishersRejectSymlinks(t *testing.T) {
 			require.NoError(os.Symlink(target, link))
 
 			scriptPath := installScript(t, repo, tc.scriptRel)
-			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd := exec.CommandContext(t.Context(), "bash", scriptPath, "--source", sourceDir)
 			cmd.Dir = repo
 			output, err := cmd.CombinedOutput()
 
@@ -222,7 +222,7 @@ func TestAssetPublishersRejectProtectedBranchNames(t *testing.T) {
 			git(t, repo, "checkout", "-b", "work")
 
 			scriptPath := installScript(t, repo, tc.scriptRel)
-			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd := exec.CommandContext(t.Context(), "bash", scriptPath, "--source", sourceDir)
 			cmd.Dir = repo
 			cmd.Env = append(os.Environ(), tc.branchEnv+"=main")
 			output, err := cmd.CombinedOutput()
@@ -317,7 +317,7 @@ conn = Conn()
 module.load_schema(conn)
 print(conn.scripts[0])
 `
-	cmd := exec.Command("python3", "-c", probe)
+	cmd := exec.CommandContext(t.Context(), "python3", "-c", probe)
 	cmd.Env = append(
 		os.Environ(),
 		"MSGVAULT_REPO="+overrideRepo,
@@ -527,7 +527,7 @@ func isolateGitFixture(t *testing.T) {
 
 func gitRef(t *testing.T, dir, ref string) (string, bool) {
 	t.Helper()
-	cmd := exec.Command("git", "rev-parse", "--verify", ref)
+	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", ref)
 	cmd.Dir = dir
 	output, err := cmd.Output()
 	if err != nil {
@@ -538,7 +538,7 @@ func gitRef(t *testing.T, dir, ref string) (string, bool) {
 
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -546,7 +546,7 @@ func git(t *testing.T, dir string, args ...string) {
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.Output()
 	require.NoError(t, err)

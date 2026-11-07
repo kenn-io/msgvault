@@ -158,7 +158,7 @@ func (r docbankAttachmentPackResolver) Resolve(ctx context.Context, hash packsto
 	if err != nil || !exists {
 		return packstore.Location{}, err
 	}
-	entry, err := r.store.GetAttachmentPackEntry(hash.String())
+	entry, err := r.store.GetAttachmentPackEntry(ctx, hash.String())
 	if err != nil || entry == nil {
 		return packstore.Location{}, err
 	}

@@ -21,12 +21,12 @@ func TestAccountIdentityAddressKeyBackfillMergesCaseVariantEmails(t *testing.T) 
 
 	// Two case variants of one logical email identity, written as a
 	// previous-release binary would: address_key omitted, so it lands as ''.
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, source_signal, confirmed_at)
 		 VALUES (?, ?, ?, ?)`),
 		src.ID, "Alice@Example.com", "manual", "2024-01-02 03:04:05+00:00")
 	require.NoError(err, "seed first case variant")
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, source_signal, confirmed_at)
 		 VALUES (?, ?, ?, ?)`),
 		src.ID, "alice@example.com", "header", "2024-05-06 07:08:09+00:00")
@@ -43,7 +43,7 @@ func TestAccountIdentityAddressKeyBackfillMergesCaseVariantEmails(t *testing.T) 
 	assert.Equal("header,manual", got.SourceSignal, "signal sets must union")
 
 	var key string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT address_key FROM account_identities WHERE source_id = ? AND address = ?`),
 		src.ID, "Alice@Example.com").Scan(&key))
 	assert.Equal("alice@example.com", key, "backfilled key must be the comparison-canonical form")
@@ -56,12 +56,12 @@ func TestAccountIdentityAddressKeyBackfillPreservesNonEmailCase(t *testing.T) {
 	src, err := st.GetOrCreateSource("matrix", "backfill-mxid@example.com")
 	require.NoError(err, "GetOrCreateSource")
 
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, source_signal)
 		 VALUES (?, ?, ?)`),
 		src.ID, "@User:server.org", "manual")
 	require.NoError(err, "seed mixed-case MXID")
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, source_signal)
 		 VALUES (?, ?, ?)`),
 		src.ID, "@user:server.org", "manual")
@@ -74,7 +74,7 @@ func TestAccountIdentityAddressKeyBackfillPreservesNonEmailCase(t *testing.T) {
 	require.Len(identities, 2, "non-email identifiers are case-sensitive and must not merge")
 	for _, ai := range identities {
 		var key string
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT address_key FROM account_identities WHERE source_id = ? AND address = ?`),
 			src.ID, ai.Address).Scan(&key))
 		assert.Equal(ai.Address, key, "non-email key must preserve case verbatim")
@@ -92,7 +92,7 @@ func TestAccountIdentityKeyIndexRejectsKeyedCaseVariantDuplicate(t *testing.T) {
 	// A direct SQL writer supplying the derived key for a case variant must
 	// hit the partial unique index: this is the schema-level enforcement the
 	// application-level compare could not provide.
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, address_key, source_signal)
 		 VALUES (?, ?, ?, ?)`),
 		src.ID, "Bob@Example.com", "bob@example.com", "raw")
@@ -111,7 +111,7 @@ func TestAccountIdentityLegacyOmittedKeyInsertSucceedsAndIsRepaired(t *testing.T
 	// A previous-release binary inserts with its old column list. The ''
 	// default keeps the write working (the partial index exempts ''), even
 	// though a keyed row for the same logical identity already exists.
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, source_signal)
 		 VALUES (?, ?, ?)`),
 		src.ID, "carol@example.com", "legacy")
@@ -164,7 +164,7 @@ func TestAccountIdentityKeyRepairRunsAfterProvenanceInitialization(t *testing.T)
 
 	src, err := st.GetOrCreateSource("gmail", "provenance-order@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "provenance-order-conversation", "Thread")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "provenance-order-conversation", "Thread")
 	require.NoError(err, "EnsureConversation")
 	messageID, err := st.UpsertMessage(&store.Message{
 		SourceID:        src.ID,
@@ -179,17 +179,17 @@ func TestAccountIdentityKeyRepairRunsAfterProvenanceInitialization(t *testing.T)
 	// a message predating attribution provenance: the archive state an
 	// upgrade encounters.
 	for _, addr := range []string{"Owner2@Example.com", "owner2@example.com"} {
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			INSERT INTO account_identities (source_id, address, source_signal)
 			VALUES (?, ?, ?)`), src.ID, addr, "manual")
 		require.NoError(err, "seed legacy identity %s", addr)
 	}
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET source_is_from_me = NULL, identity_is_from_me = FALSE
 		WHERE id = ?`), messageID)
 	require.NoError(err, "simulate pre-provenance message row")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM applied_migrations WHERE name = ?`),
 		"message_attribution_provenance_v3")
 	require.NoError(err, "reset attribution migration sentinel")
@@ -202,14 +202,14 @@ func TestAccountIdentityKeyRepairRunsAfterProvenanceInitialization(t *testing.T)
 
 	var sourceDerived sql.NullBool
 	var identityDerived bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT source_is_from_me, identity_is_from_me
 		FROM messages WHERE id = ?`), messageID).Scan(&sourceDerived, &identityDerived))
 	assert.True(sourceDerived.Valid, "provenance must be initialized")
 	assert.False(sourceDerived.Bool,
 		"identity-derived attribution must not be recorded as source-native")
 	assert.True(identityDerived, "sender matches a confirmed identity")
-	isFromMe, err := st.GetMessageIsFromMe(messageID)
+	isFromMe, err := st.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err, "GetMessageIsFromMe")
 	assert.True(isFromMe, "effective attribution comes from the identity match")
 }
@@ -224,20 +224,20 @@ func TestAccountIdentityKeyOnlyBackfillLeavesOtherColumnsUntouched(t *testing.T)
 	// One row, no duplicate: the repair must only fill in the key. The
 	// stored confirmed_at text is compared verbatim because a round trip
 	// through a Go time value rewrites it in a different format.
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, source_signal)
 		 VALUES (?, ?, ?)`),
 		src.ID, "Erin@Example.com", "manual")
 	require.NoError(err, "seed legacy row")
 	var confirmedBefore string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT CAST(confirmed_at AS TEXT) FROM account_identities WHERE source_id = ?`),
 		src.ID).Scan(&confirmedBefore))
 
 	require.NoError(st.InitSchema(), "reinit schema to run the key repair")
 
 	var key, signal, confirmedAfter string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT address_key, source_signal, CAST(confirmed_at AS TEXT)
 		 FROM account_identities WHERE source_id = ?`),
 		src.ID).Scan(&key, &signal, &confirmedAfter))
@@ -254,7 +254,7 @@ func TestAddAccountIdentityPromotesUnkeyedLegacyRowWithoutSignalChange(t *testin
 	require.NoError(err, "GetOrCreateSource")
 
 	// A previous-release writer left an unkeyed row in the same session.
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO account_identities (source_id, address, source_signal)
 		 VALUES (?, ?, ?)`),
 		src.ID, "Frank@Example.com", "manual")
@@ -269,7 +269,7 @@ func TestAddAccountIdentityPromotesUnkeyedLegacyRowWithoutSignalChange(t *testin
 	require.NoError(err, "ListAccountIdentities")
 	require.Len(identities, 1, "keyed writer must merge into the unkeyed legacy row")
 	var key string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT address_key FROM account_identities WHERE source_id = ?`),
 		src.ID).Scan(&key))
 	assert.Equal("frank@example.com", key, "legacy row must be promoted to keyed")

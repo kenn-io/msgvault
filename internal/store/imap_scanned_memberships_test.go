@@ -94,7 +94,7 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 			malformed := f.createMessage(t, "INBOX|01", "")
 			_, err := f.store.DB().Exec(f.store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), archiveOnly)
 			require.NoError(err)
-			label, err := f.store.EnsureLabel(f.source.ID, "INBOX", "INBOX", "system")
+			label, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "system")
 			require.NoError(err)
 			require.NoError(f.store.ReplaceMessageLabels(moved, []int64{label}))
 			delta := scannedIMAPDelta("INBOX", 11)

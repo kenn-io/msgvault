@@ -78,9 +78,9 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	defer server.Close()
 	imp := slack.NewImporter(st, slack.NewClient(server.URL, "synthetic-token"), "T01")
 	opts := slack.ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 
 	duckDB, err := sql.Open("duckdb", "")
@@ -88,12 +88,12 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	t.Cleanup(func() { _ = duckDB.Close() })
 	messagePattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var snippet string
-	require.NoError(duckDB.QueryRow(`SELECT snippet FROM read_parquet(?, hive_partitioning=true)
+	require.NoError(duckDB.QueryRowContext(t.Context(), `SELECT snippet FROM read_parquet(?, hive_partitioning=true)
 		WHERE source_message_id = 'C01:1750000060.000001'`, messagePattern).Scan(&snippet))
 	require.Equal("Original reply @Example", snippet)
 
 	edited.Store(true)
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	defer cancel(nil)
 	opts.Progress = func(line string) {
 		if strings.HasPrefix(line, "conversation ") {
@@ -109,7 +109,7 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	requestsBeforeResume := replyRequests.Load()
 
 	opts.Progress = nil
-	resumed, err := imp.Import(context.Background(), opts)
+	resumed, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	require.Zero(resumed.MessagesUpdated, "the continuation skips the visited channel")
 	require.Equal(requestsBeforeResume, replyRequests.Load())
@@ -117,9 +117,9 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 	stale := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.True(stale.HasRelatedRowDrift)
 	assert.True(stale.FullRebuild, "a recipient-only refresh cannot repair the reply snippet")
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
-	require.NoError(duckDB.QueryRow(`SELECT snippet FROM read_parquet(?, hive_partitioning=true)
+	require.NoError(duckDB.QueryRowContext(t.Context(), `SELECT snippet FROM read_parquet(?, hive_partitioning=true)
 		WHERE source_message_id = 'C01:1750000060.000001'`, messagePattern).Scan(&snippet))
 	assert.Equal("Updated reply @Example", snippet)
 	state, err := query.ReadCacheSyncState(analyticsDir)

@@ -213,14 +213,14 @@ func defaultPersonProviderCommandDeps(contexts ...context.Context) personProvide
 				if currentCfg == nil {
 					return nil, nil, errors.New("configuration is unavailable")
 				}
-				st, err := store.OpenReadOnly(currentCfg.DatabaseDSN())
+				st, err := store.OpenReadOnlyContext(ctx, currentCfg.DatabaseDSN())
 				if err != nil {
 					return nil, nil, err
 				}
 				return st, func() { _ = st.Close() }, nil
 			}
 			deps.openStore = func() (personProviderStore, func(), error) {
-				return openWritableStoreAndInitForInvocation(state)
+				return openWritableStoreAndInitForInvocation(ctx, state)
 			}
 			deps.setup.openCredentialStore = func() (peoplesweep.CredentialStore, error) {
 				if currentCfg == nil {

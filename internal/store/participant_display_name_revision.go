@@ -65,12 +65,9 @@ func readParticipantDisplayNameRevision(q rowQuerier) (int64, error) {
 	return revision, nil
 }
 
-// bumpParticipantDisplayNameRevision increments the participant display-name
-// revision inside tx, seeding the metadata row when it does not exist yet.
-func (s *Store) bumpParticipantDisplayNameRevision(tx *loggedTx) error {
-	return s.bumpParticipantDisplayNameRevisionContext(context.Background(), tx)
-}
-
+// bumpParticipantDisplayNameRevisionContext increments the participant
+// display-name revision inside tx, seeding the metadata row when it does not
+// exist yet.
 func (s *Store) bumpParticipantDisplayNameRevisionContext(
 	ctx context.Context,
 	tx *loggedTx,
@@ -87,15 +84,6 @@ func (s *Store) bumpParticipantDisplayNameRevisionContext(
 		return fmt.Errorf("bump participant display-name revision: %w", err)
 	}
 	return nil
-}
-
-func (s *Store) bumpParticipantDisplayNameRevisionIfChanged(
-	tx *loggedTx,
-	result sql.Result,
-) (bool, error) {
-	return s.bumpParticipantDisplayNameRevisionIfChangedContext(
-		context.Background(), tx, result,
-	)
 }
 
 func (s *Store) bumpParticipantDisplayNameRevisionIfChangedContext(
@@ -119,18 +107,19 @@ func (s *Store) bumpParticipantDisplayNameRevisionIfChangedContext(
 // RepairParticipantDisplayNames applies one maintenance batch and advances the
 // display-name revision once when at least one participant row changes.
 func (s *Store) RepairParticipantDisplayNames(
+	ctx context.Context,
 	repairs []ParticipantDisplayNameRepair,
 ) error {
 	if len(repairs) == 0 {
 		return nil
 	}
-	return s.withTx(func(tx *loggedTx) error {
-		if err := s.lockIdentityMutationTx(tx); err != nil {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		changedParticipantIDs := make([]int64, 0, len(repairs))
 		for _, repair := range repairs {
-			result, err := tx.Exec(`
+			result, err := tx.ExecContext(ctx, `
 				UPDATE participants SET display_name = ?
 				WHERE id = ?
 				  AND (display_name IS NULL OR display_name <> ?)
@@ -152,10 +141,10 @@ func (s *Store) RepairParticipantDisplayNames(
 		if len(changedParticipantIDs) == 0 {
 			return nil
 		}
-		if err := s.bumpParticipantDisplayNameRevision(tx); err != nil {
+		if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
 			return err
 		}
 		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, changedParticipantIDs...)
+			ctx, tx, changedParticipantIDs...)
 	})
 }

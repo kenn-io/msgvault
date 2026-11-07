@@ -35,7 +35,7 @@ func TestImportPst_SupportPST(t *testing.T) {
 	st := openIntegrationStore(t)
 	pstPath := filepath.Join(pstTestdataDir, "support.pst")
 
-	summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+	summary, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
 		Identifier: "support@hackingteam.com",
 		NoResume:   true,
 	})
@@ -118,7 +118,7 @@ func TestImportPst_SearchFolderResume(t *testing.T) {
 			require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
 			mock := &mockIngestFunc{}
-			summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+			summary, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
 				Identifier:         "resume@example.com",
 				CheckpointInterval: 1,
 				IngestFunc:         mock.fn,
@@ -130,7 +130,8 @@ func TestImportPst_SearchFolderResume(t *testing.T) {
 			assert.Equal(tc.wantProcessed, summary.MessagesProcessed, "MessagesProcessed")
 
 			var errorsCount int64
-			require.NoError(st.DB().QueryRow(
+			require.NoError(st.DB().QueryRowContext(
+				t.Context(),
 				`SELECT errors_count FROM sync_runs ORDER BY id DESC LIMIT 1`,
 			).Scan(&errorsCount), "read resumed checkpoint")
 			assert.Equal(int64(1), errorsCount, "prior errors retained")
@@ -184,7 +185,7 @@ func TestImportPst_EmptyAttachmentTableArchive(t *testing.T) {
 
 	var logs bytes.Buffer
 	st := openIntegrationStore(t)
-	summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+	summary, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
 		Identifier: "user@example.com",
 		NoResume:   true,
 		Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
@@ -208,12 +209,12 @@ func TestImportPst_SupportPST_Idempotent(t *testing.T) {
 	}
 
 	// First import.
-	first, err := ImportPst(context.Background(), st, pstPath, opts)
+	first, err := ImportPst(t.Context(), st, pstPath, opts)
 	require.NoError(err, "first ImportPst")
 	require.NotZero(first.MessagesAdded, "first import added no messages")
 
 	// Second import — everything should be skipped.
-	second, err := ImportPst(context.Background(), st, pstPath, opts)
+	second, err := ImportPst(t.Context(), st, pstPath, opts)
 	require.NoError(err, "second ImportPst")
 	assert.Equal(first.MessagesAdded, second.MessagesSkipped,
 		"second import skipped count should equal first import added count")
@@ -233,17 +234,18 @@ func TestImportPst_DoesNotCheckpointPastHeaderRepairFailure(t *testing.T) {
 	require.Zero(first.Errors)
 
 	var failedID int64
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT id FROM messages
 		WHERE source_id = ? AND rfc822_message_id IS NOT NULL AND rfc822_message_id <> ''
 		ORDER BY id LIMIT 1
 	`, first.SourceID).Scan(&failedID))
 	var laterMessages int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE source_id = ? AND id > ?`, first.SourceID, failedID,
 	).Scan(&laterMessages))
 	require.GreaterOrEqual(laterMessages, 2, "the failed repair must have a later batch")
-	_, err = st.DB().Exec(`UPDATE messages SET metadata = '{' WHERE id = ?`, failedID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET metadata = '{' WHERE id = ?`, failedID)
 	require.NoError(err)
 
 	failed, err := importPstWithBatchSize(t.Context(), st, pstPath, PstImportOptions{
@@ -255,7 +257,7 @@ func TestImportPst_DoesNotCheckpointPastHeaderRepairFailure(t *testing.T) {
 	require.True(failed.HardErrors)
 	require.Equal(int64(1), failed.Errors)
 
-	_, err = st.DB().Exec(`UPDATE messages SET metadata = NULL WHERE id = ?`, failedID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET metadata = NULL WHERE id = ?`, failedID)
 	require.NoError(err)
 	resumed, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
 		Identifier:         "owner@example.test",
@@ -265,7 +267,8 @@ func TestImportPst_DoesNotCheckpointPastHeaderRepairFailure(t *testing.T) {
 	require.True(resumed.WasResumed)
 
 	var metadata string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COALESCE(metadata, '') FROM messages WHERE id = ?`, failedID,
 	).Scan(&metadata))
 	assert.Contains(metadata, `"pst_thread_key"`)
@@ -278,7 +281,7 @@ func TestImportPst_SupportPST_CrossFolderLabels(t *testing.T) {
 	st := openIntegrationStore(t)
 	pstPath := filepath.Join(pstTestdataDir, "support.pst")
 
-	summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+	summary, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
 		Identifier: "support@hackingteam.com",
 		NoResume:   true,
 	})
@@ -301,7 +304,7 @@ func TestImportPst_SupportPST_SkipFolder(t *testing.T) {
 	pstPath := filepath.Join(pstTestdataDir, "support.pst")
 
 	// Skip Drafts (6 messages) — should only import Sent Messages (11).
-	summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+	summary, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
 		Identifier:  "support@hackingteam.com",
 		SkipFolders: []string{"Drafts"},
 		NoResume:    true,
@@ -324,7 +327,7 @@ func TestImportPst_SupportPST_ContextCancelled(t *testing.T) {
 	pstPath := filepath.Join(pstTestdataDir, "support.pst")
 
 	// Cancel immediately — this should cause ImportPst to abort early.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	summary, _ := ImportPst(ctx, st, pstPath, PstImportOptions{
@@ -381,7 +384,8 @@ func TestImportPst_ContextCancellationResumesWithoutSkippingMessages(t *testing.
 			assert.True(resumed.WasResumed)
 
 			var messageCount int64
-			require.NoError(st.DB().QueryRow(
+			require.NoError(st.DB().QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM messages WHERE source_id = ?`, interrupted.SourceID,
 			).Scan(&messageCount))
 			assert.Equal(int64(17), messageCount)
@@ -396,7 +400,7 @@ func TestImportPst_32BitPST(t *testing.T) {
 	st := openIntegrationStore(t)
 	pstPath := filepath.Join(pstTestdataDir, "32-bit.pst")
 
-	summary, err := ImportPst(context.Background(), st, pstPath, PstImportOptions{
+	summary, err := ImportPst(t.Context(), st, pstPath, PstImportOptions{
 		Identifier: "user@example.com",
 		NoResume:   true,
 	})
@@ -404,4 +408,69 @@ func TestImportPst_32BitPST(t *testing.T) {
 	// 32-bit.pst has no readable email messages.
 	assert.Equal(t, int64(0), summary.MessagesProcessed, "MessagesProcessed")
 	assert.False(t, summary.HardErrors, "HardErrors")
+}
+
+// A cancel that lands after an existing message's header repair commits
+// leaves the checkpoint at that message, so a resumed import never revisits
+// it. Its folder label must be restored before the import stops.
+//
+// Not parallel: it replaces the process-wide slog default and SQL log options.
+func TestImportPst_CancelAfterHeaderRepairRestoresFolderLabel(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := openIntegrationStore(t)
+	pstPath := filepath.Join(pstTestdataDir, "support.pst")
+	opts := PstImportOptions{Identifier: "owner@example.test"}
+	first, err := ImportPst(t.Context(), st, pstPath, opts)
+	require.NoError(err)
+	require.Zero(first.Errors)
+
+	db := st.DB()
+	messageLabels := func() []string {
+		rows, err := db.QueryContext(t.Context(), `
+			SELECT ml.message_id || ':' || ml.label_id FROM message_labels ml
+			JOIN messages m ON m.id = ml.message_id
+			WHERE m.source_id = ? ORDER BY ml.message_id, ml.label_id`, first.SourceID)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		var labels []string
+		for rows.Next() {
+			var label string
+			require.NoError(rows.Scan(&label))
+			labels = append(labels, label)
+		}
+		require.NoError(rows.Err())
+		return labels
+	}
+	want := messageLabels()
+	require.NotEmpty(want)
+
+	// Drop the folder labels the re-import must restore, and the header facts
+	// whose repair is the commit the cancel waits for.
+	_, err = db.ExecContext(t.Context(), `DELETE FROM message_labels
+		WHERE message_id IN (SELECT id FROM messages WHERE source_id = ?)`, first.SourceID)
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(),
+		`UPDATE messages SET rfc822_message_id = NULL WHERE source_id = ?`, first.SourceID)
+	require.NoError(err)
+
+	queryCtx := context.WithoutCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var repaired int
+		require.NoError(db.QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages
+			WHERE source_id = ? AND rfc822_message_id IS NOT NULL`, first.SourceID).Scan(&repaired))
+		return repaired > 0
+	})
+
+	interrupted, err := ImportPst(ctx, st, pstPath, opts)
+	require.NoError(err, "an interrupted import reports through the summary, not an error")
+	require.True(canceled(), "the cancel must land after a header repair commits")
+	require.Less(interrupted.MessagesProcessed, first.MessagesProcessed, "the cancel must stop the import")
+
+	resumed, err := ImportPst(t.Context(), st, pstPath, opts)
+	require.NoError(err)
+	require.True(resumed.WasResumed)
+	assert.Equal(want, messageLabels(), "every message must regain its folder labels")
 }

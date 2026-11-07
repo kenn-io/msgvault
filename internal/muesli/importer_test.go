@@ -1,7 +1,6 @@
 package muesli
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"path/filepath"
@@ -45,16 +44,16 @@ func (f *importerFixture) run(t *testing.T, opts ImportOptions) (*ImportSummary,
 	if opts.DBPath == "" {
 		opts.DBPath = f.path
 	}
-	return f.imp.Import(context.Background(), opts)
+	return f.imp.Import(t.Context(), opts)
 }
 
 func (f *importerFixture) body(t *testing.T, sourceMessageID string) string {
 	t.Helper()
 	var messageID int64
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		f.source.ID, sourceMessageID).Scan(&messageID))
-	body, err := f.st.GetMessageBodyText(messageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), messageID)
 	require.NoError(t, err)
 	return body
 }
@@ -62,7 +61,7 @@ func (f *importerFixture) body(t *testing.T, sourceMessageID string) string {
 func (f *importerFixture) messageCount(t *testing.T) int {
 	t.Helper()
 	var count int
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT count(*) FROM messages WHERE source_id = ?`), f.source.ID).Scan(&count))
 	return count
 }
@@ -89,14 +88,14 @@ func TestImportArchivesMeetingsAndIsIdempotent(t *testing.T) {
 
 	var messageType string
 	var fromMe bool
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`
 		SELECT message_type, is_from_me FROM messages
 		WHERE source_id = ? AND source_message_id = ?`),
 		f.source.ID, "meeting:1:20260901T140003Z").Scan(&messageType, &fromMe))
 	assert.Equal("meeting_transcript", messageType)
 	assert.True(fromMe, "the configured account recorded the meeting")
 	var recipients int
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`
 		SELECT count(*) FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		JOIN messages m ON m.id = mr.message_id
@@ -119,7 +118,7 @@ func TestImportUpdatesEditedMeetingInPlace(t *testing.T) {
 	_, err := f.run(t, ImportOptions{})
 	require.NoError(err)
 
-	_, err = f.muesli.Exec(`UPDATE meetings SET raw_transcript = ? WHERE id = ?`,
+	_, err = f.muesli.ExecContext(t.Context(), `UPDATE meetings SET raw_transcript = ? WHERE id = ?`,
 		"[10:00:01] You: revised words", id)
 	require.NoError(err)
 	insertRow(t, f.muesli, "meeting_participants", map[string]any{
@@ -161,10 +160,10 @@ func TestImportSkipsDeletedInProgressAndEmptyMeetings(t *testing.T) {
 
 	// Muesli's soft delete blanks the row; the archived copy must survive.
 	before := f.body(t, "meeting:1:20260901T140003Z")
-	_, err = f.muesli.Exec(`UPDATE meetings SET title = 'Deleted Meeting', raw_transcript = NULL,
+	_, err = f.muesli.ExecContext(t.Context(), `UPDATE meetings SET title = 'Deleted Meeting', raw_transcript = NULL,
 		formatted_notes = NULL, manual_notes = '', deleted_at = 1788271600 WHERE id = ?`, archived)
 	require.NoError(err)
-	_, err = f.muesli.Exec(`UPDATE meetings SET meeting_status = 'completed' WHERE id = ?`, recording)
+	_, err = f.muesli.ExecContext(t.Context(), `UPDATE meetings SET meeting_status = 'completed' WHERE id = ?`, recording)
 	require.NoError(err)
 
 	next, err := f.run(t, ImportOptions{})

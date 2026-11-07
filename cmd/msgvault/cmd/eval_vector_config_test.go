@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -64,7 +63,7 @@ func TestAttachVector_RejectsUnusableEmbeddingConfig(t *testing.T) {
 // on to the part under test.
 func seedActiveGeneration(t *testing.T, dataDir, mainPath string, mainDB *sql.DB, vecCfg vector.Config) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path:      filepath.Join(dataDir, "vectors.db"),

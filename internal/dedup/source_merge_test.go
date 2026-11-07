@@ -99,7 +99,7 @@ func TestDedupPreservesRicherMergedHistory(t *testing.T) {
 					assertSoftDeleted(t, st, historicalID, content == "equivalent")
 					if content != "equivalent" {
 						assert.Zero(t, summary.GroupsMerged)
-						_, err = st.MergeDuplicates(liveID, []int64{historicalID}, "direct-history-content")
+						_, err = st.MergeDuplicates(t.Context(), liveID, []int64{historicalID}, "direct-history-content")
 						require.ErrorContains(t, err, "would hide historical content", "direct store callers must also preserve richer history")
 						assertSoftDeleted(t, st, historicalID, false)
 					}
@@ -168,7 +168,7 @@ func TestDedupPreservesHistoricalAttachmentOccurrences(t *testing.T) {
 					}))
 				}
 				var count int
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), id).Scan(&count))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), id).Scan(&count))
 				require.Equal(len(parts), count, "the fixture must retain separate physical parts")
 			}
 			refreshed, err := engine.Scan(t.Context())
@@ -186,7 +186,7 @@ func TestDedupPreservesHistoricalAttachmentOccurrences(t *testing.T) {
 			assertSoftDeleted(t, st, historicalID, test.merge)
 			if !test.merge {
 				assert.Zero(summary.GroupsMerged)
-				_, err := st.MergeDuplicates(liveID, []int64{historicalID}, "direct-attachment-occurrences")
+				_, err := st.MergeDuplicates(t.Context(), liveID, []int64{historicalID}, "direct-attachment-occurrences")
 				require.ErrorContains(err, "would hide historical content")
 				assertSoftDeleted(t, st, historicalID, false)
 			}

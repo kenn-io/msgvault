@@ -94,13 +94,13 @@ func newAddCalendarLocalCmd() *cobra.Command {
 				return usageErr(cmd, err)
 			}
 
-			st, cleanup, err := openWritableStoreAndInitForInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForInvocation(ctx, state)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			appDecision, err := calendarAddOAuthAppDecision(st, email, calAddOAuthApp, oauthAppExplicit)
+			appDecision, err := calendarAddOAuthAppDecision(ctx, st, email, calAddOAuthApp, oauthAppExplicit)
 			if err != nil {
 				return err
 			}
@@ -495,7 +495,7 @@ func newSyncCalendarLocalCmdWithClientBuilder(buildClient calendarSyncClientBuil
 				return usageErr(cmd, err)
 			}
 
-			st, cleanup, err := openWritableStoreAndInitForInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForInvocation(ctx, state)
 			if err != nil {
 				return err
 			}
@@ -517,7 +517,7 @@ func newSyncCalendarLocalCmdWithClientBuilder(buildClient calendarSyncClientBuil
 				return nil
 			}
 			existing = activeExisting
-			appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, oauthApp, oauthAppProvided)
+			appDecision, err := calendarSyncOAuthAppDecision(ctx, st, email, existing, oauthApp, oauthAppProvided)
 			if err != nil {
 				return err
 			}
@@ -723,7 +723,7 @@ func planCLIAddCalendar(
 	if email == "" {
 		return api.CLIAddCalendarPlanResponse{}, errors.New("account email is required")
 	}
-	appDecision, err := calendarAddOAuthAppDecision(st, email, req.OAuthApp, req.OAuthAppExplicit)
+	appDecision, err := calendarAddOAuthAppDecision(ctx, st, email, req.OAuthApp, req.OAuthAppExplicit)
 	if err != nil {
 		return api.CLIAddCalendarPlanResponse{}, err
 	}
@@ -819,14 +819,14 @@ func calendarStoredOAuthApp(sources []*store.Source) string {
 	return ""
 }
 
-func calendarStoredAccountOAuthApp(st *store.Store, email string, calendarSources []*store.Source) (string, error) {
+func calendarStoredAccountOAuthApp(ctx context.Context, st *store.Store, email string, calendarSources []*store.Source) (string, error) {
 	if app := calendarStoredOAuthApp(calendarSources); app != "" {
 		return app, nil
 	}
 	if len(calendarSources) > 0 {
 		return "", nil
 	}
-	src, err := calendarGmailSourceForAccount(st, email)
+	src, err := calendarGmailSourceForAccount(ctx, st, email)
 	if errors.Is(err, errGmailSourceNotFound) {
 		return "", nil
 	}
@@ -836,8 +836,8 @@ func calendarStoredAccountOAuthApp(st *store.Store, email string, calendarSource
 	return sourceOAuthApp(src), nil
 }
 
-func calendarGmailSourceForAccount(st *store.Store, email string) (*store.Source, error) {
-	sources, err := st.ListSources(sourceTypeGmail)
+func calendarGmailSourceForAccount(ctx context.Context, st *store.Store, email string) (*store.Source, error) {
+	sources, err := st.ListSourcesContext(ctx, sourceTypeGmail)
 	if err != nil {
 		return nil, err
 	}
@@ -864,16 +864,16 @@ type calendarTokenClientMatcher interface {
 	TokenMatchesClient(ctx context.Context, email string) bool
 }
 
-func calendarAddOAuthAppDecision(st *store.Store, email, requestedApp string, explicit bool) (calendarAddOAuthApp, error) {
+func calendarAddOAuthAppDecision(ctx context.Context, st *store.Store, email, requestedApp string, explicit bool) (calendarAddOAuthApp, error) {
 	email = normalizeCalendarAccountEmail(email)
-	sources, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
+	sources, err := st.GetSourcesByTypeAndAccountContext(ctx, sourceTypeCalendar, email)
 	if err != nil {
 		return calendarAddOAuthApp{}, fmt.Errorf("load registered calendar sources for %s: %w", email, err)
 	}
 
 	resolvedApp := requestedApp
 	if !explicit && resolvedApp == "" {
-		resolvedApp, err = calendarStoredAccountOAuthApp(st, email, sources)
+		resolvedApp, err = calendarStoredAccountOAuthApp(ctx, st, email, sources)
 		if err != nil {
 			return calendarAddOAuthApp{}, err
 		}
@@ -941,6 +941,7 @@ type calendarSyncOAuthApp struct {
 }
 
 func calendarSyncOAuthAppDecision(
+	ctx context.Context,
 	st *store.Store,
 	email string,
 	existing []*store.Source,
@@ -950,7 +951,7 @@ func calendarSyncOAuthAppDecision(
 	if provided {
 		return calendarSyncOAuthApp{OAuthApp: requestedApp, OAuthAppSet: true}, nil
 	}
-	app, err := calendarStoredAccountOAuthApp(st, email, existing)
+	app, err := calendarStoredAccountOAuthApp(ctx, st, email, existing)
 	if err != nil {
 		return calendarSyncOAuthApp{}, err
 	}
@@ -1074,7 +1075,7 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		return fmt.Errorf("gcal source %q email is required", src.Name)
 	}
 
-	existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, email)
+	existing, err := st.GetSourcesByTypeAndAccountContext(ctx, sourceTypeCalendar, email)
 	if err != nil {
 		return fmt.Errorf("load registered calendar sources for %s: %w", email, err)
 	}
@@ -1094,7 +1095,7 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		return nil
 	}
 	existing = activeExisting
-	appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, src.OAuthApp, src.OAuthApp != "")
+	appDecision, err := calendarSyncOAuthAppDecision(ctx, st, email, existing, src.OAuthApp, src.OAuthApp != "")
 	if err != nil {
 		return recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	}

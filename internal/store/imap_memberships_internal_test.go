@@ -19,7 +19,7 @@ func TestCaptureInitialIMAPBaselineSkipsReconciledHistory(t *testing.T) {
 	requirements.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("imap", "baseline-internal@example.test")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "baseline", "Baseline")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "baseline", "Baseline")
 	requirements.NoError(err)
 
 	createMessage := func(sourceMessageID string) int64 {
@@ -33,18 +33,18 @@ func TestCaptureInitialIMAPBaselineSkipsReconciledHistory(t *testing.T) {
 	liveID := createMessage("live")
 	reconciledID := createMessage("reconciled")
 	labeledID := createMessage("labeled")
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP
 		WHERE id IN (?, ?)
 	`), reconciledID, labeledID)
 	requirements.NoError(err)
-	labelID, err := st.EnsureLabel(source.ID, "Legacy", "Legacy", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "Legacy", "Legacy", "user")
 	requirements.NoError(err)
 	requirements.NoError(st.ReplaceMessageLabels(labeledID, []int64{labelID}))
 
 	affected := make(map[int64]struct{})
 	requirements.NoError(st.withTx(func(tx *loggedTx) error {
-		return st.captureUntrackedIMAPMessageIDs(tx, source.ID, false, affected)
+		return st.captureUntrackedIMAPMessageIDs(t.Context(), tx, source.ID, false, affected)
 	}))
 	got := make([]int64, 0, len(affected))
 	for messageID := range affected {
@@ -55,7 +55,7 @@ func TestCaptureInitialIMAPBaselineSkipsReconciledHistory(t *testing.T) {
 	assertions.NotContains(got, reconciledID)
 
 	var deletedAt sql.NullTime
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), reconciledID).Scan(&deletedAt))
 	assertions.True(deletedAt.Valid)
@@ -64,7 +64,7 @@ func TestCaptureInitialIMAPBaselineSkipsReconciledHistory(t *testing.T) {
 func TestUntrackedIMAPMessagesUsesStampIndexSQLite(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "imap-capture-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "imap-capture-plan.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(st.Close()) })
 	requirements.NoError(st.InitSchema())
@@ -75,7 +75,7 @@ func TestUntrackedIMAPMessagesUsesStampIndexSQLite(t *testing.T) {
 
 func TestIMAPMembershipGenerationSeekUsesPrimaryKeySQLite(t *testing.T) {
 	requirements := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "imap-generation-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "imap-generation-plan.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(st.Close()) })
 	requirements.NoError(st.InitSchema())
@@ -100,7 +100,7 @@ func TestIMAPMembershipGenerationSeekUsesPrimaryKeySQLite(t *testing.T) {
 func TestIMAPMembershipMailboxesUsesMessageIndexWithStaleStatsSQLite(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "imap-mailboxes-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "imap-mailboxes-plan.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(st.Close()) })
 	requirements.NoError(st.InitSchema())

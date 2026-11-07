@@ -9,10 +9,10 @@ import (
 
 func TestPreemptionRequestVisibleThroughDerivedContexts(t *testing.T) {
 	assert := assert.New(t)
-	assert.False(PreemptionRequested(context.Background()), "plain context is never preempted")
-	assert.Nil(PreemptionSignal(context.Background()), "plain contexts have no preemption signal")
+	assert.False(PreemptionRequested(t.Context()), "plain context is never preempted")
+	assert.Nil(PreemptionSignal(t.Context()), "plain contexts have no preemption signal")
 
-	ctx, request := WithPreemption(context.Background())
+	ctx, request := WithPreemption(t.Context())
 	signal := PreemptionSignal(ctx)
 	assert.NotNil(signal)
 	child, cancel := context.WithCancel(ctx)

@@ -63,7 +63,7 @@ func TestImportEmlxRemoteImageFailureIsWarning(t *testing.T) {
 				assertions.Contains(logs.String(), "failed to archive remote image")
 			}
 			var messageID int64
-			requirements.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&messageID))
 			saved, err := st.GetMessageRawContext(t.Context(), messageID)
 			requirements.NoError(err)
 			assertions.Equal(raw, saved)
@@ -71,7 +71,7 @@ func TestImportEmlxRemoteImageFailureIsWarning(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Len(labels, 1)
 			var indexed int
-			requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'optionalimageneedle'").Scan(&indexed))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'optionalimageneedle'").Scan(&indexed))
 			assertions.Equal(1, indexed)
 			refs, err := st.MessageRemoteImages(messageID)
 			requirements.NoError(err)
@@ -113,7 +113,7 @@ func TestRawImportRemoteImagesRequireOptIn(t *testing.T) {
 			err = rawMessageIngester(fetcher)(t.Context(), st, src.ID, "user@example.com", t.TempDir(), nil, "message", "hash", raw, time.Time{}, slog.Default())
 			require.NoError(err)
 			var id int64
-			require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 			refs, err := st.MessageRemoteImages(id)
 			require.NoError(err)
 			if enabled {

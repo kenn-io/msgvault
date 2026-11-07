@@ -137,12 +137,14 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 	}
 	summary := &EMLImportSummary{MailboxesTotal: len(mailboxes)}
 
+	// Setup and checkpoints ignore cancellation so an interrupted import
+	// still reports a summary and leaves a resumable run.
+	ownershipCtx := context.WithoutCancel(ctx)
 	source, err := st.GetOrCreateSource(opts.SourceType, opts.Identifier)
 	if err != nil {
 		return nil, fmt.Errorf("get or create directory source: %w", err)
 	}
 	summary.SourceID = source.ID
-	ownershipCtx := context.WithoutCancel(ctx)
 	execution, err := st.AcquireSyncExecutionContext(ownershipCtx, source.ID)
 	if err != nil {
 		return nil, fmt.Errorf("acquire sync execution: %w", err)
@@ -158,7 +160,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 		startBox   int
 	)
 	if !opts.NoResume {
-		resumable, err := st.GetLatestCheckpointedSyncByType(source.ID, "import-"+layout.sourceType)
+		resumable, err := st.GetLatestCheckpointedSyncByType(ownershipCtx, source.ID, "import-"+layout.sourceType)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("find resumable directory import: %w", err)
 		}
@@ -218,7 +220,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 	flagLabelIDs := make(map[string]int64)
 	for boxIndex := startBox; boxIndex < len(mailboxes); boxIndex++ {
 		mailbox := mailboxes[boxIndex]
-		labelID, err := st.EnsureLabel(source.ID, mailbox.Label, mailbox.Label, "user")
+		labelID, err := st.EnsureLabel(ownershipCtx, source.ID, mailbox.Label, mailbox.Label, "user")
 		if err != nil {
 			failSync(err.Error())
 			return nil, fmt.Errorf("ensure directory label %q: %w", mailbox.Label, err)
@@ -245,7 +247,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 				for _, label := range layout.labels(filename) {
 					id, ok := flagLabelIDs[label]
 					if !ok {
-						id, err = st.EnsureLabel(source.ID, label, label, "system")
+						id, err = st.EnsureLabel(ctx, source.ID, label, label, "system")
 						if err != nil {
 							failSync(err.Error())
 							return nil, fmt.Errorf("ensure message flag label: %w", err)
@@ -263,19 +265,19 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 			hash := sha256.Sum256(raw)
 			rawHash := hex.EncodeToString(hash[:])
 			sourceMessageID := layout.sourceType + "-" + rawHash
-			existing, err := st.MessageExistsWithRawBatch(source.ID, []string{sourceMessageID})
+			existing, err := st.MessageExistsWithRawBatchContext(ctx, source.ID, []string{sourceMessageID})
 			if err != nil {
 				failSync(err.Error())
 				return nil, fmt.Errorf("check existing directory message: %w", err)
 			}
 			if messageID, ok := existing[sourceMessageID]; ok {
-				if err := st.AddMessageLabels(messageID, labelIDs); err != nil {
+				if err := st.AddMessageLabels(ctx, messageID, labelIDs); err != nil {
 					failSync(err.Error())
 					return nil, fmt.Errorf("add directory label to existing message: %w", err)
 				}
 				summary.MessagesSkipped++
 			} else {
-				existingAny, err := st.MessageExistsBatch(source.ID, []string{sourceMessageID})
+				existingAny, err := st.MessageExistsBatchContext(ctx, source.ID, []string{sourceMessageID})
 				if err != nil {
 					failSync(err.Error())
 					return nil, fmt.Errorf("check directory message metadata: %w", err)

@@ -37,7 +37,7 @@ func TestRelationshipActivityMatchesLegacyRowSet(t *testing.T) {
 		 EXCEPT ALL SELECT * FROM (` + buildLegacyRelationshipActivitySQL(path) + `))
 	)`
 	var normalizedDifferences int64
-	requirements.NoError(db.QueryRow(query).Scan(&normalizedDifferences))
+	requirements.NoError(db.QueryRowContext(t.Context(), query).Scan(&normalizedDifferences))
 	assertions.Zero(normalizedDifferences)
 }
 
@@ -58,17 +58,17 @@ func TestRelationshipActivityYearQueryExcludesOffYearEdgesUnderLowMemory(t *test
 	requirements := require.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 	writeRelationshipYearScopeFixture(t, db, root)
-	requirements.NoError(setRelationshipTestMemoryLimit(db, "128MB"))
+	requirements.NoError(setRelationshipTestMemoryLimit(t.Context(), db, "128MB"))
 
 	path := func(dataset string) string {
 		return parquetDatasetGlob(root, dataset)
 	}
 	output := filepath.Join(t.TempDir(), "relationship-activity-2025.parquet")
-	_, err := db.Exec(`COPY (` + buildRelationshipActivitySQL(path, 2025) + `) TO '` +
-		quoteSQLString(output) + `' (FORMAT PARQUET)`)
+	_, err := db.ExecContext(t.Context(), `COPY (`+buildRelationshipActivitySQL(path, 2025)+`) TO '`+
+		quoteSQLString(output)+`' (FORMAT PARQUET)`)
 	requirements.NoError(err)
 
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(t.Context(), `
 		SELECT message_id, conversation_id, occurred_year, canonical_id,
 		       participant_domain, is_direct, is_conversation_member,
 		       is_sender, is_author, is_owner
@@ -136,7 +136,7 @@ func TestBuildStreamsRelationshipActivityUnderLowMemory(t *testing.T) {
 				startDate: "2026-01-01", messageType: tc.messageType, conversationType: tc.conversationType,
 			})
 			if tc.conversationType == "group_chat" {
-				_, err := db.Exec(`CREATE TEMP TABLE incoming AS
+				_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE incoming AS
 					SELECT * REPLACE (2::BIGINT AS sender_id) FROM read_parquet(?)`,
 					parquetDatasetGlob(root, "messages"))
 				requirements.NoError(err)
@@ -145,11 +145,11 @@ func TestBuildStreamsRelationshipActivityUnderLowMemory(t *testing.T) {
 					SELECT id AS message_id, 2::BIGINT AS participant_id,
 					       'from'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name
 					FROM incoming`)
-				_, err = db.Exec("SET max_temp_directory_size = '128MB'")
+				_, err = db.ExecContext(t.Context(), "SET max_temp_directory_size = '128MB'")
 				requirements.NoError(err)
 			}
-			requirements.NoError(setRelationshipTestMemoryLimit(db, tc.memoryLimit))
-			result, err := Build(context.Background(), db, BuildOptions{
+			requirements.NoError(setRelationshipTestMemoryLimit(t.Context(), db, tc.memoryLimit))
+			result, err := Build(t.Context(), db, BuildOptions{
 				Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 			})
 			requirements.NoError(err)
@@ -170,7 +170,7 @@ func TestBuildStoresConversationMembershipOncePerConversation(t *testing.T) {
 		messageType:      "whatsapp",
 		conversationType: "group_chat",
 	})
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 	})
 	requirements.NoError(err)
@@ -189,8 +189,8 @@ func TestBuildStoresConversationMembershipOncePerConversation(t *testing.T) {
 	)
 	for _, pair := range [][2]string{{oldRelation, newRelation}, {newRelation, oldRelation}} {
 		var difference int64
-		requirements.NoError(db.QueryRow("SELECT count(*) FROM (SELECT * FROM " + pair[0] +
-			" EXCEPT ALL SELECT * FROM " + pair[1] + ")").Scan(&difference))
+		requirements.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM (SELECT * FROM "+pair[0]+
+			" EXCEPT ALL SELECT * FROM "+pair[1]+")").Scan(&difference))
 		assertions.Equal(int64(0), difference)
 	}
 }
@@ -199,7 +199,7 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	committedRoot, stagedRoot, db := writeIncrementalAppendFixture(t, 4, 3, 5)
-	result, err := Build(context.Background(), db, BuildOptions{
+	result, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeIncremental,
 		CommittedRoot:  committedRoot,
 		StagedBaseRoot: stagedRoot,
@@ -216,7 +216,7 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 	assertions.Equal(int64(7), result.Stats.TotalMessages)
 
 	var activityCount int64
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT activity_count
 		FROM read_parquet(?)
 		WHERE canonical_id = 1
@@ -227,8 +227,8 @@ func TestBuildIncrementalAppendsIntervalOverFanOut(t *testing.T) {
 func TestBuildIncrementalAppendFitsLowMemoryOnLargeArchive(t *testing.T) {
 	requirements := require.New(t)
 	committedRoot, stagedRoot, db := writeIncrementalAppendFixture(t, 300_000, 1000, 3)
-	requirements.NoError(setRelationshipTestMemoryLimit(db, "128MB"))
-	_, err := db.Exec("SET max_temp_directory_size = '128MB'")
+	requirements.NoError(setRelationshipTestMemoryLimit(t.Context(), db, "128MB"))
+	_, err := db.ExecContext(t.Context(), "SET max_temp_directory_size = '128MB'")
 	requirements.NoError(err)
 
 	_, err = Build(t.Context(), db, BuildOptions{
@@ -245,7 +245,7 @@ func BenchmarkBuildIncrementalAppend(b *testing.B) {
 	for _, committed := range []int64{100_000, 400_000} {
 		b.Run(fmt.Sprintf("committed-%dk", committed/1000), func(b *testing.B) {
 			committedRoot, stagedRoot, db := writeIncrementalAppendFixture(b, committed, 1000, 3)
-			require.NoError(b, setRelationshipTestMemoryLimit(db, "512MB"))
+			require.NoError(b, setRelationshipTestMemoryLimit(b.Context(), db, "512MB"))
 			b.ResetTimer()
 			for range b.N {
 				_, err := Build(b.Context(), db, BuildOptions{
@@ -336,7 +336,7 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 			(2::BIGINT, 1::BIGINT)
 		) AS t(participant_id, canonical_id)`)
 
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -364,7 +364,7 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 	var peopleCount, canonicalID, anchorMessageID int64
 	var isAuthor, isOwner, withOwner bool
 	var personDomainsJSON, domainKeysJSON string
-	requirements.NoError(db.QueryRow(query, int64(1)).Scan(
+	requirements.NoError(db.QueryRowContext(t.Context(), query, int64(1)).Scan(
 		&peopleCount,
 		&canonicalID,
 		&anchorMessageID,
@@ -438,7 +438,7 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 			(1::BIGINT, 1::BIGINT)
 		) AS t(source_id, participant_id)`)
 
-	_, err := Build(context.Background(), db, BuildOptions{
+	_, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -466,7 +466,7 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 			(SELECT CAST(to_json(list(domain ORDER BY domain)) AS VARCHAR)
 			 FROM logical_domain_keys)`
 	var peopleJSON, personDomainsJSON, domainKeysJSON string
-	requirements.NoError(db.QueryRow(query).Scan(
+	requirements.NoError(db.QueryRowContext(t.Context(), query).Scan(
 		&peopleJSON,
 		&personDomainsJSON,
 		&domainKeysJSON,
@@ -505,16 +505,16 @@ func TestBuildReducesManyChatConversationsUnderLowMemory(t *testing.T) {
 	writeManyChatConversations(t, db, root, conversations, 20_000)
 	// Pairing every conversation with every activity row needs over 1GB of temp
 	// storage here even with 512MB of memory.
-	requirements.NoError(setRelationshipTestMemoryLimit(db, "256MB"))
-	_, err := db.Exec("SET max_temp_directory_size = '256MB'")
+	requirements.NoError(setRelationshipTestMemoryLimit(t.Context(), db, "256MB"))
+	_, err := db.ExecContext(t.Context(), "SET max_temp_directory_size = '256MB'")
 	requirements.NoError(err)
 
-	_, err = Build(context.Background(), db, BuildOptions{
+	_, err = Build(t.Context(), db, BuildOptions{
 		Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root,
 	})
 	requirements.NoError(err)
 	var chatUnits int64
-	requirements.NoError(db.QueryRow(
+	requirements.NoError(db.QueryRowContext(t.Context(),
 		"SELECT count(*) FROM read_parquet(?) WHERE relation_kind = 4",
 		relationshipParquetGlob(root, DatasetLogicalContributions),
 	).Scan(&chatUnits))
@@ -568,7 +568,7 @@ func TestBuildRelationshipActivityAvoids100MillionEdgeExpansion(t *testing.T) {
 		messageType:      "chat",
 		conversationType: "group_chat",
 	})
-	result, err := Build(context.Background(), db, BuildOptions{
+	result, err := Build(t.Context(), db, BuildOptions{
 		Mode:           ModeFull,
 		StagedBaseRoot: root,
 		OutputRoot:     root,
@@ -870,8 +870,8 @@ func writeRelationshipYearScopeFixture(t *testing.T, db *sql.DB, root string) {
 		WHERE false`)
 }
 
-func setRelationshipTestMemoryLimit(db *sql.DB, limit string) error {
-	_, err := db.Exec("SET memory_limit = '" + limit + "'")
+func setRelationshipTestMemoryLimit(ctx context.Context, db *sql.DB, limit string) error {
+	_, err := db.ExecContext(ctx, "SET memory_limit = '"+limit+"'")
 	return err
 }
 

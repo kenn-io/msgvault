@@ -524,12 +524,12 @@ func TestIdentityMatchReviewCardDAVResourceRevision(t *testing.T) {
 	require := require.New(t)
 	st, account, book := newCardDAVResourceStore(t)
 	ctx := t.Context()
-	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books
 		SET is_write_target = FALSE WHERE id = ?`), book.ID)
 	require.NoError(err)
 	for _, uid := range []string{"review-card-a", "review-card-b"} {
 		var personID int64
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`), uid).Scan(&personID))
 		_, err = st.DB().ExecContext(ctx, st.Rebind(
 			`INSERT INTO carddav_publications (person_id, desired) VALUES (?, FALSE)`), personID)
@@ -578,7 +578,7 @@ func TestIdentityMatchReviewCardDAVResourceRevision(t *testing.T) {
 		fresh.ReviewToken, store.IdentityMatchStateAccepted, nil)
 	require.NoError(err)
 	assert.Equal(store.IdentityMatchStateAccepted, accepted.State)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_resources
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources
 		SET remote_etag = ?, mapping_revision = mapping_revision + 1 WHERE id = ?`),
 		`"three"`, candidates[0].LeftID)
 	require.NoError(err)
@@ -676,7 +676,7 @@ func TestIdentityMatchReviewPendingRecoverySettlesExistingConnection(t *testing.
 			before, err := st.GetIdentityMatchReviewContext(t.Context(), original.ID)
 			require.NoError(err)
 			var edgeCount int
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_links`).Scan(&edgeCount))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_links`).Scan(&edgeCount))
 			for range 2 {
 				_, revision, linked, err := st.ResumeAcceptedIdentityMatchCandidateContext(t.Context(), original.ID)
 				require.NoError(err)
@@ -690,7 +690,7 @@ func TestIdentityMatchReviewPendingRecoverySettlesExistingConnection(t *testing.
 				assert.Equal(before.DecidedAt, current.DecidedAt)
 			}
 			var afterEdgeCount int
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_links`).Scan(&afterEdgeCount))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_links`).Scan(&afterEdgeCount))
 			assert.Equal(edgeCount, afterEdgeCount, "settling must not add another edge")
 			applied, err := st.ApplyAcceptedIdentityMatchesContext(t.Context(), 1)
 			require.NoError(err)
@@ -725,7 +725,7 @@ func TestIdentityMatchReviewIgnoresPublicationTimestampRefresh(t *testing.T) {
 	})
 	require.NoError(err)
 	// Represent a pending publication persisted before this process started.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET updated_at = ? WHERE person_id = ?`),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_publications SET updated_at = ? WHERE person_id = ?`),
 		"2026-01-01 00:00:00", person.ID)
 	require.NoError(err)
 	before, err := st.GetIdentityMatchReviewContext(ctx, candidate.ID)
@@ -745,7 +745,7 @@ func TestIdentityMatchReviewIgnoresPublicationTimestampRefresh(t *testing.T) {
 	assert.Equal(before.ReviewToken, listed[0].ReviewToken)
 
 	// A real fence change must still invalidate the review.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_revision = sync_revision + 1 WHERE id = ?`), book.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET sync_revision = sync_revision + 1 WHERE id = ?`), book.ID)
 	require.NoError(err)
 	_, err = st.RefreshCardDAVPublicationFenceContext(ctx, person.ID)
 	require.NoError(err)
@@ -762,7 +762,7 @@ func TestIdentityMatchReviewIgnoresPublicationTimestampRefresh(t *testing.T) {
 	} {
 		fresh, err := st.GetIdentityMatchReviewContext(ctx, candidate.ID)
 		require.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(change.query), person.ID)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(change.query), person.ID)
 		require.NoError(err)
 		_, _, err = st.DecideIdentityMatchReviewedContext(ctx, candidate.ID,
 			fresh.ReviewToken, store.IdentityMatchStateRejected, nil)

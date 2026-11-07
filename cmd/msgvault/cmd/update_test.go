@@ -250,7 +250,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		_ <-chan error,
 		_ time.Duration,
 	) (*DaemonRuntime, bool, error) {
-		gotCtx = ctx
+		gotCtx = ctx //nolint:fatcontext // The test captures the lookup context to inspect it.
 		return &DaemonRuntime{
 			Record: daemon.RuntimeRecord{PID: 990},
 			Host:   net.IPv4(127, 0, 0, 1).String(),

@@ -81,7 +81,7 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 			`{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"5_to_30m"}}`,
 			`{"event":"session_ended","properties":{"surface":"private","duration_bucket":"private"}}`,
 		} {
-			require.Equal(http.StatusAccepted, screenRequest(h, body).Code)
+			require.Equal(http.StatusAccepted, screenRequest(t.Context(), h, body).Code)
 		}
 		require.NoError(reporter.Close())
 		return

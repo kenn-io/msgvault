@@ -119,13 +119,13 @@ func TestCalendarEventSourceZoneRebuild(t *testing.T) {
 
 	st := newRFC822IDBackfillBackendStore(t)
 	data, id := calendarFixture(t, st, "zone", `{"id":"all-day","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
-	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"America/Los_Angeles"}`))
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"time_zone":"America/Los_Angeles"}`))
 	row := calendarRows(t, st, id)[0]
 	requirements.NotNil(row.Event.Start)
 	assertions.Equal("2027-03-14T08:00:00Z", row.Event.Start.Format(time.RFC3339))
 	dest, err := st.GetOrCreateSource("gcal", "destination@example.com")
 	requirements.NoError(err)
-	requirements.NoError(st.UpdateSourceSyncConfig(dest.ID, `{"time_zone":"Asia/Tokyo"}`))
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), dest.ID, `{"time_zone":"Asia/Tokyo"}`))
 	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: dest.ID})
 	requirements.NoError(err)
 	// The merged copy is archive-only, so inspect its stored projection directly.

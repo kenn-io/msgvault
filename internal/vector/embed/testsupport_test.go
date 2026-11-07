@@ -181,7 +181,8 @@ func (s *testWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []stor
 func countMissing(t *testing.T, db *sql.DB, gen int64) int {
 	t.Helper()
 	var n int
-	err := db.QueryRow(
+	err := db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages
 		  WHERE (embed_gen IS NULL OR embed_gen <> ?)
 		    AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, gen).Scan(&n)
@@ -193,7 +194,7 @@ func countMissing(t *testing.T, db *sql.DB, gen int64) int {
 func readWatermark(t *testing.T, db *sql.DB, gen int64) int64 {
 	t.Helper()
 	var id int64
-	err := db.QueryRow(`SELECT watermark_id FROM embed_watermark WHERE generation_id = ?`, gen).Scan(&id)
+	err := db.QueryRowContext(t.Context(), `SELECT watermark_id FROM embed_watermark WHERE generation_id = ?`, gen).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0
 	}
@@ -218,7 +219,7 @@ type workerFixture struct {
 // deterministic vector per input.
 func newWorkerFixture(t *testing.T, n int) *workerFixture {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
@@ -227,13 +228,15 @@ func newWorkerFixture(t *testing.T, n int) *workerFixture {
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = mainDB.Close() })
 
-	_, err = mainDB.Exec(testMainSchema)
+	_, err = mainDB.ExecContext(t.Context(), testMainSchema)
 	require.NoError(t, err, "schema")
 	for i := 1; i <= n; i++ {
-		_, err := mainDB.Exec(
+		_, err := mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i))
 		require.NoError(t, err, "insert message")
-		_, err = mainDB.Exec(
+		_, err = mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i))
 		require.NoError(t, err, "insert body")
 	}

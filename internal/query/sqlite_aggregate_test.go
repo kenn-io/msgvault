@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -204,7 +203,7 @@ func TestAggregateExplicitEmailMessageTypeIncludesLegacyRows(t *testing.T) {
 		FromID:  legacySenderID,
 		ToIDs:   []int64{bobID},
 	})
-	_, err := env.DB.Exec(`UPDATE messages SET message_type = '' WHERE id = ?`, legacyMessageID)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET message_type = '' WHERE id = ?`, legacyMessageID)
 	require.NoError(t, err, "clear message_type")
 
 	opts := DefaultAggregateOptions()
@@ -409,7 +408,7 @@ func TestSQLiteEngine_ListsAggregateAndDrill(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = CASE id
 		WHEN 1 THEN '<dev_1@example.test>'
 		WHEN 2 THEN '<DEV_1@EXAMPLE.TEST>'
 		WHEN 3 THEN '<devA1@example.test>'
@@ -448,7 +447,7 @@ func TestSQLiteEngine_ListsUnicodeCaseFold(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = CASE id
 		WHEN 1 THEN '<ÉCOLE@example.test>'
 		WHEN 2 THEN '<école@example.test>'
 		ELSE NULL END`)
@@ -882,7 +881,7 @@ func TestAggregateDeterministicOrderOnTies(t *testing.T) {
 	env := &testEnv{
 		TestDB: tdb,
 		Engine: NewSQLiteEngine(tdb.DB),
-		Ctx:    context.Background(),
+		Ctx:    t.Context(),
 	}
 
 	// Default sort is by count DESC. Both labels have count=1, so they should
