@@ -11,7 +11,7 @@ RUN cd web && bun run generate && bun run build
 
 # Go build stage.
 # Pin by digest for reproducibility; update periodically.
-FROM golang:1.27.3-bookworm@sha256:05237276236793ebedaf0b87dab86add9ec9adc66ebef2dbc3107c18254cde1c AS builder
+FROM golang:1.27.3-bookworm@sha256:b08bc99468058b6d8a0ada17fa54996b910d5e82a7e95bee0372e3bd98415258 AS builder
 
 # Install build dependencies for CGO (SQLite, DuckDB).
 # libsqlite3-dev provides sqlite3.h, required to compile the sqlite-vec
@@ -63,7 +63,7 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
     ./cmd/msgvault
 
 # Runtime stage - Debian provides current glibc for CGO/DuckDB bindings
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 # Install runtime dependencies (libstdc++ required for CGO/DuckDB)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
