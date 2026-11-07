@@ -38,7 +38,7 @@ func TestYouTubeLateCaptionUsesConsentedMirror(t *testing.T) {
 			f := storetest.New(t)
 			src, err := f.Store.GetOrCreateSource("youtube", "https://www.youtube.com/channel/UCexample")
 			requirements.NoError(err)
-			conv, err := f.Store.EnsureConversation(src.ID, "video-example", "Example video")
+			conv, err := f.Store.EnsureConversation(t.Context(), src.ID, "video-example", "Example video")
 			requirements.NoError(err)
 			_, err = f.Store.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "video:video-example", MessageType: "post"})
 			requirements.NoError(err)

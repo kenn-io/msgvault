@@ -32,7 +32,7 @@ func TestYouTubeCaptionRootsSnapshotAndScope(t *testing.T) {
 	f := storetest.New(t)
 	src, err := f.Store.GetOrCreateSource("youtube", "https://www.youtube.com/channel/UCexample")
 	requirements.NoError(err)
-	conv, err := f.Store.EnsureConversation(src.ID, "video-a", "Example video")
+	conv, err := f.Store.EnsureConversation(t.Context(), src.ID, "video-a", "Example video")
 	requirements.NoError(err)
 	add := func(external string) int64 {
 		id, err := f.Store.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: external, MessageType: "post"})

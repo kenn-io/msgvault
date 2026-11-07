@@ -27,7 +27,7 @@ func captionBudgetStore(t *testing.T, count int) (*store.Store, int64, []int64, 
 	var roots []int64
 	for i := range count {
 		video := fmt.Sprintf("video-%d", i)
-		conversation, err := f.Store.EnsureConversation(source.ID, video, "Example video")
+		conversation, err := f.Store.EnsureConversation(t.Context(), source.ID, video, "Example video")
 		requirements.NoError(err)
 		root, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "video:" + video, MessageType: "post"})
 		requirements.NoError(err)

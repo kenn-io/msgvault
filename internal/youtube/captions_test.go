@@ -46,7 +46,7 @@ func captionStore(t *testing.T, n int) (*store.Store, CaptionOptions, []int64) {
 	var roots []int64
 	for i := range n {
 		video := fmt.Sprintf("video-%d", i)
-		conv, err := st.EnsureConversation(source.ID, video, "Example video")
+		conv, err := st.EnsureConversation(t.Context(), source.ID, video, "Example video")
 		requirements.NoError(err)
 		id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "video:" + video, MessageType: "post"})
 		requirements.NoError(err)

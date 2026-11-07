@@ -40,7 +40,7 @@ func runYouTubeCaptionSync(ctx context.Context, st *store.Store, client youtube.
 	if !profile.Captions {
 		return youtube.CaptionSummary{}, nil
 	}
-	source, err := st.GetSourceByTypeAndIdentifier(youtube.SourceType, youtube.SourceIdentifier(profile.ChannelID))
+	source, err := st.GetSourceByTypeAndIdentifier(ctx, youtube.SourceType, youtube.SourceIdentifier(profile.ChannelID))
 	if err != nil {
 		return youtube.CaptionSummary{}, err
 	}
