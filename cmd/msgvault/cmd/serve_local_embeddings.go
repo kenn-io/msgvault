@@ -122,6 +122,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		return err
 	}
 	loaded, err := c.state.cfg.ReloadConfigFile(snapshot)
+	if err == nil && loaded.Vector.Embeddings.LocalOnly {
+		err = loaded.Vector.Embeddings.Validate() // Keep a saved custom model instead of replacing it with Nomic.
+	}
 	if err != nil {
 		return err
 	}
@@ -129,8 +132,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	if err != nil {
 		return err
 	}
-	var configKeys toml.MetaData
-	configKeys, err = toml.Decode(string(snapshot.Content), &map[string]any{})
+	configKeys, err := toml.Decode(string(snapshot.Content), &map[string]any{})
 	if err != nil {
 		return fmt.Errorf("read local search settings: %w", err)
 	}
@@ -158,9 +160,8 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		(live != nil && nextConfig.Vector.DBPath != live.Cfg.DBPath) {
 		return errors.New("Restart msgvault to use the new storage settings.") //nolint:revive,staticcheck // Displayed directly as a recovery message in Settings.
 	}
-	useOllama := !lane.local
 	var builtinEndpoint string
-	if !useOllama {
+	if lane.local {
 		installation, err := c.install(ctx, embedlocal.InstallOptions{DataDir: dir,
 			Confirm: func(context.Context, int64) (bool, error) { return true, nil },
 			Progress: func(done, total int64) {
@@ -204,15 +205,14 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	nextCtx := withInvocation(runtimeCtx, &state)
 	workCtx := withInvocation(ctx, &state)
 	var vf *vectorFeatures
-	freshRuntime := live == nil
-	if freshRuntime {
+	if live == nil {
 		vf, err = setupVectorFeaturesForRun(nextCtx, c.store, c.dbPath, false, c.openers...)
 	} else {
 		vecCfg, resolveErr := resolvedVectorConfig(workCtx, c.store, runtimeConfig.Vector)
 		if resolveErr != nil {
 			return resolveErr
 		}
-		if !useOllama {
+		if lane.local {
 			vecCfg.Embeddings.Endpoint = builtinEndpoint
 		}
 		vf, err = live.configureText(nextCtx, &state, vecCfg)
@@ -221,7 +221,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		return err
 	}
 	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
-		if freshRuntime {
+		if live == nil {
 			_ = vf.Close()
 		}
 		if errors.Is(err, config.ErrConfigConflict) {
@@ -233,7 +233,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 	c.handle.vf = vf
 	c.handle.mu.Unlock()
 	publicationErr := publishTextVectorFeatures(nextCtx, c.store, c.server, c.scheduler, vf, &state)
-	if freshRuntime {
+	if live == nil {
 		publishVisualVectorFeatures(c.store, c.server, c.scheduler, vf, &state)
 	}
 	defer func() { result = errors.Join(result, publicationErr) }()

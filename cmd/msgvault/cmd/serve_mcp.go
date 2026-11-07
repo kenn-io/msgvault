@@ -127,12 +127,6 @@ func installServeMCP(ctx context.Context, cmd *cobra.Command, server *api.Server
 	discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	opts := daemonMCPServeOptions(discoveryCtx, client, state)
-	// Turn on enables text search behind these adapters.
-	if opts.HybridSearcher == nil {
-		opts.HybridSearcher = daemonMCPHybridSearcher{client: client}
-		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: client}
-		opts.EmbeddingStatus = client
-	}
 	if err := ctx.Err(); err != nil {
 		_ = client.Close()
 		return fmt.Errorf("initialize native MCP: %w", err)

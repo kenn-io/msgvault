@@ -63,7 +63,7 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 
 	if !running && progress.Error != "" && status.Enabled {
 		_, backend, cfg := s.vectorComponents()
-		if backend != nil {
+		if coverage, _, coverageErr := s.loadEmbeddingStatus(r.Context(), 0); backend != nil && coverageErr == nil && coverage.Pending == 0 {
 			if _, err := vector.ResolveActiveForFingerprint(r.Context(), backend, cfg.GenerationFingerprint()); err == nil {
 				progress.Error = ""
 			}

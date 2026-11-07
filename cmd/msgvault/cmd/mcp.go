@@ -274,18 +274,17 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
 	}
-	if capabilityErr == nil && health != nil && health.Vector != nil &&
-		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {
-		if health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
-			opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
-			opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
-		}
-		if health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled &&
-			daemonclient.APISchemaVersionAtLeast(schemaVersion, visualSearchMinAPISchemaVersion) {
-			opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
-		}
+	// Turn on can enable text search after this server starts.
+	activatable := mcpRequestPropertiesPresent(capabilities, "enableLocalEmbeddings")
+	lanes := capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion)
+	if activatable || lanes && health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
+		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
+		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
 	}
-	if capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
+	if lanes && health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled && daemonclient.APISchemaVersionAtLeast(schemaVersion, visualSearchMinAPISchemaVersion) {
+		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
+	}
+	if activatable || capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
 		opts.EmbeddingStatus = st
 	}
 	if capabilityErr != nil {
