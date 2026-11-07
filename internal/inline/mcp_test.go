@@ -533,7 +533,9 @@ func TestMCPResponseByteLimitChecksOverflowAndExactEOF(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			client := &http.Client{Transport: &mcpResponseTransport{base: http.DefaultTransport, limit: 8}}
-			resp, err := client.Get(srv.URL)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+			requires.NoError(err)
+			resp, err := client.Do(request)
 			if tc.invalid && !tc.streamed {
 				requires.ErrorIs(err, ErrContract, "declared overflow must fail the request before the response body is read")
 				return

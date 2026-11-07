@@ -36,7 +36,7 @@ func TestTraceMiddlewareToleratesParamsAbsentFromTheMessage(t *testing.T) {
 	interfaceIsNonNil := req.GetParams() != nil
 	must.True(interfaceIsNonNil, "an interface holding a typed nil is not itself nil; without that this reproduces nothing")
 
-	result, err := handler(context.Background(), "notifications/initialized", req)
+	result, err := handler(t.Context(), "notifications/initialized", req)
 
 	must.NoError(err)
 	checks.True(reached, "the notification must still reach the next handler")
@@ -66,7 +66,7 @@ func TestTraceMiddlewareExtractsTraceContextFromMeta(t *testing.T) {
 	})
 	req := &sdkmcp.ServerRequest[*sdkmcp.CallToolParamsRaw]{Params: params}
 
-	_, err := handler(context.Background(), "tools/call", req)
+	_, err := handler(t.Context(), "tools/call", req)
 
 	must.NoError(err)
 	checks.Equal(wantTraceID, got.TraceID().String())
@@ -87,7 +87,7 @@ func TestTraceMiddlewareToleratesParamsWithoutMeta(t *testing.T) {
 
 	req := &sdkmcp.ServerRequest[*sdkmcp.InitializedParams]{Params: &sdkmcp.InitializedParams{}}
 
-	_, err := handler(context.Background(), "notifications/initialized", req)
+	_, err := handler(t.Context(), "notifications/initialized", req)
 
 	must.NoError(err)
 	checks.True(reached)

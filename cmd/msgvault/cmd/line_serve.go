@@ -52,7 +52,7 @@ func newLineRuntime(ctx context.Context, st *store.Store, state *invocation, sch
 		if !profile.Enabled {
 			continue
 		}
-		source, err := st.GetSourceByTypeAndIdentifier(line.SourceType, profile.ChannelID)
+		source, err := st.GetSourceByTypeAndIdentifier(ctx, line.SourceType, profile.ChannelID)
 		if err == nil && source.MergedIntoSourceID != 0 {
 			err = store.ErrSourceRetired
 		}

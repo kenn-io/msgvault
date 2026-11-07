@@ -123,7 +123,8 @@ func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
 		badFTS          string
 		indexingVersion int
 	)
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		"SELECT search_fts IS NULL, COALESCE(search_fts::text, ''), indexing_version FROM messages WHERE id = $1",
 		badID).Scan(&badIsNull, &badFTS, &indexingVersion),
 		"probe bad row")

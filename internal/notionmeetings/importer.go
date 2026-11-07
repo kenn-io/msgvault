@@ -148,7 +148,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, errors.New("notion meeting importer is unavailable")
 	}
 	started := imp.now().UTC()
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, strings.TrimSpace(opts.Identifier))
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, strings.TrimSpace(opts.Identifier))
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 
 	state := syncState{Version: syncStateVersion, Known: map[string]knownMeeting{}}
-	previous, err := imp.store.GetLastSuccessfulSync(source.ID)
+	previous, err := imp.store.GetLastSuccessfulSyncContext(ctx, source.ID)
 	if err == nil && previous.CursorAfter.Valid && previous.CursorAfter.String != "" {
 		if err := json.Unmarshal([]byte(previous.CursorAfter.String), &state); err != nil {
 			return sum, fmt.Errorf("decode previous Notion sync cursor: %w", err)
@@ -328,7 +328,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 
 		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
-		archived, recoverErr := imp.archivedState(source.ID, id)
+		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
 		if recoverErr != nil {
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
@@ -486,8 +486,8 @@ type archivedMeetingState struct {
 	ResolvedUsers []resolvedUser
 }
 
-func (imp *Importer) archivedState(sourceID int64, id string) (archivedMeetingState, error) {
-	existing, err := imp.store.MessageExistsBatch(sourceID, []string{id})
+func (imp *Importer) archivedState(ctx context.Context, sourceID int64, id string) (archivedMeetingState, error) {
+	existing, err := imp.store.MessageExistsBatchContext(ctx, sourceID, []string{id})
 	if err != nil {
 		return archivedMeetingState{}, err
 	}
@@ -495,12 +495,12 @@ func (imp *Importer) archivedState(sourceID int64, id string) (archivedMeetingSt
 	if !ok {
 		return archivedMeetingState{}, nil
 	}
-	body, err := imp.store.GetMessageBodyText(messageID)
+	body, err := imp.store.GetMessageBodyText(ctx, messageID)
 	if err != nil {
 		return archivedMeetingState{}, err
 	}
 	archived := archivedMeetingState{Body: body, MessageID: messageID}
-	metadata, err := imp.store.GetMessageMetadata(messageID)
+	metadata, err := imp.store.GetMessageMetadataContext(ctx, messageID)
 	if err != nil {
 		return archivedMeetingState{}, err
 	}
@@ -510,7 +510,7 @@ func (imp *Importer) archivedState(sourceID int64, id string) (archivedMeetingSt
 			archived.ResolvedUsers = decoded.ResolvedUsers
 		}
 	}
-	raw, err := imp.store.GetMessageRaw(messageID)
+	raw, err := imp.store.GetMessageRawContext(ctx, messageID)
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrInvalidMessageRaw) {
 		return archived, nil
 	}

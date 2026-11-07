@@ -11,7 +11,7 @@ import (
 
 func TestLineInboxStatusUsesReceivedIndexSQLite(t *testing.T) {
 	require := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "line-status-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "line-status-plan.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	require.NoError(st.InitSchema())

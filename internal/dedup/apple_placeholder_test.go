@@ -70,7 +70,7 @@ func TestEngine_ApplePlaceholderRestoredCopy(t *testing.T) {
 	assert.Empty(summary.StagedManifests, "differing MIME must not stage remote deletion")
 	assertSoftDeleted(t, f.Store, partialID, true)
 	assertSoftDeleted(t, f.Store, restoredID, false)
-	count, _, err := engine.Undo("apple-restored")
+	count, _, err := engine.Undo(t.Context(), "apple-restored")
 	require.NoError(err)
 	assert.Equal(int64(1), count)
 	assertSoftDeleted(t, f.Store, partialID, false)
@@ -155,12 +155,12 @@ func TestEngine_ApplePlaceholderUnknownMIME(t *testing.T) {
 				require.NoError(f.Store.UpsertMessageRaw(unknownID, raw))
 			case "corrupt zlib":
 				require.NoError(f.Store.UpsertMessageRaw(unknownID, []byte("unused")))
-				_, err := f.Store.DB().Exec(f.Store.Rebind(
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 					"UPDATE message_raw SET raw_data = ? WHERE message_id = ?"), []byte("invalid zlib"), unknownID)
 				require.NoError(err)
 				wantID, wantCopies = restoredID, 2
 			case "unknown received":
-				_, err := f.Store.DB().Exec(f.Store.Rebind(
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 					"UPDATE messages SET is_from_me = TRUE WHERE id IN (?, ?)"), partialID, restoredID)
 				require.NoError(err)
 				wantID = restoredID

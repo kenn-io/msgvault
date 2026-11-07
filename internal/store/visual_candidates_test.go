@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -75,9 +76,9 @@ func TestVisualCandidateCatalogPagesWholeMessagesAndAppliesScope(t *testing.T) {
 	first := f.CreateMessage("visual-page-first")
 	second := f.CreateMessage("visual-page-second")
 	third := f.CreateMessage("visual-page-third")
-	require.NoError(updateVisualMessageType(f, first, "mms"))
-	require.NoError(updateVisualMessageType(f, second, "MMS"))
-	require.NoError(updateVisualMessageType(f, third, "email"))
+	require.NoError(updateVisualMessageType(t.Context(), f, first, "mms"))
+	require.NoError(updateVisualMessageType(t.Context(), f, second, "MMS"))
+	require.NoError(updateVisualMessageType(t.Context(), f, third, "email"))
 	for index, messageID := range []int64{first, second, third} {
 		hash := strings.Repeat(string(rune('c'+index)), 64)
 		writeVisualAttachment(t, f, messageID, "part:1", hash, hash[:2]+"/"+hash,
@@ -124,21 +125,21 @@ func TestVisualCandidateCatalogReflectsMovesRolesReplacementAndDeletion(t *testi
 	}})
 
 	var attachmentID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT id FROM attachments WHERE message_id = ?`), first).Scan(&attachmentID))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET message_id = ? WHERE id = ?`), second, attachmentID)
 	require.NoError(err)
 	assertVisualOwners(t, f, []store.VisualOwner{{
 		MessageID: second, BlobHash: newHash, MediaInputKey: store.VisualOriginalMediaInputKey,
 	}})
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET attachment_role = 'inline' WHERE id = ?`), attachmentID)
 	require.NoError(err)
 	assertVisualOwners(t, f, nil)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM attachments WHERE id = ?`), attachmentID)
 	require.NoError(err)
 	assertVisualOwners(t, f, nil)
 }
@@ -148,11 +149,11 @@ func TestVisualMessageContextUsesDirectBodyFallbackAndLivePredicate(t *testing.T
 	assert := assert.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("visual-context")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ?, message_type = ? WHERE id = ?`),
 		"Synthetic subject", "mms", messageID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO message_bodies (message_id, body_html) VALUES (?, ?)`),
 		messageID, `<p>Synthetic <strong>body</strong></p>`)
 	require.NoError(err)
@@ -163,7 +164,7 @@ func TestVisualMessageContextUsesDirectBodyFallbackAndLivePredicate(t *testing.T
 	assert.Equal("Synthetic body", context.Body)
 	assert.Equal("mms", context.MessageType)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
 	_, err = f.Store.GetVisualMessageContext(t.Context(), messageID)
@@ -185,8 +186,8 @@ func writeVisualAttachment(
 	}))
 }
 
-func updateVisualMessageType(f *storetest.Fixture, messageID int64, messageType string) error {
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+func updateVisualMessageType(ctx context.Context, f *storetest.Fixture, messageID int64, messageType string) error {
+	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(
 		`UPDATE messages SET message_type = ? WHERE id = ?`), messageType, messageID)
 	return err
 }

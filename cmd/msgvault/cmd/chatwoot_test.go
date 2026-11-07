@@ -150,22 +150,22 @@ func TestChatwootRegisteredInboxSelection(t *testing.T) {
 		_, err := st.GetOrCreateSource(chatwoot.SourceType, id)
 		require.NoError(err)
 	}
-	ids, err := resolveChatwootSyncInboxes(st, src, nil)
+	ids, err := resolveChatwootSyncInboxes(t.Context(), st, src, nil)
 	require.NoError(err)
 	assert.Equal([]int64{7}, ids)
-	ids, err = resolveChatwootSyncInboxes(st, src, []int64{7, 7})
+	ids, err = resolveChatwootSyncInboxes(t.Context(), st, src, []int64{7, 7})
 	require.NoError(err)
 	assert.Equal([]int64{7}, ids)
-	_, err = resolveChatwootSyncInboxes(st, src, []int64{8})
+	_, err = resolveChatwootSyncInboxes(t.Context(), st, src, []int64{8})
 	require.ErrorContains(err, "excluded")
-	_, err = resolveChatwootSyncInboxes(st, src, []int64{99})
+	_, err = resolveChatwootSyncInboxes(t.Context(), st, src, []int64{99})
 	require.ErrorContains(err, "not registered")
 	src.Inboxes = []int64{7, 999}
-	ids, err = resolveChatwootSyncInboxes(st, src, nil)
+	ids, err = resolveChatwootSyncInboxes(t.Context(), st, src, nil)
 	require.NoError(err)
 	assert.Equal([]int64{7}, ids)
 	src.ExcludeInboxes = append(src.ExcludeInboxes, 999)
-	ids, err = resolveChatwootSyncInboxes(st, src, nil)
+	ids, err = resolveChatwootSyncInboxes(t.Context(), st, src, nil)
 	require.NoError(err)
 	assert.Equal([]int64{7}, ids)
 }
@@ -228,7 +228,7 @@ func TestChatwootRegistrationUsesDaemonEnvironmentAndExcludesInboxes(t *testing.
 		}
 	}))
 	defer srv.Close()
-	registered, err := registerChatwootProfile(context.Background(), st, config.ChatwootSource{Identifier: "support", URL: srv.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN", ExcludeInboxes: []int64{8}})
+	registered, err := registerChatwootProfile(t.Context(), st, config.ChatwootSource{Identifier: "support", URL: srv.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN", ExcludeInboxes: []int64{8}})
 	require.NoError(err)
 	require.Len(registered, 1)
 	assert.Equal(srv.URL+"/accounts/9/inboxes/7", registered[0].Identifier)
@@ -301,7 +301,7 @@ func TestChatwootScheduledJobUsesAccountIdentityAndDefersMediaPacking(t *testing
 	calls := 0
 	require.NoError(registerScheduledChatwootJob(sched, src, fixture.maintenance, func(context.Context) error {
 		calls++
-		hash = fixture.ingestLoose([]byte("synthetic Chatwoot scheduled media"))
+		hash = fixture.ingestLoose(t.Context(), []byte("synthetic Chatwoot scheduled media"))
 		return nil
 	}))
 	job, ok := api.SchedulerJobNameForSource(chatwoot.SourceType, "https://chatwoot.example.com/support/accounts/9/inboxes/7")
@@ -313,7 +313,7 @@ func TestChatwootScheduledJobUsesAccountIdentityAndDefersMediaPacking(t *testing
 	assert.Equal(1, calls)
 	assert.Nil(fixture.packedEntry(hash), "scheduled sync defers packing")
 	assert.True(fixture.maintenance.packPending.Load(), "new media requests a later pack pass")
-	require.NoError(fixture.maintenance.runPendingPack(context.Background()))
+	require.NoError(fixture.maintenance.runPendingPack(t.Context()))
 	assert.NotNil(fixture.packedEntry(hash))
 }
 
@@ -370,7 +370,7 @@ func TestChatwootLimitedProfileSyncReportsResumableWork(t *testing.T) {
 	src := config.ChatwootSource{Identifier: "support", URL: server.URL, AccountID: 3, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN"}
 	_, err := st.GetOrCreateSource(chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, 3, 7))
 	require.NoError(err)
-	sum, err := importChatwootProfile(context.Background(), st, src, chatwootRunOptions{Limit: 1}, cfg)
+	sum, err := importChatwootProfile(t.Context(), st, src, chatwootRunOptions{Limit: 1}, cfg)
 	require.NoError(err)
 	require.NotNil(sum)
 	assert.True(sum.Partial)

@@ -31,7 +31,7 @@ const deletedSentinel = "2000-01-01 00:00:00+00"
 // last_modified_test.go reads its sentinel back for the same reason.
 func setDeletedFromSourceAt(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) string {
 	t.Helper()
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET deleted_from_source_at = ?
 		WHERE source_id = ? AND source_message_id = ?
 	`), deletedSentinel, sourceID, sourceMessageID)
@@ -47,7 +47,8 @@ func setDeletedFromSourceAt(t *testing.T, st *store.Store, sourceID int64, sourc
 func readDeletedFromSourceAt(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) sql.NullString {
 	t.Helper()
 	var s sql.NullString
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT CAST(deleted_from_source_at AS TEXT) FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		sourceID, sourceMessageID,
 	).Scan(&s), "read deleted_from_source_at")
@@ -68,7 +69,7 @@ func tombstoneWriters() map[string]tombstoneWriter {
 		},
 		"MarkMessagesDeletedBatch": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
 			t.Helper()
-			return st.MarkMessagesDeletedBatch(sourceID, []string{id})
+			return st.MarkMessagesDeletedBatch(t.Context(), sourceID, []string{id})
 		},
 		"MarkMessagesDeletedFromReader": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
 			t.Helper()
@@ -76,11 +77,11 @@ func tombstoneWriters() map[string]tombstoneWriter {
 		},
 		"MarkMessageDeletedByGmailID": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
 			t.Helper()
-			return st.MarkMessageDeletedByGmailID(false, id)
+			return st.MarkMessageDeletedByGmailID(t.Context(), false, id)
 		},
 		"MarkMessagesDeletedByGmailIDBatch": func(t *testing.T, st *store.Store, sourceID int64, id string) error {
 			t.Helper()
-			return st.MarkMessagesDeletedByGmailIDBatch([]string{id})
+			return st.MarkMessagesDeletedByGmailIDBatch(t.Context(), []string{id})
 		},
 	}
 }
@@ -171,7 +172,8 @@ func TestTombstoneWriters_DoNotBumpLastModifiedForAlreadyTombstoned(t *testing.T
 			setDeletedFromSourceAt(t, st, sourceID, "msg-"+name)
 
 			var id int64
-			require.NoError(t, st.DB().QueryRow(
+			require.NoError(t, st.DB().QueryRowContext(
+				t.Context(),
 				st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 				sourceID, "msg-"+name,
 			).Scan(&id), "look up message id")
@@ -194,7 +196,7 @@ func batchTombstoneWriters() map[string]batchTombstoneWriter {
 	return map[string]batchTombstoneWriter{
 		"MarkMessagesDeletedBatch": func(t *testing.T, st *store.Store, sourceID int64, ids []string) error {
 			t.Helper()
-			return st.MarkMessagesDeletedBatch(sourceID, ids)
+			return st.MarkMessagesDeletedBatch(t.Context(), sourceID, ids)
 		},
 		"MarkMessagesDeletedFromReader": func(t *testing.T, st *store.Store, sourceID int64, ids []string) error {
 			t.Helper()
@@ -202,7 +204,7 @@ func batchTombstoneWriters() map[string]batchTombstoneWriter {
 		},
 		"MarkMessagesDeletedByGmailIDBatch": func(t *testing.T, st *store.Store, sourceID int64, ids []string) error {
 			t.Helper()
-			return st.MarkMessagesDeletedByGmailIDBatch(ids)
+			return st.MarkMessagesDeletedByGmailIDBatch(t.Context(), ids)
 		},
 	}
 }

@@ -30,8 +30,8 @@ func TestMergeSourcesKeepsConflictingLegacyAttachmentDetailsVisible(t *testing.T
 			live := emailMergeFixtureMessage(t, st, into.ID, "live", []string{"recipient@example.test"}, true)
 			history := emailMergeFixtureMessage(t, st, from.ID, "history", []string{"recipient@example.test"}, true)
 			hash := strings.Repeat("a", 64)
-			require.NoError(st.UpsertAttachment(live, "current.txt", "text/plain", "synthetic/content", hash, 12))
-			require.NoError(st.UpsertAttachment(history, test.filename, test.mimeType, "synthetic/content", hash, 12))
+			require.NoError(st.UpsertAttachment(t.Context(), live, "current.txt", "text/plain", "synthetic/content", hash, 12))
+			require.NoError(st.UpsertAttachment(t.Context(), history, test.filename, test.mimeType, "synthetic/content", hash, 12))
 			req := store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID, DryRun: true}
 			preview, err := st.MergeSourcesContext(t.Context(), req)
 			require.NoError(err)
@@ -47,7 +47,7 @@ func TestMergeSourcesKeepsConflictingLegacyAttachmentDetailsVisible(t *testing.T
 			assert.Equal(wantHidden, result.DuplicatesHidden)
 			assert.Zero(result.AttachmentsCopied)
 			var visible int
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments a
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments a
  WHERE a.filename = ? AND a.mime_type = ?
  AND EXISTS (SELECT 1 FROM messages m WHERE m.id = a.message_id AND m.deleted_at IS NULL)`),
 				test.filename, test.mimeType).Scan(&visible))

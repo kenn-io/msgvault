@@ -178,6 +178,7 @@ type CLISearchRequest struct {
 }
 
 type CLISearch struct {
+	HasMore          bool                   `json:"has_more,omitzero"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
@@ -205,16 +206,18 @@ type CLIHybridSearchRequest struct {
 }
 
 type CLIHybridSearch struct {
-	Results          []CLIHybridSearchResult
-	Generation       CLIHybridGeneration
-	TookMS           int64
-	Timings          CLIHybridSearchTimings
-	PoolSaturated    bool
-	Accelerator      string
-	ReturnedCount    int
-	ScopeLabel       string
-	ScopeSourceCount int
-	HasMore          bool
+	Results               []CLIHybridSearchResult
+	Generation            CLIHybridGeneration
+	TookMS                int64
+	Timings               CLIHybridSearchTimings
+	PoolSaturated         bool
+	Accelerator           string
+	ReturnedCount         int
+	ScopeLabel            string
+	ScopeSourceCount      int
+	HasMore               bool
+	RankingLimitReached   int
+	CandidateLimitReached int
 }
 
 type CLIHybridSearchTimings struct {

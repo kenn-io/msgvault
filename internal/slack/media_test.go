@@ -1,7 +1,6 @@
 package slack
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -67,7 +66,7 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			assert.Equal(1, sum.Errors)
 			assert.Equal([]string{fileURL}, tc.transport.requests)
 			var state, reason, metadata string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT attachment_state, attachment_skip_reason, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
 				FROM attachments WHERE source_attachment_id = ?
 			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata))
@@ -76,7 +75,7 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			var detail map[string]string
 			require.NoError(json.Unmarshal([]byte(metadata), &detail))
 			var itemError string
-			require.NoError(st.DB().QueryRow(`SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT error_message FROM sync_run_items WHERE error_kind = 'slack_media_error'`).Scan(&itemError))
 			if tc.storageFailure {
 				assert.Contains(detail["fetch_error"], "\ufffd")
 				assert.True(utf8.ValidString(itemError))
@@ -96,7 +95,7 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 				backfill, err := imp.BackfillMedia(t.Context(), opts)
 				require.NoError(err)
 				assert.Equal(1, backfill.AttachmentsDownloaded)
-				require.NoError(st.DB().QueryRow(st.Rebind(`
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 					SELECT attachment_state, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
 					FROM attachments WHERE source_attachment_id = ?
 				`), "slack:F_FAILURE").Scan(&state, &metadata))
@@ -110,7 +109,7 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			opts.NoMedia, opts.Full = true, true
 			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT CAST(attachment_metadata AS TEXT) FROM attachments WHERE source_attachment_id = ?
 			`), "slack:F_FAILURE").Scan(&metadata))
 			assert.Contains(metadata, tc.reason, "deferring media keeps the last fetch reason")
@@ -118,7 +117,7 @@ func TestSlackMediaFailureDetails(t *testing.T) {
 			opts.MaxMediaBytes = 2
 			_, err = imp.BackfillMedia(t.Context(), opts)
 			require.NoError(err)
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT attachment_state, attachment_skip_reason, COALESCE(CAST(attachment_metadata AS TEXT), '{}')
 				FROM attachments WHERE source_attachment_id = ?
 			`), "slack:F_FAILURE").Scan(&state, &reason, &metadata))
@@ -207,12 +206,12 @@ func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
 	c.mediaTransport = rt
 
 	// Off-host: rejected before any request is made.
-	_, err := c.DownloadFile(context.Background(), "https://attacker.example/x", 100)
+	_, err := c.DownloadFile(t.Context(), "https://attacker.example/x", 100)
 	require.ErrorIs(err, errOffHost)
 	assert.Empty(rt.requests, "the token must never travel to an off-host URL")
 
 	// On-host succeeds.
-	data, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 100)
+	data, err := c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F01/a.png", 100)
 	require.NoError(err)
 	assert.Equal("bytes", string(data))
 	require.Len(rt.requests, 1)
@@ -220,7 +219,7 @@ func TestDownloadFileRefusesOffHostAndRedirects(t *testing.T) {
 	// A redirect — even one a compromised response injects — is refused.
 	for i, host := range []string{"attacker.example", "files.slack.com"} {
 		rt.redirect = "https://" + host + "/redirect"
-		_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
+		_, err = c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
 		require.ErrorContains(err, "slack file GET: refusing redirect to "+host)
 		assert.Len(rt.requests, i+2, "the redirect target must not be followed")
 	}
@@ -230,11 +229,11 @@ func TestDownloadFileSizeCap(t *testing.T) {
 	rt := &recordingTransport{body: strings.Repeat("x", 64)}
 	c := NewClient("", "xoxp-test")
 	c.mediaTransport = rt
-	_, err := c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
+	_, err := c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
 	require.ErrorIs(t, err, ErrAssetTooLarge)
 
 	rt.body = ""
-	_, err = c.DownloadFile(context.Background(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
+	_, err = c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F01/a.png", 10)
 	assert.ErrorContains(t, err, "empty response body")
 }
 
@@ -288,7 +287,7 @@ func TestPersistFilesRecordsStreamedOversizeForRetryPolicy(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, sum.AttachmentsSkipped)
 	var size int64
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT size FROM attachments WHERE source_attachment_id = 'slack:F_STREAM_BIG'
 	`).Scan(&size))
 	assert.Greater(size, int64(10))
@@ -328,10 +327,10 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 		TeamID: "T01", UserID: "UME",
 		AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
 	}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT a.source_attachment_id, COALESCE(a.content_hash, ''), COALESCE(a.media_type, ''),
 		       a.attachment_role, a.role_source
 		FROM attachments a JOIN messages m ON m.id = a.message_id
@@ -368,7 +367,7 @@ func TestPersistFilesLinkRowsAndPendingMarkers(t *testing.T) {
 	// Raising the cap and backfilling re-evaluates and repairs the download (the
 	// declared size in the archived raw JSON no longer exceeds it).
 	opts.MaxMediaBytes = 1 << 50
-	sum, err := imp.BackfillMedia(context.Background(), opts)
+	sum, err := imp.BackfillMedia(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(1, sum.AttachmentsDownloaded)
 	pending, err = st.ListSlackPendingAttachmentMessages(src.ID)
@@ -401,7 +400,7 @@ func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 				TeamID: "T01", UserID: "UME",
 				NoMedia: true, AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
 			}
-			sum, err := imp.Import(context.Background(), opts)
+			sum, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
 			require.Equal(1, sum.AttachmentsPending)
 
@@ -412,7 +411,7 @@ func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 			require.Len(pending, 1, "media-disabled import must create genuine pending debt")
 
 			opts.NoMedia = false
-			sum, err = imp.BackfillMedia(context.Background(), opts)
+			sum, err = imp.BackfillMedia(t.Context(), opts)
 			require.NoError(err)
 			assert.Zero(sum.AttachmentsPending)
 			assert.Zero(sum.Errors)
@@ -422,7 +421,7 @@ func TestPersistFilesTreatsGoneDownloadsAsTerminalLinks(t *testing.T) {
 			assert.Empty(pending, "a deleted Slack file must not remain pending")
 
 			var messageID int64
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
 			refs, err := st.MessageSlackAttachments(messageID)
 			require.NoError(err)
@@ -476,7 +475,7 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 		TeamID: "T01", UserID: "UME",
 		AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
 	}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The source deletes one downloaded file (tombstone) and an edit drops
@@ -492,10 +491,10 @@ func TestPersistFilesPreservesTombstonedAndOmittedDownloads(t *testing.T) {
 
 	full := opts
 	full.Full = true
-	_, err = imp.Import(context.Background(), full)
+	_, err = imp.Import(t.Context(), full)
 	require.NoError(err)
 
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT a.source_attachment_id, COALESCE(a.content_hash, ''), COALESCE(a.media_type, '')
 		FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(6))
@@ -546,7 +545,7 @@ func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
 		TeamID: "T01", UserID: "UME",
 		AttachmentsDir: t.TempDir(), MaxMediaBytes: 1 << 20,
 	}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// Both file IDs keep a row: one carries the hash, the duplicate is an
@@ -554,7 +553,7 @@ func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
 	refs, err := st.MessageSlackAttachments(messageID)
 	require.NoError(err)
@@ -570,7 +569,7 @@ func TestPersistFilesKeepsAliasRowsForDuplicateContent(t *testing.T) {
 
 	full := opts
 	full.Full = true
-	_, err = imp.Import(context.Background(), full)
+	_, err = imp.Import(t.Context(), full)
 	require.NoError(err)
 	assert.Len(rt.requests, 2, "a repair pass must not re-download duplicate-content files")
 	refs, err = st.MessageSlackAttachments(messageID)
@@ -600,7 +599,7 @@ func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
 	// Sync with media disabled: the hosted file must become a PENDING
 	// marker — a link row would hide it from backfill forever.
 	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(1, sum.AttachmentsPending)
 
@@ -610,18 +609,18 @@ func TestNoMediaDefersFilesAsPendingNotLinks(t *testing.T) {
 	require.NoError(err)
 	require.Len(pending, 1, "a --no-media deferred hosted file must stay discoverable")
 	var conversationID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT conversation_id FROM messages WHERE source_id = ? AND source_message_id = ?`,
 	), src.ID, "C01:"+ts(6)).Scan(&conversationID))
 	assert.Equal(conversationID, pending[0].ConversationID)
 
 	// Enabling media and backfilling downloads it.
 	opts.NoMedia = false
-	bsum, err := imp.BackfillMedia(context.Background(), opts)
+	bsum, err := imp.BackfillMedia(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(1, bsum.AttachmentsDownloaded)
 	var hash string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(a.content_hash,'') FROM attachments a
 		WHERE a.source_attachment_id = ?`), "slack:F_DEFER").Scan(&hash))
 	assert.NotEmpty(hash)
@@ -645,7 +644,7 @@ func TestMediaPolicySkipsChannelWithoutDownload(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, client, "T01")
 
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		TeamID: "T01", UserID: "UME", AttachmentsDir: t.TempDir(),
 		MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeDirect, MaxBytes: 100 << 20},
 	})
@@ -654,7 +653,7 @@ func TestMediaPolicySkipsChannelWithoutDownload(t *testing.T) {
 	assert.Empty(transport.requests)
 
 	var state, reason string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_state, attachment_skip_reason FROM attachments
 		WHERE source_attachment_id = 'slack:F_POLICY'
 	`).Scan(&state, &reason))
@@ -723,7 +722,7 @@ func TestBackfillMediaOverridesProviderMediaToggle(t *testing.T) {
 			assert.Len(transport.requests, tc.wantDownloads)
 
 			var contentHash, reason string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COALESCE(content_hash, ''), COALESCE(attachment_skip_reason, '')
 				FROM attachments WHERE source_attachment_id = ?
 			`), "slack:F_TOGGLE").Scan(&contentHash, &reason))
@@ -743,7 +742,7 @@ func membershipRecord(t *testing.T, st *store.Store) (count int, unknown bool) {
 	t.Helper()
 
 	var metadata string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(CAST(metadata AS TEXT), '') FROM conversations
 		WHERE source_conversation_id = ?
 	`), "C01").Scan(&metadata))
@@ -789,7 +788,7 @@ func TestMediaPolicyFailsClosedOnLaterMembershipOutage(t *testing.T) {
 		},
 	}
 	fileOutcome := func() (state, contentHash string) {
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COALESCE(attachment_state, ''), COALESCE(content_hash, '')
 			FROM attachments WHERE source_attachment_id = ?
 		`), "slack:F_LATER").Scan(&state, &contentHash))
@@ -876,7 +875,7 @@ func TestMediaPolicyFailsClosedOnUnreadableMembership(t *testing.T) {
 	assert.Empty(transport.requests, "unknown membership must not read as a channel under the limit")
 
 	fileOutcome := func() (reason, contentHash string) {
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COALESCE(attachment_skip_reason, ''), COALESCE(content_hash, '')
 			FROM attachments WHERE source_attachment_id = ?
 		`), "slack:F_ROSTER").Scan(&reason, &contentHash))

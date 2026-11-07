@@ -62,7 +62,7 @@ func TestImportEmlxRecoverableClosingBoundary(t *testing.T) {
 					seedRaw = withEnding(seedRaw)
 					source, err := st.GetOrCreateSource("apple-mail", opts.Identifier)
 					r.NoError(err)
-					label, err := st.EnsureLabel(source.ID, "legacy", "legacy", "user")
+					label, err := st.EnsureLabel(t.Context(), source.ID, "legacy", "legacy", "user")
 					r.NoError(err)
 					sum := sha256.Sum256(raw)
 					hash := hex.EncodeToString(sum[:])
@@ -84,7 +84,7 @@ func TestImportEmlxRecoverableClosingBoundary(t *testing.T) {
 				a.False(first.HardErrors)
 				a.Zero(first.Errors)
 				var mid int64
-				r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
+				r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&mid))
 				archived, err := st.GetMessageRawContext(t.Context(), mid)
 				r.NoError(err)
 				parsed, err = mime.ParseWithRecovery(archived, "")
@@ -96,7 +96,7 @@ func TestImportEmlxRecoverableClosingBoundary(t *testing.T) {
 					sum := sha256.Sum256(content)
 					hash := hex.EncodeToString(sum[:])
 					var stored int
-					r.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ? AND content_hash = ?"), mid, hash).Scan(&stored))
+					r.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ? AND content_hash = ?"), mid, hash).Scan(&stored))
 					a.Equal(1, stored)
 					blobPath, err := export.StoragePath(opts.AttachmentsDir, hash)
 					r.NoError(err)
@@ -112,7 +112,7 @@ func TestImportEmlxRecoverableClosingBoundary(t *testing.T) {
 				}
 				a.Len(labels, wantLabels)
 				var indexed int
-				r.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'attached'").Scan(&indexed))
+				r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'attached'").Scan(&indexed))
 				a.Equal(1, indexed)
 				a.Equal(1, countEmlxLedgerEntries(t, st, first.SourceID, "emlx-occurrence", "imported"))
 				warm, err := ImportEmlxDir(t.Context(), st, root, opts)
@@ -153,7 +153,7 @@ func TestImportEmlxFatalUnclosedPlaceholderPreservesRaw(t *testing.T) {
 		a.Equal(1, countEmlxLedgerEntries(t, st, result.SourceID, "emlx-occurrence", "imported"))
 		a.Equal(1, countEmlxLedgerEntries(t, st, result.SourceID, "emlx-target", "imported"))
 		var mid int64
-		r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&mid))
+		r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&mid))
 		archived, err := st.GetMessageRawContext(t.Context(), mid)
 		r.NoError(err)
 		a.Equal(msg.Raw, archived, "salvage must preserve restore-attempted raw")
@@ -179,7 +179,7 @@ func TestImportEmlxIgnoresPlaceholderInEpilogue(t *testing.T) {
 		a.False(summary.HardErrors)
 	}
 	var messageID int64
-	r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+	r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&messageID))
 	archived, err := st.GetMessageRawContext(t.Context(), messageID)
 	r.NoError(err)
 	a.Equal(raw, archived, "the epilogue is archived unchanged")

@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"math"
@@ -56,12 +55,12 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL index check")
 	}
-	_, err := f.Store.DB().Exec("DROP INDEX idx_identity_match_candidates_right")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP INDEX idx_identity_match_candidates_right")
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
 	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
 	var count int
-	require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
 	assert.Equal(t, 1, count)
 }
 
@@ -79,24 +78,24 @@ func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
 	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
 		Claim: claim, ReasonCode: "provider_timeout", Terminal: true, RequestCount: 2, UploadCount: 1,
 	}))
-	_, err = f.Store.DB().Exec("ALTER TABLE document_extractions DROP COLUMN upload_count")
+	_, err = f.Store.DB().ExecContext(t.Context(), "ALTER TABLE document_extractions DROP COLUMN upload_count")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec("DROP TABLE document_extraction_ranges")
+	_, err = f.Store.DB().ExecContext(t.Context(), "DROP TABLE document_extraction_ranges")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='16' WHERE key='schema_version'")
+	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value='16' WHERE key='schema_version'")
 	require.NoError(err)
 	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
 	version, err := f.Store.SchemaVersionContext(t.Context())
 	require.NoError(err)
 	assert.Equal(16, version)
 	var count int
-	require.Error(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	require.Error(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
 	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
 	version, err = f.Store.SchemaVersionContext(t.Context())
 	require.NoError(err)
 	assert.Equal(store.SchemaVersion, version)
-	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
 	assert.Zero(count)
 	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
 	require.NoError(err)
@@ -107,9 +106,9 @@ func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec("DROP TABLE docbank_attachment_deliveries")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE docbank_attachment_deliveries")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='9' WHERE key='schema_version'")
+	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value='9' WHERE key='schema_version'")
 	require.NoError(err)
 	require.Error(f.Store.ValidateSchemaContext(t.Context()))
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
@@ -117,21 +116,21 @@ func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(store.SchemaVersion, version)
 	var count int
-	require.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM docbank_attachment_deliveries").Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM docbank_attachment_deliveries").Scan(&count))
 	assert.Zero(count)
 }
 
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	s, err := store.OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(s.Close()) })
-	_, err = s.DB().Exec("CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE messages (wrong_column TEXT)")
+	_, err = s.DB().ExecContext(t.Context(), "CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE messages (wrong_column TEXT)")
 	require.NoError(err)
-	require.Error(s.InitSchemaContext(context.Background()))
+	require.Error(s.InitSchemaContext(t.Context()))
 	var markers int
-	require.NoError(s.DB().QueryRow("SELECT count(*) FROM archive_metadata WHERE key='schema_version'").Scan(&markers))
+	require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM archive_metadata WHERE key='schema_version'").Scan(&markers))
 	assert.Zero(markers, "failed upgrade must not certify completion")
 }
 
@@ -140,24 +139,24 @@ func TestSchemaVersionSQLiteFutureArchive(t *testing.T) {
 		t.Run(strconv.FormatInt(version, 10), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			s, err := store.OpenForTest(filepath.Join(t.TempDir(), "future.db"))
+			s, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "future.db"))
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(s.Close()) })
-			_, err = s.DB().Exec("CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+			_, err = s.DB().ExecContext(t.Context(), "CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 			require.NoError(err)
-			_, err = s.DB().Exec("INSERT INTO archive_metadata (key, value) VALUES ('schema_version', ?)", version)
+			_, err = s.DB().ExecContext(t.Context(), "INSERT INTO archive_metadata (key, value) VALUES ('schema_version', ?)", version)
 			require.NoError(err)
-			_, err = s.DB().Exec("CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep')")
+			_, err = s.DB().ExecContext(t.Context(), "CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep')")
 			require.NoError(err)
-			require.ErrorContains(s.InitSchemaContext(context.Background()), "newer")
+			require.ErrorContains(s.InitSchemaContext(t.Context()), "newer")
 			var got int64
-			require.NoError(s.DB().QueryRow("SELECT value FROM archive_metadata WHERE key='schema_version'").Scan(&got))
+			require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT value FROM archive_metadata WHERE key='schema_version'").Scan(&got))
 			assert.Equal(version, got)
 			var value string
-			require.NoError(s.DB().QueryRow("SELECT value FROM sentinel").Scan(&value))
+			require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT value FROM sentinel").Scan(&value))
 			assert.Equal("keep", value)
 			var tables int
-			require.NoError(s.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='messages'").Scan(&tables))
+			require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='messages'").Scan(&tables))
 			assert.Zero(tables, "future archive must be refused before schema DDL")
 		})
 	}
@@ -167,7 +166,7 @@ func TestSchemaVersionLegacyMarker(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	s := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	version, err := s.SchemaVersionContext(ctx)
 	require.NoError(err)
 	assert.Equal(store.SchemaVersion, version)
@@ -175,7 +174,7 @@ func TestSchemaVersionLegacyMarker(t *testing.T) {
 	version, err = s.SchemaVersionContext(ctx)
 	require.NoError(err)
 	assert.Equal(store.SchemaVersion, version)
-	_, err = s.DB().Exec("DELETE FROM archive_metadata WHERE key='schema_version'")
+	_, err = s.DB().ExecContext(t.Context(), "DELETE FROM archive_metadata WHERE key='schema_version'")
 	require.NoError(err)
 	version, err = s.SchemaVersionContext(ctx)
 	require.NoError(err)
@@ -266,17 +265,17 @@ func TestSchemaVersionMalformedAndFuture(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			req := require.New(t)
 			check := assert.New(t)
-			_, err := s.DB().Exec(s.Rebind("UPDATE archive_metadata SET value = ? WHERE key='schema_version'"), value)
+			_, err := s.DB().ExecContext(t.Context(), s.Rebind("UPDATE archive_metadata SET value = ? WHERE key='schema_version'"), value)
 			req.NoError(err)
-			req.Error(s.InitSchemaContext(context.Background()))
+			req.Error(s.InitSchemaContext(t.Context()))
 			var got string
-			req.NoError(s.DB().QueryRow("SELECT value FROM archive_metadata WHERE key='schema_version'").Scan(&got))
+			req.NoError(s.DB().QueryRowContext(t.Context(), "SELECT value FROM archive_metadata WHERE key='schema_version'").Scan(&got))
 			check.Equal(value, got)
 		})
 	}
-	_, err := s.DB().Exec("DROP TABLE archive_metadata")
+	_, err := s.DB().ExecContext(t.Context(), "DROP TABLE archive_metadata")
 	req.NoError(err)
-	version, err := s.SchemaVersionContext(context.Background())
+	version, err := s.SchemaVersionContext(t.Context())
 	req.NoError(err)
 	check.Zero(version, "missing legacy metadata must not be created by probe")
 }
@@ -429,10 +428,10 @@ SELECT replace(def, (SELECT nspname FROM ns) || '.', '') FROM (
 // schema_sqlite.sql instead.
 func schemaContractDigest(t *testing.T) string {
 	t.Helper()
-	s, err := store.OpenForTest(filepath.Join(t.TempDir(), "contract.db"))
+	s, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "contract.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	require.NoError(t, s.InitSchemaContext(context.Background()))
+	require.NoError(t, s.InitSchemaContext(t.Context()))
 	var parts []string
 	for _, object := range queryStrings(t, s, `SELECT type || ' ' || name || ' ' || sql FROM sqlite_master
 		WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite!_%' ESCAPE '!' AND name NOT LIKE '%!_fts%' ESCAPE '!'
@@ -458,7 +457,7 @@ func schemaContractDigest(t *testing.T) string {
 
 func queryStrings(t *testing.T, s *store.Store, query string) []string {
 	t.Helper()
-	rows, err := s.DB().Query(query)
+	rows, err := s.DB().QueryContext(t.Context(), query)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var out []string

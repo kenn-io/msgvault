@@ -26,7 +26,7 @@ func TestInitSchema_PGCreatesAttachmentMaintenanceIndexes(t *testing.T) {
 	st := testutil.NewTestStore(t) // runs InitSchema in an isolated schema
 	probe := func(indexName string) int {
 		var n int
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COUNT(*) FROM pg_indexes
 			WHERE schemaname = current_schema()
 			  AND tablename = 'attachments'
@@ -48,7 +48,7 @@ func TestInitSchema_PGCreatesAttachmentMaintenanceIndexes(t *testing.T) {
 		"idx_attachments_content_hash_lower",
 		"idx_attachments_thumbnail_hash_lower",
 	} {
-		_, err := st.DB().Exec(`DROP INDEX ` + name)
+		_, err := st.DB().ExecContext(t.Context(), `DROP INDEX `+name)
 		require.NoError(err, "drop %s", name)
 	}
 	require.NoError(st.InitSchema(), "InitSchema must restore upgrade indexes through maintenance")
@@ -71,7 +71,7 @@ func TestInitSchema_SQLiteCreatesThumbnailPathIndex(t *testing.T) {
 
 	st := testutil.NewTestStore(t)
 	var n int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'idx_attachments_thumbnail_path'`).Scan(&n))
 	require.Equal(1, n, "thumbnail_path lookup must use a real schema index")
@@ -91,7 +91,7 @@ func TestInitSchema_SQLiteCreatesAttachmentHashExpressionIndexes(t *testing.T) {
 	}
 	probe := func(name string) int {
 		var n int
-		require.NoError(st.DB().QueryRow(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), `
 			SELECT COUNT(*) FROM sqlite_master
 			WHERE type = 'index' AND name = ?`, name).Scan(&n))
 		return n
@@ -101,7 +101,7 @@ func TestInitSchema_SQLiteCreatesAttachmentHashExpressionIndexes(t *testing.T) {
 	}
 
 	for _, name := range names {
-		_, err := st.DB().Exec(`DROP INDEX ` + name)
+		_, err := st.DB().ExecContext(t.Context(), `DROP INDEX `+name)
 		require.NoError(err, "drop %s", name)
 	}
 	require.NoError(st.InitSchema(), "InitSchema must add expression indexes to upgraded databases")

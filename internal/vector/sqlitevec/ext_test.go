@@ -18,7 +18,7 @@ func TestSQLiteVecExtensionLoads(t *testing.T) {
 	require.NoError(err, "open")
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`CREATE VIRTUAL TABLE t USING vec0(
+	_, err = db.ExecContext(t.Context(), `CREATE VIRTUAL TABLE t USING vec0(
 		generation_id INTEGER PARTITION KEY,
 		message_id INTEGER PRIMARY KEY,
 		embedding FLOAT[4]
@@ -27,11 +27,11 @@ func TestSQLiteVecExtensionLoads(t *testing.T) {
 
 	// Sanity: insert and query a vector.
 	// Little-endian float32 blob for [1.0, 0.0, 0.0, 0.0].
-	_, err = db.Exec(`INSERT INTO t (generation_id, message_id, embedding) VALUES (?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO t (generation_id, message_id, embedding) VALUES (?, ?, ?)`,
 		1, 42, []byte{0, 0, 0x80, 0x3f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
 	require.NoError(err, "insert vector")
 
 	var vec1Info string
-	require.NoError(db.QueryRow(`SELECT vec1_info()`).Scan(&vec1Info), "query Vec1 info")
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT vec1_info()`).Scan(&vec1Info), "query Vec1 info")
 	require.Contains(vec1Info, "version 0.7")
 }

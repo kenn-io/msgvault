@@ -531,9 +531,9 @@ func TestDaemonMCPServeOptionsGatesLineReplyBySchema(t *testing.T) {
 		wantLineReply bool
 		delegated     bool
 	}{
-		{name: "delegated commands", schemaVersion: "3.47.0", delegated: true},
-		{name: "before LINE reply schema", schemaVersion: "3.46.0"},
-		{name: "LINE reply schema", schemaVersion: "3.47.0", wantLineReply: true},
+		{name: "delegated commands", schemaVersion: "3.48.0", delegated: true},
+		{name: "before LINE reply schema", schemaVersion: "3.47.0"},
+		{name: "LINE reply schema", schemaVersion: "3.48.0", wantLineReply: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

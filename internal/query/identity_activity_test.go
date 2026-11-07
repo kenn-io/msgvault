@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -37,18 +36,18 @@ func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T)
 		}},
 		Page: PageSpec{Limit: 25},
 	}
-	people, err := engine.SearchPeople(context.Background(), request)
+	people, err := engine.SearchPeople(t.Context(), request)
 	requirementsForTest.NoError(err)
 	requirementsForTest.Len(people.Rows, 1)
 	assert.Equal(t, direct, people.Rows[0].ID,
 		"conversation membership qualifies the fact filter but not non-chat people fan-out")
 	engine.identityCandidateFastPathDisabled = true
-	logicalPeople, err := engine.SearchPeople(context.Background(), request)
+	logicalPeople, err := engine.SearchPeople(t.Context(), request)
 	requirementsForTest.NoError(err)
 	assert.Equal(t, logicalPeople, people)
 	engine.identityCandidateFastPathDisabled = false
 
-	domains, err := engine.SearchDomains(context.Background(), DomainSearchRequest{
+	domains, err := engine.SearchDomains(t.Context(), DomainSearchRequest{
 		Explore: ExploreRequest{Context: Context{
 			ParticipantIDs: []int64{conversationOnly},
 		}},
@@ -91,10 +90,10 @@ func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 		Sort: SortSpec{Field: "display_label", Direction: "asc"},
 		Page: PageSpec{Limit: 25},
 	}
-	gotPeople, err := engine.SearchPeople(context.Background(), peopleRequest)
+	gotPeople, err := engine.SearchPeople(t.Context(), peopleRequest)
 	requirementsForTest.NoError(err)
 	wantPeople, err := engine.searchPeopleLegacy(
-		context.Background(),
+		t.Context(),
 		peopleRequest,
 		nil,
 		nil,
@@ -107,10 +106,10 @@ func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 		Sort: SortSpec{Field: "display_label", Direction: "asc"},
 		Page: PageSpec{Limit: 25},
 	}
-	gotDomains, err := engine.SearchDomains(context.Background(), domainRequest)
+	gotDomains, err := engine.SearchDomains(t.Context(), domainRequest)
 	requirementsForTest.NoError(err)
 	wantDomains, err := engine.searchDomainsLegacy(
-		context.Background(),
+		t.Context(),
 		domainRequest,
 		"",
 	)
@@ -163,10 +162,10 @@ func TestSourceOnlyPeopleRollupFastPathMatchesLogicalReduction(t *testing.T) {
 		Sort: SortSpec{Field: "display_label", Direction: "asc"},
 		Page: PageSpec{Limit: 25},
 	}
-	fast, err := engine.SearchPeople(context.Background(), request)
+	fast, err := engine.SearchPeople(t.Context(), request)
 	requirements.NoError(err)
 	engine.sourceRollupFastPathDisabled = true
-	logical, err := engine.SearchPeople(context.Background(), request)
+	logical, err := engine.SearchPeople(t.Context(), request)
 	requirements.NoError(err)
 
 	assertions.Equal(logical, fast)
@@ -226,7 +225,7 @@ func TestIdentityActivityAppliesFactFilters(t *testing.T) {
 	)
 	engine := builder.BuildEngine()
 
-	response, err := engine.SearchPeople(context.Background(), PersonSearchRequest{
+	response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
 		Explore: ExploreRequest{
 			Context: Context{
 				SourceIDs:    []int64{selectedSource},
@@ -363,7 +362,7 @@ func TestIdentityCandidateNarrowingRetainsScalarFilters(t *testing.T) {
 		Deletion:       DeletionActive,
 	}}
 	narrowed, err := engine.narrowIdentityFactCandidates(
-		context.Background(),
+		t.Context(),
 		request,
 	)
 	requirements.NoError(err)
@@ -401,17 +400,17 @@ func TestIdentityCandidateNarrowingSaturationFallsBackExactly(t *testing.T) {
 	}
 
 	narrowed, err := engine.narrowIdentityFactCandidates(
-		context.Background(),
+		t.Context(),
 		request.Explore,
 	)
 	require.NoError(err)
 	assert.Nil(narrowed.Search.CandidateMessageIDs)
 	assert.Equal(request.Explore.Context.ParticipantIDs, narrowed.Context.ParticipantIDs)
 
-	saturatedFallback, err := engine.SearchPeople(context.Background(), request)
+	saturatedFallback, err := engine.SearchPeople(t.Context(), request)
 	require.NoError(err)
 	engine.identityCandidateFastPathDisabled = true
-	generic, err := engine.SearchPeople(context.Background(), request)
+	generic, err := engine.SearchPeople(t.Context(), request)
 	require.NoError(err)
 	assert.Equal(generic, saturatedFallback)
 }

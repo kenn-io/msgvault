@@ -41,7 +41,7 @@ func TestHandleFastSearchStatsAreOptIn(t *testing.T) {
 				},
 			}
 			server := newTestServerWithEngine(t, engine)
-			response := doGet(server, "/api/v1/search/fast?q=needle"+tc.parameter)
+			response := doGet(t.Context(), server, "/api/v1/search/fast?q=needle"+tc.parameter)
 			require.Equal(http.StatusOK, response.Code, "body: %s", response.Body.String())
 			assert.Equal(tc.wantView, gotView)
 			var body map[string]json.RawMessage

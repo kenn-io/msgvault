@@ -108,7 +108,7 @@ func TestWebHandlerServesExactAssetsBeforeNavigationFallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil))
 
 			assert.Equal(http.StatusOK, recorder.Code)
 			assert.Equal(tc.wantBody, recorder.Body.String())
@@ -128,7 +128,7 @@ func TestWebHandlerServesShellForSafeNavigation(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			assert := assert.New(t)
 			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 
 			assert.Equal(http.StatusOK, recorder.Code)
 			assert.Equal(testIndex, recorder.Body.String())
@@ -170,7 +170,7 @@ func TestWebHandlerDelegatesUnsafeFallbacks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, nil))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
 
 			assert.Equal(http.StatusNotFound, recorder.Code)
 			assert.Equal("application/json", recorder.Header().Get("Content-Type"))
@@ -216,7 +216,7 @@ func TestWebHandlerSupportsHEADWithoutResponseBodies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodHead, tc.path, nil))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodHead, tc.path, nil))
 
 			assert.Equal(http.StatusOK, recorder.Code)
 			assert.Empty(recorder.Body.String())
@@ -248,12 +248,12 @@ func TestWebHandlerFailsConservativelyWithoutValidManifest(t *testing.T) {
 			handler := NewHandler(assets, jsonNotFoundHandler())
 
 			assetRecorder := httptest.NewRecorder()
-			handler.ServeHTTP(assetRecorder, httptest.NewRequest(http.MethodGet, "/assets/index-DV9xHoWC.js", nil))
+			handler.ServeHTTP(assetRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/assets/index-DV9xHoWC.js", nil))
 			assertions.Equal(http.StatusOK, assetRecorder.Code)
 			assertions.Empty(assetRecorder.Header().Get("Cache-Control"))
 
 			shellRecorder := httptest.NewRecorder()
-			handler.ServeHTTP(shellRecorder, httptest.NewRequest(http.MethodGet, "/not/a/real/route", nil))
+			handler.ServeHTTP(shellRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/not/a/real/route", nil))
 			assertions.Equal(http.StatusOK, shellRecorder.Code)
 			assertions.Equal(testIndex, shellRecorder.Body.String())
 		})
@@ -267,7 +267,7 @@ func TestWebHandlerDoesNotExposeViteManifest(t *testing.T) {
 	}, jsonNotFoundHandler())
 	recorder := httptest.NewRecorder()
 
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/.vite/manifest.json", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/.vite/manifest.json", nil))
 
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
 	assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
@@ -302,7 +302,7 @@ func TestWebHandlerRefusesHiddenAndCredentialAssets(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			assert := assert.New(t)
 			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 
 			assert.Equal(http.StatusNotFound, recorder.Code)
 			assert.Equal("application/json", recorder.Header().Get("Content-Type"))
@@ -312,7 +312,7 @@ func TestWebHandlerRefusesHiddenAndCredentialAssets(t *testing.T) {
 
 	t.Run("legitimate asset still served", func(t *testing.T) {
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/assets/index-DV9xHoWC.js", nil))
+		handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/assets/index-DV9xHoWC.js", nil))
 
 		assert.Equal(t, http.StatusOK, recorder.Code)
 		assert.Equal(t, `console.log("bundle")`, recorder.Body.String())
@@ -325,7 +325,7 @@ func TestWebHandlerDelegatesWhenEmbeddedIndexIsAbsent(t *testing.T) {
 	}, jsonNotFoundHandler())
 	recorder := httptest.NewRecorder()
 
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
 	assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))

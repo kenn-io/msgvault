@@ -28,7 +28,7 @@ func TestStoreAPIAdapterRefreshesAccountCatalogAfterIdentityChange(t *testing.T)
 	})
 	src, err := st.GetOrCreateSource("mbox", "archive@example.net")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "thread", "Thread")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Thread")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv, SourceMessageID: "m1", MessageType: "email",
@@ -37,7 +37,7 @@ func TestStoreAPIAdapterRefreshesAccountCatalogAfterIdentityChange(t *testing.T)
 
 	addresses := func() []string {
 		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
+		srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var body struct {
 			Accounts []struct {

@@ -73,7 +73,7 @@ func TestListIdentityRecordsIncludesHistoricalMaskedAliases(t *testing.T) {
 		}))
 	})
 
-	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 	require.NoError(err)
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)
@@ -129,7 +129,7 @@ func TestListIdentityRecordsWorksWithMaskedEmailCapabilityOnly(t *testing.T) {
 		}))
 	})
 
-	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 	require.NoError(err)
 	methodRequest := <-methodRequests
 	require.NoError(methodRequest.err)
@@ -178,7 +178,7 @@ func TestListIdentityRecordsSkipsSubmissionWithoutAccessibleAccount(t *testing.T
 		}))
 	})
 
-	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 	require.NoError(err)
 	assert.Equal([]Record{
 		{Identifier: "historical@example.test", State: "disabled", Kind: "masked-email"},
@@ -224,7 +224,7 @@ func TestListIdentityRecordsUsesUniqueAccountCapabilityFallback(t *testing.T) {
 		}))
 	})
 
-	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+	got, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 	require.NoError(err)
 	assert.Empty(got)
 	methodRequest := <-methodRequests
@@ -248,7 +248,7 @@ func TestListIdentityRecordsReturnsTypedCapabilityError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+	_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 	var capabilityErr *CapabilityError
 	require.ErrorAs(t, err, &capabilityErr)
 	assert.Equal(t, MaskedEmailCapability, capabilityErr.Capability)
@@ -271,7 +271,7 @@ func TestListIdentityRecordsRejectsAmbiguousCapabilityAccount(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+	_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 	require.ErrorContains(t, err, "ambiguous")
 	assert.NotContains(t, err.Error(), testToken)
 	assert.Equal(t, int32(0), methodRequests.Load())
@@ -340,7 +340,7 @@ func TestListIdentityRecordsRejectsCrossOriginAPIURLBeforeSendingToken(t *testin
 	}))
 	t.Cleanup(session.Close)
 
-	_, err := newClient(testToken, session.Client(), session.URL+"/session").ListIdentityRecords(context.Background())
+	_, err := newClient(testToken, session.Client(), session.URL+"/session").ListIdentityRecords(t.Context())
 	require.ErrorContains(t, err, "cross-origin")
 	assert.Equal(t, int32(0), crossOriginRequests.Load())
 	assert.NotContains(t, err.Error(), testToken)
@@ -359,7 +359,7 @@ func TestListIdentityRecordsDoesNotFollowAuthenticatedRedirects(t *testing.T) {
 	}))
 	t.Cleanup(session.Close)
 
-	_, err := newClient(testToken, session.Client(), session.URL+"/session").ListIdentityRecords(context.Background())
+	_, err := newClient(testToken, session.Client(), session.URL+"/session").ListIdentityRecords(t.Context())
 	require.Error(t, err)
 	assert.Equal(t, int32(0), redirectedRequests.Load())
 	assert.NotContains(t, err.Error(), testToken)
@@ -382,7 +382,7 @@ func TestJMAPHTTPErrorsRedactTokenAndBody(t *testing.T) {
 		_, _ = w.Write([]byte(`{"detail":"private-address@example.test","token":"fm_body_secret"}`))
 	})
 
-	_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+	_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 	require.Error(err)
 	require.ErrorContains(err, "MaskedEmail/get")
 	require.ErrorContains(err, "502")
@@ -467,7 +467,7 @@ func TestListIdentityRecordsFailsClosedForInvalidMethodResponses(t *testing.T) {
 				assert.NoError(writeJSON(w, map[string]any{"methodResponses": tt.methodResponses}))
 			})
 
-			_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+			_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 			require.Error(err)
 			require.ErrorContains(err, tt.wantError)
 			assert.NotContains(err.Error(), "private@example.test")
@@ -544,7 +544,7 @@ func TestListIdentityRecordsClassifiesObjectLimitErrors(t *testing.T) {
 				assert.NoError(writeJSON(w, map[string]any{"methodResponses": tt.methodResponses}))
 			})
 
-			_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(context.Background())
+			_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(t.Context())
 			var limitErr *ObjectLimitError
 			require.ErrorAs(err, &limitErr)
 			assert.Equal(tt.wantMethod, limitErr.Method)
@@ -572,7 +572,7 @@ func TestListIdentityRecordsReturnsContextCancellation(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 		t.Cleanup(func() { close(release) })
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() {
 			_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(ctx)
@@ -614,7 +614,7 @@ func TestListIdentityRecordsReturnsContextCancellation(t *testing.T) {
 			}
 		})
 		t.Cleanup(func() { close(release) })
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() {
 			_, err := newClient(testToken, srv.Client(), srv.URL+"/session").ListIdentityRecords(ctx)

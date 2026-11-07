@@ -113,7 +113,7 @@ func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
 		sql.NullString{String: "date square confection", Valid: true}, sql.NullString{}),
 		"UpsertMessageBody")
 
-	_, err := f.Store.DB().Exec("DROP TABLE messages_fts")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE messages_fts")
 	require.NoError(err, "DROP TABLE messages_fts")
 
 	n, err := f.Store.RebuildFTS(nil)
@@ -121,7 +121,8 @@ func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
 	assert.Equal(int64(1), n, "RebuildFTS rows")
 
 	var count int
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		"SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'confection'").Scan(&count),
 		"FTS MATCH confection")
 	assert.Equal(1, count, "match 'confection'")

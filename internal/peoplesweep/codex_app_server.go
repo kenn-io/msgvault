@@ -995,7 +995,7 @@ func (execCommandStarter) Start(
 	if executable.verifiedPath == "" || !filepath.IsAbs(executable.verifiedPath) {
 		return nil, errors.New("codex app-server verified executable is required")
 	}
-	command := exec.Command(executable.verifiedPath, args...) //nolint:gosec // The gate owns this absolute private snapshot.
+	command := exec.CommandContext(ctx, executable.verifiedPath, args...) //nolint:gosec // The gate owns this absolute private snapshot.
 	command.Env = slices.Clone(env)
 	command.Dir = dir
 	processTree, err := newCodexAppServerProcessTree(command)

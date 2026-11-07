@@ -19,7 +19,7 @@ import (
 )
 
 func TestCacheNeedsBuildContextCanceledDoesNotRequestBuild(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	got := cacheNeedsBuildContext(ctx, filepath.Join(t.TempDir(), "msgvault.db"), t.TempDir())
@@ -28,11 +28,11 @@ func TestCacheNeedsBuildContextCanceledDoesNotRequestBuild(t *testing.T) {
 }
 
 func TestCacheStalenessQueriesRespectCancellation(t *testing.T) {
-	st, err := store.OpenForTest(filepath.Join(t.TempDir(), "msgvault.db"))
+	st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "msgvault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = readCacheSyncCountersContext(ctx, st.DB())
 	require.ErrorIs(t, err, context.Canceled)
@@ -46,7 +46,7 @@ func TestCacheStalenessCanceledDuringInspection(t *testing.T) {
 	tmp := setupTestSQLite(t)
 	dbPath := filepath.Join(tmp, "test.db")
 	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, true)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(t, err)
 
 	checks := []struct {
@@ -115,23 +115,23 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 		},
 	})
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO labels (id, name) VALUES (1, 'synthetic'), (2, 'changed')`)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO labels (id, name) VALUES (1, 'synthetic'), (2, 'changed')`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO participants (id, email_address, domain)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO participants (id, email_address, domain)
 		VALUES (1, 'one@example.com', 'example.com'), (2, 'two@example.com', 'example.com')`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO message_recipients
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO message_recipients
 		(message_id, participant_id, recipient_type) VALUES (?, 1, 'to')`, messageID)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO attachments
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO attachments
 		(id, message_id, storage_path, filename, size) VALUES (1, ?, 'synthetic', 'old.txt', 1)`, messageID)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`, messageID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`, messageID)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO message_labels (message_id, label_id) VALUES (?, 1)`, messageID)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO message_labels (message_id, label_id) VALUES (?, 1)`, messageID)
 	require.NoError(err)
 	require.NoError(st.Close())
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err)
 	state, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
@@ -141,11 +141,11 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	st, err = store.Open(dbPath)
 	require.NoError(err)
 	var acknowledgedRows int64
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal`).Scan(&acknowledgedRows))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal`).Scan(&acknowledgedRows))
 	assert.Zero(acknowledgedRows, "published journal entries should be pruned")
-	require.NoError(st.AddMessageLabels(messageID, []int64{2}))
+	require.NoError(st.AddMessageLabels(t.Context(), messageID, []int64{2}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{2}, []string{"Recipient Two"}))
-	_, err = st.DB().Exec(`UPDATE attachments SET filename = 'new.txt', size = 2 WHERE id = 1`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE attachments SET filename = 'new.txt', size = 2 WHERE id = 1`)
 	require.NoError(err)
 	require.NoError(st.Close())
 	got := cacheNeedsBuild(dbPath, analyticsDir)
@@ -155,7 +155,7 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	st, err = store.Open(dbPath)
 	require.NoError(err)
 	var seq int64
-	require.NoError(st.DB().QueryRow(`SELECT MAX(seq) FROM cache_related_change_journal`).Scan(&seq))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT MAX(seq) FROM cache_related_change_journal`).Scan(&seq))
 	require.NoError(st.Close())
 	assert.Greater(seq, state.LastRelatedChangeSeq)
 	previousHook := buildCacheBeforeMessagesExportHook
@@ -163,7 +163,7 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 		return errors.New("related-row repair attempted a message export")
 	}
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = previousHook })
-	result, err := buildCacheAuto(dbPath, analyticsDir)
+	result, err := buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	assert.True(result.IdentityOnly)
 	assert.Zero(result.ExportedCount)
@@ -176,16 +176,16 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	defer func() { _ = duckDB.Close() }()
 	labelsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "message_labels", "*.parquet"), "'", "''")
 	var labelCount int64
-	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet('" + labelsPath + "')").Scan(&labelCount))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM read_parquet('"+labelsPath+"')").Scan(&labelCount))
 	assert.Equal(int64(2), labelCount)
 	recipientsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "message_recipients", "*.parquet"), "'", "''")
 	var recipientID int64
-	require.NoError(duckDB.QueryRow("SELECT participant_id FROM read_parquet('" + recipientsPath + "')").Scan(&recipientID))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT participant_id FROM read_parquet('"+recipientsPath+"')").Scan(&recipientID))
 	assert.Equal(int64(2), recipientID)
 	attachmentsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "attachments", "*.parquet"), "'", "''")
 	var filename string
 	var attachmentSize int64
-	require.NoError(duckDB.QueryRow("SELECT filename, size FROM read_parquet('"+attachmentsPath+"')").Scan(&filename, &attachmentSize))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT filename, size FROM read_parquet('"+attachmentsPath+"')").Scan(&filename, &attachmentSize))
 	assert.Equal("new.txt", filename)
 	assert.Equal(int64(2), attachmentSize)
 	assert.Equal(int64(2), repairedState.Stats.AttachmentSizeBytes)
@@ -213,15 +213,15 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(newMessageID, "from", []int64{1}, []string{"New Sender"}))
-	_, err = st.DB().Exec(`INSERT INTO labels (id, name) VALUES (3, 'second-change')`)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO labels (id, name) VALUES (3, 'second-change')`)
 	require.NoError(err)
-	require.NoError(st.AddMessageLabels(messageID, []int64{3}))
+	require.NoError(st.AddMessageLabels(t.Context(), messageID, []int64{3}))
 	require.NoError(st.Close())
-	result, err = buildCacheAuto(dbPath, analyticsDir)
+	result, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	assert.Equal(int64(1), result.StagedCount)
 	assert.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
-	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet('" + labelsPath + "')").Scan(&labelCount))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM read_parquet('"+labelsPath+"')").Scan(&labelCount))
 	assert.Equal(int64(3), labelCount)
 	for path, before := range unchangedFiles {
 		after, err := os.Stat(path)
@@ -237,11 +237,11 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	require.NoError(err)
 	st, err = store.Open(dbPath)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO labels (id, name) VALUES (4, 'label-only')`)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO labels (id, name) VALUES (4, 'label-only')`)
 	require.NoError(err)
-	require.NoError(st.AddMessageLabels(messageID, []int64{4}))
+	require.NoError(st.AddMessageLabels(t.Context(), messageID, []int64{4}))
 	require.NoError(st.Close())
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	activityAfter, err := os.Stat(activityFiles[0])
 	require.NoError(err)
@@ -250,23 +250,23 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	assert.Equal(activityBefore.Size(), activityAfter.Size())
 	var labelDefinitionCount int64
 	definitionsPath := strings.ReplaceAll(filepath.Join(analyticsDir, "labels", "*.parquet"), "'", "''")
-	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet('" + definitionsPath + "')").Scan(&labelDefinitionCount))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM read_parquet('"+definitionsPath+"')").Scan(&labelDefinitionCount))
 	assert.Equal(int64(4), labelDefinitionCount)
 
 	// A display-name change has no message_labels mutation, but must still
 	// republish the label definitions used by analytical views.
 	st, err = store.Open(dbPath)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE labels SET name = 'renamed' WHERE id = 4`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE labels SET name = 'renamed' WHERE id = 4`)
 	require.NoError(err)
 	require.NoError(st.Close())
 	got = cacheNeedsBuild(dbPath, analyticsDir)
 	assert.True(got.HasRelatedRowDrift)
 	assert.False(got.FullRebuild)
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	var labelName string
-	require.NoError(duckDB.QueryRow("SELECT name FROM read_parquet('" + definitionsPath + "') WHERE id = 4").Scan(&labelName))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT name FROM read_parquet('"+definitionsPath+"') WHERE id = 4").Scan(&labelName))
 	assert.Equal("renamed", labelName)
 	for path, before := range unchangedFiles {
 		after, err := os.Stat(path)
@@ -278,7 +278,7 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	// size again, while keeping old relationship activity in place.
 	st, err = store.Open(dbPath)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE attachments SET size = 3 WHERE id = 1`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE attachments SET size = 3 WHERE id = 1`)
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{
 		ConversationID: conversationID, SourceID: src.ID, SourceMessageID: "attachment-append",
@@ -286,7 +286,7 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(st.Close())
-	result, err = buildCacheAuto(dbPath, analyticsDir)
+	result, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	assert.Equal(int64(1), result.StagedCount)
 	repairedState, err = query.ReadCacheSyncState(analyticsDir)
@@ -312,17 +312,17 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(st.Close())
-	result, err = buildCacheAuto(dbPath, analyticsDir)
+	result, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	assert.Equal(int64(1), result.StagedCount)
-	require.NoError(duckDB.QueryRow("SELECT participant_id FROM read_parquet('"+recipientsPath+"') WHERE message_id = ?", messageID).Scan(&recipientID))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT participant_id FROM read_parquet('"+recipientsPath+"') WHERE message_id = ?", messageID).Scan(&recipientID))
 	assert.Equal(int64(1), recipientID)
 	repairedState, err = query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
 	assert.Equal(int64(4), repairedState.Stats.TotalMessages)
 	assert.Equal(int64(3), repairedState.Stats.AttachmentSizeBytes)
 	var canonicalID int64
-	require.NoError(duckDB.QueryRow(`SELECT canonical_id FROM read_parquet(?, hive_partitioning=true)
+	require.NoError(duckDB.QueryRowContext(t.Context(), `SELECT canonical_id FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id IS NOT NULL`,
 		filepath.Join(analyticsDir, "relationship_activity", "**", "*.parquet"), messageID).Scan(&canonicalID))
 	assert.Equal(int64(1), canonicalID)
@@ -332,7 +332,7 @@ func TestCacheNeedsBuildTracksCoveredRelatedRows(t *testing.T) {
 	// message shards; those cannot use the child-only repair path.
 	st, err = store.Open(dbPath)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE messages SET attachment_count = attachment_count + 1 WHERE id = ?`, messageID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET attachment_count = attachment_count + 1 WHERE id = ?`, messageID)
 	require.NoError(err)
 	require.NoError(st.Close())
 	got = cacheNeedsBuild(dbPath, analyticsDir)
@@ -383,12 +383,13 @@ func TestCacheNeedsBuild_MeetingMutation(t *testing.T) {
 			require.NoError(err)
 			require.NoError(st.Close())
 
-			_, err = buildCache(dbPath, analyticsDir, false)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 			require.NoError(err)
 
 			st, err = store.Open(dbPath)
 			require.NoError(err)
-			_, err = st.DB().Exec(
+			_, err = st.DB().ExecContext(
+				t.Context(),
 				"UPDATE messages SET "+tt.mutationField+" = ? WHERE id = ?",
 				time.Now().UTC().Add(time.Minute).Format("2006-01-02 15:04:05"), mutationID,
 			)
@@ -426,7 +427,7 @@ func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDrift(t *testing.T) {
 			full: true,
 			mutate: func(t *testing.T, st *store.Store) {
 				t.Helper()
-				_, err := st.DB().Exec(`
+				_, err := st.DB().ExecContext(t.Context(), `
 					INSERT INTO conversation_participants
 						(conversation_id, participant_id)
 					VALUES (102, 4)
@@ -447,12 +448,12 @@ func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDrift(t *testing.T) {
 			tmp := setupTestSQLite(t)
 			dbPath := filepath.Join(tmp, "test.db")
 			analyticsDir := filepath.Join(tmp, "analytics")
-			_, err := buildCache(dbPath, analyticsDir, true)
+			_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 			requirements.NoError(err)
 
 			st, err := store.Open(dbPath)
 			requirements.NoError(err)
-			_, err = st.DB().Exec(`
+			_, err = st.DB().ExecContext(t.Context(), `
 				INSERT INTO messages
 					(id, source_id, source_message_id, conversation_id,
 					 subject, sent_at, message_type)
@@ -475,7 +476,7 @@ func TestCacheNeedsBuildMixedNewMessagesAndRelationshipDrift(t *testing.T) {
 
 func explainQueryPlan(t *testing.T, s *store.Store, sql string, args ...any) string {
 	t.Helper()
-	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+sql, args...)
+	rows, err := s.DB().QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+sql, args...)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	var b strings.Builder
@@ -503,14 +504,15 @@ func TestCacheStalenessCounts_UseDeletionIndexes(t *testing.T) {
 	// cacheNeedsBuild returns early for PostgreSQL DSNs.
 	s := testutil.NewSQLiteTestStore(t)
 
-	_, err := s.DB().Exec(
+	_, err := s.DB().ExecContext(
+		t.Context(),
 		`INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com')`)
 	require.NoError(err)
-	_, err = s.DB().Exec(`INSERT INTO conversations
+	_, err = s.DB().ExecContext(t.Context(), `INSERT INTO conversations
 		(id, source_id, source_conversation_id, conversation_type)
 		VALUES (1, 1, 'conv1', 'email')`)
 	require.NoError(err)
-	_, err = s.DB().Exec(`INSERT INTO messages
+	_, err = s.DB().ExecContext(t.Context(), `INSERT INTO messages
 		(id, conversation_id, source_id, source_message_id, message_type, sent_at, deleted_from_source_at, deleted_at)
 		VALUES
 		(1, 1, 1, 'm1', 'email', '2025-01-01 00:00:00', NULL, NULL),
@@ -520,7 +522,8 @@ func TestCacheStalenessCounts_UseDeletionIndexes(t *testing.T) {
 
 	for _, name := range []string{"idx_messages_deleted_from_source_at", "idx_messages_deleted_at"} {
 		var idxCount int
-		require.NoError(s.DB().QueryRow(
+		require.NoError(s.DB().QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ?`, name,
 		).Scan(&idxCount))
 		assert.Equal(1, idxCount, "%s should be created by InitSchema", name)
@@ -538,15 +541,15 @@ func TestCacheStalenessCounts_UseDeletionIndexes(t *testing.T) {
 
 	// The queries still return correct counts through the indexes.
 	var deleted, hidden int64
-	require.NoError(s.DB().QueryRow(deletedSinceBuildCountSQL(), "2025-05-01 00:00:00").Scan(&deleted))
-	require.NoError(s.DB().QueryRow(hiddenSinceBuildCountSQL(), "2025-05-01 00:00:00").Scan(&hidden))
+	require.NoError(s.DB().QueryRowContext(t.Context(), deletedSinceBuildCountSQL(), "2025-05-01 00:00:00").Scan(&deleted))
+	require.NoError(s.DB().QueryRowContext(t.Context(), hiddenSinceBuildCountSQL(), "2025-05-01 00:00:00").Scan(&hidden))
 	assert.Equal(int64(1), deleted)
 	assert.Equal(int64(1), hidden)
 }
 
 func TestCoveredRelatedChangesUseMessageBoundary(t *testing.T) {
 	s := testutil.NewSQLiteTestStore(t)
-	_, err := s.DB().Exec(`DELETE FROM cache_related_change_journal;
+	_, err := s.DB().ExecContext(t.Context(), `DELETE FROM cache_related_change_journal;
 		INSERT INTO cache_related_change_journal (seq, dataset, message_id)
 		VALUES (1, 'message_facts', 1), (2, 'labels', 0),
 			(3, 'message_labels', 100), (4, 'message_facts', 50), (5, 'message_facts', 101)`)
@@ -565,7 +568,7 @@ func TestCoveredRelatedChangesUseMessageBoundary(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var changed, facts bool
-			require.NoError(t, s.DB().QueryRow(coveredRelatedChangesSQL(), tt.after, tt.boundary).Scan(&changed, &facts))
+			require.NoError(t, s.DB().QueryRowContext(t.Context(), coveredRelatedChangesSQL(), tt.after, tt.boundary).Scan(&changed, &facts))
 			assert.Equal(t, tt.changed, changed)
 			assert.Equal(t, tt.facts, facts)
 		})
@@ -590,7 +593,7 @@ func TestLabelsOnNewMessageKeepCacheBuildIncremental(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
         INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
         INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
             VALUES (1, 1, 'thread-1', 'email_thread');
@@ -599,32 +602,32 @@ func TestLabelsOnNewMessageKeepCacheBuildIncremental(t *testing.T) {
         INSERT INTO labels (id, name) VALUES (1, 'synthetic');
     `)
 	require.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
 	shards, err := filepath.Glob(filepath.Join(c.AnalyticsDir(), "messages", "*", "*.parquet"))
 	require.NoError(err)
 	require.NotEmpty(shards)
 	original, err := os.ReadFile(shards[0])
 	require.NoError(err)
-	_, err = s.DB().Exec(`INSERT INTO messages
+	_, err = s.DB().ExecContext(t.Context(), `INSERT INTO messages
         (id, source_id, source_message_id, conversation_id, message_type, sent_at)
         VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')`)
 	require.NoError(err)
 	before, err := cacheNeedsBuildForServing(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 	require.NoError(err)
 	require.False(before.FullRebuild, "append alone: %s", before.Reason)
-	require.NoError(s.AddMessageLabels(2, []int64{1}))
+	require.NoError(s.AddMessageLabels(t.Context(), 2, []int64{1}))
 	after, err := cacheNeedsBuildForServing(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 	require.NoError(err)
 	assert.True(after.HasNew)
 	assert.False(after.FullRebuild, "labels on the new message are exported by append: %s", after.Reason)
-	built, err := buildCacheAuto(c.DatabaseDSN(), c.AnalyticsDir())
+	built, err := buildCacheAuto(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 	require.NoError(err)
 	assert.Equal(int64(1), built.StagedCount)
 	preserved, err := os.ReadFile(shards[0])
 	require.NoError(err)
 	assert.Equal(original, preserved, "append must preserve the committed message shard")
-	engine, err := openDaemonDuckDBEngine(c, s)
+	engine, err := openDaemonDuckDBEngine(t.Context(), c, s)
 	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	result, err := engine.QuerySQL(t.Context(), "SELECT message_id, label_id FROM message_labels")

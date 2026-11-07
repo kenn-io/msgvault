@@ -47,7 +47,7 @@ func buildRelationshipScaleCache(b *testing.B, emailCount, contactCount int) {
 	db, err := duckdbutil.Open(b.Context(), duckdbutil.BuilderPolicy(b.TempDir()))
 	require.NoError(b, err)
 	defer func() { require.NoError(b, db.Close()) }()
-	_, err = db.Exec(fmt.Sprintf(`CREATE VIEW scale_messages AS
+	_, err = db.ExecContext(b.Context(), fmt.Sprintf(`CREATE VIEW scale_messages AS
 		SELECT i::BIGINT AS id, 1::BIGINT AS source_id,
 		       'message-' || i AS source_message_id,
 		       false AS archive_only,
@@ -91,7 +91,7 @@ func buildRelationshipScaleCache(b *testing.B, emailCount, contactCount int) {
 			output = dir
 			options += ", PARTITION_BY (year), WRITE_PARTITION_COLUMNS true"
 		}
-		_, err := db.Exec("COPY (" + query + ") TO '" + escapePath(output) + "' (" + options + ")")
+		_, err := db.ExecContext(b.Context(), "COPY ("+query+") TO '"+escapePath(output)+"' ("+options+")")
 		require.NoError(b, err)
 	}
 	var result identityindex.BuildResult
@@ -141,13 +141,13 @@ func BenchmarkExploreScaleQueries(b *testing.B) {
 	}
 	for _, name := range []string{"People", "Domains", "DomainDrill", "DomainDetail"} {
 		b.Run(name, func(b *testing.B) {
-			engine, err := NewDuckDBEngine(root, "", nil, DuckDBOptions{MemoryLimit: *relationshipScaleMemory})
+			engine, err := NewDuckDBEngine(b.Context(), root, "", nil, DuckDBOptions{MemoryLimit: *relationshipScaleMemory})
 			require.NoError(b, err)
 			defer func() { require.NoError(b, engine.Close()) }()
 			if *relationshipScaleProfile {
-				_, err = engine.db.Exec("SET enable_profiling = 'json'")
+				_, err = engine.db.ExecContext(b.Context(), "SET enable_profiling = 'json'")
 				require.NoError(b, err)
-				_, err = engine.db.Exec("SET profiling_output = '" + escapePath(filepath.Join(root, name+".json")) + "'")
+				_, err = engine.db.ExecContext(b.Context(), "SET profiling_output = '"+escapePath(filepath.Join(root, name+".json"))+"'")
 				require.NoError(b, err)
 			}
 			var elapsed []time.Duration
@@ -203,7 +203,7 @@ func BenchmarkRelationshipScaleQueries(b *testing.B) {
 	}
 	for _, name := range []string{"Calendar", "Timeline", "PersonActivity", "MessageActivity", "DomainPeople"} {
 		b.Run(name, func(b *testing.B) {
-			engine, err := NewDuckDBEngine(root, "", nil)
+			engine, err := NewDuckDBEngine(b.Context(), root, "", nil)
 			require.NoError(b, err)
 			defer func() { require.NoError(b, engine.Close()) }()
 			var elapsed []time.Duration

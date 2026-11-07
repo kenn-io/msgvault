@@ -74,7 +74,7 @@ func newAddLineCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func newAddLineCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("save LINE configuration: %w", err)
 			}
-			if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 				return fmt.Errorf("finish LINE setup: %w", err)
 			}
 			out := cmd.OutOrStdout()
@@ -157,7 +157,7 @@ func newSyncLineCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -171,7 +171,7 @@ func newSyncLineCmd() *cobra.Command {
 					errs = append(errs, err)
 					break
 				}
-				source, err := st.GetSourceByTypeAndIdentifier(line.SourceType, profile.ChannelID)
+				source, err := st.GetSourceByTypeAndIdentifier(ctx, line.SourceType, profile.ChannelID)
 				if err == nil && source.MergedIntoSourceID != 0 {
 					err = store.ErrSourceRetired
 				}

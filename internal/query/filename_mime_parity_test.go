@@ -19,7 +19,7 @@ func TestFilenameMIMEFamilyParity(t *testing.T) {
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, db.Close()) })
-	_, err = db.Exec(`SET threads=2`)
+	_, err = db.ExecContext(t.Context(), `SET threads=2`)
 	require.NoError(err)
 	for _, tc := range []struct {
 		mime any

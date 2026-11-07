@@ -41,7 +41,7 @@ func TestGmailCoverageBackfillAndQuery(t *testing.T) {
 	gmailCoverageAbsent(t, e, "trash")
 	f.omitSpecial = false
 	gmailCoverageReopen(t, e)
-	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 	require.NoError(err)
 	require.Zero(idle.MessagesAdded)
 	full, err := e.Syncer.Full(e.Context, testEmail)
@@ -84,14 +84,14 @@ func TestGmailCoverageIncrementalAndReplay(t *testing.T) {
 		if id == "spam" {
 			f.failGet = true
 		}
-		first, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+		first, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 		require.NoError(err)
 		if id == "spam" {
 			require.Equal(int64(1), first.Errors)
 			f.failGet = false
 			f.event = ""
 			gmailCoverageReopen(t, e)
-			retry, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+			retry, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 			require.NoError(err)
 			require.Equal(int64(1), retry.MessagesAdded)
 		} else {
@@ -101,7 +101,7 @@ func TestGmailCoverageIncrementalAndReplay(t *testing.T) {
 	}
 	f.event = ""
 	gmailCoverageReopen(t, e)
-	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 	require.NoError(err)
 	require.Zero(idle.MessagesAdded)
 }
@@ -123,7 +123,7 @@ func TestGmailCoverageRejectsOldCheckpoint(t *testing.T) {
 			_, err := e.Syncer.Full(e.Context, testEmail)
 			require.Error(err)
 			// Model an older unfiltered, unlimited Gmail full request.
-			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?, cursor_after=NULL", scenario.fingerprint)
+			_, err = e.Store.DB().ExecContext(t.Context(), "UPDATE sync_runs SET request_fingerprint=?, cursor_after=NULL", scenario.fingerprint)
 			require.NoError(err)
 			f.requests = nil
 			gmailCoverageReopen(t, e)
@@ -149,11 +149,11 @@ func TestGmailCoverageInterruptedLegacyRecoveryRestartsAndCatchesUp(t *testing.T
 	require := require.New(t)
 
 	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
-	_, err := env.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=? WHERE id=?", store.GmailHistoryRecoveryRequestFingerprint, prior.ID)
+	_, err := env.Store.DB().ExecContext(t.Context(), "UPDATE sync_runs SET request_fingerprint=? WHERE id=?", store.GmailHistoryRecoveryRequestFingerprint, prior.ID)
 	require.NoError(err)
 	// The prior run's page token was generated before Spam/Trash were included.
 	var oldToken sql.NullString
-	require.NoError(env.Store.DB().QueryRow("SELECT cursor_before FROM sync_runs WHERE id=?", prior.ID).Scan(&oldToken))
+	require.NoError(env.Store.DB().QueryRowContext(t.Context(), "SELECT cursor_before FROM sync_runs WHERE id=?", prior.ID).Scan(&oldToken))
 	require.True(oldToken.Valid)
 
 	listed := env.Mock.ListMessagesCalls

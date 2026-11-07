@@ -22,16 +22,16 @@ func TestUpsertMessageBodyRollsBackWhenEmbeddingResetFails(t *testing.T) {
 	}
 	source, err := st.GetOrCreateSource("slack", "TEXAMPLE:UEXAMPLE")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "Example")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "CEXAMPLE", "Example")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "CEXAMPLE:1", MessageType: "slack",
 	})
 	require.NoError(err)
 	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "original text", Valid: true}, sql.NullString{}))
-	_, err = st.DB().Exec(`UPDATE messages SET embed_gen = 42 WHERE id = ?`, id)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = 42 WHERE id = ?`, id)
 	require.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER fail_embed_reset BEFORE UPDATE OF embed_gen ON messages
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_embed_reset BEFORE UPDATE OF embed_gen ON messages
 		WHEN NEW.embed_gen IS NULL BEGIN SELECT RAISE(ABORT, 'synthetic embedding reset failure'); END`)
 	require.NoError(err)
 
@@ -40,7 +40,7 @@ func TestUpsertMessageBodyRollsBackWhenEmbeddingResetFails(t *testing.T) {
 
 	var body string
 	var embedGen sql.NullInt64
-	require.NoError(st.DB().QueryRow(`SELECT b.body_text, m.embed_gen FROM message_bodies b
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT b.body_text, m.embed_gen FROM message_bodies b
 		JOIN messages m ON m.id = b.message_id WHERE b.message_id = ?`, id).Scan(&body, &embedGen))
 	assert.Equal(t, "original text", body)
 	assert.Equal(t, sql.NullInt64{Int64: 42, Valid: true}, embedGen)
@@ -57,7 +57,7 @@ func TestUpsertMessageBodyComparesAfterConcurrentPostgreSQLWrite(t *testing.T) {
 	}
 	source, err := st.GetOrCreateSource("slack", "TEXAMPLE:UEXAMPLE")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "Example")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "CEXAMPLE", "Example")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "CEXAMPLE:1", MessageType: "slack",
@@ -102,7 +102,7 @@ func TestUpsertMessageBodyComparesAfterConcurrentPostgreSQLWrite(t *testing.T) {
 
 	var body string
 	var indexed bool
-	require.NoError(st.DB().QueryRow(`SELECT b.body_text, m.search_fts IS NOT NULL FROM message_bodies b
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT b.body_text, m.search_fts IS NOT NULL FROM message_bodies b
 		JOIN messages m ON m.id = b.message_id WHERE b.message_id = $1`, id).Scan(&body, &indexed))
 	assert.Equal(t, "original text", body)
 	assert.False(t, indexed, "the concurrent search document no longer matches the body")

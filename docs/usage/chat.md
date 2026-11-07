@@ -81,7 +81,7 @@ non-dry-run plan through client elicitation.
 
 ## Draft tools
 
-These tools run the matching CLI commands through your selected daemon. Draft preparation and lifecycle tools require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft creation and lifecycle commands do not send. On unreleased `main`, the owner can send reviewed LINE text drafts with `send_line_reply` (API schema 3.47.0); see [LINE setup and receipts](line.md#reply-from-a-reviewed-draft).
+These tools run the matching CLI commands through your selected daemon. Draft preparation and lifecycle tools require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft creation and lifecycle commands do not send. On unreleased `main`, the owner can send reviewed LINE text drafts with `send_line_reply` (API schema 3.48.0); see [LINE setup and receipts](line.md#reply-from-a-reviewed-draft).
 
 `draft_delete`, `draft_recover`, and `send_line_reply` require client confirmation for the specific tool and arguments. Deletion removes a draft, recovery can finish an interrupted deletion, and LINE sending can make a provider request. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete, recover, or send them.
 
@@ -98,6 +98,10 @@ These tools run the matching CLI commands through your selected daemon. Draft pr
 | `send_line_reply` | `send-line-reply` | Required `draft_id`, `revision`; owner only, requires the LINE channel's `allow_send` and exact client confirmation |
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
+
+On unreleased `main`, successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. Review these values before sending. The draft is still written unchanged.
+
+Cards need 13 to 19 digits that pass the checksum, with a first digit of 2 to 6 or 8. IBANs need a registered country length and a valid checksum. Unlabelled keys are recognized only for common provider prefixes. A labelled value needs at least eight characters with a letter and a digit or one of `!@#$%^&*+/=~`; a quoted multi-word passphrase also counts under a password label. Labels and values must be on the same line, separated by `:` or `=`; `Bearer` values also count. An absent finding does not mean the content is safe. Stored drafts, server-appended history, and attachments are outside this scan.
 
 Owner sessions expose these tools alongside the archive tools. HTTP LINE sending also requires `--http-allow-writes`. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
@@ -879,6 +883,16 @@ The tool returns the batch ID, message count, and next steps:
   "next_step": "Run 'msgvault delete-staged' to execute deletion"
 }
 ```
+
+## Server identity (unreleased)
+
+On `main`, the MCP server declares msgvault's website and icon. The icon is
+included as a PNG data URI, so stdio and HTTP clients can load it without an
+external request. Whether it appears depends on the client.
+
+The MCP HTTP listener also serves the same PNG at `/icon.png` and `/favicon.ico`.
+These public image routes accept GET and HEAD without a bearer key. They expose
+no archive data; `/mcp` keeps its configured authentication.
 
 ## CLI Flags
 

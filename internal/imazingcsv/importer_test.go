@@ -31,11 +31,11 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 
 	summary, err := NewImporter(st, Options{
 		Owner: "+1 (555) 000-0001", Timezone: "UTC",
-	}).ImportPath(context.Background(), exportDir)
+	}).ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Equal(Summary{Files: 1, Conversations: 1, Messages: 3, Participants: 3}, summary)
 
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	require.True(source.SyncConfig.Valid)
 	assert.JSONEq(`{"ambiguous_time_policy":"earlier","timezone":"UTC"}`, source.SyncConfig.String)
@@ -43,7 +43,7 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 	var conversationID int64
 	var conversationType, title string
 	var messageCount, participantCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id, conversation_type, title, message_count, participant_count
 		FROM conversations WHERE source_id = ?`), source.ID).Scan(
 		&conversationID, &conversationType, &title, &messageCount, &participantCount,
@@ -53,7 +53,7 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 	assert.Equal(3, messageCount)
 	assert.Equal(3, participantCount)
 
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(phone_number, ''), COALESCE(email_address, ''), COALESCE(display_name, '')
 		FROM participants
 		WHERE id IN (SELECT participant_id FROM conversation_participants WHERE conversation_id = ?)
@@ -78,7 +78,7 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 	var deliveredAt sql.NullTime
 	var isDelivered, isRead bool
 	var readAt, metadata sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.id, m.delivered_at, m.is_delivered, m.is_read,
 		       CAST(m.read_at AS TEXT), CAST(m.metadata AS TEXT)
 		FROM messages m
@@ -107,12 +107,12 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 	assert.JSONEq(`{"Chat Session":"Alice & Bob","Message Date":"2024-06-01 12:00:00","Delivered Date":"2024-06-01 12:00:05","Read Date":"2024-06-01 12:01:00","Service":"iMessage","Type":"Outgoing","Sender ID":"","Sender Name":"","Status":"Delivered","Replying to":"","Subject":"Greeting","Text":"hello from me","Attachment":"","Attachment type":""}`, string(raw))
 
 	var rawFormat string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT raw_format FROM message_raw WHERE message_id = ?`), messageID).Scan(&rawFormat))
 	assert.Equal(RawFormat, rawFormat)
 
 	var readReceiptImpliesDelivered bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.is_delivered FROM messages m
 		JOIN message_bodies b ON b.message_id = m.id
 		WHERE m.source_id = ? AND b.body_text = ?`),
@@ -130,7 +130,7 @@ func TestImporterPreservesRemovedIdentityOptOut(t *testing.T) {
 	imp := NewImporter(st, Options{Owner: "owner@example.test", Timezone: "UTC"})
 	_, err := imp.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "owner@example.test")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "owner@example.test")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
 	_, err = st.RemoveAccountIdentity(source.ID, "owner@example.test")
@@ -158,11 +158,11 @@ func TestImporterDoesNotDuplicateSoleUnnamedParticipantFromTitle(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, summary.Participants)
 
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	var conversationType string
 	var participantCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT conversation_type, participant_count
 		FROM conversations WHERE source_id = ?`), source.ID).Scan(
 		&conversationType, &participantCount,
@@ -199,12 +199,12 @@ func TestImporterTitleDoesNotInventParticipants(t *testing.T) {
 			require.NoError(err)
 			var members int
 			var kind string
-			require.NoError(st.DB().QueryRow(`SELECT conversation_type,
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type,
 				(SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = conversations.id)
 				FROM conversations`).Scan(&kind, &members))
 			assert.Equal(tc.wantMembers, members)
 			assert.Equal(tc.wantType, kind)
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants`).Scan(&members))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participants`).Scan(&members))
 			assert.Equal(tc.wantMembers, members, "no unused title identities reach People")
 		})
 	}
@@ -220,29 +220,29 @@ func TestImporterRerunAndRosterGrowthKeepStableRows(t *testing.T) {
 	exportDir := newTestExport(t, rows)
 	importer := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"})
 
-	firstSummary, err := importer.ImportPath(context.Background(), exportDir)
+	firstSummary, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Equal(1, firstSummary.Messages)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	firstMessages := sourceMessageIDs(t, st, source.ID)
 	firstConversation := singleConversationID(t, st, source.ID)
 	var firstMessageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		source.ID, firstMessages[0]).Scan(&firstMessageID))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET is_read = FALSE, read_at = '2026-09-14 12:00:00'
 		WHERE id = ?`), firstMessageID)
 	require.NoError(err)
 
-	_, err = importer.ImportPath(context.Background(), exportDir)
+	_, err = importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Equal(firstMessages, sourceMessageIDs(t, st, source.ID))
 	assert.Equal(firstConversation, singleConversationID(t, st, source.ID))
 	var isRead bool
 	var readAt sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_read, read_at FROM messages WHERE id = ?`), firstMessageID).Scan(&isRead, &readAt))
 	assert.False(isRead)
 	assert.True(readAt.Valid)
@@ -252,7 +252,7 @@ func TestImporterRerunAndRosterGrowthKeepStableRows(t *testing.T) {
 		rows[0],
 	)
 	writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), rows)
-	secondSummary, err := importer.ImportPath(context.Background(), exportDir)
+	secondSummary, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	assert.Equal(3, secondSummary.Messages)
 	secondMessages := sourceMessageIDs(t, st, source.ID)
@@ -261,7 +261,7 @@ func TestImporterRerunAndRosterGrowthKeepStableRows(t *testing.T) {
 	assert.Equal(firstConversation, singleConversationID(t, st, source.ID))
 
 	var conversationParticipants int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`),
 		firstConversation).Scan(&conversationParticipants))
 	assert.Equal(2, conversationParticipants)
@@ -278,11 +278,11 @@ func TestImporterContractedExportPreservesHistoricalConversationRosterAndType(t 
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	conversationID := singleConversationID(t, st, source.ID)
 	var conversationType string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT conversation_type FROM conversations WHERE id = ?`), conversationID).Scan(&conversationType))
 	require.Equal("direct_chat", conversationType)
 
@@ -290,11 +290,11 @@ func TestImporterContractedExportPreservesHistoricalConversationRosterAndType(t 
 	_, err = importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	var initialParticipantCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`),
 		conversationID).Scan(&initialParticipantCount))
 	require.Greater(initialParticipantCount, 2)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT conversation_type FROM conversations WHERE id = ?`), conversationID).Scan(&conversationType))
 	require.Equal("group_chat", conversationType)
 
@@ -303,7 +303,7 @@ func TestImporterContractedExportPreservesHistoricalConversationRosterAndType(t 
 	require.NoError(err)
 
 	var participantCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT conversation_type,
 		       (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = conversations.id)
 		FROM conversations WHERE id = ?`), conversationID).Scan(&conversationType, &participantCount))
@@ -323,26 +323,26 @@ func TestImporterContractedExportOnlyPreservesAffectedConversation(t *testing.T)
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	var teamID, otherID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`),
 		source.ID, conversationKey("Team")).Scan(&teamID))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`),
 		source.ID, conversationKey("Other")).Scan(&otherID))
 	// Simulate stale derived conversation state in the unaffected conversation.
 	// A complete rerun must repair it even while another conversation is
 	// contracted and therefore preserves its historical roster.
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO conversation_participants (conversation_id, participant_id)
 		SELECT ?, participant_id FROM conversation_participants
 		WHERE conversation_id = ? AND participant_id NOT IN (
 			SELECT participant_id FROM conversation_participants WHERE conversation_id = ?
 		) LIMIT 1`), otherID, teamID, otherID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = ?`), otherID)
 	require.NoError(err)
 
@@ -352,12 +352,12 @@ func TestImporterContractedExportOnlyPreservesAffectedConversation(t *testing.T)
 
 	var teamType, otherType string
 	var teamParticipants, otherParticipants int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT conversation_type,
 		       (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = conversations.id)
 		FROM conversations WHERE source_id = ? AND source_conversation_id = ?`),
 		source.ID, conversationKey("Team")).Scan(&teamType, &teamParticipants))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT conversation_type,
 		       (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = conversations.id)
 		FROM conversations WHERE source_id = ? AND source_conversation_id = ?`),
@@ -379,19 +379,19 @@ func TestImporterInsertingIdenticalDuplicateRowKeepsExistingRowsStable(t *testin
 	first, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	require.Equal(2, first.Messages)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	firstIDs := sourceMessageIDs(t, st, source.ID)
 	require.Len(firstIDs, 2)
-	labelID, err := st.EnsureLabel(source.ID, "imazing-duplicate-label", "Duplicates", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-duplicate-label", "Duplicates", "user")
 	require.NoError(err)
 	firstMessageIDs := make([]int64, 0, len(firstIDs))
 	for _, sourceMessageID := range firstIDs {
 		var messageID int64
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 			source.ID, sourceMessageID).Scan(&messageID))
-		_, err := st.ReconcileMessageLabels(messageID, []int64{labelID}, false)
+		_, err := st.ReconcileMessageLabels(t.Context(), messageID, []int64{labelID}, false)
 		require.NoError(err)
 		firstMessageIDs = append(firstMessageIDs, messageID)
 	}
@@ -409,13 +409,13 @@ func TestImporterInsertingIdenticalDuplicateRowKeepsExistingRowsStable(t *testin
 
 	for _, messageID := range firstMessageIDs {
 		var labelCount int
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`),
 			messageID, labelID).Scan(&labelCount))
 		assert.Equal(1, labelCount, "existing message %d keeps its label", messageID)
 	}
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 	assert.Equal(3, messageCount, "exactly one new duplicate row is added")
 }
@@ -435,16 +435,16 @@ func TestImporterInsertedDuplicateRowBeforePreservesExistingReplyEvidenceAndLabe
 	first, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	require.Equal(1, first.RepliesLinked)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	parentID := messageIDByBody(t, st, "original body")
 	var firstReplyID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM messages WHERE source_id = ? AND reply_to_message_id = ?`),
 		source.ID, parentID).Scan(&firstReplyID))
-	labelID, err := st.EnsureLabel(source.ID, "imazing-reply-label", "Replies", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-reply-label", "Replies", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(firstReplyID, []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), firstReplyID, []int64{labelID}, false)
 	require.NoError(err)
 
 	// A later export inserts one more plain copy before the existing rows,
@@ -456,12 +456,12 @@ func TestImporterInsertedDuplicateRowBeforePreservesExistingReplyEvidenceAndLabe
 	require.Equal(1, second.RepliesLinked)
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 	assert.Equal(4, messageCount, "exactly one new duplicate row is added")
 	var replyTo sql.NullInt64
 	var replyMetadata sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT reply_to_message_id, CAST(metadata AS TEXT) FROM messages WHERE id = ?`),
 		firstReplyID).Scan(&replyTo, &replyMetadata))
 	assert.True(replyTo.Valid, "the archived reply keeps its link")
@@ -469,12 +469,12 @@ func TestImporterInsertedDuplicateRowBeforePreservesExistingReplyEvidenceAndLabe
 	require.True(replyMetadata.Valid)
 	assert.Contains(replyMetadata.String, "original body", "the archived reply keeps its evidence metadata")
 	var labelCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`),
 		firstReplyID, labelID).Scan(&labelCount))
 	assert.Equal(1, labelCount, "the archived reply keeps its label")
 	var linkedCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_id = ? AND reply_to_message_id = ?`),
 		source.ID, parentID).Scan(&linkedCount))
 	assert.Equal(1, linkedCount, "no duplicate reply row is created")
@@ -496,7 +496,7 @@ func TestImporterContractedDuplicateGroupKeepsUnmatchedArchivedEvidence(t *testi
 	first, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	require.Equal(3, first.Messages)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	firstEvidence := archivedDuplicateEvidence(t, st, source.ID)
 	require.Len(firstEvidence, 3)
@@ -505,11 +505,11 @@ func TestImporterContractedDuplicateGroupKeepsUnmatchedArchivedEvidence(t *testi
 	archivedPlain := findArchivedEvidence(t, firstEvidence, "", "")
 	firstIDs := archivedSourceMessageIDs(firstEvidence)
 
-	labelDelivered, err := st.EnsureLabel(source.ID, "dup-delivered", "Dup Delivered", "user")
+	labelDelivered, err := st.EnsureLabel(t.Context(), source.ID, "dup-delivered", "Dup Delivered", "user")
 	require.NoError(err)
-	labelRead, err := st.EnsureLabel(source.ID, "dup-read", "Dup Read", "user")
+	labelRead, err := st.EnsureLabel(t.Context(), source.ID, "dup-read", "Dup Read", "user")
 	require.NoError(err)
-	labelPlain, err := st.EnsureLabel(source.ID, "dup-plain", "Dup Plain", "user")
+	labelPlain, err := st.EnsureLabel(t.Context(), source.ID, "dup-plain", "Dup Plain", "user")
 	require.NoError(err)
 	for _, labeled := range []struct {
 		messageID int64
@@ -519,7 +519,7 @@ func TestImporterContractedDuplicateGroupKeepsUnmatchedArchivedEvidence(t *testi
 		{archivedRead.messageID, labelRead},
 		{archivedPlain.messageID, labelPlain},
 	} {
-		_, err := st.ReconcileMessageLabels(labeled.messageID, []int64{labeled.labelID}, false)
+		_, err := st.ReconcileMessageLabels(t.Context(), labeled.messageID, []int64{labeled.labelID}, false)
 		require.NoError(err)
 	}
 
@@ -585,13 +585,13 @@ func TestImporterWildcardDuplicateClaimsOnlyRemainingArchivedOccurrence(t *testi
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	archived := archivedDuplicateEvidence(t, st, source.ID)
 	readMessage := findArchivedEvidence(t, archived, "Read", "")
-	labelID, err := st.EnsureLabel(source.ID, "wildcard-read", "Wildcard read", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "wildcard-read", "Wildcard read", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(readMessage.messageID, []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), readMessage.messageID, []int64{labelID}, false)
 	require.NoError(err)
 
 	writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), [][]string{delivered, plain})
@@ -599,7 +599,7 @@ func TestImporterWildcardDuplicateClaimsOnlyRemainingArchivedOccurrence(t *testi
 	require.NoError(err)
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 	assert.Equal(2, messageCount, "the wildcard row reuses the sole remaining archived occurrence")
 	assert.Equal(1, messageLabelCount(t, st, readMessage.messageID, labelID))
@@ -617,7 +617,7 @@ func TestImporterWildcardDuplicateDoesNotClaimAmbiguousArchivedOccurrence(t *tes
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), [][]string{plain})
 	_, err = importer.ImportPath(t.Context(), exportDir)
@@ -640,16 +640,16 @@ func TestImporterWildcardDuplicatePreservesForcedMatch(t *testing.T) {
 	importer := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"})
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	before := messageRowIDs(t, st, source.ID)
 	require.Len(before, 2)
 	archived := archivedDuplicateEvidence(t, st, source.ID)
 	deliveredID := findArchivedEvidence(t, archived, "Delivered", "2024-06-01 12:00:05").messageID
 	readID := findArchivedEvidence(t, archived, "Read", "").messageID
-	labelID, err := st.EnsureLabel(source.ID, "saved-message", "Saved message", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "saved-message", "Saved message", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(readID, []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), readID, []int64{labelID}, false)
 	require.NoError(err)
 
 	// Neither row is an exact match. The delivery time still identifies one
@@ -687,13 +687,13 @@ func TestImporterCompetingDuplicateRows(t *testing.T) {
 			importer := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"})
 			_, err := importer.ImportPath(t.Context(), exportDir)
 			require.NoError(err)
-			source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+			source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 			require.NoError(err)
 			archived := archivedDuplicateEvidence(t, st, source.ID)
 			require.Len(archived, 2)
-			labelID, err := st.EnsureLabel(source.ID, "saved-message", "Saved message", "user")
+			labelID, err := st.EnsureLabel(t.Context(), source.ID, "saved-message", "Saved message", "user")
 			require.NoError(err)
-			_, err = st.ReconcileMessageLabels(archived[1].messageID, []int64{labelID}, false)
+			_, err = st.ReconcileMessageLabels(t.Context(), archived[1].messageID, []int64{labelID}, false)
 			require.NoError(err)
 
 			// Neither competitor is exact; both can match only the delivered
@@ -746,15 +746,15 @@ func TestImporterEquivalentDateSpellingKeepsOneMessage(t *testing.T) {
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	firstIDs := sourceMessageIDs(t, st, source.ID)
 	require.Len(firstIDs, 1)
 	firstRowIDs := messageRowIDs(t, st, source.ID)
 	require.Len(firstRowIDs, 1)
-	labelID, err := st.EnsureLabel(source.ID, "imazing-date-label", "Date spelling stable", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-date-label", "Date spelling stable", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(firstRowIDs[0], []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), firstRowIDs[0], []int64{labelID}, false)
 	require.NoError(err)
 
 	// The RFC3339 spelling parses to the same UTC instant as the wall-clock
@@ -768,7 +768,7 @@ func TestImporterEquivalentDateSpellingKeepsOneMessage(t *testing.T) {
 	assert.Equal(firstRowIDs, messageRowIDs(t, st, source.ID),
 		"the re-spelled row updates the archived message in place")
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 	assert.Equal(1, messageCount, "the re-spelled row must not add a duplicate")
 	assert.Equal(1, messageLabelCount(t, st, firstRowIDs[0], labelID))
@@ -810,14 +810,14 @@ func TestImporterEditedContentUpdatesUniqueOccurrenceInPlace(t *testing.T) {
 
 			_, err := importer.ImportPath(t.Context(), exportDir)
 			require.NoError(err)
-			source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+			source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 			require.NoError(err)
 			firstIDs := sourceMessageIDs(t, st, source.ID)
 			require.Len(firstIDs, 1)
 			firstMessageID := messageIDByBody(t, st, tt.first[11])
-			labelID, err := st.EnsureLabel(source.ID, "imazing-edit-label", "Edit stable", "user")
+			labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-edit-label", "Edit stable", "user")
 			require.NoError(err)
-			_, err = st.ReconcileMessageLabels(firstMessageID, []int64{labelID}, false)
+			_, err = st.ReconcileMessageLabels(t.Context(), firstMessageID, []int64{labelID}, false)
 			require.NoError(err)
 
 			writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), [][]string{tt.edited})
@@ -828,7 +828,7 @@ func TestImporterEditedContentUpdatesUniqueOccurrenceInPlace(t *testing.T) {
 			assert.Equal(firstMessageID, messageIDByBody(t, st, tt.edited[11]),
 				"the edited content updates the archived message in place")
 			var messageCount int
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 			assert.Equal(1, messageCount, "the edited row must not add a duplicate")
 			assert.Equal(1, messageLabelCount(t, st, firstMessageID, labelID),
@@ -853,16 +853,16 @@ func TestImporterReorderedSameCoreRowsKeepTheirIDsByContentEvidence(t *testing.T
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	firstMessageID := messageIDByBody(t, st, "first body")
 	firstSourceID := sourceMessageIDOfMessage(t, st, firstMessageID)
 	secondMessageID := messageIDByBody(t, st, "second body")
 	secondSourceID := sourceMessageIDOfMessage(t, st, secondMessageID)
 	require.NotEqual(firstSourceID, secondSourceID)
-	labelID, err := st.EnsureLabel(source.ID, "imazing-order-label", "Order stable", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-order-label", "Order stable", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(firstMessageID, []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), firstMessageID, []int64{labelID}, false)
 	require.NoError(err)
 
 	writeTestCSV(t, filepath.Join(exportDir, "csv", "messages.csv"), [][]string{secondRow, firstRow})
@@ -894,11 +894,11 @@ func TestImporterReorderedDuplicatesKeepIDsWhenProviderEvidenceDisappears(t *tes
 	require.NoError(err)
 	firstMessageID := messageIDByBody(t, st, "first body")
 	secondMessageID := messageIDByBody(t, st, "second body")
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
-	labelID, err := st.EnsureLabel(source.ID, "imazing-evidence-label", "Evidence stable", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-evidence-label", "Evidence stable", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(firstMessageID, []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), firstMessageID, []int64{labelID}, false)
 	require.NoError(err)
 
 	for _, row := range [][]string{first, second} {
@@ -913,7 +913,7 @@ func TestImporterReorderedDuplicatesKeepIDsWhenProviderEvidenceDisappears(t *tes
 	assert.Equal(1, messageLabelCount(t, st, firstMessageID, labelID))
 	for _, messageID := range []int64{firstMessageID, secondMessageID} {
 		var metadata string
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT CAST(metadata AS TEXT) FROM messages WHERE id = ?`), messageID).Scan(&metadata))
 		assert.NotContains(metadata, `"status"`)
 		assert.NotContains(metadata, `"delivered_date"`)
@@ -934,11 +934,11 @@ func TestImporterEditedDuplicateDoesNotOverwriteEvidenceDistinctArchive(t *testi
 	require.NoError(err)
 	firstMessageID := messageIDByBody(t, st, "first body")
 	secondMessageID := messageIDByBody(t, st, "second body")
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
-	labelID, err := st.EnsureLabel(source.ID, "imazing-unmatched-label", "Unmatched stable", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-unmatched-label", "Unmatched stable", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(firstMessageID, []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), firstMessageID, []int64{labelID}, false)
 	require.NoError(err)
 
 	edited := append([]string(nil), second...)
@@ -973,12 +973,12 @@ func TestImporterFailedAttachmentRunStillRecomputesConversationStats(t *testing.
 	}).ImportPath(t.Context(), exportDir)
 	require.Error(err)
 
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	var messageCount, participantCount int
 	var lastMessageAt sql.NullTime
 	var lastMessagePreview sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT message_count, participant_count, last_message_at, last_message_preview
 		FROM conversations WHERE source_id = ?`), source.ID).Scan(
 		&messageCount, &participantCount, &lastMessageAt, &lastMessagePreview,
@@ -1001,10 +1001,10 @@ func TestImporterPartialPersistenceFailureRecomputesConversationStats(t *testing
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	secondID := messageIDByBody(t, st, "second preview")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), "[]", secondID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), "[]", secondID)
 	require.NoError(err)
 
 	first[11] = "new preview"
@@ -1013,7 +1013,7 @@ func TestImporterPartialPersistenceFailureRecomputesConversationStats(t *testing
 	require.ErrorContains(err, "decode existing metadata")
 
 	var preview sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT last_message_preview FROM conversations
 		WHERE source_id = ? AND source_conversation_id = ?`),
 		source.ID, conversationKey("First")).Scan(&preview))
@@ -1033,7 +1033,7 @@ func TestImporterRecordsSyncRunCountersOnImportAndRerun(t *testing.T) {
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 
 	first, err := st.GetLatestSync(source.ID)
@@ -1054,7 +1054,7 @@ func TestImporterRecordsSyncRunCountersOnImportAndRerun(t *testing.T) {
 	assert.Equal(int64(2), second.MessagesUpdated, "rerun updated counter")
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 	assert.Equal(2, messageCount, "rerun must not duplicate messages")
 }
@@ -1068,16 +1068,16 @@ func TestImporterRejectsTimezoneChangeAndRecordsFailedSync(t *testing.T) {
 	})
 
 	_, err := NewImporter(st, Options{Owner: "owner@example.test", Timezone: "UTC"}).
-		ImportPath(context.Background(), exportDir)
+		ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 	_, err = NewImporter(st, Options{Owner: "OWNER@EXAMPLE.TEST", Timezone: "Europe/Berlin"}).
-		ImportPath(context.Background(), exportDir)
+		ImportPath(t.Context(), exportDir)
 	require.ErrorContains(err, "timezone")
 
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "owner@example.test")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "owner@example.test")
 	require.NoError(err)
 	var completed, failed int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT
 			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
 			SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
@@ -1105,14 +1105,14 @@ func TestImporterRejectsHostDependentLocalTimezone(t *testing.T) {
 	})
 
 	_, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "Local"}).
-		ImportPath(context.Background(), exportDir)
+		ImportPath(t.Context(), exportDir)
 	require.ErrorContains(err, "host-dependent Local")
 
 	var sources, syncs, messages int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM sources WHERE source_type = ?`), SourceType).Scan(&sources))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&syncs))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&syncs))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	assert.Zero(sources, "a rejected timezone must not create a source")
 	assert.Zero(syncs, "a rejected timezone must not start a sync")
 	assert.Zero(messages, "a rejected timezone must not persist messages")
@@ -1126,12 +1126,12 @@ func TestImporterRejectsIncomingRowWithoutSenderEvidence(t *testing.T) {
 	})
 
 	_, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"}).
-		ImportPath(context.Background(), exportDir)
+		ImportPath(t.Context(), exportDir)
 	require.ErrorContains(err, "incoming sender")
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 	require.Zero(messageCount)
 }
@@ -1218,7 +1218,7 @@ func TestImporterClassifiesAttachmentMediaTypes(t *testing.T) {
 	// Sort in Go rather than SQL: PostgreSQL and SQLite collate filenames
 	// differently (contract.pdf before or after uppercase IMG names), so the
 	// assertion order must not depend on the backend's collation.
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT filename, mime_type, media_type FROM attachments`)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
@@ -1250,21 +1250,21 @@ func TestImporterRerunPreservesUserAppliedLabels(t *testing.T) {
 
 	_, err := importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "+15550000001")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM messages WHERE source_id = ?`), source.ID).Scan(&messageID))
-	labelID, err := st.EnsureLabel(source.ID, "imazing-user-label", "Keep on rerun", "user")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "imazing-user-label", "Keep on rerun", "user")
 	require.NoError(err)
-	_, err = st.ReconcileMessageLabels(messageID, []int64{labelID}, false)
+	_, err = st.ReconcileMessageLabels(t.Context(), messageID, []int64{labelID}, false)
 	require.NoError(err)
 
 	_, err = importer.ImportPath(t.Context(), exportDir)
 	require.NoError(err)
 
 	var labelCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`),
 		messageID, labelID).Scan(&labelCount))
 	assert.Equal(1, labelCount, "user-applied labels must survive a rerun that supplies no label IDs")
@@ -1297,13 +1297,13 @@ func TestImporterAttachmentFailureStillRecordsFailedOccurrence(t *testing.T) {
 	assert.Equal("failed", occurrence.state)
 	assert.Empty(occurrence.storagePath)
 	var skipReason string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(attachment_skip_reason, '') FROM attachments WHERE id = ?`),
 		occurrence.id).Scan(&skipReason))
 	assert.Equal("fetch_failure", skipReason)
 	var hasAttachments bool
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT has_attachments, attachment_count FROM messages WHERE id = ?`),
 		occurrence.messageID).Scan(&hasAttachments, &attachmentCount))
 	assert.True(hasAttachments, "the message keeps its attachment claim")
@@ -1340,7 +1340,7 @@ func TestImporterAmbiguousAttachmentRemainsMissing(t *testing.T) {
 	assert.Equal("failed", occurrence.state)
 	assert.Empty(occurrence.storagePath)
 	var skipReason string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(attachment_skip_reason, '') FROM attachments WHERE id = ?`),
 		occurrence.id).Scan(&skipReason))
 	assert.Equal("fetch_failure", skipReason)
@@ -1372,11 +1372,11 @@ func TestImporterSkipsAttachmentOverConfiguredLimit(t *testing.T) {
 	assert.Equal("skipped", occurrence.state)
 	assert.Empty(occurrence.storagePath)
 	var skipReason, displayName, syncStatus string
-	require.NoError(st.DB().QueryRow(`SELECT attachment_skip_reason FROM attachments`).Scan(&skipReason))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT attachment_skip_reason FROM attachments`).Scan(&skipReason))
 	assert.Equal("size_cap", skipReason)
-	require.NoError(st.DB().QueryRow(`SELECT display_name FROM participants WHERE phone_number = '+15550000002'`).Scan(&displayName))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT display_name FROM participants WHERE phone_number = '+15550000002'`).Scan(&displayName))
 	assert.Equal("Example Contact", displayName)
-	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&syncStatus))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&syncStatus))
 	assert.Equal("completed", syncStatus)
 }
 
@@ -1398,7 +1398,7 @@ func TestImporterDeduplicatesSharedAttachmentBytes(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, summary.AttachmentsStored)
 	var occurrences, blobs int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*), COUNT(DISTINCT storage_path) FROM attachments
 	`).Scan(&occurrences, &blobs))
 	assert.Equal(2, occurrences)
@@ -1432,10 +1432,10 @@ func TestImporterAttachmentFailuresContinueToLaterRows(t *testing.T) {
 	assert.NotContains(err.Error(), "record 4", "the valid later row must not fail")
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(3, messageCount, "every message stays committed")
 
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT filename, COALESCE(attachment_state, ''), COALESCE(storage_path, '')
 		FROM attachments`)
 	require.NoError(err)
@@ -1541,10 +1541,10 @@ func TestImportAttachmentsContinuesIndependentRowsAndCounters(t *testing.T) {
 	assert.Equal(1, skipped, "only the oversized row counts as skipped")
 
 	var occurrences int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&occurrences))
 	assert.Equal(4, occurrences, "every row leaves an occurrence")
 	var storedOnes int
-	require.NoError(f.Store.DB().QueryRow(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM attachments WHERE COALESCE(attachment_state, '') = 'stored'`).Scan(&storedOnes))
 	assert.Equal(1, storedOnes)
 }
@@ -1555,7 +1555,7 @@ func TestImportAttachmentsStopsPromptlyOnCanceledContext(t *testing.T) {
 	messageID := f.CreateMessage("canceled-attachment")
 	attachmentsDir := t.TempDir()
 	require.NoError(os.WriteFile(filepath.Join(attachmentsDir, "ok.bin"), []byte("ok"), 0o600))
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	stored, missing, skipped, err := importAttachments(ctx, f.Store, Layout{AttachmentsDir: attachmentsDir},
@@ -1567,7 +1567,7 @@ func TestImportAttachmentsStopsPromptlyOnCanceledContext(t *testing.T) {
 	require.Zero(missing)
 	require.Zero(skipped)
 	var occurrences int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&occurrences))
 	require.Zero(occurrences, "a canceled run must not store or record attachments")
 }
 
@@ -1625,7 +1625,7 @@ func TestImporterReconcilesEditedAttachmentReference(t *testing.T) {
 	assert.Equal("new.bin", attachments[0].filename)
 	var hasAttachments bool
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT has_attachments, attachment_count FROM messages WHERE id = ?`),
 		attachments[0].messageID).Scan(&hasAttachments, &attachmentCount))
 	assert.True(hasAttachments)
@@ -1679,7 +1679,7 @@ func TestImporterReconcilesClearedAttachmentReference(t *testing.T) {
 	assert.Empty(importedAttachments(t, st))
 	var hasAttachments bool
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT has_attachments, attachment_count FROM messages WHERE id = ?`),
 		messageID).Scan(&hasAttachments, &attachmentCount))
 	assert.False(hasAttachments)
@@ -1704,7 +1704,7 @@ func TestImporterContactsFillOnlyEmptyNames(t *testing.T) {
 	assert.Equal(1, summary.ContactsMatched)
 	assert.Equal(2, summary.ContactsTotal)
 
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT COALESCE(phone_number, ''), COALESCE(email_address, ''), COALESCE(display_name, '')
 		FROM participants WHERE phone_number = '+15550000002' OR email_address = 'friend@example.test'
 		ORDER BY COALESCE(phone_number, '') DESC
@@ -1721,7 +1721,7 @@ func TestImporterContactsFillOnlyEmptyNames(t *testing.T) {
 	assert.Equal([]string{"Contact Phone", "CSV Friend"}, names)
 
 	var title string
-	require.NoError(st.DB().QueryRow(`SELECT title FROM conversations`).Scan(&title))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations`).Scan(&title))
 	assert.Equal("Phone Friend & CSV Friend", title)
 }
 
@@ -1762,7 +1762,7 @@ type importedAttachment struct {
 
 func importedAttachments(t *testing.T, st *store.Store) []importedAttachment {
 	t.Helper()
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT id, message_id, COALESCE(size, 0), filename, mime_type, storage_path, content_hash,
 		       attachment_role, role_source, COALESCE(attachment_state, '')
 		FROM attachments`)
@@ -1785,7 +1785,7 @@ func importedAttachments(t *testing.T, st *store.Store) []importedAttachment {
 func singleImportedAttachment(t *testing.T, st *store.Store) importedAttachment {
 	t.Helper()
 	var attachment importedAttachment
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `
 		SELECT id, message_id, COALESCE(size, 0), filename, mime_type, storage_path, content_hash,
 		       attachment_role, role_source, COALESCE(attachment_state, '')
 		FROM attachments
@@ -1825,7 +1825,7 @@ func writeTestCSV(t *testing.T, path string, rows [][]string) {
 
 func sourceMessageIDs(t *testing.T, st *store.Store, sourceID int64) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT source_message_id FROM messages WHERE source_id = ? ORDER BY sent_at, id`), sourceID)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
@@ -1841,7 +1841,7 @@ func sourceMessageIDs(t *testing.T, st *store.Store, sourceID int64) []string {
 
 func messageRowIDs(t *testing.T, st *store.Store, sourceID int64) []int64 {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_id = ? ORDER BY sent_at, id`), sourceID)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
@@ -1858,7 +1858,7 @@ func messageRowIDs(t *testing.T, st *store.Store, sourceID int64) []int64 {
 func sourceMessageIDOfMessage(t *testing.T, st *store.Store, messageID int64) string {
 	t.Helper()
 	var id string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT source_message_id FROM messages WHERE id = ?`), messageID).Scan(&id))
 	return id
 }
@@ -1866,7 +1866,7 @@ func sourceMessageIDOfMessage(t *testing.T, st *store.Store, messageID int64) st
 func singleConversationID(t *testing.T, st *store.Store, sourceID int64) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM conversations WHERE source_id = ?`), sourceID).Scan(&id))
 	return id
 }
@@ -1884,7 +1884,7 @@ type archivedEvidence struct {
 
 func archivedDuplicateEvidence(t *testing.T, st *store.Store, sourceID int64) []archivedEvidence {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT source_message_id, id, CAST(metadata AS TEXT)
 		FROM messages WHERE source_id = ? ORDER BY id`), sourceID)
 	require.NoError(t, err)
@@ -1937,7 +1937,7 @@ func archivedSourceMessageIDs(evidence []archivedEvidence) []string {
 func messageLabelCount(t *testing.T, st *store.Store, messageID, labelID int64) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`),
 		messageID, labelID).Scan(&count))
 	return count

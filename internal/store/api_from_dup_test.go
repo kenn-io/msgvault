@@ -37,7 +37,7 @@ func TestStoreAPI_MultipleFromRows_NoDuplication(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromdup@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-fromdup", "Thread FromDup")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-fromdup", "Thread FromDup")
 	require.NoError(err, "EnsureConversation")
 
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")

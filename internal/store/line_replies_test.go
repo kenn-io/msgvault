@@ -458,7 +458,7 @@ func TestLineReplyReceiptCannotOverwriteInboundMessage(t *testing.T) {
 	require.NoError(err)
 	_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
 	require.ErrorIs(err, store.ErrLineReplyReceiptConflict)
-	body, err := st.GetMessageBodyText(parent)
+	body, err := st.GetMessageBodyText(t.Context(), parent)
 	require.NoError(err)
 	assert.Equal(t, "Incoming", body)
 }

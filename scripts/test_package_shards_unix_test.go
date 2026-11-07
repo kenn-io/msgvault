@@ -178,7 +178,7 @@ func newPackageShardsUnixFixture(t *testing.T, shards, source string) (string, f
 	t.Setenv("MSGVAULT_TEST_DB", "")
 	return dir, func(t *testing.T) (string, error) {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, bash, script, ".", shards, "fts5 sqlite_vec", "30s")
 		cmd.Dir = dir

@@ -94,7 +94,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 			if strings.Contains(body, "sync_failed") {
 				want = http.StatusBadRequest
 			}
-			require.Equal(t, want, screenRequest(handler, body).Code)
+			require.Equal(t, want, screenRequest(t.Context(), handler, body).Code)
 		}
 	}
 	for range 2 {

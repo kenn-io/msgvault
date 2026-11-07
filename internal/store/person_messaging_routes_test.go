@@ -352,7 +352,7 @@ func TestMessagingRoutesMissingMetadataStaleSourceAndReadOnly(t *testing.T) {
 	requirements.NoError(err)
 	var before, after int64
 	if !f.Store.IsPostgreSQL() {
-		requirements.NoError(f.Store.DB().QueryRow(`SELECT total_changes()`).Scan(&before))
+		requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT total_changes()`).Scan(&before))
 	}
 	page, err := f.Store.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: p.VCardUID})
 	requirements.NoError(err)
@@ -360,7 +360,7 @@ func TestMessagingRoutesMissingMetadataStaleSourceAndReadOnly(t *testing.T) {
 	assertions.Contains(page.Routes.Items[0].Reasons, "route_metadata_missing")
 	assertions.Contains(page.Routes.Items[0].Reasons, "source_stale")
 	if !f.Store.IsPostgreSQL() {
-		requirements.NoError(f.Store.DB().QueryRow(`SELECT total_changes()`).Scan(&after))
+		requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT total_changes()`).Scan(&after))
 		assertions.Equal(before, after, "route discovery must not write")
 	}
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM sources WHERE id=?`), src)
@@ -565,7 +565,7 @@ func TestMessagingRoutesKeepDeletionSignalAfterArchiveGC(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	person, peer := messagingPerson(t, st, "gc-peer")
 	sourceID, conversationID := messagingConversation(t, st, "account", "!gc:example.test", "direct_chat", peer)
-	_, err := st.DB().Exec(`INSERT INTO messages (conversation_id, source_id, source_message_id, message_type)
+	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO messages (conversation_id, source_id, source_message_id, message_type)
 		VALUES (?, ?, 'gc-message', 'email')`, conversationID, sourceID)
 	requirements.NoError(err)
 	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}

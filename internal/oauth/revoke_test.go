@@ -1,7 +1,6 @@
 package oauth
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -86,7 +85,7 @@ func TestRevokeToken(t *testing.T) {
 				Expiry:       time.Now().Add(time.Hour),
 			}, Scopes)
 
-			err := mgr.RevokeToken(context.Background(), email)
+			err := mgr.RevokeToken(t.Context(), email)
 
 			if tt.wantErr {
 				require.Error(err)
@@ -118,7 +117,7 @@ func TestRevokeToken_FallsBackToAccessToken(t *testing.T) {
 		Expiry:      time.Now().Add(time.Hour),
 	}, Scopes)
 
-	require.NoError(t, mgr.RevokeToken(context.Background(), "user@example.com"))
+	require.NoError(t, mgr.RevokeToken(t.Context(), "user@example.com"))
 	assert.Equal(t, []string{"access-only"}, *revoked)
 }
 

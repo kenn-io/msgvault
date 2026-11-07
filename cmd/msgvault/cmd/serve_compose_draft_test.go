@@ -139,7 +139,7 @@ func TestDraftComposeHTTPPublishesManagedDraft(t *testing.T) {
 	}
 	body, err := json.Marshal(map[string]any{"args": args})
 	requirements.NoError(err)
-	request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 	requirements.NoError(err)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "owner-test-key")

@@ -1,7 +1,6 @@
 package fakevault_test
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -21,7 +20,7 @@ import (
 func generate(t *testing.T, dir string, messages, attachmentBytes int64,
 	seed uint64, appendMode bool) *fakevault.Summary {
 	t.Helper()
-	sum, err := fakevault.Generate(context.Background(), fakevault.Options{
+	sum, err := fakevault.Generate(t.Context(), fakevault.Options{
 		Dir:             dir,
 		Messages:        messages,
 		AttachmentBytes: attachmentBytes,
@@ -48,7 +47,7 @@ func verifyAttachmentTree(t *testing.T, dir string) (hashes []string) {
 	t.Helper()
 	requirementsForTest := require.New(t)
 	db := openVaultDB(t, dir)
-	rows, err := db.Query(`SELECT content_hash, storage_path, size FROM attachments
+	rows, err := db.QueryContext(t.Context(), `SELECT content_hash, storage_path, size FROM attachments
 		UNION SELECT thumbnail_hash, thumbnail_path, NULL FROM attachments
 		WHERE thumbnail_hash IS NOT NULL`)
 	requirementsForTest.NoError(err)
@@ -79,7 +78,7 @@ func verifyAttachmentTree(t *testing.T, dir string) (hashes []string) {
 func countRows(t *testing.T, db *sql.DB, table string) int64 {
 	t.Helper()
 	var n int64
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n))
 	return n
 }
 
@@ -90,7 +89,7 @@ func countRows(t *testing.T, db *sql.DB, table string) int64 {
 func TestGenerateProducesBackupValidVault(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	sum := generate(t, dir, 250, 1<<21, 42, false)
 	assert.Equal(int64(250), sum.Messages)
@@ -164,13 +163,14 @@ func TestAppendExtendsVault(t *testing.T) {
 
 	db := openVaultDB(t, dir)
 	var distinct int64
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		"SELECT COUNT(DISTINCT source_message_id) FROM messages").Scan(&distinct))
 	assert.Equal(int64(250), distinct, "append must continue message indexes, not repeat them")
 	assert.Equal(int64(3), countRows(t, db, "sources"), "dimension seeding must be idempotent")
 
 	var orphans int64
-	require.NoError(db.QueryRow(`SELECT COUNT(*) FROM messages m
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages m
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE c.id IS NULL`).Scan(&orphans))
 	assert.Zero(orphans, "every message must reference an existing conversation")
@@ -181,12 +181,12 @@ func TestGenerateTargetStateGuards(t *testing.T) {
 	dir := t.TempDir()
 	generate(t, dir, 10, 0, 1, false)
 
-	_, err := fakevault.Generate(context.Background(), fakevault.Options{
+	_, err := fakevault.Generate(t.Context(), fakevault.Options{
 		Dir: dir, Messages: 10, Seed: 1,
 	})
 	require.ErrorContains(err, "already exists")
 
-	_, err = fakevault.Generate(context.Background(), fakevault.Options{
+	_, err = fakevault.Generate(t.Context(), fakevault.Options{
 		Dir: t.TempDir(), Messages: 10, Seed: 1, Append: true,
 	})
 	require.ErrorContains(err, "cannot append")
@@ -213,7 +213,7 @@ func TestGenerateSetWiseRelationshipScaleShape(t *testing.T) {
 	assertions.Equal(int64(56), countRows(t, db, "message_recipients"))
 
 	var directEdges int64
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT
 			(SELECT count(*) FROM messages WHERE sender_id IS NOT NULL) +
 			(SELECT count(*) FROM message_recipients)
@@ -221,7 +221,7 @@ func TestGenerateSetWiseRelationshipScaleShape(t *testing.T) {
 	assertions.Equal(int64(96), directEdges)
 
 	var duplicateOrSenderEdges int64
-	requirements.NoError(db.QueryRow(`
+	requirements.NoError(db.QueryRowContext(t.Context(), `
 		SELECT count(*)
 		FROM (
 			SELECT message_id, participant_id

@@ -28,7 +28,7 @@ func TestManualSyncRefreshVerifiesConversationOnlyChangesInBackground(t *testing
 		MessageType: "email", SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	require.NoError(err)
 	_, err = s.EnsureConversationWithType(source.ID, "thread-1", "email_thread", "Updated title")
 	require.NoError(err)
@@ -39,12 +39,13 @@ func TestManualSyncRefreshVerifiesConversationOnlyChangesInBackground(t *testing
 	ctx, cancel := context.WithCancel(t.Context())
 	verified := make(chan cacheStaleness, 1)
 	jobs := newCacheBuildJobs(ctx, nil, func(context.Context, buildCacheMode) error {
-		verified <- cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir())
+		verified <- cacheNeedsBuildContext(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 		return nil
 	})
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		cancel()
-		waitCtx, stop := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		waitCtx, stop := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 		defer stop()
 		require.True(jobs.waitContext(waitCtx), "background verification must finish before store cleanup")
 	})
@@ -75,7 +76,7 @@ func TestManualSyncRefreshChecksFilesBeforeThrottling(t *testing.T) {
 			c, s := openPublishedQueryTestStore(t)
 			c.Analytics.AutoBuildCache = true
 			c.Analytics.MinRebuildInterval = 6 * time.Hour
-			_, err := s.DB().Exec(`INSERT INTO messages
+			_, err := s.DB().ExecContext(t.Context(), `INSERT INTO messages
 				(id, source_id, source_message_id, conversation_id, message_type, sent_at)
 				VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')`)
 			require.NoError(err)
@@ -88,14 +89,15 @@ func TestManualSyncRefreshChecksFilesBeforeThrottling(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			completed := make(chan *buildResult, 1)
 			jobs := newCacheBuildJobs(ctx, nil, func(context.Context, buildCacheMode) error {
-				result, err := buildCacheScheduled(c.DatabaseDSN(), c.AnalyticsDir(),
+				result, err := buildCacheScheduled(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(),
 					c.Analytics.MinRebuildInterval, time.Now)
 				completed <- result
 				return err
 			})
+			// Cleanup runs after t.Context() is canceled.
 			t.Cleanup(func() {
 				cancel()
-				waitCtx, stop := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+				waitCtx, stop := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 				defer stop()
 				require.True(jobs.waitContext(waitCtx))
 			})
@@ -111,7 +113,7 @@ func TestManualSyncRefreshChecksFilesBeforeThrottling(t *testing.T) {
 			default:
 				require.FailNow("manual sync did not queue cache verification")
 			}
-			engine, err := openDaemonDuckDBEngine(c, s)
+			engine, err := openDaemonDuckDBEngine(t.Context(), c, s)
 			require.NoError(err)
 			t.Cleanup(func() { _ = engine.Close() })
 			result, err := engine.QuerySQL(t.Context(), "SELECT COUNT(*) FROM messages")

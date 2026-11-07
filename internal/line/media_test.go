@@ -27,7 +27,7 @@ func (f *inboxFixture) media(t *testing.T) store.AttachmentRef {
 	t.Helper()
 	row, err := f.st.LineMessageContext(context.Background(), f.source.ID, "1")
 	require.NoError(t, err)
-	refs, err := f.st.MessageProviderAttachments(row.ID, "line:")
+	refs, err := f.st.MessageProviderAttachments(context.Background(), row.ID, "line:")
 	require.NoError(t, err)
 	require.Len(t, refs, 1)
 	return refs["line:1"]

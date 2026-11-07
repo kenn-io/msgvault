@@ -1,7 +1,6 @@
 package calcontrol
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"fmt"
 	"testing"
@@ -31,7 +30,7 @@ func TestFutureSeriesSplitAndDelete(t *testing.T) {
 			}
 			f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", ETag: `"v1"`, Summary: "Original", Start: start, End: end, Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=4"}}}
 			f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, Start: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, End: gcal.EventDateTime{DateTime: end.DateTime.Add(24 * time.Hour)}}}
-			result, err := s.Execute(context.Background(), r, nil)
+			result, err := s.Execute(t.Context(), r, nil)
 			requirements.NoError(err)
 			requirements.NotEmpty(result.Plan)
 			assertions.Equal("update", result.Plan[0].Action)
@@ -216,7 +215,7 @@ func TestFutureSeriesUsesCalendarTimezoneWhenEventTimezoneIsMissing(t *testing.T
 		End:               gcal.EventDateTime{DateTime: occurrenceEnd},
 	}}
 
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.Len(result.Plan, 2)
 	requirements.NotNil(result.Plan[0].Event.Recurrence)
@@ -251,7 +250,7 @@ func TestFutureSeriesFirstOccurrenceUsesCalendarTimezoneForChangedBounds(t *test
 		End:               end,
 	}}
 
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 
 	requirements.NoError(err)
 	requirements.Len(result.Plan, 1)
@@ -288,7 +287,7 @@ func TestFutureSeriesRequiresTimezoneForTimedRecurrence(t *testing.T) {
 		End:               gcal.EventDateTime{DateTime: occurrenceStart.Add(time.Hour)},
 	}}
 
-	_, err = s.Execute(context.Background(), r, nil)
+	_, err = s.Execute(t.Context(), r, nil)
 	requirements.ErrorIs(err, ErrInvalid)
 	assertions.Contains(err.Error(), "time zone")
 	assertions.Empty(f.calls)
@@ -313,7 +312,7 @@ func TestFutureSplitRejectsStartAfterExistingUntilWithoutNewRule(t *testing.T) {
 		End:               gcal.EventDateTime{DateTime: instanceStart.Add(time.Hour)},
 	}}
 
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 
 	requirements.ErrorIs(err, ErrInvalid)
 	requirements.Empty(f.calls)
@@ -339,7 +338,7 @@ func TestFutureSplitCopiesOnlyWritableAttendeeFields(t *testing.T) {
 		Start: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, End: gcal.EventDateTime{DateTime: end.DateTime.Add(24 * time.Hour)},
 	}}
 
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.Len(result.Plan, 2)
 	requirements.NotNil(result.Plan[1].Event.Attendees)
@@ -377,7 +376,7 @@ func TestFutureSplitRejectsGuestRSVPStateBeforeWriting(t *testing.T) {
 				Start: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, End: gcal.EventDateTime{DateTime: end.DateTime.Add(24 * time.Hour)},
 			}}
 
-			_, err := s.Execute(context.Background(), r, nil)
+			_, err := s.Execute(t.Context(), r, nil)
 			requirements.ErrorIs(err, ErrInvalid)
 			assertions.Contains(err.Error(), "RSVP")
 			assertions.Empty(f.calls)
@@ -428,7 +427,7 @@ func TestDelegatedFuturePlanRequiresEventContentGrantForProviderDetails(t *testi
 				Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 			}
 
-			result, err := s.Execute(context.Background(), r, grant)
+			result, err := s.Execute(t.Context(), r, grant)
 			requirements.NoError(err)
 			requirements.Len(result.Plan, 2)
 			if tc.wantDetails {
@@ -467,7 +466,7 @@ func TestDelegatedWriteOnlyFutureSplitExecutesRedactedPlan(t *testing.T) {
 		Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 	}
 
-	result, err := s.Execute(context.Background(), r, grant)
+	result, err := s.Execute(t.Context(), r, grant)
 	requirements.NoError(err)
 	requirements.Equal([]string{"patch:series", "insert"}, f.calls)
 	requirements.NotNil(f.input.Description)
@@ -495,7 +494,7 @@ func TestFutureSplitValidatesGeneratedWritesBeforeTruncating(t *testing.T) {
 		Start: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, End: gcal.EventDateTime{DateTime: end.DateTime.Add(24 * time.Hour)},
 	}}
 
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	require.ErrorIs(t, err, ErrInvalid)
 	assert.Empty(t, f.calls)
 }
@@ -509,7 +508,7 @@ func TestFutureSplitRejectsFieldsItCannotPreserve(t *testing.T) {
 			r.Event = gcal.EventInput{Summary: r.Event.Summary}
 			f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: start, End: end, Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=4"}, Raw: jsontext.Value(raw)}}
 			f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, Start: gcal.EventDateTime{DateTime: start.DateTime.Add(24 * time.Hour)}, End: gcal.EventDateTime{DateTime: end.DateTime.Add(24 * time.Hour)}}}
-			_, err := s.Execute(context.Background(), r, nil)
+			_, err := s.Execute(t.Context(), r, nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "manual series edit")
 			assert.Empty(t, f.calls)
@@ -524,7 +523,7 @@ func TestFutureSplitRejectsCancelledException(t *testing.T) {
 	r.Event = gcal.EventInput{Summary: r.Event.Summary}
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: start, Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=4"}}}
 	f.FullEvents["team@example.com"] = [][]gcal.Event{{{ID: "cancelled", Status: gcal.StatusCancelled, RecurringEventID: "series", OriginalStartTime: gcal.EventDateTime{DateTime: start.DateTime.Add(48 * time.Hour)}}}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "detached exceptions")
 	assert.Empty(t, f.calls)
@@ -539,7 +538,7 @@ func TestFutureAllDaySplitPreservesDateUntil(t *testing.T) {
 	r.Event = gcal.EventInput{Summary: r.Event.Summary}
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: start, End: end, Recurrence: []string{"RRULE:FREQ=DAILY;UNTIL=20261006"}}}
 	f.instances = []gcal.Event{{ID: "instance", RecurringEventID: "series", OriginalStartTime: gcal.EventDateTime{Date: "2026-10-03"}, Start: gcal.EventDateTime{Date: "2026-10-03"}, End: gcal.EventDateTime{Date: "2026-10-04"}}}
-	result, err := s.Execute(context.Background(), r, nil)
+	result, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.Len(result.Plan, 2)
 	requirements.NotNil(result.Plan[0].Event.Recurrence)
@@ -557,12 +556,12 @@ func TestSingleSeriesRequiresOriginalAndPreservesRescheduledInstance(t *testing.
 	r.EventID = "series"
 	r.Event = gcal.EventInput{}
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: start, End: end, Recurrence: []string{"RRULE:FREQ=DAILY"}}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	requirements.Error(err)
 	assertions.Empty(f.calls)
 	r.OriginalStart = "2026-10-02T09:00:00Z"
 	f.instances = []gcal.Event{{ID: "rescheduled", RecurringEventID: "series", OriginalStartTime: start, Start: gcal.EventDateTime{DateTime: start.DateTime.Add(7 * 24 * time.Hour)}}}
-	_, err = s.Execute(context.Background(), r, nil)
+	_, err = s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	assertions.Equal([]string{"delete:rescheduled"}, f.calls)
 }
@@ -587,7 +586,7 @@ func TestSingleSeriesMatchesOriginalStartLocallyAcrossPages(t *testing.T) {
 		"page-2": {Items: []gcal.Event{selected}},
 	}
 
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	assertions.Equal([]string{"delete:rescheduled"}, f.calls)
 	assertions.Equal([]gcal.EventsListParams{{}, {PageToken: "page-2"}}, f.instanceCalls)
@@ -612,7 +611,7 @@ func TestSingleSeriesLookupStopsAfter100Pages(t *testing.T) {
 	}
 	f.instancePages[token] = gcal.EventsPage{}
 
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 
 	requirements.Error(err)
 	assertions.Contains(err.Error(), "instance lookup exceeds 100 pages")
@@ -628,7 +627,7 @@ func TestFutureRejectsUnmigratableRulesBeforeWriting(t *testing.T) {
 	r.Scope = "future"
 	r.OriginalStart = "2026-10-03T09:00:00Z"
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"series": {ID: "series", Start: start, Recurrence: []string{"RRULE:FREQ=DAILY", "EXDATE:20261004T090000Z"}}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	require.Error(t, err)
 	assert.Empty(t, f.calls)
 }
@@ -652,7 +651,7 @@ func TestFutureSplitRejectsPrivateCopyBeforeWriting(t *testing.T) {
 		End:               gcal.EventDateTime{DateTime: start.DateTime.Add(25 * time.Hour)},
 	}}
 
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	requirements.ErrorIs(err, ErrInvalid)
 	assertions.Contains(err.Error(), "privateCopy")
 	assertions.Empty(f.calls)

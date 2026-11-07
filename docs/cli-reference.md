@@ -706,7 +706,7 @@ conversation deletes its local drafts. An admitted LINE send makes edits return
 ## send-line-reply
 
 Send a reviewed local LINE text draft as the owner. Available on unreleased
-`main` with API schema 3.47.0 or newer:
+`main` with API schema 3.48.0 or newer:
 
 ```bash
 msgvault send-line-reply <chat-draft-id> --revision <n> [--json]
@@ -2839,6 +2839,8 @@ free text has zero results and a usable embedding generation. Non-active
 source-deletion searches do not receive that suggestion. JSON stdout stays
 machine-readable.
 
+Search prints a stderr hint when another full-text result exists, with the next `--offset`. Vector and hybrid text print one hint at a time; their JSON objects gain a `hints` array containing that hint's `code` and `message`. Full-text JSON stays a bare array. Complete pages add no hint. At the semantic page cap, the hint asks you to raise `vector.search.max_page_size_hybrid`. When hybrid retrieval measures messages omitted by its per-method limits, the hint names `vector.search.k_per_signal`. If both limits apply, it names both settings. Raise the named settings above their reported values on the server and restart the daemon before raising `--limit`.
+
 Search tables show the subject, or the message snippet when the subject is blank.
 Redirected or piped output keeps the full sender and subject/snippet on one line,
 with terminal controls removed and whitespace collapsed. Terminal tables fit the
@@ -4073,6 +4075,8 @@ msgvault list-senders [flags]
 | `--before YYYY-MM-DD` | Only messages before this date |
 | `--json` | Output as JSON |
 
+`list-senders`, `list-domains`, and `list-labels` print a stderr hint to raise `-n` when more rows match, including with `--json`. Their JSON stdout stays a bare array.
+
 ---
 
 ## list-domains
@@ -4616,7 +4620,7 @@ listeners were found in this application's configured data directory.
 
 Start the Model Context Protocol server for AI assistant integration.
 
-Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. The eight preparation and lifecycle tools require API schema 3.0.0 or newer. On unreleased `main`, the owner also has `send_line_reply` (API schema 3.47.0), with per-channel opt-in and confirmation of the exact draft ID and revision. See [draft and reply tools](usage/chat.md#draft-tools).
+Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. The eight preparation and lifecycle tools require API schema 3.0.0 or newer. On unreleased `main`, the owner also has `send_line_reply` (API schema 3.48.0), with per-channel opt-in and confirmation of the exact draft ID and revision. See [draft and reply tools](usage/chat.md#draft-tools).
 
 With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 

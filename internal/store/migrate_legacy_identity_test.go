@@ -176,7 +176,7 @@ func TestMigrateLegacyIdentityConfigRefreshesExistingMessages(t *testing.T) {
 	require.True(applied, "migration should insert the configured identity")
 
 	var sourceDerived, identityDerived, isFromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT source_is_from_me, identity_is_from_me, is_from_me
 		FROM messages
 		WHERE id = ?

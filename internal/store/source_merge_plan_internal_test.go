@@ -50,7 +50,7 @@ func TestSourceMergePlanFingerprintsOnlyRowsWithDestinationCandidates(t *testing
 	require := require.New(t)
 	assert := assert.New(t)
 
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "merge-fingerprint-candidates.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "merge-fingerprint-candidates.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
@@ -64,7 +64,7 @@ func TestSourceMergePlanFingerprintsOnlyRowsWithDestinationCandidates(t *testing
 
 	baseTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	addMessage := func(sourceID int64, conversationID, providerID, body string, sentAt time.Time) {
-		conversation, err := st.EnsureConversation(sourceID, conversationID, "Example chat")
+		conversation, err := st.EnsureConversation(t.Context(), sourceID, conversationID, "Example chat")
 		require.NoError(err)
 		messageID, err := st.UpsertMessage(&Message{
 			SourceID: sourceID, ConversationID: conversation, SourceMessageID: providerID,

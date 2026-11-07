@@ -19,7 +19,7 @@ func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(`
+	_, err := f.Store.DB().ExecContext(t.Context(), `
 		CREATE TABLE backup_payload (value TEXT);
 		INSERT INTO backup_payload VALUES ('complete');
 	`)
@@ -27,7 +27,7 @@ func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
 
 	backupDir := t.TempDir()
 	dst := filepath.Join(backupDir, "msgvault.db.backup")
-	require.NoError(f.Store.BackupDatabaseContext(context.Background(), dst))
+	require.NoError(f.Store.BackupDatabaseContext(t.Context(), dst))
 	require.FileExists(dst)
 
 	backupStore, err := store.OpenReadOnly(dst)
@@ -35,7 +35,7 @@ func TestBackupDatabaseContext_AtomicallyPublishesValidBackup(t *testing.T) {
 	t.Cleanup(func() { require.NoError(backupStore.Close()) })
 
 	var value string
-	err = backupStore.DB().QueryRow("SELECT value FROM backup_payload").Scan(&value)
+	err = backupStore.DB().QueryRowContext(t.Context(), "SELECT value FROM backup_payload").Scan(&value)
 	require.NoError(err, "query published backup")
 	assert.Equal("complete", value)
 
@@ -94,7 +94,7 @@ func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(`
+	_, err := f.Store.DB().ExecContext(t.Context(), `
 		CREATE TABLE backup_cancellation_payload (data BLOB);
 		INSERT INTO backup_cancellation_payload VALUES (zeroblob(33554432));
 	`)
@@ -104,7 +104,7 @@ func TestBackupDatabaseContext_CancellationRemovesUnpublishedBackup(t *testing.T
 	dst := filepath.Join(backupDir, "msgvault.db.backup")
 	tempPattern := filepath.Join(backupDir, ".msgvault.db.backup.tmp-*", "backup.db")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
@@ -144,7 +144,7 @@ func TestBackupDatabaseContext_PreservesReversiblePersonMerge(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "VACUUM INTO backup publication is SQLite-only")
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
 	survivorParticipant := f.EnsureParticipant(
 		"backup-merge-survivor@example.com", "Survivor", "example.com")

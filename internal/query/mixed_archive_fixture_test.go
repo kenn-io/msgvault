@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"testing"
@@ -47,9 +46,9 @@ func TestWriteMixedArchiveBrowserFixture(t *testing.T) {
 func buildMixedArchiveBrowserFixture(t *testing.T) mixedArchiveBrowserFixture {
 	t.Helper()
 	engine := buildBenchData(t)
-	all, err := engine.Explore(context.Background(), ExploreRequest{Page: PageSpec{Limit: 500}})
+	all, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 500}})
 	require.NoError(t, err)
-	first, err := engine.Explore(context.Background(), ExploreRequest{Page: PageSpec{Limit: 50}})
+	first, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 50}})
 	require.NoError(t, err)
 	return mixedArchiveBrowserFixture{
 		RawChatMessageCount: benchChatMessageCount, ChatConversationCount: 100,

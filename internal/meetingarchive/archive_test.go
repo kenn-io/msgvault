@@ -1,7 +1,6 @@
 package meetingarchive
 
 import (
-	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -49,7 +48,7 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 		{Name: "Test Attendee", Email: "Attendee@Example.com"},
 		{Name: "Invalid", Email: "not-an-email"},
 	}
-	result, err := New(st).Upsert(context.Background(), snapshot, UpsertOptions{})
+	result, err := New(st).Upsert(t.Context(), snapshot, UpsertOptions{})
 	require.NoError(err)
 	assert.True(result.Created)
 	assert.True(result.Changed)
@@ -63,7 +62,7 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 		messageCount, participantCount        int
 		sizeEstimate                          int64
 	)
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.message_type, m.source_message_id, m.subject,
 		       c.conversation_type, c.source_conversation_id,
 		       mb.body_text, mr.raw_format, m.metadata, p.email_address,
@@ -94,7 +93,7 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	assert.EqualValues(78, sizeEstimate, "size estimate is the body's byte length")
 
 	var participantRole string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT cp.role
 		FROM conversation_participants cp
 		JOIN messages m ON m.conversation_id = cp.conversation_id
@@ -103,7 +102,7 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	assert.Equal("member", participantRole)
 
 	var recipient, recipientEnvelope, recipientName string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT p.email_address, mr.email_address, mr.display_name
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -114,7 +113,7 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	assert.Equal("Test Attendee", recipientName)
 
 	var organizerEnvelope, organizerName string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mr.email_address, mr.display_name
 		FROM message_recipients mr
 		WHERE mr.message_id = ? AND mr.recipient_type = 'from'
@@ -122,17 +121,18 @@ func TestArchiverCreatesProviderCanonicalMeeting(t *testing.T) {
 	assert.Equal("organizer@example.com", organizerEnvelope)
 	assert.Equal("Test Organizer", organizerName)
 	var recipients, invalid int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`,
 	), result.MessageID).Scan(&recipients))
 	assert.Equal(2, recipients)
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM participants WHERE email_address = 'not-an-email'`,
 	).Scan(&invalid))
 	assert.Zero(invalid)
 	if st.FTS5Available() && !st.IsPostgreSQL() {
 		var to string
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT to_addr FROM messages_fts WHERE rowid = ?`,
 		), result.MessageID).Scan(&to))
 		assert.Equal("attendee@example.com", to)
@@ -152,7 +152,7 @@ func TestArchiverUnchangedDetectsSnapshotChangesAndPreservesIdenticalRows(t *tes
 	must.NoError(st.AddAccountIdentity(source.ID, "user@example.com", "account-email"))
 	archiver := New(st)
 
-	first, err := archiver.Upsert(context.Background(), testSnapshot(source.ID), UpsertOptions{})
+	first, err := archiver.Upsert(t.Context(), testSnapshot(source.ID), UpsertOptions{})
 	must.NoError(err)
 	unchanged, err := archiver.Unchanged(t.Context(), testSnapshot(source.ID))
 	must.NoError(err)
@@ -174,18 +174,18 @@ func TestArchiverUnchangedDetectsSnapshotChangesAndPreservesIdenticalRows(t *tes
 		})
 	}
 	var before string
-	must.NoError(st.DB().QueryRow(st.Rebind(
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`,
 	), first.MessageID).Scan(&before))
 
-	second, err := archiver.Upsert(context.Background(), testSnapshot(source.ID), UpsertOptions{})
+	second, err := archiver.Upsert(t.Context(), testSnapshot(source.ID), UpsertOptions{})
 	must.NoError(err)
 	checks.False(second.Created)
 	checks.False(second.Changed)
 	checks.Equal(first.MessageID, second.MessageID)
 
 	var after string
-	must.NoError(st.DB().QueryRow(st.Rebind(
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`,
 	), first.MessageID).Scan(&after))
 	checks.Equal(before, after)
@@ -232,14 +232,14 @@ func TestArchiverUnchangedDetectsSnapshotChangesAndPreservesIdenticalRows(t *tes
 			assert.True(second.Changed)
 			assert.Equal(first.MessageID, second.MessageID)
 			var sender sql.NullInt64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), first.MessageID).Scan(&sender))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), first.MessageID).Scan(&sender))
 			if snapshot.Organizer == nil {
 				assert.False(sender.Valid)
 			} else {
 				assert.Equal(snapshot.Organizer.ParticipantID, sender.Int64)
 			}
 			for _, role := range []string{"from", "to"} {
-				rows, err := st.DB().Query(st.Rebind(`SELECT participant_id, COALESCE(display_name, ''), COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? AND recipient_type = ? ORDER BY id`), first.MessageID, role)
+				rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT participant_id, COALESCE(display_name, ''), COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? AND recipient_type = ? ORDER BY id`), first.MessageID, role)
 				require.NoError(err)
 				defer func() { assert.NoError(rows.Close()) }()
 				people := snapshot.Attendees
@@ -269,7 +269,7 @@ func TestArchiverUnchangedDetectsSnapshotChangesAndPreservesIdenticalRows(t *tes
 				}
 			}
 			var beforeRow sql.NullInt64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), first.MessageID).Scan(&beforeRow))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), first.MessageID).Scan(&beforeRow))
 			unchanged, err = archiver.Unchanged(t.Context(), snapshot)
 			require.NoError(err)
 			if change != "mixed resolved and canonical" {
@@ -278,7 +278,7 @@ func TestArchiverUnchangedDetectsSnapshotChangesAndPreservesIdenticalRows(t *tes
 			third, err := archiver.Upsert(t.Context(), snapshot, UpsertOptions{})
 			require.NoError(err)
 			if change == "mixed resolved and canonical" {
-				rows, err := st.DB().Query(st.Rebind(`SELECT participant_id, COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? AND recipient_type = 'to' ORDER BY id`), first.MessageID)
+				rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT participant_id, COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? AND recipient_type = 'to' ORDER BY id`), first.MessageID)
 				require.NoError(err)
 				defer func() { assert.NoError(rows.Close()) }()
 				var ids []int64
@@ -298,7 +298,7 @@ func TestArchiverUnchangedDetectsSnapshotChangesAndPreservesIdenticalRows(t *tes
 			} else {
 				assert.False(third.Changed)
 				var afterRow sql.NullInt64
-				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), first.MessageID).Scan(&afterRow))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), first.MessageID).Scan(&afterRow))
 				assert.Equal(beforeRow, afterRow)
 			}
 		})
@@ -317,17 +317,18 @@ func TestArchiverWithoutOrganizerDoesNotInventSender(t *testing.T) {
 	snapshot.Attendees = nil
 	snapshot.Body = "Attendees: Unresolved User"
 
-	result, err := New(st).Upsert(context.Background(), snapshot, UpsertOptions{})
+	result, err := New(st).Upsert(t.Context(), snapshot, UpsertOptions{})
 	require.NoError(err)
 
 	var sender sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`,
 	), result.MessageID).Scan(&sender))
 	assert.False(sender.Valid)
 
 	var participantCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM participants`,
 	).Scan(&participantCount))
 	assert.Zero(participantCount)
@@ -353,7 +354,7 @@ func TestTranscriptEnrichmentPreservesRecordingAttachmentCounts(t *testing.T) {
 	assert.Equal(result.MessageID, enriched.MessageID)
 	var attached bool
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT has_attachments, attachment_count FROM messages WHERE id = ?"), result.MessageID).Scan(&attached, &count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT has_attachments, attachment_count FROM messages WHERE id = ?"), result.MessageID).Scan(&attached, &count))
 	assert.True(attached)
 	assert.Equal(1, count)
 }

@@ -218,7 +218,7 @@ func (s *Store) ExecuteGCContext(
 			}
 		}
 		if deleted > 0 {
-			if err := s.bumpDerivedDataRevision(tx); err != nil {
+			if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 				return fmt.Errorf("invalidate caches after archive GC: %w", err)
 			}
 		}

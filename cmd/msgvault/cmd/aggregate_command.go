@@ -31,6 +31,11 @@ func runAggregateListCommand(
 		return query.HintRepairEncoding(fmt.Errorf("aggregate by %s: %w", errorLabel, err))
 	}
 
+	if len(results) > 0 && results[0].TotalUnique > int64(opts.Limit) {
+		defer func() {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hint: more %ss exist; raise -n\n", errorLabel)
+		}()
+	}
 	// JSON mode must stay machine-parseable even with zero results:
 	// emit an empty array, never prose.
 	if aggJSON {

@@ -19,7 +19,7 @@ func TestSQLiteReusesCompiledStatements(t *testing.T) {
 		open func(string) (*store.Store, error)
 	}{
 		{"Open", store.Open},
-		{"OpenForTest", store.OpenForTest},
+		{"OpenForTest", func(path string) (*store.Store, error) { return store.OpenForTest(t.Context(), path) }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)

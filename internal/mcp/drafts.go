@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/sensitive"
 )
 
 // DraftRunner runs managed draft commands with the caller's daemon credential.
@@ -141,6 +142,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 		if raw.IsValid() && len(raw) > 0 {
 			switch raw[0] {
 			case '{':
+				raw = addSensitiveDraftWarnings(raw, draftSensitiveFindings(args))
 				return &toolResult{text: string(raw), structuredContent: raw}, nil
 			case '[':
 				return jsonResult(map[string]jsontext.Value{"data": raw})
@@ -148,4 +150,29 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 		}
 		return nil, newInternalError("decode "+command+" output", errors.New("expected a JSON object or array"))
 	}
+}
+
+func draftSensitiveFindings(args map[string]any) []sensitive.Finding {
+	return append(sensitive.Scan(stringArgument(args, "subject")), sensitive.Scan(stringArgument(args, "body"))...)
+}
+
+// Preserve receipts if decoration fails: the mutation already succeeded.
+func addSensitiveDraftWarnings(raw jsontext.Value, findings []sensitive.Finding) jsontext.Value {
+	if len(findings) == 0 {
+		return raw
+	}
+	var object map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return raw
+	}
+	encodedWarnings, err := json.Marshal(findings)
+	if err != nil {
+		return raw
+	}
+	object["sensitive_content"] = encodedWarnings
+	encoded, err := json.Marshal(object, json.Deterministic(true))
+	if err != nil {
+		return raw
+	}
+	return encoded
 }

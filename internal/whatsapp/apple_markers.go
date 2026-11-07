@@ -248,7 +248,7 @@ func (imp *Importer) saveAppleChatMarkers(
 	if err != nil {
 		return fmt.Errorf("encode Apple chat markers: %w", err)
 	}
-	if err := imp.store.UpdateSourceSyncState(sourceID, string(encoded)); err != nil {
+	if err := imp.store.UpdateSourceSyncState(ctx, sourceID, string(encoded)); err != nil {
 		return fmt.Errorf("save Apple chat markers: %w", err)
 	}
 	return nil

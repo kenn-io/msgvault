@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -66,7 +65,7 @@ func TestParticipantIdentifiersServiceScopeLegacyTableUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"imessage", "+12025550123", "Test User",
@@ -119,6 +118,7 @@ func TestEnsureParticipantCreationSupportsLegacyIdentifierColumns(t *testing.T) 
 			serviceSlug:    "whatsapp",
 			ensure: func(st *store.Store) (int64, error) {
 				return st.EnsureParticipantByPhone(
+					t.Context(),
 					"+15550001111", "Legacy Phone", "whatsapp",
 				)
 			},
@@ -183,6 +183,7 @@ func TestEnsureParticipantCreationRollsBackWhenIdentifierWriteFails(t *testing.T
 			name: "phone",
 			ensure: func(st *store.Store) (int64, error) {
 				return st.EnsureParticipantByPhone(
+					t.Context(),
 					"+15550009999", "Rejected Phone", "whatsapp",
 				)
 			},

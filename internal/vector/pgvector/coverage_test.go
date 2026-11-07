@@ -3,7 +3,6 @@
 package pgvector
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +24,7 @@ import (
 func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db := openPGTestDB(t) // skips when MSGVAULT_TEST_DB is unset
 	b, err := Open(ctx, Options{DB: db, Dimension: 8})
@@ -98,7 +97,7 @@ func TestCoverageSplit_EmbeddedBlankMissing(t *testing.T) {
 func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db := openPGTestDB(t) // skips when MSGVAULT_TEST_DB is unset
 	b, err := Open(ctx, Options{
@@ -161,7 +160,7 @@ func TestCoverageSplit_ScopedEmbeddedHoldsInvariant(t *testing.T) {
 func TestStats_SourceScopeExcludesOutOfScopePendingMessages(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 	b, err := Open(ctx, Options{
 		DB:         db,
@@ -196,7 +195,7 @@ func TestStats_SourceScopeExcludesOutOfScopePendingMessages(t *testing.T) {
 func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 	b, err := Open(ctx, Options{DB: db, Dimension: 8})
 	require.NoError(err)
@@ -239,7 +238,7 @@ func TestFilteredCoverageRequiresLiveGenerationStampAndVector(t *testing.T) {
 func TestActivateGeneration_RefusesEmptySourceScope(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db := openPGTestDB(t) // skips when MSGVAULT_TEST_DB is unset
 	b, err := Open(ctx, Options{

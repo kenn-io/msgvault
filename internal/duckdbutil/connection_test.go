@@ -87,18 +87,18 @@ func TestPolicyAppliesEffectiveSettings(t *testing.T) {
 		TempDirectory:        tempDir,
 		MaxTempDirectorySize: "2GB",
 	}
-	db, err := Open(context.Background(), policy)
+	db, err := Open(t.Context(), policy)
 	require.NoError(err)
 	t.Cleanup(func() {
 		require.NoError(db.Close())
 	})
 
-	require.NoError(db.Ping())
+	require.NoError(db.PingContext(t.Context()))
 	assert.DirExists(tempDir)
 	var threads, asyncThreads int
 	var preserveOrder bool
 	var spillDir string
-	require.NoError(db.QueryRow(`SELECT current_setting('threads'), current_setting('async_threads'),
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT current_setting('threads'), current_setting('async_threads'),
 		current_setting('preserve_insertion_order'), current_setting('temp_directory')`).
 		Scan(&threads, &asyncThreads, &preserveOrder, &spillDir))
 	assert.Equal(policy.Threads, threads)
@@ -128,7 +128,7 @@ func TestPolicyRejectsIncompleteOrUnsafeSettings(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			policy := valid
 			test.mutate(&policy)
-			db, err := Open(context.Background(), policy)
+			db, err := Open(t.Context(), policy)
 			if db != nil {
 				require.NoError(t, db.Close())
 			}
