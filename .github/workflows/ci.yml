@@ -125,6 +125,19 @@ jobs:
       - name: Test built CLI on a synthetic archive
         run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
+      # Keep modes inside a tar: artifact downloads do not preserve +x.
+      # This payload tests the direct executable, independently of the image build.
+      - name: Package standalone smoke input
+        run: tar -cf dist/standalone.tar -C dist msgvault -C "$GITHUB_WORKSPACE" scripts/smoke-standalone.sh
+
+      - name: Upload standalone smoke input
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: standalone-linux-${{ matrix.goarch }}
+          path: dist/standalone.tar
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Check for test reruns
         if: always()
         id: check-reruns
@@ -145,6 +158,38 @@ jobs:
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
+
+  standalone-linux-runtime:
+    needs: release-linux-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-24.04
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    container:
+      image: debian:bookworm-slim
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: standalone-linux-${{ matrix.goarch }}
+
+      - name: Exercise the executable in a stock runtime
+        shell: sh
+        run: |
+          # Do not install build tools or DuckDB in this job.
+          for tool in go gcc g++ cc duckdb; do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "Unexpected build tool in runtime: $tool" >&2
+              exit 1
+            fi
+          done
+          tar -xf standalone.tar
+          sh scripts/smoke-standalone.sh "$PWD/msgvault"
 
   checks:
     env:
