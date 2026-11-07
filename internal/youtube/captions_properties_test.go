@@ -35,7 +35,7 @@ func TestCaptionPendingCrashReplayIdentityProperty(t *testing.T) {
 		}
 		assert.Empty(ht, api.listCalls)
 		var count int
-		require.NoError(ht, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND source_part_key=?`), roots[0], captionPartKey(id)).Scan(&count))
+		require.NoError(ht, st.DB().QueryRowContext(ht.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND source_part_key=?`), roots[0], captionPartKey(id)).Scan(&count))
 		assert.Equal(ht, 1, count)
 	})
 }

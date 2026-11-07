@@ -84,7 +84,7 @@ func TestCaptionsStoreTextAndSkipUnchangedVersion(t *testing.T) {
 	assertions.Equal(250, summary.Units)
 	assertions.Equal(1, summary.Stored)
 	var mime, path, role, provenance string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT mime_type,storage_path,attachment_role,role_source FROM attachments WHERE message_id=? AND attachment_state='stored'`), roots[0]).Scan(&mime, &path, &role, &provenance))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT mime_type,storage_path,attachment_role,role_source FROM attachments WHERE message_id=? AND attachment_state='stored'`), roots[0]).Scan(&mime, &path, &role, &provenance))
 	assertions.Equal("text/plain", mime)
 	assertions.Equal("standalone", role)
 	assertions.Equal("importer_semantics", provenance)
@@ -99,7 +99,7 @@ func TestCaptionsStoreTextAndSkipUnchangedVersion(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(api.downloads, 2)
 	var count int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND attachment_state='stored'`), roots[0]).Scan(&count))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND attachment_state='stored'`), roots[0]).Scan(&count))
 	assertions.Equal(1, count)
 }
 
@@ -119,7 +119,7 @@ func TestCaptionsASRAndMissingRevisited(t *testing.T) {
 	assertions.Contains(refs, "youtube:caption:status", "ASR observation regression: available through the public reader")
 	for _, root := range roots {
 		var metadata string
-		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_metadata FROM attachments WHERE message_id=? AND attachment_state='unavailable'`), root).Scan(&metadata))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_metadata FROM attachments WHERE message_id=? AND attachment_state='unavailable'`), root).Scan(&metadata))
 		var observation map[string]any
 		requirements.NoError(json.Unmarshal([]byte(metadata), &observation))
 		assertions.NotEmpty(observation["observed_at"])
@@ -130,7 +130,7 @@ func TestCaptionsASRAndMissingRevisited(t *testing.T) {
 	assertions.Equal(1, summary.Stored)
 	assertions.Equal([]string{"later-track"}, api.downloads)
 	var stale int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND source_part_key='youtube:captions:status'`), roots[1]).Scan(&stale))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND source_part_key='youtube:captions:status'`), roots[1]).Scan(&stale))
 	assertions.Zero(stale, "a resolved transcript must clear its unavailable marker")
 }
 
@@ -214,7 +214,7 @@ func TestMalformedCaptionDefersWithoutStarvingOtherRoots(t *testing.T) {
 	assertions.Equal(1, summary.Stored)
 	assertions.Equal([]string{"bad-track", "good-track"}, api.downloads)
 	var count int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND attachment_state='stored'`), roots[1]).Scan(&count))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=? AND attachment_state='stored'`), roots[1]).Scan(&count))
 	assertions.Equal(1, count)
 	delete(api.data, "bad-track")
 	_, err = SyncCaptions(t.Context(), api, st, opts)

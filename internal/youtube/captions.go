@@ -90,10 +90,10 @@ func SyncCaptions(ctx context.Context, api CaptionAPI, st *store.Store, opts Cap
 	}
 	var cursor captionCursor
 	if raw != "" && json.Unmarshal([]byte(raw), &cursor) != nil {
-		return sum, errors.New("Saved YouTube caption progress is invalid")
+		return sum, errors.New("saved YouTube caption progress is invalid")
 	}
 	if cursor.After < 0 || cursor.Upper < cursor.After || (cursor.Pending != nil && (cursor.Pending.Root.MessageID <= cursor.After || cursor.Pending.Root.MessageID > cursor.Upper)) {
-		return sum, errors.New("Saved YouTube caption progress is inconsistent")
+		return sum, errors.New("saved YouTube caption progress is inconsistent")
 	}
 	save := func() error {
 		encoded, encodeErr := json.Marshal(cursor)
