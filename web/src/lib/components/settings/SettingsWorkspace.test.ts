@@ -186,7 +186,7 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   const firstLeave = vi.fn();
   expect(hold?.(firstLeave)).toBe(true);
   const stay = await screen.findByRole('button', { name: 'Stay' });
-  expect(screen.getByText('Leave Settings and discard 1 unsaved change?')).toBeDefined();
+  expect(screen.getByText('Leave Settings and discard unsaved changes?')).toBeDefined();
   expect(document.activeElement).toBe(stay);
   await fireEvent.click(stay);
   expect(field).toHaveProperty('value', '15m');
@@ -282,6 +282,66 @@ it('refreshes shared Contacts status after saving a disabled account', async () 
   await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
   const updatedContacts = (await screen.findByText('Contacts', { selector: '.row__name' })).closest('li')!;
   await waitFor(() => expect(within(updatedContacts).getByText('Off')).toBeDefined());
+});
+
+it.each([
+  ['provider settings', 'enrichment', 'primary endpoint'],
+  ['People sweep profile', 'enrichment', 'Model ID'],
+  ['contact account', 'carddav', 'Base URL'],
+] as const)('warns before leaving with an unsaved %s and drops it on leave', async (_form, category, label) => {
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
+  const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, operationsController, onStatusChange, category },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  const field = await screen.findByLabelText(label);
+  const saved = (field as HTMLInputElement).value;
+  expect(hold?.(vi.fn())).toBe(false);
+  await fireEvent.input(field, { target: { value: 'https://changed.example.test' } });
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  const reload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(reload);
+  expect(reload.defaultPrevented).toBe(true);
+  const leave = vi.fn();
+  expect(hold?.(leave)).toBe(true);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
+  expect(leave).toHaveBeenCalledOnce();
+  expect(screen.getByLabelText(label)).toHaveProperty('value', saved);
+  expect(hold?.(vi.fn())).toBe(false);
+  expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
+it('keeps a People provider check through an unrelated settings save', async () => {
+  let revision = '"s1"';
+  const doc = settingsDoc();
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings') {
+      if (request.method === 'PATCH') revision = '"s2"';
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      return Response.json({
+        profiles: [{ ...inferenceProfile, consent_active: path.endsWith('/consent') }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  const profileReads = () => seen.filter(request => request.method === 'GET' && request.path.endsWith('/settings/people-inference')).length;
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Check provider' }));
+  await fireEvent.click(await screen.findByLabelText('I confirm this exact disclosure'));
+  const readsBeforeSave = profileReads();
+  await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(profileReads()).toBeGreaterThan(readsBeforeSave));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Grant consent' })).toHaveProperty('disabled', false));
+  await fireEvent.click(screen.getByRole('button', { name: 'Grant consent' }));
+  await waitFor(() => expect(seen.find(request => request.path.endsWith('/consent'))?.ifMatch).toBe('"s2"'));
+  expect(seen.filter(request => request.path.endsWith('/check'))).toHaveLength(1);
 });
 
 it('keeps a failed Overview action error on Overview', async () => {
@@ -446,7 +506,7 @@ it('locks fields and newly mounted category controls without holding leave while
   try {
     await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
     expect(hold?.(vi.fn())).toBe(false);
-    expect(screen.queryByText('Leave Settings and discard 1 unsaved change?')).toBeNull();
+    expect(screen.queryByText('Leave Settings and discard unsaved changes?')).toBeNull();
     expect(screen.getByLabelText('Stop when idle after').matches(':disabled')).toBe(true);
     await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     expect(screen.getByLabelText('Builder threads').matches(':disabled')).toBe(true);
@@ -610,11 +670,13 @@ it.each([
     }
     if (path.includes('/settings/people-inference')) {
       if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
-      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      // The daemon's fingerprint covers the model, so the changed profile needs a new check.
+      const fingerprint = revision === '"s1"' ? 'fingerprint-primary' : 'fingerprint-two';
+      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint });
       if (path.endsWith('/consent')) consented = true;
       if (path.endsWith('/select')) selected = true;
       return Response.json({
-        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two', consent_active: consented }],
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two', fingerprint, consent_active: consented }],
         configured_enabled: selected, running_enabled: false, pending_restart: selected,
       }, { headers: { ETag: revision } });
     }

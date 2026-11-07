@@ -43,7 +43,7 @@
           {#if working[action.id]}
             <Button size="sm" surface="soft" tone="info" ariaLabel={`Build index, ${name}`} label="Working…" disabled />
           {:else}
-            <BuildIndexAction size="sm" surface="soft" ariaLabel={`Build index, ${name}`} disabled={Boolean(working[action.id])} onconfirm={() => onStart(action)} />
+            <BuildIndexAction size="sm" surface="soft" ariaLabel={`Build index, ${name}`} onconfirm={() => onStart(action)} />
           {/if}
         {:else if action?.kind === 'start'}
           <Button

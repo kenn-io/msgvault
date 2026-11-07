@@ -3,6 +3,7 @@
   import type { APIClient } from '../../api/client';
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
   import { credentialStatus, PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
 
   let { client, controller }: { client: APIClient; controller: PeopleInferenceController } = $props();
   let provider = $state<PeopleInferencePresetCreateRequest['preset_id']>('openai');
@@ -17,6 +18,15 @@
   let retentionPosture = $state('');
   let trainingPosture = $state('');
   let removeConfirmationName = $state('');
+  trackUnsavedForm({
+    dirty: () => Boolean(name || model || key || replacementKey || allowedSources.length || sourceSince || sourceUntil ||
+      sensitiveChoice || retentionPosture || trainingPosture),
+    discard: () => {
+      name = model = key = replacementKey = sourceSince = sourceUntil = '';
+      sensitiveChoice = retentionPosture = trainingPosture = '';
+      allowedSources = [];
+    },
+  });
 
   async function createProfile(): Promise<void> {
     const stableName = name.trim();

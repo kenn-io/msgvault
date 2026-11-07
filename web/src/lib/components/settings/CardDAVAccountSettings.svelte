@@ -11,6 +11,7 @@
   import { shellQuote } from '../../settings/shell-quote';
   import type { CardDAVAccountValues } from '../../carddav/account-settings';
   import CronField from './CronField.svelte';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
   type CardDAVAccountRequest = GeneratedCardDAVAccountRequest;
   type Action = 'test' | 'save' | 'authorize';
   let {
@@ -60,6 +61,20 @@
   let requestController: AbortController | undefined;
   let actionGeneration = 0;
   let disposed = false;
+  trackUnsavedForm({
+    dirty: () => password !== '' || provider !== persistedProvider || oauthApp !== persistedOAuthApp ||
+      baseURL !== persistedBaseURL || username !== persistedUsername || enabled !== persistedEnabled ||
+      schedule !== persistedSchedule,
+    discard: () => {
+      provider = persistedProvider;
+      oauthApp = persistedOAuthApp;
+      baseURL = persistedBaseURL;
+      username = persistedUsername;
+      enabled = persistedEnabled;
+      schedule = persistedSchedule;
+      password = '';
+    },
+  });
   $effect(() => {
     const snapshot = values;
     untrack(() => reconcileSettings(snapshot));
