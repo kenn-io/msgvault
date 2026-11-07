@@ -52,6 +52,32 @@ or a UID from one of its bound CardDAV cards. JSON profile reads include
 href, remote UID, and mapping status. UID lookup needs daemon API schema 3.10.0
 or newer.
 
+## Find confirmed photos
+
+When the Docbank integration and attachment upload consent are enabled, the
+HTTP API can link a saved profile to an explicitly chosen Docbank person and
+list confirmed photos in mirrored message attachments. This needs a Docbank
+service that supports external person identities. Names never establish a link.
+
+Send `PUT /api/v1/people/by-uid/photo-link` with JSON containing `uid` (a
+current, retired, or bound CardDAV UID), the selected Docbank `person_id`, its
+current `revision`, and `state` set to `current` or `unlinked`. A current link
+uses the profile's canonical vCard UID. To unlink a UID retained after a local
+merge, supply it as `linked_uid`; it must belong to that profile. The response
+returns the canonical `uid`, the `linked_uid`, the resulting `state`, and the
+new Docbank `revision`. A stale revision returns 412; conflicting links return
+409 for review.
+
+`GET /api/v1/people/by-uid/photos?uid=<uid>` returns the canonical UID, a
+`link_state` of `linked` or `unlinked`, and confirmed photo assertions with
+current visible attachment occurrences. Results include Docbank assertion and
+content version IDs. They do not include unconfirmed face suggestions. If
+`truncated` is true, pass `next_cursor` as the `cursor` query parameter for the
+next assertion page. Each photo returns at most ten occurrences and reports
+`occurrences_truncated` when more may exist. Distinct Docbank people linked to
+the same profile's current and retired UIDs produce a 409 instead of a guessed
+merge.
+
 ## Review identity matches
 
 Msgvault can retain uncertain identity suggestions for a person to review.
