@@ -128,10 +128,11 @@ func renderSubtitles(entry Entry, format string) (string, error) {
 		} else {
 			unsafe := strings.ContainsAny(text, "<{}\\")
 			for line := range strings.SplitSeq(text, "\n") {
-				unsafe = unsafe || srtTimingHeader.MatchString(line) || strings.Trim(line, " \t\r\f\v") != line
+				// FFmpeg splits SRT input after 4095 UTF-8 bytes, exposing new headers.
+				unsafe = unsafe || len(line) > 4095 || srtTimingHeader.MatchString(line) || strings.Trim(line, " \t\r\f\v") != line
 			}
 			if unsafe {
-				return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve markup, timing syntax, or leading/trailing whitespace; use --format vtt", i+1)
+				return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve markup, timing syntax, leading/trailing whitespace, or lines over 4095 UTF-8 bytes; use --format vtt", i+1)
 			}
 		}
 		cues = append(cues, cue{startMS, endMS, text})

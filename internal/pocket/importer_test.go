@@ -179,6 +179,13 @@ func TestPocketImportPreservesUnavailableAndClearsAuthoritativeEmpty(t *testing.
 	_, content := archivedContent(t, st, first.SourceID, "rec-a")
 	assertions.Equal("Roadmap decision", content.Summary.Text)
 	requirements.Len(content.Transcript.Segments, 1)
+	requirements.NotNil(content.Transcript.Segments[0].EndOffsetSeconds)
+	assertions.InDelta(3.0, *content.Transcript.Segments[0].EndOffsetSeconds, 0)
+	for _, format := range []meetingcontent.Format{meetingcontent.FormatSRT, meetingcontent.FormatVTT} {
+		result, err := meetingcontent.Render("synthetic", []meetingcontent.Entry{{Content: content}}, meetingcontent.PacketOptions{Format: format, MaxBytes: 4096})
+		requirements.NoError(err)
+		assertions.Contains(result.Content, "Decide roadmap")
+	}
 	requirements.Len(content.Actions, 1)
 	src.records[0] = testRecording(t, `{"id":"rec-a","transcript":{"segments":[]},"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"New summary"}}}}}`)
 	_, err = imp.Import(t.Context(), archiveOptions())

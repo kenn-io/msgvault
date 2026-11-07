@@ -2,6 +2,7 @@ package meetingcontent
 
 import (
 	"context"
+	"encoding/json/v2"
 	"os/exec"
 	"strings"
 	"testing"
@@ -41,6 +42,20 @@ func TestSubtitleParserDisplayText(t *testing.T) {
 			} else {
 				require.NoError(err)
 				assert.Equal([]string{`0:00:01.00,0:00:02.00,Example: First\N  indented`}, subtitleDisplay(t, ffmpeg, format, result.Content))
+			}
+			const speaker = "話者"
+			padding := 4095 - len(speaker+": ")
+			text := strings.Repeat("界", padding/3) + strings.Repeat("x", padding%3) + "00:00:10,000 --> 00:00:20,000\nInjected"
+			raw, err := json.Marshal(map[string]any{"transcript_segments": []any{map[string]any{"speaker_name": speaker, "text": text, "start": 1, "end": 2}}})
+			require.NoError(err)
+			content := Decode("omi_json", raw, nil)
+			result, err = Render("synthetic", []Entry{{Content: content}}, PacketOptions{Format: Format(format), MaxBytes: 8192})
+			if format == "srt" {
+				require.ErrorContains(err, "use --format vtt")
+				assert.Nil(result)
+			} else {
+				require.NoError(err)
+				assert.Equal([]string{"0:00:01.00,0:00:02.00," + speaker + ": " + strings.ReplaceAll(text, "\n", `\N`)}, subtitleDisplay(t, ffmpeg, format, result.Content))
 			}
 		})
 	}

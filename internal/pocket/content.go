@@ -78,7 +78,7 @@ func Normalize(rec Recording) (meetingcontent.Content, error) {
 			if speaker == "" {
 				speaker = strings.TrimSpace(item.Speaker)
 			}
-			transcript.Segments = append(transcript.Segments, meetingcontent.Segment{Speaker: speaker, Text: text, OffsetSeconds: item.Start})
+			transcript.Segments = append(transcript.Segments, meetingcontent.Segment{Speaker: speaker, Text: text, OffsetSeconds: item.Start, EndOffsetSeconds: item.End})
 			// Unresolved diarization labels are not people.
 			if name != "" && !seen[name] {
 				content.SourceParticipants = append(content.SourceParticipants, meetingcontent.Participant{Name: name, Role: "speaker"})

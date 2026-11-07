@@ -117,6 +117,25 @@ func TestRenderSubtitles(t *testing.T) {
 		require.ErrorContains(err, "use --format vtt")
 		assert.Nil(result)
 	}
+	for _, size := range []int{4094, 4095, 4096} {
+		const speaker = "話者"
+		remaining := size - len(speaker+": ")
+		text := strings.Repeat("界", remaining/3) + strings.Repeat("x", remaining%3)
+		raw, err := json.Marshal(map[string]any{"transcript_segments": []any{map[string]any{"speaker_name": speaker, "text": text, "start": 0, "end": 1.5}}})
+		require.NoError(err)
+		content := Decode("omi_json", raw, nil)
+		for _, format := range []Format{FormatSRT, FormatVTT} {
+			result, err := Render("archive", []Entry{{Content: content}}, PacketOptions{Format: format, MaxBytes: 8192})
+			if format == FormatSRT && size == 4096 {
+				require.ErrorContains(err, "use --format vtt")
+				assert.Nil(result)
+			} else {
+				require.NoError(err)
+				assert.Contains(result.Content, speaker+": "+text+"\n\n")
+			}
+		}
+		assert.Equal(text, content.Transcript.Segments[0].Text)
+	}
 }
 
 func TestSubtitleTiming(t *testing.T) {
@@ -311,14 +330,19 @@ func FuzzSubtitlePayload(f *testing.F) {
 		if len(text)+len(speaker) > 512 {
 			return
 		}
+		boundary := 4094 + len(text)%3
+		longSpeaker := "話者:" + hex.EncodeToString([]byte(speaker))
+		remaining := boundary - len(longSpeaker+": ")
+		longText := strings.Repeat("界", remaining/3) + strings.Repeat("x", remaining%3)
 		// Hex encoding constructs an independently known-valid text domain. Every fuzz
 		// input must successfully export this case, even if its raw case refuses.
 		for _, input := range []struct {
-			text, speaker string
-			valid         bool
+			text, speaker     string
+			valid, srtTooLong bool
 		}{
-			{text, speaker, false},
-			{"Text:" + hex.EncodeToString([]byte(text)) + "\nNext --> 世界 & done", "R&D:" + hex.EncodeToString([]byte(speaker)), true},
+			{text, speaker, false, false},
+			{"Text:" + hex.EncodeToString([]byte(text)) + "\nNext --> 世界 & done", "R&D:" + hex.EncodeToString([]byte(speaker)), true, false},
+			{longText, longSpeaker, true, boundary == 4096},
 		} {
 			text, speaker := input.text, input.speaker
 			if !utf8.ValidString(text) || !utf8.ValidString(speaker) || strings.TrimSpace(text) == "" {
@@ -341,7 +365,11 @@ func FuzzSubtitlePayload(f *testing.F) {
 					payload = speaker + ": " + payload
 				}
 				if input.valid {
-					require.NoError(err)
+					if format == "srt" && input.srtTooLong {
+						require.ErrorContains(err, "use --format vtt")
+					} else {
+						require.NoError(err)
+					}
 				}
 				if err != nil {
 					assert.Empty(got)

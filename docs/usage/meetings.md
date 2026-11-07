@@ -66,7 +66,8 @@ SRT writes plain text, preserving literal ampersands and arrows. SRT refuses
 them as markup or formatting controls. SRT also refuses complete timing headers
 at the start of a payload line, including signed timestamps, which players can
 treat as another cue. SRT also refuses leading or trailing ASCII whitespace on
-cue lines; VTT preserves indentation. Use `--format vtt` for those transcripts.
+cue lines and lines over 4095 UTF-8 bytes, including the speaker prefix.
+VTT preserves indentation and longer lines. Use `--format vtt` for those transcripts.
 Ordinary numeric arrows such as `2025 --> 2026` remain literal.
 Interior blank cue lines, multiline speaker labels, and NUL characters cause an
 explicit error.
@@ -78,7 +79,9 @@ transcription service. Complete start/end intervals in one coordinate system
 are required. Relative bounds survive from Twenty, Omi, and Plaud. New Plaud
 captures preserve explicit zero starts; older saved zero starts are ambiguous
 and refuse export. A later sync with fresh complete transcript data replaces
-that evidence; export never fetches it. Twenty uses its retained recording start
+that evidence; export never fetches it. Older Pocket archives without saved end
+bounds also need fresh complete transcript evidence; export never fetches missing
+timing. Twenty uses its retained recording start
 ahead of earliest-cue rebasing, never calendar or creation dates. Without a
 recording start, absolute-only transcripts start at their earliest cue; mixing
 them with relative cues requires an exact common origin. Overlaps survive.
