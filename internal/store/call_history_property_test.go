@@ -28,9 +28,9 @@ func FuzzCallStoreSequences(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, seed uint64) {
 		st := testutil.NewTestStore(t)
-		a, err := st.EnsureParticipantByPhone("+12025550101", "Example", "signal")
+		a, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
 		require.NoError(t, err)
-		b, err := st.EnsureParticipantByPhone("+12025550102", "Example", "signal")
+		b, err := st.EnsureParticipantByPhone(t.Context(), "+12025550102", "Example", "signal")
 		require.NoError(t, err)
 		_, err = st.LinkParticipants(a, b)
 		require.NoError(t, err)

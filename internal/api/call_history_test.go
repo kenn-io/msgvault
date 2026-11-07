@@ -69,7 +69,7 @@ func TestCallHistoryHTTPRoundtrip(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	archive := testutil.NewTestStore(t)
-	peer, err := archive.EnsureParticipantByPhone("+12025550101", "Example", "signal")
+	peer, err := archive.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
 	requirements.NoError(err)
 	person, _, err := archive.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
