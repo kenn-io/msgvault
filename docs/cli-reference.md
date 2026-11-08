@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-06"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
