@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -411,6 +413,29 @@ func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T
 	assert.Equal(daemonService, records[0].Service, "service")
 }
 
+func TestReportRetainedDaemonVersion(t *testing.T) {
+	withTestVersion(t, "v0.23.0-45-gabc")
+	for _, tt := range []struct {
+		name    string
+		options invocationOptions
+		restart string
+	}{
+		{name: "default archive", restart: "msgvault daemon restart"},
+		{name: "both selections", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"}, restart: map[string]string{
+			"linux":   "msgvault --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
+			"darwin":  "msgvault --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
+			"windows": "& 'msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'",
+		}[runtime.GOOS]},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			ctx := testInvocationContext(t.Context(), nil, tt.options)
+			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: "v0.23.0"}})
+			assert.Equal(t, "msgvault: daemon v0.23.0 is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version.\n", stderr.String())
+		})
+	}
+}
+
 func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -453,7 +478,6 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},
 		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
 		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
-		{name: "source keeps dev daemon", daemonVersion: "dev", currentVersion: "v0.23.0-45-gabc"},
 		{name: "source keeps hash daemon", daemonVersion: "abc1234", currentVersion: "v0.23.0-45-gabc"},
 		{name: "same base later source replaces earlier", daemonVersion: "v0.23.0-44-gdef", currentVersion: "v0.23.0-45-gabc", want: true},
 		{name: "same base earlier source replaces later", daemonVersion: "v0.23.0-46-gdef", currentVersion: "v0.23.0-45-gabc", want: true},

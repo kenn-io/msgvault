@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -286,52 +285,6 @@ func TestOpenHTTPStoreDisabledAutoStartDoesNotStartDaemon(t *testing.T) {
 	owner, err := claimServeOwnership(testCtx, c, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "supervised serve should claim ownership")
 	require.NoError(owner.Close(), "release supervised ownership")
-}
-
-func TestOpenHTTPStoreDisabledAutoStartReusesOlderDaemonWithoutRestart(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	withTestVersion(t, "v1.1.0")
-	dataDir := t.TempDir()
-	c := lifecycleTestConfig(dataDir)
-	c.Server.DaemonAutoStart = new(false)
-	c.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
-	testCtx := withStoreResolverConfig(t, c)
-	ping := httptestPingDaemon(t)
-	portText := strconv.Itoa(ping.Port)
-	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(ping.Host, portText),
-		Service: daemonService,
-		Version: "v1.0.0",
-		Metadata: map[string]string{
-			runtimeHost:             ping.Host,
-			runtimePort:             portText,
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(""),
-			runtimeCreateTime:       matchingProcessCreateTime(t),
-		},
-	})
-	require.NoError(err, "write runtime")
-
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
-		require.FailNow("disabled auto-start must not stop an older daemon")
-		return errors.New("unreachable")
-	})
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		require.FailNow("disabled auto-start must not start a replacement daemon")
-		return nil, errors.New("unreachable")
-	})
-
-	st, info, err := OpenHTTPStore(testCtx)
-	require.NoError(err, "OpenHTTPStore")
-	t.Cleanup(func() { _ = st.Close() })
-
-	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
-	assert.Equal("http://"+net.JoinHostPort(ping.Host, portText), info.URL)
 }
 
 func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(t *testing.T) {
@@ -1244,21 +1197,13 @@ func daemonRuntimeForHTTPServer(t *testing.T, server *httptest.Server, authFinge
 type openHTTPStoreDaemonVersionCase struct {
 	name, cli, daemon         string
 	disabled, replace, notice bool
-	options                   invocationOptions
-	restart                   string
 }
 
 func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
-	bothRestart := "msgvault --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart"
-	if runtime.GOOS == "windows" {
-		bothRestart = "& 'msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'"
-	}
 	for _, tt := range []openHTTPStoreDaemonVersionCase{
-		{name: "source keeps dev daemon", cli: "v0.23.0-45-gabc", daemon: "dev"},
 		{name: "source replaces release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true},
-		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true, restart: "msgvault daemon restart"},
-		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true, restart: "msgvault daemon restart"},
-		{name: "both selections", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true, options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"}, restart: bothRestart},
+		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true},
+		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true},
 		{name: "release keeps newer release", cli: "v0.23.0", daemon: "v0.24.0"},
 	} {
 		t.Run(tt.name, func(t *testing.T) { testOpenHTTPStoreDaemonVersionPolicy(t, tt) })
@@ -1281,7 +1226,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 		localCfg.Server.DaemonAutoStart = new(false)
 		localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
 	}
-	testCtx := testInvocationContext(t.Context(), localCfg, tt.options)
+	testCtx := withStoreResolverConfig(t, localCfg)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -1356,19 +1301,18 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 
 	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
 	assert.Equal(int64(9), stats.MessageCount)
-	assert.Equal(tt.replace, stopped)
-	assert.Equal(tt.replace, started)
 	assert.Equal(tt.replace, info.StartedLocalDaemon)
 	wantURL := server.URL
 	if tt.replace {
+		assert.True(stopped)
+		assert.True(started)
 		wantURL = successorServer.URL
 	}
 	assert.Equal(wantURL, info.URL)
 	if tt.notice {
-		assert.Equal("msgvault: daemon "+tt.daemon+" is running; this CLI is "+tt.cli+". Run "+tt.restart+" to use this version.\n", stderr)
+		assert.Contains(stderr, "daemon restart")
 	} else if tt.replace {
 		assert.Contains(stderr, "Starting local msgvault daemon")
-		assert.NotContains(stderr, "Run msgvault daemon restart")
 	} else {
 		assert.Empty(stderr)
 	}

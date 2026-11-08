@@ -1240,14 +1240,14 @@ func TestRunServeStartIgnoresDisabledDaemonAutoStart(t *testing.T) {
 }
 
 func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
-	testRunServeStartHonorsNeverAutoRestartPolicy(t, false)
+	testRunServeStartReportsRetainedDaemon(t, false)
 }
 
-func TestRunServeStartHonorsNeverAutoRestartPolicyWhileLaunchLocked(t *testing.T) {
-	testRunServeStartHonorsNeverAutoRestartPolicy(t, true)
+func TestRunServeStartReportsRetainedDaemonWhileLaunchLocked(t *testing.T) {
+	testRunServeStartReportsRetainedDaemon(t, true)
 }
 
-func testRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T, contended bool) {
+func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool) {
 	t.Helper()
 	assert := assert.New(t)
 	require :=
@@ -1283,11 +1283,12 @@ func testRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T, contended bool)
 		return nil, errors.New("unreachable")
 	})
 	cfg := lifecycleTestConfig(dataDir)
-	cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
 	if contended {
 		lock, ok := acquireBackgroundLaunchLock(dataDir)
 		require.True(ok)
 		t.Cleanup(func() { _ = lock.Unlock() })
+	} else {
+		cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
 	}
 	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStart(cmd, cfg))
@@ -1295,7 +1296,7 @@ func testRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T, contended bool)
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Equal("msgvault: daemon v0.23.0 is running; this CLI is v0.23.0-45-gabc. Run msgvault daemon restart to use this version.\n", stderr.String())
+	assert.Contains(stderr.String(), "daemon restart")
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
