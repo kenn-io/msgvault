@@ -137,7 +137,7 @@ func (s syncState) validate() error {
 			return errors.New("transcript retry deadline has a blank block ID")
 		}
 		if _, err := time.Parse(time.RFC3339, s.TranscriptRetryUntil[id]); err != nil {
-			return errors.New("transcript_retry_until must be an RFC3339 timestamp")
+			return errors.New("transcript retry deadline must use RFC3339")
 		}
 	}
 	return nil
