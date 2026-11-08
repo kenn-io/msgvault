@@ -42,7 +42,7 @@ it.each(['first job', 'existing primary', 'no primary'])('sends primary only whe
   render(EmploymentEditor, { controller, personID: 7 });
   const checkbox = screen.queryByRole('checkbox', { name: 'Primary job' });
   if (scenario === 'no primary') {
-    expect(checkbox).toBeDefined();
+    expect(checkbox).not.toBeNull();
     await fireEvent.click(checkbox!);
   } else expect(checkbox).toBeNull();
   await fireEvent.keyDown(screen.getByRole('button', { name: /^Organization:/ }), { key: 'ArrowDown' });

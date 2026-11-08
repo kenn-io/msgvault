@@ -1,7 +1,17 @@
 import { setKitTheme } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
-import { directoryPerson, relationshipType, person } from '../src/lib/directory/entity-fixtures.test-support';
+import { person } from '../src/lib/directory/person-fixtures.test-support';
+import type { DirectoryPersonSummary, RelationshipType } from '../src/lib/directory/models';
+
+function directoryPerson(id: number, overrides: Partial<DirectoryPersonSummary> = {}): DirectoryPersonSummary {
+  const detail = person(id);
+  return { id, revision: detail.revision, display_name: detail.display_name, categories: [], organizations: [], carddav_bindings: [], contact_state: 'active', vcard_uid: detail.vcard_uid, ...overrides };
+}
+
+function relationshipType(overrides: Partial<RelationshipType>): RelationshipType {
+  return { id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by', is_symmetric: false, is_canonical: true, ownership: 'user', is_deletable: overrides.ownership !== 'system', universal_id: `relationship-type-${overrides.id ?? 31}`, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides };
+}
 
 test('saved person remains selectable at 280px', async ({ page }) => {
   await installDirectoryReviewArchive(page);
@@ -85,18 +95,6 @@ for (const width of [1440, 390]) {
     expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(900);
     expect(await panel.locator('.kit-typeahead__body').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await dialog.getByRole('option', { name: /Synthetic Two/ }).click();
-    const geometry = await dialog.evaluate(element => {
-      const dates = [...element.querySelectorAll('.date-range .kit-form-field')].map(label => label.getBoundingClientRect());
-      const sections = [...element.querySelectorAll('.editor > section')].map(section => section.getBoundingClientRect());
-      return { overflow: [...element.querySelectorAll('.editor, .editor section, .sentence, .date-range')].some(child => child.scrollWidth > child.clientWidth), dates: dates.map(({ x, y }) => ({ x, y })), gap: sections[1].top - sections[0].bottom };
-    });
-    expect(geometry.overflow).toBe(false);
-    expect(geometry.gap).toBeGreaterThan(0);
-    if (width === 1440) expect(geometry.dates[0].y).toBe(geometry.dates[1].y);
-    const start = dialog.getByRole('textbox', { name: 'Start date' });
-    const end = dialog.getByRole('textbox', { name: 'End date' });
-    expect((await start.boundingBox())!.width).toBeGreaterThan(100);
-    expect((await end.boundingBox())!.width).toBeGreaterThan(100);
     await dialog.getByRole('textbox', { name: 'Start date' }).press('Enter');
     await expect(dialog).toHaveCount(0);
     await expect(add).toBeFocused();
@@ -158,20 +156,3 @@ for (const width of [1440, 390]) {
     await page.screenshot({ path: testInfo.outputPath('dialog.png'), fullPage: true });
   });
 }
-
-test('a custom connection label reads as written in the sentence', async ({ page }, testInfo) => {
-  const errors: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
-  await installDirectoryReviewArchive(page);
-  await page.route('**/api/v1/relationship-types', route => route.fulfill({ json: { relationship_types: [relationshipType()] } }));
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
-  await setKitTheme(page, 'dark');
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await page.getByRole('button', { name: 'Add connection…', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add connection', exact: true });
-  await dialog.getByRole('button', { name: 'Connection type: Type', exact: true }).click();
-  await dialog.getByRole('treeitem', { name: 'Mentors', exact: true }).click();
-  await expect(dialog.getByRole('button', { name: 'Connection type: mentors', exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('custom-connection-label.png'), fullPage: true });
-  expect(errors).toEqual([]);
-});

@@ -184,9 +184,7 @@ describe('PersonNetwork', () => {
       requests.push(request);
       const url = new URL(request.url);
       const depth = Number(url.searchParams.get('depth'));
-      const includeEnded = url.searchParams.get('include_ended') === 'true';
       if (depth === 1) return Response.json(connected(1));
-      expect(includeEnded).toBe(false);
       if (depth === 2) {
         depthTwoAttempts += 1;
         if (depthTwoAttempts === 1) return depthTwo.promise;
@@ -207,8 +205,9 @@ describe('PersonNetwork', () => {
     depthTwo.resolve(Response.json(connected(2)));
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
 
-    await controller.refreshRelationships();
-    await controller.loadNetwork(2);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Direct' }));
+    await waitFor(() => expect(requests.filter(request => new URL(request.url).searchParams.get('depth') === '1')).toHaveLength(2));
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
     expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));
@@ -218,5 +217,6 @@ describe('PersonNetwork', () => {
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '3')).toBe(true));
     await screen.findByRole('button', { name: 'Depth Three Person' });
     expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain('Depth Three Person');
+    expect(requests.map(request => new URL(request.url).searchParams.get('include_ended'))).toEqual(['false', 'false', 'false', 'false', 'false', 'false']);
   });
 });

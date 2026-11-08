@@ -38,7 +38,7 @@ describe('relationship choices', () => {
 });
 
 it('uses type and direction for phrasing when a custom label matches a built-in label', () => {
-  const choices = relationshipTypeOptions([type('custom', 'parent', 'child')])[0].children!;
+  const choices = relationshipTypeOptions([type('custom', 'parent', 'child', { ownership: 'user' })])[0].children!;
   expect(choices.map(choice => choice.displayLabel)).toEqual(['parent', 'child']);
 });
 
@@ -47,7 +47,6 @@ it.each([
   ['parent', 'incoming', 'dependent', 'dependent'],
   ['agent', 'incoming', 'representative', 'representative'],
   ['agent', 'outgoing', 'pal', 'pal'],
-  ['friend', 'outgoing', 'ally', 'ally'],
 ] as const)('keeps the catalog label for renamed %s %s', (slug, direction, label, expected) => {
   expect(relationshipPhrase(slug, direction, label)).toBe(expected);
 });

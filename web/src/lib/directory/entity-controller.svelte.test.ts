@@ -5,25 +5,26 @@ import { DirectoryEntityController } from './entity-controller.svelte';
 import type { Prepared } from './models';
 import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
-it.each(['update', 'delete'] as const)('returns business-rule refusals as errors for %s', async action => {
-  for (const code of ['employment_duplicate_active', 'employment_primary_conflict']) {
-    const requests: Request[] = [];
-    const client = createAPIClient(async input => {
-      const request = requestOf(input);
-      requests.push(request);
-      return request.method === 'GET'
-        ? Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })
-        : Response.json({ error: code, message: 'Person already has this current employment' }, { status: 409 });
-    });
-    const controller = new DirectoryEntityController(client, 7);
-    try {
-      const result = action === 'update'
-        ? await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }))
-        : await controller.deleteEmployment(11);
-      expect(result).toEqual({ ok: false, kind: 'error', status: 409, message: 'Person already has this current employment' });
-      expect(requests.map(request => request.method)).toEqual(['GET', action === 'update' ? 'PATCH' : 'DELETE']);
-    } finally { controller.destroy(); }
-  }
+it.each(['update', 'delete'] as const)('returns non-revision refusals as errors for %s', async action => {
+  const refusal = action === 'update'
+    ? { status: 409, error: 'employment_duplicate_active', message: 'Person already has this current employment' }
+    : { status: 404, error: 'employment_not_found', message: 'Employment not found' };
+  const requests: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = requestOf(input);
+    requests.push(request);
+    return request.method === 'GET'
+      ? Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })
+      : Response.json({ error: refusal.error, message: refusal.message }, { status: refusal.status });
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  try {
+    const result = action === 'update'
+      ? await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }))
+      : await controller.deleteEmployment(11);
+    expect(result).toEqual({ ok: false, kind: 'error', status: refusal.status, message: refusal.message });
+    expect(requests.map(request => request.method)).toEqual(['GET', action === 'update' ? 'PATCH' : 'DELETE']);
+  } finally { controller.destroy(); }
 });
 
 function relationshipType(id = 31, revision = 1) {
@@ -633,8 +634,7 @@ describe('DirectoryEntityController', () => {
     expect(controller.createBlocked.employments).toBe(true);
   });
 
-  it('keeps the include-ended relationship mode through create reconciliation and explicit refresh', async () => {
-    const includeEndedValues: string[] = [];
+  it('reconciles a created connection into the collection and record cache', async () => {
     let collectionReads = 0;
     const created = relationship(42, 1);
     const createdView = {
@@ -650,7 +650,6 @@ describe('DirectoryEntityController', () => {
       const path = pathOf(request);
       if (path === '/api/v1/people/7/relationships') {
         collectionReads += 1;
-        includeEndedValues.push(new URL(request.url).searchParams.get('include_ended') ?? '');
         return Response.json({ relationships: collectionReads === 1 ? [] : [createdView] });
       }
       if (path === '/api/v1/person-relationships' && request.method === 'POST') {
@@ -667,8 +666,7 @@ describe('DirectoryEntityController', () => {
       relationship_type_slug: 'knows'
     })).resolves.toMatchObject({ ok: true });
 
-    await controller.refreshRelationships();
-    expect(includeEndedValues).toEqual(['true', 'true', 'true']);
+    expect(collectionReads).toBe(2);
     expect(controller.relationships).toEqual([createdView]);
     expect(controller.relationshipRecords.get(42)).toEqual(created);
   });

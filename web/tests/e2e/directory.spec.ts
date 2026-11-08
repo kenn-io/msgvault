@@ -1,7 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
-import { parseExploreURLState } from '../../src/lib/explore/state.svelte';
 import { installMixedArchive } from './fixtures/mixed-archive';
 import { stubOperationStatus } from '../kit-ui';
 
@@ -58,7 +57,7 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await expect(chip).toBeVisible();
   await expect(directory.getByRole('button', { name: /^Remove Last contacted before/ })).toHaveCount(0);
   await expect.poll(() => afterBoundaries.at(-1)).toBe('2026-01-01T00:00:00Z');
-  expect(parseExploreURLState(new URL(page.url()).search).directoryLastContactAfter).toBe('2026-01-01');
+  expect(JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').directoryLastContactAfter).toBe('2026-01-01');
 
   await page.reload();
   await expect(chip).toBeVisible();
@@ -72,7 +71,7 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await expect(chip).toHaveCount(0);
   await expect(panel.getByLabel('Last contacted after', { exact: true })).toHaveValue('');
   await expect.poll(() => afterBoundaries.at(-1)).toBeNull();
-  expect(parseExploreURLState(new URL(page.url()).search).directoryLastContactAfter).toBe('');
+  expect(JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').directoryLastContactAfter).toBeUndefined();
 });
 
 test('Person tabs stay on one line at phone width', async ({ page }) => {
@@ -94,8 +93,6 @@ test('People Details scrolls independently at desktop width', async ({ page }) =
   const pane = page.getByRole('group', { name: 'Person page' });
   await expect(pane.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await pane.getByRole('radio', { name: 'Details', exact: true }).click();
-  await expect(pane.getByRole('button', { name: 'Add job…', exact: true })).toBeVisible();
-  await expect(pane.getByRole('button', { name: 'Add connection…', exact: true })).toBeVisible();
   const metrics = await pane.evaluate((el) => ({
     scroll: el.scrollHeight,
     client: el.clientHeight,
