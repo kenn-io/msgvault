@@ -89,7 +89,7 @@ func TestDocumentExtractionWritersRetryStaleSQLiteSnapshot(t *testing.T) {
 	armed = "INSERT INTO document_extractions"
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 	requirements.NoError(err)
-	armed = "DELETE FROM document_units"
+	armed = "DELETE FROM document_extraction_ranges"
 	requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(),
 		publicationFor(t, claim, "contended publication", strings.Repeat("d", 64))))
 	assert.Equal(t, []string{"contended publication"}, currentDocumentTexts(t, f, profile.ID, hash))
@@ -97,10 +97,18 @@ func TestDocumentExtractionWritersRetryStaleSQLiteSnapshot(t *testing.T) {
 	input.ExtractionID, input.RequireNoHead = "extraction-contended-failure", false
 	replacement, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
 	requirements.NoError(err)
+	// A terminal failure reads the serving head before its first write, so the
+	// competing commit lands after the transaction took its read snapshot.
 	armed = "UPDATE document_extractions"
 	requirements.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
-		Claim: replacement, ReasonCode: "provider_transient", RetryAt: time.Now().UTC().Add(time.Hour),
+		Claim: replacement, ReasonCode: "provider_rejected", Terminal: true,
 	}))
+	var state, terminalReason string
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
+		SELECT state, terminal_reason FROM document_extractions WHERE id = ?`),
+		replacement.ExtractionID).Scan(&state, &terminalReason))
+	assert.Equal(t, "terminal", state)
+	assert.Equal(t, "provider_rejected", terminalReason)
 	assert.Equal(t, 3, interleaved)
 }
 
