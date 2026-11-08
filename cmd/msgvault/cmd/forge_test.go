@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"net/url"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/forge"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -39,7 +43,9 @@ func (f *rotationAccountForge) Discover(context.Context, []byte, forge.OwnerFilt
 	return nil
 }
 
-func (f *rotationAccountForge) Owner(context.Context, forge.ThreadRef) (string, error) { return "", nil }
+func (f *rotationAccountForge) Owner(context.Context, forge.ThreadRef) (string, error) {
+	return "", nil
+}
 
 func (f *rotationAccountForge) Fetch(context.Context, forge.ThreadRef, []byte,
 	func(forge.ThreadHead, []forge.Post, []byte) error,
@@ -107,4 +113,49 @@ func TestForgeSyncPicksTheAccountByLoginOrIdentifier(t *testing.T) {
 	require.Len(byIdentifier, 1)
 	_, err = fs.sources(t.Context(), st, tokens, "nobody")
 	require.ErrorContains(err, `"nobody" is not added`)
+}
+
+func TestAddForgeRegistersTheTokensAccount(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	t.Setenv("MSGVAULT_FAKEFORGE_TOKEN", "7")
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	cfg.Analytics.AutoBuildCache = false
+	var synced []string
+	fs := &forgeSource{
+		name: rotationForge, label: "Fake forge", tokenEnv: "MSGVAULT_FAKEFORGE_TOKEN",
+		config: func(*config.Config) config.ForgeConfig { return config.ForgeConfig{} },
+		open: func(base *url.URL, token string) (forge.Forge, error) {
+			assert.Equal("https://forge.example.com/git", base.String())
+			return &rotationAccountForge{id: token, synced: &synced}, nil
+		},
+	}
+	cmd := fs.addCommand()
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs([]string{"--url", "https://Forge.example.com/git/"})
+
+	require.NoError(cmd.Execute())
+	assert.Contains(output.String(), "Added Fake forge account user7")
+	identifier := forge.SourceIdentifier("forge.example.com/git", "7")
+	token, err := forge.LoadToken(cfg.TokensDir(), rotationForge, identifier)
+	require.NoError(err)
+	assert.Equal("7", token.AccessToken)
+	assert.Equal("https://forge.example.com/git", token.BaseURL)
+
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	defer func() { assert.NoError(st.Close()) }()
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), rotationForge, identifier)
+	require.NoError(err)
+	assert.Equal("Fake forge user7 (forge.example.com/git)", source.DisplayName.String)
+	identities, err := st.ListAccountIdentities(source.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal(forge.AccountKey("forge.example.com/git", "7"), identities[0].Address, "the account's posts count as yours")
 }

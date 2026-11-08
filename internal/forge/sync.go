@@ -266,6 +266,12 @@ func (r *run) archiveQueue(ctx context.Context) error {
 		case errors.Is(err, errExcluded):
 			r.summary.Excluded++
 		case ctx.Err() != nil:
+			// A failure of the thread's own, not of the stop, still counts.
+			if failure := jobctx.ErrorAfterYield(ctx, err); budgetOrYield(ctx) && failure != nil &&
+				!errors.Is(failure, context.Canceled) && !errors.Is(failure, context.DeadlineExceeded) {
+				r.fail(ctx, thread, failure)
+				r.state.Queue = r.state.Queue[1:]
+			}
 			return nil
 		case errors.Is(err, errPause):
 			r.stoppedEarly = true
@@ -278,11 +284,7 @@ func (r *run) archiveQueue(ctx context.Context) error {
 			r.summary.Unavailable++
 			r.recordItem(ctx, thread.Ref, store.SyncRunItemStatusSkipped, "forge_thread_unavailable", err)
 		default:
-			r.summary.Failed++
-			r.counts.ErrorsCount++
-			r.syncer.logger.WarnContext(ctx, "forge thread sync failed", "thread", thread.Ref.Name(), "error", err)
-			r.recordItem(ctx, thread.Ref, store.SyncRunItemStatusError, "forge_thread_failed", err)
-			r.state.Queue = append(r.state.Queue, *thread)
+			r.fail(ctx, thread, err)
 		}
 		r.state.Queue = r.state.Queue[1:]
 		if r.syncer.now().Sub(r.lastSave) >= checkpointEvery {
@@ -292,6 +294,16 @@ func (r *run) archiveQueue(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// fail records a thread that failed and moves it behind the others, with
+// the place its fetch reached; the caller drops it from the front.
+func (r *run) fail(ctx context.Context, thread *queuedThread, err error) {
+	r.summary.Failed++
+	r.counts.ErrorsCount++
+	r.syncer.logger.WarnContext(ctx, "forge thread sync failed", "thread", thread.Ref.Name(), "error", err)
+	r.recordItem(ctx, thread.Ref, store.SyncRunItemStatusError, "forge_thread_failed", err)
+	r.state.Queue = append(r.state.Queue, *thread)
 }
 
 // errExcluded drops a queued thread whose repository moved to an excluded
@@ -318,7 +330,9 @@ func (r *run) archive(ctx context.Context, thread *queuedThread) error {
 			}
 		}
 		thread.Continuation = next
-		if next != nil && r.syncer.now().Sub(r.lastSave) >= checkpointEvery {
+		if next != nil {
+			// The page's posts are written; a sync that dies now resumes
+			// after them. Only threads of several pages pay for this.
 			if err := r.save(ctx); err != nil {
 				return err
 			}

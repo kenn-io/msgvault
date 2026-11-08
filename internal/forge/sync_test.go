@@ -647,9 +647,6 @@ func TestACheckpointInTheMiddleOfAThreadKeepsItsPlace(t *testing.T) {
 		{post("c2", "issue_comment", ann, "", "Three.", "2026-11-03T10:00:00Z")},
 	}
 	syncer := NewSyncer(st, f, nil)
-	// Every page is due for a checkpoint.
-	clock := time.Now()
-	syncer.now = func() time.Time { clock = clock.Add(time.Hour); return clock }
 	var midThread syncState
 	f.afterPost = func(_ string, index int) {
 		if index == 1 {
@@ -715,4 +712,35 @@ func (f *cancelAtOwnerForge) Owner(ctx context.Context, ref ThreadRef) (string, 
 		return "", ctx.Err()
 	}
 	return f.fakeForge.Owner(ctx, ref)
+}
+
+func TestAFailureAsTheBudgetRunsOutStillCounts(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	f.failures["i1"] = fetchFailure{page: 0, err: errors.New("server error")}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	// The budget runs out just as the only thread's fetch fails on its own.
+	budget := &cancelAfterFetchForge{fakeForge: f, cancel: func() { cancel(jobctx.ErrRunBudgetExceeded) }}
+
+	_, err := NewSyncer(st, budget, nil).Sync(ctx, source.ID, Options{})
+	require.ErrorIs(err, ErrEveryThreadFailed)
+	assert.Len(t, resumeState(t, st, source.ID).Queue, 1, "the failed thread stays queued")
+}
+
+// cancelAfterFetchForge stops the run's context as a fetch returns.
+type cancelAfterFetchForge struct {
+	*fakeForge
+
+	cancel func()
+}
+
+func (f *cancelAfterFetchForge) Fetch(ctx context.Context, ref ThreadRef, continuation []byte,
+	page func(ThreadHead, []Post, []byte) error,
+) error {
+	defer f.cancel()
+	return f.fakeForge.Fetch(ctx, ref, continuation, page)
 }
