@@ -1,200 +1,153 @@
 ---
-last_edited: 2026-10-22
+last_edited: 2026-11-08
 title: Open loops
 description: See which conversations still wait on your reply, and which replies you are waiting on.
 ---
 
-Open loops list the email and direct-chat conversations that still wait on an
-answer. They answer two questions: who is waiting on a reply from you, and who
-you are waiting on. Each list is worked out from the archive when you ask, so a
-reply that just synced to the same conversation clears its loop on the next
-list.
-There is nothing to turn on, and no indexing step. It calls no model and
-changes nothing at the email provider.
+Open loops show who is waiting on a reply from you, and who you are waiting
+on, across email and direct chats. msgvault works them out from your archive
+each time you ask, so a reply that just synced clears its loop on the next
+list. There is nothing to turn on. No model is called, and nothing changes at
+your email provider.
+
+Open loops are on unreleased `main`. They need a daemon with HTTP API schema
+3.44.0 or newer.
+
+## See your open loops
 
 ```bash
 msgvault loops list
-msgvault loops list --limit 10
+msgvault loops list --person 42
+msgvault loops list --json
 ```
 
-Each row shows its age, the person, the subject, and the message ID that
-started the wait. Read that message with `msgvault show-message <id>`. A
-saved person's **Details** tab in **People** shows the same loops for that
-person in a read-only Open loops card.
+The list has two sections, **Waiting on you** and **Waiting on them**, oldest
+first. Each row shows how long the wait has lasted, the person, the subject,
+and a message ID. That ID is the message that started the wait. Read it with
+`msgvault show-message <id>`.
+
+In the Web UI, open a saved person in **People** and choose **Details**. The
+**Open loops** section lists that person's loops. Select one to open its
+message.
 
 ## What counts as a loop
 
-Each person gets a separate loop, starting at their oldest unanswered, unmarked
-question or request. Addresses linked to one person count together.
+A loop starts with a message that asks something and has no answer yet:
 
-- **Waiting on you** (`reply_owed`): an email addressed to you in To asks
-  something, and 24 hours have passed. In a direct chat, a message to you that
-  asks a question or makes a request counts. An email that only copies you in
-  Cc or Bcc opens no obligation, and neither does one between two other people.
-- **Waiting on them** (`awaiting_reply`): your message asks something of the
-  one person in To, or of the other person in a direct chat, and 72 hours have
-  passed. An email to several people is group handling, which loops don't cover
-  yet, so it opens nothing. Two addresses of one person count as one person.
+- **Waiting on you** (`reply_owed`): someone asked you a question or made a
+  request, and 24 hours have passed without your reply. In email, you must be
+  in To. Mail that only copies you, in Cc or Bcc, doesn't count. In a direct
+  chat, any message to you counts.
+- **Waiting on them** (`awaiting_reply`): you asked one person something, and
+  72 hours have passed without their reply. In email, the message must go to
+  exactly one person in To. Email to several people doesn't start a loop.
 
-Every address of every account you added is you, whichever account received
-the message. Mail between two of your own accounts opens nothing. Addresses
-linked to your own person count as you too, even when they are not one of your
-account addresses. A question sent only to an old address you linked in the
-Directory waits on you, mail from your other mailbox opens nothing, and a
-question sent only to it waits on nobody.
+A message asks something when its own text has a question mark, or one of
+these phrases: "can you", "could you", "would you", "will you", "let me
+know", "let us know", "lmk", or "please" followed by send, confirm, review,
+reply, advise, share, check, or call. Quoted earlier messages, signatures,
+links, and forwarded text don't count. These rules read English only. A
+statement such as "See you Saturday!" starts nothing.
 
-Quiet conversations stay eligible at any age. Acknowledgements and replies
-that settle nothing still count toward conversation activity; list mail,
-drafts, and calendar items don't. Snoozed questions return when their deadline
-passes.
+Each person has their own loop. All addresses saved on one person count as
+that person. Every address of your accounts counts as you, and so does every
+address linked to your own person. Mail between your own accounts never
+starts a loop.
 
-An old question keeps its original age. For example, Alex asks "Can you send
-the contract?" on Aug 20 and sends "Thanks!" on Oct 18. On Oct 20 the loop
-lists with Aug 20 as its start and 61 days as its age. If neither of you had
-written since Aug 20, the loop still lists with the same start and age.
-Your message answers only the people it went to. If Alex asks you, you forward
-the thread to Sam, and Sam replies, Alex still waits on you.
+A loop keeps the age of its oldest unanswered question. If Alex asks "Can you
+send the contract?" on Aug 20 and sends "Thanks!" on Oct 18, the loop still
+starts on Aug 20. Loops don't expire, however old they are.
 
-A message asks something when its own text has a question mark, or says "can
-you", "could you", "would you", "will you", "let me know", "let us know",
-"lmk", or "please" followed by send, confirm, review, reply, advise, share,
-check, or call. Quoted lines, signatures, links, "Original Message" blocks,
-Outlook "From:" and "Sent:" headers, and forwarded text do not count. These
-wording rules read English only.
+## What answers a loop
 
-A statement such as "See you Saturday!" opens nothing. All addresses saved on
-one person count together.
+A real reply from the person you are waiting on answers the loop. That
+includes a reply from a `support@` or `info@` address, and a reply that only
+copies you. A reply from someone else doesn't. Your own reply answers a
+request only when the person who asked is among its recipients. Forwarding
+the thread to a colleague leaves the request waiting on you.
 
-## What settles a loop
+These messages neither start nor answer a loop:
 
-A real answer from the awaited person settles it, including a reply from a
-`support@` or `info@` address. Their reply also counts when you appear only on
-Cc or Bcc. A reply from someone else leaves that wait open. These messages
-neither open nor settle a loop:
-
-- A bare acknowledgement, unless it has a file attached. Its own text is at
-  most 60 characters with no question mark, and is only the words thanks,
-  thank you, thx, ty, many thanks, got it, noted, received, ack, ok, okay,
-  cheers, perfect, or great. "Great, thanks!" therefore leaves the loop open.
-  "Sounds good." counts as an answer, so it settles "Does 3pm work?".
-- Automatic replies, bulk or list mail, calendar items, and no-reply senders.
-  Your own out-of-office reply doesn't settle a request either.
+- A bare acknowledgement with no file attached. It is 60 characters or fewer,
+  has no question mark, and contains only words such as thanks, thank you,
+  thx, ty, many thanks, got it, noted, received, ack, ok, okay, cheers,
+  perfect, or great, or emoji such as 👍 or ✅. "Great, thanks!" leaves the
+  loop open. "Sounds good." answers "Does 3pm work?".
+- Automatic replies, including your own out-of-office reply.
+- Mailing-list and bulk mail, calendar invitations, and mail from no-reply
+  addresses.
 - A message with no text of its own and no file, such as a reply that only
   quotes yours.
-- An email whose stored original fails to parse. The list says how many it
-  passed over, so a reply in one of them that would have settled a loop is
-  not a silent gap. A body that merely starts with the words "MIME parsing
-  failed" is read like any other.
-  An email with no stored original is judged by its sender, list ID, and text.
-- Mail between other people and drafts.
-- Your message that goes to someone other than the person who asked, such as
-  a forward to a colleague. It leaves their request waiting on you. Your
-  reply settles it when that person is on To or Cc.
+- Drafts.
 
-A message you or the other side deleted at the provider stays in the archive
-and still counts, as a question or as the answer.
+A message deleted at the provider stays in your archive and still counts.
 
-Automatic-reply and bulk-mail headers, and calendar parts, are read from each
-stored original with the parser that sync uses, wherever the part sits in the
-message.
-
-## Clear a loop yourself
+## Mark a loop done or snooze it
 
 ```bash
 msgvault loops done 4521
 msgvault loops snooze 4521 --until 48h
-msgvault loops snooze 4521 --until 2026-10-25
+msgvault loops snooze 4521 --until 2026-12-01
 msgvault loops reopen 4521
 ```
 
-`done` hides this person's open questions. `snooze` hides them until the time
-passes. They cover the questions the list shows when you act. To mark only the
-questions you already saw, pass `--questions` with the item's
-`question_message_ids` from `msgvault loops list --json`. A question that
-appeared after that list then stays open, whatever its date. A question still
-inside its 24- or 72-hour wait stays undecided and lists when its wait ends. A
-distinct question imported later can list again, whatever its message date. For
-example, Alex asks for the contract on Monday and you mark it done. "And the
-invoice?" on Wednesday starts a new visible wait dated Wednesday. An invoice
-question from Sunday imported afterward also appears. A message that asks
-nothing leaves the loop hidden.
+Use the message ID from `msgvault loops list`.
 
-`reopen` clears the done or snooze choice on one exact question. Use the
-message ID from the earlier list or decision output. Other questions keep
-their decisions, and the question lists again only if it still waits for an
-answer and has passed its grace period.
+- `done` hides the loop's questions for good.
+- `snooze` hides them until `--until` passes. It takes a duration such as
+  `48h`, a date (midnight local time), or an RFC3339 time.
+- `reopen` removes the done or snooze decision from one question.
 
-If an action reaches the evidence limit, retry it to continue checking the
-conversation before saving the decision. The HTTP API returns
-`503 loop_scan_incomplete` with `Retry-After: 1` for this condition.
+Decisions belong to questions, not to the conversation. A new question from
+the same person brings the loop back after its own 24- or 72-hour wait. So
+does an older question that is imported later.
 
-Each question keeps its own decision when dates change or accounts merge.
-The list shows the oldest question that is neither done nor actively snoozed,
-and uses that question's age and message ID. Distinct questions keep their
-own snooze deadlines through a merge, and each reopens when its deadline
-passes. A new question must wait its own 24 or 72 hours before it lists.
+`done` and `snooze` check the conversation again before saving. If the person
+answered in the meantime, the command fails with `<id> isn't an open loop.`
 
-`done` and `snooze` take the current message ID from `loops list` and re-read
-the conversation before acting. A covered anchor, an archived answer, or a
-question still inside its grace period makes the action fail with the
-existing not-open error, as does a `--questions` question that is no longer
-open. `reopen` clears the decision by exact message ID; it
-returns an error when that question has no decision.
+A loop can gain a question after you list it. To act only on the questions
+you saw, pass the item's `question_message_ids` from
+`msgvault loops list --json`:
 
-A confirmed duplicate inherits the original question's decision. Hiding a
-duplicate preserves its own decision so undo restores it too. Done wins over
-snooze when duplicate decisions meet, and two snoozes retain the later
-deadline. A deliberate new snooze can replace an earlier deadline on an open
-question. Deleting a question removes only that question's decision.
+```bash
+msgvault loops done 4521 --questions 4521,4530
+```
 
-## Use an assistant
+Decisions follow their questions when duplicates or accounts are merged. If
+two copies of a question carry different decisions, done wins over snooze,
+and the later of two snoozes wins.
 
-On unreleased `main`, an owner-connected MCP assistant can call
-`list_open_loops`, `close_open_loop`, `snooze_open_loop`, and
-`reopen_open_loop`. The daemon must advertise each exact route and its required
-fields. API schema 3.44.0 alone is insufficient. Delegated sessions expose none
-of these tools.
+## Use loops from an assistant
 
-Start MCP with `--allow-loop-writes` to allow done, snooze, and reopen. Each
-decision needs approval for that call, showing the action and exact anchor ID.
-HTTP also requires `--http-allow-writes` and MCP protocol `2026-07-28` or newer.
-Older HTTP clients retain the list.
+An MCP assistant connected as the owner can call `list_open_loops`. Started
+with `--allow-loop-writes`, it can also mark loops done, snooze them, or
+reopen them, and you approve each call. See
+[Open loops in the MCP guide](chat.md#open-loops) for the tools and their
+parameters.
 
-1. Call `list_open_loops` with an optional positive JSON-safe `person_id` and a `limit` from 1 to 200, default 50. The list includes both `reply_owed` and `awaiting_reply`.
-2. Pass a returned item's `anchor_message_id` as `message_id` and its `question_message_ids` to `close_open_loop` or `snooze_open_loop`. They recheck the conversation and mark exactly those questions, so a question that appeared after the list stays open. The done tool is named `close_open_loop`; its receipt uses state `done`.
-3. For snooze, supply `until` as RFC3339, including fractional seconds, or `YYYY-MM-DD` at midnight in the MCP process's local timezone. Approval shows the resolved instant and offset. The deadline must still be future when execution starts. MCP rejects relative durations such as `24h`; the CLI accepts them.
-4. To clear one question's saved decision, call `reopen_open_loop` with its exact `message_id` from an earlier list or decision receipt. A hidden question is absent from the current list.
+## Use loops from the HTTP API
 
-The tools return the daemon's list and decision responses. In a list,
-`coverage_incomplete` means call again to continue checking retained evidence.
-`truncated` means narrow by `person_id`; there is no cursor.
-`skipped_unparseable` counts unreadable originals, one of which may contain a
-reply that settled a listed loop. These warnings describe evidence coverage,
-rather than source freshness.
+The list, done, snooze, and reopen routes are described in the
+[HTTP API reference](../api-server.md#open-loops). See the
+[CLI reference](../cli-reference.md#loops) for every command flag.
 
-A write refused with `loop_scan_incomplete` saves no decision. Wait at least the
-daemon's `Retry-After: 1` second, then start a new call and approve it again.
-Approval is consumed by an attempted write, and MCP performs no automatic write
-retry. Transport interruptions and unclassified write failures can report
-`operation_may_have_completed: true`; inspect the archive before deciding what
-to do next.
+Only the owner can use loops. Delegated agent tokens and remote clients can't.
 
 ## Limits
 
-- A reply settles a loop when it is archived in the same conversation. If
-  Alex answers an address of another account of yours, that reply sits in
-  that account's conversation, and the loop stays until you run
-  `msgvault loops done`.
-- Each request checks up to 1,000 uncached messages, starting with the eligible conversation whose latest activity is oldest. It saves body classifications and MIME facts so another request continues farther through history. Message text stays in the archive's existing body storage.
-- When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Run `msgvault loops list` or issue another API request to continue; the Details card has a Check more button.
-- A request that reaches its time limit returns the conversations it checked in full and sets `coverage_incomplete`, as when the 1,000-message budget runs out. Run the list again to continue.
-- Done decisions remain attached to the exact questions marked; snoozed questions return after expiry.
-- A direct chat has no stored original to check, so the automatic-reply and
-  bulk-mail rules don't apply. A bot or short-code sender that asks something
-  opens a loop, and `msgvault loops done` clears it.
-- Email threads and direct chats only. Group chats, channels, and meetings
+- **Large archives take more than one request.** Each request reads at most
+  1,000 messages it hasn't seen before, oldest conversations first, and saves
+  what it learned. If it stops early, the list says more history remains
+  (`coverage_incomplete` in JSON). Run it again to continue. In **People**,
+  the Details card has a **Check more** button. The same happens when a
+  request runs out of time.
+- **Unreadable messages are counted, not hidden.** If a stored email can't be
+  parsed, the list says how many it skipped, because a reply in one of them
+  may have answered a loop.
+- **A reply must land in the same conversation.** If Alex answers at another
+  of your accounts, that reply is in a different conversation. The loop stays
+  until you mark it done.
+- **Chats have no headers to check.** A bot or short-code sender that asks
+  something starts a loop. Mark it done.
+- **Email threads and direct chats only.** Group chats, channels, and meetings
   are skipped.
-
-See the [CLI reference](../cli-reference.md#loops) for flags and the
-[HTTP API](../api-server.md#open-loops) for endpoints. Loop routes are
-owner-only: delegated agent tokens cannot reach them.
