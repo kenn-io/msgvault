@@ -3,8 +3,10 @@ package notionmeetings
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -21,16 +23,19 @@ const (
 )
 
 type hydrationSource interface {
-	RetrievePageMarkdown(ctx context.Context, pageID string, includeTranscript bool) (*MarkdownPage, error)
 	RetrieveBlock(ctx context.Context, blockID string) (*Block, error)
 	RetrieveBlockChildren(ctx context.Context, blockID, cursor string) (*BlockPage, error)
 	ListUsers(ctx context.Context, cursor string) (*UserPage, error)
 }
 
 type blockTree struct {
-	Root   *Block
-	Blocks []Block
-	Pages  []jsontext.Value
+	Root                 *Block
+	Blocks               []Block
+	Complete             bool
+	Filtered             bool
+	SourceLastEditedTime string
+	Preserved            bool
+	SourceMeetingBlock   jsontext.Value
 }
 
 type HydratedMeeting struct {
@@ -42,7 +47,6 @@ type HydratedMeeting struct {
 	SummaryTree                blockTree
 	NotesTree                  blockTree
 	TranscriptTree             blockTree
-	PageMarkdown               *MarkdownPage
 	Summary                    string
 	Notes                      string
 	Transcript                 string
@@ -51,7 +55,6 @@ type HydratedMeeting struct {
 	UnresolvedAttendeeIDs      []string
 	AttendeeResolutionDegraded bool
 	Warnings                   []string
-	MarkdownTranscriptFallback bool
 	ResolvedUsers              []resolvedUser
 }
 
@@ -79,6 +82,7 @@ type Hydrator struct {
 	requests         int
 	bytes            int
 	blocks           int
+	visited          map[string]bool
 }
 
 func NewHydrator(source hydrationSource) *Hydrator {
@@ -102,70 +106,79 @@ func (h *Hydrator) Hydrate(ctx context.Context, meeting MeetingNote) (*HydratedM
 
 	meetingBlock, err := h.retrieveBlock(ctx, meeting.ID)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve meeting-note block %s: %w", meeting.ID, err)
+		return nil, hydrationFailure("retrieve meeting-note block", err)
 	}
-	if meetingBlock.Object != "block" || meetingBlock.ID != meeting.ID || meetingBlock.Type != "meeting_notes" {
-		return nil, fmt.Errorf("%w: retrieved meeting-note block has unexpected identity or type", ErrMalformedResponse)
+
+	if meetingBlock == nil || meetingBlock.ID != meeting.ID {
+		return nil, fmt.Errorf("%w: retrieved meeting-note block has unexpected identity", ErrMalformedResponse)
 	}
-	if strings.TrimSpace(meeting.Parent.PageID) == "" {
-		meeting.Parent = meetingBlock.Parent
+	return h.hydrateBlock(ctx, meetingBlock)
+}
+
+// HydrateBlock hydrates an already retrieved, authoritative meeting header.
+// Callers performing identity selection must match this header before calling.
+func (h *Hydrator) HydrateBlock(ctx context.Context, meetingBlock *Block) (*HydratedMeeting, error) {
+	if h == nil || h.source == nil {
+		return nil, errors.New("notion meeting hydrator is unavailable")
 	}
-	if strings.TrimSpace(meeting.Parent.PageID) == "" {
-		return nil, fmt.Errorf("notion meeting %s has no parent page ID", meeting.ID)
+	h.requests, h.bytes, h.blocks = 0, 0, 0
+	if meetingBlock != nil {
+		if err := h.reserveBytes(meetingBlock.Raw); err != nil {
+			return nil, err
+		}
 	}
+	return h.hydrateBlock(ctx, meetingBlock)
+}
+
+func (h *Hydrator) hydrateBlock(ctx context.Context, meetingBlock *Block) (*HydratedMeeting, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if meetingBlock == nil || meetingBlock.Object != "block" || meetingBlock.Type != "meeting_notes" || strings.TrimSpace(meetingBlock.ID) == "" {
+		return nil, fmt.Errorf("%w: invalid meeting-note block", ErrMalformedResponse)
+	}
+	if err := validateBlockResponse(meetingBlock.Raw, meetingBlock.ID, "meeting_notes"); err != nil {
+		return nil, hydrationFailure("validate meeting header", err)
+	}
+	var meeting MeetingNote
+	if err := json.Unmarshal(meetingBlock.Raw, &meeting); err != nil || meeting.Object != "block" || meeting.ID != meetingBlock.ID || meeting.Type != "meeting_notes" {
+		return nil, fmt.Errorf("%w: invalid authoritative meeting header", ErrMalformedResponse)
+	}
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(meetingBlock.Raw, &fields); err != nil || len(fields["meeting_notes"]) == 0 || string(fields["meeting_notes"]) == "null" {
+		return nil, fmt.Errorf("%w: missing meeting-note data", ErrMalformedResponse)
+	}
+	h.visited = map[string]bool{meeting.ID: true}
 	result := &HydratedMeeting{Discovery: meeting, MeetingBlock: meetingBlock}
 	children := meeting.MeetingNotes.Children
-	if children.SummaryBlockID != "" {
-		result.SummaryTree, err = h.readTree(ctx, children.SummaryBlockID)
-		if err != nil {
-			return nil, fmt.Errorf("hydrate summary block %s: %w", children.SummaryBlockID, err)
-		}
-		result.Summary = renderTree(result.SummaryTree)
+	sections := []struct {
+		name, id string
+		tree     *blockTree
+		text     *string
+	}{
+		{"summary", children.SummaryBlockID, &result.SummaryTree, &result.Summary},
+		{"notes", children.NotesBlockID, &result.NotesTree, &result.Notes},
+		{"transcript", children.TranscriptBlockID, &result.TranscriptTree, &result.Transcript},
 	}
-	if children.NotesBlockID != "" {
-		result.NotesTree, err = h.readTree(ctx, children.NotesBlockID)
-		if err != nil {
-			return nil, fmt.Errorf("hydrate notes block %s: %w", children.NotesBlockID, err)
+	for _, section := range sections {
+		if section.id == "" {
+			continue
 		}
-		result.Notes = renderTree(result.NotesTree)
-	}
-	if children.TranscriptBlockID != "" {
-		result.TranscriptTree, err = h.readTree(ctx, children.TranscriptBlockID)
+		tree, err := h.readTree(ctx, section.id)
+		tree.SourceLastEditedTime = meeting.LastEditedTime
 		if err != nil {
-			if !transcriptTemporarilyUnavailable(err) {
-				return nil, fmt.Errorf("hydrate transcript block %s: %w", children.TranscriptBlockID, err)
+			if !sectionTemporarilyUnavailable(err) {
+				return nil, hydrationFailure("hydrate "+section.name, err)
 			}
-			result.Warnings = append(result.Warnings, "structured transcript was temporarily unavailable; continued with page Markdown")
-		} else {
-			result.Transcript = renderTree(result.TranscriptTree)
+			result.Warnings = append(result.Warnings, section.name+" blocks were incomplete; retained available meeting content")
+		} else if !tree.Complete {
+			result.Warnings = append(result.Warnings, section.name+" blocks were incomplete; retained available meeting content")
 		}
+		*section.tree = tree
+		*section.text = renderTree(tree)
 	}
-
-	if err := h.reserveRequest(); err != nil {
-		return nil, err
-	}
-	result.PageMarkdown, err = h.source.RetrievePageMarkdown(ctx, meeting.Parent.PageID, true)
-	if err != nil {
-		return nil, fmt.Errorf("retrieve Notion page Markdown: %w", err)
-	}
-	if err := h.reserveBytes(result.PageMarkdown.Raw); err != nil {
-		return nil, err
-	}
-	markdownTranscript := extractMarkdownTranscript(result.PageMarkdown.Markdown)
-	markdownComplete := !result.PageMarkdown.Truncated && len(result.PageMarkdown.UnknownBlockIDs) == 0
-	if result.Transcript == "" && markdownTranscript != "" && !markdownComplete {
-		result.Warnings = append(result.Warnings, "page Markdown transcript was incomplete; transcript remains pending")
-	} else if result.Transcript == "" && markdownTranscript != "" {
-		result.Transcript = markdownTranscript
-		result.MarkdownTranscriptFallback = true
-		result.Warnings = append(result.Warnings, "structured transcript was empty; used page Markdown transcript")
-	} else if result.Transcript != "" && markdownTranscript != "" && markdownComplete &&
-		normalizedContent(result.Transcript) != normalizedContent(markdownTranscript) {
-		result.Warnings = append(result.Warnings, "structured transcript and page Markdown transcript differed")
-	}
-
 	if err := h.resolveAttendees(ctx, result); err != nil {
-		return nil, err
+		return nil, hydrationFailure("resolve attendees", err)
 	}
 	return result, nil
 }
@@ -178,6 +191,9 @@ func (h *Hydrator) retrieveBlock(ctx context.Context, id string) (*Block, error)
 	if err != nil {
 		return nil, err
 	}
+	if block == nil {
+		return nil, fmt.Errorf("%w: missing block", ErrMalformedResponse)
+	}
 	if err := h.reserveBytes(block.Raw); err != nil {
 		return nil, err
 	}
@@ -185,29 +201,43 @@ func (h *Hydrator) retrieveBlock(ctx context.Context, id string) (*Block, error)
 }
 
 func (h *Hydrator) readTree(ctx context.Context, id string) (blockTree, error) {
+	if h.visited[id] {
+		return blockTree{}, nil
+	}
 	root, err := h.retrieveBlock(ctx, id)
 	if err != nil {
 		return blockTree{}, err
 	}
-	tree := blockTree{Root: root, Blocks: []Block{*root}}
+	if root.ID != id || root.Object != "block" || root.Type == "" {
+		return blockTree{}, fmt.Errorf("%w: invalid section root", ErrMalformedResponse)
+	}
+	if root.Type == "meeting_notes" {
+		return blockTree{Filtered: true}, nil
+	}
+	h.visited[id] = true
 	h.blocks++
 	if h.blocks > maxHydrationBlocks {
-		return blockTree{}, errors.New("notion block traversal exceeded block limit")
+		return blockTree{}, errHydrationLimit
 	}
+	tree := blockTree{Root: root, Blocks: []Block{*root}, Complete: true}
 	if root.HasChildren {
 		if err := h.readChildren(ctx, root.ID, 1, &tree); err != nil {
-			return blockTree{}, err
+			tree.Complete = false
+			return tree, err
 		}
 	}
 	return tree, nil
 }
 
 func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, tree *blockTree) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if depth > maxHydrationDepth {
-		return fmt.Errorf("notion block traversal exceeded depth limit at %s", blockID)
+		return errHydrationLimit
 	}
 	cursor := ""
-	seen := map[string]struct{}{}
+	seen := map[string]bool{}
 	for {
 		if err := h.reserveRequest(); err != nil {
 			return err
@@ -216,14 +246,28 @@ func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, 
 		if err != nil {
 			return err
 		}
+		if page == nil {
+			return fmt.Errorf("%w: missing child page", ErrMalformedResponse)
+		}
 		if err := h.reserveBytes(page.Raw); err != nil {
 			return err
 		}
-		tree.Pages = append(tree.Pages, append(jsontext.Value(nil), page.Raw...))
 		for _, child := range page.Results {
+			if child.ID == "" || child.Object != "block" || child.Type == "" {
+				return fmt.Errorf("%w: invalid section child", ErrMalformedResponse)
+			}
+			if child.Type == "meeting_notes" {
+				tree.Filtered = true
+				continue
+			}
+			if h.visited[child.ID] {
+				tree.Complete = false
+				continue
+			}
+			h.visited[child.ID] = true
 			h.blocks++
 			if h.blocks > maxHydrationBlocks {
-				return errors.New("notion block traversal exceeded block limit")
+				return errHydrationLimit
 			}
 			tree.Blocks = append(tree.Blocks, child)
 			if child.HasChildren {
@@ -233,18 +277,29 @@ func (h *Hydrator) readChildren(ctx context.Context, blockID string, depth int, 
 			}
 		}
 		if !page.HasMore {
+			if strings.TrimSpace(page.NextCursor) != "" {
+				tree.Complete = false
+			}
 			return nil
 		}
 		next := strings.TrimSpace(page.NextCursor)
-		if next == "" {
-			return fmt.Errorf("notion child block %s has_more without next_cursor", blockID)
+		if next == "" || seen[next] {
+			tree.Complete = false
+			return nil
 		}
-		if _, duplicate := seen[next]; duplicate {
-			return fmt.Errorf("notion child block %s returned repeated child cursor %q", blockID, next)
-		}
-		seen[next] = struct{}{}
+		seen[next] = true
 		cursor = next
 	}
+}
+
+var errHydrationLimit = errors.New("notion meeting hydration exceeded traversal limit")
+
+func sectionTemporarilyUnavailable(err error) bool {
+	if errors.Is(err, errHydrationLimit) || errors.Is(err, ErrRateLimited) {
+		return true
+	}
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && (apiErr.Status == 404 || apiErr.Status >= 500)
 }
 
 func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting) error {
@@ -252,8 +307,12 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		cursor := ""
 		seen := map[string]struct{}{}
 		for {
-			if err := h.reserveRequest(); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if err := h.reserveRequest(); err != nil {
+				h.usersUnavailable, h.usersRead, h.usersIncomplete, h.usersFailure = true, true, true, err
+				break
 			}
 			page, err := h.source.ListUsers(ctx, cursor)
 			if err != nil {
@@ -266,8 +325,13 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 				h.usersRead = true
 				break
 			}
+			if page == nil {
+				h.usersUnavailable, h.usersRead, h.usersIncomplete, h.usersFailure = true, true, true, ErrMalformedResponse
+				break
+			}
 			if err := h.reserveBytes(page.Raw); err != nil {
-				return err
+				h.usersUnavailable, h.usersRead, h.usersIncomplete, h.usersFailure = true, true, true, err
+				break
 			}
 			for i := range page.Results {
 				user := &page.Results[i]
@@ -300,20 +364,24 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		result.AttendeeResolutionDegraded = true
 		if h.usersIncomplete {
 			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("Notion User Information pagination was incomplete: %v", h.usersFailure))
+				"Notion User Information pagination was incomplete; attendee emails were not resolved")
 		} else if errors.Is(h.usersFailure, ErrUserInformation) {
 			result.Warnings = append(result.Warnings, "Notion User Information access unavailable; attendee emails were not resolved")
 		} else {
 			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("Notion User Information lookup failed: %v; attendee emails were not resolved", h.usersFailure))
+				"Notion User Information lookup failed; attendee emails were not resolved")
 		}
 	}
 
-	if h.userSource != nil {
-		result.failedAttendeeIDs = map[string]bool{}
-	}
+	// Preserve archived identity only for an attendee whose lookup failed. A
+	// successfully fetched unverified user stays authoritative even when a later
+	// directory page fails for other attendees.
+	result.failedAttendeeIDs = map[string]bool{}
 	for _, id := range result.Discovery.MeetingNotes.CalendarEvent.Attendees {
 		user := h.users[id]
+		if h.userSource == nil && h.usersUnavailable && user == nil {
+			result.failedAttendeeIDs[id] = true
+		}
 		if h.userSource != nil {
 			var err error
 			user, err = h.lookupUser(ctx, id)
@@ -322,7 +390,7 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 			}
 			if err != nil {
 				if len(result.failedAttendeeIDs) == 0 {
-					result.Warnings = append(result.Warnings, fmt.Sprintf("Notion attendee lookup failed: %v; preserved meeting content", err))
+					result.Warnings = append(result.Warnings, "Notion attendee lookup failed; preserved meeting content")
 				}
 				result.failedAttendeeIDs[id] = true
 				result.AttendeeResolutionDegraded = true
@@ -333,18 +401,32 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 			label = strings.TrimSpace(user.Name)
 		}
 		result.AttendeeLabels = append(result.AttendeeLabels, label)
-		if user == nil || !user.Person.EmailVerified || strings.TrimSpace(user.Person.Email) == "" {
+		email := ""
+		if user != nil && user.Person.EmailVerified {
+			email = normalizedUserEmail(user.Person.Email)
+		}
+		if email == "" {
 			result.UnresolvedAttendeeIDs = append(result.UnresolvedAttendeeIDs, id)
 			continue
 		}
 		result.Attendees = append(result.Attendees, meetingarchive.Person{
-			Name: strings.TrimSpace(user.Name), Email: meetingidentity.Normalize(user.Person.Email), Anchor: userAnchor(id),
+			Name: strings.TrimSpace(user.Name), Email: email, Anchor: userAnchor(id),
 		})
 		result.ResolvedUsers = append(result.ResolvedUsers, resolvedUser{
-			ID: id, Name: strings.TrimSpace(user.Name), Email: meetingidentity.Normalize(user.Person.Email), EmailVerified: true,
+			ID: id, Name: strings.TrimSpace(user.Name), Email: email, EmailVerified: true,
 		})
 	}
 	return nil
+}
+
+// A verified provider flag does not make a malformed address usable identity.
+func normalizedUserEmail(value string) string {
+	email := meetingidentity.Normalize(value)
+	address, err := mail.ParseAddress(email)
+	if err != nil || address.Address != email {
+		return ""
+	}
+	return email
 }
 
 // lookupUser shares successful responses and service failures across this import.
@@ -373,6 +455,10 @@ func (h *Hydrator) lookupUser(ctx context.Context, id string) (*User, error) {
 		}
 		return nil, err
 	}
+	if user == nil {
+		h.users[id] = nil
+		return nil, ErrMalformedResponse
+	}
 	if err := h.reserveBytes(user.Raw); err != nil {
 		return nil, err
 	}
@@ -380,10 +466,42 @@ func (h *Hydrator) lookupUser(ctx context.Context, id string) (*User, error) {
 	return user, nil
 }
 
+// Preserve error identity for callers without exposing request URLs, block IDs,
+// cursors or arbitrary provider error strings through progress diagnostics.
+type hydrationError struct {
+	stage string
+	cause error
+}
+
+func (e *hydrationError) Error() string {
+	reason := "Notion content is unavailable"
+	switch {
+	case errors.Is(e.cause, context.Canceled):
+		reason = "operation canceled"
+	case errors.Is(e.cause, context.DeadlineExceeded):
+		reason = "operation deadline exceeded"
+	case errors.Is(e.cause, ErrUnauthorized):
+		reason = "integration token is invalid or expired"
+	case errors.Is(e.cause, ErrReadContent):
+		reason = "Read Content access is unavailable"
+	case errors.Is(e.cause, ErrMalformedResponse):
+		reason = "malformed response"
+	case errors.Is(e.cause, ErrRateLimited):
+		reason = "provider retry budget exhausted"
+	case errors.Is(e.cause, errHydrationLimit):
+		reason = errHydrationLimit.Error()
+	}
+	return e.stage + ": " + reason
+}
+func (e *hydrationError) Unwrap() error { return e.cause }
+func hydrationFailure(stage string, err error) error {
+	return &hydrationError{stage: stage, cause: err}
+}
+
 func (h *Hydrator) reserveRequest() error {
 	h.requests++
 	if h.requests > maxHydrationRequests {
-		return errors.New("notion meeting hydration exceeded request limit")
+		return errHydrationLimit
 	}
 	return nil
 }
@@ -391,7 +509,7 @@ func (h *Hydrator) reserveRequest() error {
 func (h *Hydrator) reserveBytes(raw []byte) error {
 	h.bytes += len(raw)
 	if h.bytes > maxHydrationBytes {
-		return errors.New("notion meeting hydration exceeded response byte limit")
+		return errHydrationLimit
 	}
 	return nil
 }
@@ -414,75 +532,6 @@ func renderTree(tree blockTree) string {
 		lines = append(lines, text)
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
-}
-
-func transcriptTemporarilyUnavailable(err error) bool {
-	if errors.Is(err, ErrRateLimited) {
-		return true
-	}
-	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.Status == 404 && apiErr.Code == "object_not_found"
-}
-
-func extractMarkdownTranscript(markdown string) string {
-	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
-	for index, line := range lines {
-		headingLevel, heading, isHeading := markdownHeading(line)
-		if !isHeading {
-			heading = strings.TrimSpace(line)
-		}
-		inline, found := transcriptMarker(heading)
-		if !found {
-			continue
-		}
-		if inline != "" {
-			return inline
-		}
-		end := len(lines)
-		if !isHeading {
-			headingLevel = 6
-		}
-		for next := index + 1; next < len(lines); next++ {
-			level, _, ok := markdownHeading(lines[next])
-			if ok && level <= headingLevel {
-				end = next
-				break
-			}
-		}
-		return strings.TrimSpace(strings.Join(lines[index+1:end], "\n"))
-	}
-	return ""
-}
-
-func markdownHeading(line string) (int, string, bool) {
-	trimmed := strings.TrimSpace(line)
-	level := 0
-	for level < len(trimmed) && trimmed[level] == '#' {
-		level++
-	}
-	if level == 0 || level > 6 || (level < len(trimmed) && trimmed[level] != ' ' && trimmed[level] != '\t') {
-		return 0, "", false
-	}
-	heading := strings.TrimSpace(trimmed[level:])
-	heading = strings.TrimSpace(strings.TrimRight(heading, "#"))
-	return level, heading, true
-}
-
-func transcriptMarker(value string) (string, bool) {
-	label := strings.TrimSpace(value)
-	inline := ""
-	if colon := strings.Index(label, ":"); colon >= 0 {
-		inline = strings.TrimSpace(label[colon+1:])
-		label = strings.TrimSpace(label[:colon])
-	}
-	if !strings.EqualFold(label, "transcript") {
-		return "", false
-	}
-	return inline, true
-}
-
-func normalizedContent(value string) string {
-	return strings.Join(strings.Fields(value), " ")
 }
 
 func parseNotionTime(value string) time.Time {
