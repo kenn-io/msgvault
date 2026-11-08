@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -413,9 +414,11 @@ func TestNotionMeetingsSummaryReportsActualCoverage(t *testing.T) {
 }
 
 func TestNotionProbeOptionalLookupLocalTimeout(t *testing.T) {
-	var out bytes.Buffer
-	probe := fakeNotionProbe{result: &notionmeetings.QueryResult{}, usersWait: true}
-	err := runNotionMeetingsProbeWithTimeout(t.Context(), &out, probe, nil, time.Millisecond)
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "User Information: unavailable")
+	synctest.Test(t, func(t *testing.T) {
+		var out bytes.Buffer
+		probe := fakeNotionProbe{result: &notionmeetings.QueryResult{}, usersWait: true}
+		err := runNotionMeetingsProbeWithTimeout(t.Context(), &out, probe, nil, time.Millisecond)
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "User Information: unavailable")
+	})
 }
