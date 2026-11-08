@@ -217,8 +217,7 @@ func (fs *forgeSource) syncCommand() *cobra.Command {
 Each sync finds the threads that changed since the last one and archives
 every post in them; the first sync also finds the older threads the account
 took part in. A sync that reaches a rate limit pauses with its place saved,
-and the next sync continues it. --full finds and fetches every thread again;
-posts archived unchanged are not written twice.`,
+and the next sync continues it. Unchanged posts are not written twice.`,
 		Example: "  msgvault sync-" + fs.name + "\n  msgvault sync-" + fs.name + " octocat\n  msgvault sync-" + fs.name + " --full",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
