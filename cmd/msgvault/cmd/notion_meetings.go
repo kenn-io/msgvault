@@ -185,7 +185,7 @@ func runNotionMeetingsProbeWithTimeout(ctx context.Context, out io.Writer, clien
 		} else {
 			sampled, err = notionmeetings.NewHydrator(notionProbeContent{client}).HydrateBlock(ctx, block)
 			if err != nil {
-				return &notionProbeError{stage: "probe Notion sample hydration", cause: err}
+				return &notionProbeError{stage: "read sample content", cause: err}
 			}
 			_, _ = fmt.Fprintln(out, "  Read Content: available")
 			children := sampled.Discovery.MeetingNotes.Children
@@ -431,6 +431,9 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 	}
 	sort.Strings(reasons)
 	for _, reason := range reasons {
+		if reason == "unfinished_progress" {
+			continue
+		}
 		_, _ = fmt.Fprintf(out, "  %s: %d\n", notionCoverageLabel(reason), summary.CoverageReasons[reason])
 	}
 

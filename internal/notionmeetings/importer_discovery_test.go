@@ -396,3 +396,32 @@ func TestOversizedEvidenceDefersOneMeetingAndContinues(t *testing.T) {
 	require.NotEmpty(state.Deferred)
 	assert.Equal("evidence_limit", state.Deferred[0].Reason)
 }
+
+func TestDeferredRootRetriesDoNotPreventFreshQueries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	_, source, imp := broadFixture(t)
+	queries := 0
+	source.windows = func(context.Context, int, *MeetingFilter) (*QueryResult, error) {
+		queries++
+		return &QueryResult{}, nil
+	}
+	source.childrenErrs = map[string]error{
+		"root-a/": ErrReadContent,
+		"root-b/": ErrReadContent,
+		"root-c/": ErrReadContent,
+	}
+	imp.limits.Requests = 2
+	now := imp.now()
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", RootPageIDs: []string{"root-a", "root-b", "root-c"}, SearchAccessible: &noSearch, Full: true}
+	for i := range 12 {
+		imp.now = func() time.Time { return now.Add(time.Duration(i) * 7 * time.Hour) }
+		_, err := imp.Import(t.Context(), opts)
+		require.NoError(err)
+		if queries > 1 {
+			break
+		}
+	}
+	assert.Greater(queries, 1, "a fresh query must run even when deferred roots keep failing")
+}

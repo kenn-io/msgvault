@@ -291,9 +291,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	sweepsStarted := 0
 	if !state.Active {
 		state.startSweep(opts, started)
+		state.activateDeferred(started, limits)
 		sweepsStarted++
 	}
-	state.activateDeferred(started, limits)
 	state.Coverage.Limited = opts.Limit > 0
 	if err := save(); err != nil {
 		return sum, err
@@ -450,6 +450,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			state.Active = false
 			if sweepsStarted == 0 && state.FreshRequested && run.requests < limits.Requests {
 				state.startSweep(opts, started)
+				state.activateDeferred(started, limits)
 				sweepsStarted++
 				idle = 0
 			}
