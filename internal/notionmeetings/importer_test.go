@@ -1216,11 +1216,11 @@ func TestImporterPreservesArchivedTranscriptOnTemporaryOmission(t *testing.T) {
 			source.markdown.Markdown = "# Weekly planning"
 			second, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 			require.NoError(err)
+			assert.True(second.PartialCoverage)
 			if tt.mutate == nil {
 				assert.Equal(int64(1), second.MeetingsUpdated)
 			} else {
 				assert.Zero(second.MeetingsUpdated)
-				assert.True(second.PartialCoverage)
 			}
 
 			var body string
