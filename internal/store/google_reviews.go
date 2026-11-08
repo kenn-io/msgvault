@@ -294,7 +294,7 @@ func (s *Store) SearchGoogleReviews(ctx context.Context, query, target string, o
 	}
 	ftsPredicate := "r.id IN (SELECT rowid FROM google_reviews_fts WHERE google_reviews_fts MATCH ?)"
 	if s.IsPostgreSQL() {
-		ftsPredicate = `to_tsvector('simple', concat_ws(' ', r.reviewer_display_name, r.star_rating, r.comment, r.reply_comment)) @@ to_tsquery('simple', ?)`
+		ftsPredicate = `to_tsvector('simple', r.reviewer_display_name || ' ' || r.star_rating || ' ' || r.comment || ' ' || r.reply_comment) @@ to_tsquery('simple', ?)`
 	}
 	where := ftsPredicate
 	args := []any{ftsArg}

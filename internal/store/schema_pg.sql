@@ -4399,7 +4399,7 @@ CREATE TABLE IF NOT EXISTS google_reviews (
 CREATE INDEX IF NOT EXISTS idx_google_reviews_target_update
     ON google_reviews(target_name, location_name, update_time DESC, review_id);
 CREATE INDEX IF NOT EXISTS idx_google_reviews_search_fts
-    ON google_reviews USING GIN (to_tsvector('simple', concat_ws(' ', reviewer_display_name, star_rating, comment, reply_comment)));
+    ON google_reviews USING GIN (to_tsvector('simple', reviewer_display_name || ' ' || star_rating || ' ' || comment || ' ' || reply_comment));
 
 CREATE TABLE IF NOT EXISTS google_reviews_sync_state (
     target_name TEXT NOT NULL,

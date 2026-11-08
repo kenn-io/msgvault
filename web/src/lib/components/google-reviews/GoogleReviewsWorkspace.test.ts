@@ -482,7 +482,7 @@ it('shows read-only policy without a response editor and clears everything on un
 
 it('ignores a late page after target switch and after unmount', async () => {
   let finish!: (value: unknown) => void;
-  const { client } = fixture(body => body.target === 'shop' ? new Promise(resolve => finish = resolve) : { reviews: [] });
+  const { client } = fixture(body => body.action === 'list' && body.target === 'shop' ? new Promise(resolve => finish = resolve) : { reviews: [] });
   const view = render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
