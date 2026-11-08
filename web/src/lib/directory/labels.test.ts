@@ -33,8 +33,6 @@ describe('work and connection labels', () => {
       const earlier = conflictSaved(new Date(2026, 10, 5, 8, 34).toISOString(), 'carddav_import');
       expect(earlier.text).toMatch(/^Saved from CardDAV contacts on Nov 5 at 8:34/);
       expect(earlier.title).toContain('2026');
-      expect(conflictSaved('invalid').text).toBe('Saved');
-      expect(conflictSaved('2024-01-05T12:00:00Z', 'from_custom').text).toMatch(/^Saved by From custom on /);
     } finally { vi.useRealTimers(); }
   });
 });

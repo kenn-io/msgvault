@@ -18,7 +18,10 @@ it('clears failures before a retry and carries the saved version into the send',
     expect(current).toEqual({ revision: 2 });
     return { ok: true };
   });
+  await attempt.run(async () => ({ ok: false, kind: 'conflict', status: 412, current: { revision: 3 }, message: 'Changed' }));
   attempt.reset();
+  expect(attempt.conflict).toBeUndefined();
+  expect(attempt.prepared).toBeUndefined();
   expect(attempt.failed).toBe(false);
   expect(attempt.details).toBe('');
 });

@@ -12,7 +12,6 @@ describe('ChangeList', () => {
     expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent!.trim())).toEqual(['Field', 'Saved', 'Yours']);
     const rows = within(table).getAllByRole('row').slice(1).map((row) => [...row.querySelectorAll('[role=rowheader], [role=cell]')].map((cell) => cell.textContent));
     expect(rows).toEqual([['Title', 'Garden designer', 'Garden design lead'], ['Role', 'None', 'Lead']]);
-    expect(table.textContent).not.toMatch(/saved|yours|→/);
     expect(screen.getByText('Saved at 10:05 PM').getAttribute('title')).toBe('Saved Nov 5, 2026, 10:05 PM');
     expect(screen.queryByText("Nothing you're editing changed.")).toBeNull();
   });

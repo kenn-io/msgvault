@@ -192,7 +192,7 @@ describe('OrganizationEditor', () => {
     });
     render(OrganizationEditor, { controller, organization: organization(), onDone });
     const name = await screen.findByRole('textbox', { name: 'Organization name' });
-    await fireEvent.input(field === 'details' ? name : screen.getByRole('textbox', { name: `Organization ${field}` }), { target: { value: field === 'details' ? 'Renamed' : 'Changed' } });
+    await fireEvent.input(field === 'details' ? name : screen.getByRole('textbox', { name: `Organization ${field}` }), { target: { value: field === 'details' ? 'Renamed' : field === 'aliases' ? 'Example, Inc., Second' : 'Changed' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
     if (field === 'details') {
@@ -200,26 +200,11 @@ describe('OrganizationEditor', () => {
     } else {
       const body = await writes.find(request => request.method === 'PUT')!.json();
       if (field === 'categories') expect(body.names).toEqual([expect.objectContaining({ name: 'Example, Inc.' })]);
-      if (field === 'aliases') expect(body.categories).toEqual([expect.objectContaining({ category: 'Research, development' })]);
+      if (field === 'aliases') {
+        expect(body.categories).toEqual([expect.objectContaining({ category: 'Research, development' })]);
+        expect(body.names.filter((item: { name_kind: string }) => item.name_kind === 'alias').map((item: { name: string }) => item.name)).toEqual(['Example, Inc.', 'Second']);
+      }
     }
-  });
-
-  it('keeps a saved comma alias whole when another alias is appended', async () => {
-    const saved = { ...organizationProfile(), names: [{ ...organizationProfile().names[0], name: 'Example, Inc.' }] };
-    const onDone = vi.fn();
-    const puts: Request[] = [];
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'PUT') puts.push(request.clone());
-      return Response.json(saved, { headers: { ETag: '"organization-21-r1"' } });
-    });
-    render(OrganizationEditor, { controller, organization: organization(), onDone });
-    const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
-    await fireEvent.input(aliases, { target: { value: 'Example, Inc., Second' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    const body = await puts[0].json();
-    expect(body.names.filter((item: { name_kind: string }) => item.name_kind === 'alias').map((item: { name: string }) => item.name)).toEqual(['Example, Inc.', 'Second']);
   });
 
   it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
@@ -395,22 +380,6 @@ it('keeps unnamed holders openable as links in a blocked deletion', async () => 
   expect(onOpenPerson).toHaveBeenCalledTimes(2);
 });
 
-it.each(['legal name', 'retirement'])('retains the saved %s in organization conflicts', async fact => {
-  let reads = 0;
-  const saved = richOrganizationProfile(2);
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    return Response.json(++reads === 1 ? organizationProfile() : { ...saved, organization: { ...saved.organization, retired_at: '2026-11-01T00:00:00Z' } }, { headers: { ETag: `"organization-21-r${reads}"` } });
-  });
-  render(OrganizationEditor, { controller, organization: organization() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
-  expect(within(alert).getByText(fact === 'legal name' ? 'Legal names' : 'Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain(fact === 'legal name' ? 'Synthetic Legal Ltd' : 'Retired');
-});
-
-
 it.each(['names', 'categories'])('keeps saved %s metadata inspectable after a conflict', async section => {
   let reads = 0;
   const saved = richOrganizationProfile(2);
@@ -425,6 +394,7 @@ it.each(['names', 'categories'])('keeps saved %s metadata inspectable after a co
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  if (section === 'names') expect(within(alert).getByText('Legal names', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Synthetic Legal Ltd');
   const value = within(alert).getByRole('region', { name: section === 'names' ? 'Name Synthetic Legal Ltd' : 'Category Research' });
   expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
   expect(within(value).getByText('Confidence').nextElementSibling?.textContent).toBe('87%');

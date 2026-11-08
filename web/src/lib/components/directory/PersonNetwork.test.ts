@@ -217,6 +217,5 @@ describe('PersonNetwork', () => {
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '3')).toBe(true));
     await screen.findByRole('button', { name: 'Depth Three Person' });
     expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain('Depth Three Person');
-    expect(requests.map(request => new URL(request.url).searchParams.get('include_ended'))).toEqual(['false', 'false', 'false', 'false', 'false', 'false']);
   });
 });

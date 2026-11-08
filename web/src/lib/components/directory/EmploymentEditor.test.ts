@@ -1,7 +1,17 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { expect, it } from 'vitest';
-import { controllerWith, organization, organizationProfile, employment, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
+import { expect, it, vi } from 'vitest';
+import { controllerWith, organization, organizationProfile, employment, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEditor from './EmploymentEditor.svelte';
+import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
+import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
+
+async function openInlineEmployer(controller: DirectoryEntityController, name: string, onDone = () => undefined): Promise<void> {
+  render(EmploymentEditor, { controller, personID: 7, onDone });
+  const query = await openTypeahead('Organization');
+  await fireEvent.input(query, { target: { value: name } });
+  await fireEvent.mouseDown(await screen.findByRole('option', { name: `Create organization “${name}”` }));
+}
+
 
 it('passes organization search loading and failures to the employer picker', async () => {
   let finish!: (response: Response) => void;
@@ -124,6 +134,9 @@ it('Keep yours writes only the fields the person changed and keeps a department 
   render(EmploymentEditor, { controller, personID: 7, employment: employment() });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  const table = await screen.findByRole('table', { name: 'What changed' });
+  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Job title']);
+  expect(screen.getByText('Other details also changed')).toBeDefined();
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(bodies).toHaveLength(2));
   expect(bodies[0]).toMatchObject({ title: 'Lead', department: 'Sales' });
@@ -153,22 +166,6 @@ it('checks Keep yours against the start date it keeps from the saved version', a
   await fireEvent.click(keep);
   await waitFor(() => expect(bodies).toHaveLength(2));
   expect(bodies[1]).toMatchObject({ start_date: '2020', end_date: '2021', is_current: false });
-});
-
-it('lists under Yours only the fields the person changed', async () => {
-  let reads = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(employment(11, ++reads, { department: reads === 1 ? 'Sales' : 'Ops' }), { headers: { ETag: `"employment-11-r${reads}"` } });
-  });
-  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  const table = await screen.findByRole('table', { name: 'What changed' });
-  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Job title']);
-  expect(screen.getByText('Other details also changed')).toBeDefined();
 });
 
 it('describes a job moved to an unloaded person without showing their ID', async () => {
@@ -240,3 +237,223 @@ it('keeps an edited end date when another editor reopens the job', async () => {
   await waitFor(() => expect(bodies).toHaveLength(2));
   expect(bodies[1]).toMatchObject({ end_date: '2021', is_current: false });
 });
+
+  it('creates an employer inline and reuses it after employment creation fails', async () => {
+    let employers = 0;
+    let jobs = 0;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/organizations' && request.method === 'POST') {
+        employers++;
+        expect(await request.json()).toMatchObject({ name: 'New Example', primary_domain: 'example.org', kind: 'school' });
+        return Response.json(organization(22, 1, 'New Example'), { headers: { ETag: '"organization-22-r1"' } });
+      }
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [], total: 0 });
+      if (path === '/api/v1/employments') {
+        jobs++;
+        const body = await request.json();
+        expect(body).toMatchObject({ organization_id: 22, title: 'Draft role', is_current: true });
+        expect(body).not.toHaveProperty('end_date');
+        if (jobs === 1) return Response.json({ message: 'Invalid employment' }, { status: 400 });
+        return Response.json(employment(11, 1, { organization_id: 22 }), { headers: { ETag: '"employment-11-r1"' } });
+      }
+      if (path === '/api/v1/people/7/employments') return collection([]);
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    let done = false;
+    await openInlineEmployer(controller, 'New Example', () => { done = true; });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Organization kind: Company' }), 'School');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Domain' }), { target: { value: 'example.org' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-13' } });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+    expect(screen.getByRole('textbox', { name: 'End date' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
+    await screen.findByText('Invalid employment');
+    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('value', 'Draft role');
+    expect(screen.getByRole('button', { name: /^Organization(:|$)/ }).textContent).toContain('New Example');
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
+    await waitFor(() => expect(done).toBe(true));
+    expect(employers).toBe(1);
+    expect(jobs).toBe(2);
+  });
+
+  it('offers to create an organization only once there is a name to create', async () => {
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization(21, 1, 'Lumen Grove')], total: 1 });
+      if (path === '/api/v1/people/7/employments') return collection([]);
+      throw new Error(`unexpected ${path}`);
+    });
+    render(EmploymentEditor, { controller, personID: 7 });
+    await openTypeahead('Organization');
+    await screen.findByRole('option', { name: /Lumen Grove/ });
+    expect(screen.queryByRole('option', { name: /^Create organization/ })).toBeNull();
+    await fireEvent.mouseDown(screen.getByRole('option', { name: /Lumen Grove/ }));
+    const nextQuery = await openTypeahead('Organization');
+    await fireEvent.input(nextQuery, { target: { value: 'Fern Hollow' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Create organization “Fern Hollow”' }));
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Fern Hollow');
+    // The Name field holds the new name, so the select says only that it's new.
+    const dialog = screen.getByRole('dialog', { name: 'Add job' });
+    expect(within(dialog).getByRole('button', { name: 'Organization: New organization' })).toHaveProperty('disabled', true);
+    expect(dialog.textContent).not.toContain('Create organization');
+    await fireEvent.click(screen.getByRole('button', { name: 'Choose an existing organization instead' }));
+    expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
+  });
+
+  it('rejects an end date before the start before creating an employer', async () => {
+    const requests: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input); requests.push(request);
+      return Response.json({ organizations: [], total: 0 });
+    });
+    await openInlineEmployer(controller, 'Example School');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '2025-06' } });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-06' } });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
+    expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
+  });
+
+  it('blocks an unknown inline employer create until organizations are refreshed', async () => {
+    let employers = 0;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'POST') { employers++; return Response.json({ message: 'Unavailable' }, { status: 503 }); }
+      return Response.json({ organizations: [], total: 0 });
+    });
+    await openInlineEmployer(controller, 'Example company');
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
+    await screen.findByRole('alert');
+    expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false));
+    expect(employers).toBe(1);
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Example company');
+  });
+
+
+  it('rejects a year-less employment date and keeps Create disabled until it is fixed', async () => {
+    const requests: Request[] = [];
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input); requests.push(request);
+      if (pathOf(request) === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    }));
+    render(EmploymentEditor, { controller, personID: 7 });
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
+    const create = screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!;
+    expect(create).toHaveProperty('disabled', false);
+
+    const start = screen.getByRole('textbox', { name: 'Start date' });
+    await fireEvent.input(start, { target: { value: '--04-12' } });
+    expect(create).toHaveProperty('disabled', true);
+    await fireEvent.click(create);
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
+
+    await fireEvent.input(start, { target: { value: '20190412' } });
+    expect(create).toHaveProperty('disabled', false);
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+    const end = screen.getByRole('textbox', { name: 'End date' });
+    await fireEvent.input(end, { target: { value: '2019-13' } });
+    expect(create).toHaveProperty('disabled', true);
+    await fireEvent.click(create);
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
+  });
+
+
+  it('shows the exact employer in the existing job context', async () => {
+    const requests: Request[] = [];
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/employments/11') return new Response(JSON.stringify(employment()), { headers: { ETag: '"employment-11-r1"' } });
+      if (path === '/api/v1/organizations/21') return new Response(JSON.stringify(organizationProfile(2, 'Exact Employment Org')), { headers: { ETag: '"organization-21-r2"' } });
+      if (path === '/api/v1/people/7/employments') return collection([employment()]);
+      throw new Error(`unexpected ${request.method} ${path}`);
+    }));
+    controller.employments = [employment()];
+    render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+    const context = await screen.findByText('At Exact Employment Org', { selector: 'p.context' });
+    expect(context.textContent).toBe('At Exact Employment Org');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(requests.some((request) => request.method === 'PATCH')).toBe(true));
+    expect(await requests.find((request) => request.method === 'PATCH')!.json()).toMatchObject({ organization_id: 21 });
+  });
+
+
+  it.each(['keep mine', 'use saved'])('preserves fields from the saved job when resolving with %s', async (resolution) => {
+    const requests: Request[] = [];
+    let reads = 0;
+    let patches = 0;
+    const hiddenByRead = [
+      { person_id: 7, organization_id: 21, source: 'user', source_ref: 'modal-old', address_id: 11, confidence: 0.11 },
+      { person_id: 8, organization_id: 22, source: 'vcard_import', source_ref: 'first-fresh', address_id: 22, confidence: 0.22 },
+    ];
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/employments/11' && request.method === 'GET') {
+        reads += 1;
+        return new Response(JSON.stringify(employment(11, reads + 1, {
+          ...hiddenByRead[reads - 1],
+          title: reads === 1 ? 'Current title' : 'Changed title',
+          department: reads === 1 ? 'Platform' : 'Concurrent research',
+          location: reads === 1 ? 'Remote' : 'Concurrent campus'
+        })), {
+          headers: { ETag: `"employment-11-r${reads + 1}"` }
+        });
+      }
+      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
+        return new Response(JSON.stringify(organizationProfile(4, 'Exact Employment Org')), { headers: { ETag: '"organization-21-r4"' } });
+      }
+      if (path === '/api/v1/organizations/22' && request.method === 'GET') {
+        return new Response(JSON.stringify({ ...organizationProfile(6, 'Concurrent Employment Org'), organization: organization(22, 6, 'Concurrent Employment Org') }), { headers: { ETag: '"organization-22-r6"' } });
+      }
+      if (path === '/api/v1/employments/11' && request.method === 'PATCH') {
+        patches += 1;
+        if (patches === 1) return Response.json({ error: 'revision_conflict', message: 'stale revision' }, { status: 412 });
+        return new Response(JSON.stringify(employment(11, 4, { ...hiddenByRead[1], title: 'Draft title' })), { headers: { ETag: '"employment-11-r4"' } });
+      }
+      if (path === '/api/v1/people/7/employments') return collection([]);
+      throw new Error(`unexpected ${request.method} ${path}`);
+    }));
+    controller.employments = [employment()];
+    const onClose = vi.fn();
+    render(EmploymentEditor, { controller, personID: 7, employment: employment(), onClose });
+    const title = await screen.findByRole('textbox', { name: 'Job title' }) as HTMLInputElement;
+    expect(screen.queryByRole('button', { name: 'New organization' })).toBeNull();
+    await fireEvent.input(title, { target: { value: 'Draft title' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    const alert = (await screen.findByRole('alert')).closest('.inline-notice')!;
+    expect(alert.textContent).toContain('This job changed since you opened it.');
+    expect(title.value).toBe('Draft title');
+    expect(patches).toBe(1);
+    const firstPatch = requests.find((request) => request.method === 'PATCH')!;
+    expect(await firstPatch.clone().json()).toMatchObject({ ...hiddenByRead[0], title: 'Draft title' });
+
+    expect(screen.getByRole('button', { name: 'Use saved' })).toBeDefined();
+    if (resolution === 'use saved') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(patches).toBe(1);
+      expect(requests.some((request) => pathOf(request) === '/api/v1/people/7/employments')).toBe(true);
+      return;
+    }
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(patches).toBe(2));
+    const retryPatch = requests.filter((request) => request.method === 'PATCH')[1]!;
+    expect(await retryPatch.clone().json()).toMatchObject({ ...hiddenByRead[1], title: 'Draft title' });
+  });

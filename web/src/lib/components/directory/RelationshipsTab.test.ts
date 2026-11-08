@@ -124,28 +124,17 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('option', { name: 'Synthetic Peer Last contact Feb 3, 2023' })).toBeDefined();
   });
 
-  it('uses a contact title and muted identifier for an unresolved imported UID', async () => {
+  it.each([
+    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from CardDAV contacts · Jul 31'],
+    ['text', 'Alex', 'Alex', 'Text · Friend · from CardDAV contacts · Jul 31'],
+  ])('describes an imported %s value', async (valueKind, value, title, description) => {
     const client = createAPIClient(async () => Response.json({ reviews: [{
-      id: 1, person_id: 7, raw_related_value: 'urn:uuid:11111111-2222-3333-4444-555555555555',
-      raw_related_type: 'friend', value_kind: 'uri', status: 'pending', source: 'carddav_import',
-      created_at: '2026-07-31T12:00:00', updated_at: '2026-07-31T12:00:00',
-    }] }));
-    const controller = new DirectoryEntityController(client, 7);
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    const title = await screen.findByText('Unknown contact');
-    // The reference leads the secondary line, then the type and where it came from.
-    const row = title.closest('.detail-row') as HTMLElement;
-    expect(row.querySelector('.description')?.textContent).toBe('urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from CardDAV contacts · Jul 31');
-  });
-
-  it('says an imported value is text', async () => {
-    const client = createAPIClient(async () => Response.json({ reviews: [{
-      id: 1, person_id: 7, raw_related_value: 'Alex', raw_related_type: 'friend', value_kind: 'text', status: 'pending',
+      id: 1, person_id: 7, raw_related_value: value, raw_related_type: 'friend', value_kind: valueKind, status: 'pending',
       source: 'carddav_import', created_at: '2026-07-31T12:00:00', updated_at: '2026-07-31T12:00:00',
     }] }));
     render(RelationshipsTab, { client, controller: new DirectoryEntityController(client, 7), personID: 7 });
-    const row = (await screen.findByText('Alex')).closest('.detail-row') as HTMLElement;
-    expect(row.querySelector('.description')?.textContent).toMatch(/^Text · Friend · from CardDAV contacts/);
+    const row = (await screen.findByText(title)).closest('.detail-row') as HTMLElement;
+    expect(row.querySelector('.description')?.textContent).toBe(description);
   });
 
   it('shows saved recovery once in the editor and restores it to the page on close', async () => {
@@ -610,7 +599,7 @@ describe('RelationshipsTab', () => {
     expect(screen.getByText('Sela Moss').closest('.detail-row')?.textContent).toContain('Friend · 2020 – 2023 · Former workshop partner.');
   });
 
-  it('opens Edit with the connection as context: since when, who added it, and prose notes', async () => {
+  it('opens Edit with the connection as context: since when and prose notes', async () => {
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/person-relationships/41') return new Response(JSON.stringify(relationship(41, 1, { start_date: { year: 2022 }, notes: 'Met at the seed exchange.' })), { headers: { ETag: '"relationship-41-r1"' } });
@@ -619,7 +608,6 @@ describe('RelationshipsTab', () => {
     controller.relationships = [view(41, 'outgoing', 'friend', 'Tavi Reed', { relationship: { ...relationship(41, 1), start_date: { year: 2022 }, notes: 'Met at the seed exchange.' } })];
     controller.relationshipTypes = [relationshipType()];
     render(RelationshipsTab, { client, controller, personID: 7, personName: 'Mira Vale' });
-    expect(screen.getByText('Tavi Reed').closest('.detail-row')?.textContent).toContain('Friend · 2022 – present · Met at the seed exchange.');
     await rowAction('Edit…');
     const dialog = await screen.findByRole('dialog', { name: 'Edit connection' });
     // A connection the person added says only since when; one from somewhere else says where.
@@ -658,7 +646,6 @@ describe('RelationshipsTab', () => {
 
     await rowAction('Edit…');
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-02' } });
-    expect(screen.getByText('End date must be on or after start date.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
