@@ -17,28 +17,40 @@ import (
 const maxPersonAgendaRequestBytes = 64 << 10
 
 type PersonAgendaItem struct {
-	UID          string             `json:"uid"`
-	Ref          string             `json:"ref"`
-	QualifiedRef string             `json:"qualified_ref"`
-	Project      string             `json:"project"`
-	Title        string             `json:"title"`
-	Body         string             `json:"body,omitempty"`
-	Revision     string             `json:"revision"`
-	List         string             `json:"list"`
-	Status       string             `json:"status"`
-	State        personagenda.State `json:"state"`
-	Priority     *int64             `json:"priority,omitempty"`
-	Labels       []string           `json:"labels,omitempty"`
-	Owner        string             `json:"owner,omitempty"`
-	WebURL       string             `json:"web_url,omitempty"`
+	Kind                string                  `json:"kind" doc:"task, series, or verified native occurrence"`
+	Membership          string                  `json:"membership" doc:"direct or inherited from a linked series"`
+	ParentUID           string                  `json:"parent_uid,omitempty"`
+	Schedules           []PersonAgendaSchedule  `json:"schedules,omitempty"`
+	Occurrence          *PersonAgendaOccurrence `json:"occurrence,omitempty"`
+	OpenOccurrences     int                     `json:"open_occurrences" doc:"Verified open occurrences; exact only when occurrences_complete is true"`
+	OccurrencesComplete bool                    `json:"occurrences_complete"`
+	UID                 string                  `json:"uid"`
+	Ref                 string                  `json:"ref"`
+	QualifiedRef        string                  `json:"qualified_ref"`
+	Project             string                  `json:"project"`
+	Title               string                  `json:"title"`
+	Body                string                  `json:"body,omitempty"`
+	Revision            string                  `json:"revision"`
+	List                string                  `json:"list"`
+	Status              string                  `json:"status"`
+	State               personagenda.State      `json:"state"`
+	Priority            *int64                  `json:"priority,omitempty"`
+	Labels              []string                `json:"labels,omitempty"`
+	Owner               string                  `json:"owner,omitempty"`
+	WebURL              string                  `json:"web_url,omitempty"`
 }
 
+type PersonAgendaSchedule personagenda.Schedule
+type PersonAgendaOccurrence personagenda.Occurrence
+type PersonAgendaRecurrenceStatus personagenda.RecurrenceStatus
+
 type PersonAgendaResult struct {
-	PersonUID  string             `json:"person_uid" doc:"Canonical stable person UID used for new Kata links"`
-	PersonUIDs []string           `json:"person_uids" doc:"Canonical UID followed by retired aliases that still resolve to this person"`
-	Truncated  bool               `json:"truncated" doc:"More open tasks exist than the agenda result limit"`
-	Project    string             `json:"project"`
-	Items      []PersonAgendaItem `json:"items"`
+	PersonUID  string                       `json:"person_uid" doc:"Canonical stable person UID used for new Kata links"`
+	PersonUIDs []string                     `json:"person_uids" doc:"Canonical UID followed by retired aliases that still resolve to this person"`
+	Truncated  bool                         `json:"truncated" doc:"More tasks or recurring series exist, or recurrence discovery is incomplete"`
+	Project    string                       `json:"project"`
+	Items      []PersonAgendaItem           `json:"items"`
+	Recurrence PersonAgendaRecurrenceStatus `json:"recurrence" doc:"Separate native recurrence discovery state; ordinary tasks survive recurrence failures"`
 }
 
 type PersonAgendaCreateRequest struct {
@@ -119,7 +131,7 @@ func (s *Server) handleListPersonAgenda(w http.ResponseWriter, r *http.Request) 
 		items = append(items, personAgendaItem(item))
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, PersonAgendaResult{Project: result.Project, PersonUID: result.PersonUID, PersonUIDs: result.PersonUIDs, Truncated: result.Truncated, Items: items})
+	writeJSON(w, http.StatusOK, PersonAgendaResult{Project: result.Project, PersonUID: result.PersonUID, PersonUIDs: result.PersonUIDs, Truncated: result.Truncated, Items: items, Recurrence: PersonAgendaRecurrenceStatus(result.Recurrence)})
 }
 
 func (s *Server) handleCreatePersonAgendaItem(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +251,19 @@ func decodeBoundedRequest(w http.ResponseWriter, r *http.Request, target any, me
 }
 
 func personAgendaItem(item personagenda.Item) PersonAgendaItem {
+	schedules := make([]PersonAgendaSchedule, 0, len(item.Schedules))
+	for _, schedule := range item.Schedules {
+		schedules = append(schedules, PersonAgendaSchedule(schedule))
+	}
+	var occurrence *PersonAgendaOccurrence
+	if item.Occurrence != nil {
+		value := PersonAgendaOccurrence(*item.Occurrence)
+		occurrence = &value
+	}
 	return PersonAgendaItem{
+		Kind: item.Kind, Membership: item.Membership, ParentUID: item.ParentUID,
+		Schedules: schedules, Occurrence: occurrence,
+		OpenOccurrences: item.OpenOccurrences, OccurrencesComplete: item.OccurrencesComplete,
 		UID: item.UID, Ref: item.Ref, QualifiedRef: item.QualifiedRef, Project: item.Project,
 		Title: item.Title, Body: item.Body, Revision: item.Revision, List: item.List,
 		Status: item.Status, State: item.State, Priority: item.PriorityValue,

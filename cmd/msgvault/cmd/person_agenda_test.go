@@ -116,5 +116,28 @@ func TestPersonAgendaListTextShowsVirtualHierarchy(t *testing.T) {
 	output, err := executePersonAgendaCommand(testCtx, t, "list", "7")
 	require.NoError(t, err)
 	assert.True(t, strings.Contains(output, "gift ideas") && strings.Contains(output, "task-1") && strings.Contains(output, "Ask"), output)
-	assert.Contains(t, output, "More open tasks are linked to this person.")
+	assert.Contains(t, output, "The task view may be incomplete. Open Kata for the full view.")
+}
+
+func TestPersonAgendaListShowsRecurringCadenceAndIncompleteReads(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"project":"example","truncated":true,"recurrence":{"state":"partial","message":"Some schedules could not be read."},"items":[{"uid":"parent","ref":"abcd","project":"example","title":"Review service","revision":"1","list":"agenda","kind":"series","membership":"direct","status":"open","state":"open","schedules":[{"uid":"job","summary":"Every 3600 seconds","timezone":"UTC","state":"parent_closed"}]}]}`))
+		assert.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	testCtx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	output, err := executePersonAgendaCommand(testCtx, t, "list", "7")
+	require.NoError(err)
+	assert.Contains(output, "Recurring")
+	assert.Contains(output, "Every 3600 seconds")
+	assert.Contains(output, "UTC")
+	assert.Contains(output, "Paused (parent closed)")
+	assert.NotContains(output, "parent_closed")
+	assert.Contains(output, "Some schedules could not be read.")
+	assert.NotContains(output, "Recurring schedules are incomplete")
+	assert.Contains(output, "Open Kata for the full view.")
+	assert.NotContains(output, "The task view may be incomplete.")
 }

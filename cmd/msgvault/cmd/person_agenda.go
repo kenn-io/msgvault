@@ -52,15 +52,46 @@ func newPersonAgendaCommand() *cobra.Command {
 				if item.Priority != nil {
 					priority = strconv.FormatInt(*item.Priority, 10)
 				}
+				title := textutil.SanitizeTerminal(item.Title)
+				switch item.Kind {
+				case "series":
+					title = "Recurring: " + title
+				case "occurrence":
+					title = "Occurrence: " + title
+				}
 				_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n",
 					textutil.SanitizeTerminal(item.List), textutil.SanitizeTerminal(item.Ref),
-					textutil.SanitizeTerminal(item.State), priority, textutil.SanitizeTerminal(item.Title))
+					textutil.SanitizeTerminal(item.State), priority, title)
+				for _, schedule := range item.Schedules {
+					state := schedule.State
+					if state == "parent_closed" {
+						state = "Paused (parent closed)"
+					}
+					_, _ = fmt.Fprintf(writer, "\t\t\t\t%s · %s · %s\n", textutil.SanitizeTerminal(schedule.Summary), textutil.SanitizeTerminal(schedule.Timezone), textutil.SanitizeTerminal(state))
+				}
+				if item.Occurrence != nil {
+					_, _ = fmt.Fprintf(writer, "\t\t\t\tScheduled for %s\n", textutil.SanitizeTerminal(item.Occurrence.ScheduledAt))
+				}
 			}
 			if err := writer.Flush(); err != nil {
 				return fmt.Errorf("write agenda: %w", err)
 			}
 			if result.Truncated {
-				_, err = fmt.Fprintln(cmd.ErrOrStderr(), "More open tasks are linked to this person. View the full list in Kata.")
+				notice := "The task view may be incomplete. Open Kata for the full view."
+				if result.Recurrence.State == "partial" {
+					notice = "Open Kata for the full view."
+				}
+				_, err = fmt.Fprintln(cmd.ErrOrStderr(), notice)
+			}
+			if err == nil && result.Recurrence.State != "" && result.Recurrence.State != "ready" {
+				message := textutil.SanitizeTerminal(result.Recurrence.Message)
+				if message == "" {
+					message = "Recurring schedules unavailable."
+					if result.Recurrence.State == "partial" {
+						message = "Recurring schedules are incomplete."
+					}
+				}
+				_, err = fmt.Fprintln(cmd.ErrOrStderr(), message)
 			}
 			if err != nil {
 				return fmt.Errorf("write agenda notice: %w", err)

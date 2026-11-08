@@ -3648,6 +3648,14 @@ Read and organize a person's live Kata tasks. Configure
 [`[integrations.kata]`](configuration.md#integrationskata) on the daemon first.
 Tasks belong to one person and stay in the configured Kata project.
 
+`list` also shows native recurring series and verified open occurrences. Series
+retain their cadence, timezone and active/paused/deleted state. The JSON response
+includes `kind`, `membership`, `parent_uid`, `schedules` and `occurrence`, plus a
+separate `recurrence` discovery state. `truncated` and partial discovery mean the
+view is incomplete; use Kata for full history. See
+[recurring Tasks in People](usage/people.md)
+for membership and unlink behavior.
+
 ```bash
 msgvault person agenda list <person-id> [--json]
 msgvault person agenda create <person-id> --title "Discuss the proposal" [flags]

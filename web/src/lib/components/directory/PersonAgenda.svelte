@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, IconButton, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Disclosure, IconButton, TextInput } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
+  import Repeat from '@lucide/svelte/icons/repeat';
   import { onDestroy, untrack } from 'svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import {
@@ -28,6 +29,10 @@
   let integrationState = $state('loading');
   let integrationMessage = $state('');
   let truncated = $state(false);
+  let recurrenceState = $state('');
+  let recurrenceMessage = $state('');
+  let pendingUnlink = $state<AgendaItem | null>(null);
+  let unlinkTrigger: HTMLElement | null = null;
   let title = $state('');
   let listName = $state('agenda');
   let generation = 0;
@@ -40,6 +45,7 @@
   let loadedRefreshKey: string | undefined;
 
   const mutationReady = $derived(integrationState === 'ready');
+  const roots = $derived(items.filter(item => item.kind !== 'occurrence' || !items.some(parent => parent.kind === 'series' && parent.uid === item.parent_uid)));
   const stateMessage = $derived.by(() => {
     if (integrationState === 'loading') return '';
     if (integrationState !== 'ready') {
@@ -64,6 +70,10 @@
         // settles. Its token can no longer change this selection's state.
         mutationToken++;
         mutating = false;
+        pendingUnlink = null;
+        unlinkTrigger = null;
+        recurrenceState = '';
+        recurrenceMessage = '';
       }
       // Same-person revisions keep write ownership and retry protection.
       // Revisit a deferred revision when the pending write releases the form.
@@ -97,7 +107,13 @@
       // check, so skip it and let the status message be the single
       // explanation instead of pairing it with a redundant
       // service-unavailable error.
-      if (integrationState !== 'ready') return;
+      if (integrationState !== 'ready') {
+        items = [];
+        truncated = false;
+        recurrenceState = '';
+        recurrenceMessage = '';
+        return;
+      }
       const { data, error: responseError } = await listPersonAgenda(
         { id: selectedPersonID },
         { ...client, signal: controller.signal },
@@ -106,10 +122,14 @@
       if (!data) throw new Error(messageFor(responseError, 'Task service is unavailable'));
       items = data.items ?? [];
       truncated = data.truncated;
+      recurrenceState = data.recurrence?.state ?? '';
+      recurrenceMessage = data.recurrence?.message ?? '';
     } catch (cause) {
       if (current !== generation || controller.signal.aborted) return;
       items = [];
       truncated = false;
+      recurrenceState = '';
+      recurrenceMessage = '';
       error = cause instanceof Error ? cause.message : 'Task service is unavailable';
     } finally {
       if (current === generation) loading = false;
@@ -197,6 +217,39 @@
     }
   }
 
+  function requestUnlink(item: AgendaItem): void {
+    if (item.kind === 'series' || (recurrenceState && recurrenceState !== 'ready')) {
+      unlinkTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      pendingUnlink = item;
+    } else void unlink(item.ref);
+  }
+
+  function focusUnlinkConfirmation(node: HTMLElement): void {
+    node.querySelector<HTMLButtonElement>('button')?.focus();
+  }
+
+  function cancelUnlink(): void {
+    pendingUnlink = null;
+    unlinkTrigger?.focus();
+    unlinkTrigger = null;
+  }
+
+  function scheduledTime(item: AgendaItem, parent: AgendaItem | undefined = undefined): string {
+    const raw = item.occurrence?.scheduled_at;
+    if (!raw || !Number.isFinite(Date.parse(raw))) return 'Scheduled time unavailable';
+    const timezone = parent?.schedules?.find(schedule => schedule.uid === item.occurrence?.job_uid)?.timezone || 'UTC';
+    try {
+      return `Scheduled for ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(raw))} · ${timezone}`;
+    } catch {
+      return `Scheduled for ${raw}`;
+    }
+  }
+
+  function scheduleState(state: string): string {
+    const states: Record<string, string> = { active: 'Active', paused: 'Paused', parent_closed: 'Paused because parent is closed', deleted: 'Deleted schedule' };
+    return states[state] ?? 'Unavailable';
+  }
+
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
       ? value.message
@@ -212,16 +265,60 @@
   <div class="heading"><h3 id={`person-${personID}-agenda-heading`}>Tasks</h3>{#if integrationState === 'disabled' && onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Tasks" onclick={onSetUp} />{/if}{#if loading}<span role="status">Loading…</span>{/if}</div>
   {#if error}<p class="notice" role="alert">{error}<Button size="sm" label="Retry tasks" onclick={() => void load()} /></p>{/if}
   {#if stateMessage && !(integrationState === 'disabled' && onSetUp)}<div class="heading"><span class="notice" role="status">{stateMessage}</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
-  {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No tasks yet</p>{/if}
-  {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
-  {#each items as item (item.uid)}
+  {#if recurrenceState && recurrenceState !== 'ready'}
+    <div class="notice" role="status">
+      <p>{recurrenceMessage || (recurrenceState === 'partial' ? 'Recurring schedules are incomplete.' : 'Recurring schedules unavailable.')}</p>
+      <Button size="sm" label="Retry recurring schedules" onclick={() => void load()} disabled={loading || mutating} />
+    </div>
+  {/if}
+  {#if !loading && !error && !stateMessage && (!recurrenceState || recurrenceState === 'ready') && items.length === 0}<p class="notice">No tasks yet</p>{/if}
+  {#if truncated}<p class="notice" role="status">{recurrenceState === 'partial' ? 'Open Kata for the full view.' : 'The task view may be incomplete. Open Kata for the full view.'}</p>{/if}
+  {#if pendingUnlink}
+    <div class="unlink-series" role="group" aria-label={`Unlink ${pendingUnlink.title}`} use:focusUnlinkConfirmation>
+      {#if pendingUnlink.kind === 'series'}
+        <p>Unlink this series? It and its occurrences may stay visible through another linked series. Separately linked occurrences stay. Scheduling and inbox requests continue.</p>
+      {:else}
+        <p>Unlink this task? A series and its occurrences may stay visible through another linked series; an occurrence may stay through its linked series. Separately linked occurrences stay. Scheduling and inbox requests continue.</p>
+      {/if}
+      <Button size="sm" label="Unlink" disabled={mutating} onclick={() => { const ref = pendingUnlink?.ref; pendingUnlink = null; if (ref) void unlink(ref); }} />
+      <Button size="sm" label={pendingUnlink.kind === 'series' ? 'Keep series linked' : 'Keep task linked'} onclick={cancelUnlink} />
+    </div>
+  {/if}
+  {#each roots as item (item.uid)}
+    <div class="agenda-family">
     <DetailRow>
       {#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}
+      {#if item.kind === 'series'}<span class="recurring-badge"><Repeat size={14} aria-hidden="true" />Recurring</span>{/if}
       {#if item.list !== 'agenda'}<small>{item.list}</small>{/if}
       {#if item.state !== 'open'}<small>{label(item.state)}</small>{/if}
       {#if item.status !== item.state}<small>{label(item.status)}</small>{/if}
-      {#snippet actions()}<IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton>{/snippet}
+      {#snippet actions()}{#if item.kind !== 'occurrence' && item.membership !== 'inherited'}<IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => requestUnlink(item)}><X size={14} /></IconButton>{/if}{/snippet}
     </DetailRow>
+    {#if item.kind === 'series'}
+      {@const children = items.filter(child => child.kind === 'occurrence' && child.parent_uid === item.uid)}
+      <div class="schedules">
+        {#each item.schedules ?? [] as schedule (schedule.uid)}
+          <p>{schedule.summary} · {schedule.timezone || 'UTC'} <small>{scheduleState(schedule.state)}</small></p>
+          {#if schedule.summary === 'Custom schedule' && schedule.cron}<Disclosure variant="plain" title="Schedule expression"><code>{schedule.cron}</code></Disclosure>{/if}
+        {/each}
+        {#if !item.occurrences_complete}<p class="notice">Occurrence count incomplete</p>
+        {:else if !item.open_occurrences}<p class="notice">No open occurrences</p>
+        {:else if item.open_occurrences > children.length}<p class="notice">{item.open_occurrences} open occurrence{item.open_occurrences === 1 ? '' : 's'}</p>{/if}
+        {#if item.web_url}<a class="notice" href={item.web_url} target="_blank" rel="noreferrer">View completed occurrences in Kata</a>{/if}
+      </div>
+      {#if children.length}
+        <ul class="occurrences" aria-label={`Occurrences of ${item.title}`}>
+          {#each children as child (child.uid)}
+            <li><DetailRow>
+              {#if child.web_url}<a href={child.web_url} target="_blank" rel="noreferrer">{child.title}</a>{:else}{child.title}{/if}
+              <small>{label(child.status)}</small>
+              {#if child.list !== item.list}<small>{child.list}</small>{/if}
+            </DetailRow><p class="notice">{scheduledTime(child, item)}</p></li>
+          {/each}
+        </ul>
+      {/if}
+    {:else if item.kind === 'occurrence'}<p class="notice">{scheduledTime(item)}</p>{/if}
+    </div>
   {/each}
   {#if mutationReady}
     <form onsubmit={(event) => { event.preventDefault(); void createItem(); }}>
@@ -244,4 +341,12 @@
   small { margin-left: var(--space-2); color: var(--text-muted); }
   a { color: var(--link-ink); }
   .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .agenda-family { min-width: 0; }
+  .recurring-badge { display: inline-flex; align-items: center; gap: var(--space-1); margin-left: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
+  .schedules { display: grid; gap: var(--space-1); }
+  .schedules p { font-size: var(--font-size-sm); }
+  .schedules code { overflow-wrap: anywhere; }
+  .occurrences { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0 var(--space-3); padding-left: var(--space-3); }
+  .unlink-series { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .unlink-series p { flex-basis: 100%; font-size: var(--font-size-sm); }
 </style>

@@ -96,6 +96,14 @@ func ErrorCode(err error) string {
 	return ""
 }
 
+// ErrorStatus returns the HTTP status of a service refusal, or zero otherwise.
+func ErrorStatus(err error) int {
+	if status, ok := errors.AsType[*httpStatusError](err); ok {
+		return status.statusCode
+	}
+	return 0
+}
+
 func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("%s: HTTP status %d", e.classification, e.statusCode)
 }

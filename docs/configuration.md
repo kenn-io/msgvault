@@ -1196,7 +1196,7 @@ and ready states.
 Optional live person agendas backed by Kata, and the connection that files
 [Kata issues from archive evidence](usage/kata-issues.md). Tasks stay in Kata;
 msgvault shows their current state when you open a person's agenda. This integration is built
-against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
+against Kata v0.22.0 and requires Kata API schema version 0.21.0 or later.
 
 | Key | Default | Description |
 |---|---|---|
@@ -1228,9 +1228,19 @@ msgvault person ID. `msgvault.list` names its list and defaults to `agenda`.
 Reads and unlink operations also recognize the person's UID aliases after a
 merge.
 
-Agendas show open tasks only, with at most 100 returned items. A `truncated`
-response means more remain; open Kata to see them. The transport also limits
-each response to 1 MiB and reports an error when it exceeds that limit.
+Agendas show open tasks and native recurring series, including a closed parent
+whose occurrences remain open. A generated child inherits its parent's current
+person and list only when it has no explicit person binding. A direct child
+binding takes precedence. Series and children are deduplicated by Kata UID.
+
+At most 100 items are returned, including series summaries and occurrences.
+`truncated` means the view may be incomplete because of display limits or partial
+discovery; open Kata for the full view. Recurrence has a separate
+discovery state: ordinary tasks remain available when native cron is unsupported,
+forbidden or unavailable. Partial discovery is reported explicitly. Recurrence
+reads are bounded to 100 catalog jobs, 24 parent families, 32 person aliases and
+20 seconds overall, with 1 MiB per catalog/family response. Ordinary task lists
+allow 16 MiB per response. No new scheduler or task database is created.
 Create, link, move between lists, and unlink tasks through msgvault; edit task
 content or priority, complete tasks, and reopen them in Kata. See
 [person agenda commands](cli-reference.md#person-agenda).

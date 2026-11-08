@@ -324,6 +324,29 @@ existing tasks with the [CLI](../cli-reference.md#person-agenda) or API. Edit
 and complete tasks in Kata. Tasks stay in Kata; this connection requires Kata
 API schema 0.21.0 or later.
 
+Native Kata recurring commitments appear with a repeat icon and **Recurring**
+badge. Each series shows its cadence, timezone and schedule state, even before
+the first occurrence. Open occurrences appear beneath it with their scheduled
+time and current Kata status. Completing an occurrence in Kata leaves the
+series running. Use its Kata link to view completed occurrences.
+
+Calendar schedules use the job’s named timezone. Intervals measure elapsed time
+from the initial binding and continue independently of completion.
+
+Create and manage schedules in Kata. The daemon creates each occurrence and
+requests attention in the configured inbox; it does not send a message to the
+contact. A scheduled time is separate from a deadline or actual delivery time.
+The authoritative Kata daemon must be running for delivery.
+
+Unlinking a series removes its direct person link. It and its inherited
+occurrences may remain visible through another linked series. Scheduling and
+inbox requests continue, and explicitly linked children remain. Individual
+occurrences open in Kata. To stop future delivery, pause the schedule in Kata.
+If recurrence discovery fails or reaches a limit, Tasks explains that the
+recurring view is incomplete and keeps successfully loaded ordinary tasks.
+Unlinking an unclassified row then asks you to review its possible recurring
+effects before removing its direct person link.
+
 ## Configure provider-backed person sweeps
 
 [Profile automation](/docs/usage/people-automation/) maintains facts for people

@@ -15,6 +15,130 @@ function readyStatus(): Response {
 }
 
 describe('PersonAgenda', () => {
+  it.each(['unavailable', 'partial'])('discloses ambiguous unlink effects during %s recurrence discovery', async state => {
+    const requests: Request[] = [];
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'DELETE') return Response.json({ item: item('unknown', 'Review notes') });
+      return Response.json({ project: 'msgvault', truncated: state === 'partial', recurrence: { state }, items: [item('unknown', 'Review notes')] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink Review notes' }));
+    expect(requests.some(request => request.method === 'DELETE')).toBe(false);
+    expect(screen.getByText(/A series and its occurrences may stay visible through another linked series/)).toBeDefined();
+    expect(screen.getByText(/Scheduling and inbox requests continue/)).toBeDefined();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Unlink$/ }));
+    if (state === 'partial') {
+      expect(screen.getByText('Open Kata for the full view.')).toBeDefined();
+      expect(screen.queryByText('More tasks are linked to this person.')).toBeNull();
+    }
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep task linked' }));
+    expect(requests.some(request => request.method === 'DELETE')).toBe(false);
+  });
+
+  it('keeps a recurring parent before delivery and nests verified occurrences with scheduled times', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return readyStatus();
+      return Response.json({ project: 'msgvault', recurrence: { state: 'ready' }, items: [
+        { ...item('series', 'Review the project'), kind: 'series', membership: 'direct', open_occurrences: 1, occurrences_complete: true,
+          schedules: [{ uid: 'job-one', state: 'active', summary: 'Cron: 0 9 * * 1', timezone: 'Europe/London', catchup: 'latest' }] },
+        { ...item('first', 'Review Monday notes'), kind: 'occurrence', membership: 'inherited', parent_uid: '01SERIES',
+          occurrence: { job_uid: 'job-one', scheduled_at: '2026-11-02T09:00:00Z', definition_event_uid: 'historical-event' } },
+        { ...item('empty', 'Monthly review'), kind: 'series', membership: 'direct', open_occurrences: 0, occurrences_complete: true,
+          schedules: [{ uid: 'job-two', state: 'paused', summary: 'Custom schedule', cron: '15 9 1,15 * *', timezone: 'UTC', catchup: 'all' }] },
+      ] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await screen.findByText('Review the project');
+    expect(screen.getAllByText('Recurring')).toHaveLength(2);
+    expect(screen.getByText('Cron: 0 9 * * 1 · Europe/London')).toBeDefined();
+    expect(screen.getByText('Paused')).toBeDefined();
+    expect(screen.getByText('Schedule expression')).toBeDefined();
+    expect(screen.getByText('15 9 1,15 * *')).toBeDefined();
+    expect(screen.queryByText('1 open occurrence')).toBeNull();
+    expect(screen.getByText('No open occurrences')).toBeDefined();
+    expect(screen.getByRole('list', { name: 'Occurrences of Review the project' }).textContent).toContain('Review Monday notes');
+    expect(screen.getByText(/Scheduled for/)).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Unlink Review Monday notes' })).toBeNull();
+  });
+
+  it('keeps ordinary tasks visible when recurring schedules are forbidden and offers retry', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return readyStatus();
+      return Response.json({ project: 'msgvault', recurrence: { state: 'forbidden', message: 'Recurring schedules are outside this credential’s scope.' }, items: [item('one', 'Send notes')] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await screen.findByText('Send notes');
+    expect(screen.getByText('Recurring schedules are outside this credential’s scope.')).toBeDefined();
+    expect(screen.queryByText('Recurring schedules unavailable.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry recurring schedules' })).toBeDefined();
+    expect(screen.queryByText('No tasks yet')).toBeNull();
+  });
+
+  it('clears an earlier recurrence notice when a retry fails', async () => {
+    let attempts = 0;
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return readyStatus();
+      attempts++;
+      if (attempts > 1) return new Response(null, { status: 503 });
+      return Response.json({ project: 'msgvault', recurrence: { state: 'partial', message: 'Some schedules could not be read.' }, items: [] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await screen.findByText('Some schedules could not be read.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry recurring schedules' }));
+    await screen.findByRole('alert');
+    expect(screen.queryByText('Some schedules could not be read.')).toBeNull();
+  });
+
+  it('explains that unlinking a series keeps scheduling and explicit child links', async () => {
+    const requests: Request[] = [];
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'DELETE') return Response.json({ item: item('series', 'Review the project') });
+      return Response.json({ project: 'msgvault', recurrence: { state: 'ready' }, items: [
+        { ...item('series', 'Review the project'), kind: 'series', schedules: [], occurrences_complete: true },
+        { ...item('direct', 'Direct occurrence'), kind: 'occurrence', membership: 'direct', parent_uid: '01SERIES', occurrence: { job_uid: 'job-one', scheduled_at: '2026-11-02T09:00:00Z' } },
+      ] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink Review the project' }));
+    expect(requests.some(request => request.method === 'DELETE')).toBe(false);
+    expect(screen.getByText(/Scheduling and inbox requests continue/)).toBeDefined();
+    expect(screen.getByText(/Separately linked occurrences stay/)).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Unlink Direct occurrence' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep series linked' }));
+    expect(requests.some(request => request.method === 'DELETE')).toBe(false);
+  });
+
+  it('keeps a nested series visible when unlinking its direct binding leaves inherited membership', async () => {
+    let unlinked = false;
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'DELETE') {
+        unlinked = true;
+        return Response.json({ item: item('nested', 'Nested series') });
+      }
+      return Response.json({ project: 'msgvault', recurrence: { state: 'ready' }, items: [
+        { ...item('outer', 'Outer series'), kind: 'series', membership: 'direct', schedules: [], occurrences_complete: true },
+        { ...item('nested', 'Nested series'), kind: 'series', membership: unlinked ? 'inherited' : 'direct', parent_uid: '01OUTER', schedules: [], occurrences_complete: true },
+      ] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink Nested series' }));
+    expect(screen.getByText(/It and its occurrences may stay visible through another linked series/)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: /^Unlink$/ }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Unlink Nested series' })).toBeNull());
+    expect(screen.getByText('Nested series')).toBeDefined();
+  });
+
   it('groups live tasks into virtual lists and creates with a retry-stable request id', async () => {
     const requests: Request[] = [];
     let created = false;
@@ -663,7 +787,7 @@ describe('PersonAgenda', () => {
       return Response.json({ project: 'msgvault', items: [item('one', 'Ask')], truncated: true });
     }));
     render(PersonAgenda, { client, personID: 7 });
-    expect(await screen.findByText('More tasks are linked to this person.')).toBeDefined();
+    expect(await screen.findByText('The task view may be incomplete. Open Kata for the full view.')).toBeDefined();
   });
 });
 

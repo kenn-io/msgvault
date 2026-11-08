@@ -49,28 +49,36 @@ const (
 )
 
 type Item struct {
-	UID           string   `json:"uid"`
-	Ref           string   `json:"ref"`
-	QualifiedRef  string   `json:"qualified_ref"`
-	Project       string   `json:"project"`
-	Title         string   `json:"title"`
-	Body          string   `json:"body,omitempty"`
-	Revision      string   `json:"revision"`
-	List          string   `json:"list"`
-	Status        string   `json:"status"`
-	State         State    `json:"state"`
-	PriorityValue *int64   `json:"priority_value,omitempty"`
-	Labels        []string `json:"labels"`
-	Owner         string   `json:"owner,omitempty"`
-	WebURL        string   `json:"web_url,omitempty"`
+	Kind                string      `json:"kind"`
+	Membership          string      `json:"membership"`
+	ParentUID           string      `json:"parent_uid,omitempty"`
+	Schedules           []Schedule  `json:"schedules,omitempty"`
+	Occurrence          *Occurrence `json:"occurrence,omitempty"`
+	OpenOccurrences     int         `json:"open_occurrences"`
+	OccurrencesComplete bool        `json:"occurrences_complete"`
+	UID                 string      `json:"uid"`
+	Ref                 string      `json:"ref"`
+	QualifiedRef        string      `json:"qualified_ref"`
+	Project             string      `json:"project"`
+	Title               string      `json:"title"`
+	Body                string      `json:"body,omitempty"`
+	Revision            string      `json:"revision"`
+	List                string      `json:"list"`
+	Status              string      `json:"status"`
+	State               State       `json:"state"`
+	PriorityValue       *int64      `json:"priority_value,omitempty"`
+	Labels              []string    `json:"labels"`
+	Owner               string      `json:"owner,omitempty"`
+	WebURL              string      `json:"web_url,omitempty"`
 }
 
 type Result struct {
-	Project    string   `json:"project"`
-	PersonUID  string   `json:"person_uid"`
-	PersonUIDs []string `json:"person_uids"`
-	Items      []Item   `json:"items"`
-	Truncated  bool     `json:"truncated"`
+	Recurrence RecurrenceStatus `json:"recurrence"`
+	Project    string           `json:"project"`
+	PersonUID  string           `json:"person_uid"`
+	PersonUIDs []string         `json:"person_uids"`
+	Items      []Item           `json:"items"`
+	Truncated  bool             `json:"truncated"`
 }
 
 type CreateInput struct {
@@ -128,6 +136,7 @@ func (s Service) List(ctx context.Context, personID int64) (Result, error) {
 		}
 		return strings.Compare(a.Title, b.Title)
 	})
+	s.projectRecurrence(ctx, uids, &result)
 	return result, nil
 }
 
@@ -315,7 +324,7 @@ func itemFromTask(task taskclient.KataTask) (Item, error) {
 	if task.Status == "closed" {
 		state = StateCompleted
 	}
-	return Item{UID: task.UID, Ref: task.Ref, QualifiedRef: task.QualifiedRef, Project: task.Project, Title: task.Title, Body: task.Body, Revision: task.Revision, List: list, Status: task.Status, State: state, PriorityValue: task.PriorityValue, Labels: append([]string{}, task.Labels...), Owner: task.Owner, WebURL: SafeWebURL(task.WebURL)}, nil
+	return Item{Kind: "task", Membership: "direct", UID: task.UID, Ref: task.Ref, QualifiedRef: task.QualifiedRef, Project: task.Project, Title: task.Title, Body: task.Body, Revision: task.Revision, List: list, Status: task.Status, State: state, PriorityValue: task.PriorityValue, Labels: append([]string{}, task.Labels...), Owner: task.Owner, WebURL: SafeWebURL(task.WebURL)}, nil
 }
 
 // SafeWebURL keeps a Kata link only when it is an absolute http(s) URL.

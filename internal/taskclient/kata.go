@@ -30,6 +30,11 @@ type KataClient struct {
 const writeActor = "msgvault"
 
 type KataTask struct {
+	ProjectID     int64
+	ProjectUID    string
+	ParentUID     string
+	RecurrenceID  *int64
+	Deleted       bool
 	UID           string
 	Ref           string
 	QualifiedRef  string
@@ -169,7 +174,7 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 	}
 	result := make([]KataTask, 0, len(response.Issues))
 	for _, issue := range response.Issues {
-		task := taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
+		task := taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, ProjectID: issue.ProjectID, ProjectUID: issue.ProjectUID, RecurrenceID: issue.RecurrenceID, DeletedAt: issue.DeletedAt, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
 		task.QualifiedRef = issue.QualifiedID
 		result = append(result, task)
 	}
@@ -275,7 +280,10 @@ func (c *KataClient) patchMetadata(ctx context.Context, project, taskID string, 
 }
 
 func taskFromKataIssue(project string, issue kata.ShowIssueOut, labels []string, webURL *string) KataTask {
-	task := KataTask{UID: issue.UID, Ref: issue.ShortID, QualifiedRef: project + "#" + issue.ShortID, Project: project, Title: issue.Title, Body: issue.Body, Revision: strconv.FormatInt(issue.Revision, 10), Metadata: issue.Metadata, Status: issue.Status, PriorityValue: issue.Priority, Labels: labels}
+	task := KataTask{ProjectID: issue.ProjectID, RecurrenceID: issue.RecurrenceID, Deleted: issue.DeletedAt != nil, UID: issue.UID, Ref: issue.ShortID, QualifiedRef: project + "#" + issue.ShortID, Project: project, Title: issue.Title, Body: issue.Body, Revision: strconv.FormatInt(issue.Revision, 10), Metadata: issue.Metadata, Status: issue.Status, PriorityValue: issue.Priority, Labels: labels}
+	if issue.ProjectUID != nil {
+		task.ProjectUID = *issue.ProjectUID
+	}
 	if issue.Owner != nil {
 		task.Owner = *issue.Owner
 	}
