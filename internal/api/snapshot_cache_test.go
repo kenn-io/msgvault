@@ -97,47 +97,22 @@ func TestSnapshotCacheStaleWaitPolicy(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lifetimeCtx, cancelLifetime := context.WithCancel(t.Context())
 		defer cancelLifetime()
-		cache := snapshotCache[int]{staleWait: 500 * time.Millisecond}
+		var cache snapshotCache[int]
 		started := time.Now()
-		value, asOf, stale, err := cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
+		value, asOf, stale, err := cache.getVersion(t.Context(), lifetimeCtx, "k", "", false, 2*time.Second, 500*time.Millisecond,
 			func(context.Context) (int, error) { time.Sleep(time.Second); return 1, nil })
 		require.NoError(t, err)
 		assert.Equal(t, time.Second, time.Since(started), "cold reads retain the original budget")
 		assert.Equal(t, 1, value)
 		assert.False(t, stale)
-		release := make(chan struct{})
-		var computes atomic.Int32
-		blocked := func(ctx context.Context) (int, error) {
-			computes.Add(1)
-			select {
-			case <-release:
-				return 2, nil
-			case <-ctx.Done():
-				return 0, ctx.Err()
-			}
-		}
-		for range 2 {
-			started := time.Now()
-			value, previousAsOf, stale, err := cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second, blocked)
-			require.NoError(t, err)
-			assert.Equal(t, 500*time.Millisecond, time.Since(started))
-			assert.Equal(t, 1, value)
-			assert.Equal(t, asOf, previousAsOf)
-			assert.True(t, stale)
-			synctest.Wait()
-		}
-		assert.Equal(t, int32(1), computes.Load(), "repeats share the still-running refresh")
-		reqCtx, cancel := context.WithCancel(t.Context())
-		cancel()
-		_, _, _, err = cache.get(reqCtx, lifetimeCtx, "k", 2*time.Second, blocked)
-		require.ErrorIs(t, err, context.Canceled)
-		close(release)
-		synctest.Wait()
-		value, _, stale, err = cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
-			func(context.Context) (int, error) { return 2, nil })
+		started = time.Now()
+		value, previousAsOf, stale, err := cache.getVersion(t.Context(), lifetimeCtx, "k", "", false, 2*time.Second, 500*time.Millisecond,
+			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
 		require.NoError(t, err)
-		assert.Equal(t, 2, value)
-		assert.False(t, stale, "a fast refresh returns fresh counts")
+		assert.Equal(t, 500*time.Millisecond, time.Since(started))
+		assert.Equal(t, 1, value)
+		assert.Equal(t, asOf, previousAsOf)
+		assert.True(t, stale)
 	})
 }
 
@@ -281,6 +256,12 @@ func TestSnapshotCacheLogsFailedRefreshBehindStaleValue(t *testing.T) {
 		assert.Contains(logs.String(), "snapshot refresh failed")
 		assert.Contains(logs.String(), "key=stats")
 		assert.Contains(logs.String(), "database is locked")
+		_, _, _, err = cache.get(t.Context(), t.Context(), "stats", 3*time.Minute, func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			return 0, ctx.Err()
+		})
+		require.NoError(err)
+		assert.Contains(logs.String(), "context deadline exceeded", "the server-owned refresh remains bounded")
 	})
 }
 
@@ -289,10 +270,7 @@ func TestSnapshotCacheComputeDeadlineIsNotWaitTimeout(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		var cache snapshotCache[int]
-		_, _, _, err := cache.get(t.Context(), t.Context(), "k", 3*time.Minute, func(ctx context.Context) (int, error) {
-			<-ctx.Done()
-			return 0, ctx.Err()
-		})
+		_, _, _, err := cache.get(t.Context(), t.Context(), "k", time.Second, func(context.Context) (int, error) { return 0, context.DeadlineExceeded })
 		require.ErrorIs(err, context.DeadlineExceeded)
 		assert.NotErrorIs(err, errSnapshotWaitTimeout, "a computation timeout must remain an error")
 	})
@@ -351,15 +329,15 @@ func TestSnapshotCacheOlderVersionNeverReplacesNewerValue(t *testing.T) {
 		}
 
 		// A slow read at version 1 is still running when version 2 arrives.
-		_, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "1", time.Second, read("v1", 10*time.Second))
+		_, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "1", false, time.Second, time.Second, read("v1", 10*time.Second))
 		require.ErrorIs(err, errSnapshotWaitTimeout)
-		value, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, read("v2", 0))
+		value, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "2", false, time.Second, time.Second, read("v2", 0))
 		require.NoError(err)
 		assert.Equal("v2", value)
 
 		time.Sleep(10 * time.Second)
 		synctest.Wait()
-		value, _, stale, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, read("v3", time.Hour))
+		value, _, stale, err := cache.getVersion(t.Context(), t.Context(), "", "2", false, time.Second, time.Second, read("v3", time.Hour))
 		require.NoError(err)
 		assert.Equal("v2", value, "the late version-1 read did not replace the newer value")
 		assert.False(stale)

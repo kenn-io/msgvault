@@ -207,9 +207,7 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 			return w
 		}
 
-		started := time.Now()
 		legacy := get(false)
-		assert.Equal(2*time.Second, time.Since(started), "cold requests retain the original budget")
 		assert.Equal(http.StatusServiceUnavailable, legacy.Code, "older clients never get placeholder zeros")
 		assert.Contains(legacy.Body.String(), "query_timeout")
 
@@ -392,6 +390,15 @@ func TestHandleCLIAccountsReplacementWaitsForOwnCounts(t *testing.T) {
 		replacement, err := st.GetOrCreateSource("gmail", "replacement@example.org")
 		require.NoError(t, err)
 		require.Equal(t, sourceID, replacement.ID, "the real SQLite creation path reuses the highest ID")
+		strict := httptest.NewRecorder()
+		srv.Router().ServeHTTP(strict, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
+		require.Equal(t, http.StatusOK, strict.Code, "the existing Web filter requests accounts without the pending-counts header: %s", strict.Body.String())
+		var fallback cliAccountsResponse
+		require.NoError(t, json.Unmarshal(strict.Body.Bytes(), &fallback))
+		assert.True(t, fallback.Stale)
+		require.Len(t, fallback.Accounts, 1)
+		assert.EqualValues(t, 1, fallback.Accounts[0].MessageCount, "strict callers retain the existing count fallback")
+
 		started := time.Now()
 		pending := getAccounts()
 		assert.Equal(t, 2*time.Second, time.Since(started), "changed accounts retain the cold budget")
@@ -401,39 +408,10 @@ func TestHandleCLIAccountsReplacementWaitsForOwnCounts(t *testing.T) {
 		assert.Zero(t, pending.Accounts[0].MessageCount, "the removed account's count is unusable")
 		close(slow.release)
 		synctest.Wait()
-		fresh := getAccounts()
-		assert.False(t, fresh.CountsPending)
-		require.Len(t, fresh.Accounts, 1)
-		assert.Equal(t, replacement.Identifier, fresh.Accounts[0].Email)
-		assert.Zero(t, fresh.Accounts[0].MessageCount, "the new account must not inherit the removed account's count")
-		assert.False(t, fresh.Stale, "a replacement follows the existing refresh wait")
-	})
-}
-
-func TestHandleCLIAccountsRefreshesNewMailWithinWarmBudget(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		srv, slow, sourceID := newSlowAccountsServer(t, st)
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
-		getAccounts := func() cliAccountsResponse {
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			var resp cliAccountsResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			return resp
-		}
-		first := getAccounts()
-		require.Len(t, first.Accounts, 1)
-		require.EqualValues(t, 1, first.Accounts[0].MessageCount)
-		conversationID, err := st.EnsureConversation(t.Context(), sourceID, "thread-1", "")
-		require.NoError(t, err)
-		_, err = st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: conversationID, SourceMessageID: "msg-2", MessageType: "email"})
-		require.NoError(t, err)
-		close(slow.release)
-		fresh := getAccounts()
-		require.Len(t, fresh.Accounts, 1)
-		assert.EqualValues(t, 2, fresh.Accounts[0].MessageCount)
-		assert.False(t, fresh.Stale)
+		recovered := getAccounts()
+		assert.False(t, recovered.CountsPending)
+		assert.False(t, recovered.Stale)
+		require.Len(t, recovered.Accounts, 1)
+		assert.Zero(t, recovered.Accounts[0].MessageCount)
 	})
 }

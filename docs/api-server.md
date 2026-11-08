@@ -1040,15 +1040,18 @@ their original `as_of`, while the shared refresh continues. Cold requests and
 changed account sets retain the two-second count budget. Before counts for
 those accounts are ready, opted-in callers receive `counts_pending` rather
 than another account's old counts.
+Callers without the header retain the previous snapshot fallback after that
+two-second wait, even when the account set changes.
 
 The CLI appends an age such as ` (counted 3 minutes ago)` to stale message
 counts. Stale JSON rows include `stale: true` and the original `as_of`.
 Fresh counts keep their existing output; unavailable counts show `pending`.
 
-The pending-counts header also gives virtual-account discovery a zero wait
-budget: previous children can be returned with `virtual_accounts_unavailable: true`,
-or omitted before the first catalog completes. Strict callers retain the separate
-bounded catalog wait, including after expiry or identity changes.
+Virtual-account discovery keeps its two-second cold wait. Once a matching
+catalog has completed, the pending-counts header lets callers reuse its children
+immediately after expiry, with `virtual_accounts_unavailable: true` while it
+refreshes. Strict callers and changed identity revisions retain the separate
+two-second catalog wait.
 
 **Response (vector search disabled):**
 

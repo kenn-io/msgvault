@@ -2827,11 +2827,11 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			sourceIdentities[i] = fmt.Sprintf("%d:%q:%q", src.ID, src.SourceType, src.Identifier)
 		}
 		slices.Sort(sourceIdentities)
-		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.getVersion(
-			r.Context(), s.importContext, "", strings.Join(sourceIdentities, "\n"), s.statsSnapshotWait, counter.CountMessagesBySourceContext,
-		)
 		// Older clients can't tell placeholder zeros from real counts, so only opted-in callers get them.
 		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
+		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.getVersion(
+			r.Context(), s.importContext, "", strings.Join(sourceIdentities, "\n"), allowPending, s.statsSnapshotWait, 500*time.Millisecond, counter.CountMessagesBySourceContext,
+		)
 		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
 		if err != nil && !response.CountsPending {
 			if s.writeIfContextError(w, err) {
@@ -2883,13 +2883,13 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			// the shared cache may predate a source whose ID was reused.
 			virtual, err = lister.ListVirtualAccountsContext(r.Context())
 		} else {
-			wait := s.statsSnapshotWait
+			warmWait := s.statsSnapshotWait
 			if r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true" {
-				wait = 0
+				warmWait = 0
 			}
 			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
-				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
-				wait, lister.ListVirtualAccountsContext,
+				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister), false,
+				s.statsSnapshotWait, warmWait, lister.ListVirtualAccountsContext,
 			)
 		}
 		// The catalog is extra detail; a slow or failed read still returns

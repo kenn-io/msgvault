@@ -32,9 +32,6 @@ type snapshotCache[T any] struct {
 	// its age a background refresh keeps the value warm. Zero starts a fresh
 	// computation every time.
 	freshFor time.Duration
-	// staleWait caps the wait when a matching snapshot exists. Other versions
-	// use the original wait without a stale fallback. Zero keeps the default policy.
-	staleWait time.Duration
 
 	mu      sync.Mutex
 	entries map[string]*snapshotEntry[T]
@@ -63,18 +60,20 @@ func (c *snapshotCache[T]) get(
 	wait time.Duration,
 	compute func(context.Context) (T, error),
 ) (T, time.Time, bool, error) {
-	return c.getVersion(reqCtx, lifetimeCtx, key, "", wait, compute)
+	return c.getVersion(reqCtx, lifetimeCtx, key, "", false, wait, wait, compute)
 }
 
 // getVersion is get for a value that version identifies, such as a revision
 // the computation depends on; only a value read at the same version is
-// served as fresh.
+// served as fresh. requireVersion also excludes other versions as stale fallbacks.
+// warmWait caps wait when a value read at version exists.
 func (c *snapshotCache[T]) getVersion(
 	reqCtx context.Context,
 	lifetimeCtx context.Context,
 	key string,
 	version string,
-	wait time.Duration,
+	requireVersion bool,
+	wait, warmWait time.Duration,
 	compute func(context.Context) (T, error),
 ) (T, time.Time, bool, error) {
 	c.mu.Lock()
@@ -102,12 +101,10 @@ func (c *snapshotCache[T]) getVersion(
 		flight = c.startLocked(reqCtx, lifetimeCtx, key, version, entry, compute)
 	}
 	hasPrevious, previous, previousAsOf := entry.has, entry.value, entry.asOf
-	if c.staleWait > 0 {
-		hasPrevious = hasPrevious && entry.version == version
-		if hasPrevious {
-			wait = min(wait, c.staleWait)
-		}
+	if hasPrevious && entry.version == version {
+		wait = min(wait, warmWait)
 	}
+	hasPrevious = hasPrevious && (!requireVersion || entry.version == version)
 	c.mu.Unlock()
 
 	var zero T

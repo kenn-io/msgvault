@@ -120,7 +120,7 @@ func TestListAccountsPendingCountsRemainExplicit(t *testing.T) {
 
 func TestListAccountsStaleCountAge(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		asOf := time.Now().Add(-3 * time.Minute)
+		asOf := time.Date(1999, time.December, 31, 18, 56, 59, 123000000, time.FixedZone("test", -5*60*60))
 		stats := daemonAccountsToStats([]daemonclient.CLIAccount{{ID: 7, Email: "counts@example.test", Type: "gmail", MessageCount: 1234, SourceDeletedCount: 2, Stale: true, AsOf: &asOf}}, false)
 		done := captureStdout(t)
 		outputAccountsTable(stats)
@@ -132,6 +132,6 @@ func TestListAccountsStaleCountAge(t *testing.T) {
 		require.Len(t, rows, 1)
 		assert.Equal(t, float64(1234), rows[0]["message_count"])
 		assert.Equal(t, true, rows[0]["stale"])
-		assert.Equal(t, asOf.Format(time.RFC3339), rows[0]["as_of"])
+		assert.Equal(t, "1999-12-31T18:56:59.123-05:00", rows[0]["as_of"])
 	})
 }
