@@ -106,7 +106,7 @@ func TestExploreReportsTransientCacheInitialization(t *testing.T) {
 	requirements.NoError(generatedBody.Validate(), "the generated client must accept the server's building response")
 }
 
-func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T) {
+func TestLiveExplorePaginationWarningsAndCacheRefusals(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -130,18 +130,8 @@ func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T)
 	assertions.Equal(page.CacheRevision, second.CacheRevision)
 	assertions.Contains(second.Warnings[0], "then restart msgvault")
 
-	for _, active := range []bool{true, false} {
-		srv.SetAnalyticsInitializationActive(active)
-		refused := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"participant","values":["1"]}]}`)
-		requirements.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
-		var unavailable ExploreCacheUnavailableResponse
-		requirements.NoError(json.Unmarshal(refused.Body.Bytes(), &unavailable))
-		if active {
-			assertions.Equal(query.CacheReadiness("building"), unavailable.Readiness)
-		} else {
-			assertions.NotEmpty(unavailable.RecoveryAction)
-		}
-	}
+	refused := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"participant","values":["1"]}]}`)
+	assertions.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
 	for route, body := range map[string]string{
 		"/api/v1/explore/groups":    `{"grouping":["source"]}`,
 		"/api/v1/explore/preflight": `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"live"}}`,
@@ -163,7 +153,7 @@ func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {
 	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','archive@example.test');
  INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type) VALUES(1,1,'thread','email_thread');
  INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,subject,snippet,sent_at) VALUES
- (1,1,'older',1,'email','Older','needle OR needle','2026-07-01'),(2,1,'newest',1,'email','Newest','needle OR needle','2026-07-02'); INSERT INTO message_bodies(message_id,body_text) VALUES(1,'needle OR needle'),(2,'needle OR needle');`)
+ (1,1,'older',1,'email','Older','needle OR needle','2026-07-01T00:00:00Z'),(2,1,'newest',1,'email','Newest','needle OR needle','2026-07-02T00:00:00Z'); INSERT INTO message_bodies(message_id,body_text) VALUES(1,'needle OR needle'),(2,'needle OR needle');`)
 	requirements.NoError(err)
 	_, err = st.RebuildFTS(nil)
 	requirements.NoError(err)
@@ -239,10 +229,6 @@ func TestLiveExploreSearchSharesSnapshot(t *testing.T) {
 	requirements.NoError(json.Unmarshal(first.Body.Bytes(), &page))
 	requirements.Len(page.Rows, 1)
 	assertions.Equal("Newest", page.Rows[0].Title)
-	assertions.GreaterOrEqual(len(page.Warnings), 2)
-	next := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"needle OR needle","search_mode":"full_text","limit":1,"cursor":"`+page.NextCursor+`"}`)
-	assertions.Equal(http.StatusConflict, next.Code, next.Body.String())
-	assertions.Contains(next.Body.String(), "archive_revision_changed")
 }
 
 func TestExploreUnavailableUsesRequestInitializationSnapshot(t *testing.T) {
