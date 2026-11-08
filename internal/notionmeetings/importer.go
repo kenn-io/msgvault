@@ -344,6 +344,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			continue
 		}
 		keepArchive := preserveArchivedSections(hydrated, archived)
+		if hydrated.SummaryTree.Preserved || hydrated.NotesTree.Preserved || hydrated.TranscriptTree.Preserved {
+			sum.PartialCoverage = true
+		}
 		if hydrated.AttendeeResolutionDegraded {
 			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)
 			if archived.MessageID != 0 {
