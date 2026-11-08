@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1184,7 +1185,7 @@ func TestPendingTranscriptCadenceAndExpiry(t *testing.T) {
 
 func TestLegacyUnscopedRefreshKeepsArchive(t *testing.T) {
 	for _, bodyOnly := range []bool{false, true} {
-		t.Run(fmt.Sprint(bodyOnly), func(t *testing.T) {
+		t.Run(strconv.FormatBool(bodyOnly), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
@@ -1200,7 +1201,9 @@ func TestLegacyUnscopedRefreshKeepsArchive(t *testing.T) {
 			legacy["schema_version"] = 1
 			legacy["transcript"] = map[string]any{}
 			legacy["page_markdown"] = map[string]any{"object": "page_markdown", "id": "page-1", "markdown": "## Transcript\nLEGACY_UNSCOPED_TRANSCRIPT"}
-			legacy["canonical"].(map[string]any)["transcript"] = "LEGACY_UNSCOPED_TRANSCRIPT"
+			canonical, ok := legacy["canonical"].(map[string]any)
+			require.True(ok)
+			canonical["transcript"] = "LEGACY_UNSCOPED_TRANSCRIPT"
 			legacyRaw, err := json.Marshal(legacy)
 			require.NoError(err)
 			require.NoError(st.UpsertMessageRawWithFormat(messageID, legacyRaw, RawFormat))
@@ -1221,7 +1224,7 @@ func TestLegacyUnscopedRefreshKeepsArchive(t *testing.T) {
 			require.NoError(err)
 			assert.Zero(second.MeetingsUpdated)
 			assert.True(second.PartialCoverage)
-			assert.Contains(strings.Join(progress, "\n"), "legacy_unscoped")
+			assert.Contains(strings.Join(progress, "\n"), "Archived meeting retained unchanged")
 			afterBody, err := st.GetMessageBodyText(t.Context(), messageID)
 			require.NoError(err)
 			afterMeta, err := st.GetMessageMetadata(messageID)
@@ -1281,8 +1284,10 @@ func TestPartialSectionPreservesCompleteEvidence(t *testing.T) {
 	require.NoError(err)
 	var after map[string]any
 	require.NoError(json.Unmarshal(afterRaw, &after))
-	prior := before["transcript"].(map[string]any)
-	retained := after["transcript"].(map[string]any)
+	prior, ok := before["transcript"].(map[string]any)
+	require.True(ok)
+	retained, ok := after["transcript"].(map[string]any)
+	require.True(ok)
 	assert.Equal(prior["root"], retained["root"])
 	assert.Equal(prior["blocks"], retained["blocks"])
 	assert.Equal(prior["source_last_edited_time"], retained["source_last_edited_time"])
@@ -1349,8 +1354,8 @@ func TestImporterRetriesNonemptyIncompleteTranscript(t *testing.T) {
 				assert.Equal("meeting-1", state.Pending[0].BlockID)
 				assert.Equal("2026-08-29T18:00:00Z", state.Pending[0].NextAttemptAt)
 				assert.Equal("2026-09-05T10:30:00Z", state.Pending[0].RetryUntil)
+				assert.True(partial.PartialCoverage)
 				if legacy {
-					assert.True(partial.PartialCoverage)
 					afterRaw, err := st.GetMessageRaw(messageID)
 					require.NoError(err)
 					assert.Equal(legacyRaw, afterRaw)
@@ -1413,30 +1418,41 @@ func TestArchivedV2RejectsUnprovenEvidence(t *testing.T) {
 
 			var evidence map[string]any
 			require.NoError(json.Unmarshal(snapshot.Raw, &evidence))
+			tree, ok := evidence["transcript"].(map[string]any)
+			require.True(ok)
 			switch mutation {
 			case "wrong_root":
-				tree := evidence["transcript"].(map[string]any)
-				tree["root"].(map[string]any)["id"] = "unrelated-section"
-				tree["blocks"].([]any)[0].(map[string]any)["id"] = "unrelated-section"
+				root, ok := tree["root"].(map[string]any)
+				require.True(ok)
+				root["id"] = "unrelated-section"
+				blocks, ok := tree["blocks"].([]any)
+				require.True(ok)
+				require.NotEmpty(blocks)
+				block, ok := blocks[0].(map[string]any)
+				require.True(ok)
+				block["id"] = "unrelated-section"
 			case "different_discovery":
-				evidence["discovery"].(map[string]any)["last_edited_time"] = "1999-01-01T00:00:00Z"
+				discovery, ok := evidence["discovery"].(map[string]any)
+				require.True(ok)
+				discovery["last_edited_time"] = "1999-01-01T00:00:00Z"
 			case "wrong_canonical":
-				evidence["canonical"].(map[string]any)["transcript"] = "UNATTRIBUTABLE"
+				canonical, ok := evidence["canonical"].(map[string]any)
+				require.True(ok)
+				canonical["transcript"] = "UNATTRIBUTABLE"
 			case "wrong_provenance":
-				tree := evidence["transcript"].(map[string]any)
 				tree["preserved"] = true
 				tree["source_meeting_block"] = evidence["meeting_block"]
 				tree["source_last_edited_time"] = "1999-01-01T00:00:00Z"
 			case "unpreserved_timestamp":
-				evidence["transcript"].(map[string]any)["source_last_edited_time"] = "1999-01-01T00:00:00Z"
+				tree["source_last_edited_time"] = "1999-01-01T00:00:00Z"
 			case "unpreserved_source_header":
 				unrelated := hydrationMeeting()
 				unrelated.ID = "unrelated-meeting"
-				evidence["transcript"].(map[string]any)["source_meeting_block"] = unrelated
+				tree["source_meeting_block"] = unrelated
 			}
 			raw, err := json.Marshal(evidence)
 			require.NoError(err)
-			_, ok := decodeArchivedEvidence(raw, "meeting-1")
+			_, ok = decodeArchivedEvidence(raw, "meeting-1")
 			assert.False(ok, "unproven evidence must retain the entire prior snapshot on an incomplete refresh")
 			decoded := meetingcontent.Decode(RawFormat, raw, nil)
 			freshProvenanceMutation := strings.HasPrefix(mutation, "unpreserved_")
@@ -1480,7 +1496,7 @@ func TestArchivedV2RejectsUnprovenEvidence(t *testing.T) {
 
 func TestImporterDiagnosticsDoNotExposeMeetingIdentifiers(t *testing.T) {
 	for _, fail := range []bool{false, true} {
-		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+		t.Run(strconv.FormatBool(fail), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
@@ -1524,7 +1540,8 @@ func TestImporterIncompleteSectionsPreserveActionEvidence(t *testing.T) {
 		require.NoError(ht, err)
 		var before map[string]any
 		require.NoError(ht, json.Unmarshal(beforeRaw, &before))
-		beforeNotes := before["notes"].(map[string]any)
+		beforeNotes, ok := before["notes"].(map[string]any)
+		require.True(ht, ok)
 		replacement := paragraph("replacement-text", text, false)
 		page := &BlockPage{Results: []Block{replacement}}
 		if filtered {
@@ -1553,7 +1570,8 @@ func TestImporterIncompleteSectionsPreserveActionEvidence(t *testing.T) {
 			require.NoError(ht, err)
 			var current map[string]any
 			require.NoError(ht, json.Unmarshal(raw, &current))
-			notes := current["notes"].(map[string]any)
+			notes, ok := current["notes"].(map[string]any)
+			require.True(ht, ok)
 			assert.Equal(ht, beforeNotes["root"], notes["root"])
 			assert.Equal(ht, beforeNotes["blocks"], notes["blocks"])
 			assert.Equal(ht, beforeNotes["source_last_edited_time"], notes["source_last_edited_time"])
@@ -1567,7 +1585,9 @@ func TestImporterIncompleteSectionsPreserveActionEvidence(t *testing.T) {
 		var taskFields map[string]any
 		require.NoError(ht, json.Unmarshal(taskRaw, &taskFields))
 		taskFields["id"] = "fresh-complete-task"
-		taskFields["to_do"].(map[string]any)["checked"] = true
+		todo, ok := taskFields["to_do"].(map[string]any)
+		require.True(ht, ok)
+		todo["checked"] = true
 		updatedRaw, err := json.Marshal(taskFields)
 		require.NoError(ht, err)
 		var updated Block
@@ -1613,4 +1633,28 @@ func TestImporterPreservedSnapshotStabilizes(t *testing.T) {
 	after, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	assert.Equal(before, after)
+}
+
+func TestImporterAcceptsEmptyCompleteSummaryAndNotes(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(t, err)
+	for _, id := range []string{"summary-1", "notes-1"} {
+		empty := paragraph(id, "", false)
+		source.blocks[id] = &empty
+	}
+	meeting := hydrationMeeting()
+	meeting.LastEditedTime = "2026-08-30T10:00:00Z"
+	source.query.Results = []MeetingNote{meeting}
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
+	require.NoError(t, err)
+	assert.False(t, result.PartialCoverage)
+	var messageID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(t, err)
+	content := meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Empty(t, content.Summary.Text)
+	assert.Empty(t, content.Notes.Text)
 }

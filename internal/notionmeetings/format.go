@@ -3,6 +3,7 @@ package notionmeetings
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -130,7 +131,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	// canonical text duplicate admitted blocks, so the source byte budget alone
 	// cannot guarantee a readable archive. Fail before replacing stored content.
 	if len(raw) > 64<<20 {
-		return meetingarchive.Snapshot{}, fmt.Errorf("Notion meeting exceeded archive evidence limit")
+		return meetingarchive.Snapshot{}, errors.New("Notion meeting exceeded archive evidence limit")
 	}
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
