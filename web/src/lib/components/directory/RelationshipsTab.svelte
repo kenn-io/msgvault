@@ -180,7 +180,12 @@
 {#if deletingType}
   <Dialog title={`Delete ${deletingType.slug} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" primaryDisabled={!typeRemoval.prepared || !typeRemoval.prepared.data.is_deletable || typeRemoval.prepared.data.ownership === 'system'} onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
     <p class="confirm">This permanently removes the connection type.</p>
-    {#snippet notice()}{#if typeRemoval.failed || typeRemoval.details}<InlineNotice message={typeRemoval.conflict ? 'This connection type changed since you opened it.' : "Couldn't delete this connection type."} details={typeRemoval.details} actionLabel={typeRemoval.conflict ? 'Reload' : 'Retry'} onaction={() => { if (typeRemoval.conflict) { typeRemoval.reset(); void prepareTypeDelete(); } else if (typeRemoval.prepared) void removeRelationshipType(); else void prepareTypeDelete(); }} />{/if}{/snippet}
+    {#snippet notice()}
+      {#if typeRemoval.conflict}
+        <!-- Delete again removes the saved version the notice shows. -->
+        <InlineNotice message="This connection type changed since you opened it." details={typeRemoval.details}><p>It now reads “{typeLabel(typeRemoval.conflict.data)}”.</p></InlineNotice>
+      {:else if typeRemoval.failed || typeRemoval.details}<InlineNotice message="Couldn't delete this connection type." details={typeRemoval.details} actionLabel="Retry" onaction={() => { if (typeRemoval.prepared) void removeRelationshipType(); else void prepareTypeDelete(); }} />{/if}
+    {/snippet}
   </Dialog>
 {/if}
 

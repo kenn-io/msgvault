@@ -913,8 +913,7 @@ describe('DirectoryEntityController', () => {
 });
 
 it.each([
-  ['Edit job', '"opaque-job-opening"'], ['End job', '"opaque-job-opening"'], ['Make primary', '"opaque-job-opening"'],
-  ['Delete job', '"opaque-job-opening"'], ['Organization', '"opaque-organization-opening"'], ['Organization profile', '"opaque-organization-opening"'],
+  ['Edit job', '"opaque-job-opening"'], ['End job', '"opaque-job-opening"'], ['Delete job', '"opaque-job-opening"'], ['Organization', '"opaque-organization-opening"'], ['Organization profile', '"opaque-organization-opening"'],
   ['Delete organization', '"opaque-organization-opening"'], ['Edit connection', '"opaque-connection-opening"'], ['Delete connection', '"opaque-connection-opening"'],
 ])('uses the opened version for %s and the conflict version for its retry', async (action, openingTag) => {
   const requests: Request[] = [];
@@ -933,7 +932,6 @@ it.each([
     switch (action) {
       case 'Edit job': return controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user', title: 'Draft title' }), prepared);
       case 'End job': return controller.endEmployment(11, { end_date: '2026' }, prepared);
-      case 'Make primary': return controller.makeEmploymentPrimary(11, prepared);
       case 'Delete job': return controller.deleteEmployment(11, prepared);
       case 'Organization': return controller.updateOrganization(21, { name: 'Draft name', kind: 'company' }, prepared);
       case 'Organization profile': return controller.putOrganizationProfile(21, () => ({}), prepared);

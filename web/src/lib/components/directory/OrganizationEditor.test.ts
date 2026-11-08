@@ -514,6 +514,27 @@ it('waits to save the organization until one of its fields changes', async () =>
   expect(screen.getByRole('button', { name: 'Save organization' })).toHaveProperty('disabled', false);
 });
 
+it('retries a failed Keep yours after the fields were changed back', async () => {
+  const tags: (string | null)[] = [];
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'GET') { reads++; return Response.json({ ...organizationProfile(reads), organization: organization(21, reads, reads === 1 ? undefined : 'Renamed elsewhere') }, { headers: { ETag: `"organization-21-r${reads}"` } }); }
+    tags.push(request.headers.get('If-Match'));
+    return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json({ message: 'Unavailable' }, { status: 503 });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  const domain = await screen.findByRole('textbox', { name: 'Organization domain' }) as HTMLInputElement;
+  const opening = domain.value;
+  await fireEvent.input(domain, { target: { value: 'new.example' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await fireEvent.input(domain, { target: { value: opening } });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await screen.findByText("Couldn't save this organization.");
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r2"']));
+});
+
 it.each(['save', 'delete'] as const)('requires review of a concurrent domain on %s after a core save', async action => {
   let revision = 1;
   let stored = organization();

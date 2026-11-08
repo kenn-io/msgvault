@@ -2,7 +2,7 @@
   import { appShortcuts, Checkbox, FormField, SelectDropdown } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
-  import { formatPartialDate as partialDate, intervalDateError } from '../../directory/dates';
+  import { formatPartialDate as partialDate } from '../../directory/dates';
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, EmploymentBody, Organization, OrganizationCreateBody, Prepared } from '../../directory/models';
@@ -48,9 +48,7 @@
   const loadFailed = $derived(!!initialEmployment && !opened && !!attempt.details);
   let selectedOrganization = $state<Organization>();
   const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
-  // The dates the next write sends: after a conflict, Keep yours keeps a start the person didn't change from the saved version.
-  const kept = $derived(merged((attempt.conflict ?? attempt.prepared)?.data));
-  const datesInvalid = $derived(!!intervalDateError(kept.start_date) || (kept.end_date !== null && !!intervalDateError(kept.end_date, kept.start_date)));
+  let datesInvalid = $state(false);
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
@@ -101,36 +99,20 @@
     });
   }
 
-  // The fields Edit job changes, as the form holds them, so the draft and a saved job compare field by field. End date and
-  // Current are one choice: a current job has no end (null), so Keep yours keeps or drops them together.
-  const jobFields = (job: Employment) => ({ title: job.title ?? '', role: job.role ?? '', department: job.department ?? '', location: job.location ?? '', description: job.description ?? '', start_date: partialDate(job.start_date), end_date: job.is_current ? null : partialDate(job.end_date) });
-  type JobFields = ReturnType<typeof jobFields>;
-
-  // Yours is only what the person changed since opening; every other field keeps the version being written.
-  function merged(current: Employment | undefined): JobFields {
-    const draft: JobFields = { title, role, department, location, description, start_date: startDate, end_date: isCurrent ? null : endDate };
-    if (!current || !opened) return draft;
-    const was = jobFields(opened.data), now = jobFields(current);
-    // A date typed as 20240305 is the same date as 2024-03-05, as the conflict notice reads it.
-    const dashed = (value: string | null) => value?.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
-    return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, (key === 'start_date' || key === 'end_date' ? dashed(draft[key]) === dashed(was[key]) : draft[key]?.trim() === was[key]?.trim()) ? now[key] : draft[key]])) as JobFields;
-  }
-
   function body(current: Employment | undefined = undefined): EmploymentBody {
-    const job = merged(current);
     return {
       person_id: current?.person_id ?? personID,
       organization_id: current?.organization_id ?? Number(organizationID),
       source: (current?.source ?? 'user') as EmploymentBody['source'],
       ...(current?.source_ref === undefined ? {} : { source_ref: current.source_ref }),
-      title: job.title.trim() || null,
-      role: job.role.trim() || null,
-      department: job.department.trim() || null,
-      location: job.location.trim() || null,
-      description: job.description.trim() || null,
-      start_date: job.start_date.trim() || null,
-      ...(job.end_date === null ? {} : { end_date: job.end_date.trim() || null }),
-      is_current: job.end_date === null,
+      title: title.trim() || null,
+      role: role.trim() || null,
+      department: department.trim() || null,
+      location: location.trim() || null,
+      description: description.trim() || null,
+      start_date: startDate.trim() || null,
+      ...(isCurrent ? {} : { end_date: endDate.trim() || null }),
+      is_current: isCurrent,
       ...(showPrimary ? { is_primary: isPrimary } : {}),
       ...(current?.address_id !== undefined ? { address_id: current.address_id } : {}),
       ...(current?.confidence !== undefined ? { confidence: current.confidence } : {})
@@ -190,7 +172,7 @@
       </div>
       {/if}
       <div class="form-pair"><FormField field={{ id: 'work-title', label: 'Job title', value: title, disabled: attempt.busy }} oninput={value => title = value} /><FormField field={{ id: 'work-role', label: 'Role on the team', value: role, disabled: attempt.busy }} oninput={value => role = value} /></div>
-      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} endAfter={kept.start_date} endForValidation={kept.end_date ?? ''} disabled={attempt.busy} />
+      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} bind:invalid={datesInvalid} disabled={attempt.busy} />
       {#if showPrimary}<Checkbox label="Primary job" checked={isPrimary} onchange={value => isPrimary = value} disabled={attempt.busy} />{/if}
       <Disclosure variant="plain" class="fold" title="More details" bind:open={moreDetails}>
         <div class="more">
@@ -204,10 +186,9 @@
   {#snippet notice()}
     {#if attempt.conflict}
       {@const facts = employmentFacts({ title, role, start_date: startDate, end_date: endDate, is_current: isCurrent, department, location, description })}
-      {@const openedFacts = employmentFacts(opened?.data ?? initialEmployment!, controller)}
-      <!-- Yours lists only the fields the person changed, the ones Keep yours writes. -->
-      {@const yours = Object.fromEntries(['Job title', 'Role on the team', 'Start date', 'End date', 'Department', 'Location', 'Description'].filter(label => facts[label] !== openedFacts[label]).map(label => [label, facts[label]]))}
-      <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, controller), openedFacts, yours)} message={attempt.details} />
+      <!-- Yours is what Keep yours writes: the form's fields as it holds them. -->
+      {@const yours = Object.fromEntries(['Job title', 'Role on the team', 'Start date', 'End date', 'Department', 'Location', 'Description'].map(label => [label, facts[label]]))}
+      <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, controller), employmentFacts(opened?.data ?? initialEmployment!, controller), yours)} message={attempt.details} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
       <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void controller.refreshOrganizations().then(() => { if (!controller.createBlocked.organizations) attempt.details = ''; }); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}

@@ -200,45 +200,6 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).toContain('Primary'));
   });
 
-  it('retains a make-primary conflict and renders the complete refreshed employment', async () => {
-    let reads = 0;
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/employments/11' && request.method === 'GET') {
-        reads += 1;
-        return new Response(JSON.stringify(employment(11, reads, reads === 1 ? {} : {
-          organization_id: 22,
-          role: 'Concurrent role',
-          department: 'Concurrent primary department',
-          address_id: 66,
-          confidence: 0.66,
-          source: 'archive_observation',
-          source_ref: 'concurrent-primary'
-        })), { headers: { ETag: `"employment-11-r${reads}"` } });
-      }
-      if (path === '/api/v1/organizations/22') return Response.json({ organization: organization(22, 1, 'Current Employer'), names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] }, { headers: { ETag: '"organization-22-r1"' } });
-      if (path === '/api/v1/employments/11/primary') {
-        return Response.json({ error: 'revision_conflict', message: 'primary changed elsewhere' }, { status: 412 });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    controller.employments = [employment(), employment(12, 1, { organization_id: 23, title: 'Other role' })];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
-
-    await rowAction('Make primary');
-
-    const alert = (await screen.findByRole('alert')).closest('.inline-notice')!;
-    expect(alert.textContent).toContain('This job changed since you opened it.');
-    expect(within(alert as HTMLElement).getByText('Role on the team', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Concurrent role');
-    expect(within(alert as HTMLElement).getByText('Department', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Concurrent primary department');
-    expect(within(alert as HTMLElement).getByText('Confidence').nextElementSibling?.textContent).toBe('66%');
-    expect(within(alert as HTMLElement).getByText('Source').nextElementSibling?.textContent).toBe('From your messages');
-    expect(within(alert as HTMLElement).getByText('Source reference').nextElementSibling?.textContent).toBe('concurrent-primary');
-    expect(reads).toBe(2);
-  });
-
   it('moves an ended job to Past', async () => {
     const requests: Request[] = [];
     let revision = 1;
@@ -312,52 +273,34 @@ describe('OrganizationEmploymentTab', () => {
   });
 });
 
-it('keeps the Make primary conflict until Reload succeeds', async () => {
-  let refreshes = 0;
-  const saved = employment(11, 2, { title: 'Concurrent title' });
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (pathOf(request) === '/api/v1/people/7/employments') return ++refreshes === 1
-      ? Response.json({ message: 'Refresh unavailable' }, { status: 503 })
-      : collection([saved]);
-    if (pathOf(request).startsWith('/api/v1/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    if (request.method === 'GET') return Response.json(saved, { headers: { ETag: '"employment-11-r2"' } });
-    return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-  });
-  controller.employments = [employment()];
-  render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await rowAction('Make primary');
-  await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
-  await waitFor(() => expect(controller.employmentsLoading).toBe(false));
-  await tick();
-  expect(controller.errors.employments).toBe('Refresh unavailable');
-  expect(screen.getByText('This job changed since you opened it.')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
-  await waitFor(() => expect(screen.queryByText('This job changed since you opened it.')).toBeNull());
-  expect(refreshes).toBe(2);
-});
-
-it('uses the selected job version when Make primary moves to another row', async () => {
+it('retries a colliding Make primary against the latest saved job', async () => {
   const tags: (string | null)[] = [];
+  let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
+    if (pathOf(request) === '/api/v1/people/7/employments') return collection([employment(11, 3, { is_primary: true })]);
     if (pathOf(request).endsWith('/primary')) {
       tags.push(request.headers.get('If-Match'));
-      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3, { is_primary: true }));
     }
-    const id = Number(pathOf(request).split('/').at(-1));
-    const version = tags.length === 0 ? 1 : id === 12 && tags.length === 1 ? 2 : 3;
-    return Response.json(employment(id, version), { headers: { ETag: `"employment-${id}-r${version}"` } });
+    reads++;
+    return Response.json(employment(11, reads), { headers: { ETag: `"employment-11-r${reads}"` } });
   });
-  controller.employments = [employment(), employment(12, 2)];
+  controller.employments = [employment(), employment(12, 1, { organization_id: 23, title: 'Other role' })];
   render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for / })[0]);
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Make primary' }));
-  await screen.findByText('This job changed since you opened it.');
-  await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for / })[1]);
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Make primary' }));
+  await rowAction('Make primary');
+  await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(tags).toHaveLength(2));
-  expect(tags).toEqual(['"employment-11-r1"', '"employment-12-r2"']);
+  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r3"']);
+  await waitFor(() => expect(screen.queryByText("Couldn't make this job primary.")).toBeNull());
+});
+
+it('shows a role beside the job title only when it differs', () => {
+  const { controller } = controllerWith(async () => collection([]));
+  controller.employments = [employment(11, 1, { title: 'Engineer', role: 'Engineer' }), employment(12, 1, { organization_id: 23, title: 'Advisor', role: 'Board seat' })];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  expect(screen.getByText(/^Engineer at/).closest('.detail-row')?.textContent?.match(/Engineer/g)).toHaveLength(1);
+  expect(screen.getByText(/^Advisor at/).closest('.detail-row')?.textContent).toContain('Board seat');
 });
 
 it('deletes the saved version a job delete conflict shows', async () => {

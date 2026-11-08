@@ -62,9 +62,9 @@
   const fieldsUnsaved = $derived(!!currentProfile && (name.trim() !== currentProfile.organization.name || kind !== currentProfile.organization.kind
     || primaryDomain.trim() !== (currentProfile.organization.primary_domain ?? '') || description.trim() !== (currentProfile.organization.description ?? '')));
   const listsUnsaved = $derived([valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories))].some((delta) => delta.added.length || delta.removed.size));
-  // Save organization writes only its own fields, so it waits until one of them changes.
+  // Save organization writes only its own fields, so it waits until one of them changes; a failed write stays retryable.
   const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations
-    || (!!currentProfile && !fieldsUnsaved && !attempt.conflict));
+    || (!!currentProfile && !fieldsUnsaved && !attempt.conflict && !attempt.failed));
   let releaseScope: (() => void) | undefined;
 
   onMount(() => {

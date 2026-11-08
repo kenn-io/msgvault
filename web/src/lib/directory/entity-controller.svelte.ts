@@ -457,7 +457,7 @@ export class DirectoryEntityController {
       prepared,
     );
   }
-  async makeEmploymentPrimary(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
+  async makeEmploymentPrimary(id: number): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
     return this.writeEmployment(id, (_current, signal, etag) =>
       generatedSetPrimaryEmployment(
         { id: id },
@@ -467,7 +467,6 @@ export class DirectoryEntityController {
           headers: { 'If-Match': etag },
         },
       ),
-      prepared,
     );
   }
   async deleteEmployment(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {

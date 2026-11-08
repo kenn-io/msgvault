@@ -119,30 +119,6 @@ it('saves against the opened job version and retries against the conflict versio
   expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r3"']);
 });
 
-it('Keep yours writes only the fields the person changed and keeps a department changed elsewhere', async () => {
-  let reads = 0;
-  const bodies: Record<string, unknown>[] = [];
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') {
-      bodies.push(await request.json());
-      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3));
-    }
-    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(employment(11, ++reads, { department: reads === 1 ? 'Sales' : 'Ops' }), { headers: { ETag: `"employment-11-r${reads}"` } });
-  });
-  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  const table = await screen.findByRole('table', { name: 'What changed' });
-  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Job title']);
-  expect(screen.getByText('Other details also changed')).toBeDefined();
-  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[0]).toMatchObject({ title: 'Lead', department: 'Sales' });
-  expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Ops' });
-});
-
 it('describes a job moved to an unloaded person', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
@@ -478,14 +454,9 @@ it('saves a date-shaped description as text', async () => {
 
 
 it.each([
-  { name: 'saved start date', opening: { start_date: { year: 2022 } }, saved: { start_date: { year: 2020 } }, mode: 'saved start', expected: { start_date: '2020', end_date: '2021', is_current: false } },
-  { name: 'retyped start date', opening: { start_date: { year: 2022, month: 3, day: 5 } }, saved: { start_date: { year: 2020 } }, mode: 'retyped date', expected: { title: 'Lead', start_date: '2020' } },
-  { name: 'reopened job', opening: { is_current: false, end_date: { year: 2020 } }, saved: { is_current: true, end_date: null }, mode: 'end', expected: { end_date: '2021', is_current: false } },
-  { name: 'saved interval', opening: { is_current: false, start_date: { year: 2020 }, end_date: { year: 2022 } }, saved: { start_date: { year: 2024 }, end_date: { year: 2026 } }, mode: 'title', expected: { start_date: '2024', end_date: '2026' } },
-  ...[['Job title', 'title'], ['Role on the team', 'role'], ['Department', 'department'], ['Location', 'location'], ['Description', 'description']].map(([label, field]) => ({ name: `whitespace in ${label}`, opening: { [field]: 'Original' }, saved: { [field]: 'Changed elsewhere' }, mode: 'whitespace', label, field, expected: { [field]: 'Changed elsewhere' } })),
-])('Keep yours preserves $name after a conflict', async (scenario) => {
-  const { opening, saved, mode, expected } = scenario;
-  const label = 'label' in scenario ? scenario.label : undefined;
+  { name: 'a department changed elsewhere', opening: { department: 'Sales' }, saved: { department: 'Ops' }, edit: ['Job title', 'Lead'], rows: ['Job title', 'Department'], expected: { title: 'Lead', department: 'Sales' } },
+  { name: 'a current job ended elsewhere', opening: { start_date: { year: 2020 } }, saved: { start_date: { year: 2020 }, is_current: false, end_date: { year: 2022 } }, edit: ['Start date', '2024'], rows: ['Start date', 'End date'], expected: { start_date: '2024', is_current: true } },
+])('Keep yours writes the form and lists every field it overwrites, with $name', async ({ opening, saved, edit, rows, expected }) => {
   let reads = 0;
   const bodies: Record<string, unknown>[] = [];
   const job = employment(11, 1, opening);
@@ -499,20 +470,12 @@ it.each([
     return Response.json(employment(11, ++reads, reads === 1 ? opening : { ...opening, ...saved }), { headers: { ETag: `"employment-11-r${reads}"` } });
   });
   render(EmploymentEditor, { controller, personID: 7, employment: job });
-  if (mode === 'whitespace') await fireEvent.input(await screen.findByRole('textbox', { name: label }), { target: { value: ' Original ' } });
-  else if (mode === 'end') await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
-  else {
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
-    if (mode === 'retyped date') await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '20220305' } });
-  }
+  await fireEvent.input(await screen.findByRole('textbox', { name: edit[0] }), { target: { value: edit[1] } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  const keep = await screen.findByRole('button', { name: 'Keep yours' });
-  if (mode === 'saved start') {
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
-    await waitFor(() => expect(keep).toHaveProperty('disabled', false));
-  }
-  if (mode === 'saved start' || mode === 'title') expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
+  const table = await screen.findByRole('table', { name: 'What changed' });
+  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(rows);
+  const keep = screen.getByRole('button', { name: 'Keep yours' });
+  expect(keep).toHaveProperty('disabled', false);
   await fireEvent.click(keep);
   await waitFor(() => expect(bodies).toHaveLength(2));
   expect(bodies[1]).toMatchObject(expected);

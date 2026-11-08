@@ -73,7 +73,8 @@
     if (acting) return;
     if (primaryTarget?.id !== employment.id) primary.reset();
     primaryTarget = employment;
-    await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
+    // Make primary changes only the flag, so it always writes the latest saved version.
+    await primary.run(() => controller.makeEmploymentPrimary(employment.id));
   }
 
   async function removeEmployment(): Promise<void> {
@@ -115,7 +116,7 @@
 {#snippet pastRows()}<div class="records">{#each pastJobs as employment (employment.id)}{@render jobRow(employment)}{/each}</div>{/snippet}
 {#snippet jobRow(employment: Employment)}
   <!-- The organization is a link in the row's text, so the row itself takes no tap: Edit… is in ⋯, and a tap on a phone never lands on the wrong target. -->
-  <DetailRow actionLabel={`${employmentLabel(employment)} at ${controller.organizationName(employment.organization_id)}`} description={[dateSpan(employment.start_date, employment.end_date, employment.is_current), employment.title ? employment.role : '', employment.department, employment.is_current && employment.is_primary && currentJobs.length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')} menu={[
+  <DetailRow actionLabel={`${employmentLabel(employment)} at ${controller.organizationName(employment.organization_id)}`} description={[dateSpan(employment.start_date, employment.end_date, employment.is_current), employment.title && employment.role?.trim() !== employment.title.trim() ? employment.role : '', employment.department, employment.is_current && employment.is_primary && currentJobs.length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')} menu={[
     { label: 'Edit…', onselect: () => employmentEditor = employment },
     ...(employment.is_current ? [{ label: 'End…', onselect: () => endingEmployment = employment }] : []),
     ...(employment.is_current && !employment.is_primary ? [{ label: 'Make primary', disabled: acting, onselect: () => void makePrimary(employment) }] : []),
@@ -124,10 +125,7 @@
     {employmentLabel(employment)} at <button type="button" data-link onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
   </DetailRow>
   {#if primary.details && primaryTarget?.id === employment.id}
-    {#if primary.conflict}
-      <ConflictNotice noun="job" saved={primary.conflict.data} {...conflict(employmentFacts(primary.conflict.data, controller), employmentFacts(primaryTarget, controller), { 'Primary job': 'Yes' })} message={primary.details} actionLabel="Reload"
-        onaction={() => void controller.refreshEmployments().then(() => { if (!controller.errors.employments) primary.reset(); })} />
-    {:else}<InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />{/if}
+    <InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
   {/if}
 {/snippet}
 
