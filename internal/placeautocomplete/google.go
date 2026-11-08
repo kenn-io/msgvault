@@ -27,7 +27,7 @@ const endpoint = "https://places.googleapis.com/v1"
 const maxResponse = 1 << 20
 
 var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,36}$`)
-var placeIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+var placeIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type Bias struct {
 	Latitude     float64
@@ -189,6 +189,9 @@ func (c *Client) request(ctx context.Context, method, path, query, mask string, 
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return errors.New("Google Places request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -197,6 +200,9 @@ func (c *Client) request(ctx context.Context, method, path, query, mask string, 
 	}
 	data, err = io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil || len(data) > maxResponse {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return errors.New("Google Places response unavailable")
 	}
 	if err := json.Unmarshal(data, out); err != nil {
