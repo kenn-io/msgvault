@@ -618,6 +618,28 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
   expect(await screen.findByRole('button', { name: 'Keep yours' })).toBeDefined();
 });
 
+it('drops a jobs check that finishes after Back and a new check', async () => {
+  let finishFirst!: (response: Response) => void;
+  let checks = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/employments')) return ++checks === 1
+      ? new Promise<Response>(resolve => finishFirst = resolve)
+      : Response.json({ employments: [] });
+    return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await waitFor(() => expect(checks).toBe(1));
+  await fireEvent.click(screen.getByRole('button', { name: /^Back to / }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+  finishFirst(Response.json({ message: 'Check failed' }, { status: 400 }));
+  await new Promise(resolve => setTimeout(resolve));
+  expect(screen.queryByText("Couldn't check jobs.")).toBeNull();
+  expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false);
+});
+
 it('shows a failed holder profile read as a failed check and retries it', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {

@@ -55,10 +55,10 @@
   const removal = new WriteAttempt<Prepared<OrganizationProfile>>();
   const submitting = $derived(attempt.busy || removal.busy);
   let confirmDelete = $state(false);
-  let checkingDelete = $state(false);
-  let checkError = $state('');
-  let holders = $state<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
-  const deleteBlocked = $derived(checkingDelete || !!checkError || !holders || holders.count > 0);
+  // The jobs check: reset on Back, close, and each new check, so a late result from an earlier one is dropped.
+  const check = new WriteAttempt<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
+  const holders = $derived(check.prepared);
+  const deleteBlocked = $derived(!holders || holders.count > 0);
   const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
 
@@ -147,16 +147,8 @@
     if (!initialOrganization) return;
     if (!confirmDelete) attempt.reset();
     confirmDelete = true;
-    checkingDelete = true;
-    checkError = '';
-    holders = undefined;
-    try {
-      holders = await controller.organizationEmploymentHolders(initialOrganization.id);
-    } catch (cause) {
-      checkError = cause instanceof Error ? cause.message : 'No response from the server.';
-    } finally {
-      checkingDelete = false;
-    }
+    check.reset();
+    await check.prepare(() => controller.organizationEmploymentHolders(initialOrganization.id));
   }
 
   async function remove(): Promise<void> {
@@ -181,7 +173,7 @@
   }
 
   function requestClose(): void {
-    if (!submitting) { if (attempt.conflict) void controller.refreshOrganizations(); attempt.reset(); removal.reset(); onClose(); }
+    if (!submitting) { if (attempt.conflict) void controller.refreshOrganizations(); attempt.reset(); removal.reset(); check.reset(); onClose(); }
   }
 
   // Splits on commas, but a saved value that holds one ("Example, Inc.") stays whole, and a list left as it opened stays as saved.
@@ -388,11 +380,11 @@
 {/snippet}
 {#snippet deleteStart()}{#if initialOrganization && currentProfile && !confirmDelete}<Button tone="danger" label="Delete organization…" disabled={submitting} onclick={() => void checkDeletion()} />{/if}{/snippet}
 {#if confirmDelete}
-  <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; attempt.reset(); removal.reset(); }} backLabel={`Back to ${name}`}
+  <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; attempt.reset(); removal.reset(); check.reset(); }} backLabel={`Back to ${name}`}
     primaryLabel={deleteBlocked ? undefined : 'Delete'} primaryTone="danger" cancellable={false} busy={submitting} onprimary={() => void remove()}>
     <div class="delete-step">
-      {#if checkingDelete}<p role="status">Checking jobs…</p>{/if}
-      {#if checkError}<InlineNotice message="Couldn't check jobs." details={checkError} actionLabel="Check again" onaction={() => void checkDeletion()} />{/if}
+      {#if !holders && !check.details}<p role="status">Checking jobs…</p>{/if}
+      {#if check.details}<InlineNotice message="Couldn't check jobs." details={check.details} actionLabel="Check again" onaction={() => void checkDeletion()} />{/if}
       {#if holders && holders.count > 0}
         <p>{holders.count === 1 && !holders.atLeast ? "Delete its job first. Ending it isn't enough." : `Delete its ${holders.count}${holders.atLeast ? ' or more' : ''} jobs first. Ending them isn't enough.`}</p>
         <!-- The open person's own job is deleted from here. Anyone else's is deleted on their page, so their row's
