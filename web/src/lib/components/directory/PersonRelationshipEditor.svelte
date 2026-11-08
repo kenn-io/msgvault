@@ -263,7 +263,7 @@
       </section>
       <section>
         {#if initialRelationship}
-          <DateField bind:value={endDate} start={partialDate((attempt.conflict?.data ?? attempt.prepared?.data ?? initialRelationship).start_date)} bind:error={endDateError} disabled={attempt.busy} />
+          <DateField bind:value={endDate} start={startDate} bind:error={endDateError} disabled={attempt.busy} />
           {#if initialRelationship.end_date && !endDate.trim()}<p class="muted">To reopen it, add a new connection.</p>{/if}
         {:else}<DateRange bind:start={startDate} bind:end={endDate} showCurrent={false} bind:invalid={datesInvalid} disabled={attempt.busy} />{/if}
         <label class="notes">Notes<textarea aria-label="Notes" bind:value={notes} disabled={attempt.busy}></textarea></label>

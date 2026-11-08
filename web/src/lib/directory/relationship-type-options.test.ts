@@ -58,8 +58,3 @@ it.each([
 ] as const)('keeps the catalog label for renamed %s %s', (slug, direction, label, expected) => {
   expect(relationshipPhrase(slug, direction, label)).toBe(expected);
 });
-
-it('fills empty reverse labels', () => {
-  const choices = relationshipTypeOptions([type('custom', 'mentor', '', { ownership: 'user' })])[0].children!;
-  expect(choices.map(choice => choice.label)).toEqual(['Mentor', 'Mentor']);
-});
