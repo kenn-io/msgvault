@@ -157,6 +157,7 @@ func newSlowAccountsServer(t *testing.T, st *store.Store) (*Server, *slowCountsS
 func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
 		srv, slow, _ := newSlowAccountsServer(t, st)
 		t.Cleanup(func() { close(slow.release) })
 		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
@@ -169,12 +170,12 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 			return response
 		}
-		assert.False(t, getAccounts().Stale)
+		assert.False(getAccounts().Stale)
 		started := time.Now()
 		response := getAccounts()
-		assert.Equal(t, 500*time.Millisecond, time.Since(started), "the server configures the short warm-count budget")
-		assert.True(t, response.Stale)
-		assert.False(t, response.AsOf.IsZero())
+		assert.Equal(500*time.Millisecond, time.Since(started), "the server configures the short warm-count budget")
+		assert.True(response.Stale)
+		assert.False(response.AsOf.IsZero())
 	})
 }
 
@@ -307,13 +308,15 @@ func (s *catalogReadStore) ListVirtualAccountsContext(ctx context.Context) (map[
 func TestHandleCLIAccountsOptionalCatalogPreservesStrictRefresh(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		src, err := st.GetOrCreateSource("gmail", "alice@example.com")
-		require.NoError(t, err)
+		require.NoError(err)
 		conversation, err := st.EnsureConversation(t.Context(), src.ID, "thread", "")
-		require.NoError(t, err)
+		require.NoError(err)
 		_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conversation, SourceMessageID: "message", MessageType: "email"})
-		require.NoError(t, err)
-		require.NoError(t, st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
+		require.NoError(err)
+		require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
 		var calls int
 		catalog := &catalogReadStore{Store: st, readCatalog: func(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
 			calls++
@@ -324,7 +327,7 @@ func TestHandleCLIAccountsOptionalCatalogPreservesStrictRefresh(t *testing.T) {
 			return st.ListVirtualAccountsContext(ctx)
 		}}
 		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: catalog, Logger: testLogger()})
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
 		getAccounts := func(optIn bool) cliAccountsResponse {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 			if optIn {
@@ -332,23 +335,23 @@ func TestHandleCLIAccountsOptionalCatalogPreservesStrictRefresh(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			var response cliAccountsResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 			return response
 		}
 		first := getAccounts(true)
-		require.Len(t, first.Accounts, 1)
-		require.NotEmpty(t, first.Accounts[0].VirtualAccounts)
+		require.Len(first.Accounts, 1)
+		require.NotEmpty(first.Accounts[0].VirtualAccounts)
 		time.Sleep(3 * time.Minute)
 		started := time.Now()
 		optional := getAccounts(true)
-		assert.Zero(t, time.Since(started), "the header opts into immediate reuse of expired children")
-		assert.True(t, optional.VirtualAccountsUnavailable)
-		require.Len(t, optional.Accounts, 1)
-		assert.Equal(t, first.Accounts[0].VirtualAccounts, optional.Accounts[0].VirtualAccounts)
+		assert.Zero(time.Since(started), "the header opts into immediate reuse of expired children")
+		assert.True(optional.VirtualAccountsUnavailable)
+		require.Len(optional.Accounts, 1)
+		assert.Equal(first.Accounts[0].VirtualAccounts, optional.Accounts[0].VirtualAccounts)
 		started = time.Now()
 		getAccounts(false)
-		assert.Equal(t, 2*time.Second, time.Since(started), "callers without the header keep the strict catalog wait")
+		assert.Equal(2*time.Second, time.Since(started), "callers without the header keep the strict catalog wait")
 	})
 }
