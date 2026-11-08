@@ -174,7 +174,7 @@ describe('PersonNetwork', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('reloads for depth with current edges and retains the graph through loading, error, and retry', async () => {
+  it('reloads for depth and retains the graph through loading, error, and retry', async () => {
     const depthTwo = deferredResponse();
     const requests: Request[] = [];
     let depthTwoAttempts = 0;

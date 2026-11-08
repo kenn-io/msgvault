@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 import { person } from '../src/lib/directory/person-fixtures.test-support';
 import { directoryPerson, relationshipType } from '../src/lib/directory/entity-data.test-support';
+import { relationship } from '../src/lib/directory/entity-fixtures.test-support';
 
 test('saved person remains selectable at 280px', async ({ page }) => {
   await installDirectoryReviewArchive(page);
@@ -47,14 +48,15 @@ for (const width of [1440, 390]) {
       const query = new URL(route.request().url()).searchParams.get('q')?.toLowerCase() ?? '';
       return route.fulfill({ json: { people: savedPeople.filter(person => person.display_name?.toLowerCase().includes(query)) } });
     });
+    const savedRelationship = relationship(50, 1, { relationship_type_id: 1, type_slug: 'parent', source_person_id: 9, target_person_id: 7, forward_label: 'parent', reverse_label: 'child' });
     let saved = false;
     await page.route('**/api/v1/person-relationships', async route => {
       saved = true;
-      await route.fulfill({ status: 201, json: { id: 50, revision: 1 } });
+      await route.fulfill({ status: 201, json: savedRelationship });
     });
     await page.route('**/api/v1/people/7/relationships*', route => route.fulfill({ json: { relationships: saved ? [{
       counterpart_person_id: 9, counterpart_display_name: 'Synthetic Two', counterpart_label: 'parent', direction: 'incoming',
-      relationship: { id: 50, revision: 1, type_slug: 'parent', source_person_id: 9, target_person_id: 7, forward_label: 'parent', reverse_label: 'child', is_symmetric: false, source: 'user' }
+      relationship: savedRelationship
     }] : [] } }));
     await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
     await page.getByRole('radio', { name: 'Details', exact: true }).click();

@@ -26,6 +26,14 @@ describe('work and connection labels', () => {
 
   it('dates saved conflicts and names imported edits', () => {
     vi.useFakeTimers();
+    const DateTimeFormat = Intl.DateTimeFormat;
+    const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+      return new DateTimeFormat(locale ?? 'en-US', options);
+    });
+    const toLocaleTimeString = Date.prototype.toLocaleTimeString;
+    const time = vi.spyOn(Date.prototype, 'toLocaleTimeString').mockImplementation(function (this: Date, locale, options) {
+      return toLocaleTimeString.call(this, locale ?? 'en-US', options);
+    });
     try {
       vi.setSystemTime(new Date(2026, 10, 6, 12));
       const today = conflictSaved(new Date(2026, 10, 6, 8, 34).toISOString());
@@ -33,6 +41,6 @@ describe('work and connection labels', () => {
       const earlier = conflictSaved(new Date(2026, 10, 5, 8, 34).toISOString(), 'carddav_import');
       expect(earlier.text).toMatch(/^Saved from CardDAV contacts on Nov 5 at 8:34/);
       expect(earlier.title).toContain('2026');
-    } finally { vi.useRealTimers(); }
+    } finally { time.mockRestore(); formatter.mockRestore(); vi.useRealTimers(); }
   });
 });

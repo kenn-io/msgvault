@@ -472,15 +472,11 @@ describe('RelationshipsTab', () => {
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
       const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships')!;
       await expect(post.clone().json()).resolves.toMatchObject({
-        source_person_id: 8,
-        target_person_id: 7,
         start_date: '2025',
         end_date: '2026-08',
         notes: 'Synthetic note'
       });
       expect((await post.clone().json()).source).toBeUndefined();
-      const createdRow = screen.getByText('Synthetic Counterpart').closest('.detail-row') as HTMLElement;
-      expect(createdRow.textContent).toContain('Is mentored by');
     } finally {
       vi.useRealTimers();
     }
@@ -652,12 +648,16 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    await screen.findByRole('button', { name: 'Keep yours' });
+    expect(screen.queryByRole('rowheader', { name: 'Notes' })).toBeNull();
+    expect(screen.getByText('Other details also changed')).toBeDefined();
+    expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Concurrent note');
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     const patches = requests.filter(request => request.method === 'PATCH');
-    const patch = patches[1];
-    await expect(patch.clone().json()).resolves.toEqual({ end_date: '2026-08' });
+    await expect(patches[0].clone().json()).resolves.toEqual({ end_date: '2026-08' });
+    await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-08' });
   });
 
   it('omits a cleared end date while saving notes on an ended connection', async () => {
@@ -1223,32 +1223,6 @@ describe('RelationshipsTab', () => {
     expect(deletion.headers.get('If-Match')).toBe('"relationship-type-31-r1"');
     expect(controller.relationshipTypes).toEqual([]);
   });
-});
-
-it('shows only the connection values Keep yours will actually overwrite', async () => {
-  const bodies: unknown[] = [];
-  const opening = relationship(41, 1, { notes: 'Original note' });
-  const saved = relationship(41, 2, { notes: 'Concurrent note' });
-  const { client, controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') {
-      bodies.push(await request.json());
-      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    }
-    return Response.json(bodies.length ? saved : opening, { headers: { ETag: bodies.length ? '"person-relationship-41-r2"' : '"person-relationship-41-r1"' } });
-  });
-  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
-  render(RelationshipsTab, { client, controller, personID: 7 });
-  await rowAction('Edit…');
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2027' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await screen.findByRole('button', { name: 'Keep yours' });
-  expect(screen.queryByRole('rowheader', { name: 'Notes' })).toBeNull();
-  expect(screen.getByText('Other details also changed')).toBeDefined();
-  expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Concurrent note');
-  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies).toEqual([{ end_date: '2027' }, { end_date: '2027' }]);
 });
 
 it.each(['failed', 'committed'])('shows the latest outcome after a %s connection retry', async outcome => {

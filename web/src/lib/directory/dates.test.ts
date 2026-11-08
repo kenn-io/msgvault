@@ -11,6 +11,7 @@ describe('isCalendarDate', () => {
 describe('intervalDateError', () => {
   it.each(['', '  ', '2019', '2019-04', '2019-04-12', '20190412', '2024-02-29'])('accepts %j', (value) => {
     expect(intervalDateError(value)).toBeNull();
+    expect(intervalDateError('2024-02', '2024-03')).toBe('End date must be on or after start date.');
   });
   it.each(['--04-12', '--04', '---12', 'spring 2019', '2019-13', '2019-02-30', '0000', '201904', '2019-4'])(
     'rejects %j', (value) => {
@@ -34,8 +35,7 @@ describe('profileDateError', () => {
 });
 
 describe('date readings', () => {
-  it('reads dates and rejects an end before the start', () => {
-    expect(intervalDateError('2024-02', '2024-03')).toBe('End date must be on or after start date.');
+  it('reads dates', () => {
     expect(readablePartialDate('2024')).toBe('2024');
     expect(readablePartialDate({ year: 2024, month: 3 })).toBe('Mar 2024');
     expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { valueProvenance } from './history-format';
-import { requestOf, pathOf, organization, organizationProfile, envelope, richOrganizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
+import { requestOf, pathOf, organization, employment, organizationProfile, envelope, richOrganizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
@@ -166,7 +166,7 @@ describe('OrganizationEditor', () => {
     const { controller } = controllerWith(async input => {
       const request = requestOf(input); requests.push(request);
       const path = pathOf(request);
-      if (path.endsWith('/employments')) return Response.json({ employments: Array.from({ length: count }, (_, i) => ({ person_id: Math.max(1, i), is_current: false })) });
+      if (path.endsWith('/employments')) return Response.json({ employments: Array.from({ length: count }, (_, i) => employment(i + 1, 1, { person_id: Math.max(1, i), is_current: false })) });
       if (path.startsWith('/api/v1/people/')) return Response.json({ display_name: `Example Person ${path.split('/').at(-1)}` });
       return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     });

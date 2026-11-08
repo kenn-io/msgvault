@@ -25,7 +25,6 @@ it('rejects a retried end date before the saved start year', async () => {
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));
   await screen.findByRole('button', { name: 'Keep yours' });
   expect(bodies).toEqual([{ end_date: '2027' }]);
-  await fireEvent.input(end, { target: { value: '2027' } });
   expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', true);
 });
 
