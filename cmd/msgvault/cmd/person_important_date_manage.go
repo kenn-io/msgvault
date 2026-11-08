@@ -62,7 +62,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		if state == nil || state.cfg == nil {
 			return errors.New("configuration unavailable")
 		}
-		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		st, cleanup, err := openReadOnlyStoreForInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -110,7 +110,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		if state == nil || state.cfg == nil {
 			return errors.New("configuration unavailable")
 		}
-		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		st, cleanup, err := openReadOnlyStoreForInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		if state == nil || state.cfg == nil {
 			return errors.New("configuration unavailable")
 		}
-		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		st, cleanup, err := openReadOnlyStoreForInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
