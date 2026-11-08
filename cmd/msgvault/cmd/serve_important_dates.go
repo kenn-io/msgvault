@@ -26,6 +26,7 @@ func addImportantDateJob(s *scheduler.Scheduler, cfg importantdate.Config, run f
 }
 
 func newImportantDateScheduledRun(cfg *config.Config, st *store.Store) func(context.Context) error {
+	var cursor string
 	return func(ctx context.Context) error {
 		settings := cfg.People.ImportantDates
 		if !settings.Enabled {
@@ -44,13 +45,14 @@ func newImportantDateScheduledRun(cfg *config.Config, st *store.Store) func(cont
 		}
 		settings.ProjectUID = projectUID
 		settings.ConsentScope = importantdate.DestinationScope(cfg.Integrations.Kata.Endpoint, settings.Project, projectUID)
-		_, more, err := importantdate.RunOnce(ctx, st, client, settings, time.Now())
-		if err != nil {
-			return err
-		}
-		if more {
+		_, next, err := importantdate.RunBatch(ctx, st, client, settings, time.Now(), cursor)
+		cursor = next
+		if next != "" {
+			if err != nil {
+				return &scheduler.RescheduleError{Err: err}
+			}
 			return scheduler.ErrReschedule
 		}
-		return nil
+		return err
 	}
 }

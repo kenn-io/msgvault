@@ -258,6 +258,20 @@ func (s *Store) ImportantDateDeliveryExistsContext(ctx context.Context, key stri
 	return exists, nil
 }
 
+// ImportantDateDeliveryBlockedContext also excludes a retained issue whose
+// original date differs from the candidate. It requires owner reconciliation.
+func (s *Store) ImportantDateDeliveryBlockedContext(ctx context.Context, key, fingerprint string) (bool, error) {
+	blocked, err := s.ImportantDateDeliveryExistsContext(ctx, key)
+	if err != nil || blocked {
+		return blocked, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ? AND state = 'issue_created' AND fingerprint <> ?)`, key, fingerprint).Scan(&blocked)
+	if err != nil {
+		return false, fmt.Errorf("check corrected important-date delivery: %w", err)
+	}
+	return blocked, nil
+}
+
 // ImportantDateDelivery is a retained occurrence and its delivery status.
 type ImportantDateDelivery struct {
 	OccurrenceKey string                     `json:"occurrence_key"`

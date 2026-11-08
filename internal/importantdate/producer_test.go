@@ -250,3 +250,51 @@ func TestRunContinuesAfterRetainedIssueLookupFailure(t *testing.T) {
 	checks.Equal(store.ImportantDateIssueCreated, state)
 	checks.Equal("unreadable-issue", uid)
 }
+
+func TestRunBatchContinuesPastRepeatedPreflightFailures(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	now := time.Now()
+	tomorrow := now.UTC().AddDate(0, 0, 1)
+	month, day := int(tomorrow.Month()), tomorrow.Day()
+	cfg := Config{Enabled: true, PrivateDestination: true, Project: "private-example", ProjectUID: "project-example", Recipient: "owner/agent", UseCadencePresets: true}
+	cfg.ApplyDefaults()
+	cfg.ConsentScope = DestinationScope("https://example.test", cfg.Project, cfg.ProjectUID)
+	for i := range 26 {
+		participant, err := st.EnsureParticipantByIdentifier("email", fmt.Sprintf("batch-failure-%d@example.test", i), "Example Contact")
+		must.NoError(err)
+		person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+		must.NoError(err)
+		_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: new(int64(21))}, Source: store.ProvenanceUser})
+		must.NoError(err)
+		_, err = st.AddPersonDateContext(ctx, person.ID, store.PersonDateInput{DateKind: store.PersonDateBirthday, Date: store.PartialDate{Month: &month, Day: &day}, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+		must.NoError(err)
+		must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+person.VCardUID, cfg.ConsentScope, cfg.Recipient, true))
+	}
+	candidates, err := Candidates(ctx, st, cfg, now)
+	must.NoError(err)
+	must.Len(candidates, 26)
+	for _, candidate := range candidates[:25] {
+		claimed, err := st.ClaimImportantDateDeliveryContext(ctx, candidate.OccurrenceKey, candidate.Fingerprint)
+		must.NoError(err)
+		must.True(claimed)
+		changed, err := st.AdvanceImportantDateDeliveryContext(ctx, candidate.OccurrenceKey, store.ImportantDateClaimed, store.ImportantDateIssueInFlight, "")
+		must.NoError(err)
+		must.True(changed)
+		changed, err = st.AdvanceImportantDateDeliveryContext(ctx, candidate.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateIssueCreated, "unreadable-issue")
+		must.NoError(err)
+		must.True(changed)
+	}
+	kata := &failingRetainedIssueKata{}
+	count, cursor, err := RunBatch(ctx, st, kata, cfg, now, "")
+	checks.ErrorContains(err, "issue lookup unavailable")
+	checks.Equal(25, count)
+	must.NotEmpty(cursor)
+	count, cursor, err = RunBatch(ctx, st, kata, cfg, now, cursor)
+	must.NoError(err)
+	checks.Equal(1, count)
+	checks.Empty(cursor)
+	checks.Equal(1, kata.notifications)
+}
