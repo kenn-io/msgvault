@@ -560,7 +560,8 @@ func TestSaturatedDeferredQueueRetainsFailedAdmission(t *testing.T) {
 	assert.Len(saved.Deferred, imp.limits.Scopes)
 }
 
-func TestOversizedPromotedBacklogDoesNotAcquireSyncLock(t *testing.T) {
+func TestOversizedBacklogRemainsReplayable(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	st, _, imp := broadFixture(t)
 	state := newSyncState()
@@ -574,7 +575,11 @@ func TestOversizedPromotedBacklogDoesNotAcquireSyncLock(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
 	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat"})
-	require.ErrorContains(err, "saved sync progress is too large")
+	require.NoError(err)
+	saved, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	require.Len(saved.PendingBacklog, 1)
+	assert.Equal(state.PendingBacklog[0].BlockID, saved.PendingBacklog[0].BlockID)
 	run, err = st.StartSyncContext(t.Context(), src.ID, SourceType)
 	require.NoError(err)
 	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
