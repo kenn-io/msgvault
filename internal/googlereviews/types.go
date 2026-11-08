@@ -78,8 +78,8 @@ type Request struct {
 	Comment           string `json:"comment,omitempty"`
 	ConfirmationToken string `json:"confirmation_token,omitempty"`
 	ReceiptID         string `json:"receipt_id,omitempty"`
-	PageSize          int    `json:"page_size,omitempty"`
-	Confirmed         bool   `json:"confirmed,omitempty"`
+	PageSize          int    `json:"page_size,omitzero"`
+	Confirmed         bool   `json:"confirmed,omitzero"`
 }
 
 func (r Request) Validate() error {

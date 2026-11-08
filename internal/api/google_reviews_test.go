@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/googlereviews"
 )
 
@@ -128,12 +129,14 @@ func (googleReviewSearchArchive) SearchGoogleReviews(_ context.Context, query, t
 }
 
 func TestGoogleReviewsBackfillReturnsBusyWhenArchiveGateHeld(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	assert := assert.New(t)
+	require := require.New(t)
 	oldLimit := operationGateWaitLimit
 	operationGateWaitLimit = 20 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "archive backup")
-	require.True(t, ok)
+	require.True(ok)
 	defer release()
 	service := googlereviews.NewService(googlereviews.Options{
 		Archive:           googleReviewSearchArchive{},
@@ -148,11 +151,37 @@ func TestGoogleReviewsBackfillReturnsBusyWhenArchiveGateHeld(t *testing.T) { //n
 		Store:  &mockStore{stats: &StoreStats{}}, Logger: testLogger(), GoogleReviews: service, OperationGate: gate,
 	})
 	response := reviewAPIRequest(t, srv, `{"action":"backfill","target":"shop"}`, "owner")
-	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
 	var body ErrorResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-	assert.Equal(t, "operation_in_progress", body.Error)
-	assert.Contains(t, body.Message, "archive backup")
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal("operation_in_progress", body.Error)
+	assert.Contains(body.Message, "archive backup")
+}
+
+func TestGoogleReviewsClientControlRoundTrip(t *testing.T) {
+	require := require.New(t)
+	service := googlereviews.NewService(googlereviews.Options{
+		Targets: func(context.Context) ([]googlereviews.Target, error) {
+			return []googlereviews.Target{{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: "accounts/a/locations/l", Enabled: true, OwnProject: true}}, nil
+		},
+	})
+	t.Cleanup(service.Close)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}},
+		Store:  &mockStore{stats: &StoreStats{}}, Logger: testLogger(), GoogleReviews: service,
+	})
+	httpSrv := httptest.NewServer(srv.Router())
+	t.Cleanup(httpSrv.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: httpSrv.URL, APIKey: "owner", AllowInsecure: true, HTTPClient: httpSrv.Client()})
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	_, err = client.ControlGoogleReviews(t.Context(), googlereviews.Request{Action: "capabilities"})
+	require.NoError(err)
+	result, err := client.ControlGoogleReviews(t.Context(), googlereviews.Request{Action: "invalidate_target", Target: "shop"})
+	require.NoError(err)
+	require.NotEmpty(result.CredentialChangeToken)
+	_, err = client.ControlGoogleReviews(t.Context(), googlereviews.Request{Action: "resume_target", Target: "shop", ConfirmationToken: result.CredentialChangeToken})
+	require.NoError(err)
 }
 
 func TestGoogleReviewsArchiveSearchIsOwnerOnlyAndNotCached(t *testing.T) {
