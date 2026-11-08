@@ -90,6 +90,24 @@ it('searches all archived targets when no target filter is selected', async () =
   expect(seen.find(item => item.action === 'archive_search')).toEqual({ action: 'archive_search', q: 'helpful service', target: null, page: 1, page_size: 20 });
 });
 
+it('resets archive pagination when the query changes', async () => {
+  const { client, seen } = fixture(body => body.action === 'archive_search' ? {
+    total: 40, page: body.page, page_size: 20, results: [],
+  } : { reviews: [] });
+  render(GoogleReviewsWorkspace, { client });
+  const query = await screen.findByLabelText('Search archived reviews');
+  await fireEvent.input(query, { target: { value: 'first query' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Search archive' }));
+  await screen.findByText('Page 1 of 2');
+  await fireEvent.input(query, { target: { value: 'second query' } });
+  expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Search archive' }));
+  await screen.findByText('Page 1 of 2');
+  expect(seen.filter(item => item.action === 'archive_search').map(item => [item.q, item.page])).toEqual([
+    ['first query', 1], ['second query', 1],
+  ]);
+});
+
 it('explains that a cursor-cycle retry restarts from the first page', async () => {
   const { client } = fixture(body => body.action === 'archive_status' ? {
     archive_sync: { target: 'shop', status: 'partial', pages_fetched: 1, reviews_fetched: 20, archived_review_count: 20, last_error_code: 'cursor_cycle', coverage_note: 'API pagination does not guarantee lifetime coverage.' },
@@ -183,17 +201,19 @@ it.each(['recognized conflict', 'unrecognized conflict', 'forged server error', 
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(screen.queryByLabelText('Public response')).toBeNull();
   expect(seen.filter(body => body.action === 'confirm_reply')).toEqual([{ action: 'confirm_reply', confirmation_token: 'token1', confirmed: true }]);
-  await fireEvent.click(screen.getByRole('button', { name: 'Check receipt' }));
-  await screen.findByText('receipt1');
-  expect(seen.filter(body => body.action === 'receipt')).toEqual([{ action: 'receipt', receipt_id: 'receipt1' }]);
   if (known) {
-    await screen.findByText(/Submission failed/);
+    expect(screen.queryByRole('button', { name: 'Check receipt' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh reviews' }));
     await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
     await fireEvent.input(await screen.findByLabelText('Public response'), { target: { value: 'Fresh response.' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Preview response' }));
     expect(within(await screen.findByRole('dialog')).getByText('receipt2')).toBeDefined();
     expect(seen.filter(body => body.action === 'preview_reply')).toHaveLength(2);
+    expect(seen.filter(body => body.action === 'receipt')).toHaveLength(0);
+  } else {
+    await fireEvent.click(screen.getByRole('button', { name: 'Check receipt' }));
+    await screen.findByText('receipt1');
+    expect(seen.filter(body => body.action === 'receipt')).toEqual([{ action: 'receipt', receipt_id: 'receipt1' }]);
   }
   expect(seen.filter(body => body.action === 'confirm_reply')).toHaveLength(1);
   expect(document.body.textContent).not.toContain('private-confirm-canary');

@@ -70,7 +70,10 @@
       if (body.action === 'receipt' && cause instanceof ReceiptUnavailableError) {
         receiptUnavailable = true;
         unknown = true;
-      } else if (confirmation && !(cause instanceof PreviewConflictError)) unknown = true;
+      } else if (confirmation && cause instanceof PreviewConflictError) {
+        receiptID = ''; receipt = undefined; receiptUnavailable = false; receiptReviewID = ''; receiptTarget = ''; recoveryInspected = false; unknown = false;
+        error = cause.message;
+      } else if (confirmation) unknown = true;
       else error = cause instanceof Error ? cause.message : 'Google Reviews request failed.';
     } finally { if (current === generation) busy = false; }
   }
@@ -103,6 +106,10 @@
     } catch (cause) {
       if (current === archiveGeneration) archiveError = cause instanceof Error ? cause.message : 'Google Reviews backfill could not start.';
     } finally { if (current === archiveGeneration) archiveBusy = false; }
+  }
+
+  function archiveInputChanged() {
+    invalidateArchive(); archiveResult = undefined; archivePage = 1; archiveError = '';
   }
 
   async function findArchive(page = 1) {
@@ -246,7 +253,7 @@
     {/if}
     <div class="archive-search">
       <label for="google-review-archive-query">Search archived reviews</label>
-      <input id="google-review-archive-query" bind:value={archiveQuery} maxlength="256" onkeydown={event => { if (event.key === 'Enter') { event.preventDefault(); void findArchive(1); } }} />
+      <input id="google-review-archive-query" bind:value={archiveQuery} maxlength="256" oninput={archiveInputChanged} onkeydown={event => { if (event.key === 'Enter') { event.preventDefault(); void findArchive(1); } }} />
       <span class="muted">{archiveQueryBytes} / 256 UTF-8 bytes</span>
       <Button label="Search archive" disabled={archiveBusy || !archiveQuery.trim() || archiveQueryBytes > 256} onclick={() => void findArchive(1)} />
     </div>
