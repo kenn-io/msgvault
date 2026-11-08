@@ -600,3 +600,135 @@ func TestEngineSearchPropagatesPersonStoreError(t *testing.T) {
 	require.ErrorContains(t, err, "resolve final person search hits")
 	assert.Nil(t, results)
 }
+
+// This implements the optional scoped capability independently: any accidental
+// unscoped call during widening or final revalidation fails immediately.
+type scopedTestStore struct {
+	base           *testStore
+	organizationID int64
+	members        map[int64]bool
+	calls          int
+	beforeResolve  func(int)
+}
+
+func (s *scopedTestStore) ResolvePersonSemanticCandidatesContext(context.Context, []store.PersonSemanticCandidate) ([]store.Person, error) {
+	panic("scoped search must never use the unscoped resolver")
+}
+
+func (s *scopedTestStore) ResolvePersonSemanticCandidatesInOrganizationContext(ctx context.Context, candidates []store.PersonSemanticCandidate, organizationID int64) ([]store.Person, error) {
+	if organizationID != s.organizationID {
+		return nil, fmt.Errorf("unexpected organization %d", organizationID)
+	}
+	s.calls++
+	if s.beforeResolve != nil {
+		s.beforeResolve(s.calls)
+	}
+	people, err := s.base.ResolvePersonSemanticCandidatesContext(ctx, candidates)
+	if err != nil {
+		return nil, err
+	}
+	var scoped []store.Person
+	for _, person := range people {
+		if s.members[person.ID] {
+			scoped = append(scoped, person)
+		}
+	}
+	return scoped, nil
+}
+
+func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		hits         int
+		removeOnCall int
+		want         []int64
+	}{
+		{"initial full page", 8, 0, []int64{1, 2}},
+		{"widened full page", 8, 0, []int64{2, 4}},
+		{"exhausted final page", 5, 0, []int64{2, 4}},
+		{"membership changes at final recheck", 8, 3, []int64{4, 6}},
+		{"membership changes at exhaustion", 5, 2, []int64{4}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			check := assert.New(t)
+			must := require.New(t)
+
+			backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
+			data := &scopedTestStore{base: &testStore{documents: map[int64]*store.PersonSemanticDocument{}, people: map[int64]store.Person{}}, organizationID: 42, members: map[int64]bool{2: true, 4: true, 6: true}}
+			if tc.name == "initial full page" {
+				data.members[1] = true
+			}
+			for i := int64(1); i <= int64(tc.hits); i++ {
+				revision := fmt.Sprintf("revision-%d", i)
+				backend.personHits = append(backend.personHits, vector.PersonHit{PersonID: i, Revision: revision, Score: 1 - float64(i)/10, Rank: int(i)})
+				data.base.documents[i] = &store.PersonSemanticDocument{PersonID: i, Revision: revision}
+				data.base.people[i] = store.Person{ID: i, VCardUID: fmt.Sprintf("uid-%d", i)}
+			}
+			data.beforeResolve = func(call int) {
+				if call == tc.removeOnCall {
+					delete(data.members, 2)
+				}
+			}
+			embedder := &testEmbedder{vec: []float32{1, 0, 0}}
+			engine := NewEngine(backend, data, embedder, Config{ExpectedFingerprint: "test:3:rperson-semantic-v1", Gate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return nil })})
+			limit := 2
+			if tc.name == "exhausted final page" || tc.name == "membership changes at exhaustion" {
+				limit = 3
+			}
+			results, err := engine.SearchInOrganization(t.Context(), "synthetic", limit, 42)
+			must.NoError(err)
+			var got []int64
+			for _, result := range results {
+				got = append(got, result.Person.ID)
+				check.Equal(fmt.Sprintf("uid-%d", result.Person.ID), result.Person.VCardUID)
+			}
+			check.Equal(tc.want, got)
+			check.Equal([]string{"synthetic"}, embedder.calls)
+			if tc.name == "initial full page" {
+				check.Equal([]int{2}, backend.personSearchLimits)
+			} else {
+				check.Greater(len(backend.personSearchLimits), 1)
+			}
+		})
+	}
+}
+
+func TestEngineOrganizationScopeUnsupportedAndNegativeFailBeforeEgress(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
+	for _, id := range []int64{-1, 42} {
+		embedder := &testEmbedder{}
+		backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
+		engine := newTestEngine(backend, &testStore{}, embedder)
+		_, err := engine.SearchInOrganization(t.Context(), "synthetic", 2, id)
+		must.Error(err)
+		check.Empty(embedder.calls)
+		check.Empty(backend.personSearchLimits)
+	}
+}
+
+func TestEngineOrganizationScopePreservesConsentAndCoverageGate(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
+	for _, gateErr := range []error{vector.ErrSemanticPersonEmbeddingsDisabled, vector.ErrSemanticPersonEmbeddingConsentRequired, nil} {
+		backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
+		data := &scopedTestStore{organizationID: 42}
+		embedder := &testEmbedder{}
+		engine := NewEngine(backend, data, embedder, Config{
+			ExpectedFingerprint: "test:3:rperson-semantic-v1",
+			Gate:                vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return gateErr }),
+			PersonCoverage:      func(context.Context, vector.GenerationID) (Coverage, error) { return Coverage{Mismatched: 1}, nil },
+		})
+		_, err := engine.SearchInOrganization(t.Context(), "synthetic", 2, 42)
+		if gateErr != nil {
+			must.ErrorIs(err, gateErr)
+		} else {
+			must.ErrorIs(err, ErrPersonCoverageIncomplete)
+		}
+		check.Empty(embedder.calls)
+		check.Empty(backend.personSearchLimits)
+		check.Zero(data.calls)
+	}
+}

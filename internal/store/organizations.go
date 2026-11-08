@@ -588,8 +588,12 @@ func organizationWhere(filter OrganizationFilter) (string, []any) {
 	}
 	if query := NormalizeOrganizationName(filter.Query); query != "" {
 		query = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
-		conditions = append(conditions, `name_normalized LIKE ? ESCAPE '\'`)
-		args = append(args, query+"%")
+		conditions = append(conditions, `(name_normalized LIKE ? ESCAPE '\' OR EXISTS (
+			SELECT 1 FROM organization_names alias
+			WHERE alias.organization_id = organizations.id
+			AND alias.active_until IS NULL AND alias.superseded_at IS NULL
+			AND alias.name_normalized LIKE ? ESCAPE '\'))`)
+		args = append(args, query+"%", query+"%")
 	}
 	if len(conditions) == 0 {
 		return "", args

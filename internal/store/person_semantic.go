@@ -151,6 +151,18 @@ func (s *Store) ListPersonSemanticDocumentsContext(
 func (s *Store) ResolvePersonSemanticCandidatesContext(
 	ctx context.Context, candidates []PersonSemanticCandidate,
 ) ([]Person, error) {
+	return s.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, 0)
+}
+
+// ResolvePersonSemanticCandidatesInOrganizationContext applies exact current
+// membership in an active canonical organization in the same snapshot as
+// revision validation and root hydration. Zero leaves membership unrestricted.
+func (s *Store) ResolvePersonSemanticCandidatesInOrganizationContext(
+	ctx context.Context, candidates []PersonSemanticCandidate, organizationID int64,
+) ([]Person, error) {
+	if organizationID < 0 {
+		return nil, errors.New("person semantic organization ID must not be negative")
+	}
 	people := make([]Person, 0, len(candidates))
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		allowed, err := s.loadPersonSemanticAttributeDefinitionsTx(ctx, tx)
@@ -164,6 +176,20 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 			}
 			if err != nil {
 				return fmt.Errorf("load person %d semantic search candidate: %w", candidate.PersonID, err)
+			}
+			if organizationID > 0 {
+				member := false
+				// The snapshot loader uses the employment is_current contract.
+				for _, employment := range snapshot.employments {
+					organization := employment.organization
+					if organization.ID == organizationID && organization.RetiredAt == nil && organization.MergedIntoID == nil {
+						member = true
+						break
+					}
+				}
+				if !member {
+					continue
+				}
 			}
 			document, err := renderPersonSemanticDocument(snapshot)
 			if err != nil {

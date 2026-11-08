@@ -49,6 +49,9 @@ func (b *PeopleBrowser) ListDirectoryPeople(
 	ctx context.Context,
 	query store.DirectoryPeopleQuery,
 ) (*store.DirectoryPeoplePage, error) {
+	if err := b.engine.store.RequirePersonDiscoveryScope(ctx, query.OrganizationID); err != nil {
+		return nil, err
+	}
 	if err := b.engine.store.RequireDirectoryAddress(ctx, query.Address); err != nil {
 		return nil, err
 	}
@@ -65,6 +68,9 @@ func (b *PeopleBrowser) ListDirectoryPeople(
 			LastContactAfter:  query.LastContactAfter,
 			LastContactBefore: query.LastContactBefore,
 		},
+	}
+	if query.OrganizationID > 0 {
+		options.Query.OrganizationID = &query.OrganizationID
 	}
 	if query.Sort != "" {
 		sort := generated.ListDirectoryPeopleQuerySort(query.Sort)

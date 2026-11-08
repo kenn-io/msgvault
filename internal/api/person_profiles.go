@@ -81,8 +81,9 @@ type PersonSearchEngine interface {
 }
 
 type PersonSearchRequest struct {
-	Query string `json:"query" minLength:"1"`
-	Limit int    `json:"limit,omitzero" minimum:"0" maximum:"100" default:"20"`
+	Query          string `json:"query" minLength:"1"`
+	OrganizationID int64  `json:"organization_id,omitzero" minimum:"0"`
+	Limit          int    `json:"limit,omitzero" minimum:"0" maximum:"100" default:"20"`
 }
 
 type PersonSearchResult struct {
@@ -97,7 +98,7 @@ type PersonSearchResponse struct {
 func (s *Server) registerPersonProfileRoutes(api huma.API) {
 	search := rawAPIV1Operation("searchPeople", http.MethodPost, "/people/search",
 		"Search durable people semantically")
-	search.Description = "Searches only the curated person vector corpus and returns durable person roots in relevance order."
+	search.Description = "Ranks supported current searchable non-sensitive profile fields, excluding private Notes and observations. Sends query text to the configured embedding provider under separate people consent. Optional organization_id restricts results to current employment at an active canonical organization. Ranking is not exhaustive."
 	search.RequestBody = jsonRequestBodyFor[PersonSearchRequest](api)
 	search.Responses = jsonResponsesFor[PersonSearchResponse](api)
 	addErrorResponses(api, search.Responses, http.StatusServiceUnavailable)
@@ -183,6 +184,10 @@ func (s *Server) handleSemanticPersonSearch(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid_query", "query must contain non-whitespace text")
 		return
 	}
+	if request.OrganizationID < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_organization_id", "organization_id must not be negative")
+		return
+	}
 	if request.Limit < 0 || request.Limit > maximumPersonSearchLimit {
 		writeError(w, http.StatusBadRequest, "invalid_limit", "limit must be between 0 and 100")
 		return
@@ -205,7 +210,20 @@ func (s *Server) handleSemanticPersonSearch(w http.ResponseWriter, r *http.Reque
 			"Semantic person search is not configured on this server")
 		return
 	}
-	results, err := engine.Search(r.Context(), request.Query, request.Limit)
+	var results []personsearch.Result
+	var err error
+	if request.OrganizationID > 0 {
+		scoped, ok := engine.(interface {
+			SearchInOrganization(ctx context.Context, query string, limit int, organizationID int64) ([]personsearch.Result, error)
+		})
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "person_discovery_scope_unsupported", "Organization-scoped person search is not supported by this server")
+			return
+		}
+		results, err = scoped.SearchInOrganization(r.Context(), request.Query, request.Limit, request.OrganizationID)
+	} else {
+		results, err = engine.Search(r.Context(), request.Query, request.Limit)
+	}
 	if err != nil {
 		s.writePersonSearchError(r.Context(), w, err)
 		return
@@ -387,6 +405,13 @@ func directoryPeopleQuery(values url.Values) (store.DirectoryPeopleQuery, error)
 		PrimaryChannel: values.Get("primary_channel"),
 		Sort:           values.Get("sort"),
 	}
+	if value := strings.TrimSpace(values.Get("organization_id")); value != "" {
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id < 0 {
+			return store.DirectoryPeopleQuery{}, fmt.Errorf("%w: organization_id must be a nonnegative integer", store.ErrInvalidDirectoryQuery)
+		}
+		query.OrganizationID = id
+	}
 	for _, field := range []struct {
 		name   string
 		target **time.Time
@@ -557,7 +582,8 @@ func addDirectoryPeopleParameters(operation *huma.Operation) {
 		queryIntegerParam("limit", "Maximum rows to return (default 50, max 100)"),
 		queryStringParam("contact_state", "Current contact state: active or inactive", false),
 		queryStringParam("category", "Current person category", false),
-		queryStringParam("organization", "Current organization", false),
+		queryStringParam("organization", "Current canonical organization name", false),
+		queryIntegerParam("organization_id", "Exact active canonical organization ID; current employment only, zero omits scope"),
 		queryStringParam("primary_channel", "Primary communication channel", false),
 		lastContactAfter,
 		lastContactBefore,

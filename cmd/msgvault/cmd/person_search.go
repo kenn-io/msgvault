@@ -21,14 +21,16 @@ const (
 )
 
 var (
-	personSearchLimit = defaultPersonSearchLimit
-	personSearchJSON  bool
+	personSearchLimit          = defaultPersonSearchLimit
+	personSearchJSON           bool
+	personSearchOrganizationID int64
 )
 
 type personSearchCLIResult struct {
 	ID          int64   `json:"id"`
 	DisplayName *string `json:"display_name"`
 	Score       float64 `json:"score"`
+	VCardUID    string  `json:"vcard_uid"`
 }
 
 type personSearchCLIResponse struct {
@@ -40,7 +42,10 @@ var personSearchCmd = &cobra.Command{
 	Short: "Search durable person profiles semantically",
 	Long: `Rank durable people by semantic similarity to free text. Needs the semantic
 people lane; 'msgvault setup status' shows whether it is on and how to
-enable it. For saved names or address fragments without semantic search,
+enable it. Query text is sent to the configured embedding provider under
+separate people-embedding consent. Ranking is non-exhaustive;
+private Notes, sensitive fields, observations and unsupported attribute types
+are excluded. For saved names or address fragments without semantic search,
 use 'person directory --query <name>' or '--address <address>'.`,
 	Example: `  msgvault person search "works on billing" --json`,
 	Args:    cobra.MinimumNArgs(1),
@@ -48,6 +53,9 @@ use 'person directory --query <name>' or '--address <address>'.`,
 		query := strings.TrimSpace(strings.Join(args, " "))
 		if query == "" {
 			return usageErr(cmd, errors.New("query must contain non-whitespace text"))
+		}
+		if personSearchOrganizationID < 0 {
+			return usageErr(cmd, errors.New("--organization-id must not be negative"))
 		}
 		if personSearchLimit < 1 || personSearchLimit > maximumPersonSearchLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be between 1 and 100, got %d", personSearchLimit))
@@ -59,8 +67,14 @@ use 'person directory --query <name>' or '--address <address>'.`,
 		}
 		defer func() { _ = client.Close() }()
 
+		if err := client.RequirePersonDiscoveryScope(cmd.Context(), personSearchOrganizationID); err != nil {
+			return err
+		}
 		limit := int64(personSearchLimit)
 		body := generated.SearchPeopleBody{Query: query, Limit: &limit}
+		if personSearchOrganizationID > 0 {
+			body.OrganizationID = &personSearchOrganizationID
+		}
 		response, err := daemonclient.APIResponse(client,
 			func(api *apiclient.Client) (*generated.SearchPeopleResp, error) {
 				return api.SearchPeopleWithResponse(cmd.Context(), &generated.SearchPeopleRequestOptions{
@@ -80,7 +94,7 @@ use 'person directory --query <name>' or '--address <address>'.`,
 		output := personSearchCLIResponse{Results: make([]personSearchCLIResult, len(response.JSON200.Results))}
 		for i, result := range response.JSON200.Results {
 			output.Results[i] = personSearchCLIResult{
-				ID: result.Person.ID, DisplayName: result.Person.DisplayName, Score: result.Score,
+				ID: result.Person.ID, DisplayName: result.Person.DisplayName, Score: result.Score, VCardUID: result.Person.VcardUID,
 			}
 		}
 		if personSearchJSON {
@@ -101,6 +115,7 @@ func init() {
 	personSearchCmd.Flags().IntVar(
 		&personSearchLimit, "limit", defaultPersonSearchLimit, "Maximum number of results",
 	)
+	personSearchCmd.Flags().Int64Var(&personSearchOrganizationID, "organization-id", 0, "Exact active organization ID; current employment only")
 	personSearchCmd.Flags().BoolVar(&personSearchJSON, flagJSON, false, "Output as JSON")
 }
 

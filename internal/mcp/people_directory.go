@@ -33,7 +33,8 @@ func listDirectoryPeopleDefinition(_ *handlers) toolDefinition {
 			"last_contact_before": stringSchema("Inclusive upper bound for last contact: RFC3339 timestamp or YYYY-MM-DD (midnight UTC)"),
 			"contact_state":       stringSchema("Current contact state", "active", "inactive"),
 			"category":            stringSchema("Current person category"),
-			"organization":        stringSchema("Current organization"),
+			"organization":        stringSchema("Current canonical organization name"),
+			"organization_id":     boundedIntegerSchema("Exact active canonical organization ID; current employment only; requires daemon schema 3.49.0", 0, maxJSONSafeInteger),
 			"primary_channel":     stringSchema("Curated primary communication channel"),
 		}),
 		outputSchemaFor[store.DirectoryPeoplePage](),
@@ -63,7 +64,12 @@ func (h *handlers) listDirectoryPeople(ctx context.Context, req toolRequest) (*t
 		before = &beforeValue
 	}
 
+	organizationID, err := nonnegativeInt64Arg(args, "organization_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
 	query := store.DirectoryPeopleQuery{
+		OrganizationID:    organizationID,
 		Query:             stringArgument(args, toolArgQuery),
 		Address:           stringArgument(args, "address"),
 		Cursor:            stringArgument(args, toolArgCursor),
@@ -123,6 +129,8 @@ func directoryDaemonError(err error) *toolResult {
 		return nil
 	}
 	switch coded.APIErrorCode() {
+	case "person_discovery_scope_unsupported":
+		return toolErrorResult("person_discovery_scope_unsupported: exact organization scope requires daemon API schema 3.49.0 or newer; upgrade the daemon")
 	case "directory_address_unsupported":
 		return toolErrorResult("directory_address_unsupported: person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
 	case "invalid_cursor":

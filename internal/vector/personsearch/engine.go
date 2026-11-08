@@ -71,6 +71,14 @@ type Store interface {
 	) ([]store.Person, error)
 }
 
+// organizationStore optionally supplies exact current membership validation.
+// A scoped search must never fall back to the unscoped Store capability.
+type organizationStore interface {
+	ResolvePersonSemanticCandidatesInOrganizationContext(
+		ctx context.Context, candidates []store.PersonSemanticCandidate, organizationID int64,
+	) ([]store.Person, error)
+}
+
 // QueryEmbedder embeds one free-text query.
 type QueryEmbedder interface {
 	EmbedQuery(ctx context.Context, text string) ([]float32, error)
@@ -113,12 +121,33 @@ func NewEngine(backend Backend, data Store, embedder QueryEmbedder, config Confi
 // Search embeds query once, searches only the person corpus, drops stale or
 // deleted hits, and returns durable person roots in ANN rank order.
 func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result, error) {
+	return e.SearchInOrganization(ctx, query, limit, 0)
+}
+
+// SearchInOrganization ranks current person documents while requiring exact
+// current membership in an active canonical organization. Zero is unscoped.
+func (e *Engine) SearchInOrganization(ctx context.Context, query string, limit int, organizationID int64) ([]Result, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, errors.New("empty person search query")
 	}
 	if limit <= 0 {
 		return nil, errors.New("person search limit must be positive")
+	}
+	if organizationID < 0 {
+		return nil, errors.New("person search organization ID must not be negative")
+	}
+	resolveCandidates := func(ctx context.Context, candidates []store.PersonSemanticCandidate) ([]store.Person, error) {
+		return e.store.ResolvePersonSemanticCandidatesContext(ctx, candidates)
+	}
+	if organizationID > 0 {
+		scoped, ok := e.store.(organizationStore)
+		if !ok {
+			return nil, errors.New("organization-scoped person search is not supported by the store")
+		}
+		resolveCandidates = func(ctx context.Context, candidates []store.PersonSemanticCandidate) ([]store.Person, error) {
+			return scoped.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, organizationID)
+		}
 	}
 	if e.config.Gate == nil {
 		return nil, errors.New("semantic person search gate is not configured")
@@ -189,7 +218,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 					finalCandidates = append(finalCandidates, candidate)
 				}
 			}
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, finalCandidates)
+			people, err := resolveCandidates(ctx, finalCandidates)
 			if err != nil {
 				return nil, fmt.Errorf("resolve final person search hits: %w", err)
 			}
@@ -198,7 +227,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 		hadValidCandidates := len(valid) > 0
 		var newlyResolved []store.Person
 		if len(newCandidates) > 0 {
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, newCandidates)
+			people, err := resolveCandidates(ctx, newCandidates)
 			if err != nil {
 				return nil, fmt.Errorf("resolve current person search hits: %w", err)
 			}
@@ -225,7 +254,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 			if !hadValidCandidates {
 				return personResultsInHitOrder(hits, newlyResolved, limit), nil
 			}
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, currentCandidates)
+			people, err := resolveCandidates(ctx, currentCandidates)
 			if err != nil {
 				return nil, fmt.Errorf("revalidate final person search hits: %w", err)
 			}

@@ -293,6 +293,10 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		if daemonclient.APISchemaVersionAtLeast(schemaVersion, directoryPeopleMinAPISchemaVersion) {
 			opts.DirectoryBackend = people
 		}
+		if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.PersonDiscoveryMinAPISchemaVersion) {
+			opts.SemanticPeopleBackend = people
+			opts.OrganizationBackend = people
+		}
 		opts.PeopleBackend = people
 		if supportsNamedPromotion(capabilities) {
 			opts.PeopleBackend = daemonMCPNamedPeopleBrowser{PeopleBrowser: people, client: st}

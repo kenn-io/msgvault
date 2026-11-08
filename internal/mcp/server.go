@@ -60,6 +60,8 @@ const (
 	ToolSearchPersonFiles         = "search_person_files"
 	ToolSearchPeople              = "search_people"
 	ToolListDirectoryPeople       = "list_directory_people"
+	ToolSearchSemanticPeople      = "search_semantic_people"
+	ToolListOrganizations         = "list_organizations"
 	ToolFindChat                  = "find_chat"
 	ToolGetPersonNotes            = "get_person_notes"
 	ToolGetPersonProfile          = "get_person_profile"
@@ -134,6 +136,8 @@ type ServeOptions struct {
 	PersonFileSearcher     PersonFileSearcher
 	PeopleBackend          peoplebrowser.Backend
 	DirectoryBackend       peoplebrowser.DirectoryLister
+	SemanticPeopleBackend  peoplebrowser.SemanticPeopleSearcher
+	OrganizationBackend    peoplebrowser.OrganizationLister
 	ChatDiscoveryBackend   ChatDiscoveryBackend
 	PersonAgendaBackend    PersonAgendaBackend
 	PersonTierBackend      PersonTierBackend
@@ -387,39 +391,41 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
-		embeddingStatus:      opts.EmbeddingStatus,
-		delegatedOnly:        opts.DelegatedOnly,
-		downloads:            opts.downloads,
-		engine:               opts.Engine,
-		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
-		attachmentsDir:       opts.AttachmentsDir,
-		attachmentReader:     opts.AttachmentReader,
-		manifestSaver:        opts.ManifestSaver,
-		hybridSearcher:       opts.HybridSearcher,
-		similarSearcher:      opts.SimilarSearcher,
-		dataDir:              opts.DataDir,
-		documentSearcher:     opts.DocumentSearcher,
-		mediaSearcher:        opts.MediaSearcher,
-		personFileSearcher:   opts.PersonFileSearcher,
-		peopleBackend:        opts.PeopleBackend,
-		directoryBackend:     opts.DirectoryBackend,
-		hybridEngine:         opts.HybridEngine,
-		vectorCfg:            opts.VectorCfg,
-		backend:              opts.Backend,
-		visualSearcher:       opts.VisualSearcher,
-		savedViews:           opts.SavedViews,
-		meetings:             opts.Meetings,
-		calendar:             opts.Calendar,
-		personAgendaBackend:  opts.PersonAgendaBackend,
-		personTierBackend:    opts.PersonTierBackend,
-		kata:                 opts.Kata,
-		identityReview:       opts.IdentityReview,
-		personCardDAV:        opts.PersonCardDAV,
-		messageTags:          opts.MessageTags,
-		identityScoring:      opts.IdentityScoring,
-		drafts:               opts.Drafts,
-		contactRoutesBackend: opts.ContactRoutesBackend,
-		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+		embeddingStatus:       opts.EmbeddingStatus,
+		delegatedOnly:         opts.DelegatedOnly,
+		downloads:             opts.downloads,
+		engine:                opts.Engine,
+		archiveSQLQuerier:     opts.ArchiveSQLQuerier,
+		attachmentsDir:        opts.AttachmentsDir,
+		attachmentReader:      opts.AttachmentReader,
+		manifestSaver:         opts.ManifestSaver,
+		hybridSearcher:        opts.HybridSearcher,
+		similarSearcher:       opts.SimilarSearcher,
+		dataDir:               opts.DataDir,
+		documentSearcher:      opts.DocumentSearcher,
+		mediaSearcher:         opts.MediaSearcher,
+		personFileSearcher:    opts.PersonFileSearcher,
+		peopleBackend:         opts.PeopleBackend,
+		directoryBackend:      opts.DirectoryBackend,
+		semanticPeopleBackend: opts.SemanticPeopleBackend,
+		organizationBackend:   opts.OrganizationBackend,
+		hybridEngine:          opts.HybridEngine,
+		vectorCfg:             opts.VectorCfg,
+		backend:               opts.Backend,
+		visualSearcher:        opts.VisualSearcher,
+		savedViews:            opts.SavedViews,
+		meetings:              opts.Meetings,
+		calendar:              opts.Calendar,
+		personAgendaBackend:   opts.PersonAgendaBackend,
+		personTierBackend:     opts.PersonTierBackend,
+		kata:                  opts.Kata,
+		identityReview:        opts.IdentityReview,
+		personCardDAV:         opts.PersonCardDAV,
+		messageTags:           opts.MessageTags,
+		identityScoring:       opts.IdentityScoring,
+		drafts:                opts.Drafts,
+		contactRoutesBackend:  opts.ContactRoutesBackend,
+		chatDiscoveryBackend:  opts.ChatDiscoveryBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {

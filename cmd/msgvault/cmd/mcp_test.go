@@ -381,6 +381,9 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
 			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
+			wantDiscovery := tt.schemaVersion == api.APISchemaVersion
+			assert.Equal(wantDiscovery, opts.SemanticPeopleBackend != nil)
+			assert.Equal(wantDiscovery, opts.OrganizationBackend != nil)
 			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)

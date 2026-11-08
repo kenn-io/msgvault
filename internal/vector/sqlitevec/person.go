@@ -17,6 +17,9 @@ import (
 
 var _ vector.PersonBackend = (*Backend)(nil)
 
+// vec0 rejects KNN requests above this limit; larger searches rank exactly.
+const personVec0KNNLimit = 4096
+
 const personEmbeddingsSchema = `
 CREATE TABLE IF NOT EXISTS person_embeddings (
 	embedding_id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -328,12 +331,29 @@ func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, que
 		   AND v.embedding MATCH ?
 		   AND k = ?
 		 ORDER BY v.distance, p.person_id`, PersonVectorTableName(dim))
-	rows, err := b.db.QueryContext(ctx, q, int64(gen), float32SliceBlob(queryVec), min(k, count))
+	searchLimit := min(k, count)
+	queryBlob := float32SliceBlob(queryVec)
+	args := []any{int64(gen), queryBlob, searchLimit}
+	if searchLimit > personVec0KNNLimit {
+		// Scoped widening must reach every candidate, including people beyond
+		// vec0's KNN ceiling. Rank the existing generation's vectors directly
+		// with the same cosine distance and person-ID tie ordering.
+		q = fmt.Sprintf(`
+			SELECT p.person_id, p.published_revision,
+			       vec_distance_cosine(v.embedding, ?) AS distance
+			  FROM %s v
+			  JOIN person_embeddings p ON p.embedding_id = v.embedding_id
+			 WHERE v.generation_id = ? AND p.generation_id = ?
+			 ORDER BY distance, p.person_id
+			 LIMIT ?`, PersonVectorTableName(dim))
+		args = []any{queryBlob, int64(gen), int64(gen), searchLimit}
+	}
+	rows, err := b.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search person vectors: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	hits := make([]vector.PersonHit, 0, min(k, count))
+	hits := make([]vector.PersonHit, 0, searchLimit)
 	for rows.Next() {
 		var hit vector.PersonHit
 		var distance float64

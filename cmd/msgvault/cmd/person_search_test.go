@@ -89,8 +89,8 @@ func TestPersonSearchCommandJSONHasStableExplicitOrderedShape(t *testing.T) {
 
 	assert.JSONEq(t, `{
 		"results": [
-			{"id": 9, "display_name": "Synthetic Architect", "score": 0.91},
-			{"id": 3, "display_name": "Test Researcher", "score": 0.73}
+			{"id": 9, "display_name": "Synthetic Architect", "score": 0.91, "vcard_uid":"00000000-0000-0000-0000-000000000009"},
+			{"id": 3, "display_name": "Test Researcher", "score": 0.73, "vcard_uid":"00000000-0000-0000-0000-000000000003"}
 		]
 	}`, stdout.String())
 	assert.Empty(t, stderr.String(), "JSON mode emits no progress noise")
@@ -149,8 +149,8 @@ func TestPersonSearchCommandPreservesNilDisplayNameAcrossOutputModes(t *testing.
 		requirements.NoError(command.Execute())
 
 		checks.JSONEq(`{"results":[
-			{"id":11,"display_name":null,"score":0.82},
-			{"id":4,"display_name":"Synthetic Named Person","score":0.61}
+			{"id":11,"display_name":null,"score":0.82,"vcard_uid":"00000000-0000-0000-0000-000000000011"},
+			{"id":4,"display_name":"Synthetic Named Person","score":0.61,"vcard_uid":"00000000-0000-0000-0000-000000000004"}
 		]}`, stdout.String())
 		checks.Empty(stderr.String(), "nil display-name JSON emits no progress noise")
 	})
@@ -726,7 +726,7 @@ func TestPersonSearchProductionCompositionDoesNotPublishReadyWithoutThePersonEng
 	command.SetArgs([]string{"--json", "architect"})
 	requirements.NoError(command.Execute())
 	assertions.JSONEq(`{"results":[{"id":`+
-		jsonInt(person.ID)+`,"display_name":"Synthetic Architect","score":1}]}`, stdout.String())
+		jsonInt(person.ID)+`,"display_name":"Synthetic Architect","score":1,"vcard_uid":"`+person.VCardUID+`"}]}`, stdout.String())
 	assertions.Empty(stderr.String())
 
 	providerMu.Lock()
@@ -738,14 +738,16 @@ func TestPersonSearchProductionCompositionDoesNotPublishReadyWithoutThePersonEng
 
 func newPersonSearchTestCommand(ctx context.Context, t *testing.T) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	savedLimit, savedJSON := personSearchLimit, personSearchJSON
+	savedLimit, savedJSON, savedOrganization := personSearchLimit, personSearchJSON, personSearchOrganizationID
+	personSearchOrganizationID = 0
 	personSearchLimit, personSearchJSON = defaultPersonSearchLimit, false
 	t.Cleanup(func() {
-		personSearchLimit, personSearchJSON = savedLimit, savedJSON
+		personSearchLimit, personSearchJSON, personSearchOrganizationID = savedLimit, savedJSON, savedOrganization
 	})
 	command := &cobra.Command{
 		Use: personSearchCmd.Use, Args: personSearchCmd.Args, RunE: personSearchCmd.RunE,
 	}
+	command.Flags().Int64Var(&personSearchOrganizationID, "organization-id", 0, "")
 	command.Flags().IntVar(&personSearchLimit, "limit", defaultPersonSearchLimit, "")
 	command.Flags().BoolVar(&personSearchJSON, flagJSON, false, "")
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -782,4 +784,26 @@ func writePersonSearchCommandResponse(t *testing.T, w http.ResponseWriter) {
 
 func jsonInt(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+func TestPersonDiscoverySemanticCLIRejectsOldDaemonBeforeSearch(t *testing.T) {
+	var searches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, err := io.WriteString(w, `{ "status":"ok", "api_schema_version":"3.48.0" }`)
+			assert.NoError(t, err)
+			return
+		}
+		searches.Add(1)
+		writePersonSearchCommandResponse(t, w)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	command, _, _ := newPersonSearchTestCommand(ctx, t)
+	command.SetArgs([]string{"--organization-id", "13", "equipment", "--json"})
+	err := command.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "3.49.0")
+	assert.Zero(t, searches.Load())
 }

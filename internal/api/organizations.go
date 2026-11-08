@@ -203,7 +203,7 @@ type SetOrganizationAttributeBody struct {
 
 func (s *Server) registerOrganizationRoutes(api huma.API) {
 	list := rawAPIV1Operation("listOrganizations", http.MethodGet, "/organizations", "List organizations")
-	list.Parameters = append(list.Parameters, queryIntegerParam("limit", "Maximum results"), queryIntegerParam("offset", "Results to skip"), queryBooleanParam("include_retired", "Include retired organizations"), queryStringParam("q", "Normalized-name search", false))
+	list.Parameters = append(list.Parameters, queryIntegerParam("limit", "Maximum results"), queryIntegerParam("offset", "Results to skip"), queryBooleanParam("include_retired", "Include retired organizations"), queryStringParam("q", "Canonical name or current saved name alias prefix; wildcard characters are literal", false))
 	list.Responses = jsonResponsesFor[OrganizationsResponse](api)
 	addErrorResponses(api, list.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, list, s.handleListOrganizations)

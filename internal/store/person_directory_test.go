@@ -3,6 +3,7 @@ package store_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"hegel.dev/go/hegel"
 )
 
 // This catches a directory query that ignores its typo-tolerant lexical
@@ -402,4 +404,138 @@ func TestDirectoryLinearMatcherPreservesAcceptance(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(p, after)
 	}
+}
+
+func TestDirectoryOrganizationScopeIntersectsAndBindsCursor(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	org := mustOrganization(t, st, "Scoped Company")
+	other := mustOrganization(t, st, "Other Company")
+	var members []*store.Person
+	for i := range 3 {
+		person := createDirectoryPerson(t, st, "Same Name", fmt.Sprintf("scoped-%d@example.invalid", i), "friend", "active", "Independent Company")
+		members = append(members, person)
+		_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Source: store.ProvenanceUser})
+		must.NoError(err)
+	}
+	// A second current role must not duplicate the person.
+	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: members[0].ID, OrganizationID: org.ID, Title: new("Advisor"), Source: store.ProvenanceUser})
+	must.NoError(err)
+	createDirectoryPerson(t, st, "Same Name", "outsider@example.invalid", "friend", "active", "Scoped Company")
+	query := store.DirectoryPeopleQuery{OrganizationID: org.ID, Query: "same", Category: "friend", ContactState: "active", Organization: "Scoped Company", Limit: 1}
+	first, err := st.DirectoryPeoplePageContext(ctx, query)
+	must.NoError(err)
+	must.Len(first.People, 1)
+	check.Equal(members[0].ID, first.People[0].ID)
+	check.Equal(members[0].VCardUID, first.People[0].VCardUID)
+	must.NotEmpty(first.NextCursor)
+	query.Cursor, query.OrganizationID = first.NextCursor, other.ID
+	_, err = st.DirectoryPeoplePageContext(ctx, query)
+	must.ErrorIs(err, store.ErrInvalidDirectoryCursor)
+	query.Cursor, query.OrganizationID, query.Organization = "", org.ID, "Other Company"
+	page, err := st.DirectoryPeoplePageContext(ctx, query)
+	must.NoError(err)
+	check.Empty(page.People)
+	_, err = st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: -1})
+	must.ErrorIs(err, store.ErrInvalidDirectoryQuery)
+	// A cursor's anchor must still qualify for this exact organization.
+	employments, err := st.ListEmploymentsContext(ctx, store.EmploymentFilter{PersonID: members[0].ID, OrganizationID: org.ID, CurrentOnly: true})
+	must.NoError(err)
+	for _, employment := range employments {
+		must.NoError(st.DeleteEmploymentContext(ctx, employment.ID, employment.Revision))
+	}
+	query.Cursor, query.Organization = first.NextCursor, "Scoped Company"
+	_, err = st.DirectoryPeoplePageContext(ctx, query)
+	must.ErrorIs(err, store.ErrInvalidDirectoryCursor)
+}
+
+func TestDirectoryOrganizationScopeExcludesInactiveMembership(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	org := mustOrganization(t, st, "Membership Company")
+	for i, action := range []string{"current", "ended", "deleted", "not current"} {
+		person := createDirectoryPerson(t, st, "Member", fmt.Sprintf("membership-%d@example.invalid", i), "friend", "inactive", "Independent Company")
+		input := store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Source: store.ProvenanceUser}
+		if action == "not current" {
+			input.IsCurrent = new(false)
+		}
+		employment, err := st.AddEmploymentContext(ctx, input)
+		must.NoError(err)
+		switch action {
+		case "ended":
+			_, err = st.EndEmploymentContext(ctx, employment.ID, employment.Revision, store.PartialDate{Year: new(2025)})
+		case "deleted":
+			err = st.DeleteEmploymentContext(ctx, employment.ID, employment.Revision)
+		}
+		must.NoError(err)
+	}
+	page, err := st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: org.ID})
+	must.NoError(err)
+	must.Len(page.People, 1)
+	// Retirement and merge IDs are not redirects to active membership.
+	org, err = st.GetOrganizationContext(ctx, org.ID)
+	must.NoError(err)
+	org, err = st.ReplaceOrganizationContext(ctx, org.ID, org.Revision, store.OrganizationInput{Name: org.Name, Kind: org.Kind}, true)
+	must.NoError(err)
+	page, err = st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: org.ID})
+	must.NoError(err)
+	check.Empty(page.People)
+	org, err = st.ReplaceOrganizationContext(ctx, org.ID, org.Revision, store.OrganizationInput{Name: org.Name, Kind: org.Kind}, false)
+	must.NoError(err)
+	survivor := mustOrganization(t, st, "Surviving Company")
+	_, err = st.MergeOrganizationsContext(ctx, survivor.ID, survivor.Revision, org.ID, org.Revision)
+	must.NoError(err)
+	for _, id := range []int64{org.ID, 999999} {
+		page, err = st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: id})
+		must.NoError(err)
+		check.Empty(page.People)
+	}
+}
+
+// On a stable fixture, every generated pagination schedule must enumerate the
+// exact eligible set once, including duplicate names and multiple current roles.
+func TestDirectoryOrganizationScopePaginationProperty(t *testing.T) {
+	must := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	org := mustOrganization(t, st, "Property Company")
+	var want []int64
+	for i := range 9 {
+		person := createDirectoryPerson(t, st, "Same Name", fmt.Sprintf("property-%d@example.invalid", i), "friend", "active", "Independent Company")
+		if i%3 != 0 {
+			want = append(want, person.ID)
+			for role := range 2 {
+				_, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Title: new(fmt.Sprintf("Role %d", role)), Source: store.ProvenanceUser})
+				must.NoError(err)
+			}
+		}
+	}
+	hegel.Test(t, func(ht *hegel.T) {
+		check := assert.New(ht)
+		must := require.New(ht)
+
+		query := store.DirectoryPeopleQuery{OrganizationID: org.ID, Sort: []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc}[hegel.Draw(ht, hegel.Integers(0, 2))]}
+		var got []int64
+		for pages := 0; ; pages++ {
+			must.Less(pages, len(want)+1, "pagination must terminate")
+			query.Limit = hegel.Draw(ht, hegel.Integers(1, store.MaxDirectoryPeopleLimit))
+			if hegel.Draw(ht, hegel.Booleans()) {
+				query.Limit = hegel.Draw(ht, hegel.Integers(1, len(want)))
+			}
+			page, err := st.DirectoryPeoplePageContext(t.Context(), query)
+			must.NoError(err)
+			got = append(got, directoryPersonIDs(page.People)...)
+			query.Cursor = page.NextCursor
+			if query.Cursor == "" {
+				break
+			}
+		}
+		check.ElementsMatch(want, got)
+	}, hegel.WithTestCases(2048), hegel.WithDatabase(""))
 }

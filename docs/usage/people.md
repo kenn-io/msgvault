@@ -202,6 +202,42 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 
 `person list` continues to show the full unpaginated profile collection. Its `--json` output remains an array of profiles.
 
+### Find someone within a company
+
+Resolve the company first, then use its numeric organization ID:
+
+```bash
+msgvault organization list --query "Example Cooperative" --json
+msgvault person directory --organization-id 3 --category colleague --limit 25 --json
+msgvault person directory --organization-id 3 --query "Alex Example" --json
+```
+
+Organization lookup matches canonical names and current saved name aliases by
+prefix. Multiple organizations can share an alias; select the intended ID
+rather than the first result. `--organization-id` selects only saved people
+with current curated employment at that active organization. An unknown,
+retired, or merged organization ID returns no members. Ended employment is
+excluded. Resolve the active organization again after an organization merge.
+
+`--organization` matches the current canonical organization name instead of its
+ID. `--category`, `--contact-state active|inactive`, and the other directory
+filters intersect. Contact state describes archived contact activity, not
+employment status. `--limit` accepts 1–100. Follow every `next_cursor` with the
+same filters to enumerate matching saved people. This is not a census of all
+employees: unpromoted identities and missing employment records are outside
+this directory. People with the same name keep separate IDs and vCard UIDs.
+
+Exact organization-ID filters require daemon API schema 3.49.0 or newer. The
+CLI refuses an older or unknown schema before sending a scoped request.
+
+In MCP, call `list_organizations` with `query`, then `list_directory_people`
+with the chosen `organization_id`. Follow organization `has_more`/`offset`
+and directory `next_cursor`; pages reflect live data between requests. Read a
+selected person's current fields with `get_person_profile`. Attribute values
+retain their `source` and `active_from` provenance. A current profile value is
+not a report of competing claims, resolution decisions, or source evidence.
+Private Notes remain in the separate `get_person_notes` tool.
+
 ## Keep private notes
 
 In **People → Details**, use **More fields** to add notes, pronunciation, and custom fields. Manage field definitions, connection types, and organizations in **Settings → People**. The header's **More actions → History** includes replaced values and merge history.
@@ -277,7 +313,22 @@ employment, relationships, and eligible searchable attributes. It does not
 search your messages or private Notes. Sensitive attributes and `how_we_met`
 are excluded. Search text and the curated person documents go to the configured
 embedding endpoint. `--limit` defaults to 20 and accepts 1–100; `--json` includes
-person IDs and scores.
+person IDs, canonical vCard UIDs, names, and scores.
+
+Use `person search "needs equipment" --organization-id 3 --json` to restrict
+ranked matches to the selected organization's current employees. In MCP, use
+`search_semantic_people` with `query`, `organization_id`, and `limit`. This tool
+sends the query to the configured embedding provider under the existing separate
+people-embedding consent. Tool availability reports daemon support; it does not
+mean the provider, consent, or index is ready. Missing consent, incomplete or
+rejected profile coverage, and stale indexes remain explicit errors.
+
+Semantic ranking is non-exhaustive, even when the index covers every supported
+current profile document. It excludes observations, private Notes, sensitive
+attributes, historical values, and unsupported attribute types. Use the exact
+directory for membership enumeration and `get_person_profile` for current
+values and provenance. Observation and contested-ledger readers are separate
+work; semantic profile search does not provide them.
 
 ## Find files related to a person
 

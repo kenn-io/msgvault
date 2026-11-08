@@ -44,6 +44,7 @@ type DirectoryPeopleQuery struct {
 	ContactState      string     `json:"contact_state,omitempty"`
 	Category          string     `json:"category,omitempty"`
 	Organization      string     `json:"organization,omitempty"`
+	OrganizationID    int64      `json:"organization_id,omitzero"`
 	PrimaryChannel    string     `json:"primary_channel,omitempty"`
 	LastContactAfter  *time.Time `json:"last_contact_after,omitempty"`
 	LastContactBefore *time.Time `json:"last_contact_before,omitempty"`
@@ -81,6 +82,7 @@ type normalizedDirectoryPeopleQuery struct {
 	contactState      string
 	category          string
 	organization      string
+	organizationID    int64
 	primaryChannel    string
 	lastContactAfter  string
 	lastContactBefore string
@@ -134,8 +136,12 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 		contactState:   normalizeDirectoryText(query.ContactState),
 		category:       normalizeDirectoryText(query.Category),
 		organization:   normalizeDirectoryText(query.Organization),
+		organizationID: query.OrganizationID,
 		primaryChannel: normalizeDirectoryText(query.PrimaryChannel),
 		sort:           strings.TrimSpace(query.Sort),
+	}
+	if normalized.organizationID < 0 {
+		return normalized, fmt.Errorf("%w: organization ID must not be negative", ErrInvalidDirectoryQuery)
 	}
 	if normalized.sort == "" {
 		normalized.sort = DirectoryPeopleSortName
@@ -176,13 +182,14 @@ func normalizeDirectoryPeopleQuery(query DirectoryPeopleQuery) (normalizedDirect
 		ContactState      string `json:"contact_state"`
 		Category          string `json:"category"`
 		Organization      string `json:"organization"`
+		OrganizationID    int64  `json:"organization_id,omitzero"`
 		PrimaryChannel    string `json:"primary_channel"`
 		LastContactAfter  string `json:"last_contact_after"`
 		LastContactBefore string `json:"last_contact_before"`
 		Sort              string `json:"sort"`
 	}{
 		Query: normalized.query, Address: normalized.address, ContactState: normalized.contactState,
-		Category: normalized.category, Organization: normalized.organization,
+		Category: normalized.category, Organization: normalized.organization, OrganizationID: normalized.organizationID,
 		PrimaryChannel:   normalized.primaryChannel,
 		LastContactAfter: normalized.lastContactAfter, LastContactBefore: normalized.lastContactBefore,
 		Sort: normalized.sort,
@@ -257,7 +264,7 @@ func (s *Store) directoryPeoplePageContext(
 // each chunk that leaves the page short. Hydration stays separate so
 // current categories and employments are never read outside that window.
 func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query normalizedDirectoryPeopleQuery, after *directoryPeopleCursor) ([]directoryPersonCandidate, error) {
-	querySQL, args := directoryCandidateProjectionSQL(query)
+	querySQL, args := s.directoryCandidateProjectionSQL(query)
 	var rawAfter *directoryRawCandidateCursor
 	if after != nil {
 		rawAfter = &directoryRawCandidateCursor{quality: after.Quality, sortKey: after.SortKey, orderName: after.OrderKey, personID: after.PersonID}
@@ -294,7 +301,7 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 	return verified, nil
 }
 
-func directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQuery) (string, []any) {
+func (s *Store) directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQuery) (string, []any) {
 	where, filterArgs := []string{}, []any{}
 	if query.contactState != "" {
 		where, filterArgs = append(where, "dp.contact_state = ?"), append(filterArgs, query.contactState)
@@ -313,6 +320,14 @@ func directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQuery) (stri
 	}
 	if query.organization != "" {
 		where, filterArgs = append(where, `EXISTS (SELECT 1 FROM directory_person_filters filter WHERE filter.person_id = dp.person_id AND filter.filter_kind = 'organization' AND filter.value_key = ?)`), append(filterArgs, directoryKey(query.organization))
+	}
+	if query.organizationID > 0 {
+		where = append(where, `EXISTS (SELECT 1 FROM employments employment
+			JOIN organizations organization ON organization.id = employment.organization_id
+			WHERE employment.person_id = dp.person_id AND employment.organization_id = ?
+			AND `+s.dialect.BoolTrueExpr("employment.is_current")+`
+			AND organization.retired_at IS NULL AND organization.merged_into_id IS NULL)`)
+		filterArgs = append(filterArgs, query.organizationID)
 	}
 	filterSQL := "1 = 1"
 	if len(where) > 0 {
@@ -344,7 +359,7 @@ func (s *Store) directoryCursorAnchorTx(
 	query normalizedDirectoryPeopleQuery,
 	personID int64,
 ) (directoryPersonCandidate, error) {
-	querySQL, args := directoryCandidateProjectionSQL(query)
+	querySQL, args := s.directoryCandidateProjectionSQL(query)
 	querySQL = `SELECT person_id, match_quality, sort_key, order_key FROM (` + querySQL + `) candidate WHERE person_id = ?`
 	args = append(args, personID)
 	candidates, err := s.selectDirectoryRawCandidateChunkTx(ctx, tx, querySQL, args, nil, 1, query.sort)

@@ -48,6 +48,8 @@ type catalogCapabilities struct {
 	mediaSearch     bool
 	people          bool
 	directoryPeople bool
+	semanticPeople  bool
+	organizations   bool
 	chatDiscovery   bool
 	visualSearch    bool
 	embeddingStatus bool
@@ -139,6 +141,8 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		mediaSearch:     opts.MediaSearcher != nil,
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
+		semanticPeople:  opts.SemanticPeopleBackend != nil,
+		organizations:   opts.OrganizationBackend != nil,
 		chatDiscovery:   opts.ChatDiscoveryBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
 		embeddingStatus: opts.EmbeddingStatus != nil,
@@ -265,6 +269,8 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		listIdentityMatchesDefinition(),
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
+		searchSemanticPeopleDefinition(),
+		listOrganizationsDefinition(),
 		findChatDefinition(),
 		listSavedViewsDefinition(nil),
 		querySQLDefinition(),
