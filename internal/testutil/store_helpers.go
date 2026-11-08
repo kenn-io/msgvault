@@ -278,6 +278,6 @@ FOR EACH ROW EXECUTE FUNCTION reject_message_insert();`
 		stmt = `CREATE TRIGGER reject_message_insert BEFORE INSERT ON messages
 WHEN ` + cond + ` BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END`
 	}
-	_, err := st.DB().Exec(stmt)
+	_, err := st.DB().ExecContext(t.Context(), stmt)
 	require.NoError(t, err)
 }

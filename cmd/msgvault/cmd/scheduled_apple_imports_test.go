@@ -323,7 +323,7 @@ func scheduledIMessageDateClear(t *testing.T, failAfterClear bool) {
 	chat, err := sql.Open("sqlite3", chatPath+"?_journal_mode=WAL")
 	require.NoError(err)
 	t.Cleanup(func() { _ = chat.Close() })
-	_, err = chat.Exec(`
+	_, err = chat.ExecContext(t.Context(), `
  CREATE TABLE message (guid TEXT, text TEXT, attributedBody BLOB, date INTEGER,
   is_from_me INTEGER, service TEXT, cache_has_attachments INTEGER, handle_id INTEGER);
  CREATE TABLE attachment (filename TEXT);
@@ -366,14 +366,14 @@ func scheduledIMessageDateClear(t *testing.T, failAfterClear bool) {
 		require.NoError(err)
 		defer func() { _ = analytics.Close() }()
 		var count int
-		require.NoError(analytics.QueryRow(`
+		require.NoError(analytics.QueryRowContext(t.Context(), `
  SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)
  WHERE source_message_id = ?`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet"), sourceMessageID).Scan(&count))
 		return count
 	}
 	require.Equal(1, cachedMessages("1"), "initial cache should contain the dated message")
 
-	_, err = chat.Exec(`UPDATE message SET date = ? WHERE ROWID = 1`, int64(math.MaxInt64))
+	_, err = chat.ExecContext(t.Context(), `UPDATE message SET date = ? WHERE ROWID = 1`, int64(math.MaxInt64))
 	require.NoError(err)
 
 	// Stand in for the build subprocess with the real full build.
@@ -392,7 +392,7 @@ func scheduledIMessageDateClear(t *testing.T, failAfterClear bool) {
 	if failAfterClear {
 		// The import clears the date, then fails when it recomputes conversation
 		// stats at the end of the run.
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations
  BEGIN SELECT RAISE(ABORT, 'synthetic stats failure'); END`)
 		require.NoError(err)
 	}
@@ -433,7 +433,7 @@ func TestScheduledIMessageUnchangedReimportNeedsNoRebuild(t *testing.T) {
 	chat, err := sql.Open("sqlite3", chatPath+"?_journal_mode=WAL")
 	require.NoError(err)
 	t.Cleanup(func() { _ = chat.Close() })
-	_, err = chat.Exec(`
+	_, err = chat.ExecContext(t.Context(), `
  CREATE TABLE message (guid TEXT, text TEXT, attributedBody BLOB, date INTEGER,
   is_from_me INTEGER, service TEXT, cache_has_attachments INTEGER, handle_id INTEGER);
  CREATE TABLE attachment (filename TEXT);
@@ -486,7 +486,7 @@ func TestScheduledIMessageUnchangedReimportNeedsNoRebuild(t *testing.T) {
 	assert.Equal(1, buildCalls, "an unchanged reimport must not invoke the cache builder")
 	assert.False(cacheNeedsBuildContext(ctx, dbPath, cfg.AnalyticsDir()).FullRebuild, "unchanged sender rows must leave the published cache current")
 
-	_, err = chat.Exec(`UPDATE message SET text = 'one, edited' WHERE ROWID = 1`)
+	_, err = chat.ExecContext(t.Context(), `UPDATE message SET text = 'one, edited' WHERE ROWID = 1`)
 	require.NoError(err)
 	require.NoError(runScheduledIMessage(ctx, st, imessageCfg))
 	assert.Equal(2, buildCalls, "a changed message requires a full rebuild")
@@ -501,7 +501,7 @@ func TestScheduledWhatsAppFreshnessAndEditedCache(t *testing.T) {
 	chat, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	defer func() { _ = chat.Close() }()
-	_, err = chat.Exec(`CREATE TABLE ZWACHATSESSION (Z_PK INTEGER PRIMARY KEY, ZCONTACTJID TEXT, ZPARTNERNAME TEXT, ZSESSIONTYPE INTEGER, ZLASTMESSAGEDATE TIMESTAMP);
+	_, err = chat.ExecContext(t.Context(), `CREATE TABLE ZWACHATSESSION (Z_PK INTEGER PRIMARY KEY, ZCONTACTJID TEXT, ZPARTNERNAME TEXT, ZSESSIONTYPE INTEGER, ZLASTMESSAGEDATE TIMESTAMP);
  CREATE TABLE ZWAGROUPMEMBER (Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INTEGER, ZMEMBERJID TEXT, ZCONTACTNAME TEXT, ZFIRSTNAME TEXT, ZISADMIN INTEGER);
  CREATE TABLE ZWAMESSAGE (Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INTEGER, ZGROUPMEMBER INTEGER, ZSTANZAID TEXT, ZISFROMME INTEGER, ZMESSAGEDATE TIMESTAMP, ZTEXT TEXT, ZMESSAGETYPE INTEGER, ZFROMJID TEXT);
  INSERT INTO ZWACHATSESSION VALUES (1, '15555550101@s.whatsapp.net', 'Test Peer', 0, 700000001);
@@ -539,7 +539,7 @@ func TestScheduledWhatsAppFreshnessAndEditedCache(t *testing.T) {
 	assert.True(sources[0].LastSyncAt.Valid)
 	cursor := sources[0].SyncCursor
 	require.True(cursor.Valid, "the importer persists its Apple chat markers")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), sources[0].ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), sources[0].ID)
 	require.NoError(err)
 	require.NoError(runScheduledWhatsAppApple(ctx, st, source))
 	sources, err = st.ListSources("whatsapp")
@@ -553,7 +553,7 @@ func TestScheduledWhatsAppFreshnessAndEditedCache(t *testing.T) {
 	assert.NotEmpty(before.Chats)
 	assert.Equal(before.Chats, after.Chats, "freshness must preserve the chat markers")
 	assert.Equal(1, buildCalls, "an unchanged run leaves the cache current")
-	_, err = chat.Exec(`UPDATE ZWAMESSAGE SET ZTEXT = 'edited text with more bytes', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
+	_, err = chat.ExecContext(t.Context(), `UPDATE ZWAMESSAGE SET ZTEXT = 'edited text with more bytes', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1;
  INSERT INTO ZWAMESSAGE VALUES (2, 1, NULL, 'addition', 0, 700000002, 'new text', 0, '15555550101@s.whatsapp.net', 1);
  UPDATE ZWACHATSESSION SET ZLASTMESSAGEDATE = 700000002 WHERE Z_PK = 1;`)
 	require.NoError(err)
@@ -564,7 +564,7 @@ func TestScheduledWhatsAppFreshnessAndEditedCache(t *testing.T) {
 	defer func() { _ = analytics.Close() }()
 	var snippet string
 	var size int64
-	require.NoError(analytics.QueryRow(`SELECT snippet, size_estimate FROM read_parquet(?, hive_partitioning=true) WHERE source_message_id = 'original'`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&snippet, &size))
+	require.NoError(analytics.QueryRowContext(t.Context(), `SELECT snippet, size_estimate FROM read_parquet(?, hive_partitioning=true) WHERE source_message_id = 'original'`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&snippet, &size))
 	assert.Equal("edited text with more bytes", snippet)
 	assert.Equal(int64(len("edited text with more bytes")), size)
 }
@@ -578,7 +578,7 @@ func TestScheduledWhatsAppPersistsDuplicateWarnings(t *testing.T) {
 			chat, err := sql.Open("sqlite3", path)
 			require.NoError(err)
 			defer func() { _ = chat.Close() }()
-			_, err = chat.Exec(`CREATE TABLE ZWACHATSESSION (Z_PK INTEGER PRIMARY KEY, ZCONTACTJID TEXT, ZPARTNERNAME TEXT, ZSESSIONTYPE INTEGER, ZLASTMESSAGEDATE TIMESTAMP);
+			_, err = chat.ExecContext(t.Context(), `CREATE TABLE ZWACHATSESSION (Z_PK INTEGER PRIMARY KEY, ZCONTACTJID TEXT, ZPARTNERNAME TEXT, ZSESSIONTYPE INTEGER, ZLASTMESSAGEDATE TIMESTAMP);
  CREATE TABLE ZWAGROUPMEMBER (Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INTEGER, ZMEMBERJID TEXT, ZCONTACTNAME TEXT, ZFIRSTNAME TEXT, ZISADMIN INTEGER);
  CREATE TABLE ZWAMESSAGE (Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INTEGER, ZGROUPMEMBER INTEGER, ZSTANZAID TEXT, ZISFROMME INTEGER, ZMESSAGEDATE TIMESTAMP, ZTEXT TEXT, ZMESSAGETYPE INTEGER, ZFROMJID TEXT);
  INSERT INTO ZWACHATSESSION VALUES (1, '15555550101@s.whatsapp.net', 'Test Peer', 0, 700000001);
@@ -588,12 +588,12 @@ func TestScheduledWhatsAppPersistsDuplicateWarnings(t *testing.T) {
  CREATE TABLE Z_METADATA (Z_VERSION INTEGER PRIMARY KEY, Z_UUID VARCHAR(255), Z_PLIST BLOB);
  INSERT INTO Z_METADATA VALUES (1, 'synthetic-store', NULL);`)
 			require.NoError(err)
-			_, err = chat.Exec(`INSERT INTO ZWAMESSAGE VALUES
+			_, err = chat.ExecContext(t.Context(), `INSERT INTO ZWAMESSAGE VALUES
  (2, 1, NULL, 'duplicate', 0, 700000002, 'duplicate one', 0, '15555550101@s.whatsapp.net', 1),
  (3, 1, NULL, 'duplicate', 0, 700000003, 'duplicate two', 0, '15555550101@s.whatsapp.net', 1)`)
 			require.NoError(err)
 			if onlyDuplicates {
-				_, err = chat.Exec(`DELETE FROM ZWAMESSAGE WHERE Z_PK = 1`)
+				_, err = chat.ExecContext(t.Context(), `DELETE FROM ZWAMESSAGE WHERE Z_PK = 1`)
 				require.NoError(err)
 			}
 			cfg := config.NewDefaultConfig()
@@ -610,12 +610,12 @@ func TestScheduledWhatsAppPersistsDuplicateWarnings(t *testing.T) {
 			require.NoError(runScheduledWhatsAppApple(ctx, st, source))
 			var status string
 			var errorsCount, messages int
-			require.NoError(st.DB().QueryRow(`SELECT status, errors_count FROM sync_runs`).Scan(&status, &errorsCount))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status, errors_count FROM sync_runs`).Scan(&status, &errorsCount))
 			assert.Equal("completed", status)
 			assert.Equal(1, errorsCount, "duplicate warnings must survive in source status")
 			assert.Contains(logs.String(), "level=WARN")
 			assert.Contains(logs.String(), "skipping 2 Apple text messages whose stanza IDs are duplicated")
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 			if onlyDuplicates {
 				assert.Zero(messages)
 			} else {
