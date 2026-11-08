@@ -583,3 +583,39 @@ it('waits to save the organization until one of its fields changes', async () =>
   await fireEvent.input(screen.getByRole('textbox', { name: 'Organization domain' }), { target: { value: 'new.example' } });
   expect(screen.getByRole('button', { name: 'Save organization' })).toHaveProperty('disabled', false);
 });
+
+it.each(['save', 'delete'] as const)('requires review of a concurrent domain on %s after a core save', async action => {
+  let revision = 1;
+  let stored = organization();
+  const writes: { method: string; tag: string | null }[] = [];
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
+    const tag = `"organization-21-r${revision}"`;
+    if (request.method === 'GET') return Response.json({ ...organizationProfile(revision), organization: stored }, { headers: { ETag: tag } });
+    writes.push({ method: request.method, tag: request.headers.get('If-Match') });
+    if (request.headers.get('If-Match') !== tag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (request.method === 'DELETE') return new Response(null, { status: 204 });
+    stored = { ...stored, ...await request.json(), revision: ++revision };
+    return Response.json(stored, { headers: { ETag: `"organization-21-r${revision}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, Draft alias' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'First name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  stored = { ...stored, primary_domain: 'concurrent.example', revision: ++revision };
+  if (action === 'save') {
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Second name' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  } else {
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete organization…' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  }
+  expect(await screen.findByText('concurrent.example')).toBeDefined();
+  expect(writes[1]).toEqual({ method: action === 'save' ? 'PATCH' : 'DELETE', tag: '"organization-21-r2"' });
+  expect(onDone).not.toHaveBeenCalled();
+  expect(stored.primary_domain).toBe('concurrent.example');
+});
