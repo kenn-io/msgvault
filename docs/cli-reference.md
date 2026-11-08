@@ -5734,3 +5734,25 @@ msgvault import-x <archive-dir>
 Re-imports skip stored messages and retry missing media. See [X DM imports](usage/text-messages.md#import-x)
 for supported layouts, evidence, limits and replay behavior. The source files must
 be on the daemon host; run with `--local` there when using a remote daemon.
+
+## address
+
+Use `msgvault address autocomplete "12 Example"` to request Google Places
+suggestions for a partial address. The command returns JSON with a session
+token, candidates, and attribution. Set `MSGVAULT_GOOGLE_PLACES_API_KEY` in the
+command's environment. This explicit command sends the entered text and any
+location hints to Google; it does not read or change the archive.
+
+Use `--session-token` to reuse the returned token while refining the same
+query. Optional `--language`, `--region`, `--limit` (1–5), and the combination
+`--lat`, `--lng`, `--radius` (metres) refine results. Choose a candidate before
+running `msgvault address select <place-id> --session-token <token>`. The select
+command returns address-only Place Details as JSON and ends the session. Start
+a new session for a new selection. Suggestions and selected details are not
+address validation or an archive write. Display Google Maps attribution with
+suggestions and follow Google's Places display and attribution policies.
+
+Google bills Places separately from the free GoPlaces software. Autocomplete
+and Details requests have separate free monthly usage caps; incomplete or
+abandoned sessions are charged per request. Check current [Google pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+and [session pricing](https://developers.google.com/maps/documentation/places/web-service/session-pricing).
