@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -208,6 +209,26 @@ func TestShellQuote(t *testing.T) {
 			assert.Equal(t, tt.want, got, "shellQuote(%q)", tt.input)
 		})
 	}
+}
+
+func TestFormatShellCommandPowerShellArguments(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell is required to exercise Windows argument parsing")
+	}
+	args := []string{"msgvault", "--home", `C:\archives\sample's folder`, "daemon", "restart"}
+	command := FormatShellCommand("windows", args...)
+	script := `$tokens = $null; $errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseInput($env:MSGVAULT_TEST_COMMAND, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw $errors[0] }
+@($ast.EndBlock.Statements[0].PipelineElements[0].CommandElements | ForEach-Object { $_.Value }) | ConvertTo-Json -Compress`
+	cmd := exec.CommandContext(t.Context(), pwsh, "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = append(os.Environ(), "MSGVAULT_TEST_COMMAND="+command)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	var got []string
+	require.NoError(t, json.Unmarshal(output, &got))
+	assert.Equal(t, args, got)
 }
 
 func TestSanitizeEmail(t *testing.T) {

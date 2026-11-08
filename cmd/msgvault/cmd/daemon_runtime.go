@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -653,10 +654,7 @@ func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRun
 	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
 		options := optionsFromContext(ctx)
 		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-		for i := 1; i < len(args); i += 2 {
-			args[i] = oauth.ShellQuote(args[i])
-		}
-		restart := strings.Join(append([]string{"msgvault"}, args...), " ")
+		restart := oauth.FormatShellCommand(runtime.GOOS, append([]string{"msgvault"}, args...)...)
 		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s daemon restart to use this version.\n", rt.Record.Version, Version, restart)
 	}
 }
