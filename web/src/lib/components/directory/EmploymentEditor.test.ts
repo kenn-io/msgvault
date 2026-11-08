@@ -63,6 +63,23 @@ it.each(['first job', 'existing primary', 'no primary'])('sends primary only whe
   else expect(body).not.toHaveProperty('is_primary');
 });
 
+it('offers primary job when an existing current job is primary', async () => {
+  let body: Record<string, unknown> | undefined;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'POST') { body = await request.json(); return Response.json(employment()); }
+    return Response.json({ employments: [], organizations: [organization()] });
+  });
+  controller.organizations = [organization()];
+  controller.employments = [employment(12, 1, { is_primary: true })];
+  render(EmploymentEditor, { controller, personID: 7 });
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Primary job' }));
+  await fireEvent.keyDown(screen.getByRole('button', { name: /^Organization:/ }), { key: 'ArrowDown' });
+  await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+  await waitFor(() => expect(body).toMatchObject({ is_primary: true }));
+});
+
 it('ends a primary job from Edit without overriding the stored primary rule', async () => {
   let body: Record<string, unknown> | undefined;
   const job = employment(11, 1, { is_primary: true });

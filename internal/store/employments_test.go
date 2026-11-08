@@ -51,6 +51,24 @@ func TestConcurrentAndHistoricalEmploymentsStayIndependentlyQueryable(t *testing
 	assert.Equal("2018-06", byOrganization[0].EndDate.String())
 }
 
+func TestCreatingPrimaryEmploymentReplacesExistingPrimary(t *testing.T) {
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	person := mustPromotedPerson(ctx, t, st, "primary@example.com", "primary")
+	first := mustOrganization(t, st, "First Example")
+	second := mustOrganization(t, st, "Second Example")
+	previous, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: first.ID, Source: store.ProvenanceUser, IsPrimary: new(true)})
+	require.NoError(t, err)
+	created, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: second.ID, Source: store.ProvenanceUser, IsPrimary: new(true)})
+	require.NoError(t, err)
+	assert.True(t, created.IsPrimary)
+	demoted, err := st.GetEmploymentContext(ctx, previous.ID)
+	require.NoError(t, err)
+	assert.False(t, demoted.IsPrimary)
+	assert.True(t, demoted.IsCurrent)
+	assert.Equal(t, previous.Revision+1, demoted.Revision)
+}
+
 func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
