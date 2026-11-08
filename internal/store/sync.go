@@ -1517,6 +1517,27 @@ func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID in
 	return run, err
 }
 
+// GetLatestStartedSyncContext is GetLatestSyncContext without not-started
+// attempts. Those wrote nothing, so they cannot invalidate an importer's
+// incremental state.
+func (s *Store) GetLatestStartedSyncContext(ctx context.Context, sourceID, excludeID int64) (*SyncRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after, request_fingerprint
+		FROM sync_runs
+		WHERE source_id = ? AND id <> ? AND sync_type <> ?
+		ORDER BY started_at DESC, id DESC
+		LIMIT 1
+	`, sourceID, excludeID, SyncTypeNotStarted)
+
+	run, err := scanSyncRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("latest started sync for source %d: %w", sourceID, ErrSyncRunNotFound)
+	}
+	return run, err
+}
+
 // GetLatestCheckpointedSync returns the newest running, paused, failed or
 // cancelled checkpoint since the source's last completed run. A newer
 // uncheckpointed interruption does not hide recoverable state, while completion

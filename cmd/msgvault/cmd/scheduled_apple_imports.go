@@ -142,7 +142,8 @@ func recordNotStartedAttempt(
 	if src == nil || ctx.Err() != nil || latestSyncRunID(ctx, s, src) != previousRunID {
 		return
 	}
-	if err := s.RecordNotStartedSync(ctx, src.ID, cause.Error()); err != nil {
+	// Finish the record once begun, so a stop request cannot leave it running.
+	if err := s.RecordNotStartedSync(context.WithoutCancel(ctx), src.ID, cause.Error()); err != nil {
 		logger.Warn("could not record failed scheduled import", "source_id", src.ID, "error", err)
 	}
 }
