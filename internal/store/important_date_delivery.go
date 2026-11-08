@@ -71,16 +71,24 @@ func (s *Store) AdvanceImportantDateDeliveryContext(ctx context.Context, key str
 	if !valid || strings.TrimSpace(key) == "" || ((to == ImportantDateIssueCreated || from == ImportantDateIssueCreated || from == ImportantDateNotifyInFlight) && strings.TrimSpace(issueUID) == "") {
 		return false, ErrImportantDateTransition
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE important_date_deliveries SET state = ?, issue_uid = ?
-		WHERE occurrence_key = ? AND state = ? AND (issue_uid = '' OR issue_uid = ?)`, to, issueUID, key, from, issueUID)
-	if err != nil {
-		return false, fmt.Errorf("advance important-date delivery: %w", err)
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("count important-date transitions: %w", err)
-	}
-	return count == 1, nil
+	var changed bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE important_date_deliveries SET state = ?, issue_uid = ?
+			WHERE occurrence_key = ? AND state = ? AND (issue_uid = '' OR issue_uid = ?)`, to, issueUID, key, from, issueUID)
+		if err != nil {
+			return fmt.Errorf("advance important-date delivery: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count important-date transitions: %w", err)
+		}
+		changed = count == 1
+		return nil
+	})
+	return changed, err
 }
 
 // ImportantDateDeliveryContext reads a retained occurrence without changing it.
@@ -146,4 +154,31 @@ func (s *Store) ListImportantDateDeliveriesContext(ctx context.Context) ([]Impor
 		return nil, fmt.Errorf("list important-date deliveries: %w", err)
 	}
 	return result, nil
+}
+
+// ResolveImportantDateDeliveryContext records an operator's reconciliation of
+// an unresolved attempt. It never sends a request or makes a claim retryable.
+func (s *Store) ResolveImportantDateDeliveryContext(ctx context.Context, key string, resolution ImportantDateDeliveryState, issueUID string) (bool, error) {
+	if strings.TrimSpace(key) == "" || (resolution != ImportantDateDelivered && resolution != ImportantDateCancelled) || (resolution == ImportantDateDelivered && strings.TrimSpace(issueUID) == "") {
+		return false, ErrImportantDateTransition
+	}
+	var changed bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE important_date_deliveries SET state = ?, issue_uid = CASE WHEN issue_uid = '' THEN ? ELSE issue_uid END
+			WHERE occurrence_key = ? AND state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')
+			AND (issue_uid = '' OR ? = '' OR issue_uid = ?)`, resolution, issueUID, key, issueUID, issueUID)
+		if err != nil {
+			return fmt.Errorf("resolve important-date delivery: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count resolved important-date deliveries: %w", err)
+		}
+		changed = count == 1
+		return nil
+	})
+	return changed, err
 }

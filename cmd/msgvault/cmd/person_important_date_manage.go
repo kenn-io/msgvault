@@ -197,6 +197,32 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		return err
 	}}
 	withdraw.Flags().Int64Var(&withdrawRevision, "revision", 0, "Current revision from list")
-	group.AddCommand(add, list, consent, status, preview, update, withdraw)
+	var resolution, issueUID string
+	resolve := &cobra.Command{Use: "resolve <occurrence-key>", Short: "Record the result of an inspected uncertain delivery", Long: "After inspecting the issue and inbox, mark an unresolved occurrence delivered or cancelled. This never resends a request.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration unavailable")
+		}
+		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		changed, err := st.ResolveImportantDateDeliveryContext(cmd.Context(), args[0], store.ImportantDateDeliveryState(resolution), issueUID)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errors.New("occurrence is not unresolved or issue identity differs")
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Delivery resolved")
+		return err
+	}}
+	resolve.Flags().StringVar(&resolution, "resolution", "", "delivered or cancelled")
+	resolve.Flags().StringVar(&issueUID, "issue", "", "Inspected Kata issue UID (required for delivered)")
+	group.AddCommand(add, list, consent, status, preview, update, withdraw, resolve)
 	return group
 }

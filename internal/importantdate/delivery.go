@@ -15,6 +15,7 @@ import (
 
 type DeliveryStore interface {
 	ClaimImportantDateDeliveryContext(context.Context, string, string) (bool, error)
+	ImportantDateDeliveryContext(context.Context, string) (store.ImportantDateDeliveryState, string, error)
 	AdvanceImportantDateDeliveryContext(context.Context, string, store.ImportantDateDeliveryState, store.ImportantDateDeliveryState, string) (bool, error)
 	WithImportantDateConsentContext(context.Context, string, string, string, func(context.Context) error) (bool, error)
 }
@@ -52,6 +53,13 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 	var issue taskclient.KataTask
 	var reused bool
 	active, err := s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.Project, input.Recipient, func(fenced context.Context) error {
+		state, _, err := s.Store.ImportantDateDeliveryContext(fenced, input.OccurrenceKey)
+		if err != nil {
+			return err
+		}
+		if state != store.ImportantDateIssueInFlight {
+			return errDeliveryIneligible
+		}
 		valid, err := revalidate(fenced)
 		if err != nil {
 			return err
@@ -93,6 +101,13 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 		return err
 	}
 	active, err = s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.Project, input.Recipient, func(fenced context.Context) error {
+		state, issueUID, err := s.Store.ImportantDateDeliveryContext(fenced, input.OccurrenceKey)
+		if err != nil {
+			return err
+		}
+		if state != store.ImportantDateNotifyInFlight || issueUID != issue.UID {
+			return errDeliveryIneligible
+		}
 		valid, err := revalidate(fenced)
 		if err != nil {
 			return err

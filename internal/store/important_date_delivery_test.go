@@ -78,3 +78,24 @@ func TestImportantDatePendingAcrossYears(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, pending)
 }
+
+func TestImportantDateOperatorResolutionNeverReclaims(t *testing.T) {
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	key := "person/example:birthday:2027"
+	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, key, "fingerprint-example")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	changed, err := st.AdvanceImportantDateDeliveryContext(ctx, key, store.ImportantDateClaimed, store.ImportantDateIssueInFlight, "")
+	require.NoError(t, err)
+	require.True(t, changed)
+	changed, err = st.ResolveImportantDateDeliveryContext(ctx, key, store.ImportantDateDelivered, "")
+	assert.Error(t, err)
+	assert.False(t, changed)
+	changed, err = st.ResolveImportantDateDeliveryContext(ctx, key, store.ImportantDateDelivered, "issue-example")
+	require.NoError(t, err)
+	assert.True(t, changed)
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, key, "fingerprint-example")
+	require.NoError(t, err)
+	assert.False(t, claimed)
+}

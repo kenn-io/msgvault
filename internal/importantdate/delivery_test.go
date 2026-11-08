@@ -12,9 +12,11 @@ import (
 )
 
 type deliveryStoreFake struct {
-	claimed bool
-	state   store.ImportantDateDeliveryState
-	consent bool
+	claimed               bool
+	state                 store.ImportantDateDeliveryState
+	consent               bool
+	resolveBeforeDispatch bool
+	issueUID              string
 }
 
 func (f *deliveryStoreFake) ClaimImportantDateDeliveryContext(context.Context, string, string) (bool, error) {
@@ -25,16 +27,23 @@ func (f *deliveryStoreFake) ClaimImportantDateDeliveryContext(context.Context, s
 	f.state = store.ImportantDateClaimed
 	return true, nil
 }
-func (f *deliveryStoreFake) AdvanceImportantDateDeliveryContext(_ context.Context, _ string, from, to store.ImportantDateDeliveryState, _ string) (bool, error) {
+func (f *deliveryStoreFake) AdvanceImportantDateDeliveryContext(_ context.Context, _ string, from, to store.ImportantDateDeliveryState, issue string) (bool, error) {
 	if f.state != from {
 		return false, nil
 	}
 	f.state = to
+	f.issueUID = issue
 	return true, nil
+}
+func (f *deliveryStoreFake) ImportantDateDeliveryContext(context.Context, string) (store.ImportantDateDeliveryState, string, error) {
+	return f.state, f.issueUID, nil
 }
 func (f *deliveryStoreFake) WithImportantDateConsentContext(ctx context.Context, _, _, _ string, dispatch func(context.Context) error) (bool, error) {
 	if !f.consent {
 		return false, nil
+	}
+	if f.resolveBeforeDispatch {
+		f.state = store.ImportantDateCancelled
 	}
 	return true, dispatch(ctx)
 }
@@ -91,5 +100,15 @@ func TestDeliveryDoesNotRenotifyExistingIssue(t *testing.T) {
 	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
 	require.NoError(t, err)
 	assert.Equal(t, store.ImportantDateCancelled, st.state)
+	assert.Zero(t, kata.notifications)
+}
+
+func TestDeliveryStopsIfOperatorResolvedBeforeDispatch(t *testing.T) {
+	st := &deliveryStoreFake{consent: true, resolveBeforeDispatch: true}
+	kata := &deliveryKataFake{}
+	service := DeliveryService{Store: st, Kata: kata}
+	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	require.NoError(t, err)
+	assert.Zero(t, kata.creates)
 	assert.Zero(t, kata.notifications)
 }

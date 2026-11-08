@@ -205,7 +205,7 @@ When enabled, set `private_destination = true`, an explicit Kata project and rec
 
 `use_cadence_presets` explicitly maps contact-frequency values 21, 60, 180, and 365 days to A, B, C, and D. It does not infer importance from other intervals. Custom and unassigned values are excluded. Current derived, incomplete, conflicting, and non-Gregorian dates are skipped. A linked child or recorded dependent or pet inherits an eligible parent's tier, but needs its own consent. Merged and split identities are quarantined pending reconciliation.
 
-The job sends no greetings and uses no model. It creates a generic preparation issue and a native inbox request containing subject identity only after consent. It retains uncertain delivery states and does not retry them automatically. The current status command lists retained states; operator reconciliation for uncertain outcomes and date changes remains manual.
+The job sends no greetings and uses no model. It creates a generic preparation issue and a native inbox request containing subject identity only after consent. It retains uncertain delivery states and does not retry them automatically. The status command lists retained states. After inspecting an uncertain outcome, use `person important-date resolve` to record a delivered or cancelled result without resending. A changed date remains quarantined across years pending further reconciliation.
 
 ## People sweep inference
 
