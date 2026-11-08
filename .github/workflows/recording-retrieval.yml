@@ -87,8 +87,8 @@ jobs:
         run: >-
           go test -tags 'fts5 sqlite_vec' -timeout 15m
           ./internal/docbankmedia ./internal/api ./internal/daemonclient ./internal/mcp
-          ./cmd/msgvault/cmd ./internal/beeper ./internal/recordingref
-          -run 'TestRecordingSearch|TestMediaSearch|TestMessageRecordings|TestMedia|TestSearchMedia|TestStoredMediaProviderMatrix|TestStoredMediaEmailFallback|TestStoredMediaProcessingChoice|TestRecordingReference'
+          ./cmd/msgvault/cmd ./internal/beeper ./internal/recordingref ./pkg/client
+          -run 'TestRecordingSearch|TestMediaSearch|TestMessageRecordings|TestMedia|TestSearchMedia|TestStoredMediaProviderMatrix|TestStoredMediaEmailFallback|TestStoredMediaProcessingChoice|TestRecordingReference|TestGeneratedMediaSearch'
   evaluation:
     runs-on: ubuntu-26.04
     timeout-minutes: 40
