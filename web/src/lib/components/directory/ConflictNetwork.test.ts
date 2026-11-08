@@ -4,10 +4,12 @@ import { controllerWith, employment, organizationProfile, relationship, requestO
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 import PersonNetwork from './PersonNetwork.svelte';
 import RelationshipsTab from './RelationshipsTab.svelte';
+import OrganizationEditor from './OrganizationEditor.svelte';
+import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 
 it('refreshes Work and Network when accepting a job ended elsewhere', async () => {
   let endedElsewhere = false;
-  const { controller } = controllerWith(async input => {
+  const { client } = controllerWith(async input => {
     const request = requestOf(input);
     const path = pathOf(request);
     const job = employment(11, endedElsewhere ? 2 : 1, endedElsewhere ? { is_current: false, end_date: { year: 2026, month: 10 } } : {});
@@ -23,6 +25,8 @@ it('refreshes Work and Network when accepting a job ended elsewhere', async () =
     });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
+  const directoryChanged = vi.fn();
+  const controller = new DirectoryEntityController(client, 7, { onDirectoryChange: directoryChanged });
   controller.employments = [employment()];
   controller.organizationRecords.set(21, organizationProfile());
   render(OrganizationEmploymentTab, { controller, personID: 7 });
@@ -36,7 +40,30 @@ it('refreshes Work and Network when accepting a job ended elsewhere', async () =
   await screen.findByRole('button', { name: 'Keep yours' });
   await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
   await waitFor(() => expect(controller.employments[0].is_current).toBe(false));
+  await waitFor(() => expect(directoryChanged).toHaveBeenCalledOnce());
   await waitFor(() => expect(screen.queryByRole('list', { name: 'Network connections' })).toBeNull());
+});
+
+it('refreshes Network when accepting an organization renamed elsewhere', async () => {
+  let renamed = false;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/organizations/21' && request.method === 'GET') return Response.json(organizationProfile(renamed ? 2 : 1, renamed ? 'Saved Org' : 'Synthetic Org'), { headers: { ETag: `"organization-21-r${renamed ? 2 : 1}"` } });
+    if (path === '/api/v1/organizations/21' && request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: 'Example Person', hop: 0 }, { id: 'organization:21', kind: 'organization', entity_id: 21, label: renamed ? 'Saved Org' : 'Synthetic Org', hop: 1 }], edges: [{ id: 'employment:11', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:21', label: 'Engineer' }] });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+  await screen.findByText('Synthetic Org');
+  render(OrganizationEditor, { controller, organization: { id: 21 } });
+  const name = await screen.findByRole('textbox', { name: 'Organization name' });
+  await waitFor(() => expect(name).toHaveProperty('value', 'Synthetic Org'));
+  await fireEvent.input(name, { target: { value: 'Draft Org' } });
+  renamed = true;
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await screen.findByRole('button', { name: 'Use saved' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
+  await screen.findByText('Saved Org');
 });
 
 it('refreshes Connections and Network when cancelling the delete of a connection ended elsewhere', async () => {

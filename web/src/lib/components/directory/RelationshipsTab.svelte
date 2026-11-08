@@ -198,7 +198,7 @@
 {/snippet}
 {#snippet connectionRow(view: PersonRelationshipView)}
   <!-- The person is a link in the row's text, so the row itself takes no tap: Edit… is in ⋯. -->
-  <DetailRow actionLabel={counterpart(view)} description={[sentenceCase(view.counterpart_label), dateSpan(view.relationship.start_date, view.relationship.end_date, view.relationship.status !== 'ended', { later: true }), view.relationship.notes ?? ''].filter(Boolean).join(' · ')} menu={[
+  <DetailRow actionLabel={counterpart(view)} description={[sentenceCase(view.counterpart_label), dateSpan(view.relationship.start_date, view.relationship.end_date, view.relationship.status !== 'ended', { later: true, precision: 'day' }), view.relationship.notes ?? ''].filter(Boolean).join(' · ')} menu={[
     { label: 'Edit…', onselect: () => openEditor(view) },
     { label: 'Delete…', danger: true, onselect: () => openDelete(view) }
   ]}>

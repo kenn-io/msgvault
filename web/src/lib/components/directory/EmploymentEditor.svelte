@@ -141,8 +141,23 @@
     if (!controller.createBlocked.employments) attempt.details = '';
   }
 
+  async function refreshOrganizationAfterUnknown(): Promise<void> {
+    await controller.refreshOrganizations(organizationName.trim());
+    if (controller.createBlocked.organizations) return;
+    const matches = controller.organizations.filter(item => item.name.trim().toLocaleLowerCase() === organizationName.trim().toLocaleLowerCase());
+    if (matches.length === 1) {
+      selectedOrganization = matches[0];
+      organizationID = String(matches[0].id);
+      creatingOrganization = false;
+    } else if (matches.length > 1) {
+      creatingOrganization = false;
+      organizationID = '';
+    }
+    attempt.details = '';
+  }
+
   function requestClose(): void {
-    if (!attempt.busy) { if (attempt.conflict) void controller.refreshEmployments(); attempt.reset(); onClose(); }
+    if (!attempt.busy) { if (attempt.conflict) void controller.acceptSavedEmployment(); attempt.reset(); onClose(); }
   }
 </script>
 
@@ -190,7 +205,7 @@
       {@const yours = Object.fromEntries(['Job title', 'Role on the team', 'Start date', 'End date', 'Department', 'Location', 'Description'].map(label => [label, facts[label]]))}
       <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, controller), employmentFacts(opened?.data ?? initialEmployment!, controller), yours)} message={attempt.details} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
-      <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void controller.refreshOrganizations().then(() => { if (!controller.createBlocked.organizations) attempt.details = ''; }); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
+      <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void refreshOrganizationAfterUnknown(); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}
   {/snippet}
 </Dialog>

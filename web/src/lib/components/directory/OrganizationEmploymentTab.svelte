@@ -97,7 +97,7 @@
 
   function closeDelete(): void {
     if (acting) return;
-    if (removal.conflict) void controller.refreshEmployments();
+    if (removal.conflict) void controller.acceptSavedEmployment();
     deletingEmployment = undefined;
     removal.reset();
   }
@@ -126,7 +126,7 @@
   </DetailRow>
   {#if primary.conflict && primaryTarget?.id === employment.id}
     <ConflictNotice noun="job" saved={primary.conflict.data} {...conflict(employmentFacts(primary.conflict.data, controller), employmentFacts(primaryTarget, controller), { 'Primary job': 'Yes' })} message={primary.details} actionLabel="Keep yours" onaction={() => void makePrimary(employment)} />
-    <button type="button" data-link disabled={acting} onclick={() => { primary.reset(); primaryTarget = undefined; void controller.refreshEmployments(); }}>Use saved</button>
+    <button type="button" data-link disabled={acting} onclick={() => { primary.reset(); primaryTarget = undefined; void controller.acceptSavedEmployment(); }}>Use saved</button>
   {:else if primary.details && primaryTarget?.id === employment.id}
     <InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
   {/if}

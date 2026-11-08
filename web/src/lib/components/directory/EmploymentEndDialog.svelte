@@ -22,7 +22,7 @@
   // The title names the action; the line under it names the job: "Garden designer at Lumen Grove · since Mar 2024".
   const since = $derived(readablePartialDate(shown.start_date));
   const context = $derived([`${shown.title || shown.role || 'Job'} at ${employerName}`, since ? `since ${since}` : ''].filter(Boolean).join(' · '));
-  function close(): void { if (!attempt.busy) { if (attempt.conflict) void controller.refreshEmployments(); attempt.reset(); onClose(); } }
+  function close(): void { if (!attempt.busy) { if (attempt.conflict) void controller.acceptSavedEmployment(); attempt.reset(); onClose(); } }
   async function submit(): Promise<void> {
     if (attempt.busy || !opened || !endDate.trim() || dateError) return;
     if (await attempt.run(current => controller.endEmployment(employment.id, { end_date: endDate.trim() }, current ?? opened))) close();

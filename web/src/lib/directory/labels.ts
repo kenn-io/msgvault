@@ -28,14 +28,14 @@ export const channelLabel = (code: string): string => CHANNELS[code] ?? sentence
 export const reviewStateChip = (code: string): { label: string; tone: ChipTone } =>
   REVIEW_STATES[code] ?? { label: sentenceCase(code), tone: 'neutral' };
 
-type SpanDate = { year?: number; month?: number } | null | undefined;
+type SpanDate = { year?: number; month?: number; day?: number } | null | undefined;
 
 /**
  * A job's or a connection's dates as one range, so Work and Connections read alike: "Mar 2024 – present",
  * "2020 – 2023", "From 2019", "Until 2021". `later` lowercases "From" and "Until" for a later middot segment.
  */
-export function dateSpan(start: SpanDate, end: SpanDate, current: boolean, { later = false } = {}): string {
-  const when = (value: SpanDate) => readablePartialDate(value && { year: value.year, month: value.month });
+export function dateSpan(start: SpanDate, end: SpanDate, current: boolean, { later = false, precision = 'month' }: { later?: boolean; precision?: 'month' | 'day' } = {}): string {
+  const when = (value: SpanDate) => readablePartialDate(value && { year: value.year, month: value.month, ...(precision === 'day' ? { day: value.day } : {}) });
   const from = when(start), until = when(end) || (current ? 'present' : '');
   const text = from && until ? `${from} – ${until}` : from ? `From ${from}` : until && until !== 'present' ? `Until ${until}` : '';
   return later ? text.replace(/^(From|Until) /, word => word.toLowerCase()) : text;

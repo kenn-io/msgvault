@@ -39,6 +39,15 @@ async function rowAction(label: string): Promise<void> {
 }
 
 describe('RelationshipsTab', () => {
+  it('shows the recorded days on an ended connection', async () => {
+    const { client, controller } = controllerWith(async () => Response.json({ relationships: [] }));
+    const item = view(41, 'outgoing', 'mentors', 'Synthetic Peer');
+    item.relationship = relationship(41, 1, { status: 'ended', start_date: { year: 2024, month: 1, day: 5 }, end_date: { year: 2024, month: 1, day: 6 } });
+    controller.relationships = [item];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByText('1 past connection'));
+    expect(screen.getByText(/Jan 5, 2024 – Jan 6, 2024/)).toBeDefined();
+  });
   it('freezes the person picker while creating a connection', async () => {
     let finish!: (response: Response) => void;
     const pending = new Promise<Response>(resolve => { finish = resolve; });

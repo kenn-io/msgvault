@@ -165,6 +165,9 @@ export class DirectoryEntityController {
   async refreshEmployments(): Promise<void> {
     await Promise.all([this.loadEmployments(true), this.refreshNetwork()]);
   }
+  async acceptSavedEmployment(): Promise<void> {
+    await Promise.all([this.refreshEmployments(), this.options.onDirectoryChange?.()]);
+  }
   private async loadEmployments(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('employments');
     try {

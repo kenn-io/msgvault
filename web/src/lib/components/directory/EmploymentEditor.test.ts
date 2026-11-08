@@ -255,6 +255,27 @@ it('allows closing while the job loads', async () => {
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Example company');
   });
 
+  it('uses an organization found after its creation response is lost', async () => {
+    let posts = 0;
+    let jobBody: Record<string, unknown> | undefined;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input), path = pathOf(request);
+      if (path === '/api/v1/organizations' && request.method === 'POST') { posts++; throw new TypeError('response lost'); }
+      if (path === '/api/v1/organizations') return Response.json({ organizations: posts ? [organization(22, 1, 'Example company')] : [], total: posts });
+      if (path === '/api/v1/employments') { jobBody = await request.json(); return Response.json(employment(11, 1, { organization_id: 22 })); }
+      if (path === '/api/v1/people/7/employments') return collection([]);
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    await openInlineEmployer(controller, 'Example company');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    await screen.findByRole('button', { name: 'Check again' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await screen.findByRole('button', { name: 'Organization: Example company' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    await waitFor(() => expect(jobBody).toMatchObject({ organization_id: 22 }));
+    expect(posts).toBe(1);
+  });
+
 
   it('rejects a year-less employment date and keeps Create disabled until it is fixed', async () => {
     const requests: Request[] = [];
