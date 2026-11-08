@@ -2,8 +2,8 @@ package search
 
 import "strings"
 
-// EscapeLike makes SQL LIKE wildcards literal with ESCAPE '\'.
-func EscapeLike(value string) string {
+// escapeLike makes SQL LIKE wildcards literal with ESCAPE '\'.
+func escapeLike(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
 }
 
@@ -11,12 +11,12 @@ func EscapeLike(value string) string {
 func senderMatch(value string) (operator, pattern string, metadata bool) {
 	value = normalizeAddr(value)
 	if strings.HasPrefix(value, "@") {
-		return "LIKE", "%" + EscapeLike(value), false
+		return "LIKE", "%" + escapeLike(value), false
 	}
 	if address, err := ParseAccountAddress(value); err == nil {
 		return "=", address, false
 	}
-	return "LIKE", "%" + EscapeLike(value) + "%", true
+	return "LIKE", "%" + escapeLike(value) + "%", true
 }
 
 func senderCondition(value string, lower func(string) string) (string, []any) {

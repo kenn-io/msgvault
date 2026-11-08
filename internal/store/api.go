@@ -654,7 +654,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			if !hasFTSToken(term) {
 				continue
 			}
-			like := "%" + search.EscapeLike(strings.ToLower(term)) + "%"
+			like := "%" + escapeLike(strings.ToLower(term)) + "%"
 			conditions = append(conditions,
 				`(LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')`)
 			args = append(args, like, like)
@@ -682,7 +682,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		}
 		conditions = append(conditions,
 			`LOWER(m.subject) LIKE LOWER(?) ESCAPE '\'`)
-		args = append(args, "%"+search.EscapeLike(strings.ToLower(term))+"%")
+		args = append(args, "%"+escapeLike(strings.ToLower(term))+"%")
 	}
 
 	// list: / list-id: filters. Each predicate is separate so repeated
@@ -694,12 +694,12 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		conditions = append(conditions, fmt.Sprintf(`%s LIKE %s ESCAPE '\'`,
 			s.dialect.UnicodeLowerExpression("COALESCE(m.list_id, '')"),
 			s.dialect.UnicodeLowerExpression("?")))
-		args = append(args, "%"+search.EscapeLike(strings.ToLower(listID))+"%")
+		args = append(args, "%"+escapeLike(strings.ToLower(listID))+"%")
 	}
 	for _, filename := range q.Filenames {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND %s LIKE %s ESCAPE '\')`,
 			s.dialect.UnicodeLowerExpression("COALESCE(fa.filename, '')"), s.dialect.UnicodeLowerExpression("?")))
-		args = append(args, "%"+search.EscapeLike(filename)+"%")
+		args = append(args, "%"+escapeLike(filename)+"%")
 	}
 	// Structured Explore mailing-list filters use exact membership. Each
 	// request filter is an OR group, and repeated filters are ANDed.
@@ -842,7 +842,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		addrs []string
 	}{{"to", q.ToAddrs}, {"cc", q.CcAddrs}, {"bcc", q.BccAddrs}} {
 		for _, addr := range group.addrs {
-			arg := "%" + search.EscapeLike(strings.ToLower(addr)) + "%"
+			arg := "%" + escapeLike(strings.ToLower(addr)) + "%"
 			if !rowIDs {
 				operators = append(operators, searchOperator{condition: len(conditions), matching: fmt.Sprintf(`SELECT mr2.message_id FROM message_recipients mr2 INDEXED BY idx_message_recipients_participant
 					WHERE mr2.recipient_type = '%s' AND mr2.participant_id IN
@@ -859,7 +859,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		}
 	}
 	for _, lbl := range q.Labels {
-		arg := "%" + search.EscapeLike(strings.ToLower(lbl)) + "%"
+		arg := "%" + escapeLike(strings.ToLower(lbl)) + "%"
 		if !rowIDs {
 			operators = append(operators, searchOperator{condition: len(conditions), matching: `SELECT ml2.message_id FROM message_labels ml2
 				WHERE ml2.label_id IN (SELECT l2.id FROM labels l2 WHERE LOWER(l2.name) LIKE ? ESCAPE '\')`, args: []any{arg}})
@@ -1044,11 +1044,20 @@ func (s *Store) searchMessagesQueryNoFTS(
 	return s.searchMessagesQueryImpl(ctx, q, offset, limit, false)
 }
 
+// escapeLike escapes SQL LIKE special characters (%, _) so they are
+// matched literally. The escaped string should be used with ESCAPE '\'.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // searchMessagesLike is a fallback search using LIKE with batch-loaded
 // recipients and labels. Wraps both sides in LOWER for PG portability —
 // SQLite's ASCII LIKE is case-insensitive by default but PG's is strict.
 func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessage, int64, error) {
-	likePattern := "%" + search.EscapeLike(strings.ToLower(query)) + "%"
+	likePattern := "%" + escapeLike(strings.ToLower(query)) + "%"
 
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM messages

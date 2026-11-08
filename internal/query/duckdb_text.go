@@ -143,7 +143,7 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 			WHERE ml.message_id = msg.id
 			  AND lbl.name ILIKE ? ESCAPE '\'
 		)`)
-		args = append(args, search.EscapeLike(filter.Label))
+		args = append(args, escapeILIKE(filter.Label))
 	}
 	if filter.TimeRange.Period != "" {
 		g := inferTimeGranularity(
@@ -585,7 +585,7 @@ func (e *DuckDBEngine) GetTextStats(
 		args = append(args, *opts.SourceID)
 	}
 	if opts.SearchQuery != "" {
-		termPattern := "%" + search.EscapeLike(opts.SearchQuery) + "%"
+		termPattern := "%" + escapeILIKE(opts.SearchQuery) + "%"
 		conditions = append(conditions,
 			"(msg.subject ILIKE ? ESCAPE '\\' OR msg.snippet ILIKE ? ESCAPE '\\')")
 		args = append(args, termPattern, termPattern)

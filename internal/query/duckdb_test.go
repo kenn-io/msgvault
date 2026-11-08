@@ -3113,6 +3113,30 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_AfterBefore(t *testing.T) {
 // Search Query Filter Tests
 // =============================================================================
 
+// TestEscapeILIKE verifies that ILIKE wildcard characters are escaped.
+func TestEscapeILIKE(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"hello", "hello"},
+		{"100%", "100\\%"},
+		{"test_email", "test\\_email"},
+		{"50% off!", "50\\% off!"},
+		{"foo_bar_baz", "foo\\_bar\\_baz"},
+		{"a\\b", "a\\\\b"},
+		{"100%_test\\path", "100\\%\\_test\\\\path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := escapeILIKE(tt.input)
+			assert.Equal(t, tt.want, got, "escapeILIKE(%q)", tt.input)
+		})
+	}
+}
+
 // TestBuildWhereClause_SearchOperators tests that buildWhereClause handles
 // various search operators correctly.
 func TestBuildWhereClause_SearchOperators(t *testing.T) {

@@ -1080,6 +1080,25 @@ func TestAggregateSearchMatchesDisplayedKeysAndStats(t *testing.T) {
 	}
 }
 
+// TestEscapeSQLiteLike verifies that wildcard characters are escaped
+// so they match literally in label search.
+func TestEscapeSQLiteLike(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input, want string
+	}{
+		{"work", "work"},
+		{"100%", `100\%`},
+		{"in_box", `in\_box`},
+		{`path\raw`, `path\\raw`},
+		{`%_\`, `\%\_\\`},
+	}
+	for _, tt := range tests {
+		got := escapeSQLiteLike(tt.input)
+		assert.Equal(t, tt.want, got, "escapeSQLiteLike(%q)", tt.input)
+	}
+}
+
 // TestAggregateBySender_RecipientFilterNoOvercount verifies that recipient
 // EXISTS filters don't inflate counts when a message has multiple matching
 // recipients. Message 1 has to:bob AND to:carol; a search matching both

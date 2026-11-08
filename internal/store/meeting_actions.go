@@ -17,7 +17,6 @@ import (
 
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/personscope"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -263,7 +262,7 @@ func (s *Store) meetingActionFilters(query MeetingActionsQuery) (string, []any) 
 		args = append(args, string(query.Status))
 	}
 	if query.Query != "" {
-		pattern := "%" + search.EscapeLike(strings.ToLower(query.Query)) + "%"
+		pattern := "%" + escapeLike(strings.ToLower(query.Query)) + "%"
 		conditions = append(conditions, `(`+
 			s.dialect.UnicodeLowerExpression(`a.title`)+` LIKE ? ESCAPE '\' OR `+
 			s.dialect.UnicodeLowerExpression(`a.description`)+` LIKE ? ESCAPE '\')`)
