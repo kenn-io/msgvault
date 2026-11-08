@@ -240,8 +240,9 @@ func storedMatches(ctx context.Context, st *store.Store, prior store.MessageMeta
 }
 
 // resolveSender returns the sender's participant. An email or phone is a
-// global identity shared with every other source; anything else becomes an
-// imported identifier, see senderIdentifier.
+// global identity shared with every other source, and so is an id of a
+// connector's shared identifier type; anything else becomes an imported
+// identifier, see senderIdentifier.
 func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int64, error) {
 	sender := snapshot.Sender
 	var (
@@ -259,6 +260,9 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 		}
 	case sender.Phone != "":
 		id, err = st.EnsurePhoneParticipantContext(ctx, sender.Phone, sender.Name)
+	case sender.ID != "" && snapshot.SenderIdentifierType != "":
+		id, err = st.EnsureParticipantByIdentifierContext(ctx,
+			snapshot.SenderIdentifierType, sender.ID, sender.Name)
 	default:
 		id, err = st.EnsureParticipantByIdentifierContext(ctx,
 			SenderIdentifierType, senderIdentifier(snapshot.SourceIdentifier, sender), sender.Name)

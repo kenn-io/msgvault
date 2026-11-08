@@ -31,6 +31,9 @@ type Snapshot struct {
 	Metadata             []byte
 	Raw                  []byte
 	Sender               MessageImportSender
+	// SenderIdentifierType, when set, is the shared identifier type of a
+	// sender's id; see Writer.WithSenderIdentifierType.
+	SenderIdentifierType string
 }
 
 // canonicalMessage is the stored raw evidence: the normalized request

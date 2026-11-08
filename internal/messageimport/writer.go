@@ -12,10 +12,11 @@ import (
 // the same validation, sender identity, search indexing and idempotency as
 // the import API.
 type Writer struct {
-	store            *store.Store
-	sourceID         int64
-	sourceType       string
-	sourceIdentifier string
+	store                *store.Store
+	sourceID             int64
+	sourceType           string
+	sourceIdentifier     string
+	senderIdentifierType string
 }
 
 // NewWriter writes into source through st, which the caller scopes to its
@@ -27,6 +28,16 @@ func NewWriter(st *store.Store, source *store.Source) *Writer {
 		sourceType:       source.SourceType,
 		sourceIdentifier: source.Identifier,
 	}
+}
+
+// WithSenderIdentifierType makes a sender's id an identifier of
+// identifierType that every source shares, instead of an id that means
+// something only inside this source. A connector uses it for the account
+// IDs its platform assigns, so one account is one participant in every
+// source that sees it. An email or phone still decides first.
+func (w *Writer) WithSenderIdentifierType(identifierType string) *Writer {
+	w.senderIdentifierType = identifierType
+	return w
 }
 
 // Write validates and stores one message, keyed by message.external_id
@@ -43,5 +54,6 @@ func (w *Writer) Write(ctx context.Context, message ImportedMessage) (WriteResul
 	if err != nil {
 		return WriteResult{}, err
 	}
+	snapshot.SenderIdentifierType = w.senderIdentifierType
 	return persist(ctx, w.store, w.sourceID, snapshot)
 }
