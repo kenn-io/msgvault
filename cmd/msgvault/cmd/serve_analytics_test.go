@@ -392,17 +392,21 @@ func TestStartDaemonAnalyticsInitializerValidCacheWaitsForDuckDB(t *testing.T) {
 }
 
 func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
-	for _, published := range []bool{false, true} {
-		t.Run(fmt.Sprint(published), func(t *testing.T) {
+	for _, scenario := range []string{"absent", "partial publication", "stale schema"} {
+		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
 			c, st := openTestDaemonAnalyticsStore(t)
 			c.Analytics.Engine = config.AnalyticsEngineAuto
 			c.Analytics.AutoBuildCache = true
-			if published {
+			if scenario != "absent" {
 				publishStaleTestCache(t, c, st)
 				state, err := query.ReadCacheSyncState(c.AnalyticsDir())
 				require.NoError(err)
-				state.FullRebuildRequired = true
+				if scenario == "stale schema" {
+					state.SchemaVersion--
+				} else {
+					state.FullRebuildRequired = true
+				}
 				encoded, err := json.Marshal(state)
 				require.NoError(err)
 				require.NoError(os.WriteFile(query.CacheStatePath(c.AnalyticsDir()), encoded, 0o600))
@@ -418,7 +422,7 @@ func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
 			require.True(h.WaitContext(t.Context()))
 			require.NoError(h.Err())
 			assert.False(t, srv.AnalyticsInitializationActive())
-			if published {
+			if scenario == "partial publication" {
 				assert.IsType(t, &query.DuckDBEngine{}, srv.QueryEngine())
 			} else {
 				assert.IsType(t, &query.LiveExploreEngine{}, srv.QueryEngine())

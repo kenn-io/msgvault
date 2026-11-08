@@ -128,6 +128,8 @@ func (e *LiveExploreEngine) Explore(ctx context.Context, request ExploreRequest)
 		defer release()
 	}
 	conditions, args := buildExploreConditionsWithDialect(request, exploreConditionDialect{
+		unicodeLower:   e.dialect.UnicodeLowerExpression,
+		envelopeColumn: "email_address",
 		dateComparison: func(column, operator string) string {
 			return sqliteutil.TimestampKeyFunction + "(" + column + ") " + operator + " ?"
 		},

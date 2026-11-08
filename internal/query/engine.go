@@ -206,8 +206,8 @@ type SemanticMessageSearchResult struct {
 	HasMore  bool
 }
 
-// EntryExplorer lists message and conversation rows. Auto mode can serve
-// these rows from live SQLite while the analytical cache is unavailable.
+// EntryExplorer lists message and conversation rows. Auto mode may serve
+// live SQLite rows during or after a full analytical cache rebuild.
 type EntryExplorer interface {
 	Explore(ctx context.Context, request ExploreRequest) (*ExploreResponse, error)
 }

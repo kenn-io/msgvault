@@ -36,11 +36,12 @@ func liveExploreFixture(t *testing.T) sqliteExploreFixture {
 	source := b.AddSource("archive@example.test")
 	other := b.AddSourceWithType("chat@example.test", "whatsapp")
 	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
-	bob := b.AddParticipant("bob@other.test", "other.test", "Bob")
+	bob := b.AddParticipant("bob@other.test", "öther.test", "Bob")
 	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	first := b.AddMessage(MessageOpt{SourceID: source, Subject: "First", SentAt: base, ListID: new("<list@example.test>")})
+	first := b.AddMessage(MessageOpt{SourceID: source, Subject: "First", SentAt: base, ListID: new("<lïst@example.test>")})
 	b.AddFrom(first, alice, "Alice envelope")
 	b.AddTo(first, bob, "Bob")
+	b.recipients[0].EmailAddress = "älïce@example.test"
 	b.AddAttachment(first, 128, "file.txt")
 	for i, typ := range []string{"whatsapp", "whatsapp", "event", "meeting", "item", "email"} {
 		opt := MessageOpt{SourceID: other, MessageType: typ, SentAt: base.Add(time.Duration(i) * time.Hour), Subject: typ, SenderID: &alice}
@@ -94,7 +95,7 @@ func liveExploreFixture(t *testing.T) sqliteExploreFixture {
 		require.NoError(err)
 	}
 	for _, r := range b.recipients {
-		_, err := st.DB().ExecContext(t.Context(), "INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(?,?,?,?)", r.MessageID, r.ParticipantID, r.Type, r.DisplayName)
+		_, err := st.DB().ExecContext(t.Context(), "INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name,email_address) VALUES(?,?,?,?,NULLIF(?,''))", r.MessageID, r.ParticipantID, r.Type, r.DisplayName, r.EmailAddress)
 		require.NoError(err)
 	}
 	_, err = st.DB().ExecContext(t.Context(), "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(900,?)", bob)
@@ -127,10 +128,12 @@ func TestSQLiteExploreMatchesCache(t *testing.T) {
 		"dates":              {Context: Context{After: &after, Before: &before}},
 		"kind":               {Context: Context{Kinds: []EntryKind{EntryConversation}}},
 		"type":               {Context: Context{MessageTypes: []string{"email"}}},
-		"domain":             {Context: Context{Domains: []string{"other.test"}}},
-		"domain conjunction": {Context: Context{Domains: []string{"example.test"}, AdditionalDomainGroups: [][]string{{"other.test"}}}},
-		"mailing list":       {Context: Context{MailingLists: []string{"<LIST@example.test>"}}},
-		"list conjunction":   {Context: Context{MailingLists: []string{"<list@example.test>"}, AdditionalMailingListGroups: [][]string{{"<LIST@example.test>"}}}},
+		"domain":             {Context: Context{Domains: []string{"öther.test"}}},
+		"unicode domain":     {Context: Context{Domains: []string{"ÖTHER.TEST"}}},
+		"unicode envelope":   {Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{1}, EmailIdentifier: "ÄLÏCE@example.test", Direction: IdentityDirectionSender}}},
+		"domain conjunction": {Context: Context{Domains: []string{"example.test"}, AdditionalDomainGroups: [][]string{{"öther.test"}}}},
+		"mailing list":       {Context: Context{MailingLists: []string{"<LÏST@example.test>"}}},
+		"list conjunction":   {Context: Context{MailingLists: []string{"<lïst@example.test>"}, AdditionalMailingListGroups: [][]string{{"<LÏST@example.test>"}}}},
 		"active":             {Context: Context{Deletion: DeletionActive}},
 		"deleted":            {Context: Context{Deletion: DeletionDeleted}},
 		"full text":          {Search: SearchSpec{Mode: SearchFullText, Query: "fixture", CandidateMessageIDs: []int64{1, 2, 3}, LexicalIndexRevision: "fts5:fixture"}},
@@ -147,6 +150,9 @@ func TestSQLiteExploreMatchesCache(t *testing.T) {
 			require := require.New(t)
 			expected, err := cache.Explore(t.Context(), request)
 			require.NoError(err)
+			if name == "unicode domain" || name == "unicode envelope" || name == "mailing list" {
+				require.NotEmpty(expected.Rows)
+			}
 			got, err := live.Explore(t.Context(), request)
 			require.NoError(err)
 			for i := range expected.Rows {

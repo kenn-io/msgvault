@@ -247,6 +247,8 @@ func validateResolvedSearch(search SearchSpec) (SearchProvenance, error) {
 }
 
 type exploreConditionDialect struct {
+	unicodeLower   func(string) string
+	envelopeColumn string
 	dateComparison func(string, string) string
 	dateParam      func(time.Time) any
 	messageTypes   func(string, []string) (string, []any)
@@ -255,6 +257,8 @@ type exploreConditionDialect struct {
 
 func buildExploreConditions(request ExploreRequest) (string, []any) {
 	return buildExploreConditionsWithDialect(request, exploreConditionDialect{
+		unicodeLower:   func(column string) string { return "LOWER(" + column + ")" },
+		envelopeColumn: "envelope_address",
 		dateComparison: func(column, operator string) string { return column + " " + operator + " CAST(? AS TIMESTAMP)" },
 		dateParam:      func(value time.Time) any { return value.UTC() },
 		messageTypes:   duckDBMessageTypeCondition,
@@ -289,7 +293,7 @@ func buildExploreConditionsWithDialect(request ExploreRequest, dialect exploreCo
 		conditions = append(conditions, "message_id IN (SELECT account_m.id FROM messages account_m WHERE "+strings.Join(scopeConditions, " AND ")+")")
 		args = append(args, scopeArgs...)
 	}
-	if identityCondition, identityArgs := buildIdentityPredicateCondition(request.Context.Identity, ""); identityCondition != "" {
+	if identityCondition, identityArgs := buildIdentityPredicateCondition(request.Context.Identity, "", dialect.unicodeLower, dialect.envelopeColumn); identityCondition != "" {
 		conditions = append(conditions, identityCondition)
 		args = append(args, identityArgs...)
 	}
@@ -321,14 +325,14 @@ func buildExploreConditionsWithDialect(request ExploreRequest, dialect exploreCo
 		for i, value := range values {
 			// Test the same sender, recipient, and roster membership as the
 			// list columns without aggregating lists for the whole archive.
-			parts[i] = `(lower(sender_domain) = lower(?) OR message_id IN (
+			parts[i] = `(` + dialect.unicodeLower("sender_domain") + ` = ` + dialect.unicodeLower("?") + ` OR message_id IN (
 				SELECT domain_recipient.message_id FROM message_recipients domain_recipient
 				JOIN participants domain_person ON domain_person.id = domain_recipient.participant_id
-				WHERE COALESCE(domain_person.domain, '') = lower(?)
+				WHERE COALESCE(domain_person.domain, '') = ` + dialect.unicodeLower("?") + `
 			) OR conversation_id IN (
 				SELECT domain_member.conversation_id FROM conversation_participants domain_member
 				JOIN participants domain_person ON domain_person.id = domain_member.participant_id
-				WHERE COALESCE(domain_person.domain, '') = lower(?)
+				WHERE COALESCE(domain_person.domain, '') = ` + dialect.unicodeLower("?") + `
 			))`
 			args = append(args, value, value, value)
 		}
@@ -341,7 +345,7 @@ func buildExploreConditionsWithDialect(request ExploreRequest, dialect exploreCo
 		}
 		parts := make([]string, len(values))
 		for i, value := range values {
-			parts[i] = "LOWER(list_id) = LOWER(?)"
+			parts[i] = "(list_id IS NOT NULL AND " + dialect.unicodeLower("COALESCE(list_id, '')") + " = " + dialect.unicodeLower("?") + ")"
 			args = append(args, value)
 		}
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
@@ -411,7 +415,7 @@ func buildExploreConditionsWithDialect(request ExploreRequest, dialect exploreCo
 	return strings.Join(conditions, " AND "), args
 }
 
-func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string) (string, []any) {
+func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string, lower func(string) string, envelopeColumn string) (string, []any) {
 	if identity == nil {
 		return "", nil
 	}
@@ -471,11 +475,12 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 			return participantMatch(alias + ".participant_id")
 		}
 		args = append(args, identity.EmailIdentifier)
-		envelope := "(COALESCE(" + alias + ".envelope_address, '') <> '' AND LOWER(" + alias + ".envelope_address) = LOWER(?))"
+		column := alias + "." + envelopeColumn
+		envelope := "(COALESCE(" + column + ", '') <> '' AND " + lower("COALESCE("+column+", '')") + " = " + lower("?") + ")"
 		if len(identity.ParticipantIDs) == 0 {
 			return envelope
 		}
-		return "(" + envelope + " OR (COALESCE(" + alias + ".envelope_address, '') = '' AND " +
+		return "(" + envelope + " OR (COALESCE(" + alias + "." + envelopeColumn + ", '') = '' AND " +
 			participantMatch(alias+".participant_id") + fallbackGuard + "))"
 	}
 	senderCondition := func() string {
@@ -483,7 +488,7 @@ func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string)
 			SELECT 1 FROM message_recipients identity_mr_sender_envelope
 			WHERE identity_mr_sender_envelope.message_id = ` + outerPrefix + `message_id
 			  AND identity_mr_sender_envelope.recipient_type = 'from'
-			  AND COALESCE(identity_mr_sender_envelope.envelope_address, '') <> ''
+			  AND COALESCE(identity_mr_sender_envelope.` + envelopeColumn + `, '') <> ''
 		)`
 		explicitFrom := `EXISTS (
 			SELECT 1 FROM message_recipients identity_mr_sender
