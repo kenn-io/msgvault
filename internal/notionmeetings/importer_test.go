@@ -1716,7 +1716,7 @@ func TestImporterPreservedSnapshotStabilizes(t *testing.T) {
 func TestImporterAcceptsEmptyCompleteSummaryAndNotes(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	noSearch := false
-	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", SearchAccessible: &noSearch})
+	_, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work", SearchAccessible: &noSearch})
 	require.NoError(t, err)
 	for _, id := range []string{"summary-1", "notes-1"} {
 		empty := paragraph(id, "", false)
@@ -1726,7 +1726,7 @@ func TestImporterAcceptsEmptyCompleteSummaryAndNotes(t *testing.T) {
 	meeting.LastEditedTime = "2026-08-30T10:00:00Z"
 	source.query.Results = []MeetingNote{meeting}
 	installMeetingHeader(t, source.fakeHydrationSource, meeting)
-	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true, SearchAccessible: &noSearch})
+	result, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work", Full: true, SearchAccessible: &noSearch})
 	require.NoError(t, err)
 	assert.False(t, result.PartialCoverage)
 	var messageID int64
@@ -1741,7 +1741,7 @@ func TestImporterAcceptsEmptyCompleteSummaryAndNotes(t *testing.T) {
 func TestImporterReportsPreservedSectionWhenHeaderOmitsID(t *testing.T) {
 	st, source, imp := newImporterFixture(t)
 	noSearch := false
-	opts := ImportOptions{Identifier: "work", SearchAccessible: &noSearch}
+	opts := ImportOptions{UserID: "creator-1", Identifier: "work", SearchAccessible: &noSearch}
 	first, err := imp.Import(t.Context(), opts)
 	require.NoError(t, err)
 	meeting := hydrationMeeting()
