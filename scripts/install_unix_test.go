@@ -69,7 +69,9 @@ esac
 			assert := assert.New(t)
 			t.Parallel()
 			shell, _ := exec.LookPath(tc.shell)
-			home := t.TempDir()
+			// Bash resolves symlinked working directories, including macOS /var.
+			home, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(err)
 			destination := filepath.Join(home, ".local", "bin")
 			manual := `export PATH="$PATH":'` + destination + `'`
 			installDir := destination
