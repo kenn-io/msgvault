@@ -453,3 +453,65 @@ func TestDeliveryRecoversCancellationImmediatelyAfterClaim(t *testing.T) {
 	must.NoError(service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil }))
 	checks.Equal(1, kata.notifications)
 }
+
+type confirmThenCancelKata struct {
+	deliveryKataFake
+	cancel       context.CancelFunc
+	cancelCreate bool
+}
+
+func (f *confirmThenCancelKata) CreateTaskReused(ctx context.Context, project, key string, create taskclient.KataCreate) (taskclient.KataTask, bool, error) {
+	task, reused, err := f.deliveryKataFake.CreateTaskReused(ctx, project, key, create)
+	if f.cancelCreate {
+		f.cancel()
+	}
+	return task, reused, err
+}
+
+func (f *confirmThenCancelKata) NotifyIssue(ctx context.Context, project, uid, recipient, message string) error {
+	err := f.deliveryKataFake.NotifyIssue(ctx, project, uid, recipient, message)
+	if !f.cancelCreate {
+		f.cancel()
+	}
+	return err
+}
+
+func TestDeliveryRetainsConfirmedWriteWhenConsentTransactionIsCancelled(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		cancelCreate bool
+		wantState    store.ImportantDateDeliveryState
+		wantNotify   int
+	}{
+		{name: "issue created", cancelCreate: true, wantState: store.ImportantDateIssueCreated},
+		{name: "notification delivered", wantState: store.ImportantDateDelivered, wantNotify: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			st := storetest.New(t).Store
+			participant, err := st.EnsureParticipantByIdentifier("email", "owner@example.test", "Example Owner")
+			must.NoError(err)
+			person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
+			must.NoError(err)
+			subject := "person/" + person.VCardUID
+			must.NoError(st.SetImportantDateConsentContext(t.Context(), subject, "scope-example", "owner/agent", true))
+			input := DeliveryInput{OccurrenceKey: subject + ":birthday:2027", Fingerprint: "fingerprint-example", SubjectUID: subject, OwnerUID: subject, Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			kata := &confirmThenCancelKata{cancel: cancel, cancelCreate: test.cancelCreate}
+			service := DeliveryService{Store: st, Kata: kata}
+			err = service.Deliver(ctx, input, func(context.Context) (bool, error) { return true, nil })
+			must.ErrorIs(err, context.Canceled)
+			state, issueUID, err := st.ImportantDateDeliveryContext(t.Context(), input.OccurrenceKey)
+			must.NoError(err)
+			checks.Equal(test.wantState, state)
+			checks.Equal("issue-example", issueUID)
+			checks.Equal(1, kata.creates)
+			checks.Equal(test.wantNotify, kata.notifications)
+			must.NoError(service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil }))
+			checks.Equal(1, kata.creates)
+			checks.Equal(1, kata.notifications)
+		})
+	}
+}

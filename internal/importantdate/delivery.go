@@ -70,7 +70,7 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 	marker := hex.EncodeToString(digest[:])
 	var issue taskclient.KataTask
 	var reused bool
-	attempted := false
+	attempted, confirmed := false, false
 	active, err := s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.OwnerUID, input.ConsentScope, input.Recipient, func(fenced context.Context) error {
 		state, _, err := s.Store.ImportantDateDeliveryContext(fenced, input.OccurrenceKey)
 		if err != nil {
@@ -97,15 +97,24 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 				personUID = subjectUID
 			}
 			issue, reused, err = s.Kata.CreateTaskReused(fenced, input.Project, marker, taskclient.KataCreate{Title: "Prepare for an upcoming date", Metadata: map[string]any{taskclient.ActionMetadataKey: marker, personagenda.PersonMetadataKey: personUID, "msgvault.important_date.subject": input.SubjectUID}})
+			confirmed = err == nil
 		}
 		return err
 	})
 	if err != nil || !active {
 		outcome := store.ImportantDateRetryIssue
+		issueUID := ""
 		if attempted {
 			outcome = store.ImportantDateUnknown
+			if confirmed && issue.UID != "" && issue.Project == input.Project {
+				issueUID = issue.UID
+				outcome = store.ImportantDateIssueCreated
+				if reused || issue.Status != "open" {
+					outcome = store.ImportantDateCancelled
+				}
+			}
 		}
-		recoveryErr := s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, outcome, "")
+		recoveryErr := s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, outcome, issueUID)
 		if errors.Is(err, errDeliveryIneligible) {
 			return nil
 		}
@@ -131,7 +140,7 @@ func (s DeliveryService) notify(ctx context.Context, input DeliveryInput, issueU
 	if err != nil || !changed {
 		return err
 	}
-	attempted := false
+	attempted, confirmed := false, false
 	active, err := s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.OwnerUID, input.ConsentScope, input.Recipient, func(fenced context.Context) error {
 		state, currentUID, err := s.Store.ImportantDateDeliveryContext(fenced, input.OccurrenceKey)
 		if err != nil {
@@ -158,12 +167,17 @@ func (s DeliveryService) notify(ctx context.Context, input DeliveryInput, issueU
 			return errIssueClosed
 		}
 		attempted = true
-		return s.Kata.NotifyIssue(fenced, input.Project, issueUID, input.Recipient, "Review the upcoming date in msgvault")
+		err = s.Kata.NotifyIssue(fenced, input.Project, issueUID, input.Recipient, "Review the upcoming date in msgvault")
+		confirmed = err == nil
+		return err
 	})
 	if err != nil || !active {
 		outcome := store.ImportantDateIssueCreated
 		if attempted {
 			outcome = store.ImportantDateUnknown
+			if confirmed {
+				outcome = store.ImportantDateDelivered
+			}
 		} else if errors.Is(err, errIssueClosed) {
 			outcome = store.ImportantDateCancelled
 		}
