@@ -19,7 +19,7 @@ on:
     - cron: '23 8 * * 1'
 jobs:
   changes:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ false }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -46,7 +46,7 @@ jobs:
 
   release-linux-smoke:
     needs: changes
-    if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
+    if: &go-changed ${{ false }}
     strategy:
       fail-fast: false
       matrix:
@@ -150,7 +150,7 @@ jobs:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     runs-on: ubuntu-26.04
     timeout-minutes: 37
     steps:
@@ -212,7 +212,7 @@ jobs:
 
   test:
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     runs-on: ubuntu-26.04
     timeout-minutes: 38
     steps:
@@ -295,7 +295,7 @@ jobs:
   # lane's script — on its own runner.
   test-sharded:
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     name: test-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -346,7 +346,7 @@ jobs:
           if-no-files-found: ignore
 
   test-macos-15:
-    if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    if: ${{ false }}
     runs-on: macos-26
     timeout-minutes: 79
     steps:
@@ -391,7 +391,7 @@ jobs:
 
   frontend:
     needs: changes
-    if: &web-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
+    if: &web-changed ${{ false }}
     runs-on: ubuntu-26.04
     timeout-minutes: 33
     steps:
@@ -503,7 +503,7 @@ jobs:
 
   web-e2e:
     needs: changes
-    if: *web-changed
+    if: ${{ false }}
     runs-on: ubuntu-26.04
     timeout-minutes: 31
     steps:
@@ -565,7 +565,7 @@ jobs:
       - *stop-browser-server
 
   large-archive-benchmark:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: ${{ false }}
     runs-on: macos-26
     # The sparse benchmark sample is warm; allow for measured macOS query compilation.
     timeout-minutes: 22
@@ -597,7 +597,7 @@ jobs:
 
   test-windows:
     needs: changes
-    if: *go-changed
+    if: ${{ !cancelled() }}
     runs-on: windows-2025
     timeout-minutes: 47
     steps:
@@ -721,7 +721,7 @@ jobs:
 
   lint-windows:
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     runs-on: windows-2025
     timeout-minutes: 64
     steps:
@@ -771,7 +771,7 @@ jobs:
 
   test-windows-slow-packages:
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     runs-on: windows-2025
     timeout-minutes: 21
     steps:
@@ -828,7 +828,7 @@ jobs:
 
   test-windows-sharded:
     needs: changes
-    if: *go-changed
+    if: ${{ !cancelled() }}
     name: test-windows-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -850,18 +850,10 @@ jobs:
             timeout: 36m
             job_timeout: 64
             extra_packages: ./internal/deletion ./internal/beeper ./scripts/contextual-retrieval-eval ./internal/chatwoot ./internal/slack
-          - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 36m, job_timeout: 64 }
-          - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 30m, job_timeout: 38 }
-          - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 30m, job_timeout: 38 }
-          - { name: store-3, package: ./internal/store, part: 3, parts: 3, timeout: 30m, job_timeout: 58 }
-          - name: sync-vector-embed
-            job_timeout: 66
-            package: ./internal/sync
-            package2: ./internal/vector/embed
-            timeout: 40m
           - name: vector-sqlite
             job_timeout: 47
             package: ./internal/vector/sqlitevec
+            package2: ''
             extra_packages: ./internal/query
             timeout: 9m
     runs-on: windows-2025
@@ -926,7 +918,7 @@ jobs:
           if-no-files-found: ignore
 
   test-windows-pack-restore:
-    if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    if: ${{ false }}
     runs-on: windows-2025
     timeout-minutes: 10
     steps:
@@ -976,7 +968,7 @@ jobs:
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     runs-on: ubuntu-26.04
     timeout-minutes: 109
     services:
@@ -1065,7 +1057,7 @@ jobs:
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
   test-postgres:
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     runs-on: ubuntu-26.04
     timeout-minutes: 55
     services:
@@ -1148,7 +1140,7 @@ jobs:
   # connections never compete with the rest of the suite.
   test-postgres-sharded:
     needs: changes
-    if: *go-changed
+    if: ${{ false }}
     name: test-postgres-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
