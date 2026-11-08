@@ -61,7 +61,7 @@ func newClient(apiBase *url.URL, token, userAgent string, httpClient *http.Clien
 		Authorize: func(req *http.Request) {
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Accept", "application/vnd.github+json")
-			req.Header.Set("X-GitHub-Api-Version", apiVersion)
+			req.Header.Set("X-Github-Api-Version", apiVersion)
 		},
 		UserAgent: userAgent,
 		Limited:   c.limited,
@@ -94,13 +94,13 @@ func (c *client) reserve(resource string) error {
 }
 
 func (c *client) observe(resp *http.Response) {
-	remaining, err1 := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
-	limit, err2 := strconv.Atoi(resp.Header.Get("X-RateLimit-Limit"))
-	reset, err3 := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
+	remaining, err1 := strconv.Atoi(resp.Header.Get("X-Ratelimit-Remaining"))
+	limit, err2 := strconv.Atoi(resp.Header.Get("X-Ratelimit-Limit"))
+	reset, err3 := strconv.ParseInt(resp.Header.Get("X-Ratelimit-Reset"), 10, 64)
 	if err1 != nil || err2 != nil || err3 != nil {
 		return
 	}
-	name := resp.Header.Get("X-RateLimit-Resource")
+	name := resp.Header.Get("X-Ratelimit-Resource")
 	if name == "" {
 		name = resource(resp.Request.URL.Path)
 	}
@@ -119,8 +119,8 @@ func (c *client) limited(resp *http.Response) (time.Time, bool) {
 	if retryAfter, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
 		return c.now().Add(time.Duration(retryAfter) * time.Second), true
 	}
-	if resp.Header.Get("X-RateLimit-Remaining") == "0" {
-		if reset, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+	if resp.Header.Get("X-Ratelimit-Remaining") == "0" {
+		if reset, err := strconv.ParseInt(resp.Header.Get("X-Ratelimit-Reset"), 10, 64); err == nil {
 			return time.Unix(reset, 0), true
 		}
 	}

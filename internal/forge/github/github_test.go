@@ -230,8 +230,9 @@ func TestSyncPausesAtTheRateLimitReserveAndResumes(t *testing.T) {
 	f := newFakeGitHub(t)
 	seedThreads(f)
 	source := newGitHubSource(t, st)
-	// Discovery's two searches leave GraphQL at its 20% reserve.
-	f.graphQLRemaining = 1001
+	// Discovery's five queries (a discussion lookup, four searches) leave
+	// GraphQL at its 20% reserve.
+	f.graphQLRemaining = 1004
 
 	paused, err := syncGitHub(t, st, f, source, withoutSecretCorp)
 	require.NoError(err, "the reserve pauses the run without failing it")
@@ -360,7 +361,7 @@ func TestSearchReadsALongHistoryInWindows(t *testing.T) {
 
 	var refs []forge.ThreadRef
 	var through time.Time
-	err := f.forge().searchInvolvement(t.Context(), searchIssues, "octo", &cursor{}, &through, forge.NewOwnerFilter(nil, nil),
+	err := f.forge().searchThreads(t.Context(), searchIssues, "involves:octo", &cursor{}, &through, forge.NewOwnerFilter(nil, nil),
 		func(page []forge.ThreadRef, _ []byte) error {
 			refs = append(refs, page...)
 			return nil
@@ -386,7 +387,7 @@ func TestSearchReadsASecondHoldingMoreThanAWindow(t *testing.T) {
 
 	var refs []forge.ThreadRef
 	var through time.Time
-	err := f.forge().searchInvolvement(t.Context(), searchIssues, "octo", &cursor{}, &through, forge.NewOwnerFilter(nil, nil),
+	err := f.forge().searchThreads(t.Context(), searchIssues, "involves:octo", &cursor{}, &through, forge.NewOwnerFilter(nil, nil),
 		func(page []forge.ThreadRef, _ []byte) error {
 			refs = append(refs, page...)
 			return nil

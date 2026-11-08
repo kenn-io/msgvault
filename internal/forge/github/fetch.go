@@ -257,8 +257,13 @@ func (f *Forge) firstPage(ctx context.Context, ref forge.ThreadRef) (continuatio
 	case forge.KindDiscussion:
 		if ref.Number == 0 {
 			number, err := f.findDiscussion(ctx, ref)
-			if err != nil {
-				return continuation{}, nil, err
+			switch {
+			case errors.Is(err, errDiscussionNotFound) && f.now().Sub(ref.UpdatedAt) > discussionIndexLag:
+				return continuation{}, nil, fmt.Errorf("%w: no discussion titled %q in %s", forge.ErrUnavailable,
+					strings.TrimPrefix(ref.Locator, "title:"), ref.Repo)
+			case err != nil:
+				// Search may not have indexed it yet; the thread stays queued.
+				return continuation{}, nil, fmt.Errorf("find the discussion of %s: %w", ref.Name(), err)
 			}
 			ref.Number = number
 		}
@@ -553,10 +558,12 @@ func (f *Forge) threadError(err error, ref forge.ThreadRef, roots ...string) err
 	}
 }
 
-// optional reports whether every error is at a field a post may lack.
+// optional reports whether every error says a field a post may lack is
+// missing or forbidden. Any other error, such as a timeout, leaves the
+// thread incomplete, to be fetched again.
 func (e *graphQLResponseError) optional() bool {
 	for _, err := range e.errors {
-		if len(err.Path) == 0 {
+		if len(err.Path) == 0 || (err.Type != "NOT_FOUND" && err.Type != "FORBIDDEN") {
 			return false
 		}
 		last := fmt.Sprint(err.Path[len(err.Path)-1])

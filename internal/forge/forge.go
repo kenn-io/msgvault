@@ -79,10 +79,15 @@ type ThreadRef struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// Name is how errors and logs name the thread.
+// Name is how errors and logs name the thread, as its forge does: a merge
+// request is !N, anything else #N.
 func (r ThreadRef) Name() string {
 	if r.Number > 0 {
-		return fmt.Sprintf("%s#%d", r.Repo, r.Number)
+		sign := "#"
+		if r.Kind == KindMergeRequest {
+			sign = "!"
+		}
+		return fmt.Sprintf("%s%s%d", r.Repo, sign, r.Number)
 	}
 	if r.Locator != "" {
 		return r.Locator

@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -28,11 +29,13 @@ const (
 type cursor struct {
 	// Notifications advance only after a scan read every page.
 	Notifications notificationCursor `json:"notifications,omitzero"`
-	// IssuesThrough and DiscussionsThrough are the latest update each
-	// involvement search has read; results come oldest first, so everything
-	// older was read too.
-	IssuesThrough      time.Time `json:"issues_through,omitzero"`
-	DiscussionsThrough time.Time `json:"discussions_through,omitzero"`
+	// Each search's through is the latest update it has read. Results come
+	// oldest first, so everything older was read too, and the next page or
+	// sync continues from there.
+	IssuesThrough          time.Time `json:"issues_through,omitzero"`
+	DiscussionsThrough     time.Time `json:"discussions_through,omitzero"`
+	ReviewedThrough        time.Time `json:"reviewed_through,omitzero"`
+	ReviewRequestedThrough time.Time `json:"review_requested_through,omitzero"`
 }
 
 type notificationCursor struct {
@@ -51,8 +54,10 @@ func (c cursor) encode() []byte {
 	return data
 }
 
-// Discover reads the notifications, then searches for issues, pull
-// requests and discussions that involve the account.
+// Discover reads the notifications, then searches for the issues, pull
+// requests and discussions the account authored, commented on, was
+// assigned or mentioned in, and the pull requests it reviewed or was asked
+// to review.
 func (f *Forge) Discover(ctx context.Context, raw []byte, owners forge.OwnerFilter, _ forge.KnownThreads,
 	page func([]forge.ThreadRef, []byte) error,
 ) error {
@@ -69,10 +74,23 @@ func (f *Forge) Discover(ctx context.Context, raw []byte, owners forge.OwnerFilt
 	if err := f.scanNotifications(ctx, &state, owners, page); err != nil {
 		return err
 	}
-	if err := f.searchInvolvement(ctx, searchIssues, login, &state, &state.IssuesThrough, owners, page); err != nil {
-		return err
+	for _, search := range []struct {
+		kind    searchKind
+		query   string
+		through *time.Time
+	}{
+		{searchIssues, "involves:" + login, &state.IssuesThrough},
+		{searchDiscussions, "involves:" + login, &state.DiscussionsThrough},
+		// involves: leaves out reviews; a pull request the account only
+		// reviewed or was asked to review is found here.
+		{searchIssues, "is:pr reviewed-by:" + login, &state.ReviewedThrough},
+		{searchIssues, "is:pr review-requested:" + login, &state.ReviewRequestedThrough},
+	} {
+		if err := f.searchThreads(ctx, search.kind, search.query, &state, search.through, owners, page); err != nil {
+			return err
+		}
 	}
-	return f.searchInvolvement(ctx, searchDiscussions, login, &state, &state.DiscussionsThrough, owners, page)
+	return nil
 }
 
 // notification is one thread of GET /notifications.
@@ -126,9 +144,16 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 			if n.UpdatedAt.After(latest) {
 				latest = n.UpdatedAt
 			}
-			if ref, ok := notificationRef(n); ok && owners.Allows(ref.Owner) {
-				refs = append(refs, ref)
+			ref, ok := notificationRef(n)
+			if !ok || !owners.Allows(ref.Owner) {
+				continue
 			}
+			if ref.Kind == forge.KindDiscussion {
+				if ref, err = f.resolveDiscussion(ctx, ref); err != nil {
+					return err
+				}
+			}
+			refs = append(refs, ref)
 		}
 		// The next link carries the query; only the first page is conditional.
 		next, query, header = forge.NextLink(resp.Header.Get("Link")), nil, nil
@@ -166,6 +191,7 @@ func notificationRef(n notification) (forge.ThreadRef, bool) {
 		ref.Kind, ref.Locator = forge.KindRelease, n.Subject.URL
 		ref.Key = strings.ToLower(ref.Repo) + "@" + n.Subject.URL
 	case "Discussion":
+		// The number is resolved from the title, see resolveDiscussion.
 		ref.Kind, ref.Locator = forge.KindDiscussion, "title:"+n.Subject.Title
 		ref.Key = strings.ToLower(ref.Repo) + "#title:" + n.Subject.Title
 	default:
@@ -240,15 +266,14 @@ type searchPage struct {
 	Nodes []searchNode `json:"nodes"`
 }
 
-// searchInvolvement finds the threads of kind that login authored,
-// commented on, was assigned or was mentioned in, updated at or after
-// *through, oldest first. GitHub returns at most 1,000 results per search,
-// so a longer history is read in windows, each starting at the last update
-// the previous one read. *through advances after every page.
-func (f *Forge) searchInvolvement(ctx context.Context, kind searchKind, login string, state *cursor, through *time.Time,
+// searchThreads finds the threads of kind that match query, updated at or
+// after *through, oldest first. GitHub returns at most 1,000 results per
+// search, so a longer history is read in windows, each starting at the last
+// update the previous one read. *through advances after every page.
+func (f *Forge) searchThreads(ctx context.Context, kind searchKind, query string, state *cursor, through *time.Time,
 	owners forge.OwnerFilter, page func([]forge.ThreadRef, []byte) error,
 ) error {
-	base := "involves:" + login + ownerQualifiers(owners)
+	base := query + ownerQualifiers(owners)
 	for {
 		windowStart := *through
 		q := base + " sort:updated-asc"
@@ -376,6 +401,29 @@ func searchRefs(nodes []searchNode, owners forge.OwnerFilter) []forge.ThreadRef 
 	return refs
 }
 
+// discussionIndexLag is how long a new or renamed discussion may take to
+// appear in GitHub's search; a title not found for longer names no
+// discussion any more.
+const discussionIndexLag = 24 * time.Hour
+
+var errDiscussionNotFound = errors.New("no discussion with that title")
+
+// resolveDiscussion gives a notified discussion its number, so it is the
+// same thread a search finds. One not found yet keeps its title: Fetch
+// tries again.
+func (f *Forge) resolveDiscussion(ctx context.Context, ref forge.ThreadRef) (forge.ThreadRef, error) {
+	number, err := f.findDiscussion(ctx, ref)
+	switch {
+	case errors.Is(err, errDiscussionNotFound):
+		return ref, nil
+	case err != nil:
+		return forge.ThreadRef{}, err
+	}
+	ref.Number, ref.Locator = number, ""
+	ref.Key = threadKey(ref.Repo, number)
+	return ref, nil
+}
+
 const findDiscussionQuery = `query FindDiscussion($q: String!, $after: String) {
   search(type: DISCUSSION, query: $q, first: 100, after: $after) {
     pageInfo { hasNextPage endCursor }
@@ -420,7 +468,7 @@ func (f *Forge) findDiscussion(ctx context.Context, ref forge.ThreadRef) (int, e
 			}
 		}
 		if !data.Search.PageInfo.HasNextPage {
-			return 0, fmt.Errorf("%w: no discussion titled %q in %s", forge.ErrUnavailable, title, ref.Repo)
+			return 0, errDiscussionNotFound
 		}
 		after = data.Search.PageInfo.EndCursor
 	}

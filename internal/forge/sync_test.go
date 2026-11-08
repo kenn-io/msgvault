@@ -704,6 +704,7 @@ func TestASchedulerStopKeepsAnIndependentFailure(t *testing.T) {
 // thread's owner, as the scheduler does when a run's budget runs out.
 type cancelAtOwnerForge struct {
 	*fakeForge
+
 	key    string
 	cancel func()
 }

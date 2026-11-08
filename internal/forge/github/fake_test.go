@@ -51,7 +51,10 @@ type fakeGitHub struct {
 
 	issueSearch      []searchNode
 	discussionSearch []searchNode
-	created          map[int]time.Time
+	// reviewedSearch and reviewRequestedSearch answer the review searches.
+	reviewedSearch        []searchNode
+	reviewRequestedSearch []searchNode
+	created               map[int]time.Time
 	// discussionPages splits FindDiscussion results into pages of this size.
 	discussionPages int
 
@@ -110,14 +113,12 @@ func (f *fakeGitHub) log(entry string) {
 func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if r.Header.Get("Authorization") != "Bearer test-token" {
-		f.t.Errorf("request without the token: %s %s", r.Method, r.URL)
-	}
+	assert.Equal(f.t, "Bearer test-token", r.Header.Get("Authorization"), "%s %s", r.Method, r.URL)
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/user":
 		f.log("GET /user")
 		if !f.noScopes {
-			w.Header().Set("X-OAuth-Scopes", f.scopes)
+			w.Header().Set("X-Oauth-Scopes", f.scopes)
 		}
 		f.writeJSON(w, map[string]any{"id": f.userID, "login": f.login, "html_url": "https://github.com/" + f.login})
 	case r.Method == http.MethodGet && r.URL.Path == "/notifications":
@@ -142,7 +143,7 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/graphql":
 		f.serveGraphQL(w, r)
 	default:
-		f.t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		assert.Fail(f.t, "unexpected request", "%s %s", r.Method, r.URL)
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
@@ -191,8 +192,7 @@ var (
 
 func (f *fakeGitHub) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 	var req graphQLRequest
-	if err := json.UnmarshalRead(r.Body, &req); err != nil {
-		f.t.Errorf("decode GraphQL request: %v", err)
+	if !assert.NoError(f.t, json.UnmarshalRead(r.Body, &req), "decode GraphQL request") {
 		return
 	}
 	vars := req.Variables
@@ -205,13 +205,11 @@ func (f *fakeGitHub) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 	default:
 		f.log(fmt.Sprintf("%s %v %v", req.OperationName, vars["id"], vars["after"]))
 	}
-	if strings.Contains(req.Query, "{{email}}") {
-		f.t.Errorf("unexpanded email placeholder in %s", req.OperationName)
-	}
-	w.Header().Set("X-RateLimit-Resource", "graphql")
-	w.Header().Set("X-RateLimit-Limit", "5000")
-	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(f.graphQLRemaining))
-	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(f.graphQLReset.Unix(), 10))
+	assert.NotContains(f.t, req.Query, "{{email}}", "unexpanded email placeholder in %s", req.OperationName)
+	w.Header().Set("X-Ratelimit-Resource", "graphql")
+	w.Header().Set("X-Ratelimit-Limit", "5000")
+	w.Header().Set("X-Ratelimit-Remaining", strconv.Itoa(f.graphQLRemaining))
+	w.Header().Set("X-Ratelimit-Reset", strconv.FormatInt(f.graphQLReset.Unix(), 10))
 	if body, ok := f.refuse[req.OperationName]; ok {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, body)
@@ -248,8 +246,7 @@ func (f *fakeGitHub) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 		f.writeGraphQL(w, map[string]any{"repository": map[string]any{"discussion": thread}}, errs)
 	default:
 		page, ok := f.pages[fmt.Sprintf("%s %v %v", req.OperationName, vars["id"], vars["after"])]
-		if !ok {
-			f.t.Errorf("no page for %s %v %v", req.OperationName, vars["id"], vars["after"])
+		if !assert.True(f.t, ok, "no page for %s %v %v", req.OperationName, vars["id"], vars["after"]) {
 			return
 		}
 		f.writeGraphQL(w, map[string]any{"node": map[string]any{"page": page}}, nil)
@@ -260,14 +257,17 @@ func (f *fakeGitHub) serveSearch(w http.ResponseWriter, vars map[string]any) {
 	q, _ := vars["q"].(string)
 	f.searchQueries = append(f.searchQueries, q)
 	nodes := f.issueSearch
-	if vars["type"] == string(searchDiscussions) {
+	switch {
+	case vars["type"] == string(searchDiscussions):
 		nodes = f.discussionSearch
+	case strings.Contains(q, "reviewed-by:"):
+		nodes = f.reviewedSearch
+	case strings.Contains(q, "review-requested:"):
+		nodes = f.reviewRequestedSearch
 	}
 	parse := func(raw string) time.Time {
 		at, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			f.t.Errorf("parse %q: %v", raw, err)
-		}
+		assert.NoError(f.t, err, "parse %q", raw)
 		return at
 	}
 	excluded := map[string]bool{}
@@ -315,8 +315,7 @@ func (f *fakeGitHub) serveSearch(w http.ResponseWriter, vars map[string]any) {
 func (f *fakeGitHub) serveFindDiscussion(w http.ResponseWriter, vars map[string]any) {
 	q, _ := vars["q"].(string)
 	match := repoTitle.FindStringSubmatch(q)
-	if match == nil {
-		f.t.Errorf("FindDiscussion query without repo and title: %s", q)
+	if !assert.NotNil(f.t, match, "FindDiscussion query without repo and title: %s", q) {
 		return
 	}
 	var nodes []map[string]any
@@ -345,9 +344,7 @@ func (f *fakeGitHub) serveFindDiscussion(w http.ResponseWriter, vars map[string]
 
 func (f *fakeGitHub) writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.MarshalWrite(w, value); err != nil {
-		f.t.Errorf("encode response: %v", err)
-	}
+	assert.NoError(f.t, json.MarshalWrite(w, value), "encode response")
 }
 
 func (f *fakeGitHub) writeGraphQL(w http.ResponseWriter, data any, errs []map[string]any) {
