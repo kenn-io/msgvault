@@ -75,7 +75,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		UNION SELECT survivor_person_id_at_merge, current_person_id FROM person_merges WHERE current_person_id IS NOT NULL
 		UNION SELECT source_person_id, new_person_id FROM person_splits
 	), lineage(id) AS (
-		SELECT ? UNION SELECT CASE WHEN edges.a = lineage.id THEN edges.b ELSE edges.a END
+		SELECT CAST(? AS BIGINT) UNION SELECT CASE WHEN edges.a = lineage.id THEN edges.b ELSE edges.a END
 		FROM lineage JOIN edges ON edges.a = lineage.id OR edges.b = lineage.id
 	) SELECT id FROM lineage ORDER BY id`, personID)
 	if err != nil {
