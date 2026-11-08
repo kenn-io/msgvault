@@ -133,7 +133,8 @@ export function postalAddressText(input: Partial<Input>): string {
   const segments = (value: string) => value.split(/[,\n]+/).map(part => part.trim()).filter(Boolean);
   const structuredSegments = new Set(segments(components));
   const freeSegments = segments(input.free_text ?? '');
-  const freeText = freeSegments.length && freeSegments.every(part => structuredSegments.has(part)) ? '' : input.free_text;
+  const distinctFreeSegments = freeSegments.filter(part => !structuredSegments.has(part));
+  const freeText = distinctFreeSegments.length === freeSegments.length ? input.free_text : distinctFreeSegments.join(', ');
   return (freeText === components ? components : [freeText, components].filter(Boolean).join(', ')) || input.label || input.original_value || '';
 }
 
