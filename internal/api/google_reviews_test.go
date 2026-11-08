@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,6 +125,34 @@ func (googleReviewSearchArchive) SearchGoogleReviews(_ context.Context, query, t
 			Target: "shop", Review: googlereviews.Review{ReviewID: "synthetic", Comment: "synthetic review text"},
 		}},
 	}, nil
+}
+
+func TestGoogleReviewsBackfillReturnsBusyWhenArchiveGateHeld(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "archive backup")
+	require.True(t, ok)
+	defer release()
+	service := googlereviews.NewService(googlereviews.Options{
+		Archive:           googleReviewSearchArchive{},
+		BeginArchiveWrite: gate.BeginWorkContext,
+		Targets: func(context.Context) ([]googlereviews.Target, error) {
+			return []googlereviews.Target{{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: "accounts/a/locations/l", Enabled: true, OwnProject: true}}, nil
+		},
+	})
+	t.Cleanup(service.Close)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}},
+		Store:  &mockStore{stats: &StoreStats{}}, Logger: testLogger(), GoogleReviews: service, OperationGate: gate,
+	})
+	response := reviewAPIRequest(t, srv, `{"action":"backfill","target":"shop"}`, "owner")
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var body ErrorResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal(t, "operation_in_progress", body.Error)
+	assert.Contains(t, body.Message, "archive backup")
 }
 
 func TestGoogleReviewsArchiveSearchIsOwnerOnlyAndNotCached(t *testing.T) {

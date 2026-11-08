@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -74,8 +75,20 @@ func (s *Server) handleGoogleReviews(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "google_reviews_unavailable", googlereviews.ErrUnavailable.Error())
 		return
 	}
-	result, err := s.googleReviews.Execute(r.Context(), principal, request)
+	ctx := r.Context()
+	if request.Action == "backfill" || request.Action == "invalidate_target" {
+		// These actions may wait for archive transactions or a cancelled worker.
+		// Keep foreground requests bounded while the worker settles independently.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, operationGateWaitLimit)
+		defer cancel()
+	}
+	result, err := s.googleReviews.Execute(ctx, principal, request)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && r.Context().Err() == nil {
+			writeOperationGateBusy(w, r, s.operationGate)
+			return
+		}
 		status, code := http.StatusBadGateway, "google_reviews_unavailable"
 		switch {
 		case errors.Is(err, googlereviews.ErrInvalid):
