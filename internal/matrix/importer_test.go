@@ -1187,10 +1187,10 @@ func TestImporterKeepsMergedMatrixHistoryOutOfProviderWork(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_type FROM conversations WHERE id = ?`), room).Scan(&conversationType))
 	assert.Equal("direct_chat", conversationType)
 	var retryState string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_state FROM attachments WHERE message_id = ?`), retryID).Scan(&retryState))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT attachment_state FROM attachments WHERE message_id = ?`), retryID).Scan(&retryState))
 	assert.Equal(string(attachmentpolicy.StatePending), retryState)
 	var legacyAttachments int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), legacyID).Scan(&legacyAttachments))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), legacyID).Scan(&legacyAttachments))
 	assert.Zero(legacyAttachments)
 	candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
 	require.NoError(err)
@@ -1231,7 +1231,7 @@ func TestImporterArchivesStickerAttachment(t *testing.T) {
 	assert.Empty(page.Candidates)
 	assert.Equal(int64(1), page.Counts.IneligibleOccurrences)
 	var attachmentID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), messageIDs["$sticker"]).Scan(&attachmentID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), messageIDs["$sticker"]).Scan(&attachmentID))
 	_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 0)
 	require.NoError(err)
 	assert.False(eligible)

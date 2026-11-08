@@ -69,7 +69,7 @@ func TestMatrixMediaReplacementAndExclusionRecomputeSizeEstimate(t *testing.T) {
 	ref := store.AttachmentRef{SourceAttachmentID: "matrix:mxc://example.org/media", StoragePath: "aa/media", ContentHash: strings.Repeat("a", 64), Size: 100, State: attachmentpolicy.StateStored}
 	req.NoError(s.ReplaceMessageMatrixAttachments(t.Context(), messageID, []store.AttachmentRef{ref}))
 	var size int64
-	req.NoError(s.DB().QueryRow(s.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&size))
+	req.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&size))
 	check.Equal(int64(116), size)
 	candidates, err := s.ListAttachmentPolicyCandidates(t.Context())
 	req.NoError(err)
@@ -77,7 +77,7 @@ func TestMatrixMediaReplacementAndExclusionRecomputeSizeEstimate(t *testing.T) {
 	check.Equal("matrix", candidates[0].SourceType)
 	check.Equal(ref.SourceAttachmentID, candidates[0].SourceAttachmentID)
 	req.NoError(s.ExcludeAttachmentOccurrences(t.Context(), []store.AttachmentExclusion{{AttachmentID: candidates[0].AttachmentID, Reason: attachmentpolicy.SkipPolicyScope}}))
-	req.NoError(s.DB().QueryRow(s.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&size))
+	req.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&size))
 	check.Equal(int64(16), size)
 }
 
@@ -139,7 +139,7 @@ func TestMatrixRetrySkipsRequireResolvedRoster(t *testing.T) {
 		{`{"member_count":30}`, 40, 1},
 		{`{"member_count":30,"member_count_unknown":true}`, 0, 1},
 	} {
-		_, err = s.DB().Exec(s.Rebind(`UPDATE conversations SET metadata = ?, participant_count = 30 WHERE id = ?`), scenario.metadata, room)
+		_, err = s.DB().ExecContext(t.Context(), s.Rebind(`UPDATE conversations SET metadata = ?, participant_count = 30 WHERE id = ?`), scenario.metadata, room)
 		req.NoError(err)
 		policy.MaxParticipants = scenario.limit
 		items, err := s.ListMatrixRetryableAttachmentMessagesContext(t.Context(), source.ID, 0, 100, policy)
@@ -287,7 +287,7 @@ func TestMatrixProviderQueriesSkipMergedArchiveOnlyMessages(t *testing.T) {
 	check.Empty(candidates)
 	for _, messageID := range []int64{placeholderID, legacyID, retryID, storedID} {
 		var archiveOnly bool
-		req.NoError(s.DB().QueryRow(s.Rebind(`SELECT EXISTS (SELECT 1 FROM source_merge_archive_only_messages WHERE message_id = ?)`), messageID).Scan(&archiveOnly))
+		req.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT EXISTS (SELECT 1 FROM source_merge_archive_only_messages WHERE message_id = ?)`), messageID).Scan(&archiveOnly))
 		check.True(archiveOnly)
 	}
 }

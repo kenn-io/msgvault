@@ -514,7 +514,7 @@ func TestImportMediaEncryptionReplacementAndReuse(t *testing.T) {
 		metadataBefore, err := f.store.GetMessageMetadata(ids["$media"])
 		req.NoError(err)
 		var editedBefore bool
-		req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT is_edited FROM messages WHERE id = ?`), ids["$media"]).Scan(&editedBefore))
+		req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT is_edited FROM messages WHERE id = ?`), ids["$media"]).Scan(&editedBefore))
 		for i, replacement := range []*event.MessageEventContent{
 			{MsgType: event.MsgFile, Body: "newer body", File: content.File},
 			{MsgType: event.MsgFile, Body: "different URL", URL: "mxc://example.org/other"},
@@ -537,7 +537,7 @@ func TestImportMediaEncryptionReplacementAndReuse(t *testing.T) {
 				req.NoError(err)
 				check.Equal(metadataBefore, metadataAfter)
 				var editedAfter bool
-				req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT is_edited FROM messages WHERE id = ?`), ids["$media"]).Scan(&editedAfter))
+				req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT is_edited FROM messages WHERE id = ?`), ids["$media"]).Scan(&editedAfter))
 				check.Equal(editedBefore, editedAfter)
 				check.Equal(2, requests, "a newer fingerprint leaves archived media alone when the remote file returns 404")
 				refs, err = f.store.MessageMatrixAttachments(t.Context(), ids["$media"])
@@ -641,7 +641,7 @@ func TestImportDeferredMediaSurvivesSourceRedaction(t *testing.T) {
 	ids, err := f.store.MessageExistsBatch(f.sourceID, []string{"$media"})
 	req.NoError(err)
 	var deleted bool
-	req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), ids["$media"]).Scan(&deleted))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), ids["$media"]).Scan(&deleted))
 	check.True(deleted)
 	f.quiet = true
 	opts.NoMedia = false
@@ -692,7 +692,7 @@ func TestImportMediaContentRefusesNewerVersion(t *testing.T) {
 			req.NoError(err)
 			check.Equal(metadata, saved)
 			var edited bool
-			req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT is_edited FROM messages WHERE id = ?`), messageID).Scan(&edited))
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT is_edited FROM messages WHERE id = ?`), messageID).Scan(&edited))
 			check.False(edited)
 		})
 	}
@@ -1072,7 +1072,7 @@ func TestImportMediaBackoffAvoidsReadsAndUnchangedWrites(t *testing.T) {
 			req.NoError(err)
 			req.Equal(state, refs["matrix:mxc://example.org/file"].State)
 			if f.store.IsPostgreSQL() {
-				_, err = f.store.DB().Exec(`CREATE FUNCTION reject_media_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected media write'; END $$`)
+				_, err = f.store.DB().ExecContext(t.Context(), `CREATE FUNCTION reject_media_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unexpected media write'; END $$`)
 				req.NoError(err)
 			}
 			for _, table := range []string{"attachments", "messages"} {
@@ -1081,7 +1081,7 @@ func TestImportMediaBackoffAvoidsReadsAndUnchangedWrites(t *testing.T) {
 					if f.store.IsPostgreSQL() {
 						create = fmt.Sprintf(`CREATE TRIGGER reject_%s_%s BEFORE %s ON %s FOR EACH ROW EXECUTE FUNCTION reject_media_write()`, table, operation, operation, table)
 					}
-					_, err = f.store.DB().Exec(create)
+					_, err = f.store.DB().ExecContext(t.Context(), create)
 					req.NoError(err)
 				}
 			}
@@ -1450,7 +1450,7 @@ func TestImportMediaPublicationInterruptionPreservesStoredAttachment(t *testing.
 		}
 		var count int64
 		var hasAttachments bool
-		req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT attachment_count, has_attachments FROM messages WHERE id = ?`), ids["$media"]).Scan(&count, &hasAttachments))
+		req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT attachment_count, has_attachments FROM messages WHERE id = ?`), ids["$media"]).Scan(&count, &hasAttachments))
 		check.Equal(int64(1), count)
 		check.True(hasAttachments)
 		refs, err := f.store.MessageMatrixAttachments(t.Context(), ids["$media"])
@@ -1660,7 +1660,7 @@ func TestImportLegacyMediaDiscoverySkipsMalformedEvents(t *testing.T) {
 			check.Equal(mediaDiscoveryVersion, state.MediaDiscoveryVersion)
 			check.Zero(state.MediaDiscoveryAfter)
 			check.False(state.MediaDiscoveryIncomplete)
-			_, err = f.store.DB().Exec(f.store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), ids["$media"])
+			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), ids["$media"])
 			req.NoError(err)
 			_, _, _, err = NewImporter(f.store, runtime).archivedMediaContent(t.Context(), ids["$media"])
 			req.ErrorIs(err, errReadArchivedEvent)
@@ -1824,7 +1824,7 @@ func TestImportFullDiscoversLegacyMediaWithoutSourceHistory(t *testing.T) {
 				req.NoError(err)
 				req.NoError(f.store.SetMessageMetadata(ids["$media"], sql.NullString{String: string(metadata), Valid: true}))
 			case "shrunken-roster":
-				_, err = f.store.DB().Exec(f.store.Rebind(`UPDATE conversations SET participant_count = 30, metadata = ? WHERE source_id = ?`), `{"member_count":30}`, f.sourceID)
+				_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE conversations SET participant_count = 30, metadata = ? WHERE source_id = ?`), `{"member_count":30}`, f.sourceID)
 				req.NoError(err)
 				f.timeline = nil
 				opts.MediaPolicy.MaxParticipants = 20
@@ -1960,7 +1960,7 @@ func TestImportDirectMediaScopeExcludesNonDirectRooms(t *testing.T) {
 	req.NoError(err)
 	check.Equal(attachmentpolicy.SkipPolicyScope, refs["matrix:mxc://example.org/public"].SkipReason)
 	var kind string
-	req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT c.conversation_type FROM conversations c JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), ids["$public"]).Scan(&kind))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT c.conversation_type FROM conversations c JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), ids["$public"]).Scan(&kind))
 	check.Equal("group_chat", kind)
 }
 

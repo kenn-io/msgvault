@@ -37,7 +37,7 @@ func TestCacheMessageSizeTriggerUpgradesExistingArchive(t *testing.T) {
 	s := f.Store
 	messageID, err := s.UpsertMessage(f.NewMessage().Build())
 	req.NoError(err)
-	_, err = s.DB().Exec(`DROP TRIGGER trg_cache_message_facts_update;
+	_, err = s.DB().ExecContext(t.Context(), `DROP TRIGGER trg_cache_message_facts_update;
 		CREATE TRIGGER trg_cache_message_facts_update AFTER UPDATE OF sender_id ON messages
 		BEGIN INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', NEW.id); END;
 		UPDATE applied_migrations SET version = 3 WHERE name = 'cache_message_source_attribution';
@@ -45,17 +45,17 @@ func TestCacheMessageSizeTriggerUpgradesExistingArchive(t *testing.T) {
 	req.NoError(err)
 	req.NoError(s.InitSchema())
 	var repaired int
-	req.NoError(s.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = 0`).Scan(&repaired))
+	req.NoError(s.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = 0`).Scan(&repaired))
 	assert.Equal(t, 1, repaired, "upgrade repairs facts missed by the old trigger")
 	req.NoError(s.InitSchema())
-	req.NoError(s.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = 0`).Scan(&repaired))
+	req.NoError(s.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = 0`).Scan(&repaired))
 	assert.Equal(t, 1, repaired, "repair runs once")
-	_, err = s.DB().Exec(`UPDATE messages SET size_estimate = 42 WHERE id = ?`, messageID)
+	_, err = s.DB().ExecContext(t.Context(), `UPDATE messages SET size_estimate = 42 WHERE id = ?`, messageID)
 	req.NoError(err)
-	_, err = s.DB().Exec(`UPDATE messages SET size_estimate = 42 WHERE id = ?`, messageID)
+	_, err = s.DB().ExecContext(t.Context(), `UPDATE messages SET size_estimate = 42 WHERE id = ?`, messageID)
 	req.NoError(err)
 	var changed int
-	req.NoError(s.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = ?`, messageID).Scan(&changed))
+	req.NoError(s.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_facts' AND message_id = ?`, messageID).Scan(&changed))
 	assert.Equal(t, 1, changed, "only changed sizes invalidate cached facts")
 }
 
