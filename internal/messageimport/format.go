@@ -59,14 +59,25 @@ type messageMetadata struct {
 }
 
 func BuildSnapshot(req NormalizedRequest) (Snapshot, error) {
-	message := req.Message
+	snapshot, err := buildMessageSnapshot(SourceType, req.Source.Identifier, req.Message)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot.SourceDisplayName = req.Source.DisplayName
+	snapshot.AccountEmail = req.Source.AccountEmail
+	return snapshot, nil
+}
+
+// buildMessageSnapshot builds the stored form of one message for a source of
+// type platform.
+func buildMessageSnapshot(platform, sourceIdentifier string, message NormalizedMessage) (Snapshot, error) {
 	raw, err := json.Marshal(buildCanonicalMessage(message), json.Deterministic(true))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("marshal canonical message: %w", err)
 	}
 	metadata, err := json.Marshal(messageMetadata{
-		Platform:               SourceType,
-		SourceIdentifier:       req.Source.Identifier,
+		Platform:               platform,
+		SourceIdentifier:       sourceIdentifier,
 		ExternalMessageID:      message.ExternalID,
 		ExternalConversationID: message.Conversation.ExternalID,
 		URL:                    message.URL,
@@ -78,9 +89,7 @@ func BuildSnapshot(req NormalizedRequest) (Snapshot, error) {
 
 	bodyText, bodyHTML := renderBodies(message)
 	return Snapshot{
-		SourceIdentifier:     req.Source.Identifier,
-		SourceDisplayName:    req.Source.DisplayName,
-		AccountEmail:         req.Source.AccountEmail,
+		SourceIdentifier:     sourceIdentifier,
 		SourceMessageID:      message.ExternalID,
 		SourceConversationID: message.Conversation.ExternalID,
 		ConversationTitle:    message.Conversation.Title,
