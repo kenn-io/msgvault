@@ -759,7 +759,11 @@ func TestSyncStateRejectsInvalidTimesWithSafeLocalDiagnostics(t *testing.T) {
 			}
 			err := state.validate()
 			require.Error(err)
-			assert.Equal(field+" must be an RFC3339 timestamp", err.Error())
+			want := field + " must be an RFC3339 timestamp"
+			if field == "transcript_retry_until" {
+				want = "transcript retry deadline must use RFC3339"
+			}
+			assert.Equal(want, err.Error())
 			assert.NotContains(err.Error(), privateID)
 			assert.NotContains(err.Error(), "PRIVATE_CURSOR")
 			assert.NotContains(err.Error(), "content unavailable")
