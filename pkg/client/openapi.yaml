@@ -11065,13 +11065,29 @@ components:
       properties:
         body:
           type: string
+        kind:
+          description: task, series, or verified native occurrence
+          type: string
         labels:
           items:
             type: string
           type: array
         list:
           type: string
+        membership:
+          description: direct or inherited from a linked series
+          type: string
+        occurrence:
+          $ref: "#/components/schemas/PersonAgendaOccurrence"
+        occurrences_complete:
+          type: boolean
+        open_occurrences:
+          description: Verified open occurrences; exact only when occurrences_complete is true
+          format: int64
+          type: integer
         owner:
+          type: string
+        parent_uid:
           type: string
         priority:
           format: int64
@@ -11084,6 +11100,10 @@ components:
           type: string
         revision:
           type: string
+        schedules:
+          items:
+            $ref: "#/components/schemas/PersonAgendaSchedule"
+          type: array
         state:
           type: string
         status:
@@ -11095,6 +11115,10 @@ components:
         web_url:
           type: string
       required:
+        - kind
+        - membership
+        - open_occurrences
+        - occurrences_complete
         - uid
         - ref
         - qualified_ref
@@ -11122,6 +11146,29 @@ components:
       required:
         - item
       type: object
+    PersonAgendaOccurrence:
+      properties:
+        definition_event_uid:
+          type: string
+        job_uid:
+          type: string
+        scheduled_at:
+          type: string
+      required:
+        - job_uid
+        - definition_event_uid
+        - scheduled_at
+      type: object
+    PersonAgendaRecurrenceStatus:
+      properties:
+        message:
+          type: string
+        state:
+          type: string
+      required:
+        - state
+        - message
+      type: object
     PersonAgendaResult:
       properties:
         items:
@@ -11138,8 +11185,11 @@ components:
           type: array
         project:
           type: string
+        recurrence:
+          $ref: "#/components/schemas/PersonAgendaRecurrenceStatus"
+          description: Separate native recurrence discovery state; ordinary tasks survive recurrence failures
         truncated:
-          description: More open tasks exist than the agenda result limit
+          description: More tasks or recurring series exist, or recurrence discovery is incomplete
           type: boolean
       required:
         - person_uid
@@ -11147,6 +11197,62 @@ components:
         - truncated
         - project
         - items
+        - recurrence
+      type: object
+    PersonAgendaSchedule:
+      properties:
+        catchup:
+          type: string
+        cron:
+          type: string
+        definition_event_uid:
+          type: string
+        deleted:
+          type: boolean
+        editable:
+          type: boolean
+        enabled:
+          type: boolean
+        grace_seconds:
+          format: int64
+          type: integer
+        interval_seconds:
+          format: int64
+          type: integer
+        occurrence_body:
+          type: string
+        occurrence_title:
+          type: string
+        parent_closed:
+          type: boolean
+        recipient:
+          type: string
+        state:
+          type: string
+        summary:
+          type: string
+        timezone:
+          type: string
+        trigger_kind:
+          type: string
+        uid:
+          type: string
+      required:
+        - uid
+        - definition_event_uid
+        - state
+        - summary
+        - timezone
+        - catchup
+        - trigger_kind
+        - occurrence_title
+        - recipient
+        - grace_seconds
+        - interval_seconds
+        - enabled
+        - parent_closed
+        - deleted
+        - editable
       type: object
     PersonAgendaUpdateRequest:
       additionalProperties: false
@@ -17066,7 +17172,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.48.0
+  version: 3.49.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

@@ -10783,24 +10783,88 @@ func (p PersonAgendaCreateRequest) Validate() error {
 }
 
 type PersonAgendaItem struct {
-	Body         *string  `json:"body,omitzero"`
-	Labels       []string `json:"labels,omitempty"`
-	List         string   `json:"list" validate:"required"`
-	Owner        *string  `json:"owner,omitzero"`
-	Priority     *int64   `json:"priority,omitempty"`
-	Project      string   `json:"project" validate:"required"`
-	QualifiedRef string   `json:"qualified_ref" validate:"required"`
-	Ref          string   `json:"ref" validate:"required"`
-	Revision     string   `json:"revision" validate:"required"`
-	State        string   `json:"state" validate:"required"`
-	Status       string   `json:"status" validate:"required"`
-	Title        string   `json:"title" validate:"required"`
-	UID          string   `json:"uid" validate:"required"`
-	WebURL       *string  `json:"web_url,omitzero"`
+	Body *string `json:"body,omitzero"`
+
+	// Kind task, series, or verified native occurrence
+	Kind   string   `json:"kind" validate:"required"`
+	Labels []string `json:"labels,omitempty"`
+	List   string   `json:"list" validate:"required"`
+
+	// Membership direct or inherited from a linked series
+	Membership          string                  `json:"membership" validate:"required"`
+	Occurrence          *PersonAgendaOccurrence `json:"occurrence,omitempty"`
+	OccurrencesComplete bool                    `json:"occurrences_complete"`
+
+	// OpenOccurrences Verified open occurrences; exact only when occurrences_complete is true
+	OpenOccurrences int64                  `json:"open_occurrences"`
+	Owner           *string                `json:"owner,omitzero"`
+	ParentUID       *string                `json:"parent_uid,omitzero"`
+	Priority        *int64                 `json:"priority,omitempty"`
+	Project         string                 `json:"project" validate:"required"`
+	QualifiedRef    string                 `json:"qualified_ref" validate:"required"`
+	Ref             string                 `json:"ref" validate:"required"`
+	Revision        string                 `json:"revision" validate:"required"`
+	Schedules       []PersonAgendaSchedule `json:"schedules,omitempty"`
+	State           string                 `json:"state" validate:"required"`
+	Status          string                 `json:"status" validate:"required"`
+	Title           string                 `json:"title" validate:"required"`
+	UID             string                 `json:"uid" validate:"required"`
+	WebURL          *string                `json:"web_url,omitzero"`
 }
 
 func (p PersonAgendaItem) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if err := typesValidator.Var(p.List, "required"); err != nil {
+		errors = errors.Append("List", err)
+	}
+	if err := typesValidator.Var(p.Membership, "required"); err != nil {
+		errors = errors.Append("Membership", err)
+	}
+	if p.Occurrence != nil {
+		if v, ok := any(p.Occurrence).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Occurrence", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Project, "required"); err != nil {
+		errors = errors.Append("Project", err)
+	}
+	if err := typesValidator.Var(p.QualifiedRef, "required"); err != nil {
+		errors = errors.Append("QualifiedRef", err)
+	}
+	if err := typesValidator.Var(p.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
+	}
+	if err := typesValidator.Var(p.Revision, "required"); err != nil {
+		errors = errors.Append("Revision", err)
+	}
+	for i, item := range p.Schedules {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Schedules[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if err := typesValidator.Var(p.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(p.Title, "required"); err != nil {
+		errors = errors.Append("Title", err)
+	}
+	if err := typesValidator.Var(p.UID, "required"); err != nil {
+		errors = errors.Append("UID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonAgendaLinkRequest struct {
@@ -10829,6 +10893,25 @@ func (p PersonAgendaMutationResponse) Validate() error {
 	return errors
 }
 
+type PersonAgendaOccurrence struct {
+	DefinitionEventUID string `json:"definition_event_uid" validate:"required"`
+	JobUID             string `json:"job_uid" validate:"required"`
+	ScheduledAt        string `json:"scheduled_at" validate:"required"`
+}
+
+func (p PersonAgendaOccurrence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonAgendaRecurrenceStatus struct {
+	Message string `json:"message" validate:"required"`
+	State   string `json:"state" validate:"required"`
+}
+
+func (p PersonAgendaRecurrenceStatus) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type PersonAgendaResult struct {
 	Items []PersonAgendaItem `json:"items" validate:"required"`
 
@@ -10836,10 +10919,11 @@ type PersonAgendaResult struct {
 	PersonUID string `json:"person_uid" validate:"required"`
 
 	// PersonUids Canonical UID followed by retired aliases that still resolve to this person
-	PersonUids []string `json:"person_uids" validate:"required"`
-	Project    string   `json:"project" validate:"required"`
+	PersonUids []string                     `json:"person_uids" validate:"required"`
+	Project    string                       `json:"project" validate:"required"`
+	Recurrence PersonAgendaRecurrenceStatus `json:"recurrence"`
 
-	// Truncated More open tasks exist than the agenda result limit
+	// Truncated More tasks or recurring series exist, or recurrence discovery is incomplete
 	Truncated bool `json:"truncated"`
 }
 
@@ -10864,10 +10948,39 @@ func (p PersonAgendaResult) Validate() error {
 	if err := typesValidator.Var(p.Project, "required"); err != nil {
 		errors = errors.Append("Project", err)
 	}
+	if v, ok := any(p.Recurrence).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Recurrence", err)
+		}
+	}
 	if len(errors) == 0 {
 		return nil
 	}
 	return errors
+}
+
+type PersonAgendaSchedule struct {
+	Catchup            string  `json:"catchup" validate:"required"`
+	Cron               *string `json:"cron,omitzero"`
+	DefinitionEventUID string  `json:"definition_event_uid" validate:"required"`
+	Deleted            bool    `json:"deleted"`
+	Editable           bool    `json:"editable"`
+	Enabled            bool    `json:"enabled"`
+	GraceSeconds       int64   `json:"grace_seconds"`
+	IntervalSeconds    int64   `json:"interval_seconds"`
+	OccurrenceBody     *string `json:"occurrence_body,omitzero"`
+	OccurrenceTitle    string  `json:"occurrence_title" validate:"required"`
+	ParentClosed       bool    `json:"parent_closed"`
+	Recipient          string  `json:"recipient" validate:"required"`
+	State              string  `json:"state" validate:"required"`
+	Summary            string  `json:"summary" validate:"required"`
+	Timezone           string  `json:"timezone" validate:"required"`
+	TriggerKind        string  `json:"trigger_kind" validate:"required"`
+	UID                string  `json:"uid" validate:"required"`
+}
+
+func (p PersonAgendaSchedule) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type PersonAgendaUpdateRequest struct {
