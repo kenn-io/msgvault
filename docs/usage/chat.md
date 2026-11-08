@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-06"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -953,8 +953,8 @@ Deprecated in 0.17.0: MCP analytics behavior moved from per-command flags to dae
 ## Agent Skills
 
 For terminal coding agents, msgvault also bundles read-only skills covering
-search, attachment retrieval, and analytics. Install them into detected Claude
-Code and Codex skill directories with:
+search, attachment retrieval, analytics, and one-to-one continuity. Install them
+into detected Claude Code and Codex skill directories with:
 
 ```bash
 msgvault skills install
