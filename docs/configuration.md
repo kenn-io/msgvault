@@ -181,6 +181,32 @@ its timezone, and the large-audience cut uses its direct limit. After you change
 values and the commands warn until `msgvault activity build` rebuilds it. See
 [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
+## Important-date alerts
+
+The optional calendar job checks declared birthdays and anniversaries without running the people sweep. It is disabled by default. Enable it only when the configured Kata project and recipient are private and approved for the subjects. Each subject also needs recipient-specific consent; see [important-date commands](cli-reference.md#person-important-date).
+
+```toml
+[people.important_dates]
+enabled = false
+private_destination = false
+project = ""
+recipient = ""
+timezone = "UTC"
+schedule = "15 8 * * *"
+leap_day = "february_28"
+use_cadence_presets = false
+lead_a = 30
+lead_b = 21
+lead_c = 14
+lead_d = 7
+```
+
+When enabled, set `private_destination = true`, an explicit Kata project and recipient, and enable the existing [Kata integration](#integrationskata). `timezone` is UTC or an IANA zone. Leap-day choices are `february_28`, `march_1`, and `leap_years_only`. The schedule uses the shared five-field cron grammar. Lead times are calendar days from 1 through 366.
+
+`use_cadence_presets` explicitly maps contact-frequency values 21, 60, 180, and 365 days to A, B, C, and D. It does not infer importance from other intervals. Custom and unassigned values are excluded. Current derived, incomplete, conflicting, and non-Gregorian dates are skipped. A linked child or recorded dependent or pet inherits an eligible parent's tier, but needs its own consent. Merged and split identities are quarantined pending reconciliation.
+
+The job sends no greetings and uses no model. It creates a generic preparation issue and a native inbox request containing subject identity only after consent. It retains uncertain delivery states and does not retry them automatically. The current status command lists retained states; operator reconciliation for uncertain outcomes and date changes remains manual.
+
 ## People sweep inference
 
 People sweeps use one named protocol profile at a time. A profile records the
