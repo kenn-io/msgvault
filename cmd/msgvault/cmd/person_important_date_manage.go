@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -101,6 +102,44 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		}
 		return writeJSONOutput(cmd, result)
 	}}
+	var reconcileDigest, reconcileKey, reconcileDecisions string
+	var reconcileRevision int64
+	var inspectedSnapshots bool
+	reconcile := &cobra.Command{Use: "reconcile <person-id>", Short: "Apply reviewed important-date identity decisions", Long: "After reviewing lineage and required merge snapshots, provide explicit decisions for every listed historical person and owned subject. Existing consent is revoked. Ambiguous mappings remain quarantined.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
+		if err != nil {
+			return err
+		}
+		var decisions []store.ImportantDateIdentityDecision
+		if err := json.Unmarshal([]byte(reconcileDecisions), &decisions); err != nil {
+			return errors.New("invalid important-date decisions JSON")
+		}
+		if reconcileRevision < 0 {
+			return errors.New("identity revision is required")
+		}
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration unavailable")
+		}
+		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		uid, err := st.ReconcileImportantDateIdentityContext(cmd.Context(), store.ImportantDateReconcileRequest{PersonID: id, IdentityRevision: reconcileRevision, LineageDigest: reconcileDigest, IdempotencyKey: reconcileKey, Actor: "owner", InspectedSnapshots: inspectedSnapshots, Decisions: decisions})
+		if err != nil {
+			return err
+		}
+		return writeJSONOutput(cmd, map[string]string{"reconciliation_uid": uid})
+	}}
+	reconcile.Flags().StringVar(&reconcileDigest, "digest", "", "Digest from the inspected lineage view")
+	reconcile.Flags().Int64Var(&reconcileRevision, "identity-revision", -1, "Identity revision from the inspected lineage view")
+	reconcile.Flags().StringVar(&reconcileKey, "key", "", "Unique idempotency key for this decision")
+	reconcile.Flags().StringVar(&reconcileDecisions, "decisions-json", "", "Explicit subject and meaning mappings as a JSON array")
+	reconcile.Flags().BoolVar(&inspectedSnapshots, "inspected-snapshots", false, "Confirm that required merge snapshots were inspected")
 	var grant bool
 	consent := &cobra.Command{Use: "consent <subject-uid>", Short: "Set consent for the configured private destination", Long: "Grant only when the subject's information may be shared with the exact configured private project and recipient. Without --grant, consent is revoked.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
@@ -312,13 +351,13 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Accepted correction for %d retained occurrence(s)\n", count)
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Accepted correction for %d retained record(s)\n", count)
 		if err != nil {
 			return fmt.Errorf("write correction status: %w", err)
 		}
 		return nil
 	}}
 	acceptCorrection.Flags().StringVar(&correctionDate, "date", "", "Current date as YYYY-MM-DD or --MM-DD")
-	group.AddCommand(add, list, lineage, consent, status, preview, update, withdraw, resolve, acceptCorrection)
+	group.AddCommand(add, list, lineage, reconcile, consent, status, preview, update, withdraw, resolve, acceptCorrection)
 	return group
 }

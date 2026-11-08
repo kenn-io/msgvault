@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -40,6 +41,13 @@ func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fing
 			return err
 		}
 		fenced := withWritableSnapshot(ctx, s.db.DB, tx)
+		guarded, err := s.importantDateOccurrenceGuardedContext(fenced, key)
+		if err != nil {
+			return err
+		}
+		if guarded {
+			return nil
+		}
 		pending, err := s.ImportantDateHasOtherPendingContext(fenced, key[:separator+1], key, fingerprint)
 		if err != nil {
 			return err
@@ -57,6 +65,26 @@ func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fing
 			return fmt.Errorf("count important-date claims: %w", err)
 		}
 		claimed = count == 1
+		if !claimed {
+			return nil
+		}
+		subject, meaning, year, err := importantDateOccurrenceParts(key)
+		if err != nil {
+			return err
+		}
+		// Persist equivalence at claim time so a later split or narrowed
+		// mapping cannot resurrect this occurrence for a possible subject.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO important_date_occurrence_guards
+			(reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key)
+			SELECT b.reconciliation_uid, other.resolved_subject, b.meaning, ?, ?
+			FROM important_date_identity_bindings b
+			JOIN important_date_reconciliations r ON r.uid = b.reconciliation_uid AND r.active = 1
+			JOIN important_date_identity_bindings other ON other.reconciliation_uid = b.reconciliation_uid
+				AND other.original_subject = b.original_subject AND other.meaning = b.meaning
+			WHERE b.resolved_subject = ? AND b.meaning = ? AND other.resolved_subject <> b.resolved_subject
+			ON CONFLICT DO NOTHING`, year, key, subject, meaning); err != nil {
+			return fmt.Errorf("retain equivalent important-date guards: %w", err)
+		}
 		return nil
 	})
 	return claimed, err
@@ -132,19 +160,74 @@ func (s *Store) ImportantDateHasOtherPendingContext(ctx context.Context, prefix,
 	if prefix == "" || !strings.HasPrefix(currentKey, prefix) || fingerprint == "" {
 		return false, ErrImportantDateTransition
 	}
+	subject, meaning, err := importantDatePrefixParts(prefix)
+	if err != nil {
+		return false, err
+	}
 	var pending bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries
-		WHERE substr(occurrence_key, 1, ?) = ? AND occurrence_key <> ? AND state <> 'retry_issue'
-		AND ((fingerprint <> ? AND accepted_fingerprint <> ?) OR state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, utf8.RuneCountInString(prefix), prefix, currentKey, fingerprint, fingerprint).Scan(&pending)
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries d
+		WHERE substr(d.occurrence_key, 1, ?) = ? AND d.occurrence_key <> ? AND d.state <> 'retry_issue'
+		AND ((d.fingerprint <> ? AND d.accepted_fingerprint <> ? AND NOT EXISTS (
+			SELECT 1 FROM important_date_occurrence_guards g JOIN important_date_reconciliations r ON r.uid = g.reconciliation_uid AND r.active = 1
+			WHERE g.original_occurrence_key = d.occurrence_key AND g.resolved_subject = ? AND g.meaning = ? AND g.accepted_fingerprint = ?))
+			OR d.state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, utf8.RuneCountInString(prefix), prefix, currentKey, fingerprint, fingerprint, subject, meaning, fingerprint).Scan(&pending)
 	if err != nil {
 		return false, fmt.Errorf("check pending important-date occurrences: %w", err)
 	}
+	if pending {
+		return true, nil
+	}
+	year, err := strconv.Atoi(strings.TrimPrefix(currentKey, prefix))
+	if err != nil {
+		return false, ErrImportantDateTransition
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_occurrence_guards g
+		JOIN important_date_reconciliations r ON r.uid = g.reconciliation_uid AND r.active = 1
+		JOIN important_date_deliveries d ON d.occurrence_key = g.original_occurrence_key
+		WHERE g.resolved_subject = ? AND g.meaning = ? AND g.occurrence_year <> ? AND d.state <> 'retry_issue'
+		AND ((d.fingerprint <> ? AND g.accepted_fingerprint <> ?) OR d.state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, subject, meaning, year, fingerprint, fingerprint).Scan(&pending)
+	if err != nil {
+		return false, fmt.Errorf("check reconciled important-date occurrences: %w", err)
+	}
+	if pending {
+		return true, nil
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_identity_bindings b
+		JOIN important_date_reconciliations r ON r.uid = b.reconciliation_uid AND r.active = 1
+		JOIN important_date_identity_bindings other ON other.reconciliation_uid = b.reconciliation_uid
+			AND other.original_subject = b.original_subject AND other.meaning = b.meaning
+		JOIN important_date_deliveries d ON substr(d.occurrence_key, 1, length(other.resolved_subject || ':' || other.meaning || ':')) = other.resolved_subject || ':' || other.meaning || ':'
+		WHERE b.resolved_subject = ? AND b.meaning = ? AND other.resolved_subject <> b.resolved_subject
+		AND d.occurrence_key <> ? AND d.state <> 'retry_issue'
+		AND ((d.fingerprint <> ? AND NOT EXISTS (SELECT 1 FROM important_date_occurrence_guards g
+			WHERE g.reconciliation_uid = b.reconciliation_uid AND g.original_occurrence_key = d.occurrence_key
+			AND g.resolved_subject = b.resolved_subject AND g.meaning = b.meaning AND g.accepted_fingerprint = ?))
+			OR d.state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, subject, meaning, currentKey, fingerprint, fingerprint).Scan(&pending)
+	if err != nil {
+		return false, fmt.Errorf("check equivalent pending important-date occurrences: %w", err)
+	}
 	return pending, nil
+}
+
+func importantDatePrefixParts(prefix string) (string, string, error) {
+	if !strings.HasSuffix(prefix, ":") {
+		return "", "", ErrImportantDateTransition
+	}
+	trimmed := strings.TrimSuffix(prefix, ":")
+	separator := strings.LastIndexByte(trimmed, ':')
+	if separator < 1 || separator == len(trimmed)-1 {
+		return "", "", ErrImportantDateTransition
+	}
+	return trimmed[:separator], trimmed[separator+1:], nil
 }
 
 // ImportantDateDeliveryExistsContext reports whether an occurrence is not
 // eligible for a safe issue or notification preflight retry.
 func (s *Store) ImportantDateDeliveryExistsContext(ctx context.Context, key string) (bool, error) {
+	guarded, err := s.importantDateOccurrenceGuardedContext(ctx, key)
+	if err != nil || guarded {
+		return guarded, err
+	}
 	var exists bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ? AND state NOT IN ('retry_issue', 'issue_created'))`, key).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check important-date delivery: %w", err)
@@ -223,23 +306,58 @@ func (s *Store) AcceptImportantDateCorrectionContext(ctx context.Context, prefix
 	if prefix == "" || strings.TrimSpace(fingerprint) == "" || len(fingerprint) > 128 {
 		return 0, ErrImportantDateTransition
 	}
+	subject, meaning, err := importantDatePrefixParts(prefix)
+	if err != nil {
+		return 0, err
+	}
 	var changed int64
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		var ambiguous bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_identity_bindings b
+			JOIN important_date_reconciliations r ON r.uid = b.reconciliation_uid AND r.active = 1
+			JOIN important_date_identity_bindings other ON other.reconciliation_uid = b.reconciliation_uid
+				AND other.original_subject = b.original_subject AND other.meaning = b.meaning
+			WHERE b.resolved_subject = ? AND b.meaning = ? AND other.resolved_subject <> b.resolved_subject)`, subject, meaning).Scan(&ambiguous); err != nil {
+			return fmt.Errorf("check ambiguous date corrections: %w", err)
+		}
+		if ambiguous {
+			return errors.New("resolve ambiguous identity mappings before accepting a correction")
+		}
 		var unresolved bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE substr(occurrence_key, 1, ?) = ? AND state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown'))`, utf8.RuneCountInString(prefix), prefix).Scan(&unresolved); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries d
+			WHERE (substr(d.occurrence_key, 1, ?) = ? OR EXISTS (SELECT 1 FROM important_date_occurrence_guards g
+				JOIN important_date_reconciliations r ON r.uid = g.reconciliation_uid AND r.active = 1
+				WHERE g.original_occurrence_key = d.occurrence_key AND g.resolved_subject = ? AND g.meaning = ?))
+			AND d.state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown'))`, utf8.RuneCountInString(prefix), prefix, subject, meaning).Scan(&unresolved); err != nil {
 			return fmt.Errorf("check unresolved date corrections: %w", err)
 		}
 		if unresolved {
 			return errors.New("resolve pending deliveries before accepting a correction")
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE important_date_deliveries SET accepted_fingerprint = ? WHERE substr(occurrence_key, 1, ?) = ? AND state IN ('delivered', 'cancelled')`, fingerprint, utf8.RuneCountInString(prefix), prefix)
+		result, err := tx.ExecContext(ctx, `UPDATE important_date_deliveries SET accepted_fingerprint = ?
+			WHERE substr(occurrence_key, 1, ?) = ? AND state IN ('delivered', 'cancelled')
+			AND NOT EXISTS (SELECT 1 FROM important_date_occurrence_guards g
+				JOIN important_date_reconciliations r ON r.uid = g.reconciliation_uid AND r.active = 1
+				WHERE g.original_occurrence_key = important_date_deliveries.occurrence_key AND g.resolved_subject <> ?)`, fingerprint, utf8.RuneCountInString(prefix), prefix, subject)
 		if err != nil {
 			return fmt.Errorf("accept important-date correction: %w", err)
 		}
 		changed, err = result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		result, err = tx.ExecContext(ctx, `UPDATE important_date_occurrence_guards SET accepted_fingerprint = ?
+			WHERE resolved_subject = ? AND meaning = ? AND EXISTS (SELECT 1 FROM important_date_reconciliations r
+				WHERE r.uid = important_date_occurrence_guards.reconciliation_uid AND r.active = 1)
+			AND EXISTS (SELECT 1 FROM important_date_deliveries d WHERE d.occurrence_key = important_date_occurrence_guards.original_occurrence_key AND d.state IN ('delivered', 'cancelled'))`, fingerprint, subject, meaning)
+		if err != nil {
+			return fmt.Errorf("accept reconciled important-date correction: %w", err)
+		}
+		count, err := result.RowsAffected()
+		changed += count
 		return err
 	})
 	return changed, err

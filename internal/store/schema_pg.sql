@@ -4443,5 +4443,6 @@ CREATE TABLE IF NOT EXISTS important_date_occurrence_guards (
     meaning TEXT NOT NULL CHECK (meaning IN ('birthday', 'anniversary')),
     occurrence_year INTEGER NOT NULL,
     original_occurrence_key TEXT NOT NULL REFERENCES important_date_deliveries(occurrence_key) ON DELETE RESTRICT,
+    accepted_fingerprint TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key)
 );

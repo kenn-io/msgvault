@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -16,21 +17,32 @@ import (
 // ImportantDateLineage is an owner-only inspection of connected identity
 // history. It does not approve any mapping or release a quarantined identity.
 type ImportantDateLineage struct {
-	TopologyDigest   string                         `json:"topology_digest"`
-	Digest           string                         `json:"digest,omitempty"`
-	IdentityRevision int64                          `json:"identity_revision"`
-	PersonIDs        []int64                        `json:"person_ids"`
-	MissingPersonIDs []int64                        `json:"missing_person_ids"`
-	PersonUIDs       []string                       `json:"person_uids"`
-	People           []ImportantDateLineagePerson   `json:"people"`
-	Aliases          []ImportantDateLineageAlias    `json:"aliases"`
-	MergeSnapshots   []ImportantDateLineageSnapshot `json:"merge_snapshots"`
-	MergeIDs         []int64                        `json:"merge_ids"`
-	SplitResults     []PersonSplitResult            `json:"split_results"`
-	MissingSplitIDs  []int64                        `json:"missing_split_result_ids"`
-	SplitIDs         []int64                        `json:"split_ids"`
-	OwnedSubjects    []ImportantDateLineageSubject  `json:"owned_subjects"`
-	Deliveries       []ImportantDateLineageDelivery `json:"deliveries"`
+	ActiveReconciliations []string                       `json:"active_reconciliations"`
+	TopologyDigest        string                         `json:"topology_digest"`
+	Digest                string                         `json:"digest,omitempty"`
+	IdentityRevision      int64                          `json:"identity_revision"`
+	PersonIDs             []int64                        `json:"person_ids"`
+	MissingPersonIDs      []int64                        `json:"missing_person_ids"`
+	PersonUIDs            []string                       `json:"person_uids"`
+	People                []ImportantDateLineagePerson   `json:"people"`
+	Aliases               []ImportantDateLineageAlias    `json:"aliases"`
+	MergeSnapshots        []ImportantDateLineageSnapshot `json:"merge_snapshots"`
+	MergeIDs              []int64                        `json:"merge_ids"`
+	SplitResults          []PersonSplitResult            `json:"split_results"`
+	MissingSplitIDs       []int64                        `json:"missing_split_result_ids"`
+	SplitIDs              []int64                        `json:"split_ids"`
+	OwnedSubjects         []ImportantDateLineageSubject  `json:"owned_subjects"`
+	Deliveries            []ImportantDateLineageDelivery `json:"deliveries"`
+	Guards                []ImportantDateLineageGuard    `json:"guards"`
+}
+
+type ImportantDateLineageGuard struct {
+	ReconciliationUID   string `json:"reconciliation_uid"`
+	ResolvedSubject     string `json:"resolved_subject"`
+	Meaning             string `json:"meaning"`
+	OccurrenceYear      int    `json:"occurrence_year"`
+	OriginalKey         string `json:"original_occurrence_key"`
+	AcceptedFingerprint string `json:"accepted_fingerprint,omitempty"`
 }
 
 type ImportantDateLineageSnapshot struct {
@@ -311,6 +323,34 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	for _, subject := range result.OwnedSubjects {
 		prefixes = append(prefixes, "owned/"+subject.UID+":")
 	}
+	active := map[string]struct{}{}
+	for _, prefix := range prefixes {
+		subject := strings.TrimSuffix(prefix, ":")
+		rows, err := s.db.QueryContext(ctx, `SELECT r.uid FROM important_date_reconciliations r WHERE r.active = 1
+			AND EXISTS (SELECT 1 FROM important_date_identity_bindings b WHERE b.reconciliation_uid = r.uid AND b.original_subject = ?)`, subject)
+		if err != nil {
+			return result, fmt.Errorf("read active lineage decisions: %w", err)
+		}
+		for rows.Next() {
+			var uid string
+			if err := rows.Scan(&uid); err != nil {
+				_ = rows.Close()
+				return result, fmt.Errorf("scan active lineage decision: %w", err)
+			}
+			active[uid] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return result, fmt.Errorf("iterate active lineage decisions: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return result, fmt.Errorf("close active lineage decisions: %w", err)
+		}
+	}
+	for uid := range active {
+		result.ActiveReconciliations = append(result.ActiveReconciliations, uid)
+	}
+	sort.Strings(result.ActiveReconciliations)
 	for _, prefix := range prefixes {
 		rows, err := s.db.QueryContext(ctx, `SELECT occurrence_key, state, issue_uid, fingerprint, accepted_fingerprint FROM important_date_deliveries WHERE substr(occurrence_key, 1, ?) = ? ORDER BY occurrence_key`, utf8.RuneCountInString(prefix), prefix)
 		if err != nil {
@@ -342,10 +382,32 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		}
 	}
 	sort.Slice(result.Deliveries, func(i, j int) bool { return result.Deliveries[i].OccurrenceKey < result.Deliveries[j].OccurrenceKey })
-	sort.Slice(result.MergeIDs, func(i, j int) bool { return result.MergeIDs[i] < result.MergeIDs[j] })
+	for _, delivery := range result.Deliveries {
+		rows, err := s.db.QueryContext(ctx, `SELECT reconciliation_uid, resolved_subject, meaning, occurrence_year, accepted_fingerprint
+			FROM important_date_occurrence_guards WHERE original_occurrence_key = ? ORDER BY reconciliation_uid, resolved_subject, meaning, occurrence_year`, delivery.OccurrenceKey)
+		if err != nil {
+			return result, fmt.Errorf("read lineage occurrence guards: %w", err)
+		}
+		for rows.Next() {
+			guard := ImportantDateLineageGuard{OriginalKey: delivery.OccurrenceKey}
+			if err := rows.Scan(&guard.ReconciliationUID, &guard.ResolvedSubject, &guard.Meaning, &guard.OccurrenceYear, &guard.AcceptedFingerprint); err != nil {
+				_ = rows.Close()
+				return result, fmt.Errorf("scan lineage occurrence guard: %w", err)
+			}
+			result.Guards = append(result.Guards, guard)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return result, fmt.Errorf("iterate lineage occurrence guards: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return result, fmt.Errorf("close lineage occurrence guards: %w", err)
+		}
+	}
+	slices.Sort(result.MergeIDs)
 	sort.Slice(result.MergeSnapshots, func(i, j int) bool { return result.MergeSnapshots[i].MergeID < result.MergeSnapshots[j].MergeID })
-	sort.Slice(result.SplitIDs, func(i, j int) bool { return result.SplitIDs[i] < result.SplitIDs[j] })
-	sort.Slice(result.MissingSplitIDs, func(i, j int) bool { return result.MissingSplitIDs[i] < result.MissingSplitIDs[j] })
+	slices.Sort(result.SplitIDs)
+	slices.Sort(result.MissingSplitIDs)
 	sort.Slice(result.SplitResults, func(i, j int) bool { return result.SplitResults[i].Split.ID < result.SplitResults[j].Split.ID })
 	topology := struct {
 		PersonIDs        []int64                        `json:"person_ids"`

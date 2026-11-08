@@ -34,7 +34,15 @@ func (s *Store) SetImportantDateConsentContext(ctx context.Context, subject, pro
 					return errors.New("important-date subject is unavailable")
 				}
 			case strings.HasPrefix(subject, "owned/"):
-				err := tx.QueryRowContext(ctx, `SELECT p.id FROM important_date_subjects d JOIN persons p ON p.vcard_uid = d.owner_uid WHERE d.uid = ? AND d.withdrawn = 0`, strings.TrimPrefix(subject, "owned/")).Scan(&personID)
+				err := tx.QueryRowContext(ctx, `SELECT p.id FROM important_date_subjects d JOIN persons p ON (
+					(p.vcard_uid = d.owner_uid AND NOT EXISTS (SELECT 1 FROM important_date_identity_bindings b
+						JOIN important_date_reconciliations r ON r.uid = b.reconciliation_uid AND r.active = 1
+						WHERE b.original_subject = 'owned/' || d.uid AND b.meaning = 'birthday'))
+					OR EXISTS (SELECT 1 FROM important_date_identity_bindings b
+						JOIN important_date_reconciliations r ON r.uid = b.reconciliation_uid AND r.active = 1
+						WHERE b.original_subject = 'owned/' || d.uid AND b.resolved_subject = 'owned/' || d.uid
+						AND b.meaning = 'birthday' AND b.effective_owner = 'person/' || p.vcard_uid)
+				) WHERE d.uid = ? AND d.withdrawn = 0`, strings.TrimPrefix(subject, "owned/")).Scan(&personID)
 				if err != nil {
 					return errors.New("important-date subject is unavailable")
 				}

@@ -64,6 +64,10 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	replayed, err := st.ReconcileImportantDateIdentityContext(ctx, request)
 	must.NoError(err)
 	checks.Equal(id, replayed)
+	outdated := request
+	outdated.IdempotencyKey = "outdated-reconcile"
+	_, err = st.ReconcileImportantDateIdentityContext(ctx, outdated)
+	must.Error(err, "a prior inspection cannot silently supersede a newer decision")
 	var guards int
 	err = st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM important_date_occurrence_guards WHERE reconciliation_uid = ? AND resolved_subject = ? AND meaning = 'birthday' AND occurrence_year = 2027`), id, target).Scan(&guards)
 	must.NoError(err)
@@ -73,5 +77,103 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	checks.False(active)
 	stable, err := st.ImportantDateIdentityStableContext(ctx, merged.Person.ID)
 	must.NoError(err)
-	checks.False(stable, "recording decisions alone must not release quarantine")
+	checks.True(stable, "a reviewed unchanged lineage may be eligible after fresh consent")
+}
+
+func TestImportantDateSplitGuardSuppressesHistoricOccurrence(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	firstParticipant, err := st.EnsureParticipantByIdentifier("email", "split-first@example.test", "Example Person")
+	must.NoError(err)
+	secondParticipant, err := st.EnsureParticipantByIdentifier("email", "split-second@example.test", "Example Person")
+	must.NoError(err)
+	first, _, err := st.CreatePersonFromParticipantContext(ctx, firstParticipant)
+	must.NoError(err)
+	second, _, err := st.CreatePersonFromParticipantContext(ctx, secondParticipant)
+	must.NoError(err)
+	oldKey := "person/" + second.VCardUID + ":birthday:2027"
+	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, oldKey, "old-fingerprint")
+	must.NoError(err)
+	must.True(claimed)
+	changed, err := st.ResolveImportantDateDeliveryContext(ctx, oldKey, store.ImportantDateCancelled, "")
+	must.NoError(err)
+	must.True(changed)
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: first.ID, AbsorbedID: second.ID, ExpectedSurvivorRevision: first.Revision, ExpectedAbsorbedRevision: second.Revision, IdempotencyKey: "example-split-guard-merge", Actor: "test"})
+	must.NoError(err)
+	split, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{secondParticipant}, ExpectedSourceRevision: merged.Person.Revision, IdempotencyKey: "example-split-guard-split", Actor: "test"})
+	must.NoError(err)
+	lineage, err := st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	newSubject := "person/" + split.NewPerson.VCardUID
+	firstSubject := "person/" + split.SourcePerson.VCardUID
+	request := store.ImportantDateReconcileRequest{PersonID: split.NewPerson.ID, IdentityRevision: lineage.IdentityRevision, LineageDigest: lineage.Digest, IdempotencyKey: "example-split-guard", Actor: "test", InspectedSnapshots: true}
+	for _, uid := range lineage.PersonUIDs {
+		target := newSubject
+		if uid == split.SourcePerson.VCardUID {
+			target = firstSubject
+		}
+		for _, meaning := range []string{"birthday", "anniversary"} {
+			request.Decisions = append(request.Decisions, store.ImportantDateIdentityDecision{OriginalSubject: "person/" + uid, Meaning: meaning, ResolvedSubjects: []string{target}})
+		}
+	}
+	for i := range request.Decisions {
+		if request.Decisions[i].OriginalSubject == "person/"+second.VCardUID && request.Decisions[i].Meaning == "birthday" {
+			request.Decisions[i].ResolvedSubjects = []string{firstSubject, newSubject}
+		}
+	}
+	_, err = st.ReconcileImportantDateIdentityContext(ctx, request)
+	must.NoError(err)
+	stable, err := st.ImportantDateIdentityStableContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	checks.False(stable, "ambiguous mappings must remain quarantined")
+	stable, err = st.ImportantDateIdentityStableContext(ctx, split.SourcePerson.ID)
+	must.NoError(err)
+	checks.False(stable)
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, firstSubject+":birthday:2027", "old-fingerprint")
+	must.NoError(err)
+	checks.False(claimed, "an ambiguous historical occurrence guards both possible people")
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, firstSubject+":birthday:2028", "old-fingerprint")
+	must.NoError(err)
+	must.True(claimed)
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, newSubject+":birthday:2028", "old-fingerprint")
+	must.NoError(err)
+	checks.False(claimed, "new occurrences also deduplicate across ambiguous mappings")
+	changed, err = st.ResolveImportantDateDeliveryContext(ctx, firstSubject+":birthday:2028", store.ImportantDateCancelled, "")
+	must.NoError(err)
+	must.True(changed)
+	_, err = st.AcceptImportantDateCorrectionContext(ctx, newSubject+":birthday:", "changed-fingerprint")
+	must.Error(err)
+	// An explicit later decision narrows attribution without deleting history.
+	lineage, err = st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	request.LineageDigest = lineage.Digest
+	request.IdentityRevision = lineage.IdentityRevision
+	request.IdempotencyKey = "example-split-guard-resolved"
+	for i := range request.Decisions {
+		if request.Decisions[i].OriginalSubject == "person/"+second.VCardUID && request.Decisions[i].Meaning == "birthday" {
+			request.Decisions[i].ResolvedSubjects = []string{newSubject}
+		}
+	}
+	_, err = st.ReconcileImportantDateIdentityContext(ctx, request)
+	must.NoError(err)
+	stable, err = st.ImportantDateIdentityStableContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	checks.True(stable)
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, newSubject+":birthday:2028", "old-fingerprint")
+	must.NoError(err)
+	checks.False(claimed, "narrowing a later mapping must retain earlier possible-subject guards")
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, newSubject+":birthday:2027", "old-fingerprint")
+	must.NoError(err)
+	checks.False(claimed, "the old occurrence must guard its mapped split identity")
+	pending, err := st.ImportantDateHasOtherPendingContext(ctx, newSubject+":birthday:", newSubject+":birthday:2028", "changed-fingerprint")
+	must.NoError(err)
+	checks.True(pending, "a correction requires review of historical mapped issues")
+	count, err := st.AcceptImportantDateCorrectionContext(ctx, newSubject+":birthday:", "changed-fingerprint")
+	must.NoError(err)
+	checks.Equal(int64(2), count)
+	pending, err = st.ImportantDateHasOtherPendingContext(ctx, newSubject+":birthday:", newSubject+":birthday:2028", "changed-fingerprint")
+	must.NoError(err)
+	checks.False(pending)
 }

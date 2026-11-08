@@ -35,9 +35,8 @@ type ImportantDateReconcileRequest struct {
 }
 
 // ReconcileImportantDateIdentityContext records a reviewed mapping and guards
-// every retained occurrence without changing history or enabling publication.
-// Publication remains quarantined until routing and guard checks consume these
-// decisions under the same identity fence.
+// every retained occurrence without changing history. It revokes existing
+// consent; future publication requires a fresh destination-specific grant.
 func (s *Store) ReconcileImportantDateIdentityContext(ctx context.Context, request ImportantDateReconcileRequest) (string, error) {
 	if request.PersonID <= 0 || request.LineageDigest == "" || strings.TrimSpace(request.IdempotencyKey) == "" || strings.TrimSpace(request.Actor) == "" {
 		return "", errors.New("invalid important-date reconciliation request")
@@ -71,6 +70,18 @@ func (s *Store) ReconcileImportantDateIdentityContext(ctx context.Context, reque
 		}
 		fenced := withWritableSnapshot(ctx, s.db.DB, tx)
 		lineage, err := s.ImportantDateLineageContext(fenced, request.PersonID)
+		if err != nil {
+			return err
+		}
+		// Relationship and cadence writers lock person rows when updating
+		// projections, but do not all acquire the identity fence. Lock every
+		// live lineage person, then re-read the reviewed view under those locks.
+		for _, person := range lineage.People {
+			if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision = revision WHERE id = ?`, person.ID); err != nil {
+				return fmt.Errorf("lock important-date lineage person: %w", err)
+			}
+		}
+		lineage, err = s.ImportantDateLineageContext(fenced, request.PersonID)
 		if err != nil {
 			return err
 		}
@@ -164,6 +175,35 @@ func (s *Store) recordImportantDateReconciliationTx(ctx context.Context, tx *log
 	if len(decisions) != len(expected) {
 		return errors.New("every lineage subject and meaning needs an explicit decision")
 	}
+	// Carry every earlier guard forward, including guards created for a new
+	// occurrence after an ambiguous reconciliation. Narrowing a later mapping
+	// must not resurrect an issue on either previously possible subject.
+	type retainedGuard struct {
+		originalKey, resolvedSubject, meaning string
+		year                                  int
+	}
+	var retained []retainedGuard
+	for _, delivery := range lineage.Deliveries {
+		rows, err := tx.QueryContext(ctx, `SELECT resolved_subject, meaning, occurrence_year FROM important_date_occurrence_guards WHERE original_occurrence_key = ?`, delivery.OccurrenceKey)
+		if err != nil {
+			return fmt.Errorf("read prior important-date guards: %w", err)
+		}
+		for rows.Next() {
+			guard := retainedGuard{originalKey: delivery.OccurrenceKey}
+			if err := rows.Scan(&guard.resolvedSubject, &guard.meaning, &guard.year); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan prior important-date guard: %w", err)
+			}
+			retained = append(retained, guard)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate prior important-date guards: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close prior important-date guards: %w", err)
+		}
+	}
 	// A new decision supersedes every earlier decision that touches this
 	// lineage, without discarding its bindings, guards, or audit record.
 	for key := range expected {
@@ -205,6 +245,17 @@ func (s *Store) recordImportantDateReconciliationTx(ctx context.Context, tx *log
 		for _, target := range decision.ResolvedSubjects {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO important_date_occurrence_guards (reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key) VALUES (?, ?, ?, ?, ?)`, uid, target, key.meaning, year, delivery.OccurrenceKey); err != nil {
 				return fmt.Errorf("retain important-date occurrence guard: %w", err)
+			}
+		}
+	}
+	for _, guard := range retained {
+		decision, ok := decisions[importantDateDecisionKey{subject: guard.resolvedSubject, meaning: guard.meaning}]
+		if !ok {
+			return errors.New("prior occurrence guard has no identity decision")
+		}
+		for _, target := range decision.ResolvedSubjects {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO important_date_occurrence_guards (reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, uid, target, guard.meaning, guard.year, guard.originalKey); err != nil {
+				return fmt.Errorf("carry prior important-date guard: %w", err)
 			}
 		}
 	}
