@@ -41,6 +41,12 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, key, "example-fingerprint")
 	must.NoError(err)
 	must.True(claimed)
+	// A UID can contain delimiters; an unrelated subject whose UID begins
+	// with a lineage UID must not appear in the inspection.
+	unrelated := "person/" + first.VCardUID + ":extra:birthday:2027"
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, unrelated, "example-fingerprint")
+	must.NoError(err)
+	must.True(claimed)
 	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: first.ID, AbsorbedID: second.ID, ExpectedSurvivorRevision: first.Revision, ExpectedAbsorbedRevision: second.Revision, IdempotencyKey: "example-merge", Actor: "test"})
 	must.NoError(err)
 	stable, err := st.ImportantDateIdentityStableContext(ctx, first.ID)
