@@ -282,6 +282,49 @@ func TestNormalizeEmploymentValueCanonicalizesOrganization(t *testing.T) {
 	}`, string(normalized.JSON))
 }
 
+func TestNormalizeEmploymentValueExpandsShorthand(t *testing.T) {
+	tests := []struct {
+		name      string
+		submitted string
+		want      string
+		wantFail  bool
+	}{
+		{
+			name:      "organization as a bare name",
+			submitted: `{"organization":"  Frst ","role":"early stage investing"}`,
+			want:      `{"organization":{"name":"Frst"},"role":"early stage investing"}`,
+		},
+		{
+			name:      "dates as ISO strings",
+			submitted: `{"organization":"Acme","start_date":"2021","end_date":"2024-05-02"}`,
+			want:      `{"organization":{"name":"Acme"},"start_date":{"year":2021},"end_date":{"year":2024,"month":5,"day":2}}`,
+		},
+		{
+			name:      "object form is unchanged",
+			submitted: `{"organization":{"name":"Acme"},"start_date":{"year":2021,"month":3}}`,
+			want:      `{"organization":{"name":"Acme"},"start_date":{"year":2021,"month":3}}`,
+		},
+		{name: "unparseable date string still fails", submitted: `{"organization":"Acme","start_date":"spring 2021"}`, wantFail: true},
+		{name: "out of range month still fails", submitted: `{"organization":"Acme","start_date":"2021-13"}`, wantFail: true},
+		{name: "empty organization name still fails", submitted: `{"organization":"  "}`, wantFail: true},
+		{name: "unknown field still fails", submitted: `{"organization":"Acme","salary":"high"}`, wantFail: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			normalized, failure, err := NormalizeClaimValue(testEmploymentTarget(), json.RawMessage(test.submitted))
+			require.NoError(t, err)
+			if test.wantFail {
+				require.NotNil(t, failure)
+				require.Nil(t, normalized)
+				return
+			}
+			require.Nil(t, failure)
+			require.NotNil(t, normalized)
+			assert.JSONEq(t, test.want, string(normalized.JSON))
+		})
+	}
+}
+
 func TestNormalizeEmploymentValueRejectsReversedPartialDatesAtSharedPrecision(t *testing.T) {
 	tests := []struct {
 		name      string

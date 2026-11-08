@@ -151,6 +151,7 @@ func normalizeGenericValue(valueType ValueType, submitted jsontext.Value) ([]byt
 }
 
 func normalizeEmploymentValue(submitted jsontext.Value) ([]byte, error) {
+	submitted = expandEmploymentShorthand(submitted)
 	if err := jsonexact.Validate(submitted, EmploymentValue{}); err != nil {
 		return nil, fmt.Errorf("validate employment fields: %w", err)
 	}
@@ -186,6 +187,85 @@ func normalizeEmploymentValue(submitted jsontext.Value) ([]byte, error) {
 		return nil, errors.New("employment start_date must not be after end_date at their shared precision")
 	}
 	return json.Marshal(value, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+}
+
+// expandEmploymentShorthand rewrites the two shorthands models emit for an
+// employment value into the object form the strict schema expects: an
+// organization given as a bare name ("Acme" -> {"name":"Acme"}) and a
+// partial date given as an ISO string ("2023", "2023-05", "2023-05-02" ->
+// {"year":2023,...}). The extraction schema leaves claim values untyped, so
+// a provider cannot be held to the object form by schema alone. Anything
+// else, including an unparseable date string, is returned unchanged and fails
+// the strict validation as before.
+func expandEmploymentShorthand(submitted jsontext.Value) jsontext.Value {
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(submitted, &fields); err != nil || fields == nil {
+		return submitted
+	}
+	changed := false
+	if raw, ok := fields["organization"]; ok && raw.Kind() == '"' {
+		var name string
+		if json.Unmarshal(raw, &name) == nil {
+			if encoded, err := json.Marshal(OrganizationReference{Name: name}); err == nil {
+				fields["organization"] = encoded
+				changed = true
+			}
+		}
+	}
+	for _, key := range []string{"start_date", "end_date"} {
+		raw, ok := fields[key]
+		if !ok || raw.Kind() != '"' {
+			continue
+		}
+		var text string
+		if json.Unmarshal(raw, &text) != nil {
+			continue
+		}
+		date, ok := parseISOPartialDate(strings.TrimSpace(text))
+		if !ok {
+			continue
+		}
+		if encoded, err := json.Marshal(date); err == nil {
+			fields[key] = encoded
+			changed = true
+		}
+	}
+	if !changed {
+		return submitted
+	}
+	encoded, err := json.Marshal(fields, json.Deterministic(true))
+	if err != nil {
+		return submitted
+	}
+	return encoded
+}
+
+// parseISOPartialDate accepts "YYYY", "YYYY-MM" or "YYYY-MM-DD". Range
+// checks are left to validatePartialDate.
+func parseISOPartialDate(text string) (PartialDateValue, bool) {
+	parts := strings.Split(text, "-")
+	if len(parts) > 3 || len(parts[0]) != 4 {
+		return PartialDateValue{}, false
+	}
+	numbers := make([]int, len(parts))
+	for i, part := range parts {
+		if i > 0 && len(part) != 2 {
+			return PartialDateValue{}, false
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return PartialDateValue{}, false
+		}
+		numbers[i] = n
+	}
+	date := PartialDateValue{Year: numbers[0]}
+	if len(numbers) > 1 {
+		date.Month = numbers[1]
+	}
+	if len(numbers) > 2 {
+		date.Day = numbers[2]
+	}
+	return date, true
 }
 
 func partialDateAfterAtSharedPrecision(start, end *PartialDateValue) bool {
