@@ -320,6 +320,7 @@ it('deletes the saved version a job delete conflict shows', async () => {
   expect(changes.textContent).toContain('Concurrent department');
   expect(changes.textContent).toContain('Concurrent office');
   expect(changes.textContent).toContain('Concurrent description');
+  expect(within(changes).getByRole('rowheader', { name: 'Confidence' }).parentElement?.textContent).toContain('88%');
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 });
