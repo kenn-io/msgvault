@@ -680,7 +680,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		importContext:          importContext,
 		cancelImports:          cancelImports,
 		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
-		accountCountSnapshots:  snapshotCache[map[int64]store.SourceMessageCounts]{logger: opts.Logger},
+		accountCountSnapshots: snapshotCache[map[int64]store.SourceMessageCounts]{
+			logger: opts.Logger, staleWait: 500 * time.Millisecond,
+		},
 		virtualAccountSnapshots: snapshotCache[map[int64][]store.VirtualAccount]{
 			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor,
 		},

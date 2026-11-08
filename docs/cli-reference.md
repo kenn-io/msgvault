@@ -4887,14 +4887,12 @@ include `id`, `email`, `type`, `display_name`, and `last_sync`. Pass `email` to
 
 List archived accounts across source types. The table and JSON output include
 the archive alias, history-only state, retirement destination, and Beeper
-re-anchor marker. While counts for the listed accounts are still
-unavailable, the table shows `pending` in the messages column, and JSON entries
+re-anchor marker. While the daemon's first message-count refresh is still
+running, the table shows `pending` in the messages column, and JSON entries
 carry `"counts_pending": true` in place of `message_count` and
-`source_deleted_count`. Later calls show the finished counts or a cached
-snapshot. Warm requests try fresh counts for 500 ms, then show the previous
-count with its age, such as `1,234 (counted 3 minutes ago)`. Stale JSON rows
-include `stale: true` and the original `as_of` timestamp. Cold requests and
-changed account sets retain a two-second count budget.
+`source_deleted_count`. Later calls try fresh counts for 500 ms, then show the
+previous count with its age, such as `1,234 (counted 3 minutes ago)`. Stale
+JSON rows include `stale: true` and the original `as_of` timestamp.
 
 ```bash
 msgvault list-accounts [flags]

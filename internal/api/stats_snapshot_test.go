@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -197,6 +196,7 @@ func TestHandleCLIAccountsColdCountsPending(t *testing.T) {
 		srv, slow, sourceID := newSlowAccountsServer(t, st)
 		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
 		slow.calls.Store(1)
+		srv.statsSnapshotWait = 20 * time.Millisecond
 		get := func(optIn bool) *httptest.ResponseRecorder {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 			if optIn {
@@ -302,116 +302,4 @@ func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
 			assertions.NotContains(w.Body.String(), "synthetic count failure")
 		}
 	}
-}
-
-// slowCatalogStore leaves an expired catalog refresh in flight until released.
-type slowCatalogStore struct {
-	*store.Store
-	calls   atomic.Int32
-	release chan struct{}
-}
-
-func (s *slowCatalogStore) ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
-	if s.calls.Add(1) > 1 {
-		select {
-		case <-s.release:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	return s.Store.ListVirtualAccountsContext(ctx)
-}
-
-func TestHandleCLIAccountsOptionalCatalogPreservesStrictRefresh(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		srv, _, sourceID := newSlowAccountsServer(t, st)
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
-		slow := &slowCatalogStore{Store: st, release: make(chan struct{})}
-		srv.store = slow
-		require.NoError(t, st.AddAccountIdentity(sourceID, "work@example.org", "manual"))
-		httpSrv := httptest.NewTestServer(t, srv.Router())
-		client, err := daemonclient.New(daemonclient.Config{URL: httpSrv.URL, AllowInsecure: true, HTTPClient: httpSrv.Client(), Context: t.Context()})
-		require.NoError(t, err)
-		first, err := client.GetCLIVirtualAccounts(t.Context())
-		require.NoError(t, err)
-		require.NotEmpty(t, first[sourceID])
-		time.Sleep(3 * time.Minute)
-
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
-		req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
-		w := httptest.NewRecorder()
-		started := time.Now()
-		srv.Router().ServeHTTP(w, req)
-		assert.Zero(t, time.Since(started), "optional discovery reuses expired children immediately")
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		var optional cliAccountsResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &optional))
-		assert.True(t, optional.VirtualAccountsUnavailable)
-		require.Len(t, optional.Accounts, 1)
-		assert.Equal(t, first[sourceID], optional.Accounts[0].VirtualAccounts)
-
-		returned := make(chan error, 1)
-		var strict map[int64][]store.VirtualAccount
-		go func() {
-			var err error
-			strict, err = client.GetCLIVirtualAccounts(t.Context())
-			returned <- err
-		}()
-		synctest.Wait()
-		assert.Empty(t, returned, "strict catalog waits for the refresh")
-		time.Sleep(time.Second)
-		close(slow.release)
-		require.NoError(t, <-returned)
-		assert.Equal(t, first, strict)
-	})
-}
-
-func TestHandleCLIAccountsReplacementWaitsForOwnCounts(t *testing.T) {
-	testutil.SkipIfPostgres(t, "SQLite reuses the removed source ID")
-	st := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		srv, slow, sourceID := newSlowAccountsServer(t, st)
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
-		getAccounts := func() cliAccountsResponse {
-			w := httptest.NewRecorder()
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
-			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
-			srv.Router().ServeHTTP(w, req)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			var resp cliAccountsResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			return resp
-		}
-		first := getAccounts()
-		require.Len(t, first.Accounts, 1)
-		require.EqualValues(t, 1, first.Accounts[0].MessageCount)
-		require.NoError(t, st.RemoveSource(sourceID))
-		replacement, err := st.GetOrCreateSource("gmail", "replacement@example.org")
-		require.NoError(t, err)
-		require.Equal(t, sourceID, replacement.ID, "the real SQLite creation path reuses the highest ID")
-		strict := httptest.NewRecorder()
-		srv.Router().ServeHTTP(strict, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
-		require.Equal(t, http.StatusOK, strict.Code, "the existing Web filter requests accounts without the pending-counts header: %s", strict.Body.String())
-		var fallback cliAccountsResponse
-		require.NoError(t, json.Unmarshal(strict.Body.Bytes(), &fallback))
-		assert.True(t, fallback.Stale)
-		require.Len(t, fallback.Accounts, 1)
-		assert.EqualValues(t, 1, fallback.Accounts[0].MessageCount, "strict callers retain the existing count fallback")
-
-		started := time.Now()
-		pending := getAccounts()
-		assert.Equal(t, 2*time.Second, time.Since(started), "changed accounts retain the cold budget")
-		require.Len(t, pending.Accounts, 1)
-		assert.True(t, pending.CountsPending)
-		assert.False(t, pending.Stale)
-		assert.Zero(t, pending.Accounts[0].MessageCount, "the removed account's count is unusable")
-		close(slow.release)
-		synctest.Wait()
-		recovered := getAccounts()
-		assert.False(t, recovered.CountsPending)
-		assert.False(t, recovered.Stale)
-		require.Len(t, recovered.Accounts, 1)
-		assert.Zero(t, recovered.Accounts[0].MessageCount)
-	})
 }

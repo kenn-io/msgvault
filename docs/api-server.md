@@ -1033,25 +1033,10 @@ Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
 anyway: the response sets `"counts_pending": true`, and every account's
 `message_count` and `source_deleted_count` is a placeholder `0`.
 
-When a snapshot matches the listed accounts, message counts get 500 ms to
-refresh. A refresh that finishes within that budget supplies fresh counts;
-otherwise the response carries the previous counts, `"stale": true`, and
-their original `as_of`, while the shared refresh continues. Cold requests and
-changed account sets retain the two-second count budget. Before counts for
-those accounts are ready, opted-in callers receive `counts_pending` rather
-than another account's old counts.
-Callers without the header retain the previous snapshot fallback after that
-two-second wait, even when the account set changes.
-
-The CLI appends an age such as ` (counted 3 minutes ago)` to stale message
-counts. Stale JSON rows include `stale: true` and the original `as_of`.
-Fresh counts keep their existing output; unavailable counts show `pending`.
-
-Virtual-account discovery keeps its two-second cold wait. Once a matching
-catalog has completed, the pending-counts header lets callers reuse its children
-immediately after expiry, with `virtual_accounts_unavailable: true` while it
-refreshes. Strict callers and changed identity revisions retain the separate
-two-second catalog wait.
+Once a count snapshot exists, fresh counts get 500 ms. If they don't finish,
+the response carries the previous counts with `"stale": true` and their
+original `as_of`, while the refresh continues. The CLI shows such counts with
+their age, such as `1,234 (counted 3 minutes ago)`.
 
 **Response (vector search disabled):**
 

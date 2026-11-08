@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -120,50 +118,4 @@ func TestStaleAccountCatalogNeverRejectsConfirmedAlias(t *testing.T) {
 		selection, err := h.resolveAccount(t.Context(), "alias@example.org")
 		return err == nil && selection.scope != nil
 	}, 10*time.Second, 100*time.Millisecond, "the refreshed catalog resolves the alias")
-}
-
-type coldCatalogStore struct{ *store.Store }
-
-func (s *coldCatalogStore) CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
-	select {
-	case <-time.After(3 * time.Second):
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	return s.Store.CountMessagesBySourceContext(ctx)
-}
-
-func (s *coldCatalogStore) ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
-	select {
-	case <-time.After(3500 * time.Millisecond):
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	return s.Store.ListVirtualAccountsContext(ctx)
-}
-
-func TestColdStatsRetainsConfirmedAccountCatalog(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		src, err := st.GetOrCreateSource("gmail", "owner@example.com")
-		require.NoError(t, err)
-		require.NoError(t, st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
-		conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "")
-		require.NoError(t, err)
-		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "work", MessageType: "email"}, RawMIME: []byte("X-Delivered-To: work@example.org\r\n\r\nbody")})
-		require.NoError(t, err)
-		srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Engine: query.NewSQLiteEngine(st.DB()), Store: &coldCatalogStore{Store: st}, Logger: slog.New(slog.DiscardHandler)})
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
-		httpSrv := httptest.NewTestServer(t, srv.Router())
-		client, err := daemonclient.New(daemonclient.Config{URL: httpSrv.URL, AllowInsecure: true, HTTPClient: httpSrv.Client()})
-		require.NoError(t, err)
-		h := &handlers{engine: daemonclient.NewEngineAdapter(client)}
-		response := runTool[getStatsResponse](t, ToolGetStats, h.getStats, map[string]any{})
-		require.Len(t, response.Accounts, 1)
-		var addresses []string
-		for _, child := range response.Accounts[0].VirtualAccounts {
-			addresses = append(addresses, child.AccountAddress)
-		}
-		assert.Contains(t, addresses, "work@example.org", "get_stats retains the confirmed receiving address on a cold daemon")
-	})
 }

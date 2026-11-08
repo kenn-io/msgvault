@@ -22,9 +22,9 @@ var listAccountsCmd = &cobra.Command{
 	Long: `List every account in the archive: email, chat, meeting, and file-import
 sources. JSON rows have id, email, type (gmail, imap, mbox, slack, ...),
 display_name, and last_sync. message_count and source_deleted_count are
-included when ready; counts_pending: true replaces them before usable counts exist.
-Warm requests try fresh counts for 500 ms, then show the previous count's age.
-Cold requests wait up to two seconds. Stale JSON rows include stale and as_of.
+included when ready; counts_pending: true replaces them while refreshing.
+When fresh counts take over 500 ms, earlier counts show their age;
+stale JSON rows add stale and as_of.
 
 Pass email to --account or id to --source-id on other commands;
 export-messages takes --source <type>:<email>.`,

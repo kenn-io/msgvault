@@ -708,11 +708,11 @@ type CLIQueryMessageSummary query.MessageSummary
 
 type cliAccountsResponse struct {
 	Accounts []cliAccountResponse `json:"accounts"`
-	// Stale reports message counts served from an earlier snapshot, including
-	// reuse after a short refresh wait. AsOf says when it was taken.
+	// Stale reports message counts served from an earlier snapshot because
+	// fresh counts did not finish in time; AsOf says when it was taken.
 	Stale bool      `json:"stale,omitempty"`
 	AsOf  time.Time `json:"as_of,omitzero"`
-	// CountsPending reports that no count for the current accounts is ready, so
+	// CountsPending reports that the first count refresh is still running, so
 	// every count is a zero placeholder. Only callers sending
 	// apiprotocol.AllowPendingCountsHeader get it.
 	CountsPending bool `json:"counts_pending,omitempty"`
@@ -2822,16 +2822,11 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
 	if counter, ok := s.store.(sourceMessageCounter); ok && !s.sourceScopedRead(r) {
-		sourceIdentities := make([]string, len(sources))
-		for i, src := range sources {
-			sourceIdentities[i] = fmt.Sprintf("%d:%q:%q", src.ID, src.SourceType, src.Identifier)
-		}
-		slices.Sort(sourceIdentities)
+		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
+			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
+		)
 		// Older clients can't tell placeholder zeros from real counts, so only opted-in callers get them.
 		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
-		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.getVersion(
-			r.Context(), s.importContext, "", strings.Join(sourceIdentities, "\n"), allowPending, s.statsSnapshotWait, 500*time.Millisecond, counter.CountMessagesBySourceContext,
-		)
 		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
 		if err != nil && !response.CountsPending {
 			if s.writeIfContextError(w, err) {
@@ -2883,13 +2878,9 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 			// the shared cache may predate a source whose ID was reused.
 			virtual, err = lister.ListVirtualAccountsContext(r.Context())
 		} else {
-			warmWait := s.statsSnapshotWait
-			if r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true" {
-				warmWait = 0
-			}
 			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
-				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister), false,
-				s.statsSnapshotWait, warmWait, lister.ListVirtualAccountsContext,
+				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
+				s.statsSnapshotWait, lister.ListVirtualAccountsContext,
 			)
 		}
 		// The catalog is extra detail; a slow or failed read still returns
