@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"net/url"
 	"os"
 	"strconv"
@@ -192,4 +193,15 @@ func TestForgeSyncRemembersARenamedAccountsLogin(t *testing.T) {
 	require.NoError(err, "the account is found by its current login")
 	require.Len(found, 1)
 	assert.Equal("Fake forge user7 (forge.example.com)", found[0].DisplayName.String, "the source carries its current login")
+}
+
+func TestForgeSyncOutputNamesTheForgeOnce(t *testing.T) {
+	assert := assert.New(t)
+	fs := &forgeSource{name: rotationForge, label: "Fake forge"}
+	named := &store.Source{Identifier: "forge.example.com:user:7", DisplayName: sql.NullString{String: "Fake forge user7", Valid: true}}
+	unnamed := &store.Source{Identifier: "forge.example.com:user:7"}
+
+	assert.Equal("Fake forge user7", fs.accountName(named, forge.Summary{Login: "user7"}))
+	assert.Equal("Fake forge user7", fs.accountName(named, forge.Summary{}), "a sync that failed before reading the account")
+	assert.Equal("Fake forge forge.example.com:user:7", fs.accountName(unnamed, forge.Summary{}))
 }

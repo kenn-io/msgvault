@@ -252,7 +252,7 @@ and the next sync continues it. Unchanged posts are not written twice.`,
 				err = recordSyncAttempt(ctx, fs.name, source.Identifier, err)
 				fs.printSummary(cmd.OutOrStdout(), source, summary)
 				if err != nil && ctx.Err() == nil {
-					syncErrors = append(syncErrors, fmt.Errorf("%s %s: %w", fs.label, sourceName(source, summary), err))
+					syncErrors = append(syncErrors, fmt.Errorf("%s: %w", fs.accountName(source, summary), err))
 				}
 			}
 			cacheErr := rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state)
@@ -363,7 +363,7 @@ func (fs *forgeSource) runScheduled(ctx context.Context, s *store.Store) error {
 		}
 		summary, err := fs.sync(ctx, s, state.cfg, source, false)
 		if err := recordSyncAttempt(ctx, fs.name, source.Identifier, err); err != nil {
-			errs = append(errs, fmt.Errorf("%s %s: %w", fs.label, sourceName(source, summary), err))
+			errs = append(errs, fmt.Errorf("%s: %w", fs.accountName(source, summary), err))
 		}
 		if summary.Paused || jobctx.PreemptionRequested(ctx) {
 			resumeAt = ordered[(i+1)%len(ordered)].Identifier
@@ -402,20 +402,24 @@ func (r *accountRotation) resumeAt(forgeName, identifier string) {
 	r.mu.Unlock()
 }
 
-func sourceName(source *store.Source, summary forge.Summary) string {
-	if summary.Login != "" {
-		return summary.Login
-	}
-	if source.DisplayName.Valid && source.DisplayName.String != "" {
+// accountName names an account in sync output, such as "GitHub octocat":
+// by the login the forge reported, else by its source's name, which already
+// starts with the forge's.
+func (fs *forgeSource) accountName(source *store.Source, summary forge.Summary) string {
+	switch {
+	case summary.Login != "":
+		return fs.label + " " + summary.Login
+	case source.DisplayName.Valid && source.DisplayName.String != "":
 		return source.DisplayName.String
+	default:
+		return fs.label + " " + source.Identifier
 	}
-	return source.Identifier
 }
 
 func (fs *forgeSource) printSummary(out io.Writer, source *store.Source, summary forge.Summary) {
-	name := textutil.SanitizeTerminal(sourceName(source, summary))
-	_, _ = fmt.Fprintf(out, "%s %s: %d threads archived, %d new messages, %d updated",
-		fs.label, name, summary.Archived, summary.Added, summary.Updated)
+	name := textutil.SanitizeTerminal(fs.accountName(source, summary))
+	_, _ = fmt.Fprintf(out, "%s: %d threads archived, %d new messages, %d updated",
+		name, summary.Archived, summary.Added, summary.Updated)
 	if summary.Excluded > 0 {
 		_, _ = fmt.Fprintf(out, ", %d threads of excluded owners skipped", summary.Excluded)
 	}
