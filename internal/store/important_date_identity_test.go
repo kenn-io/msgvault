@@ -110,3 +110,18 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	must.NoError(err)
 	checks.NotEqual(lineage.Digest, again.Digest)
 }
+
+func TestRetiringAliasChangesIdentityRevision(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	personID := newTestPerson(t, st)
+	before, err := st.IdentityRevisionContext(ctx)
+	must.NoError(err)
+	_, err = st.RetirePersonUIDAliasContext(ctx, "retired-example-uid", &personID, "test")
+	must.NoError(err)
+	after, err := st.IdentityRevisionContext(ctx)
+	must.NoError(err)
+	checks.Equal(before+1, after)
+}
