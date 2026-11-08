@@ -261,7 +261,7 @@ it('allows closing while the job loads', async () => {
     const { controller } = controllerWith(async input => {
       const request = requestOf(input), path = pathOf(request);
       if (path === '/api/v1/organizations' && request.method === 'POST') { posts++; throw new TypeError('response lost'); }
-      if (path === '/api/v1/organizations') return Response.json({ organizations: posts ? [organization(22, 1, 'Example company')] : [], total: posts });
+      if (path === '/api/v1/organizations') return Response.json({ organizations: posts ? [{ ...organization(22, 1, 'Example company'), primary_domain: null }] : [], total: posts });
       if (path === '/api/v1/employments') { jobBody = await request.json(); return Response.json(employment(11, 1, { organization_id: 22 })); }
       if (path === '/api/v1/people/7/employments') return collection([]);
       throw new Error(`Unexpected ${request.method} ${path}`);
@@ -274,6 +274,31 @@ it('allows closing while the job loads', async () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
     await waitFor(() => expect(jobBody).toMatchObject({ organization_id: 22 }));
     expect(posts).toBe(1);
+  });
+
+  it.each([
+    { field: 'domain', kind: 'company', primary_domain: 'synthetic.example' },
+    { field: 'kind', kind: 'school', primary_domain: 'different.example' }
+  ])('does not select a namesake with a different $field after an uncertain create', async ({ kind, primary_domain }) => {
+    let posts = 0;
+    let jobBody: unknown;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input), path = pathOf(request);
+      if (path === '/api/v1/organizations' && request.method === 'POST') { posts++; return Response.json({ message: 'Unavailable' }, { status: 500 }); }
+      if (path === '/api/v1/organizations') return Response.json({ organizations: new URL(request.url).searchParams.get('q') === 'Example company' ? [{ ...organization(21, 1, 'Example company'), kind, primary_domain }] : [], total: 1 });
+      if (path === '/api/v1/employments') { jobBody = await request.json(); return Response.json(employment()); }
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    await openInlineEmployer(controller, 'New company');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Example company' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Domain' }), { target: { value: 'different.example' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(controller.organizations).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    await waitFor(() => expect(posts).toBe(2));
+    expect(jobBody).toBeUndefined();
   });
 
 

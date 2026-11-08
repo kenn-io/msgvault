@@ -144,7 +144,7 @@
   async function refreshOrganizationAfterUnknown(): Promise<void> {
     await controller.refreshOrganizations(organizationName.trim());
     if (controller.createBlocked.organizations) return;
-    const matches = controller.organizations.filter(item => item.name.trim().toLocaleLowerCase() === organizationName.trim().toLocaleLowerCase());
+    const matches = controller.organizations.filter(item => item.name.trim().toLocaleLowerCase() === organizationName.trim().toLocaleLowerCase() && item.kind === organizationKind && (item.primary_domain ?? null) === (organizationDomain.trim() || null));
     if (matches.length === 1) {
       selectedOrganization = matches[0];
       organizationID = String(matches[0].id);
