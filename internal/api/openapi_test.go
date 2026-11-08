@@ -1314,7 +1314,11 @@ func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 		},
 		"/api/v1/cli/attachment": {
 			operationID: "getCLIAttachment",
-			statuses:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
+			statuses:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
+		},
+		"/api/v1/attachments/{hash}/content": {
+			operationID: "getAttachmentContent",
+			statuses:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
 		},
 		"/api/v1/messages/{id}/inline": {
 			operationID: "getMessageInlinePart",

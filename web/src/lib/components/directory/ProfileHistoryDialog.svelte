@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getPersonProfileHistory as generatedGetPersonProfileHistory } from '../../api/generated/api/api';
-  import { Button, Modal } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Modal } from '@kenn-io/kit-ui';
   import AttributeSection from './AttributeSection.svelte';
   import { sentenceCase } from '../../explore/labels';
   import { historyProvenance } from './history-format';
@@ -125,10 +125,9 @@
             <ul>{#each section.current as item (item.id)}{@render row(item)}{/each}</ul>
           {/if}
           {#if section.past.length > 0}
-            <details>
-              <summary>{section.past.length} earlier {section.past.length === 1 ? 'value' : 'values'}</summary>
+            <Disclosure variant="plain">{#snippet summary()}{section.past.length} earlier {section.past.length === 1 ? 'value' : 'values'}{/snippet}
               <ul>{#each section.past as item (item.id)}{@render row(item)}{/each}</ul>
-            </details>
+            </Disclosure>
           {/if}
         </section>
       {/each}
@@ -191,13 +190,13 @@
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
-  details summary {
+  .profile-history :global(.kit-disclosure__summary) {
     padding: var(--space-2) 0;
     color: var(--text-secondary);
     cursor: pointer;
     font-size: var(--font-size-sm);
   }
-  details li {
+  .profile-history :global(.kit-disclosure li) {
     flex-direction: column;
     gap: var(--space-1);
     color: var(--text-secondary);

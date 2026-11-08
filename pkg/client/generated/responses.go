@@ -63,6 +63,8 @@ type GetAttachmentContentErrorResponse = ErrorResponse
 
 type GetAttachmentContentErrorResponseJSON = ErrorResponse
 
+type GetAttachmentContentErrorResponseJSON403 = ErrorResponse
+
 type GetAttachmentContentErrorResponseJSON404 = ErrorResponse
 
 type GetAttachmentContentErrorResponseJSON500 = ErrorResponse
@@ -446,6 +448,8 @@ type GetCLIAttachmentResponse = runtime.File
 type GetCLIAttachmentErrorResponse = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON = ErrorResponse
+
+type GetCLIAttachmentErrorResponseJSON403 = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON404 = ErrorResponse
 
@@ -1048,6 +1052,22 @@ func (g *GetDomainTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error
 }
 
 type GetDomainTimelineErrorResponseJSONDefault = ErrorResponse
+
+type GetLocalEmbeddingsResponse = LocalEmbeddingsStatus
+
+type GetLocalEmbeddingsErrorResponse = ErrorResponse
+
+type GetLocalEmbeddingsErrorResponseJSON = ErrorResponse
+
+type GetLocalEmbeddingsErrorResponseJSONDefault = ErrorResponse
+
+type EnableLocalEmbeddingsResponse = LocalEmbeddingsStatus
+
+type EnableLocalEmbeddingsErrorResponse = ErrorResponse
+
+type EnableLocalEmbeddingsErrorResponseJSON = ErrorResponse
+
+type EnableLocalEmbeddingsErrorResponseJSONDefault = ErrorResponse
 
 type GetEmbeddingStatusResponse = EmbeddingStatus
 
@@ -4178,6 +4198,7 @@ type GetAttachmentContentResp struct {
 	StatusCode   int
 	JSON400      *GetAttachmentContentErrorResponse
 	JSON401      *GetAttachmentContentErrorResponseJSON
+	JSON403      *GetAttachmentContentErrorResponseJSON403
 	JSON404      *GetAttachmentContentErrorResponseJSON404
 	JSON500      *GetAttachmentContentErrorResponseJSON500
 	JSON503      *GetAttachmentContentErrorResponseJSON503
@@ -4679,6 +4700,7 @@ type GetCLIAttachmentResp struct {
 	StatusCode   int
 	JSON400      *GetCLIAttachmentErrorResponse
 	JSON401      *GetCLIAttachmentErrorResponseJSON
+	JSON403      *GetCLIAttachmentErrorResponseJSON403
 	JSON404      *GetCLIAttachmentErrorResponseJSON404
 	JSON413      *GetCLIAttachmentErrorResponseJSON413
 	JSON500      *GetCLIAttachmentErrorResponseJSON500
@@ -5183,6 +5205,26 @@ type GetDomainTimelineResp struct {
 	JSON409      *GetDomainTimelineErrorResponseJSON
 	JSON503      *GetDomainTimelineErrorResponseJSON503
 	JSONDefault  *GetDomainTimelineErrorResponseJSONDefault
+}
+
+type GetLocalEmbeddingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetLocalEmbeddingsResponse
+	JSON401      *GetLocalEmbeddingsErrorResponse
+	JSON503      *GetLocalEmbeddingsErrorResponseJSON
+	JSONDefault  *GetLocalEmbeddingsErrorResponseJSONDefault
+}
+
+type EnableLocalEmbeddingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON202      *EnableLocalEmbeddingsResponse
+	JSON401      *EnableLocalEmbeddingsErrorResponse
+	JSON503      *EnableLocalEmbeddingsErrorResponseJSON
+	JSONDefault  *EnableLocalEmbeddingsErrorResponseJSONDefault
 }
 
 type GetEmbeddingStatusResp struct {

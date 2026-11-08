@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-08"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -82,7 +82,7 @@ non-dry-run plan through client elicitation.
 
 These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
 
-`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
+`draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. By default, clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
 | Tool | Command | Parameters |
 |---|---|---|
@@ -97,7 +97,9 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
-On unreleased `main`, successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. Review these values before sending. The draft is still written unchanged.
+On unreleased `main`, successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. The `quoted: true` label identifies sensitive content in parts of the body that msgvault recognizes as quoted history. The quote rules cover `>` lines and their reply attribution, keeping an unmarked answer below the block authored. A reply attribution without a `>` block, a dashed forwarded or original-message separator, or an Outlook `From:`/`Sent:` header marks history through the end of the body. The label neither proves authorship nor changes confirmation, and the approval prompt repeats it. Review these values before sending. The draft is still written unchanged.
+
+On unreleased `main`, `msgvault mcp --confirm-sensitive-drafts` requires client approval before creating or editing a draft with detected sensitive content. For native daemon endpoints, use `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. This option is off by default. Clients without elicitation support, and HTTP clients using a protocol older than `2026-07-28`, cannot write flagged drafts when it is enabled. The option grants no tools; standalone HTTP writes still require `--http-allow-writes`.
 
 Cards need 13 to 19 digits that pass the checksum, with a first digit of 2 to 6 or 8. IBANs need a registered country length and a valid checksum. Unlabelled keys are recognized only for common provider prefixes. A labelled value needs at least eight characters with a letter and a digit or one of `!@#$%^&*+/=~`; a quoted multi-word passphrase also counts under a password label. Labels and values must be on the same line, separated by `:` or `=`; `Bearer` values also count. An absent finding does not mean the content is safe. Stored drafts, server-appended history, and attachments are outside this scan.
 
@@ -177,6 +179,14 @@ these tools do not complete tasks or infer new ones.
 ## Setup
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
+
+### Tools available for your archive
+
+MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a source that supports them. CardDAV tools need a configured connection. Kata tools, including `get_person_agenda`, need `[integrations.kata]` enabled with an endpoint. An mbox-only archive retains search, messages, attachments, people, and Saved Views. Reconnect after adding a source or integration to refresh the list, including on the native daemon endpoints. Each discovery read has its own 10-second deadline. A failed read hides its families; successful reads keep theirs available. Family discovery controls tool listings; HTTP calls use the daemon's existing authorization and consent checks.
+
+Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
+
+The complete default stdio `tools/list` response, including output schemas, measures 173,598 bytes for an mbox-only archive and 226,314 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, rounded up from the measured sizes plus 10%. Optional write flags are off in both measurements.
 
 ### Claude Desktop Configuration
 
@@ -472,6 +482,8 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
 }
 ```
 
+`from:` accepts a sender name, address, or domain. See [sender matching](https://msgvault.io/docs/usage/searching/#domain-search) for the matching rules.
+
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
 cap it at 50. `search_message_bodies`, `semantic_search_messages`, `list_messages`, and `search_by_domains` use this
@@ -653,17 +665,21 @@ All `group_by` values return a JSON array of objects with these fields:
 | `AttachmentCount` | Number of attachments |
 | `TotalUnique` | Total number of distinct groups (same on every row) |
 
-Embedded MCP servers register vector tools from the backends supplied by their
-caller. Daemon-backed MCP reads one authenticated health response during
-startup and enables the full text search schema only when the response reports
-`text_enabled: true` with API schema `2.28.0` or newer. It registers
+The native daemon MCP listener always registers semantic search, similar-message search, and embedding status tools. Before text search is enabled, these tools return the daemon's unavailable response. Turning on search by meaning enables them without restarting MCP.
+
+Other embedded MCP servers register vector tools from the backends supplied by their
+caller. Standalone daemon-backed MCP reads one authenticated health response during
+startup. It registers the full semantic and similar-message tools when the daemon
+advertises `enableLocalEmbeddings`, even while text search is disabled. Turning on
+search by meaning makes these tools usable without restarting MCP. Otherwise, it
+requires `text_enabled: true` with API schema `2.28.0` or newer. It registers
 `search_visual_attachments` only when `visual_enabled: true`, the same lane
 fields are available, and the daemon serves the visual route from schema
-`2.4.0` or newer. Disabled or unknown lanes omit their optional searchers. The
+`2.4.0` or newer. Without local activation support, disabled or unknown text lanes omit their optional searchers. The
 reduced `semantic_search_messages` entry remains as discovery guidance and
 returns `vector_not_enabled` until text search is configured.
 
-A successful authenticated health response with API schema `3.21.0` or newer also registers `get_embeddings_status`.
+Standalone daemon-backed MCP also registers `get_embeddings_status` when the daemon advertises `enableLocalEmbeddings`, or when authenticated health reports a vector lane and API schema `3.21.0` or newer.
 
 Daemons older than schema 2.28.0 keep the basic MCP catalog and reduced
 semantic guidance. Upgrade them to 2.28.0 or newer to expose full semantic,
@@ -816,6 +832,57 @@ Omitted fields are preserved; `false` and empty arrays are explicit changes.
 A stale ETag returns `settings_conflict`. Selection changes retain archived data
 and may require a daemon restart; inspect `pending_restart` in the response.
 
+## Open loops
+
+On unreleased `main`, an assistant connected as the owner can see who is
+waiting on a reply and record decisions. See [Open loops](open-loops.md) for
+what counts as a loop. Delegated sessions get none of these tools. A tool
+appears only when the daemon offers its route, which needs HTTP API schema
+3.44.0 or newer.
+
+| Tool | Effect | Parameters |
+|---|---|---|
+| `list_open_loops` | List loops waiting on the owner (`reply_owed`) and on the other person (`awaiting_reply`). | Optional `person_id`; `limit` from 1 to 200, default 50 |
+| `close_open_loop` | Mark the listed questions done. | `message_id` and `question_message_ids` |
+| `snooze_open_loop` | Hide the listed questions until a deadline. | `message_id`, `question_message_ids`, and `until` |
+| `reopen_open_loop` | Clear the decision on one question. | `message_id` |
+
+To act on a loop:
+
+1. Call `list_open_loops`. Each item has `anchor_message_id`, the message that
+   started the wait, and `question_message_ids`, every question in the loop.
+2. Pass the item's `anchor_message_id` as `message_id`, and its
+   `question_message_ids`, to `close_open_loop` or `snooze_open_loop`. Only
+   those questions are marked. A question that arrived after the list stays
+   open.
+3. For `snooze_open_loop`, give `until` as an RFC3339 time or a `YYYY-MM-DD`
+   date, which means midnight in the MCP server's time zone. Durations such as
+   `24h` are rejected, so the deadline can't move between approval and saving.
+4. To undo a decision, call `reopen_open_loop` with the question's
+   `message_id` from an earlier list or receipt.
+
+Every decision needs `--allow-loop-writes` and approval for that one call. The
+approval shows the action, the message ID, the question IDs, and for snooze
+the exact deadline. For the daemon's built-in endpoint, use
+`msgvault serve --mcp-allow-writes --mcp-allow-loop-writes`; decisions then
+appear on `/mcp/writes`. Over HTTP, decisions also need
+`--http-allow-writes` and protocol `2026-07-28` or newer. Older HTTP clients
+get the list only.
+
+Read the list's warnings before acting:
+
+- `coverage_incomplete`: the daemon stopped before checking all history. Call
+  again to continue.
+- `truncated`: more loops are open than `limit`. Narrow with `person_id`;
+  there is no cursor.
+- `skipped_unparseable`: stored emails the daemon couldn't read. A reply in one
+  of them may have answered a listed loop.
+
+A decision refused with `loop_scan_incomplete` saved nothing. Wait at least
+one second, then make a new call, which needs approval again. MCP never
+retries a write by itself. If a write reports
+`operation_may_have_completed: true`, list the loops again before retrying.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
@@ -824,10 +891,11 @@ Enable only the writes intended for the assistant's session:
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
-`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
+`draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. On unreleased `main`, `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
 
 Profile tools use the following arguments. Reads need no write opt-in; writes
 require `--allow-profile-writes` and the HTTP opt-in when applicable.
@@ -911,6 +979,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |

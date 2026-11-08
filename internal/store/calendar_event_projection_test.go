@@ -116,10 +116,10 @@ func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {
 	assertions.Equal("confirmed", calendarRows(t, st, id)[0].Event.Status)
 }
 
-func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
+func TestCalendarEventBackfillResumesCommittedPagesAfterCancel(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
-	// More than one page, with real raw snapshots and real commits.
+	// Exercise cancellation through the calendar wrapper across a page boundary.
 	for i := range 103 {
 		calendarFixture(t, base, fmt.Sprintf("backfill-%d", i), calendarRaw)
 	}
@@ -141,7 +141,7 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 		committed: func(_ bool) {
 			if pending.Swap(false) {
 				committed++
-				if committed == 3 {
+				if committed == 1 {
 					cancel()
 				}
 			}
@@ -151,7 +151,7 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 	requirements.ErrorIs(st.InitSchemaContext(ctx), context.Canceled)
 	var count int
 	requirements.NoError(base.db.QueryRow(`SELECT COUNT(*) FROM calendar_events`).Scan(&count))
-	assertions.Equal(3, count)
+	assertions.Equal(100, count, "the committed page survives cancellation")
 	applied, err := base.IsMigrationAppliedContext(t.Context(), "calendar_event_projection_v1", 1)
 	requirements.NoError(err)
 	assertions.False(applied)
@@ -159,6 +159,9 @@ func TestCalendarEventBackfillResumesAfterCancel(t *testing.T) {
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 	requirements.NoError(base.db.QueryRow(`SELECT COUNT(*) FROM calendar_events`).Scan(&count))
 	assertions.Equal(103, count)
+	applied, err = base.IsMigrationAppliedContext(t.Context(), "calendar_event_projection_v1", calendarEventProjectionVersion)
+	requirements.NoError(err)
+	assertions.True(applied)
 	rejectCalendarWrites(t, base)
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 }

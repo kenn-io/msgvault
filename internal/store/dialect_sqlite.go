@@ -513,7 +513,7 @@ func (d *SQLiteDialect) FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.
 // FTSAvailable probes for FTS5 by querying the virtual table.
 // Checking sqlite_master alone is insufficient: a binary built without FTS5
 // support will fail with "no such module: fts5" even if the table exists.
-func (d *SQLiteDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {
+func (d *SQLiteDialect) FTSAvailable(ctx context.Context, db SQLReader) (bool, error) {
 	var probe int
 	err := db.QueryRowContext(ctx, "SELECT 1 FROM messages_fts LIMIT 1").Scan(&probe)
 	if err != nil && ctx.Err() != nil {
@@ -1995,6 +1995,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN hidden_text_present BOOLEAN NOT NULL DEFAULT 0`, "hidden_text_present"},
 		{`ALTER TABLE messages ADD COLUMN account_address TEXT`, "account_address"},
 		{`ALTER TABLE messages ADD COLUMN account_path TEXT`, "account_path"},
+		{`ALTER TABLE messages ADD COLUMN email_linkage_outcome TEXT`, "email_linkage_outcome"},
 		{`ALTER TABLE messages ADD COLUMN draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
 		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},

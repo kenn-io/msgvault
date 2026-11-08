@@ -47,6 +47,19 @@ processing. For a guided setup using
 the provider keys you have, start with
 [Recommended Configuration](/docs/usage/recommended-configuration/).
 
+## Turn on search by meaning
+
+In the Web UI, open Settings, then Overview, and click **Turn on** beside
+**Search by meaning**. MsgVault downloads the shared local server if needed,
+builds the message index, and enables semantic search in the running daemon.
+The row shows download and indexing progress. You can close the page while it
+runs and keep using keyword search.
+
+If Ollama already serves `nomic-embed-text`, Turn on uses it. An existing
+Ollama configuration stays on Ollama.
+When the browser uses a remote address, the download line names the daemon host.
+The **Turn on** hint below full-text search results opens Settings.
+
 ## Prerequisites
 
 1. **An embedding provider.** Run `msgvault setup providers --local-embeddings`
@@ -114,7 +127,7 @@ go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
 
 Use `msgvault setup providers` to select defaults. Without a hosted key, setup uses Ollama with `nomic-embed-text` or offers the shared local server. It asks once before downloading missing model and runtime files.
 
-Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. The switch changes semantic-person consent identities once, so renew those consents. Later local server port changes preserve the local generation and consent identities. Configured providers remain tied to their endpoints.
+Run `msgvault setup providers --local-embeddings` to switch to the shared local server while Ollama is running. Switching an Ollama-built Nomic message index with the same recipe keeps its generation; the next build embeds only new messages. Switching from another model requires `msgvault embeddings build --full-rebuild --yes`. This CLI switch changes semantic-person consent identities once, so renew those consents. Later local server port changes preserve the local generation and consent identities. Configured providers remain tied to their endpoints.
 
 For manual configuration, add a `[vector]` block
 to `~/.msgvault/config.toml`.

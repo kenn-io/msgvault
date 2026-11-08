@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -60,6 +62,7 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	"golang.org/x/oauth2"
 )
 
@@ -211,6 +214,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
 	}
+	if runtime := findAnyDaemonRuntimeContext(cmd.Context(), cfg.Data.DataDir); runtime != nil {
+		return daemonOwnerLockHeldError{url: urlFromDaemonRuntime(runtime)}
+	}
 
 	// Missing provider credentials should not prevent the daemon from serving
 	// read-only HTTP requests against an import-only archive.
@@ -320,7 +326,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// remaining move is SIGKILL on a writing process. Cancelling here stops it
 	// at the next batch boundary, keeps every batch already committed, and
 	// leaves the migration unmarked so the next start resumes.
-	if err := s.InitSchemaContext(cmd.Context()); err != nil {
+	if err := s.InitSchemaUnlessCurrentContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
@@ -672,6 +678,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
 		}
 	}
 
@@ -1084,6 +1103,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
+		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
+			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
+			inspect: embedlocal.Inspect, install: embedlocal.Install,
+		})
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -1573,6 +1597,16 @@ func openDaemonAnalyticsEngine(
 	s *store.Store,
 	intent startupCacheBuildIntent,
 ) (query.Engine, string, startupCacheBuildOutcome, error) {
+	return openDaemonAnalyticsEngineWithRebuild(ctx, c, s, intent, nil)
+}
+
+func openDaemonAnalyticsEngineWithRebuild(
+	ctx context.Context,
+	c *config.Config,
+	s *store.Store,
+	intent startupCacheBuildIntent,
+	onFullRebuild func(),
+) (query.Engine, string, startupCacheBuildOutcome, error) {
 	if c == nil || s == nil {
 		return nil, "", startupCacheBuildOutcomeNone,
 			errors.New("daemon analytics engine unavailable")
@@ -1629,11 +1663,8 @@ func openDaemonAnalyticsEngine(
 	shouldBuild := intent != startupCacheBuildIntentNone || automaticBuild
 	var automaticBuildErr error
 	if shouldBuild {
-		// Build the cache before serving rather than starting on live-SQL
-		// fallback: incremental rebuilds take seconds, and startup progress
-		// already streams to the CLI that auto-started the daemon. A failed
-		// build is fatal for engine="duckdb" (documented to never fall back)
-		// and falls back to live SQL for engine="auto".
+		// Incremental builds keep the brief cache wait. Full builds let auto
+		// mode serve live entries until the replacement cache opens.
 		fullBuild := staleness.FullRebuild
 		reason := staleness.Reason
 		if intent == startupCacheBuildIntentFull {
@@ -1644,6 +1675,10 @@ func openDaemonAnalyticsEngine(
 			"step", "build_analytics_cache",
 			"reason", reason,
 			"full_rebuild", fullBuild)
+
+		if fullBuild && engineMode == config.AnalyticsEngineAuto && onFullRebuild != nil {
+			onFullRebuild()
+		}
 
 		var buildErr error
 		if intent != startupCacheBuildIntentNone {
@@ -1809,9 +1844,9 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
-func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
-	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
-		return nil
+func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue {
+		return 0
 	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
@@ -1826,11 +1861,16 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 			timeout = parsed
 		}
 	}
+	return max(timeout, 0)
+}
+
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
+	timeout := effectiveDaemonIdleTimeout(c, logger)
 	if timeout <= 0 {
 		return nil
 	}
 	return api.NewIdleTracker(timeout, func() {
-		logger.Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
+		repairLogger(logger).Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
 		stop()
 	})
 }
@@ -1866,12 +1906,24 @@ type storeAPIAdapter struct {
 	lookupEnv              personenrichment.CredentialLookup
 }
 
+// publishedConfig applies a live vector activation without adopting other
+// saved edits that remain pending until their runtime is activated.
+func (a *storeAPIAdapter) publishedConfig(ctx context.Context) *config.Config {
+	vectorCfg, ok := api.PublishedVectorConfig(ctx)
+	if !ok || a.config == nil {
+		return a.config
+	}
+	cfg := *a.config
+	cfg.Vector = vectorCfg
+	return &cfg
+}
+
 func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context {
 	if a == nil {
 		return ctx
 	}
 	state := newInvocation()
-	state.cfg = a.config
+	state.cfg = a.publishedConfig(ctx)
 	state.options = a.options
 	if a.logger != nil {
 		state.logger = a.logger
@@ -2170,6 +2222,12 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
 ) ([]api.APIMessage, int64, error) {
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
+}
+
+var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	return a.store.PopulateMessageBodiesContext(ctx, messages)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
@@ -2671,19 +2729,8 @@ func attachmentRemovalCommand(args []string) bool {
 // need no further interpretation here, but they must not be mistaken for
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			return false
-		}
-		name := strings.TrimPrefix(arg, "--")
-		if before, _, ok := strings.Cut(name, "="); ok {
-			name = before
-		}
-		if !loggingPassthroughFlags[name] {
-			return false
-		}
-	}
-	return true
+	flags := clirun.NewFlagSet()
+	return clirun.Parse(flags, args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

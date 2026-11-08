@@ -217,17 +217,12 @@ type Chunk struct {
 }
 
 // Filter carries the structured filters pushed into both signal CTEs
-// in hybrid search. Values are pre-resolved to IDs at the Go layer
-// (addresses → participant IDs, labels → label IDs) so backend code
-// only deals in integers.
+// in hybrid search. Sender terms remain values; recipient addresses and labels
+// resolve to IDs at the Go layer.
 //
-// Semantics match the existing SQLite search path (internal/store/api.go,
-// internal/query/sqlite.go): each repeated same-field operator becomes
-// its own AND'd EXISTS clause at the message level, so a query like
-// `from:alice from:bob` requires the message to have one `from`
-// participant matching "alice" AND another (or the same) matching
-// "bob". Within a group, IDs are OR'd (any matching participant
-// satisfies the group); across groups they are AND'd.
+// SenderTerms require each from: value to match sender metadata. Other repeated
+// operators use independent message-level requirements; ID groups are OR within
+// each group and AND across groups.
 //
 //   - Sender/SenderExact/RecipientAny/To/Cc/Bcc/LabelGroups are AND-of-OR groups: each inner
 //     slice is one search-token resolution (substring → matching IDs).
@@ -254,7 +249,8 @@ type Filter struct {
 	MessageIDs         []int64   // exact bounded candidate population; empty = unrestricted
 	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
 	ConversationIDs    []int64   // exact messages.conversation_id values; empty = unrestricted
-	SenderGroups       [][]int64 // one inner slice per `from:` token; AND across, OR within
+	SenderTerms        []string  // each normalized from: value; message and participant metadata
+	SenderGroups       [][]int64 // structured domain selections; AND across, OR within
 	SenderExactGroups  [][]int64 // exact structured sender; from rows OR messages.sender_id
 	RecipientAnyGroups [][]int64 // exact structured recipient; to/cc/bcc rows are OR'd
 	ToGroups           [][]int64 // one inner slice per `to:` token; AND across, OR within
@@ -280,6 +276,7 @@ func (f Filter) IsEmpty() bool {
 	return len(f.AccountScopes) == 0 && len(f.MessageIDs) == 0 &&
 		len(f.SourceIDs) == 0 &&
 		len(f.ConversationIDs) == 0 &&
+		len(f.SenderTerms) == 0 &&
 		len(f.SenderGroups) == 0 &&
 		len(f.SenderExactGroups) == 0 &&
 		len(f.RecipientAnyGroups) == 0 &&
@@ -365,6 +362,13 @@ type Stats struct {
 	// stability; semantically it is now a "missing" count.
 	PendingCount int64
 	StorageBytes int64
+}
+
+// BuildScopeBackend can pin coverage gates to a new scope over shared storage.
+// The original backend retains ownership of the shared storage handle.
+type BuildScopeBackend interface {
+	Backend
+	WithBuildScope(scope BuildScope) Backend
 }
 
 // Backend is the minimum contract a vector store must implement.

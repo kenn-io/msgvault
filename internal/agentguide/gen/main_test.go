@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,12 +11,11 @@ import (
 	"go.kenn.io/msgvault/internal/mcp"
 )
 
-func TestToolTableIsCurrent(t *testing.T) {
-	source, err := os.ReadFile("../../../docs/guides/agent-quickstart.md")
-	require.NoError(t, err)
-	generated, err := updateToolTable(source, mcp.ToolSummaries())
-	require.NoError(t, err)
-	assert.Equal(t, strings.ReplaceAll(string(source), "\r\n", "\n"), string(generated), "run make agent-guide")
+func TestPublisherChecksCommittedArtifacts(t *testing.T) {
+	// Fork PRs execute the main-pinned CI workflow, so a new Makefile check in
+	// this series is not yet run there. Also protect direct `go test` users by
+	// checking the real committed artifacts through the production publisher.
+	require.NoError(t, publishGuide("../../../docs/guides/agent-quickstart.md", true))
 }
 
 func TestToolTableRendering(t *testing.T) {

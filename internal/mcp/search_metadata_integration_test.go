@@ -236,3 +236,29 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
 }
+
+func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
+	db, _ := sqlobserve.Open(t, nil)
+	seedMetadataSearch(t, db)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO participants(id,email_address,display_name) VALUES(1,'alex@example.com','Alex Kim');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(1,1,'from');`)
+	require.NoError(t, err)
+	var requests atomic.Int32
+	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
+	for _, tool := range []struct {
+		name    string
+		handler toolHandler
+	}{
+		{ToolSearchMetadata, h.searchMetadata},
+		{ToolSearchMessages, h.searchMessages},
+	} {
+		t.Run(tool.name, func(t *testing.T) {
+			response := runTool[paginatedSearchMessages](t, tool.name, tool.handler, map[string]any{"query": "from:alex"})
+			var ids []int64
+			for _, row := range response.Data {
+				ids = append(ids, row.ID)
+			}
+			assert.Equal(t, []int64{1}, ids)
+		})
+	}
+}

@@ -64,8 +64,12 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			SizeEstimate:    int64(1000 + i*250),
 		})
 		setupRequire.NoError(err, "UpsertMessage")
-		setupRequire.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
-			"ReplaceMessageRecipients from")
+		if i == 0 {
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), aliceID, mid)
+			setupRequire.NoError(err)
+		} else {
+			setupRequire.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}), "ReplaceMessageRecipients from")
+		}
 
 		setupRequire.NoError(st.ReplaceMessageRecipients(mid, "to", []int64{bobID}, []string{"Bob"}),
 			"ReplaceMessageRecipients to")
@@ -76,6 +80,12 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	ctx := t.Context()
+
+	t.Run("sender_search", func(t *testing.T) {
+		rows, err := eng.Search(ctx, search.Parse("from:alice"), 100, 0)
+		require.NoError(t, err)
+		assert.Len(t, rows, 4)
+	})
 
 	t.Run("sender_name_label_page", func(t *testing.T) {
 		msgs, err := eng.ListMessages(ctx, query.MessageFilter{

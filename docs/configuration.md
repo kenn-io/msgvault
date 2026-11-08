@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: "2026-11-07"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -957,7 +957,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
-| `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
+| `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 | `muesli_recording_max_bytes` | `4294967296` (4 GiB) | Server limit for streamed Muesli audio uploads; `0` uses the default. Independent of the recorder's `recording_max_bytes` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
@@ -973,7 +973,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
 
-`daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
@@ -1027,7 +1027,7 @@ use `docker exec --user <daemon-uid> ...`. If `api_key_env` names a variable
 provided only to the supervised daemon, also provide it to the CLI process;
 the CLI does not inherit the daemon's environment.
 
-`daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
+`daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
 `daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start` and `msgvault daemon restart` still start a daemon when you run them. `msgvault update` restarts only a daemon msgvault started in the background, unless you pass `--no-restart`. Commands routed to `[remote].url` are unaffected.
 
@@ -1237,7 +1237,7 @@ Cache build memory and temporary disk usage scale with archive size, so a
 minimum interval can prevent repeated archive-scale work when sources sync
 frequently. Changes under `[analytics]` take effect after the daemon restarts.
 
-This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. It does not affect the Web UI's Explore, Files, or People/domains workspaces, which require the SQLite + DuckDB/Parquet cache regardless of this setting and are unavailable on PostgreSQL; see [PostgreSQL Backend](/docs/architecture/postgresql/) for the current scope.
+This setting governs the aggregate views (Senders/Domains/Labels/Time) and is ignored entirely when `[data].database_url` points at PostgreSQL — a PostgreSQL backend always uses live SQL for those views, and `build-cache` refuses to run against it. In auto mode on SQLite, Messages serves live archive rows while the cache rebuilds and after a failed build. Grouping, person filters, semantic search, per-row exact-match counts, bulk actions, Files, People/domains, and the reader’s Open person action still require the analytical cache. Messages shows a recovery notice after a failed build. These workspaces remain unavailable on PostgreSQL; see [PostgreSQL Backend](/docs/architecture/postgresql/) for the current scope.
 
 ### `[backup]`
 
@@ -1615,6 +1615,38 @@ the subthread request and silently omit child chats. Unsupported CLI commands
 and malformed MCP catalogs fail explicitly. Read the [connection and capture limits](usage/inline.md)
 before choosing media caps or configuring a remote daemon.
 
+### `[[facebook_comments]]` {#facebook-comments}
+
+Select one Facebook Page for comment ingestion (unreleased). See
+[Facebook Page comments](usage/facebook-comments.md) for token setup, coverage,
+and recovery. Tokens are read only from the named daemon environment variable.
+
+```toml
+[[facebook_comments]]
+identifier = "example-page"
+app_id = "9"
+page_id = "100"
+token_env = "EXAMPLE_FACEBOOK_PAGE_TOKEN"
+enabled = true
+schedule = "*/30 * * * *"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | required | Local profile label, unique ignoring case; renaming it preserves archive identity |
+| `app_id` | required | Decimal Meta app ID; paired with `page_id` for source and actor identity |
+| `page_id` | required | Decimal selected Page ID; verified against the supplied Page token before registration |
+| `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
+| `enabled` | `false` | Enable scheduled sync; manual commands remain available |
+| `schedule` | empty | Five-field cron expression; empty means manual sync only |
+
+`identifier` is trimmed and must be nonempty and unique ignoring case.
+`app_id` and `page_id` must be positive decimal IDs without leading zeros.
+Duplicate app/Page pairs, invalid environment variable names, unknown profile
+keys, and invalid schedules are rejected. The source identifier is
+`app:<app_id>:page:<page_id>`; scheduled jobs use
+`facebook_comments:<source-identifier>`, independently of email account dispatch.
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a
@@ -1860,6 +1892,7 @@ transcription in Plaud before syncing. See the
 identifier = "work"
 account_email = "you@example.com"
 schedule = "30 */6 * * *"
+limit = 50
 enabled = true
 ```
 
@@ -1869,6 +1902,7 @@ enabled = true
 | `account_email` | Required | Explicit account email; normalized to lowercase and checked against live Plaud identity |
 | `endpoint` | `https://mcp.plaud.ai/mcp` | MCP resource endpoint override; changing it requires new authorization |
 | `schedule` | — | Five-field cron expression used by `msgvault serve` |
+| `limit` | `0` (all) | Most recordings a scheduled run checks; works like `sync-plaud --limit` |
 | `enabled` | `false` | Whether a scheduled entry runs in the daemon |
 
 Authorize with `msgvault add-plaud <identifier>` on the daemon host. The callback
@@ -2600,7 +2634,7 @@ rate_limit_qps = 5
 api_port = 0
 bind_addr = "127.0.0.1"
 api_key = "your-secret-key"
-daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
+daemon_idle_timeout = "20m" # automatic daemon idle timeout; "0s" disables
 daemon_auto_restart = "newer" # newer, never, or always
 daemon_auto_start = true # false when a supervisor runs msgvault serve
 

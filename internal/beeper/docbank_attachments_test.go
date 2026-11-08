@@ -1023,7 +1023,7 @@ func (r *mirrorRig) delivered(versions ...string) []string {
 
 func (r *mirrorRig) processingDue() {
 	r.t.Helper()
-	_, err := r.f.Store.DB().Exec(`UPDATE docbank_attachment_processing SET next_action_at = '2000-01-01 00:00:00' WHERE next_action_at IS NOT NULL`)
+	_, err := r.f.Store.DB().ExecContext(r.t.Context(), `UPDATE docbank_attachment_processing SET next_action_at = '2000-01-01 00:00:00' WHERE next_action_at IS NOT NULL`)
 	require.NoError(r.t, err)
 }
 
@@ -1041,7 +1041,7 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	r.delivered("a")
 	require.NoError(r.runBatch(t.Context()))
 	var next time.Time
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT next_action_at FROM docbank_attachment_processing`).Scan(&next))
+	require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT next_action_at FROM docbank_attachment_processing`).Scan(&next))
 	assert.True(next.After(time.Now()))
 	assert.Equal([]string{"a"}, r.processing.Plans)
 	assert.Equal([]string{"a"}, r.processing.Jobs)
@@ -1099,7 +1099,7 @@ func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
 	require.ErrorIs(pollErr, docbankmedia.ErrInvalidReceipt)
 
 	var outcome, jobID string
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&outcome, &jobID))
+	require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&outcome, &jobID))
 	assert.Equal("requested", outcome)
 	assert.Equal(docbanktest.ProcessingJobID("a", r.processing.Fingerprint), jobID)
 	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
@@ -1129,7 +1129,7 @@ func TestAttachmentMirrorProcessingRefusalsWaitForProfileChange(t *testing.T) {
 			require.NoError(r.runBatch(t.Context()))
 			assert.Equal(map[string]int64{outcome: 1}, r.processingCounts().Outcomes)
 			var savedJobID string
-			require.NoError(r.f.Store.DB().QueryRow(r.f.Store.Rebind(`SELECT job_id FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&savedJobID))
+			require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), r.f.Store.Rebind(`SELECT job_id FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&savedJobID))
 			assert.Empty(savedJobID)
 			plans, jobs := len(r.processing.Plans), len(r.processing.Jobs)
 			require.NoError(r.runBatch(t.Context()))

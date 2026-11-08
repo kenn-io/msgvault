@@ -554,7 +554,7 @@ func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql
 
 // FTSAvailable reports whether tsvector search is available.
 // PostgreSQL always supports tsvector — check that the column exists.
-func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {
+func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db SQLReader) (bool, error) {
 	var count int
 	err := db.QueryRowContext(ctx, postgresColumnExistsSQL("messages", "search_fts")).Scan(&count)
 	if err != nil && ctx.Err() != nil {
@@ -682,6 +682,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE`, "hidden_text_present"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_address TEXT`, "account_address"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_path TEXT`, "account_path"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS email_linkage_outcome TEXT`, "email_linkage_outcome"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS phone_number TEXT`, "phone_number"},
@@ -2296,7 +2297,7 @@ var exclusiveLockTables = []string{
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
-	"message_delivery_addresses",
+	"message_delivery_addresses", "email_link_keys",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",

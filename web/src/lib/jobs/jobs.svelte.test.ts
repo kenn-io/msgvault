@@ -92,3 +92,32 @@ it('discards a held source observation after a newer refresh', async () => {
     operations.destroy();
   }
 });
+
+it('offers source setup only after a successful empty source read', async () => {
+  let sources: ReturnType<typeof sourceStatus>[] = [];
+  let failing = false;
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.includes('/sources')) return failing ? Response.json({}, { status: 500 }) : Response.json({ sources });
+    return Response.json({ lanes: operationLanes() });
+  });
+  const operations = new OperationsController(client);
+  const store = new JobsStore(client, operations);
+  try {
+    expect(store.noSources).toBe(false);
+    await store.refresh();
+    expect(store.noSources).toBe(true);
+    sources = [sourceStatus()];
+    await store.refresh();
+    expect(store.noSources).toBe(false);
+    sources = [];
+    await store.refresh();
+    expect(store.noSources).toBe(true);
+    failing = true;
+    await store.refresh();
+    expect(store.noSources).toBe(false);
+  } finally {
+    store.dispose();
+    operations.destroy();
+  }
+});

@@ -42,6 +42,7 @@
     onActiveKey?: (key: string) => void;
     onVisibleRows?: (rowKeys: string[]) => void;
     onRetry?: () => void;
+    onAddSource?: () => void;
   }
 
   let {
@@ -67,7 +68,8 @@
     onLoadThroughEnd = undefined,
     onActiveKey = undefined,
     onVisibleRows = undefined,
-    onRetry = undefined
+    onRetry = undefined,
+    onAddSource = undefined
   }: Props = $props();
 
   const compact = new MediaQuery(MEDIA.compact);
@@ -487,7 +489,13 @@
         </div>
       {:else if rows.length === 0}
         <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length + 1}>
-          <EmptyState title="No items match this view" description="Adjust the search or clear filters to widen the view." />
+          {#if onAddSource}
+            <EmptyState title="No mail yet" description="Add an account or import an export to start your archive.">
+              <Button size="sm" tone="info" surface="solid" label="Add source" onclick={onAddSource} />
+            </EmptyState>
+          {:else}
+            <EmptyState title="No items match this view" description="Adjust the search or clear filters to widen the view." />
+          {/if}
         </div></div>
       {:else if !slice || rowHeight === undefined}
         <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length + 1}><p class="empty" role="status">Preparing table layout…</p></div></div>
@@ -729,11 +737,14 @@
     background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-surface));
   }
 
+  /* Selected rows read as one block: the fill and the 3px accent run under each
+   * row's divider, so neither a stripe nor a rule breaks them. */
   .data-row.data-row--selected {
     border-start-start-radius: 0;
     border-end-start-radius: 0;
-    background: var(--selected-bg);
-    box-shadow: inset 3px 0 0 var(--accent-blue);
+    border-bottom-color: transparent;
+    background: linear-gradient(to right, var(--accent-blue) 3px, var(--selected-bg) 3px);
+    box-shadow: none;
   }
 
   .cell--people :global(.kit-tooltip-trigger) { max-width: 100%; }

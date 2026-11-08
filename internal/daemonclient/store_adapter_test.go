@@ -1335,6 +1335,8 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 		assert.Equal("true", r.Header.Get(apiprotocol.AllowPendingCountsHeader))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
+			"stale": true,
+			"as_of": "2024-02-03T04:05:06Z",
 			"accounts": [{
 				"id": 7,
 				"email": "alice@example.com",
@@ -1360,6 +1362,9 @@ func TestGetCLIAccounts_Success(t *testing.T) {
 	assert.Equal("Alice", accounts[0].DisplayName, "DisplayName")
 	assert.Equal("archive", accounts[0].Alias, "Alias")
 	assert.Equal(int64(1234), accounts[0].MessageCount, "MessageCount")
+	assert.True(accounts[0].Stale)
+	require.NotNil(accounts[0].AsOf)
+	assert.Equal("2024-02-03T04:05:06Z", accounts[0].AsOf.UTC().Format(time.RFC3339))
 	require.NotNil(accounts[0].LastSync, "LastSync")
 	assert.Equal("2024-01-02T03:04:05Z", accounts[0].LastSync.UTC().Format(time.RFC3339), "LastSync")
 }

@@ -135,6 +135,7 @@ func listLimitArg(args map[string]any) int {
 type handlers struct {
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
+	sensitiveConfirm     bool
 	downloads            *downloadCache
 	engine               query.Engine
 	archiveSQLQuerier    ArchiveSQLQuerier
@@ -780,14 +781,14 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	}
 	if result.TotalCount < 0 {
 		return jsonResult(searchMetadataResponse{
-			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr),
+			paginatedResponse: newPaginatedResponseNoTotal(result.Messages, offset, hasMore), Hints: result.Hints, IndexState: result.IndexState, Warnings: search.LiteralORWarnings(queryStr),
 		})
 	}
-	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState, search.LiteralORWarnings(queryStr))
+	return metadataSearchResult(result.Messages, result.TotalCount, offset, result.IndexState, search.LiteralORWarnings(queryStr), result.Hints)
 }
 
-func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string, warnings []string) (*toolResult, error) {
-	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state, Warnings: warnings})
+func metadataSearchResult(messages []query.MessageSummary, total int64, offset int, state string, warnings []string, hints []query.SearchHint) (*toolResult, error) {
+	return jsonResult(searchMetadataResponse{paginatedResponse: newPaginatedResponse(messages, total, offset), IndexState: state, Warnings: warnings, Hints: hints})
 }
 
 // searchMessageBodies searches message bodies by keyword, vector, or hybrid.

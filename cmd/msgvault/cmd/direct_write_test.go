@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +16,35 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestOpenWritableStoreAndInitPostgreSQLWithOpenWriter(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL")
+	}
+	st := f.Store
+	cfg := lifecycleTestConfig(t.TempDir())
+	setMatrixTestDatabaseURL(t, st, cfg)
+	messageID := f.CreateMessage("held")
+
+	writer, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { require.NoError(writer.Rollback()) }()
+	_, err = writer.ExecContext(t.Context(), `UPDATE messages SET snippet = snippet WHERE id = $1`, messageID)
+	require.NoError(err)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	opened, cleanup, err := openWritableStoreAndInitForInvocation(ctx, testInvocationWithConfig(cfg))
+	if cleanup != nil {
+		defer cleanup()
+	}
+	require.NoError(err, "a current archive opens while another session holds a message write")
+	require.NotNil(opened)
+}
 
 func TestAcquireDirectSQLiteWriteLockSkipsPostgreSQL(t *testing.T) {
 	dataDir := t.TempDir()
@@ -166,7 +196,7 @@ func TestDirectWriterOwnsArchive_FalseWhenDaemonRecordPresent(t *testing.T) {
 
 	// A live daemon advertises a runtime record; simulate one for this
 	// (alive) test process so liveDaemonRecords observes it.
-	_, _, err := writeDaemonRuntime(dataDir, "127.0.0.1", 0, "test", "")
+	_, _, err := writeDaemonRuntime(dataDir, "127.0.0.1", 0, "test", "", 0)
 	require.NoError(
 		err, "write daemon runtime record")
 

@@ -4469,3 +4469,20 @@ func TestMetadataSearchLiteralORWarning(t *testing.T) {
 func (*fakeBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
 	return vector.EmbeddingCheckpoints{}
 }
+
+func TestHTTPCallsSkipFamilyDiscovery(t *testing.T) {
+	probes := 0
+	handler, closeHandler := NewHTTPHandler(ServeOptions{
+		Engine:           &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, Subject: "synthetic message"}}},
+		DiscoverFamilies: func(context.Context) *ArchiveFamilies { probes++; return &ArchiveFamilies{} },
+	}, HTTPOptions{})
+	defer closeHandler()
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_message","arguments":{"id":42}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Zero(t, probes)
+}

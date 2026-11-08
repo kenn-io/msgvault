@@ -25,6 +25,7 @@ export class JobsStore {
   #kinds = $state<OperationLaneStatus[]>([]);
   #stopObserving: () => void;
   #sourceError = $state<boolean>();
+  noSources = $derived(this.#sourceError === false && this.#sources.length === 0);
   #operations: OperationsController;
   #client: APIClient;
   #controller?: AbortController;

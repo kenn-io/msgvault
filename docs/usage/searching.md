@@ -102,7 +102,7 @@ msgvault supports a local subset of Gmail-like search syntax.
 
 | Operator | Description | Example |
 |---|---|---|
-| `from:` | Sender address | `from:alice@example.com` |
+| `from:` | Sender name, address, or domain | `from:alice@example.com` |
 | `to:` | Recipient address | `to:bob@example.com` |
 | `cc:` | CC recipient | `cc:team@example.com` |
 | `bcc:` | BCC recipient | `bcc:admin@example.com` |
@@ -175,6 +175,8 @@ attribution never lets msgvault send from it. The
 and the order msgvault trusts them in.
 
 ### Domain Search
+
+`from:` matches full email addresses exactly, domains by suffix, and other values as literal substrings of the sender's name, address, or phone number. Each repeated `from:` value must match.
 
 The `from:`, `to:`, `cc:`, and `bcc:` operators recognize bare domain names with common TLDs. For example, `from:example.com` automatically matches all messages from the `example.com` domain. For uncommon TLDs, use the explicit `@` prefix: `from:@brand.pizza`.
 

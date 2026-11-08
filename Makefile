@@ -224,6 +224,10 @@ test:
 		$(MAKE) test-standard; \
 	fi
 
+.PHONY: test-install
+test-install:
+	$(call gotestsum,install,./scripts,-timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" -run '^TestInstallPath$$' -count=1)
+
 # Use an existing built binary when supplied, otherwise build the worktree CLI.
 .PHONY: test-cli-e2e
 test-cli-e2e:

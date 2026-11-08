@@ -31,3 +31,18 @@ func TestStripReplyQuotes(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskReplyQuotes(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"authored text", "Hello\nWorld", "Hello\nWorld"},
+		{"quoted line", "Hi\n> q\nOK", "Hi\n   \nOK"},
+		{"multibyte line with CRLF", "Hi\r\n> reçu\r\nOK", "Hi\r\n       \r\nOK"},
+		{"answer below quote block", "On Monday, A wrote:\n> q\nOK", "                   \n   \nOK"},
+		{"unmarked tail", "On Monday, A wrote:\nq\nOK", "                   \n \n  "},
+		{"separated Outlook headers", "hello\nFrom: a\nOn Monday, A wrote:\n> q\nSent: b", "hello\nFrom: a\n                   \n   \nSent: b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, MaskReplyQuotes(tc.body))
+		})
+	}
+}
