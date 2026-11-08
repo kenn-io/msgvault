@@ -270,6 +270,7 @@ func TestInterruptedDueRetryDoesNotBlockNextMeeting(t *testing.T) {
 	first, err := imp.loadState(t.Context(), src.ID)
 	require.NoError(err)
 	assert.Equal(deadline, first.TranscriptRetryUntil["retry-a"])
+	require.Len(first.Pending, 2)
 	assert.False(pendingDue(first.Pending[0], now))
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
