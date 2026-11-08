@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DATE_HINT, dateNote, intervalDateError, isCalendarDate, isTextProfileDate, profileDateError, readablePartialDate, spokenDate } from './dates';
+import { DATE_HINT, dateNote, intervalDateError, isCalendarDate, isTextProfileDate, profileDateError, readablePartialDate } from './dates';
 
 describe('isCalendarDate', () => {
   it.each([
@@ -42,10 +42,10 @@ describe('date readings', () => {
     const today = new Date(2026, 10, 6);
     expect(readablePartialDate('2026-03-05', today)).toBe('Mar 5');
     expect(readablePartialDate('2026-03', today)).toBe('Mar 2026');
-    expect(spokenDate('2026-11-06', today)).toBe('Today, Nov 6');
-    expect(spokenDate('20261105', today)).toBe('Nov 5');
-    expect(spokenDate('2025-11-06', today)).toBe('Nov 6, 2025');
-    expect(spokenDate('2026-02-30', today)).toBe('');
+    expect(dateNote('2026-11-06', false, today)).toBe('Today, Nov 6');
+    expect(dateNote('20261105', false, today)).toBe('Nov 5');
+    expect(dateNote('2025-11-06', false, today)).toBe('Nov 6, 2025');
+    expect(dateNote('2026-02-30', false, today)).toBe('');
     expect(dateNote('2024-03', true, today)).toBe(DATE_HINT);
     expect(dateNote('2024-03', false, today)).toBe('Mar 2024');
     expect(dateNote('2024', false, today)).toBe('');

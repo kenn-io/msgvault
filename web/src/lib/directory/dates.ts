@@ -92,14 +92,6 @@ export function readablePartialDate(value: string | PartialDateParts | null | un
   return date.year === today.getFullYear() ? `${month} ${date.day}` : `${month} ${date.day}, ${date.year}`;
 }
 
-/** A typed date read back in words under its field: "Today, Nov 6", "Nov 5", "Mar 2024". Empty when it isn't a date yet. */
-export function spokenDate(value: string, today: Date = new Date()): string {
-  const trimmed = value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
-  if (!trimmed || intervalDateError(trimmed)) return '';
-  const reading = readablePartialDate(trimmed, today);
-  return trimmed === localDateStr(today) ? `Today, ${reading}` : reading;
-}
-
 /**
  * What sits in the hint's place under a date field: the forms while it's empty
  * or focused, then the date in words once it holds one ("Mar 2024", "Today,
@@ -107,9 +99,10 @@ export function spokenDate(value: string, today: Date = new Date()): string {
  */
 export function dateNote(value: string, focused: boolean, today: Date = new Date()): string {
   if (intervalDateError(value)) return '';
-  if (focused || !value.trim()) return DATE_HINT;
-  const reading = spokenDate(value, today);
-  return reading === value.trim() ? '' : reading;
+  const trimmed = value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+  if (focused || !trimmed) return DATE_HINT;
+  const reading = readablePartialDate(trimmed, today);
+  return trimmed === localDateStr(today) ? `Today, ${reading}` : reading === value.trim() ? '' : reading;
 }
 
 /** Sort partial dates latest first, placing an unknown month or day at the end of its period. */

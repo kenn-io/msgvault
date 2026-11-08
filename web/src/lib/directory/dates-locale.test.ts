@@ -6,9 +6,9 @@ it('reads dates in the browser locale', async () => {
     return new DateTimeFormat(locale ?? 'fr-FR', options);
   });
   try {
-    const { readablePartialDate, spokenDate } = await import('./dates');
+    const { readablePartialDate, dateNote } = await import('./dates');
     expect(readablePartialDate('2024-03')).toBe('mars 2024');
-    expect(spokenDate('2026-03-05', new Date(2026, 10, 7))).toBe('mars 5');
+    expect(dateNote('2026-03-05', false, new Date(2026, 10, 7))).toBe('mars 5');
   } finally { formatter.mockRestore(); }
   // A fresh import loads kit-ui again, which outlasts the default 5s under a full parallel run.
 }, 20_000);

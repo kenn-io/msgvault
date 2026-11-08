@@ -493,18 +493,13 @@ describe('OrganizationEmploymentTab', () => {
     expect(screen.getByRole('dialog', {name:'Edit job'})).toBeDefined();
   });
 
-  it('adds the role to a titled job and lists past jobs most recent first', async () => {
+  it('adds the role to a titled job', async () => {
     const { controller } = controllerWith(async () => Response.json({ organizations: [], total: 0 }));
     controller.employments = [
       employment(1, 1, { title: 'Garden designer', role: 'Design lead', department: 'Community gardens', start_date: { year: 2024, month: 3 } }),
-      employment(2, 1, { title: 'Intern', is_current: false, start_date: { year: 2018 }, end_date: { year: 2019 } }),
-      employment(3, 1, { title: 'Project assistant', is_current: false, start_date: { year: 2021 }, end_date: { year: 2023 } }),
     ];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
     expect(screen.getByText('Garden designer', { exact: false }).closest('.detail-row')?.textContent).toContain('Mar 2024 – present · Design lead · Community gardens');
-    await fireEvent.click(screen.getByText('2 past jobs'));
-    const past = screen.getAllByText(/^(Intern|Project assistant) at/).map(row => row.textContent?.split(' at ')[0]);
-    expect(past).toEqual(['Project assistant', 'Intern']);
   });
 
   it('makes a current employment primary', async () => {

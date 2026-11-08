@@ -7,7 +7,7 @@ export type RelationshipChoice = TypeaheadOption & { slug: string; direction: Or
 // Groups in order of use, and each group's types with the common ones first. Each type appears once;
 // types not listed fall in Other, by label.
 const groups: Record<string, string[]> = {
-  Family: ['spouse', 'parent', 'sibling', 'kin', 'relative'],
+  Family: ['spouse', 'parent', 'sibling', 'kin'],
   Work: ['colleague', 'co-worker', 'agent'],
   Social: ['friend', 'date', 'sweetheart', 'acquaintance', 'neighbor', 'met', 'co-resident', 'crush', 'muse'],
   Other: ['contact'],
@@ -15,7 +15,7 @@ const groups: Record<string, string[]> = {
 const phrases: Record<string, [string, string]> = {
   'parent:outgoing': ['parent', 'is a parent of'], 'parent:incoming': ['child', 'is a child of'],
   'sibling:outgoing': ['sibling', 'is a sibling of'], 'spouse:outgoing': ['spouse', 'is a spouse of'],
-  'kin:outgoing': ['relative', 'is a relative of'], 'relative:outgoing': ['relative', 'is a relative of'],
+  'kin:outgoing': ['relative', 'is a relative of'],
   'agent:outgoing': ['agent', 'is an agent for'], 'agent:incoming': ['principal', 'is represented by'],
   'colleague:outgoing': ['colleague', 'is a colleague of'], 'co-worker:outgoing': ['co-worker', 'is a co-worker of'],
   'acquaintance:outgoing': ['acquaintance', 'is an acquaintance of'], 'friend:outgoing': ['friend', 'is a friend of'],

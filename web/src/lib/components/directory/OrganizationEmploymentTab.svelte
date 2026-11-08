@@ -10,7 +10,6 @@
   import ConflictNotice from '../common/ConflictNotice.svelte';
   import { conflict, employmentFacts } from '../../directory/conflict';
   import { WriteAttempt } from '../../directory/write-attempt.svelte';
-  import { latestDateKey } from '../../directory/dates';
   import DetailRow from '../people/DetailRow.svelte';
   import { dateSpan } from '../../directory/labels';
   import EmploymentEditor from './EmploymentEditor.svelte';
@@ -29,9 +28,8 @@
   let employmentEditor = $state<Employment | null | undefined>(undefined);
   let endingEmployment = $state<Employment>();
   const currentJobs = $derived(controller.employments.filter(job => job.is_current));
-  // Most recent first: the latest end, then the latest start.
-  const pastJobs = $derived(controller.employments.filter(job => !job.is_current)
-    .sort((a, b) => latestDateKey(b.end_date) - latestDateKey(a.end_date) || latestDateKey(b.start_date) - latestDateKey(a.start_date)));
+  // The server lists jobs most recent first.
+  const pastJobs = $derived(controller.employments.filter(job => !job.is_current));
   let deletingEmployment = $state<Employment>();
   const removal = new WriteAttempt<Prepared<Employment>>();
   const primary = new WriteAttempt<Prepared<Employment>>();
