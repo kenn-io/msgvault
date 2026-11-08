@@ -37,6 +37,7 @@ type liveExploreSnapshot struct {
 // The archive pool is borrowed; the separate Explore reader is owned.
 type LiveExploreEngine struct {
 	*SQLiteEngine
+
 	exploreReader *sqliteExploreReader
 }
 

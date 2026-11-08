@@ -207,7 +207,7 @@ func TestStartDaemonAnalyticsInitializerTracksAutoInitializationIndependently(t 
 	requirements.NoError(err, "an in-flight live request survives the swap")
 	releaseSnapshot()
 	requirements.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
-	_, _, _, err = live.BeginExploreSnapshot(t.Context())
+	_, err = live.Explore(t.Context(), query.ExploreRequest{})
 	assertions.ErrorIs(err, sql.ErrConnDone)
 }
 

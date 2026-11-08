@@ -36,7 +36,7 @@ func liveExploreFixture(t *testing.T) sqliteExploreFixture {
 	source := b.AddSource("archive@example.test")
 	other := b.AddSourceWithType("chat@example.test", "whatsapp")
 	alice := b.AddParticipant("alice@example.test", "example.test", "Alice")
-	bob := b.AddParticipant("bob@other.test", "öther.test", "Bob")
+	bob := b.AddParticipant("bob@other.test", "ömail.test", "Bob")
 	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	first := b.AddMessage(MessageOpt{SourceID: source, Subject: "First", SentAt: base, ListID: new("<lïst@example.test>")})
 	b.AddFrom(first, alice, "Alice envelope")
@@ -132,10 +132,10 @@ func TestSQLiteExploreMatchesCache(t *testing.T) {
 		{"dates", ExploreRequest{Context: Context{After: &after, Before: &before}}, true},
 		{"kind", ExploreRequest{Context: Context{Kinds: []EntryKind{EntryConversation}}}, true},
 		{"type", ExploreRequest{Context: Context{MessageTypes: []string{"email"}}}, true},
-		{"domain", ExploreRequest{Context: Context{Domains: []string{"öther.test"}}}, true},
-		{"unicode domain", ExploreRequest{Context: Context{Domains: []string{"ÖTHER.TEST"}}}, true},
+		{"domain", ExploreRequest{Context: Context{Domains: []string{"ömail.test"}}}, true},
+		{"unicode domain", ExploreRequest{Context: Context{Domains: []string{"ÖMAIL.TEST"}}}, true},
 		{"unicode envelope", ExploreRequest{Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{1}, EmailIdentifier: "ÄLÏCE@example.test", Direction: IdentityDirectionSender}}}, true},
-		{"domain conjunction", ExploreRequest{Context: Context{Domains: []string{"example.test"}, AdditionalDomainGroups: [][]string{{"öther.test"}}}}, true},
+		{"domain conjunction", ExploreRequest{Context: Context{Domains: []string{"example.test"}, AdditionalDomainGroups: [][]string{{"ömail.test"}}}}, true},
 		{"mailing list", ExploreRequest{Context: Context{MailingLists: []string{"<LÏST@example.test>"}}}, true},
 		{"list conjunction", ExploreRequest{Context: Context{MailingLists: []string{"<lïst@example.test>"}, AdditionalMailingListGroups: [][]string{{"<LÏST@example.test>"}}}}, true},
 		{"active", ExploreRequest{Context: Context{Deletion: DeletionActive}}, true},
