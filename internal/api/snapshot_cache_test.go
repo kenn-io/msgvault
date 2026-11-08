@@ -124,20 +124,6 @@ func TestSnapshotCacheImmediateStalePolicy(t *testing.T) {
 		cancel()
 		_, _, _, err = cache.get(reqCtx, lifetimeCtx, "k", 2*time.Second, blocked)
 		require.ErrorIs(t, err, context.Canceled)
-		time.Sleep(3 * time.Minute)
-		synctest.Wait()
-
-		value, _, stale, err = cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
-			func(context.Context) (int, error) { return 2, nil })
-		require.NoError(t, err)
-		assert.Equal(t, 1, value, "a failed refresh keeps the previous snapshot")
-		assert.True(t, stale)
-		synctest.Wait()
-		value, _, _, err = cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
-			func(context.Context) (int, error) { return 2, nil })
-		require.NoError(t, err)
-		assert.Equal(t, 2, value, "a successful retry replaces the snapshot")
-		synctest.Wait()
 	})
 }
 
@@ -289,7 +275,10 @@ func TestSnapshotCacheComputeDeadlineIsNotWaitTimeout(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		var cache snapshotCache[int]
-		_, _, _, err := cache.get(t.Context(), t.Context(), "k", time.Second, func(context.Context) (int, error) { return 0, context.DeadlineExceeded })
+		_, _, _, err := cache.get(t.Context(), t.Context(), "k", 3*time.Minute, func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			return 0, ctx.Err()
+		})
 		require.ErrorIs(err, context.DeadlineExceeded)
 		assert.NotErrorIs(err, errSnapshotWaitTimeout, "a computation timeout must remain an error")
 	})

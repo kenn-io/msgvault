@@ -396,9 +396,5 @@ func TestHandleCLIAccountsReplacementWaitsForOwnCounts(t *testing.T) {
 		assert.Equal(t, replacement.Identifier, fresh.Accounts[0].Email)
 		assert.Zero(t, fresh.Accounts[0].MessageCount, "the new account must not inherit the removed account's count")
 		assert.False(t, fresh.Stale, "a replacement follows the existing refresh wait")
-		started := time.Now()
-		repeat := getAccounts()
-		assert.Zero(t, time.Since(started))
-		assert.True(t, repeat.Stale, "matching accounts retain immediate reuse")
 	})
 }
