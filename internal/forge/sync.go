@@ -233,7 +233,7 @@ func (r *run) loadState(ctx context.Context) (syncState, error) {
 func (r *run) discover(ctx context.Context) error {
 	err := r.syncer.forge.Discover(ctx, r.state.Cursor, r.owners, r.known,
 		func(threads []ThreadRef, next []byte) error {
-			var archived map[string]archivedAt
+			var archived map[string]KnownThread
 			if !r.state.Full {
 				var err error
 				if archived, err = r.known.all(ctx); err != nil {
@@ -242,7 +242,7 @@ func (r *run) discover(ctx context.Context) error {
 			}
 			allowed := slices.DeleteFunc(slices.Clone(threads), func(ref ThreadRef) bool {
 				copied, ok := archived[ref.Key]
-				return !r.owners.Allows(ref.Owner) || ok && copied.holds(ref.UpdatedAt)
+				return !r.owners.Allows(ref.Owner) || ok && copied.Holds(ref.UpdatedAt)
 			})
 			r.summary.Found += r.state.queue(allowed)
 			r.state.Cursor = next

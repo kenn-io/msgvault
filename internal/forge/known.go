@@ -71,9 +71,8 @@ type knownThreads struct {
 	store    *store.Store
 	sourceID int64
 	loaded   []KnownThread
-	// archived is each archived thread's update when it was fetched, and
-	// when that fetch read its first page, by key.
-	archived map[string]archivedAt
+	// archived is each archived thread, by key.
+	archived map[string]KnownThread
 	ready    bool
 }
 
@@ -89,7 +88,7 @@ func (k *knownThreads) load(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read archived threads: %w", err)
 	}
-	k.archived = make(map[string]archivedAt, len(ids))
+	k.archived = make(map[string]KnownThread, len(ids))
 	for _, id := range ids {
 		facts, ok := decodeFacts(metadata[id])
 		if ok {
@@ -97,8 +96,9 @@ func (k *knownThreads) load(ctx context.Context) error {
 			if readAt.IsZero() || readAt.After(facts.CheckedAt) {
 				readAt = facts.CheckedAt
 			}
-			k.loaded = append(k.loaded, KnownThread{Ref: facts.Ref, ReadAt: readAt, CheckedAt: facts.CheckedAt})
-			k.archived[facts.Ref.Key] = archivedAt{updated: facts.Ref.UpdatedAt, read: readAt}
+			thread := KnownThread{Ref: facts.Ref, ReadAt: readAt, CheckedAt: facts.CheckedAt}
+			k.loaded = append(k.loaded, thread)
+			k.archived[facts.Ref.Key] = thread
 		}
 	}
 	slices.SortStableFunc(k.loaded, func(a, b KnownThread) int {
@@ -152,28 +152,24 @@ func (k *knownThreads) Each(ctx context.Context, fn func(KnownThread) error) err
 	return nil
 }
 
-// archivedAt is the update an archived thread was fetched for, and when the
-// fetch read its first page.
-type archivedAt struct {
-	updated, read time.Time
-}
-
 // readMargin is how long after an update a fetch must have read a thread to
 // hold it for certain: forges report updates in whole seconds, by a clock
 // that may differ from this machine's.
 const readMargin = time.Minute
 
-// holds reports whether the archived copy holds an update discovery
+// Holds reports whether the archived copy holds an update discovery
 // reports: one older than the update it was fetched for, or that same
 // update when the fetch read the thread well after it. A thread changed
 // again in the same second as the update it was fetched for reports that
 // update again, and is fetched again unless its copy was read well after.
-func (a archivedAt) holds(update time.Time) bool {
-	return !update.IsZero() && (update.Before(a.updated) || update.Equal(a.updated) && a.read.After(update.Add(readMargin)))
+// A forge that skips what it read before asks this, so it skips only what
+// the core would.
+func (k KnownThread) Holds(update time.Time) bool {
+	return !update.IsZero() && (update.Before(k.Ref.UpdatedAt) || update.Equal(k.Ref.UpdatedAt) && k.ReadAt.After(update.Add(readMargin)))
 }
 
-// all returns every archived thread's archivedAt, by key.
-func (k *knownThreads) all(ctx context.Context) (map[string]archivedAt, error) {
+// all returns every archived thread, by key.
+func (k *knownThreads) all(ctx context.Context) (map[string]KnownThread, error) {
 	if err := k.load(ctx); err != nil {
 		return nil, err
 	}
