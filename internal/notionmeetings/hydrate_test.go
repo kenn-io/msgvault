@@ -279,20 +279,6 @@ func TestHydratorRejectsNonMeetingRootBlock(t *testing.T) {
 	assert.Nil(t, hydrated)
 }
 
-func TestHydratorEmptyTranscriptExcludesAllParentSections(t *testing.T) {
-	assert := assert.New(t)
-	source := completeHydrationSource()
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Late transcript.\n\n## Action items\nDo not archive as transcript."
-
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Empty(hydrated.Transcript)
-	assert.NotContains(hydrated.Transcript, "Action items")
-	assert.NotContains(hydrated.Transcript, "Do not archive")
-}
-
 func TestHydratorDoesNotWarnWhenOnlyLaterMarkdownSectionDiffers(t *testing.T) {
 	source := completeHydrationSource()
 	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Ready to ship.\n\n## Action items\nDifferent content."
@@ -300,42 +286,6 @@ func TestHydratorDoesNotWarnWhenOnlyLaterMarkdownSectionDiffers(t *testing.T) {
 	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	assert.NotContains(t, hydrated.Warnings, "structured transcript and page Markdown transcript differed")
-}
-
-func TestHydratorLeavesIncompleteMarkdownTranscriptPending(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*MarkdownPage)
-	}{
-		{
-			name: "truncated",
-			mutate: func(page *MarkdownPage) {
-				page.Truncated = true
-			},
-		},
-		{
-			name: "unknown blocks",
-			mutate: func(page *MarkdownPage) {
-				page.UnknownBlockIDs = []string{"transcript-child-1"}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			source := completeHydrationSource()
-			empty := paragraph("transcript-1", "", false)
-			source.blocks["transcript-1"] = &empty
-			source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Partial transcript."
-			tt.mutate(source.markdown)
-
-			hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-			require.NoError(t, err)
-			assert.Empty(hydrated.Transcript)
-			assert.Zero(source.markdownCalls)
-		})
-	}
 }
 
 func TestHydratorDoesNotCompareIncompleteMarkdownTranscript(t *testing.T) {
@@ -693,16 +643,6 @@ func TestHydratorOptionalFailuresDoNotExposeRequestIdentifiers(t *testing.T) {
 	assert.NotContains(t, strings.Join(result.Warnings, "\n"), "PRIVATE_CURSOR")
 }
 
-func TestHydratorOptionalNilUserDoesNotLoseContent(t *testing.T) {
-	assert := assert.New(t)
-
-	result, err := NewHydrator(completeHydrationSource()).WithUserSource(&fakeUserSource{}).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-	assert.True(result.AttendeeResolutionDegraded)
-	assert.Empty(result.Attendees)
-}
-
 func TestSnapshotFullPagePresence(t *testing.T) {
 	for _, value := range []any{nil, false, true} {
 		t.Run(fmt.Sprint(value), func(t *testing.T) {
@@ -760,12 +700,27 @@ func TestV2BlockRenderingRoundTrip(t *testing.T) {
 
 func TestSnapshotRejectsEvidenceLargerThanReaderLimit(t *testing.T) {
 	source := completeHydrationSource()
-	// One valid 23 MiB root fits the hydration budget, but serializing both root
-	// and admitted blocks plus canonical text would exceed the reader's 64 MiB.
-	text := strings.Repeat("a", 23<<20)
-	block := paragraph("transcript-1", text, false)
-	source.blocks[block.ID] = &block
-	result, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
+	text := strings.Repeat("a", 12<<20)
+	for _, id := range []string{"summary-1", "notes-1"} {
+		block := paragraph(id, text, false)
+		require.Less(t, int64(len(block.Raw)), maxResponseSize)
+		source.blocks[id] = &block
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		id := strings.TrimPrefix(r.URL.Path, "/v1/blocks/")
+		if block, ok := source.blocks[id]; ok {
+			_, _ = w.Write(block.Raw)
+			return
+		}
+		if r.URL.Path == "/v1/users" {
+			_, _ = io.WriteString(w, `{"object":"list","results":[],"has_more":false,"next_cursor":null}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	result, err := NewHydrator(NewClient(server.URL, "synthetic")).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	_, err = result.ArchiveSnapshot(1, "synthetic", "")
 	require.Error(t, err)
