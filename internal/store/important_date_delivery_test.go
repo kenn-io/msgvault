@@ -137,3 +137,26 @@ func TestImportantDatePreflightFailureCanRetryWithoutBlockingFutureYears(t *test
 	must.NoError(err)
 	checks.True(claimed)
 }
+
+func TestImportantDateNotificationClaimRequiresOriginalDate(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	key := "person/example:birthday:2027"
+	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, key, "original-date")
+	must.NoError(err)
+	must.True(claimed)
+	changed, err := st.AdvanceImportantDateDeliveryContext(ctx, key, store.ImportantDateClaimed, store.ImportantDateIssueInFlight, "")
+	must.NoError(err)
+	must.True(changed)
+	changed, err = st.AdvanceImportantDateDeliveryContext(ctx, key, store.ImportantDateIssueInFlight, store.ImportantDateIssueCreated, "issue-example")
+	must.NoError(err)
+	must.True(changed)
+	claimed, err = st.ClaimImportantDateNotificationContext(ctx, key, "corrected-date", "issue-example")
+	must.NoError(err)
+	checks.False(claimed)
+	claimed, err = st.ClaimImportantDateNotificationContext(ctx, key, "original-date", "issue-example")
+	must.NoError(err)
+	checks.True(claimed)
+}

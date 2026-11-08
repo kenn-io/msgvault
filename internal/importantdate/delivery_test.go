@@ -27,6 +27,13 @@ func (f *deliveryStoreFake) ClaimImportantDateDeliveryContext(context.Context, s
 	f.state = store.ImportantDateClaimed
 	return true, nil
 }
+func (f *deliveryStoreFake) ClaimImportantDateNotificationContext(_ context.Context, _ string, _ string, issue string) (bool, error) {
+	if f.state != store.ImportantDateIssueCreated || f.issueUID != issue {
+		return false, nil
+	}
+	f.state = store.ImportantDateNotifyInFlight
+	return true, nil
+}
 func (f *deliveryStoreFake) AdvanceImportantDateDeliveryContext(_ context.Context, _ string, from, to store.ImportantDateDeliveryState, issue string) (bool, error) {
 	if f.state != from {
 		return false, nil
@@ -74,6 +81,9 @@ func (f *deliveryKataFake) FindActionTask(context.Context, string, string) (task
 func (f *deliveryKataFake) CreateTaskReused(_ context.Context, project, _ string, _ taskclient.KataCreate) (taskclient.KataTask, bool, error) {
 	f.creates++
 	return taskclient.KataTask{UID: "issue-example", Project: project, Status: "open"}, false, nil
+}
+func (f *deliveryKataFake) GetTask(_ context.Context, project, uid string) (taskclient.KataTask, error) {
+	return taskclient.KataTask{UID: uid, Project: project, Status: "open"}, nil
 }
 func (f *deliveryKataFake) NotifyIssue(context.Context, string, string, string, string) error {
 	f.notifications++
@@ -148,5 +158,32 @@ func TestDeliveryCancelsDefiniteLookupFailure(t *testing.T) {
 	err = service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
 	must.NoError(err)
 	checks.Equal(store.ImportantDateDelivered, st.state)
+	checks.Equal(1, kata.notifications)
+}
+
+func TestDeliveryRetriesNotificationPreflightWithoutRecreatingIssue(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := &deliveryStoreFake{consent: true}
+	kata := &deliveryKataFake{}
+	service := DeliveryService{Store: st, Kata: kata}
+	input := DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+	validations := 0
+	revalidate := func(context.Context) (bool, error) {
+		validations++
+		if validations == 2 {
+			return false, errors.New("preflight unavailable")
+		}
+		return true, nil
+	}
+	err := service.Deliver(t.Context(), input, revalidate)
+	must.Error(err)
+	checks.Equal(store.ImportantDateIssueCreated, st.state)
+	checks.Equal(1, kata.creates)
+	checks.Zero(kata.notifications)
+	err = service.Deliver(t.Context(), input, revalidate)
+	must.NoError(err)
+	checks.Equal(store.ImportantDateDelivered, st.state)
+	checks.Equal(1, kata.creates)
 	checks.Equal(1, kata.notifications)
 }

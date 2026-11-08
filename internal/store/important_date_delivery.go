@@ -68,7 +68,7 @@ func (s *Store) AdvanceImportantDateDeliveryContext(ctx context.Context, key str
 	valid := (from == ImportantDateClaimed && (to == ImportantDateIssueInFlight || to == ImportantDateCancelled)) ||
 		(from == ImportantDateIssueInFlight && (to == ImportantDateIssueCreated || to == ImportantDateUnknown || to == ImportantDateCancelled || to == ImportantDateRetryIssue)) ||
 		(from == ImportantDateIssueCreated && (to == ImportantDateNotifyInFlight || to == ImportantDateCancelled)) ||
-		(from == ImportantDateNotifyInFlight && (to == ImportantDateDelivered || to == ImportantDateUnknown || to == ImportantDateCancelled))
+		(from == ImportantDateNotifyInFlight && (to == ImportantDateDelivered || to == ImportantDateUnknown || to == ImportantDateCancelled || to == ImportantDateIssueCreated))
 	if !valid || strings.TrimSpace(key) == "" || ((to == ImportantDateIssueCreated || from == ImportantDateIssueCreated || from == ImportantDateNotifyInFlight) && strings.TrimSpace(issueUID) == "") {
 		return false, ErrImportantDateTransition
 	}
@@ -88,6 +88,29 @@ func (s *Store) AdvanceImportantDateDeliveryContext(ctx context.Context, key str
 		}
 		changed = count == 1
 		return nil
+	})
+	return changed, err
+}
+
+// ClaimImportantDateNotificationContext resumes only the same date that
+// created the retained issue. A correction requires operator reconciliation.
+func (s *Store) ClaimImportantDateNotificationContext(ctx context.Context, key, fingerprint, issueUID string) (bool, error) {
+	if key == "" || fingerprint == "" || issueUID == "" {
+		return false, ErrImportantDateTransition
+	}
+	var changed bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE important_date_deliveries SET state = 'notify_in_flight'
+			WHERE occurrence_key = ? AND fingerprint = ? AND issue_uid = ? AND state = 'issue_created'`, key, fingerprint, issueUID)
+		if err != nil {
+			return fmt.Errorf("claim important-date notification: %w", err)
+		}
+		count, err := result.RowsAffected()
+		changed = count == 1
+		return err
 	})
 	return changed, err
 }
@@ -119,11 +142,11 @@ func (s *Store) ImportantDateHasOtherPendingContext(ctx context.Context, prefix,
 	return pending, nil
 }
 
-// ImportantDateDeliveryExistsContext reports whether an occurrence has any
-// retained state, including dismissed, completed, or uncertain deliveries.
+// ImportantDateDeliveryExistsContext reports whether an occurrence is not
+// eligible for a safe issue or notification preflight retry.
 func (s *Store) ImportantDateDeliveryExistsContext(ctx context.Context, key string) (bool, error) {
 	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ? AND state <> 'retry_issue')`, key).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ? AND state NOT IN ('retry_issue', 'issue_created'))`, key).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check important-date delivery: %w", err)
 	}
 	return exists, nil
