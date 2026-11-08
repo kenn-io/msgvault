@@ -17,7 +17,7 @@ func init() {
 		defaultURL:  "https://github.com",
 		fixedURL:    true,
 		tokenEnv:    clirun.EnvGitHubToken,
-		tokenPrompt: "GitHub personal access token (classic, with the notifications scope):",
+		tokenPrompt: "GitHub personal access token (classic, with the notifications and public_repo scopes, or repo):",
 		addHelp: `Add a GitHub account as an archive source.
 
 Archives the issues, pull requests and discussions the account takes part in,
@@ -27,9 +27,9 @@ for threads that involve it, so threads it only commented on are archived too.
 
 Requires a classic personal access token: GitHub's notifications API doesn't
 accept fine-grained tokens. Create one at https://github.com/settings/tokens
-with the notifications scope; add repo to archive private repositories, and
-read:user to link GitHub accounts to the people in your archive by their
-public email.
+with the notifications and public_repo scopes, or repo to archive private
+repositories too; add read:user to link GitHub accounts to the people in your
+archive by their public email.
 
 Provide the token via --token-file, the MSGVAULT_GITHUB_TOKEN environment
 variable, or the interactive prompt. Choose whose repositories are archived

@@ -1962,10 +1962,10 @@ failure detail from the attachment row.
 ## add-github
 
 Register a [GitHub account](/docs/usage/forges/#github) as a `github` source.
-Requires a classic personal access token with the `notifications` scope, plus
-`repo` to archive private repositories and `read:user` to join accounts to
-people by their public email; GitHub's notifications API doesn't accept
-fine-grained tokens. The token is checked with `GET /user` and stored in the
+Requires a classic personal access token with the `notifications` and
+`public_repo` scopes, or `repo` to archive private repositories too, plus
+`read:user` to join accounts to people by their public email; GitHub's
+notifications API doesn't accept fine-grained tokens. The token is checked with `GET /user` and stored in the
 tokens directory. The source's identifier is `github.com:user:<account-id>`.
 
 ```bash

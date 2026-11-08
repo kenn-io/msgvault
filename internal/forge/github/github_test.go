@@ -420,8 +420,10 @@ func TestAccountRequiresAClassicTokenThatReadsNotifications(t *testing.T) {
 		emails   bool
 		wantErr  error
 	}{
-		{name: "notifications scope", scopes: "notifications"},
+		{name: "notifications and public_repo scopes", scopes: "notifications, public_repo"},
 		{name: "repo scope with read:user", scopes: "repo, read:user", emails: true},
+		{name: "notifications scope alone, which can't read discussions", scopes: "notifications", wantErr: ErrClassicTokenRequired},
+		{name: "public_repo scope alone, which can't read notifications", scopes: "public_repo", wantErr: ErrClassicTokenRequired},
 		{name: "other scopes only", scopes: "gist, read:org", wantErr: ErrClassicTokenRequired},
 		{name: "fine-grained token", noScopes: true, wantErr: ErrClassicTokenRequired},
 	} {

@@ -32,10 +32,11 @@ const (
 	secondaryPause = 2 * time.Minute
 )
 
-// ErrClassicTokenRequired means the token cannot read notifications: GitHub
-// serves them only to classic personal access tokens with the
-// notifications or repo scope.
-var ErrClassicTokenRequired = errors.New("GitHub notifications need a classic personal access token with the notifications or repo scope")
+// ErrClassicTokenRequired means the token can't read what a sync reads:
+// GitHub serves notifications only to classic personal access tokens with
+// the notifications or repo scope, and its GraphQL API reads discussions
+// only with public_repo or repo.
+var ErrClassicTokenRequired = errors.New("GitHub needs a classic personal access token with the notifications and public_repo scopes, or repo")
 
 // client calls GitHub's REST and GraphQL APIs with one token.
 type client struct {
@@ -263,8 +264,9 @@ func (c *client) graphQL(ctx context.Context, request graphQLRequest, out any) e
 }
 
 // account returns the token's account and checks that it reads
-// notifications. It reports whether the token may read users' public
-// emails, which links GitHub accounts to the people in the archive.
+// notifications and discussions. It reports whether the token may read
+// users' public emails, which links GitHub accounts to the people in the
+// archive.
 func (c *client) account(ctx context.Context) (forge.Account, bool, error) {
 	var user struct {
 		ID    int64  `json:"id"`
@@ -285,7 +287,7 @@ func (c *client) account(ctx context.Context) (forge.Account, bool, error) {
 			granted[strings.TrimSpace(scope)] = true
 		}
 	}
-	if !granted["notifications"] && !granted["repo"] {
+	if !granted["repo"] && (!granted["notifications"] || !granted["public_repo"]) {
 		return forge.Account{}, false, ErrClassicTokenRequired
 	}
 	if user.ID == 0 || user.Login == "" {

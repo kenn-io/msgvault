@@ -21,8 +21,8 @@ one at [github.com/settings/tokens](https://github.com/settings/tokens):
 
 | Scope | Gives msgvault |
 |---|---|
-| `notifications` | Your notifications: required |
-| `repo` | Private repositories' threads |
+| `notifications` and `public_repo` | Your notifications, and discussions in public repositories: required |
+| `repo` | Everything both give, and private repositories' threads |
 | `read:user` | Other accounts' public emails, which join a GitHub account to the same person in your mail |
 
 Then add the account:
