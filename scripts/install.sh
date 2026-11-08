@@ -37,20 +37,21 @@ detect_arch() {
 
 # Find install directory
 find_install_dir() {
+    local install_dir
     if [ -n "${MSGVAULT_INSTALL_DIR:-}" ]; then
-        mkdir -p "$MSGVAULT_INSTALL_DIR"
-        echo "$MSGVAULT_INSTALL_DIR"
+        install_dir="$MSGVAULT_INSTALL_DIR"
     elif [ -w "/usr/local/bin" ]; then
-        echo "/usr/local/bin"
+        install_dir="/usr/local/bin"
     else
-        mkdir -p "$HOME/.local/bin"
-        echo "$HOME/.local/bin"
+        install_dir="$HOME/.local/bin"
     fi
+    mkdir -p "$install_dir" || error "Could not create install directory: $install_dir"
+    cd "$install_dir" && pwd -P
 }
 
 # Save PATH for new terminals and show how to update the current shell.
 configure_path() {
-    local install_dir="$1" profile quoted command manual
+    local install_dir="$1" profile quoted command manual configured=true
     local profiles=()
     case ":$PATH:" in *:"$install_dir":*) return ;; esac
 
@@ -67,7 +68,7 @@ configure_path() {
             done
             profiles+=("$HOME/$profile")
             ;;
-        zsh) profiles=("${ZDOTDIR:-$HOME}/.zshrc") ;;
+        zsh) profiles=("${ZDOTDIR:-$HOME}/.zshrc" "${ZDOTDIR:-$HOME}/.zprofile") ;;
         fish)
             quoted="${install_dir//\\/\\\\}"
             quoted="'${quoted//\'/\\\'}'"
@@ -75,10 +76,18 @@ configure_path() {
             manual="$command"
             profiles=("${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish")
             ;;
-        sh|dash|ksh) profiles=("$HOME/.profile") ;;
+        *)
+            warn "Configure PATH manually for your shell. Installed executable:"
+            printf '  %s/msgvault\n\n' "$quoted"
+            return
+            ;;
     esac
     case "${MSGVAULT_NO_MODIFY_PATH:-}" in
-        1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]) profiles=() ;;
+        1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])
+            profiles=()
+            configured=false
+            warn "PATH changes disabled by MSGVAULT_NO_MODIFY_PATH."
+            ;;
     esac
     for profile in "${profiles[@]}"; do
         if grep -qxF -- "$command" "$profile" 2>/dev/null; then
@@ -87,10 +96,15 @@ configure_path() {
         if mkdir -p "$(dirname "$profile")" && printf '\n%s\n' "$command" >> "$profile"; then
             info "Added msgvault to PATH in $profile"
         else
+            configured=false
             warn "Could not update $profile"
         fi
     done
-    warn "Open a new terminal, or run:"
+    if "$configured"; then
+        warn "Open a new terminal, or run:"
+    else
+        warn "Run in your current shell:"
+    fi
     printf '  %s\n\n' "$manual"
 }
 
@@ -228,7 +242,8 @@ main() {
 
     local os=$(detect_os)
     local arch=$(detect_arch)
-    local install_dir=$(find_install_dir)
+    local install_dir
+    install_dir=$(find_install_dir) || exit 1
 
     info "Platform: ${os}/${arch}"
     info "Install directory: ${install_dir}"
