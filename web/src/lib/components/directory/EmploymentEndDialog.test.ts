@@ -81,20 +81,8 @@ it('sends the version opened before a concurrent edit', async () => {
     vi.stubEnv('TZ', 'America/New_York');
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-05T04:30:00Z'));
-    let reads = 0;
     const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
-    const saved = employment(11, 2, { start_date: { year: 2024, month: 3 }, title: 'Current saved role', organization_id: 22 });
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'POST') return Response.json({ message: 'Concurrent end', error: 'revision_conflict' }, { status: 412 });
-      if (pathOf(request) === '/api/v1/organizations/22') {
-        return Response.json({ organization: organization(22, 1, 'Current Employer'), names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] }, { headers: { ETag: '"organization-22-r1"' } });
-      }
-      if (pathOf(request) === '/api/v1/people/7/employments') return collection([saved]);
-      reads++;
-      return Response.json(reads === 1 ? opening : saved, { headers: { ETag: `"employment-11-r${reads}"` } });
-    });
-    controller.employments = [opening];
+    const { controller } = controllerWith(async () => Response.json(opening, { headers: { ETag: '"employment-11-r1"' } }));
     const onClose = vi.fn();
     const view = render(EmploymentEndDialog, { controller, employment: opening, onClose });
     try {

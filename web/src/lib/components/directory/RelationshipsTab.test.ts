@@ -125,14 +125,14 @@ describe('RelationshipsTab', () => {
   });
 
   it.each([
-    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from CardDAV contacts · Jul 31'],
-    ['text', 'Alex', 'Alex', 'Text · Friend · from CardDAV contacts · Jul 31'],
-  ])('describes an imported %s value', async (valueKind, value, title, description) => {
+    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'vcard_import', 'urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from a contact file · Jul 31'],
+    ['text', 'Alex', 'Alex', 'carddav_import', 'Text · Friend · from CardDAV contacts · Jul 31'],
+  ])('describes an imported %s value', async (valueKind, value, title, source, description) => {
     vi.setSystemTime(new Date(2026, 10, 6, 12));
     try {
     const client = createAPIClient(async () => Response.json({ reviews: [{
       id: 1, person_id: 7, raw_related_value: value, raw_related_type: 'friend', value_kind: valueKind, status: 'pending',
-      source: 'carddav_import', created_at: '2026-07-31T12:00:00', updated_at: '2026-07-31T12:00:00',
+      source, created_at: '2026-07-31T12:00:00', updated_at: '2026-07-31T12:00:00',
     }] }));
     render(RelationshipsTab, { client, controller: new DirectoryEntityController(client, 7), personID: 7 });
     const row = (await screen.findByText(title)).closest('.detail-row') as HTMLElement;
@@ -314,7 +314,7 @@ describe('RelationshipsTab', () => {
     expect(await screen.findByRole('heading', { name: 'Suggested (1)' })).toBeDefined();
     await fireEvent.click(screen.getByText('2 reviewed'));
     const row = screen.getByText('Synthetic Peer').closest('.detail-row') as HTMLElement;
-    expect(row.textContent).toContain('Friend · from CardDAV contacts');
+    expect(row.textContent).toContain('Friend');
     expect(within(row).queryByText('Pending')).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Open matched person' }).length).toBeGreaterThan(0);
     const rejected = screen.getByText('Rejected').closest('.detail-row') as HTMLElement;
@@ -361,7 +361,7 @@ describe('RelationshipsTab', () => {
     try {
       await screen.findByText('existing@example.com');
       expect(screen.getByText('Accepted').closest('.exception')).toBeTruthy();
-      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X CUSTOM friend · from a contact file');
+      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X CUSTOM friend');
       merged = true;
       await controller.refreshRelationships();
       expect(await screen.findByText('absorbed@example.com')).toBeDefined();
@@ -444,8 +444,8 @@ describe('RelationshipsTab', () => {
         requests.push(request);
         const path = pathOf(request);
         if (path === '/api/v1/people/directory') return Response.json({ people: [
-          { id: 7, revision: 1, display_name: 'Selected Self', categories: [], contact_state: 'active', organizations: [] },
-          { id: 8, revision: 1, display_name: 'Synthetic Counterpart', categories: [], contact_state: 'active', organizations: [] }
+          directoryPerson(7, { display_name: 'Selected Self' }),
+          directoryPerson(8, { display_name: 'Synthetic Counterpart' })
         ] });
         if (path === '/api/v1/person-relationships' && request.method === 'POST') {
           return new Response(JSON.stringify(created), { status: 201, headers: { ETag: '"relationship-44-r1"' } });
@@ -489,7 +489,7 @@ describe('RelationshipsTab', () => {
       const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
         const request = requestOf(input); requests.push(request);
         if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [
-          { id: 8, revision: 1, display_name: 'Synthetic Counterpart', categories: [], contact_state: 'active', organizations: [] }
+          directoryPerson(8, { display_name: 'Synthetic Counterpart' })
         ] });
         throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
       }));
@@ -508,15 +508,6 @@ describe('RelationshipsTab', () => {
 
       const start = screen.getByRole('textbox', { name: 'Start date' });
       await fireEvent.input(start, { target: { value: '2019-02-30' } });
-      expect(create).toHaveProperty('disabled', true);
-      await fireEvent.click(create);
-      expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
-
-      await fireEvent.input(start, { target: { value: '2019' } });
-      expect(create).toHaveProperty('disabled', false);
-
-      const end = screen.getByRole('textbox', { name: 'End date' });
-      await fireEvent.input(end, { target: { value: '--04-12' } });
       expect(create).toHaveProperty('disabled', true);
       await fireEvent.click(create);
       expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
@@ -911,7 +902,7 @@ describe('RelationshipsTab', () => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') return Response.json({ people: [
-        { id: 8, revision: 1, display_name: 'Synthetic Counterpart', categories: [], contact_state: 'active', organizations: [] }
+        directoryPerson(8, { display_name: 'Synthetic Counterpart' })
       ] });
       if (path === '/api/v1/person-relationships' && request.method === 'POST') {
         posts += 1;

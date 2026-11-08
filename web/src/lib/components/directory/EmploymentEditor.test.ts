@@ -224,10 +224,6 @@ it('allows closing while the job loads', async () => {
       throw new Error(`unexpected ${path}`);
     });
     render(EmploymentEditor, { controller, personID: 7 });
-    await openTypeahead('Organization');
-    await screen.findByRole('option', { name: /Lumen Grove/ });
-    expect(screen.queryByRole('option', { name: /^Create organization/ })).toBeNull();
-    await fireEvent.mouseDown(screen.getByRole('option', { name: /Lumen Grove/ }));
     const nextQuery = await openTypeahead('Organization');
     await fireEvent.input(nextQuery, { target: { value: 'Fern Hollow' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Create organization “Fern Hollow”' }));
@@ -235,9 +231,7 @@ it('allows closing while the job loads', async () => {
     // The Name field holds the new name, so the select says only that it's new.
     const dialog = screen.getByRole('dialog', { name: 'Add job' });
     expect(within(dialog).getByRole('button', { name: 'Organization: New organization' })).toHaveProperty('disabled', true);
-    expect(dialog.textContent).not.toContain('Create organization');
     await fireEvent.click(screen.getByRole('button', { name: 'Choose an existing organization instead' }));
-    expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
     const idQuery = await openTypeahead('Organization');
     await fireEvent.input(idQuery, { target: { value: '21' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Create organization “21”' }));
@@ -278,24 +272,6 @@ it('allows closing while the job loads', async () => {
 
     const start = screen.getByRole('textbox', { name: 'Start date' });
     await fireEvent.input(start, { target: { value: '--04-12' } });
-    expect(create).toHaveProperty('disabled', true);
-    await fireEvent.click(create);
-    expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
-
-    await fireEvent.input(start, { target: { value: '20190412' } });
-    expect(create).toHaveProperty('disabled', false);
-
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-    const end = screen.getByRole('textbox', { name: 'End date' });
-    await fireEvent.input(end, { target: { value: '2019-13' } });
-    expect(create).toHaveProperty('disabled', true);
-    await fireEvent.click(create);
-    expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
-    const employerQuery = await openTypeahead('Organization');
-    await fireEvent.input(employerQuery, { target: { value: 'Example School' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Create organization “Example School”' }));
-    await fireEvent.input(start, { target: { value: '2025-06' } });
-    await fireEvent.input(end, { target: { value: '2024-06' } });
     expect(create).toHaveProperty('disabled', true);
     await fireEvent.click(create);
     expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);

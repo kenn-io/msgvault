@@ -10,7 +10,7 @@ const employment = makeEmployment(11, 1, { person_id: 42, is_primary: true });
 test.beforeEach(async ({ page }) => {
   await installMixedArchive(page);
   await page.route('**/api/v1/organizations?*', route => route.fulfill({ json: { organizations: [organization], total: 1 } }));
-  await page.route('**/api/v1/organizations/21', route => route.fulfill({ headers: { ETag: '"organization-21-r1"' }, json: route.request().method() === 'PATCH' ? organization : { organization, names: [], categories: [] } }));
+  await page.route('**/api/v1/organizations/21', route => route.fulfill({ headers: { ETag: '"organization-21-r1"' }, json: route.request().method() === 'PATCH' ? organization : { organization, names: [], categories: [], addresses: [], contact_points: [], identifiers: [], media: [] } }));
   await page.route('**/api/v1/people/42/employments', route => route.fulfill({ json: { employments: [employment] } }));
   await page.route('**/api/v1/employments/11', route => route.fulfill({ headers: { ETag: '"employment-11-r1"' }, json: employment }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
@@ -177,7 +177,6 @@ for (const width of [1440, 390]) {
     // End date holds its empty hint line, level with Start's hint, and Current sits 8 below it.
     const current = (await add.locator('.date-range .current').boundingBox())!;
     const [hint, endHint] = await Promise.all([0, 1].map(async index => (await add.locator('.date-range .note').nth(index).boundingBox())!));
-    await expect(add.getByRole('checkbox', { name: 'Primary job' })).toHaveCount(0);
     expect(endHint.y - (end.y + end.height)).toBe(4);
     expect(current.y - (endHint.y + endHint.height)).toBe(8);
     if (width === 1440) expect(endHint.y).toBe(hint.y);

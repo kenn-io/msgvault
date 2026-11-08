@@ -11,13 +11,13 @@ describe('isCalendarDate', () => {
 describe('intervalDateError', () => {
   it.each(['', '  ', '2019', '2019-04', '2019-04-12', '20190412', '2024-02-29'])('accepts %j', (value) => {
     expect(intervalDateError(value)).toBeNull();
-    expect(intervalDateError('2024-02', '2024-03')).toBe('End date must be on or after start date.');
   });
-  it.each(['--04-12', '--04', '---12', 'spring 2019', '2019-13', '2019-02-30', '0000', '201904', '2019-4'])(
-    'rejects %j', (value) => {
-      expect(intervalDateError(value)).toBe(
-        'Use 2024, 2024-03, or 2024-03-15.');
-    });
+  it.each([
+    ...['--04-12', '--04', '---12', 'spring 2019', '2019-13', '2019-02-30', '0000', '201904', '2019-4'].map(value => [value, '', 'Use 2024, 2024-03, or 2024-03-15.']),
+    ['2024-02', '2024-03', 'End date must be on or after start date.'],
+  ])('rejects %j with start %j', (value, start, error) => {
+    expect(intervalDateError(value, start)).toBe(error);
+  });
 });
 
 describe('profileDateError', () => {
