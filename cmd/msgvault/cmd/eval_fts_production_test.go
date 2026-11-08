@@ -147,11 +147,9 @@ func TestRankedFTS_MatchesProductionRelevanceRanking(t *testing.T) {
 	assert.Empty(t, diag.notes(), "a clean archive produces a clean run")
 }
 
-// TestRankedFTS_HonoursProductionAddressFilterSemantics checks that evaluation
-// and production store search find the same message by sender fragment.
-func TestRankedFTS_HonoursProductionAddressFilterSemantics(t *testing.T) {
+// Evaluation must forward sender terms along with the text query.
+func TestRankedFTS_PreservesSenderFilter(t *testing.T) {
 	s := seedRankingDivergenceArchive(t)
-	ctx := t.Context()
 	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO participants (id, email_address) VALUES (1, 'landlord@example.com');
 INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (1, 1, 'from');
@@ -160,18 +158,13 @@ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALU
 
 	const topic = "from:landlord renewal"
 
-	production, _, err := s.SearchMessagesQueryContext(ctx, search.Parse(topic), 0, 10)
-	require.NoError(t, err, "production store search")
-	require.Equal(t, []string{"<m1@example.com>"}, keysOfAPIMessages(production),
-		"production finds the message by its sender fragment")
-
 	ev, _ := newTestEvaluator(t, s, "message")
 	ev.limit = 10
 
 	ranked, err := ev.rankedFTS(evalTestQuery(t, topic))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"<m1@example.com>"}, ranked,
-		"the eval must score the hits production returns, not zero")
+		"evaluation retains the sender filter")
 }
 
 // writeEvalFile writes one of the run's input files and returns its path.

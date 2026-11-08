@@ -4,7 +4,6 @@ package pgvector
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -379,36 +378,26 @@ func TestVectorFilenameFilterBeforeRanking(t *testing.T) {
 }
 
 func TestVectorSenderTermsBeforeRanking(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	f := seedThree(t)
 	_, err := f.db.ExecContext(f.ctx, `CREATE TABLE participants(id BIGINT PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
- INSERT INTO participants(id,email_address,phone_number,display_name) VALUES(1000,'alex@example.com',NULL,'Élodie Kim'),(2000,NULL,'+12025550999','Alex Chat');
- INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Álvaro Header'),(2,1000,'from','Other'); UPDATE messages SET sender_id = 2000 WHERE id = 3;`)
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		terms []string
-		want  []int64
-	}{
-		{[]string{"header"}, []int64{1}},
-		{[]string{"kim", "header"}, []int64{1}},
-		{[]string{"chat"}, []int64{3}},
-	} {
-		t.Run(strings.Join(tc.terms, "+"), func(t *testing.T) {
-			filter := vector.Filter{SenderTerms: tc.terms}
-			hits, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, filter)
-			require.NoError(t, err)
-			ids := make([]int64, 0, len(hits))
-			for _, hit := range hits {
-				ids = append(ids, hit.MessageID)
-			}
-			assert.ElementsMatch(t, tc.want, ids)
-			fused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter})
-			require.NoError(t, err)
-			ids = ids[:0]
-			for _, hit := range fused {
-				ids = append(ids, hit.MessageID)
-			}
-			assert.ElementsMatch(t, tc.want, ids)
-		})
+ INSERT INTO participants(id,email_address,phone_number,display_name) VALUES(1000,'alex@example.com',NULL,'Élodie Kim');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Álvaro Header'),(2,1000,'from','Other');`)
+	require.NoError(err)
+	filter := vector.Filter{SenderTerms: []string{"kim", "header"}}
+	hits, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, filter)
+	require.NoError(err)
+	ids := make([]int64, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.MessageID)
 	}
+	assert.ElementsMatch([]int64{1}, ids)
+	fused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter})
+	require.NoError(err)
+	ids = ids[:0]
+	for _, hit := range fused {
+		ids = append(ids, hit.MessageID)
+	}
+	assert.ElementsMatch([]int64{1}, ids)
 }

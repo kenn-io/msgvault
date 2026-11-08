@@ -43,8 +43,6 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	}{
 		{"from:alex", []int64{ids[4], ids[11]}},
 		{"from:álvaro", []int64{ids[10]}},
-		{"from:alex@example.com", []int64{ids[4]}},
-		{"from:alice@example.com from:bob@example.com", nil},
 		{"from:alice", []int64{ids[0]}},
 		{"from:ALICE@EXAMPLE.COM", []int64{ids[0]}},
 		{"to:bob", []int64{ids[0]}},

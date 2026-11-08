@@ -245,16 +245,20 @@ func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
-	response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": "from:alex"})
-	var ids []int64
-	for _, row := range response.Data {
-		ids = append(ids, row.ID)
+	for _, tool := range []struct {
+		name    string
+		handler toolHandler
+	}{
+		{ToolSearchMetadata, h.searchMetadata},
+		{ToolSearchMessages, h.searchMessages},
+	} {
+		t.Run(tool.name, func(t *testing.T) {
+			response := runTool[paginatedSearchMessages](t, tool.name, tool.handler, map[string]any{"query": "from:alex"})
+			var ids []int64
+			for _, row := range response.Data {
+				ids = append(ids, row.ID)
+			}
+			assert.Equal(t, []int64{1}, ids)
+		})
 	}
-	assert.Equal(t, []int64{1}, ids)
-	legacy := runTool[paginatedSearchMessages](t, ToolSearchMessages, h.searchMessages, map[string]any{"query": "from:alex"})
-	ids = ids[:0]
-	for _, row := range legacy.Data {
-		ids = append(ids, row.ID)
-	}
-	assert.Equal(t, []int64{1}, ids)
 }
