@@ -43,7 +43,7 @@ type forgeSource struct {
 	// config returns the forge's config block.
 	config func(*config.Config) config.ForgeConfig
 	// open returns the forge for a token on the instance at base.
-	open func(base *url.URL, token string) forge.Forge
+	open func(base *url.URL, token string) (forge.Forge, error)
 }
 
 func forgeUserAgent() string {
@@ -98,7 +98,10 @@ func (fs *forgeSource) addCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			adapter := fs.open(base, token)
+			adapter, err := fs.open(base, token)
+			if err != nil {
+				return err
+			}
 			account, err := adapter.Account(cmd.Context())
 			if err != nil {
 				return err
@@ -276,7 +279,11 @@ func (fs *forgeSource) sync(ctx context.Context, s *store.Store, cfg *config.Con
 		return forge.Summary{SourceID: source.ID}, fmt.Errorf("stored %s URL: %w", fs.label, err)
 	}
 	blocks := fs.config(cfg)
-	syncer := forge.NewSyncer(s, fs.open(base, token.AccessToken), loggerFromContext(ctx))
+	adapter, err := fs.open(base, token.AccessToken)
+	if err != nil {
+		return forge.Summary{SourceID: source.ID}, err
+	}
+	syncer := forge.NewSyncer(s, adapter, loggerFromContext(ctx))
 	return syncer.Sync(ctx, source.ID, forge.Options{
 		Owners: forge.NewOwnerFilter(blocks.IncludeOwners, blocks.ExcludeOwners),
 		Full:   full,

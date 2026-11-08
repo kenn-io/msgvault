@@ -39,12 +39,12 @@ Examples:
   msgvault add-github --token-file ~/github-token.txt
   MSGVAULT_GITHUB_TOKEN="ghp_..." msgvault add-github`,
 		config: func(c *config.Config) config.ForgeConfig { return c.GitHub },
-		open: func(_ *url.URL, token string) forge.Forge {
+		open: func(_ *url.URL, token string) (forge.Forge, error) {
 			api, err := url.Parse(github.APIURL)
 			if err != nil {
-				panic(err) // a constant URL always parses
+				return nil, err
 			}
-			return github.New(api, token, forgeUserAgent())
+			return github.New(api, token, forgeUserAgent()), nil
 		},
 	})
 }

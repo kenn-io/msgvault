@@ -62,8 +62,8 @@ func TestScheduledForgeSyncContinuesWithTheNextAccountAfterAPause(t *testing.T) 
 		name:   rotationForge,
 		label:  "Fake forge",
 		config: func(*config.Config) config.ForgeConfig { return config.ForgeConfig{} },
-		open: func(_ *url.URL, token string) forge.Forge {
-			return &rotationAccountForge{id: token, limited: limited[token], synced: &synced}
+		open: func(_ *url.URL, token string) (forge.Forge, error) {
+			return &rotationAccountForge{id: token, limited: limited[token], synced: &synced}, nil
 		},
 	}
 	for _, id := range []string{"1", "2"} {
