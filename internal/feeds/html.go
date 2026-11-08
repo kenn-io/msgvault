@@ -20,7 +20,11 @@ var urlAttributes = map[string]bool{
 // the feed meant once it no longer sits next to the feed. gofeed has already
 // applied any xml:base. Every byte outside a rewritten tag is kept as it was.
 // A fragment-only link (#notes) stays as it is.
-func absoluteURLs(source, base string) string {
+//
+// Each resolved URL is as long as base, so many short references against a
+// long base grow the HTML many times over. When the rewritten HTML would be
+// longer than maxBytes, the item keeps its HTML as published.
+func absoluteURLs(source, base string, maxBytes int) string {
 	baseURL, err := url.Parse(base)
 	if err != nil || !baseURL.IsAbs() {
 		return source
@@ -38,6 +42,7 @@ func absoluteURLs(source, base string) string {
 			continue
 		}
 		token := tokens.Token()
+		room := maxBytes - out.Len()
 		changed := false
 		for i, attr := range token.Attr {
 			var resolved string
@@ -45,9 +50,13 @@ func absoluteURLs(source, base string) string {
 			case urlAttributes[attr.Key]:
 				resolved = absoluteURL(baseURL, attr.Val)
 			case attr.Key == "srcset":
-				resolved = absoluteSrcset(baseURL, attr.Val)
+				resolved = absoluteSrcset(baseURL, attr.Val, room)
 			}
 			if resolved != "" && resolved != attr.Val {
+				// A tag's URL attributes each count against the room.
+				if room -= len(resolved); room < 0 {
+					return source
+				}
 				token.Attr[i].Val = resolved
 				changed = true
 			}
@@ -56,6 +65,9 @@ func absoluteURLs(source, base string) string {
 			out.WriteString(token.String())
 		} else {
 			out.WriteString(raw)
+		}
+		if out.Len() > maxBytes {
+			return source
 		}
 	}
 	return out.String()
@@ -77,13 +89,16 @@ func absoluteURL(base *url.URL, value string) string {
 }
 
 // absoluteSrcset resolves each candidate URL in a srcset list. A list with a
-// data: URL is left alone, since its commas can't be told from the list's.
-func absoluteSrcset(base *url.URL, value string) string {
+// data: URL is left alone, since its commas can't be told from the list's. It
+// stops once the list it builds is longer than room, and returns that longer
+// list, so the caller sees it doesn't fit.
+func absoluteSrcset(base *url.URL, value string, room int) string {
 	if strings.Contains(value, "data:") {
 		return ""
 	}
 	candidates := strings.Split(value, ",")
 	changed := false
+	size := 0
 	for i, candidate := range candidates {
 		fields := strings.Fields(candidate)
 		if len(fields) == 0 {
@@ -94,6 +109,9 @@ func absoluteSrcset(base *url.URL, value string) string {
 			changed = true
 		}
 		candidates[i] = strings.Join(fields, " ")
+		if size += len(candidates[i]) + len(", "); size > room {
+			return strings.Join(candidates[:i+1], ", ")
+		}
 	}
 	if !changed {
 		return ""

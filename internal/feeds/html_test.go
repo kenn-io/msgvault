@@ -1,6 +1,7 @@
 package feeds
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +26,26 @@ func TestAbsoluteURLs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, absoluteURLs(tc.in, base))
+			assert.Equal(t, tc.want, absoluteURLs(tc.in, base, maxItemHTMLBytes))
 		})
 	}
+}
+
+func TestAbsoluteURLsKeepsHTMLThatWouldOutgrowItsBound(t *testing.T) {
+	t.Parallel()
+	// A redirect can make the feed's address long, and every short relative
+	// reference then grows to its length.
+	base := "https://example.com/" + strings.Repeat("a", 4000) + "/feed.atom"
+	const maxBytes = 64 << 10
+	for _, tc := range []struct{ name, in string }{
+		{"many references", strings.Repeat(`<img src="x">`, 100)},
+		{"one srcset of many candidates", `<img srcset="` + strings.Repeat("x 1x,", 100) + `">`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.in, absoluteURLs(tc.in, base, maxBytes), "rewritten, it would pass %d bytes", maxBytes)
+		})
+	}
+	assert.Equal(t, `<img src="https://example.com/`+strings.Repeat("a", 4000)+`/x">`,
+		absoluteURLs(`<img src="x">`, base, maxBytes), "HTML that fits is still rewritten")
 }

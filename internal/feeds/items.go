@@ -16,6 +16,9 @@ const (
 	maxExternalIDChars = 256
 	maxTitleChars      = 4096
 	maxSenderNameChars = 256
+	// maxItemHTMLBytes bounds an item's HTML once its URLs are absolute: no
+	// larger than a whole message the import API accepts.
+	maxItemHTMLBytes = int(messageimport.MaxRequestBytes)
 	// feedPrefixChars of a feed URL's SHA-256 hex digest name the feed in its
 	// item keys.
 	feedPrefixChars = 16
@@ -77,7 +80,7 @@ func itemMessage(
 	if plain {
 		message.BodyText = body
 	} else {
-		message.BodyHTML = absoluteURLs(body, documentURL)
+		message.BodyHTML = absoluteURLs(body, documentURL, maxItemHTMLBytes)
 	}
 	return message
 }
