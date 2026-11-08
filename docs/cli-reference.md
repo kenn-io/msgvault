@@ -1917,7 +1917,7 @@ msgvault sync-feeds --full
 
 | Flag | Default | Description |
 |---|---|---|
-| `--full` | `false` | Download every feed again instead of sending the stored HTTP validators |
+| `--full` | `false` | Download every feed again, even when unchanged |
 
 Scheduled fetching is controlled by [`[feeds]`](configuration.md#feeds).
 

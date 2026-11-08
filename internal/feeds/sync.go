@@ -125,11 +125,11 @@ func (s *Syncer) Follow(ctx context.Context, urls []string) (Summary, error) {
 			}
 			fetched, err := s.fetcher.Fetch(ctx, feedURL, Validators{})
 			if err != nil {
-				run.summary.Feeds = append(run.summary.Feeds, FeedResult{URL: feedURL, Err: err})
+				run.report(ctx, FeedResult{URL: feedURL, Err: err})
 				continue
 			}
 			if _, _, err := registry.Add(ctx, feedURL, feedTitle(feedURL, fetched.Feed)); err != nil {
-				run.summary.Feeds = append(run.summary.Feeds, FeedResult{URL: feedURL, Err: err})
+				run.report(ctx, FeedResult{URL: feedURL, Err: err})
 				continue
 			}
 			run.feed(ctx, feedURL, "", &fetched, Validators{})
@@ -224,18 +224,7 @@ func (s *Syncer) run(ctx context.Context, registry *Registry, body func(context.
 // knownTitle names the feed in the result until a download names it again.
 func (r *syncRun) feed(ctx context.Context, feedURL, knownTitle string, fetched *Fetched, validators Validators) {
 	result := FeedResult{URL: feedURL, Title: knownTitle}
-	defer func() {
-		r.summary.Feeds = append(r.summary.Feeds, result)
-		if result.Err != nil && ctx.Err() == nil {
-			r.syncer.logger.WarnContext(ctx, "feed sync failed", "feed", feedURL, "error", result.Err)
-			// The run continues; a recording failure only loses this diagnostic.
-			_ = r.scoped.RecordSyncRunItemContext(ctx, store.SyncRunItem{
-				SyncRunID: r.syncID, SourceMessageID: "feed:" + feedURL, Phase: "fetch",
-				Status: store.SyncRunItemStatusError, ErrorKind: "feed_unavailable",
-				ErrorMessage: truncate(result.Err.Error(), maxStoredErrorChars),
-			})
-		}
-	}()
+	defer func() { r.report(ctx, result) }()
 
 	if fetched == nil {
 		got, err := r.syncer.fetcher.Fetch(ctx, feedURL, validators)
@@ -259,6 +248,24 @@ func (r *syncRun) feed(ctx context.Context, feedURL, knownTitle string, fetched 
 		return
 	}
 	result.Err = r.recordCheck(ctx, feedURL, result.Title, &fetched.Validators, nil)
+}
+
+// report adds a feed's result to the summary. A failed feed counts as an
+// error of the run, so the source shows the sync as failing, and is recorded
+// as a sync-run item with its error.
+func (r *syncRun) report(ctx context.Context, result FeedResult) {
+	r.summary.Feeds = append(r.summary.Feeds, result)
+	if result.Err == nil || ctx.Err() != nil {
+		return
+	}
+	r.checkpoint.ErrorsCount++
+	r.syncer.logger.WarnContext(ctx, "feed sync failed", "feed", result.URL, "error", result.Err)
+	// The run continues; a recording failure only loses this diagnostic.
+	_ = r.scoped.RecordSyncRunItemContext(ctx, store.SyncRunItem{
+		SyncRunID: r.syncID, SourceMessageID: "feed:" + result.URL, Phase: "fetch",
+		Status: store.SyncRunItemStatusError, ErrorKind: "feed_unavailable",
+		ErrorMessage: truncate(result.Err.Error(), maxStoredErrorChars),
+	})
 }
 
 // archive writes the feed's items that the archive does not hold yet.

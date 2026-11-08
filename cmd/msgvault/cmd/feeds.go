@@ -255,10 +255,9 @@ func newSyncFeedsCmd() *cobra.Command {
 		Use:   "sync-feeds [url]...",
 		Short: "Archive new items from followed feeds",
 		Long: `Fetch every followed feed, or the given ones, and archive each item the
-archive does not hold yet. Items are archived once, keyed by their GUID or ID.
-Unchanged feeds answer from their HTTP validators without being downloaded;
---full downloads every feed again. A feed that fails is reported and the
-others still sync.`,
+archive does not hold yet. Items are archived once. Unchanged feeds are not
+downloaded again; --full downloads every feed again. A feed that fails is
+reported and the others still sync.`,
 		Example: `  msgvault sync-feeds
   msgvault sync-feeds https://example.com/releases.atom`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -286,7 +285,7 @@ others still sync.`,
 			return errors.Join(recordSyncAttempt(ctx, feeds.SourceType, feeds.SourceIdentifier, err), feedFailures(summary), cacheErr)
 		},
 	}
-	cmd.Flags().Bool("full", false, "download every feed again, ignoring stored HTTP validators")
+	cmd.Flags().Bool("full", false, "download every feed again, even when unchanged")
 	return addManualSyncCacheFlags(cmd)
 }
 
@@ -320,8 +319,9 @@ func printFeedSummary(out io.Writer, summary feeds.Summary) {
 			_, _ = fmt.Fprintln(out)
 		}
 	}
+	// A total across feeds; a failure count comes with the command's error.
 	if len(summary.Feeds) > 1 {
-		_, _ = fmt.Fprintf(out, "%d feeds, %d new items, %d failed\n", len(summary.Feeds), summary.Added(), summary.Failed())
+		_, _ = fmt.Fprintf(out, "%d feeds, %d new items\n", len(summary.Feeds), summary.Added())
 	}
 }
 

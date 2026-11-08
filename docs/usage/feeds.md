@@ -36,11 +36,20 @@ schedule = "*/30 * * * *"
 Run `msgvault sync-feeds` to fetch them now. Once the schedule is set, the
 Sources page offers **Sync now** for the Feeds source.
 
-- Each fetch sends the validators from the last one, so an unchanged feed
-  answers without being downloaded again. `sync-feeds --full` downloads every
-  feed again.
+- An unchanged feed isn't downloaded again. `sync-feeds --full` downloads
+  every feed again.
 - A feed that fails is recorded on the sync run, and the other feeds still
   sync. `msgvault list-feeds` shows each feed's last check and its last error.
+
+## Feeds on your own network
+
+A feed whose URL names a private address or a local name, such as
+`http://192.168.1.20/feed.xml` or `http://nas.local/feed.xml`, is fetched from
+your network. A feed whose URL names a public host may only reach public
+addresses: a redirect, or a host name that resolves to a private, loopback or
+reserved address, fails the fetch, so a publisher can't send msgvault to your
+own machine or network. To follow an internal feed whose host name resolves to
+a private address, add it by that address.
 
 ## What gets archived
 
@@ -61,8 +70,9 @@ msgvault search "release notes" --message-type feed_item
 | Categories, enclosures, and image | The message's metadata |
 
 Each item is archived once, keyed by its RSS `guid`, Atom `id`, or JSON Feed
-`id`, else by its link. A later edit to an item does not change the archived
-copy.
+`id`, else by its link, within its feed: feeds promise unique IDs only within
+themselves, so an item that two feeds publish is archived in each. A later
+edit to an item does not change the archived copy.
 
 The sender follows the item's author. An author with a URL is that site's
 participant. An author with only a name is a participant of that feed alone,

@@ -142,7 +142,19 @@ type archivedItem struct {
 	Metadata    string
 }
 
+// archivedItems returns the archived feed items keyed by their ID within
+// their feed: the item key without its feed prefix.
 func archivedItems(t *testing.T, st *store.Store) map[string]archivedItem {
+	t.Helper()
+	items := map[string]archivedItem{}
+	for _, item := range archivedItemList(t, st) {
+		_, id, _ := strings.Cut(item.Key, ":")
+		items[id] = item
+	}
+	return items
+}
+
+func archivedItemList(t *testing.T, st *store.Store) []archivedItem {
 	t.Helper()
 	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT m.id, m.source_message_id, m.message_type, COALESCE(m.subject, ''), m.sent_at,
@@ -159,13 +171,13 @@ func archivedItems(t *testing.T, st *store.Store) map[string]archivedItem {
 	`), SourceType)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
-	items := map[string]archivedItem{}
+	var items []archivedItem
 	for rows.Next() {
 		var item archivedItem
 		require.NoError(t, rows.Scan(&item.ID, &item.Key, &item.MessageType, &item.Subject, &item.SentAt,
 			&item.Body, &item.BodyHTML, &item.Sender, &item.SenderType, &item.SenderValue,
 			&item.Feed, &item.FeedTitle, &item.Metadata))
-		items[item.Key] = item
+		items = append(items, item)
 	}
 	require.NoError(t, rows.Err())
 	return items
@@ -326,6 +338,9 @@ func TestFollowRejectsURLsThatAreNotFeeds(t *testing.T) {
 	assert.Contains(summary.Feeds[1].Err.Error(), "404")
 	require.NoError(summary.Feeds[2].Err)
 	assert.Equal(2, summary.Failed())
+	latest, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(int64(2), latest.ErrorsCount, "feeds that fail to follow are errors of the run")
 
 	list, err := NewRegistry(st).List(t.Context())
 	require.NoError(err)
@@ -347,13 +362,22 @@ func TestSyncRecordsAFailingFeedAndSyncsTheRest(t *testing.T) {
 	require.NoError(err)
 
 	server.set("/a.atom", "not xml at all")
+	server.set("/b.rss", strings.Replace(rssFeed, "<item>", `<item>
+      <title>Note after the failure</title>
+      <guid>note-3</guid>
+      <description>Archived although another feed failed.</description>
+    </item>
+    <item>`, 1))
 	summary, err := syncer.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err, "one broken feed does not fail the sync")
 	assert.Equal(1, summary.Failed())
+	assert.Equal(1, summary.Added(), "the feed after the failing one still syncs")
+	assert.Equal("Note after the failure", archivedItems(t, st)["note-3"].Subject)
 
 	latest, err := st.GetLatestSync(summary.SourceID)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusCompleted, latest.Status)
+	assert.Equal(int64(1), latest.ErrorsCount, "the failed feed is an error of the run")
 	failures, err := st.CountSyncRunItemsContext(t.Context(), latest.ID, store.SyncRunItemStatusError)
 	require.NoError(err)
 	assert.Equal(int64(1), failures)
@@ -367,6 +391,48 @@ func TestSyncRecordsAFailingFeedAndSyncsTheRest(t *testing.T) {
 	assert.Contains(byURL[server.url("/a.atom")].State.LastError, "not an RSS, Atom or JSON feed")
 	assert.NotEmpty(byURL[server.url("/a.atom")].State.ETag, "a failed fetch keeps the last good validators")
 	assert.Empty(byURL[server.url("/b.rss")].State.LastError)
+}
+
+func TestFeedsWithTheSameItemIDsKeepTheirOwnItems(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	server := newFeedServer(t, map[string]string{"/a.atom": atomFeed, "/b.atom": atomFeed})
+	summary, err := newTestSyncer(st, time.Now()).Follow(t.Context(), []string{server.url("/a.atom"), server.url("/b.atom")})
+	require.NoError(err)
+	assert.Equal(4, summary.Added(), "each feed archives its own copy of item IDs the other also uses")
+
+	perFeed := map[string]int{}
+	for _, item := range archivedItemList(t, st) {
+		perFeed[item.Feed]++
+	}
+	assert.Equal(map[string]int{server.url("/a.atom"): 2, server.url("/b.atom"): 2}, perFeed)
+}
+
+func TestFollowArchivesAFeedWhoseURLIsLongerThanAConversationID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	server := newFeedServer(t, map[string]string{"/releases.atom": atomFeed})
+	feedURL := server.url("/releases.atom?q=" + strings.Repeat("a", 300))
+	syncer := newTestSyncer(st, time.Now())
+	summary, err := syncer.Follow(t.Context(), []string{feedURL})
+	require.NoError(err)
+	require.NoError(summary.Feeds[0].Err)
+	assert.Equal(2, summary.Added())
+	for _, item := range archivedItemList(t, st) {
+		assert.Equal(conversationKey(feedURL), item.Feed)
+	}
+
+	list, err := NewRegistry(st).List(t.Context())
+	require.NoError(err)
+	require.Len(list, 1)
+	assert.Equal(feedURL, list[0].URL, "the feed keeps its full URL")
+	summary, err = syncer.Sync(t.Context(), SyncOptions{URLs: []string{feedURL}})
+	require.NoError(err)
+	assert.True(summary.Feeds[0].NotModified, "syncs find the feed by its full URL")
 }
 
 func TestRegistryRemovesAndResumesFeeds(t *testing.T) {

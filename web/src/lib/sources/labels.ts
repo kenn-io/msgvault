@@ -18,6 +18,21 @@ export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);
 }
 
+/**
+ * The parts that tell a source apart from its displayed name, in order: a
+ * part that repeats the name, or an earlier part, says nothing new.
+ */
+export function sourceDetails(name: string, ...parts: (string | undefined)[]): string[] {
+  const shown = [name.toLocaleLowerCase()];
+  const details: string[] = [];
+  for (const part of parts) {
+    if (!part || shown.includes(part.toLocaleLowerCase())) continue;
+    shown.push(part.toLocaleLowerCase());
+    details.push(part);
+  }
+  return details;
+}
+
 // API import sources receive data when a client posts it; they have nothing
 // to sync or schedule.
 const ON_DEMAND_SOURCE_TYPES: ReadonlySet<string> = new Set(['meeting_import', 'message_import']);

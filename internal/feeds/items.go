@@ -16,12 +16,17 @@ const (
 	maxExternalIDChars = 256
 	maxTitleChars      = 4096
 	maxSenderNameChars = 256
+	// feedPrefixChars of a feed URL's SHA-256 hex digest name the feed in its
+	// item keys.
+	feedPrefixChars = 16
 )
 
-// itemKey is an item's stable external ID: its GUID (RSS guid, Atom id or
-// JSON Feed id), else its link, else a hash of what it says. A key too long
+// itemKey is an item's stable external ID within the feed source: a prefix
+// naming its feed, then its GUID (RSS guid, Atom id or JSON Feed id), else
+// its link, else a hash of what it says. Feeds promise unique IDs only
+// within themselves, so two feeds' item "1" stay two items. A key too long
 // for the archive is hashed.
-func itemKey(item *gofeed.Item, link string) string {
+func itemKey(feedURL string, item *gofeed.Item, link string) string {
 	key := strings.TrimSpace(item.GUID)
 	if key == "" {
 		key = link
@@ -29,6 +34,7 @@ func itemKey(item *gofeed.Item, link string) string {
 	if key == "" {
 		key = "sha256:" + hashParts(item.Title, item.Published, item.Updated, item.Content, item.Description)
 	}
+	key = hashParts(feedURL)[:feedPrefixChars] + ":" + key
 	if utf8.RuneCountInString(key) > maxExternalIDChars {
 		key = "sha256:" + hashParts(key)
 	}
@@ -53,10 +59,10 @@ func itemMessage(feedURL string, feed *gofeed.Feed, item *gofeed.Item, firstSeen
 		body = strings.TrimSpace(item.Description)
 	}
 	message := messageimport.ImportedMessage{
-		ExternalID:  itemKey(item, link),
+		ExternalID:  itemKey(feedURL, item, link),
 		MessageType: MessageType,
 		Conversation: messageimport.MessageImportConversation{
-			ExternalID: feedURL,
+			ExternalID: conversationKey(feedURL),
 			Title:      truncate(feedTitle(feedURL, feed), maxTitleChars),
 		},
 		Sender:   itemSender(feedURL, feed, item, base),

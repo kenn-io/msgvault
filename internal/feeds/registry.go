@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/store"
@@ -53,6 +54,9 @@ func (f Feed) Followed() bool {
 // State is a feed's subscription record, stored under the "feed" key of
 // its conversation's metadata.
 type State struct {
+	// URL is the feed's address. The conversation's own ID is the URL too,
+	// unless the URL is too long for an ID; see conversationKey.
+	URL          string     `json:"url,omitempty"`
 	Title        string     `json:"title,omitempty"`
 	AddedAt      *time.Time `json:"added_at,omitempty"`
 	RemovedAt    *time.Time `json:"removed_at,omitempty"`
@@ -189,7 +193,11 @@ func (r *Registry) List(ctx context.Context) ([]Feed, error) {
 			return nil, fmt.Errorf("read feed %s: %w", id, err)
 		}
 		if ok {
-			feeds = append(feeds, Feed{URL: id, State: state})
+			feedURL := state.URL
+			if feedURL == "" {
+				feedURL = id
+			}
+			feeds = append(feeds, Feed{URL: feedURL, State: state})
 		}
 	}
 	return feeds, nil
@@ -206,7 +214,7 @@ func updateState(
 	ctx context.Context, st *store.Store, source *store.Source, feedURL, title string, change func(*State),
 ) (State, error) {
 	conversationID, err := st.EnsureConversationWithTypeContext(
-		ctx, source.ID, feedURL, messageimport.ConversationType, title)
+		ctx, source.ID, conversationKey(feedURL), messageimport.ConversationType, title)
 	if err != nil {
 		return State{}, fmt.Errorf("ensure feed conversation: %w", err)
 	}
@@ -227,6 +235,7 @@ func updateState(
 		}
 	}
 	change(&state)
+	state.URL = feedURL
 	encoded, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
 		return State{}, fmt.Errorf("encode feed state: %w", err)
@@ -240,6 +249,15 @@ func updateState(
 		return State{}, err
 	}
 	return state, nil
+}
+
+// conversationKey is a feed's conversation ID: its URL, or a hash of a URL
+// too long for an import's conversation ID.
+func conversationKey(feedURL string) string {
+	if utf8.RuneCountInString(feedURL) <= maxExternalIDChars {
+		return feedURL
+	}
+	return "sha256:" + hashParts(feedURL)
 }
 
 func decodeState(metadata sql.NullString) (State, bool, error) {

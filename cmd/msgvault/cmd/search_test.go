@@ -317,8 +317,9 @@ func TestSearchCmd_MessageTypeFlagAcceptsImportedTypes(t *testing.T) {
 		return root.Execute()
 	}
 
-	require.NoError(run("feed_item"), "an imported type should be forwarded")
-	assert.Equal("feed_item", gotType, "message_type query")
+	// A type no list in msgvault knows: imports choose their own.
+	require.NoError(run("bookmark"), "an imported type should be forwarded")
+	assert.Equal("bookmark", gotType, "message_type query")
 
 	gotType = ""
 	err := run("Feed-Item")

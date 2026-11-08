@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
+import { syncCommand, sourceDetails, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -62,4 +62,15 @@ it.each([
   ['msmail', 'sync_not_configured', null, 'msgvault sync --source-id 4'],
 ] as const)('offers a manual sync command for %s with reason %s and last successful sync %j', (source_type, sync_unavailable_reason, last_successful_sync, want) => {
   expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
+});
+
+it.each([
+  ['Feeds', ['Feeds', 'feeds'], []],
+  ['Work', ['Gmail', 'work@example.com'], ['Gmail', 'work@example.com']],
+  ['Work', ['Gmail', 'work'], ['Gmail']],
+  ['Releases', ['Message import', 'releases'], ['Message import']],
+  ['My feeds', ['Feeds', 'feeds'], ['Feeds']],
+  ['Inbox', ['', undefined], []]
+] as const)('shows what tells %s apart from %j', (name, parts, expected) => {
+  expect(sourceDetails(name, ...parts)).toEqual(expected);
 });
