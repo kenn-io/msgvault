@@ -33,9 +33,8 @@ type snapshotCache[T any] struct {
 	// version, or an older one, still serves as the stale fallback. Zero
 	// starts a fresh computation every time.
 	freshFor time.Duration
-	// serveStaleImmediately returns an available value at the caller's version
-	// while refreshing it, without spending the wait budget. Other versions
-	// wait without a stale fallback.
+	// serveStaleImmediately returns an available value while refreshing it,
+	// without spending the wait budget.
 	serveStaleImmediately bool
 
 	mu      sync.Mutex
@@ -104,14 +103,10 @@ func (c *snapshotCache[T]) getVersion(
 		flight = c.startLocked(reqCtx, lifetimeCtx, key, version, entry, compute)
 	}
 	hasPrevious, previous, previousAsOf := entry.has, entry.value, entry.asOf
-	servePrevious := c.serveStaleImmediately && entry.version == version
-	if c.serveStaleImmediately && entry.version != version {
-		hasPrevious = false
-	}
 	c.mu.Unlock()
 
 	var zero T
-	if hasPrevious && servePrevious {
+	if hasPrevious && c.serveStaleImmediately {
 		if err := reqCtx.Err(); err != nil {
 			return zero, time.Time{}, false, err
 		}

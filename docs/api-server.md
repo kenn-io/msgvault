@@ -1037,9 +1037,13 @@ Once an account-count snapshot exists, message counts reuse it immediately
 while a refresh runs, even after a long gap between listings. The response carries
 the actual previous counts, `"stale": true`, and the original `as_of`.
 It omits `counts_pending`. This also applies to fast archives after new mail arrives.
-Adding or removing a source waits for a new count snapshot, with the same
-pending-counts and timeout behavior as the first listing.
-Virtual-account catalogs retain their separate bounded wait.
+The CLI marks these counts with ` (snapshot)` in the messages column and adds
+`stale: true` and the original `as_of` to JSON rows. Pending counts still show `pending`.
+
+The pending-counts header also gives virtual-account discovery a zero wait
+budget: previous children can be returned with `virtual_accounts_unavailable: true`,
+or omitted before the first catalog completes. Strict callers retain the separate
+bounded catalog wait, including after expiry or identity changes.
 
 **Response (vector search disabled):**
 
