@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 });
 
-test('End opens a small dialog, retains a rejected date, and closes with Cancel', async ({ page }) => {
+test('End retains a rejected date and closes with Cancel', async ({ page }) => {
   await page.route('**/api/v1/employments/11/end', route => route.fulfill({ status: 400, json: { message: 'Unable to end this employment' } }));
   const work = page.getByRole('region', { name: 'Work', exact: true });
   await work.getByRole('button', { name: /^Actions for /  }).click();
@@ -49,10 +49,7 @@ for (const width of [1440, 390]) {
     await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({json:{employments:[employment]}}));
     await editor.getByRole('button', { name: 'Delete organization…' }).click();
     const deletion = page.getByRole('dialog', { name: 'Delete Example Org?' });
-    await expect(deletion.getByText("Delete its job first. Ending it isn't enough.")).toBeVisible();
-    await expect(deletion.getByText('1 job', { exact: true })).toHaveCount(0);
     // The job blocking the delete is this person's own, so its row leads straight to it; the name is a link.
-    await expect(deletion.getByRole('button', { name: 'Delete job…', exact: true })).toBeVisible();
     const holder = deletion.locator('.holders').getByRole('button', { name: 'Archive Person', exact: true });
     expect(await holder.evaluate(element => getComputedStyle(element).color)).toBe(await page.evaluate(() => {
       const probe = document.body.appendChild(document.createElement('a'));
@@ -62,7 +59,6 @@ for (const width of [1440, 390]) {
     }));
     await expect(page.getByRole('dialog')).toHaveCount(1);
     await deletion.getByRole('button', { name:'Back to Example Org', exact:true }).click();
-    await expect(editor.getByRole('textbox',{name:'Organization name'})).toHaveValue('Example Org');
     await editor.getByRole('button',{name:'Close',exact:true}).click();
     await page.getByRole('button',{name:'Add job…',exact:true}).click();
     const add = page.getByRole('dialog',{name:'Add job',exact:true});

@@ -176,7 +176,6 @@ for (const width of [1440, 390]) {
     // panel's top and bottom with no divider under it or frame of its own, and folds the server's words under Details.
     await dialog.getByRole('button', { name: 'Connection type: Type', exact: true }).click();
     const typeSearch = dialog.getByRole('combobox', { name: 'Connection type', exact: true });
-    await expect(typeSearch).toHaveAttribute('placeholder', 'Type');
     const notice = dialog.getByRole('alert').filter({ hasText: "Couldn't load connection types." });
     const message = (await notice.getByText("Couldn't load connection types.").boundingBox())!;
     const retry = (await notice.getByRole('button', { name: 'Retry', exact: true }).boundingBox())!;

@@ -71,7 +71,9 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await expect(chip).toHaveCount(0);
   await expect(panel.getByLabel('Last contacted after', { exact: true })).toHaveValue('');
   await expect.poll(() => afterBoundaries.at(-1)).toBeNull();
-  expect(JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').directoryLastContactAfter).toBeUndefined();
+  const explore = new URL(page.url()).searchParams.get('explore');
+  expect(explore).not.toBeNull();
+  expect(JSON.parse(explore!).directoryLastContactAfter).toBeUndefined();
 });
 
 test('Person tabs stay on one line at phone width', async ({ page }) => {

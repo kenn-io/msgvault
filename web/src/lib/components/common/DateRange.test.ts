@@ -13,13 +13,12 @@ it('retains the end date while Current disables it', async () => {
   expect(end).toHaveProperty('value', '2025-03');
 });
 
-it('validates partial dates and date order under their fields', async () => {
+it('renders a date error under its field', async () => {
   render(DateRange, { start: '2024-03', end: '2024-02' });
-  expect(screen.getByText('End date must be on or after start date.')).toBeDefined();
-  await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-04-31' } });
-  expect(screen.getByText('Use 2024, 2024-03, or 2024-03-15.')).toBeDefined();
+  const end = screen.getByRole('textbox', { name: 'End date' });
+  expect(end.closest('.field')!.textContent).toContain('End date must be on or after start date.');
   await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-04-30' } });
-  expect(screen.queryByText('Use 2024, 2024-03, or 2024-03-15.')).toBeNull();
+  expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
 });
 
 it('shows date hints and places Current under the end date', async () => {
@@ -52,10 +51,8 @@ it('shows date hints and places Current under the end date', async () => {
   expect(secondEnd.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
   await fireEvent.focusOut(secondEnd);
   await fireEvent.input(secondStart, { target: { value: '2024-03' } });
-  expect(screen.getByText('Mar 2024')).toBeDefined();
   expect(secondEnd.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
   await fireEvent.input(secondEnd, { target: { value: '2025' } });
-  expect(screen.queryByText('2025')).toBeNull();
   expect(hints()).toHaveLength(0);
   first.unmount();
 

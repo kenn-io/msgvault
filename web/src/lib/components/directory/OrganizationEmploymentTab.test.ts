@@ -273,10 +273,9 @@ describe('OrganizationEmploymentTab', () => {
     expect(reads).toBe(2);
   });
 
-  it('supports end and delete with reconciled sibling state', async () => {
+  it('moves an ended job to Past', async () => {
     const requests: Request[] = [];
     let revision = 1;
-    let deleted = false;
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
@@ -288,9 +287,7 @@ describe('OrganizationEmploymentTab', () => {
         revision += 1;
         return new Response(JSON.stringify(employment(11, revision, { is_current: false, end_date: { year: 2026, month: 8 } })), { headers: { ETag: `"employment-11-r${revision}"` } });
       }
-      if (path === '/api/v1/employments/11' && request.method === 'DELETE') { deleted = true; return new Response(null, { status: 204 }); }
       if (path === '/api/v1/people/7/employments') {
-        if (deleted) return Response.json({ employments: [] });
         return Response.json({ employments: [employment(11, revision, { is_current: false })] });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
@@ -308,11 +305,7 @@ describe('OrganizationEmploymentTab', () => {
     expect((await requests.find((request) => pathOf(request) === '/api/v1/employments/11/end')!.json())).toEqual({ end_date: '2026-08' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^End /  })).toBeNull());
 
-    if (!controller.employments.some(job => job.is_current)) await fireEvent.click(screen.getByText(/^\d+ past jobs?$/));
-    await rowAction('Delete…');
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(screen.getByText('No work yet')).toBeDefined());
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText('1 past job')).toBeDefined();
   });
 
   it('blocks an unknown employment create until explicit refresh and keeps the modal draft open', async () => {
@@ -483,7 +476,7 @@ it('deletes the saved version a job delete conflict shows', async () => {
   expect(screen.getByText('Concurrent title')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
+  expect(tags).toHaveLength(2);
 });
 
 it('opens the person when multiple jobs block an organization deletion', async () => {

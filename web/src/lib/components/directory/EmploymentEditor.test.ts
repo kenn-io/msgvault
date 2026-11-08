@@ -168,7 +168,7 @@ it('checks Keep yours against the start date it keeps from the saved version', a
   expect(bodies[1]).toMatchObject({ start_date: '2020', end_date: '2021', is_current: false });
 });
 
-it('describes a job moved to an unloaded person without showing their ID', async () => {
+it('describes a job moved to an unloaded person', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);

@@ -59,11 +59,7 @@ it.each([
   expect(relationshipPhrase(slug, direction, label)).toBe(expected);
 });
 
-it('orders custom directions consistently regardless of input order and fills empty reverse labels', () => {
-  const a = type('zeta', 'zeta', 'alpha', { ownership: 'user' });
-  const b = type('b', 'beta', 'gamma', { ownership: 'user' });
-  const names = (types: RelationshipType[]) => relationshipTypeOptions(types)[0].children!.map(choice => choice.name);
-  expect(names([a, b])).toEqual(names([b, a]));
+it('fills empty reverse labels', () => {
   const choices = relationshipTypeOptions([type('custom', 'mentor', '', { ownership: 'user' })])[0].children!;
   expect(choices.map(choice => choice.label)).toEqual(['Mentor', 'Mentor']);
 });

@@ -667,7 +667,8 @@ it.each(['failure', 'conflict'])('keeps the concurrent domain after a partial sa
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
   await fireEvent.click(await screen.findByRole('button', { name: outcome === 'failure' ? 'Retry' : 'Keep yours' }));
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-  expect(patches.every((body, index) => index === 0 || body.primary_domain === 'concurrent.example')).toBe(true);
+  expect(patches).toHaveLength(2);
+  expect(patches.at(-1)).toMatchObject({ primary_domain: 'concurrent.example' });
 });
 
 it('shows the retirement date in a conflict', async () => {
