@@ -53,6 +53,8 @@ import type {
   CardDAVGoogleAuthorizeRequest,
   CardDAVGoogleAuthorizeResponse,
   CardDAVGoogleCallbackRequest,
+  CardDAVParticipantBindingOptions,
+  CardDAVParticipantBindingResult,
   CardDAVPublicationApprovalRequest,
   CardDAVPublicationPreviewResponse,
   CardDAVPublicationResponse,
@@ -919,6 +921,23 @@ export const completeGoogleCardDAVAuthorization = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: cardDAVGoogleCallbackRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview, reconcile, or undo automatic CardDAV participant memberships
+ */
+export const reconcileCardDAVParticipantBindings = (
+  cardDAVParticipantBindingOptions: CardDAVParticipantBindingOptions,
+  options?: SecondParameter<typeof orvalFetch<CardDAVParticipantBindingResult>>,
+) => {
+  return orvalFetch<CardDAVParticipantBindingResult>(
+    {
+      url: `/api/v1/carddav/participant-bindings`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: cardDAVParticipantBindingOptions,
     },
     options,
   );

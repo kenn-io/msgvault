@@ -167,6 +167,10 @@ func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, p
 			}
 			return fmt.Errorf("lock CardDAV publication book: %w", err)
 		}
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+
 		if s.cardDAVReviewPersonLockHook != nil {
 			s.cardDAVReviewPersonLockHook()
 		}
@@ -662,7 +666,10 @@ func (s *Store) CommitCardDAVPublicationContext(
 			if _, err = tx.ExecContext(ctx, `DELETE FROM carddav_publications WHERE person_id = ?`, current.PersonID); err != nil {
 				return err
 			}
-			return s.resolvePublicationConflictAuditTx(ctx, tx, pending)
+			if err := s.resolvePublicationConflictAuditTx(ctx, tx, pending); err != nil {
+				return err
+			}
+			return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
 		}
 		if input.Tombstone || input.Remote.Href != current.Href || input.Remote.SemanticHash != current.OutgoingSemanticHash ||
 			len(input.Remote.RemoteBody) == 0 || input.Remote.RemoteETag == "" {
@@ -762,7 +769,10 @@ func (s *Store) CommitCardDAVPublicationContext(
 		if affected, _ := result.RowsAffected(); affected != 1 {
 			return ErrCardDAVStalePlan
 		}
-		return s.resolvePublicationConflictAuditTx(ctx, tx, pending)
+		if err := s.resolvePublicationConflictAuditTx(ctx, tx, pending); err != nil {
+			return err
+		}
+		return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
 	})
 }
 
@@ -784,7 +794,7 @@ func (s *Store) resolvePublicationConflictAuditTx(
 			return err
 		}
 	}
-	_, err := resolveCardDAVConflictAuditTx(ctx, tx, s.dialect,
+	_, err := s.resolveCardDAVConflictAuditTx(ctx, tx, s.dialect,
 		pending.ResolutionConflictID, CardDAVResolutionKeepLocal)
 	return err
 }
@@ -820,6 +830,16 @@ func (s *Store) rollbackCardDAVPublicationContext(
 		if current.MutationRevision != pending.MutationRevision || current.PendingOperation != pending.PendingOperation {
 			return ErrCardDAVStalePlan
 		}
+		if current.PendingOperation == CardDAVMutationCreate && current.PreviousMappingRevision > 0 {
+			resource, err := s.findCardDAVResourceTx(ctx, tx, current.AddressBookID, current.Href)
+			if err != nil {
+				return err
+			}
+			if err := s.rollbackCardDAVCreateFenceTx(ctx, tx, current, resource, pending.ResolutionConflictID); err != nil {
+				return err
+			}
+		}
+
 		if current.PendingOperation != CardDAVMutationCreate {
 			result, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET
 				mapping_revision = ?, updated_at = `+s.dialect.Now()+`

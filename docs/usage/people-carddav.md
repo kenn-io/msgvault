@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-11-04"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -239,6 +239,63 @@ msgvault carddav books set-role 4 --lookup-source
 false. Only one book across all connections can be the write target. Msgvault
 rejects incompatible role changes when publications, pending writes, or conflicts still depend on
 the book; resolve those dependencies first.
+
+## Connect cards to archived identities
+
+After upgrading to a version with participant binding, the next CardDAV sync
+binds subscribed contacts to matching archived participants. Email matches ignore
+case. Phone matches use the archive's phone normalization. Names never establish
+a match. Phone extensions and service-scoped handles are excluded.
+
+Each match includes that participant's existing identity links. A saved person
+can cover several identity clusters; CardDAV does not create new links between
+them. Unchanged cards are checked on each sync, so participants arriving later
+are picked up too. Lookup-only books do not create bindings.
+
+Preview or apply the same reconciliation using the retained cards, without
+contacting the CardDAV server:
+
+```bash
+msgvault carddav bind-participants --dry-run
+msgvault carddav bind-participants
+msgvault carddav bind-participants --dry-run --json
+msgvault person identities 7
+```
+
+The report gives `cards_scanned`, `participants_bound`, `participants_unbound`,
+and `conflicts`. Counts in a dry run describe its read snapshot; an apply
+recomputes them. Conflict details contain participant and person IDs, without
+addresses. A shared address claimed by different saved people, or a participant
+already bound to another person, is reported without moving it or merging
+profiles. Correct the cards or inspect the people and explicitly merge them
+with [person merge](people.md#merge-duplicate-profiles-and-reverse-a-merge). People with active merge
+lineage receive no new automatic bindings until that lineage is resolved.
+An unresolved CardDAV edit conflict also suspends that card's automatic claims
+until you resolve it. Other subscribed cards can still support the same person.
+
+Removing an address or deleting its card releases memberships created by this
+feature. Role changes, discovery removal, conflict capture and publication
+completion also release unsupported automatic memberships in their transaction.
+New bindings after those operations appear on the next sync or explicit
+reconciliation. A stale automatic owner is released before another person can
+acquire the component on a later pass.
+
+Existing memberships stay manual on upgrade. Promoting an already bound
+participant or explicitly linking its identities confirms those memberships as
+manual. User-approved identity matches and person merges/splits do the same.
+Manual memberships survive card edits and automatic cleanup. System identity
+matches and importer deduplication preserve automatic ownership.
+
+To remove only the automatic memberships:
+
+```bash
+msgvault carddav bind-participants --undo --dry-run
+msgvault carddav bind-participants --undo
+```
+
+Undo does not change cards or manual memberships. The next sync can recreate
+supported automatic bindings. To keep a binding removed, correct the address in
+the source card or remove that card from the subscribed book.
 
 ## Sync and publish selected people
 

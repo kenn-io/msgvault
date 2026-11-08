@@ -198,7 +198,7 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 		var refreshed *IdentityMatchCandidate
 		revision, linked, err = s.linkParticipantsContextGuardedOwned(
 			ctx, current.LeftID, current.RightID,
-			current.ID,
+			current.ID, decidedBy != string(AttributeOwnershipSystem),
 			func(ctx context.Context, tx *loggedTx) error {
 				loaded, loadErr := getIdentityMatchCandidateWithoutEvidenceTx(ctx, tx, current.ID)
 				if errors.Is(loadErr, ErrIdentityMatchNotFound) {

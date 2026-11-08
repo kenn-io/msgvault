@@ -291,6 +291,16 @@ type CompleteGoogleCardDAVAuthorizationErrorResponseJSON = ErrorResponse
 
 type CompleteGoogleCardDAVAuthorizationErrorResponseJSONDefault = ErrorResponse
 
+type ReconcileCardDAVParticipantBindingsResponse = CardDAVParticipantBindingResult
+
+type ReconcileCardDAVParticipantBindingsErrorResponse = ErrorResponse
+
+type ReconcileCardDAVParticipantBindingsErrorResponseJSON = ErrorResponse
+
+type ReconcileCardDAVParticipantBindingsErrorResponseJSON503 = ErrorResponse
+
+type ReconcileCardDAVParticipantBindingsErrorResponseJSONDefault = ErrorResponse
+
 type UnpublishCardDAVPersonResponse = CardDAVPublicationResponse
 
 type UnpublishCardDAVPersonErrorResponse = ErrorResponse
@@ -4557,6 +4567,22 @@ type CompleteGoogleCardDAVAuthorizationResp struct {
 	JSON503      *CompleteGoogleCardDAVAuthorizationErrorResponseJSON
 	Headers503   *CompleteGoogleCardDAVAuthorizationResp503Headers
 	JSONDefault  *CompleteGoogleCardDAVAuthorizationErrorResponseJSONDefault
+}
+
+type ReconcileCardDAVParticipantBindingsResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ReconcileCardDAVParticipantBindingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ReconcileCardDAVParticipantBindingsResponse
+	JSON400      *ReconcileCardDAVParticipantBindingsErrorResponse
+	JSON500      *ReconcileCardDAVParticipantBindingsErrorResponseJSON
+	JSON503      *ReconcileCardDAVParticipantBindingsErrorResponseJSON503
+	Headers503   *ReconcileCardDAVParticipantBindingsResp503Headers
+	JSONDefault  *ReconcileCardDAVParticipantBindingsErrorResponseJSONDefault
 }
 
 type UnpublishCardDAVPersonResp503Headers struct {
