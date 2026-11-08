@@ -26,7 +26,7 @@ func TestImportantDateDeliveryClaimAndUnknown(t *testing.T) {
 	changed, err = st.AdvanceImportantDateDeliveryContext(ctx, "synthetic:occurrence:2027", store.ImportantDateIssueInFlight, store.ImportantDateIssueCreated, "issue-example")
 	must.NoError(err)
 	checks.True(changed)
-	changed, err = st.AdvanceImportantDateDeliveryContext(ctx, "synthetic:occurrence:2027", store.ImportantDateIssueCreated, store.ImportantDateNotifyInFlight, "issue-example")
+	changed, err = st.ClaimImportantDateNotificationContext(ctx, "synthetic:occurrence:2027", "fingerprint-example", "issue-example")
 	must.NoError(err)
 	checks.True(changed)
 	changed, err = st.AdvanceImportantDateDeliveryContext(ctx, "synthetic:occurrence:2027", store.ImportantDateNotifyInFlight, store.ImportantDateUnknown, "issue-example")
@@ -71,7 +71,13 @@ func TestImportantDatePendingAcrossYears(t *testing.T) {
 		if transition[1] == store.ImportantDateIssueInFlight {
 			issue = ""
 		}
-		changed, err := st.AdvanceImportantDateDeliveryContext(ctx, prefix+"2027", transition[0], transition[1], issue)
+		var changed bool
+		var err error
+		if transition[0] == store.ImportantDateIssueCreated {
+			changed, err = st.ClaimImportantDateNotificationContext(ctx, prefix+"2027", "fingerprint-example", issue)
+		} else {
+			changed, err = st.AdvanceImportantDateDeliveryContext(ctx, prefix+"2027", transition[0], transition[1], issue)
+		}
 		must.NoError(err)
 		must.True(changed)
 	}

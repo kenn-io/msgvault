@@ -67,7 +67,7 @@ func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fing
 func (s *Store) AdvanceImportantDateDeliveryContext(ctx context.Context, key string, from, to ImportantDateDeliveryState, issueUID string) (bool, error) {
 	valid := (from == ImportantDateClaimed && (to == ImportantDateIssueInFlight || to == ImportantDateCancelled)) ||
 		(from == ImportantDateIssueInFlight && (to == ImportantDateIssueCreated || to == ImportantDateUnknown || to == ImportantDateCancelled || to == ImportantDateRetryIssue)) ||
-		(from == ImportantDateIssueCreated && (to == ImportantDateNotifyInFlight || to == ImportantDateCancelled)) ||
+		(from == ImportantDateIssueCreated && to == ImportantDateCancelled) ||
 		(from == ImportantDateNotifyInFlight && (to == ImportantDateDelivered || to == ImportantDateUnknown || to == ImportantDateCancelled || to == ImportantDateIssueCreated))
 	if !valid || strings.TrimSpace(key) == "" || ((to == ImportantDateIssueCreated || from == ImportantDateIssueCreated || from == ImportantDateNotifyInFlight) && strings.TrimSpace(issueUID) == "") {
 		return false, ErrImportantDateTransition
