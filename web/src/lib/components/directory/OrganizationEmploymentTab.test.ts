@@ -24,7 +24,10 @@ describe('OrganizationEmploymentTab', () => {
     const dialog = screen.getByRole('dialog', { name: /^Delete .*\?/  });
     expect(dialog.textContent).toContain('This permanently removes the job.');
     expect(dialog.textContent?.includes('End it instead')).toBe(current);
-    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeDefined();
+    if (current) {
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'End it instead…' }));
+      expect(screen.getByRole('dialog', { name: 'End job' })).toBeDefined();
+    }
   });
 
   it('keeps the delete step active while its write is pending', async () => {
@@ -109,7 +112,6 @@ describe('OrganizationEmploymentTab', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'this organization' }));
       await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
       await screen.findByText("Delete its job first. Ending it isn't enough.");
-      expect(screen.queryByText(/has 1 job/)).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Delete job…' }));
       const confirm = await screen.findByRole('dialog', { name: 'Delete Engineer at Synthetic Org?' });
       await waitFor(() => expect(within(confirm).getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));

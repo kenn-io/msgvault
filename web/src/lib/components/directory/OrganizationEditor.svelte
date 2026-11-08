@@ -92,7 +92,7 @@
     if (saveDisabled || submitting) return;
     // The notice and Retry follow the latest save.
     profileAttempt.reset();
-    let saved: { entity: Organization; etag?: string } | undefined;
+    let saved: { entity?: Organization; etag?: string } | undefined;
     const ok = await attempt.run(async current => {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       const result = initialOrganization
@@ -103,7 +103,7 @@
     });
     if (!ok) return;
     if (!currentProfile || !listsUnsaved) { onDone(saved?.entity); return; }
-    keepOpen({ ...currentProfile, organization: saved!.entity }, saved!.etag);
+    keepOpen({ ...currentProfile, organization: saved!.entity! }, saved!.etag);
   }
 
   async function saveProfile(): Promise<void> {

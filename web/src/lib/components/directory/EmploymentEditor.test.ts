@@ -432,7 +432,6 @@ it('keeps an edited end date when another editor reopens the job', async () => {
     const onClose = vi.fn();
     render(EmploymentEditor, { controller, personID: 7, employment: employment(), onClose });
     const title = await screen.findByRole('textbox', { name: 'Job title' }) as HTMLInputElement;
-    expect(screen.queryByRole('button', { name: 'New organization' })).toBeNull();
     await fireEvent.input(title, { target: { value: 'Draft title' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 

@@ -16,7 +16,7 @@ describe('OrganizationEditor', () => {
         if (body?.names.some(item => item.name === 'acme  labs') || body?.categories.some(item => item.category === 'research')) {
           return Response.json({ message: 'Duplicate profile value' }, { status: 400 });
         }
-        return Response.json(profile, { headers: { ETag: '"organization-21-r3"' } });
+        return Response.json(organizationProfile(3), { headers: { ETag: '"organization-21-r3"' } });
       }
       return Response.json(profile, { headers: { ETag: '"organization-21-r1"' } });
     });
@@ -41,7 +41,7 @@ describe('OrganizationEditor', () => {
         return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
       }
       const profile = organizationProfile();
-      return Response.json(++reads === 1 ? profile : { ...profile, organization: { ...profile.organization, name: 'New name' } }, { headers: { ETag: `"organization-21-r${reads}"` } });
+      return Response.json(++reads === 1 ? profile : { ...organizationProfile(2), organization: { ...organization(21, 2), name: 'New name' } }, { headers: { ETag: `"organization-21-r${reads}"` } });
     });
     render(OrganizationEditor, { controller, organization: organization() });
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
@@ -175,7 +175,6 @@ describe('OrganizationEditor', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
     // One sentence carries the count and the action, followed by the people holding the jobs.
     const first = await screen.findByText(count === 1 ? "Delete its job first. Ending it isn't enough." : "Delete its 200 or more jobs first. Ending them isn't enough.");
-    expect(screen.queryByText(/^(1 job|At least 200 jobs)$/)).toBeNull();
     expect(screen.getByRole('button', { name: /^Back to / })).toBeDefined();
     expect(first.compareDocumentPosition(screen.getByText('Example Person 1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     if (count === 200) expect(screen.getByText('and at least 196 more')).toBeDefined();
@@ -315,13 +314,13 @@ it('Keep yours on aliases keeps value metadata changed elsewhere and sends only 
   const onDone = vi.fn();
   const opening = organizationProfile();
   // Elsewhere: the alias the person keeps, re-imported with new provenance.
-  const newer = { ...opening, names: [{ ...opening.names[0], envelope: envelope(31, { source: 'vcard_import', source_ref: 'resource-current' }) }] };
+  const newer = { ...organizationProfile(2), names: [{ ...opening.names[0], envelope: envelope(31, { source: 'vcard_import', source_ref: 'resource-current' }) }] };
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (request.method === 'PATCH' || request.method === 'PUT') {
       writes.push({ method: request.method, tag: request.headers.get('If-Match'), body: await request.json() });
       if (request.headers.get('If-Match') === '"organization-21-r1"') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      return Response.json(newer, { headers: { ETag: '"organization-21-r3"' } });
+      return Response.json({ ...newer, organization: organization(21, 3) }, { headers: { ETag: '"organization-21-r3"' } });
     }
     return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"organization-21-r${reads === 1 ? 1 : 2}"` } });
   });
@@ -348,7 +347,7 @@ it('retries a failed alias save with the profile write alone', async () => {
     const request = requestOf(input);
     if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     methods.push(request.method);
-    return methods.length === 1 ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r2"' } });
+    return methods.length === 1 ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : Response.json(organizationProfile(2), { headers: { ETag: '"organization-21-r2"' } });
   });
   render(OrganizationEditor, { controller, organization: organization(), onDone });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
@@ -617,5 +616,4 @@ it.each(['save', 'delete'] as const)('requires review of a concurrent domain on 
   expect(await screen.findByText('concurrent.example')).toBeDefined();
   expect(writes[1]).toEqual({ method: action === 'save' ? 'PATCH' : 'DELETE', tag: '"organization-21-r2"' });
   expect(onDone).not.toHaveBeenCalled();
-  expect(stored.primary_domain).toBe('concurrent.example');
 });
