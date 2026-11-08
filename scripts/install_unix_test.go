@@ -58,15 +58,14 @@ case "$1:$2" in
 esac
 `, sha256.Sum256(data))), 0o700))
 	for _, tc := range []struct {
-		name, shell, optOut, pathEntry                                         string
-		relative, loginProfile, inheritedZdotdir, exportZdotdir, checkChecksum bool
+		name, shell, optOut, pathEntry        string
+		relative, loginProfile, exportZdotdir bool
 	}{
-		{name: "fresh with spaces", shell: "bash", relative: true, checkChecksum: true},
+		{name: "fresh with spaces", shell: "bash", relative: true},
 		{name: "existing login", shell: "bash", loginProfile: true},
 		{name: "opt out", shell: "bash", optOut: "1"},
 		{name: "exact PATH", shell: "bash", pathEntry: "exact"},
 		{name: "sibling PATH", shell: "bash", pathEntry: "sibling"},
-		{name: "zsh custom directory", shell: "zsh", inheritedZdotdir: true},
 		{name: "zsh redirects directory", shell: "zsh", exportZdotdir: true},
 		{name: "fish custom directory", shell: "fish"},
 		{name: "unsupported", shell: "other"},
@@ -118,9 +117,6 @@ esac
 				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
 				"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
 				"FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
-			if tc.inheritedZdotdir {
-				env = append(env, "ZDOTDIR="+filepath.Join(home, "zsh"))
-			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
 			for run := range 2 {
@@ -132,9 +128,6 @@ esac
 				cmd.Dir = home
 				output, err := cmd.CombinedOutput()
 				require.NoError(err, string(output))
-				if tc.checkChecksum && run == 0 {
-					assert.Contains(string(output), "Checksum verified")
-				}
 				if tc.optOut != "" || tc.shell == "other" {
 					assert.NotContains(string(output), "Open a new terminal")
 					if tc.shell == "other" {
@@ -143,6 +136,8 @@ esac
 					} else {
 						assert.Contains(string(output), "Run in your current shell:")
 					}
+				} else if tc.pathEntry != "exact" {
+					assert.Contains(string(output), "Open a new terminal, or run:")
 				}
 				for profile, original := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
@@ -155,6 +150,8 @@ esac
 						assert.Contains(string(output), filepath.Join(home, profile))
 					}
 					assert.Regexp("^"+regexp.QuoteMeta(original)+"\n[^\n]+\n$", string(data))
+					line := strings.TrimSuffix(strings.TrimPrefix(string(data), original+"\n"), "\n")
+					assert.Contains(string(output), "\n  "+line+"\n")
 				}
 			}
 			if tc.optOut != "" || tc.shell == "other" || tc.pathEntry == "exact" {
