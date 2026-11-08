@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
@@ -151,5 +152,28 @@ func TestListAccountsStaleCountAge(t *testing.T) {
 		require.Len(freshRows, 1)
 		assert.NotContains(freshRows[0], "stale")
 		assert.NotContains(freshRows[0], "as_of")
+
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/v1/health":
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion})
+			case "/api/v1/cli/accounts":
+				_, _ = w.Write([]byte(`{"stale":true,"as_of":"2000-01-01T00:02:00Z","accounts":[{"id":7,"email":"clock@example.test","type":"gmail","message_count":5}]}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		server.Start()
+		remoteCtx := configureRemoteDaemonForTest(t, server.URL)
+		savedJSON, savedSchemaCheck := listAccountsJSON, remoteAPISchemaCheckEnabled
+		listAccountsJSON, remoteAPISchemaCheckEnabled = false, true
+		defer func() { listAccountsJSON, remoteAPISchemaCheckEnabled = savedJSON, savedSchemaCheck }()
+		command := &cobra.Command{Use: "list-accounts", RunE: listAccountsCmd.RunE}
+		done = captureStdout(t)
+		err := command.ExecuteContext(remoteCtx)
+		remoteOutput := done()
+		require.NoError(err)
+		assert.Contains(remoteOutput, "5 (counted now)", "a remote clock ahead of the CLI cannot count messages in the future")
 	})
 }

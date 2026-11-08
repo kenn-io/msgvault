@@ -119,7 +119,7 @@ func formatMessagesCell(s accountStats) string {
 		count = fmt.Sprintf("%s (+%s deleted from source)", count, formatCount(s.SourceDeletedCount))
 	}
 	if s.Stale && s.AsOf != nil {
-		count += " (counted " + humanize.Time(*s.AsOf) + ")"
+		count += " (counted " + humanize.Time(time.Now().Add(-max(time.Since(*s.AsOf), 0))) + ")"
 	}
 	return count
 }
