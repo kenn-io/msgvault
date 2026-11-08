@@ -240,7 +240,7 @@ for selection limits, source coverage, unknown duration, and action filters.
 
 ## Cache states
 
-The web tables share one analytical cache across message types. In auto mode, Messages serves live archive rows during a full rebuild, with a notice naming operations that still need the cache. If no usable cache is produced, those rows stay available with recovery steps. Other cache-dependent views show the cache state and recovery steps. A live pagination cursor expires when the archive changes or the replacement cache publishes; reload the view to continue. Setting `analytics.auto_build_cache = false` skips automatic startup rebuilds and their live Messages path. Run `msgvault build-cache` for an explicit rebuild, or leave `analytics.auto_build_cache =
+The web tables share one analytical cache across message types. In auto mode, Messages serves live archive rows during a full rebuild, with a notice naming operations that still need the cache. If no usable cache is produced, those rows stay available with recovery steps. Other cache-dependent views show the cache state and recovery steps. A live pagination cursor expires when the archive changes or the replacement cache publishes; reload the view to continue. Setting `analytics.auto_build_cache = false` skips automatic startup rebuilds and their live Messages path. Run `msgvault build-cache --full-rebuild` to rebuild explicitly, then restart a daemon that was already running. Leave `analytics.auto_build_cache =
 true` for daemon startup to build a stale cache. With `analytics.engine =
 "duckdb"`, startup fails if no usable cache can be produced.
 
