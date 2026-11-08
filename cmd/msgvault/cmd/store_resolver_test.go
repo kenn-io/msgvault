@@ -1249,6 +1249,7 @@ func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
 		{"never keeps release", "v0.23.0-45-gabc", "v0.23.0", false, false, true},
 		{"disabled auto-start keeps release", "v0.23.0-45-gabc", "v0.23.0", true, false, true},
 		{"release keeps newer release", "v0.23.0", "v0.24.0", false, false, false},
+		{"release keeps source daemon", "v0.23.0", "v0.23.0-45-gabc", false, false, false},
 		{"equal source versions", "v0.23.0-45-gabc", "v0.23.0-45-gabc", false, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

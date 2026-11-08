@@ -640,8 +640,7 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 	if rt.Record.Version == currentVersion {
 		return false
 	}
-	if update.IsDevBuildVersion(currentVersion) || update.IsDevBuildVersion(rt.Record.Version) ||
-		strings.HasSuffix(currentVersion, "-dirty") || strings.HasSuffix(rt.Record.Version, "-dirty") {
+	if update.IsDevBuildVersion(currentVersion) || strings.HasSuffix(currentVersion, "-dirty") {
 		return true
 	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
