@@ -445,12 +445,40 @@ it('shows the retirement date in a conflict', async () => {
   expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
 });
 
+it('preserves a concurrent contact after a core conflict and alias save', async () => {
+  const onDone = vi.fn();
+  let revision = 1;
+  const contacts = richOrganizationProfile().contact_points;
+  let savedContacts: string[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const tag = `"organization-21-r${revision}"`;
+    if (request.method === 'GET') return Response.json({ ...organizationProfile(revision), contact_points: revision > 1 ? contacts : [] }, { headers: { ETag: tag } });
+    if (request.headers.get('If-Match') !== tag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    const body = await request.json();
+    revision++;
+    if (request.method === 'PATCH') return Response.json({ ...organization(21, revision), ...body }, { headers: { ETag: `"organization-21-r${revision}"` } });
+    savedContacts = body.contact_points.map((item: { original_value: string }) => item.original_value);
+    return Response.json({ ...organizationProfile(revision), ...body }, { headers: { ETag: `"organization-21-r${revision}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, New alias' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
+  revision++;
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(savedContacts).toEqual(['concurrent@example.test']);
+});
+
 it('keeps the dialog open while the other section still has unsaved edits', async () => {
   const writes: { method: string; tag: string | null; body: { primary_domain?: string; name?: string; names?: { name: string }[] } }[] = [];
   const onDone = vi.fn();
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
-    if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    if (request.method === 'GET') return Response.json(organizationProfile(writes.length + 1), { headers: { ETag: `"organization-21-r${writes.length + 1}"` } });
     const body = await request.json();
     writes.push({ method: request.method, tag: request.headers.get('If-Match'), body });
     const tag = `"organization-21-r${writes.length + 1}"`;

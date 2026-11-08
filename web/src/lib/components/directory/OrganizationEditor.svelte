@@ -91,18 +91,17 @@
     // The notice and Retry follow the latest save.
     profileAttempt.reset();
     let saved: Organization | undefined;
-    let etag: string | undefined;
     const ok = await attempt.run(async current => {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       const result = initialOrganization
         ? await controller.updateOrganization(initialOrganization.id, body, current ?? opened)
         : await controller.createOrganization(body);
-      if (result.ok) { saved = result.entity; etag = result.etag; }
+      if (result.ok) saved = result.entity;
       return result;
     });
     if (!ok) return;
     if (!currentProfile || !listsUnsaved) { onDone(saved); return; }
-    keepOpen({ ...currentProfile, organization: saved! }, etag);
+    keepOpen({ ...currentProfile, organization: saved! }, undefined);
   }
 
   async function saveProfile(): Promise<void> {
@@ -128,8 +127,7 @@
     keepOpen(saved!, etag);
   }
 
-  // Each save writes its own section. While the other section still holds edits the dialog stays open on them, and
-  // their save sends the version this one returned.
+  // Only a complete profile may be paired with its returned version.
   function keepOpen(profile: OrganizationProfile, etag: string | undefined): void {
     currentProfile = profile;
     opened = etag ? { data: profile, etag } : undefined;
