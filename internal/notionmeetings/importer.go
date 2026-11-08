@@ -212,15 +212,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	// Rotate legacy overflow into bounded active slots after retaining deadlines.
 	state.schedulePendingBacklog(started, limits.Pending)
+	lastValidCursor, err := state.marshal()
+	if err != nil {
+		return sum, err
+	}
 	syncID, err := imp.store.StartSyncContext(ctx, source.ID, SourceType)
 	if err != nil {
 		return sum, err
 	}
 	scoped := imp.store.ScopedToSync(source.ID, syncID)
-	lastValidCursor, err := state.marshal()
-	if err != nil {
-		return sum, err
-	}
 	checkpoint := func() (*store.Checkpoint, error) {
 		cursor, err := state.marshal()
 		if err != nil {

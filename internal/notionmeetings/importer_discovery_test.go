@@ -560,6 +560,26 @@ func TestSaturatedDeferredQueueRetainsFailedAdmission(t *testing.T) {
 	assert.Len(saved.Deferred, imp.limits.Scopes)
 }
 
+func TestOversizedPromotedBacklogDoesNotAcquireSyncLock(t *testing.T) {
+	require := require.New(t)
+	st, _, imp := broadFixture(t)
+	state := newSyncState()
+	now := imp.now()
+	state.PendingBacklog = []pendingTranscript{{BlockID: strings.Repeat("x", 2<<20), NextAttemptAt: now.Format(time.RFC3339), RetryUntil: now.Add(time.Hour).Format(time.RFC3339)}}
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat"})
+	require.ErrorContains(err, "saved sync progress is too large")
+	run, err = st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+}
+
 func TestSaturatedFailingRetriesPermitFreshQuery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
