@@ -178,16 +178,19 @@ A folder filter limits which remote IMAP folders msgvault scans during that
 run. It does not delete messages from the server or remove messages already in
 the local archive.
 
-An email can appear in more than one IMAP folder. During a filtered scan,
-msgvault keeps the stable identity and folder labels learned by earlier,
-broader scans while adding information from the selected folders. A later sync
-with no folder filters scans the complete account again. Filtered scans preserve
-existing archive membership and leave messages' source-deleted status unchanged.
-Saved exclusions pause deletion tracking even in the folders still being scanned,
-and pause folder cursor advancement. Expunged messages keep their prior deletion
-markers. Messages previously marked present remain ineligible for `gc` until
-you remove the exclusions and a complete sync resumes tracking. Changed mailboxes
-can be listed again on later runs while exclusions remain active.
+An email can appear in more than one IMAP folder. By default, a filtered scan
+keeps the stable identity and folder labels learned by earlier, broader scans
+while adding information from selected folders. It preserves saved membership,
+source-deletion markers and folder cursors. Saved exclusions therefore pause
+deletion tracking even in folders still being scanned. Messages previously
+marked present remain ineligible for `gc` until a complete sync resumes tracking
+or you opt in below.
+
+To track deletions in scanned folders, saved exclusions must skip only the
+account's Trash or Junk mailboxes, and no `folders` allow list can be set. Other
+exclusions or an allow list keep the default behavior. See
+[`imap_reconcile_filtered_deletions`](../configuration.md#sync) for
+setup, membership rules, and the effects on `gc`.
 
 Folder filtering works the same whether the CLI uses a local daemon or a
 configured remote msgvault server.

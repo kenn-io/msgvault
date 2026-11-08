@@ -2629,3 +2629,27 @@ func TestLoadApplePhonePrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadIMAPReconcileFilteredDeletions(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	const account = "imaps://user@example.com@imap.example.com:993"
+	const content = `[sync]
+imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
+`
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte(content), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	assert.True(cfg.Sync.IMAPReconcileFilteredDeletions[account])
+}
+
+func TestSyncConfigValidateRejectsBlankIMAPAccount(t *testing.T) {
+	for _, key := range []string{"", " \t "} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q/%t", key, enabled), func(t *testing.T) {
+				cfg := SyncConfig{IMAPReconcileFilteredDeletions: map[string]bool{key: enabled}}
+				require.ErrorContains(t, cfg.Validate(), "sync.imap_reconcile_filtered_deletions contains a blank account key")
+			})
+		}
+	}
+}
