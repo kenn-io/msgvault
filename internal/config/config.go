@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/importantdate"
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -716,6 +717,7 @@ type DeletionConfig struct {
 // PeopleConfig keeps the existing archive sweep and external enrichment as
 // sibling, independently disabled subsystems.
 type PeopleConfig struct {
+	ImportantDates  importantdate.Config    `toml:"important_dates"`
 	Sweep           peoplesweep.Config      `toml:"sweep"`
 	Enrichment      personenrichment.Config `toml:"enrichment"`
 	IdentityScoring personmatch.Config      `toml:"identity_scoring"`
@@ -998,6 +1000,7 @@ func NewDefaultConfig() *Config {
 	cfg.Integrations.Tasks.ApplyDefaults()
 	cfg.Integrations.Kata.ApplyDefaults()
 	cfg.Activity.ApplyDefaults()
+	cfg.People.ImportantDates.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
@@ -1159,6 +1162,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.People.IdentityScoring.BatchSize == 0 {
 		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
+	cfg.People.ImportantDates.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
 		if len(key) > 0 && key[0] == "chatwoot" {
@@ -1303,6 +1307,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.deferDaemonError(cfg.Integrations.Docbank.validate())
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
+		return nil, err
+	}
+	cfg.People.ImportantDates.ApplyDefaults()
+	if err := cfg.People.ImportantDates.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.People.Sweep.Validate(); err != nil {
