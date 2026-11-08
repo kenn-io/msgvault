@@ -29,16 +29,36 @@ func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fing
 	if strings.TrimSpace(key) == "" || len(key) > 512 || strings.TrimSpace(fingerprint) == "" || len(fingerprint) > 128 {
 		return false, ErrImportantDateTransition
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO important_date_deliveries (occurrence_key, fingerprint, state, issue_uid)
-		VALUES (?, ?, 'claimed', '') ON CONFLICT (occurrence_key) DO NOTHING`, key, fingerprint)
-	if err != nil {
-		return false, fmt.Errorf("claim important-date delivery: %w", err)
+	separator := strings.LastIndexByte(key, ':')
+	if separator < 1 || separator == len(key)-1 {
+		return false, ErrImportantDateTransition
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("count important-date claims: %w", err)
-	}
-	return count == 1, nil
+	var claimed bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		fenced := withWritableSnapshot(ctx, s.db.DB, tx)
+		pending, err := s.ImportantDateHasOtherPendingContext(fenced, key[:separator+1], key, fingerprint)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return nil
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO important_date_deliveries (occurrence_key, fingerprint, state, issue_uid)
+			VALUES (?, ?, 'claimed', '') ON CONFLICT (occurrence_key) DO NOTHING`, key, fingerprint)
+		if err != nil {
+			return fmt.Errorf("claim important-date delivery: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count important-date claims: %w", err)
+		}
+		claimed = count == 1
+		return nil
+	})
+	return claimed, err
 }
 
 // AdvanceImportantDateDeliveryContext applies a compare-and-set transition.
