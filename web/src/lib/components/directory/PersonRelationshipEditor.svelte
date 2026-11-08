@@ -77,7 +77,6 @@
   let endDateError = $state<string | null>(null);
   let notes = $state(initialView?.relationship.notes ?? '');
   const attempt = new WriteAttempt<Prepared<PersonRelationship>>();
-  const submittedFields = new Set<string>();
   const loading = $derived(!!initialView && !opened && !attempt.details);
   let committed = $state(false);
   let uncertainCreate = $state<CreatePersonRelationshipRequest>();
@@ -171,12 +170,6 @@
     )
       return;
     const patch = initialRelationship ? patchBody() : undefined;
-    // Keep yours after a conflict that already holds these values is Use saved.
-    if (patch && Object.keys(patch).length === 0) {
-      if (attempt.conflict) requestClose();
-      return;
-    }
-    if (patch) Object.keys(patch).forEach(key => submittedFields.add(key));
     const create = initialRelationship ? undefined : createBody(counterpartID!);
     const ok = await attempt.run(current => initialRelationship
       ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
@@ -200,19 +193,11 @@
       ...(notes.trim() ? { notes: notes.trim() } : {}),
     };
   }
+  // The form as shown; an emptied End date isn't sent, since a connection reopens only as a new one.
   function patchBody(): PatchPersonRelationshipRequest {
-    const body: PatchPersonRelationshipRequest = {};
-    const nextEndDate = endDate.trim();
-    const openingEndDate = partialDate(initialRelationship?.end_date);
-    const nextNotes = notes.trim();
-    const openingNotes = initialRelationship?.notes?.trim() ?? '';
-    const saved = attempt.conflict?.data ?? attempt.prepared?.data ?? initialRelationship;
-    const savedEndDate = partialDate(saved?.end_date);
-    const savedNotes = saved?.notes?.trim() ?? '';
-    if (nextEndDate && (nextEndDate !== openingEndDate || submittedFields.has('end_date')) && nextEndDate !== savedEndDate) body.end_date = nextEndDate;
-    if ((nextNotes !== openingNotes || submittedFields.has('notes')) && nextNotes !== savedNotes) body.notes = nextNotes || null;
-    return body;
+    return { ...(endDate.trim() ? { end_date: endDate.trim() } : {}), notes: notes.trim() || null };
   }
+  const edited = $derived(!!initialRelationship && ((!!endDate.trim() && endDate.trim() !== partialDate(initialRelationship.end_date)) || notes.trim() !== (initialRelationship.notes?.trim() ?? '')));
   async function refreshAfterUncertainOutcome(): Promise<void> {
     await controller.refreshRelationships();
     if (!controller.createBlocked.relationships && !controller.errors.relationships) {
@@ -226,16 +211,11 @@
   }
   function recoveredCreateMatches(view: PersonRelationshipView, draft: CreatePersonRelationshipRequest): boolean {
     const saved = view.relationship;
-    const selectedType = controller.relationshipTypes.find(type => type.slug === draft.relationship_type_slug);
+    const typeSlug = draft.relationship_type_slug;
     let sourceID = draft.source_person_id;
     let targetID = draft.target_person_id;
-    let typeSlug = draft.relationship_type_slug;
-    if (selectedType && !selectedType.is_canonical && selectedType.inverse_type_id !== undefined) {
-      [sourceID, targetID] = [targetID, sourceID];
-      typeSlug = controller.relationshipTypes.find(type => type.id === selectedType.inverse_type_id)?.slug ?? typeSlug;
-    }
-    const canonicalType = controller.relationshipTypes.find(type => type.slug === typeSlug);
-    if (canonicalType?.is_symmetric && sourceID > targetID) [sourceID, targetID] = [targetID, sourceID];
+    // The picker offers canonical types only; the store orders a symmetric pair's people.
+    if (controller.relationshipTypes.find(type => type.slug === typeSlug)?.is_symmetric && sourceID > targetID) [sourceID, targetID] = [targetID, sourceID];
     const canonicalDate = (value: string | undefined) => {
       const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(value?.trim() ?? '');
       return compact ? `${compact[1]}-${compact[2]}-${compact[3]}` : value?.trim() ?? '';
@@ -258,7 +238,7 @@
 <Dialog title={initialRelationship ? 'Edit connection' : 'Add connection'} onclose={requestClose}
   primaryLabel={attempt.conflict ? 'Keep yours' : initialRelationship ? 'Save' : 'Add connection'} onprimary={() => void submit()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}
-  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || committed || !relationshipTypeSlug || datesInvalid || !!endDateError || (!!initialRelationship && !attempt.conflict && Object.keys(patchBody()).length === 0) || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || committed || !relationshipTypeSlug || datesInvalid || !!endDateError || (!!initialRelationship && !attempt.conflict && !edited) || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
   {#if loading}<p role="status">Loading connection…</p>{:else if !initialView || opened}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="editor" aria-busy={attempt.busy}>

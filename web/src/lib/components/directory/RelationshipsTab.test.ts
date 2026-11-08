@@ -616,7 +616,7 @@ describe('RelationshipsTab', () => {
     expect(within(dialog).getByRole('textbox', { name: 'Notes' }).tagName).toBe('TEXTAREA');
   });
 
-  it('patches only a changed end date so a fresh server note is not overwritten', async () => {
+  it('lists a note changed elsewhere as a row Keep yours writes back', async () => {
     const requests: Request[] = [];
     let reads = 0;
     const opening = relationship(41, 1, { notes: 'Opening note', start_date: { year: 2024, month: 3 } });
@@ -649,15 +649,15 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByRole('button', { name: 'Keep yours' });
-    expect(screen.queryByRole('rowheader', { name: 'Notes' })).toBeNull();
-    expect(screen.getByText('Other details also changed')).toBeDefined();
-    expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Concurrent note');
+    expect(screen.getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['End date', 'Notes']);
+    expect(screen.getByRole('rowheader', { name: 'Notes' }).nextElementSibling?.textContent).toBe('Concurrent note');
     await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     const patches = requests.filter(request => request.method === 'PATCH');
-    await expect(patches[0].clone().json()).resolves.toEqual({ end_date: '2026-08' });
-    await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-08' });
+    await expect(patches[0].clone().json()).resolves.toEqual({ end_date: '2026-08', notes: 'Opening note' });
+    await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-08', notes: 'Opening note' });
+    expect(patches[1].headers.get('If-Match')).toBe('"relationship-41-r2"');
   });
 
   it('saves notes changed back to their opening value after a conflict', async () => {
@@ -685,14 +685,14 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(bodies).toEqual([{ notes: 'Draft' }, { notes: 'Opening' }]));
   });
 
-  it('refreshes connections after a conflict already saved the requested note', async () => {
+  it('refreshes connections after Keep yours on a conflict that already saved the requested note', async () => {
     const opening = relationship(41, 1, { notes: 'Opening note' });
     const saved = relationship(41, 2, { notes: 'Shared new note' });
     let reads = 0;
     let networkReads = 0;
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input);
-      if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      if (request.method === 'PATCH') return request.headers.get('If-Match') === '"relationship-41-r1"' ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(saved);
       if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: `"relationship-41-r${reads}"` } });
       if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: saved })] });
       if (pathOf(request) === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: ++networkReads === 1 ? 'Before' : 'After', hop: 0 }], edges: [] });
@@ -705,8 +705,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Shared new note' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-    // It closes at once, as Use saved does, so nothing typed during the refresh is lost.
-    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(screen.getByText('Synthetic Learner').closest('.detail-row')?.textContent).toContain('Shared new note'));
     expect(controller.network?.nodes?.[0].label).toBe('After');
   });
@@ -743,7 +742,7 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
   });
 
-  it('clears changed notes without resending an opening end date', async () => {
+  it('writes the form as shown on Keep yours, with the end date it opened with', async () => {
     const requests: Request[] = [];
     let reads = 0;
     const opening = relationship(41, 1, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 6 } });
@@ -774,12 +773,13 @@ describe('RelationshipsTab', () => {
     await rowAction('Edit…');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: '   ' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    await screen.findByRole('button', { name: 'Keep yours' });
+    expect(screen.getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['End date', 'Notes']);
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     const patches = requests.filter(request => request.method === 'PATCH');
-    const patch = patches[1];
-    await expect(patch.clone().json()).resolves.toEqual({ notes: null });
+    await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-06', notes: null });
   });
 
   it('disables Save for an unchanged relationship', async () => {
@@ -1301,10 +1301,9 @@ it.each(['cleared notes', 'derived status'])('compares %s after an end-date conf
   await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2026' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await screen.findByRole('button', { name: 'Keep yours' });
-  if (change === 'cleared notes') {
-    expect(screen.getByText('Other details also changed')).toBeDefined();
-    expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('None');
-  } else expect(screen.queryByText('Other details also changed')).toBeNull();
+  expect(screen.queryByText('Other details also changed')).toBeNull();
+  if (change === 'cleared notes') expect(screen.getByRole('rowheader', { name: 'Notes' }).nextElementSibling?.textContent).toBe('None');
+  else expect(screen.queryByRole('rowheader', { name: 'Notes' })).toBeNull();
 });
 
 it.each(['cancel', 'delete'] as const)('refreshes a connection type conflict before %s', async action => {

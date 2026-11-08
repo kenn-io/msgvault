@@ -43,18 +43,22 @@
   const aliasesShown = $derived(addingAliases || baselineAliases.length > 0);
   const categoriesShown = $derived(addingCategories || baselineCategories.length > 0);
   let contactDetailsOpen = $state(false);
+  // What each section's form was last saved or loaded as.
   let currentProfile = $state<OrganizationProfile>();
-  // The version a write sends as If-Match.
+  // The version a first save sends as If-Match.
   let opened: Prepared<OrganizationProfile> | undefined;
+  const load = new WriteAttempt<Prepared<OrganizationProfile>>();
   const attempt = new WriteAttempt<Prepared<OrganizationProfile>>();
-  const loading = $derived(!!initialOrganization && !currentProfile && !attempt.details);
+  const loading = $derived(!!initialOrganization && !currentProfile && !load.details);
   // A failed load leaves nothing to edit, so the form and Save give way to the notice.
-  const loadFailed = $derived(!!initialOrganization && !currentProfile && !!attempt.details);
+  const loadFailed = $derived(!!initialOrganization && !currentProfile && !!load.details);
   // Aliases and categories save on their own, with their own If-Match.
   const profileAttempt = new WriteAttempt<Prepared<OrganizationProfile>>();
   const removal = new WriteAttempt<Prepared<OrganizationProfile>>();
   const submitting = $derived(attempt.busy || profileAttempt.busy || removal.busy);
   let confirmDelete = $state(false);
+  // A conflict whose attempt a later save reset still refreshes the views on close.
+  let conflicted = false;
   // The jobs check: reset on Back, close, and each new check, so a late result from an earlier one is dropped.
   const check = new WriteAttempt<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
   const holders = $derived(check.prepared);
@@ -75,7 +79,7 @@
 
   async function loadCurrent(): Promise<void> {
     if (!initialOrganization) return;
-    opened = await attempt.prepare(() => controller.prepareOrganizationMutation(initialOrganization.id));
+    opened = await load.prepare(() => controller.prepareOrganizationMutation(initialOrganization.id));
     if (!opened) return;
     const profile = (currentProfile = opened.data);
     name = profile.organization.name;
@@ -91,60 +95,61 @@
   async function saveOrganization(): Promise<void> {
     if (saveDisabled || submitting) return;
     // The notice and Retry follow the latest save.
+    conflicted ||= profileAttempt.hadConflict;
     profileAttempt.reset();
     let saved: { entity?: Organization; etag?: string } | undefined;
+    let reviewed = false;
     const ok = await attempt.run(async current => {
+      reviewed = !!current;
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       const result = initialOrganization
         ? await controller.updateOrganization(initialOrganization.id, body, current ?? opened)
         : await controller.createOrganization(body);
-      if (result.ok) { saved = result; currentProfile = current?.data ?? currentProfile; }
+      if (result.ok) saved = result;
       return result;
     });
     if (!ok) return;
     if (!currentProfile || !listsUnsaved) { onDone(saved?.entity); return; }
+    // The form shows what the save wrote.
     name = saved!.entity!.name;
     kind = saved!.entity!.kind;
     primaryDomain = saved!.entity!.primary_domain ?? '';
     description = saved!.entity!.description ?? '';
-    keepOpen({ ...currentProfile, organization: saved!.entity! }, saved!.etag);
+    keepOpen({ ...currentProfile, organization: saved!.entity! }, saved!.etag, reviewed);
   }
 
   async function saveProfile(): Promise<void> {
     if (!initialOrganization || !currentProfile || submitting) return;
-    const aliasDelta = valueDelta(baselineAliases, values(aliases));
-    const categoryDelta = valueDelta(baselineCategories, values(categories));
     let saved: OrganizationProfile | undefined;
     let etag: string | undefined;
+    let reviewed = false;
     const ok = await profileAttempt.run(async current => {
-      const result = await controller.putOrganizationProfile(
-        initialOrganization.id,
-        (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta),
-        current ?? opened
-      );
+      reviewed = !!current;
+      const result = await controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? opened);
       if (result.ok) { saved = result.entity; etag = result.etag; }
       return result;
     });
     if (!ok) return;
     if (!fieldsUnsaved) { onDone(); return; }
-    // The saved profile may carry another writer's edits: the lists and every untouched field take it, so the next
-    // save keeps them; a typed field stays.
-    const was = currentProfile.organization, now = saved!.organization;
-    if (name.trim() === was.name) name = now.name;
-    if (kind === was.kind) kind = now.kind;
-    if (primaryDomain.trim() === (was.primary_domain ?? '')) primaryDomain = now.primary_domain ?? '';
-    if (description.trim() === (was.description ?? '')) description = now.description ?? '';
     baselineAliases = (saved!.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
     baselineCategories = (saved!.categories ?? []).map((item) => item.category);
     aliases = baselineAliases.join(', ');
     categories = baselineCategories.join(', ');
-    keepOpen(saved!, etag);
+    keepOpen(reviewed ? { ...saved!, organization: currentProfile.organization } : saved!, etag, reviewed);
   }
 
-  // Only a complete profile may be paired with its returned version.
-  function keepOpen(profile: OrganizationProfile, etag: string | undefined): void {
+  // Aliases and categories as the form shows them, over the rest of the version sent.
+  function listsBody(profile: OrganizationProfile): OrganizationProfileBody {
+    const saved = (profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
+    return profileBody(profile, valueDelta(saved, values(aliases)), valueDelta((profile.categories ?? []).map((item) => item.category), values(categories)));
+  }
+
+  // The other section still has edits, so the dialog stays open. After a first save nothing unseen came with the
+  // returned version, so the next save sends it; after Keep yours the other section's fields may be stale, so its save
+  // sends the version the dialog opened and shows what changed.
+  function keepOpen(profile: OrganizationProfile, etag: string | undefined, reviewed: boolean): void {
     currentProfile = profile;
-    opened = etag ? { data: profile, etag } : undefined;
+    if (etag && !reviewed) opened = { data: profile, etag };
   }
 
   async function checkDeletion(): Promise<void> {
@@ -176,7 +181,7 @@
   }
 
   function requestClose(): void {
-    if (!submitting) { if (attempt.hadConflict || profileAttempt.hadConflict || removal.hadConflict) void controller.refreshDirectoryViews(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
+    if (!submitting) { if (conflicted || attempt.hadConflict || profileAttempt.hadConflict || removal.hadConflict) void controller.refreshDirectoryViews(); load.reset(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
   }
 
   function values(value: string): string[] {
@@ -466,13 +471,15 @@
       <!-- Yours is what Keep yours writes: the four fields as the form holds them. -->
       {@render conflictNotice(attempt, { Name: name.trim(), Kind: sentenceCase(kind), Domain: primaryDomain.trim(), Description: description.trim() }, undefined)}
     {:else if profileAttempt.conflict}
-      {@const lists = profileBody(profileAttempt.conflict.data, valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories)))}
-      <!-- Yours is what Keep yours writes: the saved lists with the person's additions and removals. -->
+      {@const lists = listsBody(profileAttempt.conflict.data)}
+      <!-- Yours is what Keep yours writes: the lists as the form shows them. -->
       {@render conflictNotice(profileAttempt, { Aliases: lists.names!.filter(item => item.name_kind === 'alias').map(item => item.name).join(', '), Categories: lists.categories!.map(item => item.category).join(', ') }, () => void saveProfile())}
     {:else if profileAttempt.details}
       <InlineNotice message="Couldn't save the aliases and categories." details={profileAttempt.details} actionLabel="Retry" onaction={() => void saveProfile()} />
+    {:else if loadFailed}
+      <InlineNotice message="Couldn't load this organization." details={load.details} actionLabel="Retry" onaction={() => void loadCurrent()} />
     {:else if attempt.details || controller.createBlocked.organizations}
-      <InlineNotice message={controller.createBlocked.organizations ? "Couldn't confirm the organization was saved." : !currentProfile && initialOrganization ? "Couldn't load this organization." : "Couldn't save this organization."} details={attempt.details || undefined} actionLabel={controller.createBlocked.organizations ? 'Check again' : 'Retry'} onaction={() => { if (controller.createBlocked.organizations) void refreshAfterUnknown(); else if (initialOrganization && !currentProfile) void loadCurrent(); else void saveOrganization(); }} />
+      <InlineNotice message={controller.createBlocked.organizations ? "Couldn't confirm the organization was saved." : "Couldn't save this organization."} details={attempt.details || undefined} actionLabel={controller.createBlocked.organizations ? 'Check again' : 'Retry'} onaction={() => { if (controller.createBlocked.organizations) void refreshAfterUnknown(); else void saveOrganization(); }} />
     {/if}
   {/snippet}
 </Dialog>
