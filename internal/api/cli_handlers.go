@@ -1853,125 +1853,54 @@ func cliRunCommandAllowed(args []string) bool {
 }
 
 func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
-	boolFlags := map[string]bool{}
-	valueFlags := map[string]bool{}
-	maxPositionals := 0
+	flags := clirun.NewFlagSet()
+	maxPositionals := 1
 	switch operation {
 	case "list":
-		boolFlags["json"] = true
+		maxPositionals = 0
+		flags.Bool("json", false, "")
 	case "status":
-		maxPositionals = 1
-		for _, name := range []string{"all", "json", "semantic-embeddings"} {
-			boolFlags[name] = true
-		}
+		flags.Bool("all", false, "")
+		flags.Bool("json", false, "")
+		flags.Bool("semantic-embeddings", false, "")
 	case "consent":
-		maxPositionals = 1
-		for _, name := range []string{"yes", "json", "semantic-embeddings"} {
-			boolFlags[name] = true
-		}
+		flags.Bool("yes", false, "")
+		flags.Bool("json", false, "")
+		flags.Bool("semantic-embeddings", false, "")
 	case "revoke":
-		maxPositionals = 1
-		for _, name := range []string{"all", "json", "semantic-embeddings"} {
-			boolFlags[name] = true
-		}
-		valueFlags["if-fingerprint"] = true
-		valueFlags["fingerprint"] = true
+		flags.Bool("all", false, "")
+		flags.Bool("json", false, "")
+		flags.Bool("semantic-embeddings", false, "")
+		flags.String("if-fingerprint", "", "")
+		flags.String("fingerprint", "", "")
 	case "history":
-		maxPositionals = 1
-		boolFlags["json"] = true
-		valueFlags["limit"] = true
-		valueFlags["person"] = true
+		flags.Bool("json", false, "")
+		flags.Int("limit", 0, "")
+		flags.Int64("person", 0, "")
 	case "check":
-		maxPositionals = 1
-		boolFlags["json"] = true
-		valueFlags["if-fingerprint"] = true
+		flags.Bool("json", false, "")
+		flags.String("if-fingerprint", "", "")
 	case "reverify":
-		maxPositionals = 1
-		boolFlags["yes"] = true
-		boolFlags["json"] = true
+		flags.Bool("yes", false, "")
+		flags.Bool("json", false, "")
 	default:
 		return false
 	}
-	// The CLI forwards the root logging flags after the command words, so
-	// every operation accepts them, as cliRunPersonEnrichmentAllowed does.
-	boolFlags["verbose"] = true
-	boolFlags["log-sql"] = true
-
-	positionals := 0
-	guardedRevoke := false
-	pendingValueFlag := ""
-	consumeValue := func(name, value string) bool {
-		if value == "" || strings.HasPrefix(value, "-") {
-			return false
-		}
-		if name == "if-fingerprint" && !validPersonProviderFingerprint(value) {
-			return false
-		}
-		guardedRevoke = guardedRevoke || name == "if-fingerprint"
-		return true
-	}
-	for _, argument := range args {
-		if pendingValueFlag != "" {
-			if !consumeValue(pendingValueFlag, argument) {
-				return false
-			}
-			pendingValueFlag = ""
-			continue
-		}
-		if !strings.HasPrefix(argument, "--") {
-			positionals++
-			if positionals > maxPositionals || peoplesweep.ValidateProviderProfileName(argument) != nil {
-				return false
-			}
-			continue
-		}
-		nameValue := strings.TrimPrefix(argument, "--")
-		name, value, hasValue := strings.Cut(nameValue, "=")
-		// The CLI forwards these two as name=value with the root flags'
-		// own values: any string for log-level, including the empty
-		// fallback to the configured level, and any int64 for
-		// log-sql-slow-ms.
-		if name == "log-level" {
-			if !hasValue {
-				return false
-			}
-			continue
-		}
-		if name == "log-sql-slow-ms" {
-			if !hasValue {
-				return false
-			}
-			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-				return false
-			}
-			continue
-		}
-		if boolFlags[name] {
-			if hasValue {
-				if _, err := strconv.ParseBool(value); err != nil {
-					return false
-				}
-			}
-			continue
-		}
-		if !valueFlags[name] {
-			return false
-		}
-		if !hasValue {
-			pendingValueFlag = name
-			continue
-		}
-		if !consumeValue(name, value) {
-			return false
-		}
-	}
-	if pendingValueFlag != "" {
+	if flags.Parse(args) != nil || flags.NArg() > maxPositionals {
 		return false
 	}
-	if guardedRevoke && positionals != 1 {
-		return false
+	for _, profile := range flags.Args() {
+		if peoplesweep.ValidateProviderProfileName(profile) != nil {
+			return false
+		}
 	}
-	return true
+	for _, name := range []string{"if-fingerprint", "fingerprint"} {
+		if flags.Changed(name) && !validPersonProviderFingerprint(flags.Lookup(name).Value.String()) {
+			return false
+		}
+	}
+	// A guarded revoke or check names the profile whose fingerprint it guards.
+	return !flags.Changed("if-fingerprint") || flags.NArg() == 1
 }
 
 func validPersonProviderFingerprint(fingerprint string) bool {
@@ -1990,97 +1919,59 @@ func cliRunPersonEnrichmentAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	operation := args[0]
-	values, positionals, ok := cliRunStrictFlagValues(args[1:])
-	if !ok {
-		return false
-	}
-	allowed := func(names ...string) bool {
-		set := make(map[string]struct{}, len(names)+4)
-		for _, name := range names {
-			set[name] = struct{}{}
-		}
-		for _, name := range []string{"log-level", "verbose", "log-sql", "log-sql-slow-ms"} {
-			set[name] = struct{}{}
-		}
-		for name := range values {
-			if _, exists := set[name]; !exists {
-				return false
-			}
-		}
-		return true
-	}
-	switch operation {
+	flags := clirun.NewFlagSet()
+	parsed := func() bool { return flags.Parse(args[1:]) == nil }
+	switch args[0] {
 	case "status":
-		return len(positionals) == 0 && allowed("limit", "json")
+		flags.Int("limit", 0, "")
+		flags.Bool("json", false, "")
+		return parsed() && flags.NArg() == 0
 	case "profiles":
-		return len(positionals) == 0 && allowed("json")
+		flags.Bool("json", false, "")
+		return parsed() && flags.NArg() == 0
 	case "consent":
-		return len(positionals) == 1 && isLowerSHA256(positionals[0]) && allowed("json")
+		flags.Bool("json", false, "")
+		return parsed() && flags.NArg() == 1 && isLowerSHA256(flags.Arg(0))
 	case "revoke":
-		return len(positionals) <= 1 && allowed("all", "json") &&
-			(len(positionals) == 0 || isLowerSHA256(positionals[0]))
+		flags.Bool("all", false, "")
+		flags.Bool("json", false, "")
+		return parsed() && flags.NArg() <= 1 && (flags.NArg() == 0 || isLowerSHA256(flags.Arg(0)))
 	case "run":
-		return len(positionals) == 0 && allowed("person", "provider", "idempotency-key", "json") &&
-			cliRunPositiveInt(values["person"]) && cliRunSafeToken(values["provider"]) &&
-			cliRunSafeToken(values["idempotency-key"])
+		person := flags.Int64("person", 0, "")
+		provider := flags.String("provider", "", "")
+		idempotencyKey := flags.String("idempotency-key", "", "")
+		flags.Bool("json", false, "")
+		return parsed() && flags.NArg() == 0 && *person > 0 &&
+			cliRunSafeToken(*provider) && cliRunSafeToken(*idempotencyKey)
 	case "suppress":
-		if len(positionals) != 0 || !allowed(
-			"person", "provider-namespace", "identifier-class", "normalization-version",
-			"key-id", "digest", "reason", "actor") {
+		person := flags.Int64("person", 0, "")
+		namespace := flags.String("provider-namespace", "", "")
+		class := flags.String("identifier-class", "", "")
+		version := flags.String("normalization-version", "", "")
+		keyID := flags.String("key-id", "", "")
+		digest := flags.String("digest", "", "")
+		reason := flags.String("reason", "", "")
+		actor := flags.String("actor", "", "")
+		if !parsed() || flags.NArg() != 0 {
 			return false
 		}
-		if person := values["person"]; person != "" {
-			return cliRunPositiveInt(person) && values["provider-namespace"] == "" &&
-				values["identifier-class"] == "" && values["normalization-version"] == "" &&
-				values["key-id"] == "" && values["digest"] == "" && values["actor"] == "" &&
-				(values["reason"] == "opt_out" || values["reason"] == "data_subject_request")
+		validReason := *reason == "opt_out" || *reason == "data_subject_request"
+		if flags.Changed("person") {
+			return *person > 0 && *namespace == "" && *class == "" && *version == "" &&
+				*keyID == "" && *digest == "" && *actor == "" && validReason
 		}
-		namespace := values["provider-namespace"]
-		kind, fingerprint, found := strings.Cut(namespace, ":")
-		class := values["identifier-class"]
+		kind, fingerprint, found := strings.Cut(*namespace, ":")
 		versionByClass := map[string]string{
 			"email": "email-v1", "phone": "phone-v1", "public_profile_url": "public-url-v1",
 			"provider_person_id": "provider-person-id-v1", "name_company": "name-company-v1",
 		}
-		version, validClass := versionByClass[class]
+		wantVersion, validClass := versionByClass[*class]
 		return found && (kind == "exa" || kind == "sixtyfour") && isLowerSHA256(fingerprint) &&
-			validClass && values["normalization-version"] == version &&
-			isLowerSHA256(values["key-id"]) && isLowerSHA256(values["digest"]) &&
-			(values["reason"] == "opt_out" || values["reason"] == "data_subject_request") &&
-			values["actor"] == "cli"
+			validClass && *version == wantVersion &&
+			isLowerSHA256(*keyID) && isLowerSHA256(*digest) && validReason && *actor == "cli"
 	default:
 		return false
 	}
-}
-
-func cliRunStrictFlagValues(args []string) (map[string]string, []string, bool) {
-	values := make(map[string]string)
-	positionals := make([]string, 0)
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			positionals = append(positionals, arg)
-			continue
-		}
-		nameValue := strings.TrimPrefix(arg, "--")
-		name, value, hasValue := strings.Cut(nameValue, "=")
-		if name == "" {
-			return nil, nil, false
-		}
-		if !hasValue {
-			value = "true"
-		}
-		if _, duplicate := values[name]; duplicate {
-			return nil, nil, false
-		}
-		values[name] = value
-	}
-	return values, positionals, true
-}
-
-func cliRunPositiveInt(value string) bool {
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	return err == nil && parsed > 0
 }
 
 func cliRunSafeToken(value string) bool {

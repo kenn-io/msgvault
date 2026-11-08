@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -2772,19 +2773,8 @@ func attachmentRemovalCommand(args []string) bool {
 // need no further interpretation here, but they must not be mistaken for
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			return false
-		}
-		name := strings.TrimPrefix(arg, "--")
-		if before, _, ok := strings.Cut(name, "="); ok {
-			name = before
-		}
-		if !loggingPassthroughFlags[name] {
-			return false
-		}
-	}
-	return true
+	flags := clirun.NewFlagSet()
+	return flags.Parse(args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

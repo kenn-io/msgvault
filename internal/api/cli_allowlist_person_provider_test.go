@@ -73,10 +73,17 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 		{name: "forwarded false logging switches", args: []string{
 			"person", "provider", "list", "--log-sql=false", "--verbose=false",
 		}, want: true},
+		{name: "logging flag values as separate arguments", args: []string{
+			"person", "provider", "status", "alpha", "--log-level", "warn", "--log-sql-slow-ms", "250", "-v",
+		}, want: true},
 		{name: "log level without value", args: []string{"person", "provider", "status", "--log-level"}},
-		{name: "slow query threshold without value", args: []string{"person", "provider", "status", "--log-sql-slow-ms", "250"}},
 		{name: "non-integer slow query threshold", args: []string{"person", "provider", "status", "--log-sql-slow-ms=soon"}},
 		{name: "verbose with non-boolean value", args: []string{"person", "provider", "list", "--verbose=loud"}},
+		{name: "non-integer history limit", args: []string{"person", "provider", "history", "alpha", "--limit=soon"}},
+		{name: "fingerprint value swallowing a flag", args: []string{
+			"person", "provider", "revoke", "alpha", "--fingerprint", "--json",
+		}},
+		{name: "local flag after terminator", args: []string{"person", "provider", "check", "--", "--api-key=secret-canary"}},
 		{name: "add is local", args: []string{"person", "provider", "add", "alpha"}},
 		{name: "use is local", args: []string{"person", "provider", "use", "alpha"}},
 		{name: "remove is local", args: []string{"person", "provider", "remove", "alpha"}},
@@ -251,6 +258,14 @@ func TestCLIRunCommandAllowedPermitsExactPersonEnrichmentCommandsAndRejectsRawSh
 			"--digest=" + strings.Repeat("c", 64), "--reason=opt_out", "--actor=cli",
 		}},
 		{name: "unknown flag rejected", args: []string{"person", "enrichment", "status", "--credential=secret"}},
+		{name: "forwarded logging flags", args: []string{
+			"person", "enrichment", "profiles", "--log-level=warn", "--log-sql", "--log-sql-slow-ms=250", "--verbose=false",
+		}, want: true},
+		{name: "run without person", args: []string{"person", "enrichment", "run", "--provider=exa-default", "--idempotency-key=run-1"}},
+		{name: "run with non-integer person", args: []string{
+			"person", "enrichment", "run", "--person=seven", "--provider=exa-default", "--idempotency-key=run-1",
+		}},
+		{name: "json with non-boolean value", args: []string{"person", "enrichment", "profiles", "--json=loud"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
