@@ -143,7 +143,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 	reconcile.Flags().BoolVar(&inspectedSnapshots, "inspected-snapshots", false, "Confirm that required merge snapshots were inspected")
 	reconcile.Flags().Int64SliceVar(&reviewedSplitIDs, "reviewed-split", nil, "Explicitly reviewed ambiguous split ID (repeatable)")
 	var grant bool
-	consent := &cobra.Command{Use: "consent <subject-uid>", Short: "Set consent for the configured private destination", Long: "Grant only when the subject's information may be shared with the exact configured private project and recipient. Without --grant, consent is revoked.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	consent := &cobra.Command{Use: "consent <subject-uid>", Short: "Set consent for the configured private destination", Long: "Grant only when the subject's information may be shared with the exact configured private project and recipient.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
