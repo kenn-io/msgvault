@@ -84,8 +84,8 @@ func (s *Store) HasImportantDateConsentContext(ctx context.Context, subject, pro
 // checks consent and dispatches. The callback must revalidate the event and
 // routing using the provided transaction context before its external write.
 // Record the in-flight state in a separate committed transaction before calling.
-// An error can mean the external write
-// committed; callers must retain an unknown delivery state rather than retry.
+// An error can mean an external write committed. Callers retain a confirmed
+// result and mark an unconfirmed write unknown rather than retrying it.
 func (s *Store) WithImportantDateConsentContext(ctx context.Context, subject, owner, project, recipient string, dispatch func(context.Context) error) (bool, error) {
 	if !validImportantDateConsent(subject, project, recipient) || !strings.HasPrefix(owner, "person/") || dispatch == nil {
 		return false, errors.New("invalid important-date consent dispatch")

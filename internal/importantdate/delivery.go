@@ -134,7 +134,7 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 }
 
 // notify claims a known, not-yet-attempted notification. Failed preflight can
-// return to issue_created; once NotifyIssue is called the result is uncertain.
+// return to issue_created; an unconfirmed NotifyIssue result remains unknown.
 func (s DeliveryService) notify(ctx context.Context, input DeliveryInput, issueUID string, revalidate func(context.Context) (bool, error)) error {
 	changed, err := s.Store.ClaimImportantDateNotificationContext(ctx, input.OccurrenceKey, input.Fingerprint, issueUID)
 	if err != nil || !changed {
