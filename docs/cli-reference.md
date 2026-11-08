@@ -4890,8 +4890,9 @@ the archive alias, history-only state, retirement destination, and Beeper
 re-anchor marker. While the daemon's first message-count refresh is still
 running, the table shows `pending` in the messages column, and JSON entries
 carry `"counts_pending": true` in place of `message_count` and
-`source_deleted_count`. Later calls show the finished counts or a cached
-snapshot.
+`source_deleted_count`. Later calls try fresh counts for 500 ms, then show the
+previous count with its age, such as `1,234 (counted 3 minutes ago)`. Stale
+JSON rows include `stale: true` and the original `as_of` timestamp.
 
 ```bash
 msgvault list-accounts [flags]

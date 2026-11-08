@@ -1033,6 +1033,15 @@ Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
 anyway: the response sets `"counts_pending": true`, and every account's
 `message_count` and `source_deleted_count` is a placeholder `0`.
 
+Once a count snapshot exists, fresh counts get 500 ms. If they don't finish,
+the response carries the previous counts with `"stale": true` and their
+original `as_of`, while the refresh continues. The CLI shows such counts with
+their age, such as `1,234 (counted 3 minutes ago)`.
+
+Virtual-account counts retain their two-second cold wait. Once a matching catalog
+exists, callers with the pending-counts header reuse it immediately after
+expiry while it refreshes. Strict callers retain the two-second refresh wait.
+
 **Response (vector search disabled):**
 
 ```json
