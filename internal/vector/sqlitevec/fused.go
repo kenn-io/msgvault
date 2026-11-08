@@ -409,18 +409,16 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest,
 		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
 	var senderArgs []any
-	var senderSQL strings.Builder
-	for _, term := range req.Filter.SenderTerms {
-		predicate, args := search.SenderCondition(term, "p.email_address", "p.phone_number", "p.display_name", "mr.display_name")
+	if len(req.Filter.SenderTerms) > 0 {
+		predicate, args := search.SenderCondition(req.Filter.SenderTerms, "p.email_address", "p.phone_number", (&store.SQLiteDialect{}).UnicodeLowerExpression, "p.display_name", "mr.display_name")
 		for _, arg := range args {
 			name := fmt.Sprintf("sender_term_%d", len(senderArgs))
 			senderArgs = append(senderArgs, sql.Named(name, arg))
 			predicate = strings.Replace(predicate, "?", ":"+name, 1)
 		}
-		senderSQL.WriteString(` AND EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id
-			WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND ` + predicate + `)`)
+		filterWhere += ` AND EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id
+			WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND ` + predicate + `)`
 	}
-	filterWhere += senderSQL.String()
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
 		name := fmt.Sprintf("account_scope_%d", len(accountArgs))

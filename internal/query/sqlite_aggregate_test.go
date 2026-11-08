@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -1094,8 +1095,8 @@ func TestEscapeSQLiteLike(t *testing.T) {
 		{`%_\`, `\%\_\\`},
 	}
 	for _, tt := range tests {
-		got := escapeSQLiteLike(tt.input)
-		assert.Equal(t, tt.want, got, "escapeSQLiteLike(%q)", tt.input)
+		got := search.EscapeLike(tt.input)
+		assert.Equal(t, tt.want, got, "search.EscapeLike(%q)", tt.input)
 	}
 }
 

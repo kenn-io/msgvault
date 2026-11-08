@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -726,7 +727,7 @@ func (e *SQLiteEngine) TextAggregate(
 		args = append(args, e.dialect.DateParam(*opts.Before))
 	}
 	if opts.SearchQuery != "" {
-		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
+		likeTerm := "%" + search.EscapeLike(opts.SearchQuery) + "%"
 		conditions = append(conditions, `(m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')`)
 		args = append(args, likeTerm, likeTerm)
 	}
@@ -902,7 +903,7 @@ func (e *SQLiteEngine) GetTextStats(
 		args = append(args, *opts.SourceID)
 	}
 	if opts.SearchQuery != "" {
-		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
+		likeTerm := "%" + search.EscapeLike(opts.SearchQuery) + "%"
 		conditions = append(conditions, `(m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')`)
 		args = append(args, likeTerm, likeTerm)
 	}

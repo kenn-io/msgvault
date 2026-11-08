@@ -14,7 +14,7 @@ import (
 // BuildFilter translates a parsed Gmail-syntax query into a vector.Filter.
 // Sender terms remain message-level predicates so From-header names can differ
 // between messages from the same participant. Recipient and label tokens resolve
-// to ID groups; repeated tokens remain independent message-level requirements.
+// to ID groups; repeated recipient tokens remain independent requirements.
 //
 // Caller is responsible for any additional filter fields that do not
 // derive from the query string (e.g. a SourceID coming from an HTTP

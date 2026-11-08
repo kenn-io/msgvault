@@ -3131,8 +3131,8 @@ func TestEscapeILIKE(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := escapeILIKE(tt.input)
-			assert.Equal(t, tt.want, got, "escapeILIKE(%q)", tt.input)
+			got := search.EscapeLike(tt.input)
+			assert.Equal(t, tt.want, got, "search.EscapeLike(%q)", tt.input)
 		})
 	}
 }
@@ -3156,7 +3156,7 @@ func TestBuildWhereClause_SearchOperators(t *testing.T) {
 		{
 			name:        "from operator",
 			searchQuery: "from:alice",
-			wantClauses: []string{"recipient_type = 'from'", "email_address ILIKE"},
+			wantClauses: []string{"recipient_type = 'from'", "LOWER(COALESCE(p.email_address, '')) LIKE"},
 		},
 		{
 			name:        "to operator",
@@ -3390,7 +3390,7 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 			query: &search.Query{
 				FromAddrs: []string{"test_user%"},
 			},
-			wantClauses: []string{"p.email_address ILIKE", "ESCAPE"},
+			wantClauses: []string{"LOWER(COALESCE(p.email_address, '')) LIKE", "ESCAPE"},
 			wantInArgs:  []string{"test\\_user\\%"},
 		},
 		{

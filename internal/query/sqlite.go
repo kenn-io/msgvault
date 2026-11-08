@@ -127,12 +127,6 @@ func (e *SQLiteEngine) queryRowContext(ctx context.Context, query string, args .
 	return store.ReadDBContext(ctx, e.db).QueryRowContext(ctx, e.dialect.Rebind(query), args...)
 }
 
-// escapeSQLiteLike escapes LIKE wildcard characters (%, _, \) with \.
-func escapeSQLiteLike(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(s)
-}
-
 // aggDimension describes the variable parts of an aggregate query for a given ViewType.
 type aggDimension struct {
 	keyExpr   string // SQL expression returned as the grouping key
@@ -722,7 +716,7 @@ func (e *SQLiteEngine) buildAggregateSearchParts(
 		for _, label := range q.Labels {
 			labelParts = append(labelParts, metadataContainsExpression(e.dialect, "l.name"))
 			args = append(args,
-				"%"+escapeSQLiteLike(label)+"%")
+				"%"+search.EscapeLike(label)+"%")
 		}
 		conditions = append(conditions,
 			"("+strings.Join(labelParts, " OR ")+")")
@@ -814,13 +808,13 @@ func (e *SQLiteEngine) buildAggregateTextSearchConditions(
 			}
 		} else {
 			textCondition = `(LOWER(m.subject) LIKE LOWER(?) ESCAPE '\' OR LOWER(m.snippet) LIKE LOWER(?) ESCAPE '\')`
-			pattern := "%" + escapeSQLiteLike(term) + "%"
+			pattern := "%" + search.EscapeLike(term) + "%"
 			textArgs = append(textArgs, pattern, pattern)
 		}
 
 		conditions = append(conditions, "("+textCondition+" OR "+keyCondition+")")
 		args = append(args, textArgs...)
-		args = append(args, "%"+escapeSQLiteLike(term)+"%")
+		args = append(args, "%"+search.EscapeLike(term)+"%")
 	}
 	return conditions, args
 }
@@ -844,7 +838,7 @@ func (e *SQLiteEngine) buildAggregateStatsSearchParts(
 		labelParts := make([]string, 0, len(q.Labels))
 		for _, label := range q.Labels {
 			labelParts = append(labelParts, keyCondition)
-			labelRowArgs = append(labelRowArgs, "%"+escapeSQLiteLike(label)+"%")
+			labelRowArgs = append(labelRowArgs, "%"+search.EscapeLike(label)+"%")
 		}
 		if len(labelParts) > 0 {
 			labelRowConditions = append(labelRowConditions,
@@ -2052,10 +2046,10 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 		return conditions, args, ""
 	}
 
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.CcAddrs, "cc")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.BccAddrs, "bcc")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.CcAddrs, "cc")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.BccAddrs, "bcc")
 
 	// Label filter - case-insensitive substring match using EXISTS
 	// so each label term can match a different row in message_labels.
@@ -2066,7 +2060,7 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 			WHERE ml_lbl.message_id = m.id
 			  AND %s
 		)`, metadataContainsExpression(e.dialect, "l_lbl.name")))
-		args = append(args, "%"+escapeSQLiteLike(label)+"%")
+		args = append(args, "%"+search.EscapeLike(label)+"%")
 	}
 
 	// Subject filter. Use the dialect's Unicode-aware fold on both sides so
@@ -2074,7 +2068,7 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 	if len(q.SubjectTerms) > 0 {
 		for _, term := range q.SubjectTerms {
 			conditions = append(conditions, metadataContainsExpression(e.dialect, "m.subject"))
-			args = append(args, "%"+escapeSQLiteLike(term)+"%")
+			args = append(args, "%"+search.EscapeLike(term)+"%")
 		}
 	}
 
@@ -2085,7 +2079,7 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 			continue
 		}
 		conditions = append(conditions, metadataContainsExpression(e.dialect, "m.list_id"))
-		args = append(args, "%"+escapeSQLiteLike(listID)+"%")
+		args = append(args, "%"+search.EscapeLike(listID)+"%")
 	}
 	// account: and received: match the derived account projection.
 	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
@@ -2096,7 +2090,7 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 
 	for _, filename := range q.Filenames {
 		conditions = append(conditions, "EXISTS (SELECT 1 FROM attachments fa WHERE fa.message_id = m.id AND "+metadataContainsExpression(e.dialect, "fa.filename")+")")
-		args = append(args, "%"+escapeSQLiteLike(filename)+"%")
+		args = append(args, "%"+search.EscapeLike(filename)+"%")
 	}
 
 	// message_type: filter (e.g. sms, whatsapp, calendar_event). The store
@@ -2156,7 +2150,7 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 			// LOWER both sides so PostgreSQL's case-sensitive LIKE
 			// returns the same hits as SQLite's ASCII-folded LIKE.
 			for _, term := range q.TextTerms {
-				likeTerm := "%" + escapeSQLiteLike(term) + "%"
+				likeTerm := "%" + search.EscapeLike(term) + "%"
 				conditions = append(conditions,
 					"(LOWER(m.subject) LIKE LOWER(?) ESCAPE '\\' OR LOWER(m.snippet) LIKE LOWER(?) ESCAPE '\\')")
 				args = append(args, likeTerm, likeTerm)
@@ -2176,7 +2170,7 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 // appendSQLiteAddressCondition resolves matching participants first and looks
 // messages up by rowid. A correlated EXISTS scans every message for a rare
 // address; this semi-join also avoids multiplying result rows.
-func appendSQLiteAddressCondition(
+func (e *SQLiteEngine) appendSQLiteAddressCondition(
 	conditions []string,
 	args []any,
 	addresses []string,
@@ -2186,20 +2180,8 @@ func appendSQLiteAddressCondition(
 		return conditions, args
 	}
 	if recipientType == "from" {
-		for _, address := range addresses {
-			participant, participantArgs := search.SenderCondition(address, "p_addr.email_address", "p_addr.phone_number", "p_addr.display_name")
-			matching := `SELECT mr_addr.message_id FROM message_recipients mr_addr
-				WHERE mr_addr.recipient_type = 'from' AND mr_addr.participant_id IN (
-					SELECT p_addr.id FROM participants p_addr WHERE ` + participant + `)`
-			args = append(args, participantArgs...)
-			if !strings.Contains(address, "@") {
-				matching += ` UNION SELECT mr_addr.message_id FROM message_recipients mr_addr
-					WHERE mr_addr.recipient_type = 'from' AND LOWER(mr_addr.display_name) LIKE ? ESCAPE '\'`
-				args = append(args, participantArgs[0])
-			}
-			conditions = append(conditions, "m.id IN ("+matching+")")
-		}
-		return conditions, args
+		_, matching, senderArgs := search.SenderLookup(addresses, e.dialect.UnicodeLowerExpression)
+		return append(conditions, "m.id IN ("+matching+")"), append(args, senderArgs...)
 	}
 	parts := make([]string, 0, len(addresses))
 	matchArgs := make([]any, 0, len(addresses)*2)
@@ -2207,7 +2189,7 @@ func appendSQLiteAddressCondition(
 		switch {
 		case strings.HasPrefix(address, "@"):
 			parts = append(parts, `LOWER(p_addr.email_address) LIKE ? ESCAPE '\'`)
-			matchArgs = append(matchArgs, "%"+escapeSQLiteLike(strings.ToLower(address)))
+			matchArgs = append(matchArgs, "%"+search.EscapeLike(strings.ToLower(address)))
 		default:
 			lower := strings.ToLower(address)
 			parts = append(parts, "(LOWER(p_addr.email_address) = ? OR p_addr.phone_number = ?)")
@@ -2341,7 +2323,7 @@ func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *searc
 	conditions, args, ftsJoin = e.buildSearchCriteria(ctx, &structured, false)
 
 	for _, term := range q.TextTerms {
-		pattern := "%" + escapeSQLiteLike(term) + "%"
+		pattern := "%" + search.EscapeLike(term) + "%"
 		conditions = append(conditions, fmt.Sprintf(`(
 			%s OR
 			%s OR

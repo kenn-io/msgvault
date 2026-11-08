@@ -61,7 +61,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(err)
 		ids = append(ids, id)
 	}
-	alex, err := st.EnsureParticipant("alex@example.com", "Alex Kim", "example.com")
+	alex, err := st.EnsureParticipant("alex@example.com", "Élodie Alex Kim", "example.com")
 	require.NoError(err)
 	bob, err := st.EnsureParticipant("jimbob@example.com", "Jim Bob", "example.com")
 	require.NoError(err)
@@ -117,7 +117,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	for _, tc := range []struct {
 		query string
 		count int
-	}{{"from:alex", 4}, {"from:bob@example.com", 0}} {
+	}{{"from:alex", 4}, {"from:bob@example.com", 0}, {"from:élodie", 4}, {"from:alex@exam", 4}} {
 		var rows []query.MessageSummary
 		decode(run("search", tc.query, "--json"), &rows)
 		assert.Len(rows, tc.count)
@@ -129,6 +129,13 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 			assert.ElementsMatch(senderIDs, got)
 		}
 	}
+	var repeated []query.MessageSummary
+	decode(run("search", "from:alex@example.com from:jimbob@example.com", "--json"), &repeated)
+	got := make([]int64, 0, len(repeated))
+	for _, row := range repeated {
+		got = append(got, row.ID)
+	}
+	assert.ElementsMatch(append(append([]int64(nil), senderIDs...), ids[2]), got)
 	for _, mode := range []string{"vector", "hybrid"} {
 		var result struct {
 			Results []query.MessageSummary `json:"results"`

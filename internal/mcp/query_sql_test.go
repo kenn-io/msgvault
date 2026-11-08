@@ -123,25 +123,10 @@ func TestQuerySQLToolConfinesDaemonOwnerCredentialsToArchive(t *testing.T) {
 	t.Cleanup(func() { require.NoError(fixtureDB.Close()) })
 	// View schemas are exercised by query's engine tests. This transport fixture
 	// needs committed Parquet data to query through the native archive boundary.
-	for _, dataset := range query.RequiredParquetDirs {
-		dir := filepath.Join(analyticsDir, dataset)
-		require.NoError(os.MkdirAll(dir, 0o700))
-		path := strings.ReplaceAll(filepath.ToSlash(filepath.Join(dir, "rows.parquet")), "'", "''")
-		rows := "SELECT 'synthetic archive row' AS subject"
-		if dataset == "relationship_activity" {
-			rows = "SELECT 1::BIGINT AS message_id, NULL::BIGINT AS canonical_id, FALSE AS unsent, 'synthetic archive row' AS subject"
-		}
-		_, err := fixtureDB.ExecContext(t.Context(), "COPY ("+rows+") TO '"+path+"' (FORMAT PARQUET)")
-		require.NoError(err)
-	}
-	fingerprint, err := query.CacheDatasetFingerprint(analyticsDir)
-	require.NoError(err)
-	state, err := json.Marshal(query.CacheSyncState{
-		LastSyncAt: time.Now().UTC(), PublishedAt: time.Now().UTC(),
-		SchemaVersion: query.CacheSchemaVersion, DatasetFingerprint: fingerprint,
+	writeSearchParquetFixture(t, fixtureDB, analyticsDir, map[string]string{
+		"messages":              "SELECT 'synthetic archive row' AS subject",
+		"relationship_activity": "SELECT 1::BIGINT AS message_id, NULL::BIGINT AS canonical_id, FALSE AS unsent, 'synthetic archive row' AS subject",
 	})
-	require.NoError(err)
-	require.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
 	options := query.DuckDBOptions{DisableLegacyAnalyticalViews: true}
 	owner, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil, options)
 	require.NoError(err)
@@ -241,4 +226,25 @@ func callSQLToolHTTP(t *testing.T, handler http.Handler, statement, apiKey strin
 	var result rawRPCResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 	return result
+}
+
+func writeSearchParquetFixture(t *testing.T, db *sql.DB, dir string, datasets map[string]string) {
+	t.Helper()
+	require := require.New(t)
+	for _, dataset := range query.RequiredParquetDirs {
+		path := filepath.Join(dir, dataset)
+		require.NoError(os.MkdirAll(path, 0o700))
+		rows := datasets[dataset]
+		if rows == "" {
+			rows = "SELECT 1 AS unused WHERE false"
+		}
+		file := strings.ReplaceAll(filepath.ToSlash(filepath.Join(path, "rows.parquet")), "'", "''")
+		_, err := db.ExecContext(t.Context(), "COPY ("+rows+") TO '"+file+"' (FORMAT PARQUET)")
+		require.NoError(err)
+	}
+	fingerprint, err := query.CacheDatasetFingerprint(dir)
+	require.NoError(err)
+	state, err := json.Marshal(query.CacheSyncState{LastSyncAt: time.Now().UTC(), PublishedAt: time.Now().UTC(), SchemaVersion: query.CacheSchemaVersion, DatasetFingerprint: fingerprint})
+	require.NoError(err)
+	require.NoError(os.WriteFile(query.CacheStatePath(dir), state, 0o600))
 }

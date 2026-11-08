@@ -20,9 +20,9 @@ func TestSenderSearch(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{FromID: bob})
 	decoy := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alex@example.company")})
 	env.AddMessage(dbtest.MessageOpts{FromID: decoy})
-	header := env.AddParticipant(dbtest.ParticipantOpts{Email: new("other@elsewhere.test"), DisplayName: new("Participant Name")})
+	header := env.AddParticipant(dbtest.ParticipantOpts{Email: new("other@elsewhere.test"), DisplayName: new("Élodie Participant")})
 	id := env.AddMessage(dbtest.MessageOpts{FromID: header})
-	env.SetFromName(id, `Header_%\name`)
+	env.SetFromName(id, `Álvaro Header_%\name`)
 	env.AddMessage(dbtest.MessageOpts{FromID: header})
 	phone := env.AddParticipant(dbtest.ParticipantOpts{Phone: new("+12025550123")})
 	env.AddMessage(dbtest.MessageOpts{FromID: phone})
@@ -32,6 +32,9 @@ func TestSenderSearch(t *testing.T) {
 	}{
 		{"from:alex", []int64{100, 101, 102, 103, 105}},
 		{"from:kim", []int64{100, 101, 102, 103}},
+		{"from:élodie", []int64{106, 107}}, {"from:álvaro", []int64{106}},
+		{"from:alex@exam", []int64{100, 101, 102, 103, 105}},
+		{"from:alex@example.com from:jimbob@example.com", []int64{100, 101, 102, 103, 104}},
 		{"from:alex@example.com", []int64{100, 101, 102, 103}},
 		{"from:bob@example.com", nil},
 		{"from:example.com", []int64{1, 2, 3, 100, 101, 102, 103, 104}},
@@ -62,13 +65,13 @@ func TestDuckDBSenderSearch(t *testing.T) {
 	alex := b.AddParticipant("alex@example.com", "example.com", "Alex Kim")
 	bob := b.AddParticipant("jimbob@example.com", "example.com", "Jim Bob")
 	decoy := b.AddParticipant("alex@example.company", "example.company", "Decoy")
-	header := b.AddParticipant("other@elsewhere.test", "elsewhere.test", "Participant Name")
+	header := b.AddParticipant("other@elsewhere.test", "elsewhere.test", "Élodie Participant")
 	phone := b.AddPhoneParticipant("+12025550123", "")
 	for i, sender := range []int64{alex, alex, alex, alex, bob, decoy, header, header, phone} {
 		id := b.AddMessage(MessageOpt{Subject: "senderfixture"})
 		name := ""
 		if i == 6 {
-			name = `Header_%\name`
+			name = `Álvaro Header_%\name`
 		}
 		b.AddFrom(id, sender, name)
 	}
@@ -79,6 +82,9 @@ func TestDuckDBSenderSearch(t *testing.T) {
 	}{
 		{"from:alex", []int64{1, 2, 3, 4, 6}},
 		{"from:kim", []int64{1, 2, 3, 4}},
+		{"from:élodie", []int64{7, 8}}, {"from:álvaro", []int64{7}},
+		{"from:alex@exam", []int64{1, 2, 3, 4, 6}},
+		{"from:alex@example.com from:jimbob@example.com", []int64{1, 2, 3, 4, 5}},
 		{"from:alex@example.com", []int64{1, 2, 3, 4}},
 		{"from:bob@example.com", nil},
 		{"from:example.com", []int64{1, 2, 3, 4, 5}},

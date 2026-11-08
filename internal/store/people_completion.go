@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/search"
 )
 
 const (
@@ -37,8 +39,8 @@ func (s *Store) CompletePersonProfilesContext(
 	if err != nil {
 		return nil, err
 	}
-	queryTextLike := escapeLike(queryText)
-	queryUsernameLike := escapeLike(queryUsername)
+	queryTextLike := search.EscapeLike(queryText)
+	queryUsernameLike := search.EscapeLike(queryUsername)
 	currentEmployment := s.dialect.BoolTrueExpr("e.is_current")
 	rows, err := s.db.QueryContext(ctx, `
 		WITH bindings AS (

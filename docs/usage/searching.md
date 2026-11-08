@@ -177,7 +177,7 @@ and the order msgvault trusts them in.
 
 ### Domain Search
 
-`from:` matches full email addresses exactly, domains by suffix, and other values as literal substrings of the sender's name, address, or phone number.
+`from:` matches full email addresses exactly, domains by suffix, and other values, including partial addresses, as literal substrings of the sender's name, address, or phone number. Repeated `from:` values match any of the senders.
 
 The `from:`, `to:`, `cc:`, and `bcc:` operators recognize bare domain names with common TLDs. For example, `from:example.com` automatically matches all messages from the `example.com` domain. For uncommon TLDs, use the explicit `@` prefix: `from:@brand.pizza`.
 

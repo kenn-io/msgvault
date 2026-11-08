@@ -381,17 +381,21 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	f := seedThree(t)
 	_, err := f.db.ExecContext(f.ctx, `CREATE TABLE participants(id BIGINT PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
- INSERT INTO participants(id,email_address,display_name) VALUES(1000,'alex@example.com','Participant Kim'),(2000,'alex@example.company','Decoy');
- INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Alex Header'),(2,1000,'from','Other'),(3,2000,'from','Decoy');`)
+ INSERT INTO participants(id,email_address,display_name) VALUES(1000,'alex@example.com','Élodie Kim'),(2000,'alex@example.company','Decoy');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Álvaro Header'),(2,1000,'from','Other'),(3,2000,'from','Decoy');`)
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		term string
 		want []int64
 	}{
-		{"header", []int64{1}}, {"kim", []int64{1, 2}}, {"alex@example.com", []int64{1, 2}}, {"@example.com", []int64{1, 2}}, {"bob@example.com", nil},
+		{"from:header", []int64{1}}, {"from:kim", []int64{1, 2}}, {"from:alex@example.com", []int64{1, 2}}, {"from:@example.com", []int64{1, 2}}, {"from:bob@example.com", nil},
+		{"from:élodie", []int64{1, 2}}, {"from:álvaro", []int64{1}},
+		{"from:alex@exam", []int64{1, 2, 3}},
+		{"from:bob@example.com from:header", []int64{1}},
 	} {
 		t.Run(tc.term, func(t *testing.T) {
-			filter := vector.Filter{SenderTerms: []string{tc.term}}
+			filter, err := hybrid.BuildFilter(f.ctx, f.db, (&store.PostgreSQLDialect{}).Rebind, search.Parse(tc.term))
+			require.NoError(t, err)
 			hits, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, filter)
 			require.NoError(t, err)
 			ids := make([]int64, 0, len(hits))

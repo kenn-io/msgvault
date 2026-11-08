@@ -2,23 +2,69 @@ package search
 
 import "strings"
 
-// SenderCondition matches a normalized from: value against sender metadata.
-// Column expressions are supplied by the SQL owner; values are always bound.
-func SenderCondition(value, email, phone string, names ...string) (string, []any) {
+// EscapeLike makes SQL LIKE wildcards literal with ESCAPE '\'.
+func EscapeLike(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
+}
+
+// senderMatch classifies domains, complete addresses, and metadata fragments.
+func senderMatch(value string) (operator, pattern string, metadata bool) {
 	value = strings.ToLower(value)
-	escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	if strings.HasPrefix(value, "@") {
-		return `LOWER(` + email + `) LIKE ? ESCAPE '\'`, []any{"%" + escape.Replace(value)}
+		return "LIKE", "%" + EscapeLike(value), false
 	}
-	if strings.Contains(value, "@") {
-		return "LOWER(" + email + ") = ?", []any{value}
+	local, domain, address := strings.Cut(value, "@")
+	if address && local != "" && strings.Contains(domain, ".") && !strings.HasPrefix(domain, ".") && !strings.HasSuffix(domain, ".") {
+		return "=", value, false
 	}
-	columns := append([]string{email, phone}, names...)
-	parts := make([]string, 0, len(columns))
-	args := make([]any, 0, len(columns))
-	for _, column := range columns {
-		parts = append(parts, `LOWER(`+column+`) LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escape.Replace(value)+"%")
+	return "LIKE", "%" + EscapeLike(value) + "%", true
+}
+
+// SenderCondition matches any normalized from: value against sender metadata.
+// The SQL owner supplies column expressions and its Unicode folding function.
+func SenderCondition(values []string, email, phone string, lower func(string) string, names ...string) (string, []any) {
+	var parts []string
+	var args []any
+	for _, value := range values {
+		operator, pattern, metadata := senderMatch(value)
+		columns := []string{email}
+		if metadata {
+			columns = append(columns, phone)
+			columns = append(columns, names...)
+		}
+		for _, column := range columns {
+			condition := lower("COALESCE("+column+", '')") + " " + operator + " ?"
+			if operator == "LIKE" {
+				condition += ` ESCAPE '\'`
+			}
+			parts = append(parts, condition)
+			args = append(args, pattern)
+		}
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", args
+}
+
+// SenderLookup shares correlated and participant-first message lookups.
+// Both forms bind the same arguments so adaptive search can switch between them.
+func SenderLookup(values []string, lower func(string) string) (condition, matching string, args []any) {
+	participant, args := SenderCondition(values, "p2.email_address", "p2.phone_number", lower, "p2.display_name")
+	predicate := participant
+	matching = `SELECT mr2.message_id FROM message_recipients mr2 WHERE mr2.recipient_type = 'from'
+  AND mr2.participant_id IN (SELECT p2.id FROM participants p2 WHERE ` + participant + `)`
+	var headers []string
+	for _, value := range values {
+		_, pattern, metadata := senderMatch(value)
+		if metadata {
+			headers = append(headers, lower("COALESCE(mr2.display_name, '')")+` LIKE ? ESCAPE '\'`)
+			args = append(args, pattern)
+		}
+	}
+	if len(headers) > 0 {
+		header := "(" + strings.Join(headers, " OR ") + ")"
+		predicate = "(" + participant + " OR " + header + ")"
+		matching += ` UNION SELECT mr2.message_id FROM message_recipients mr2 WHERE mr2.recipient_type = 'from' AND ` + header
+	}
+	condition = `EXISTS (SELECT 1 FROM message_recipients mr2 JOIN participants p2 ON p2.id = mr2.participant_id
+  WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from' AND ` + predicate + `)`
+	return condition, matching, args
 }

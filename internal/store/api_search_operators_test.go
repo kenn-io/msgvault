@@ -17,7 +17,7 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	carol := f.EnsureParticipant("carol@example.com", "Carol", "example.com")
 	literal := f.EnsureParticipant("a_lice%tag@example.com", "Literal", "example.com")
 	decoy := f.EnsureParticipant("axliceZtag@example.com", "Decoy", "example.com")
-	alex := f.EnsureParticipant("alex@example.com", "Alex Kim", "example.com")
+	alex := f.EnsureParticipant("alex@example.com", "Élodie Alex Kim", "example.com")
 	jim := f.EnsureParticipant("jimbob@example.com", "Jim Bob", "example.com")
 	domainDecoy := f.EnsureParticipant("alex@example.company", "Decoy", "example.company")
 	ids := f.CreateMessages(40)
@@ -35,13 +35,16 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	for i, sender := range []int64{alex, alex, alex, alex, jim, domainDecoy} {
 		requirements.NoError(f.Store.ReplaceMessageRecipients(ids[4+i], "from", []int64{sender}, nil))
 	}
-	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[10], "from", []int64{jim}, []string{`Header_%\name`}))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[10], "from", []int64{jim}, []string{`Álvaro Header_%\name`}))
 	for _, tc := range []struct {
 		input string
 		want  []int64
 	}{
 		{"from:alex", []int64{ids[4], ids[5], ids[6], ids[7], ids[9]}},
 		{"from:kim", []int64{ids[4], ids[5], ids[6], ids[7]}},
+		{"from:élodie", []int64{ids[4], ids[5], ids[6], ids[7]}}, {"from:álvaro", []int64{ids[10]}},
+		{"from:alex@exam", []int64{ids[4], ids[5], ids[6], ids[7], ids[9]}},
+		{"from:alice@example.com from:bob@example.com", []int64{ids[0], ids[1]}},
 		{"from:alex@example.com", []int64{ids[4], ids[5], ids[6], ids[7]}},
 		{"from:bob@example.com", []int64{ids[1]}},
 		{"from:example.com", []int64{ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[6], ids[7], ids[8], ids[10]}},

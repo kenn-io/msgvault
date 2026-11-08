@@ -221,13 +221,9 @@ type Chunk struct {
 // (addresses → participant IDs, labels → label IDs) so backend code
 // only deals in integers.
 //
-// Semantics match the existing SQLite search path (internal/store/api.go,
-// internal/query/sqlite.go): each repeated same-field operator becomes
-// its own AND'd EXISTS clause at the message level, so a query like
-// `from:alice from:bob` requires the message to have one `from`
-// participant matching "alice" AND another (or the same) matching
-// "bob". Within a group, IDs are OR'd (any matching participant
-// satisfies the group); across groups they are AND'd.
+// SenderTerms match any from: value against sender metadata. Other repeated
+// operators use independent message-level requirements; ID groups are OR within
+// each group and AND across groups.
 //
 //   - Sender/SenderExact/RecipientAny/To/Cc/Bcc/LabelGroups are AND-of-OR groups: each inner
 //     slice is one search-token resolution (substring → matching IDs).
@@ -254,7 +250,7 @@ type Filter struct {
 	MessageIDs         []int64   // exact bounded candidate population; empty = unrestricted
 	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
 	ConversationIDs    []int64   // exact messages.conversation_id values; empty = unrestricted
-	SenderTerms        []string  // normalized from: values, evaluated against message and participant names
+	SenderTerms        []string  // any normalized from: value; message and participant metadata
 	SenderGroups       [][]int64 // structured domain selections; AND across, OR within
 	SenderExactGroups  [][]int64 // exact structured sender; from rows OR messages.sender_id
 	RecipientAnyGroups [][]int64 // exact structured recipient; to/cc/bcc rows are OR'd

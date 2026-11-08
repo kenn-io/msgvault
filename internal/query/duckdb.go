@@ -955,14 +955,6 @@ func duckDBMessageTypeCondition(alias string, messageTypes []string) (string, []
 	return "(" + strings.Join(conditions, " OR ") + ")", args
 }
 
-// escapeILIKE escapes ILIKE wildcard characters (% and _) in user input.
-func escapeILIKE(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\") // Escape backslash first
-	s = strings.ReplaceAll(s, "%", "\\%")
-	s = strings.ReplaceAll(s, "_", "\\_")
-	return s
-}
-
 func aggregateTextSearchParts(termPattern string) ([]string, []any) {
 	return []string{
 		`msg.subject ILIKE ? ESCAPE '\'`,
@@ -1002,7 +994,7 @@ func (e *DuckDBEngine) buildAggregateSearchConditions(q *search.Query, keyColumn
 	// key columns when provided (e.g., label name in Labels view).
 	// Uses ILIKE for performance on Parquet scans.
 	for _, term := range q.TextTerms {
-		termPattern := "%" + escapeILIKE(term) + "%"
+		termPattern := "%" + search.EscapeLike(term) + "%"
 		parts, termArgs := aggregateTextSearchParts(termPattern)
 		for _, col := range keyColumns {
 			parts = append(parts, col+` ILIKE ? ESCAPE '\'`)
@@ -1049,7 +1041,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 
 	// subject: filter
 	for _, subj := range q.SubjectTerms {
-		subjPattern := "%" + escapeILIKE(subj) + "%"
+		subjPattern := "%" + search.EscapeLike(subj) + "%"
 		conditions = append(conditions, "msg.subject ILIKE ? ESCAPE '\\'")
 		args = append(args, subjPattern)
 	}
@@ -1061,7 +1053,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 			continue
 		}
 		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeILIKE(listID)+"%")
+		args = append(args, "%"+search.EscapeLike(listID)+"%")
 	}
 	// account: and received: match the derived account projection.
 	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
@@ -1071,7 +1063,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
 	for _, filename := range q.Filenames {
 		conditions = append(conditions, e.filenameCondition())
-		args = append(args, "%"+escapeILIKE(filename)+"%")
+		args = append(args, "%"+search.EscapeLike(filename)+"%")
 	}
 
 	// label: filter - case-insensitive substring match.
@@ -1092,7 +1084,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		var labelParts []string
 		for _, label := range q.Labels {
 			labelParts = append(labelParts, labelKeyCol+` ILIKE ? ESCAPE '\'`)
-			args = append(args, "%"+escapeILIKE(label)+"%")
+			args = append(args, "%"+search.EscapeLike(label)+"%")
 		}
 		conditions = append(conditions, "("+strings.Join(labelParts, " OR ")+")")
 	} else {
@@ -1104,7 +1096,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 				WHERE ml_label.message_id = msg.id
 				  AND l_label.name ILIKE ? ESCAPE '\'
 			)`)
-			args = append(args, "%"+escapeILIKE(label)+"%")
+			args = append(args, "%"+search.EscapeLike(label)+"%")
 		}
 	}
 
@@ -1166,14 +1158,14 @@ func (e *DuckDBEngine) buildStatsSearchConditions(q *search.Query, groupBy ViewT
 			labelParts := make([]string, 0, len(q.Labels))
 			for _, label := range q.Labels {
 				labelParts = append(labelParts, `lbl_rs.name ILIKE ? ESCAPE '\'`)
-				labelRowArgs = append(labelRowArgs, "%"+escapeILIKE(label)+"%")
+				labelRowArgs = append(labelRowArgs, "%"+search.EscapeLike(label)+"%")
 			}
 			labelRowConditions = append(labelRowConditions,
 				"("+strings.Join(labelParts, " OR ")+")")
 			q.Labels = nil
 		}
 		for _, term := range q.TextTerms {
-			termPattern := "%" + escapeILIKE(term) + "%"
+			termPattern := "%" + search.EscapeLike(term) + "%"
 			parts, termArgs := aggregateTextSearchParts(termPattern)
 			parts = append(parts, `lbl_rs.name ILIKE ? ESCAPE '\'`)
 			termArgs = append(termArgs, termPattern)
@@ -1195,7 +1187,7 @@ func (e *DuckDBEngine) buildStatsSearchConditions(q *search.Query, groupBy ViewT
 	// also use EXISTS for the grouping key because the stats query has no
 	// participant/label joins.
 	for _, term := range q.TextTerms {
-		termPattern := "%" + escapeILIKE(term) + "%"
+		termPattern := "%" + search.EscapeLike(term) + "%"
 		parts, termArgs := aggregateTextSearchParts(termPattern)
 		switch groupBy {
 		case ViewSenderNames, ViewRecipientNames:
@@ -1677,7 +1669,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			WHERE ml.message_id = msg.id
 			  AND lbl.name ILIKE ? ESCAPE '\'
 		)`)
-		args = append(args, escapeILIKE(filter.Label))
+		args = append(args, search.EscapeLike(filter.Label))
 	} else if filter.MatchesEmpty(ViewLabels) {
 		conditions = append(conditions, "NOT EXISTS (SELECT 1 FROM ml WHERE ml.message_id = msg.id)")
 	}
@@ -2378,7 +2370,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			continue
 		}
 		conditions = append(conditions, "m.list_id ILIKE ? ESCAPE '\\'")
-		args = append(args, "%"+escapeSQLiteLike(listID)+"%")
+		args = append(args, "%"+search.EscapeLike(listID)+"%")
 	}
 	// account: and received: match the derived account projection.
 	if accountConditions, accountArgs := search.AccountConditions(q, "m"); len(accountConditions) > 0 {
@@ -2388,7 +2380,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "m")
 	for _, filename := range q.Filenames {
 		conditions = append(conditions, `EXISTS (SELECT 1 FROM sqlite_db.attachments fa WHERE fa.message_id = m.id AND fa.filename ILIKE ? ESCAPE '\')`)
-		args = append(args, "%"+escapeILIKE(filename)+"%")
+		args = append(args, "%"+search.EscapeLike(filename)+"%")
 	}
 
 	if len(q.MessageTypes) > 0 {
@@ -3283,7 +3275,7 @@ func (e *DuckDBEngine) buildSearchCriteria(q *search.Query) ([]string, []any) {
 	// Uses ILIKE for performance on Parquet scans.
 	if len(q.TextTerms) > 0 {
 		for _, term := range q.TextTerms {
-			termPattern := "%" + escapeILIKE(term) + "%"
+			termPattern := "%" + search.EscapeLike(term) + "%"
 			conditions = append(conditions, `(
 				msg.subject ILIKE ? ESCAPE '\' OR
 				COALESCE(msg.snippet, '') ILIKE ? ESCAPE '\' OR
@@ -3319,7 +3311,7 @@ func (e *DuckDBEngine) buildSearchCriteria(q *search.Query) ([]string, []any) {
 	if len(q.SubjectTerms) > 0 {
 		for _, term := range q.SubjectTerms {
 			conditions = append(conditions, "msg.subject ILIKE ? ESCAPE '\\'")
-			args = append(args, "%"+escapeILIKE(term)+"%")
+			args = append(args, "%"+search.EscapeLike(term)+"%")
 		}
 	}
 
@@ -3330,7 +3322,7 @@ func (e *DuckDBEngine) buildSearchCriteria(q *search.Query) ([]string, []any) {
 			continue
 		}
 		conditions = append(conditions, `msg.list_id ILIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escapeILIKE(listID)+"%")
+		args = append(args, "%"+search.EscapeLike(listID)+"%")
 	}
 	// account: and received: match the derived account projection.
 	if accountConditions, accountArgs := search.AccountConditions(q, "msg"); len(accountConditions) > 0 {
@@ -3340,7 +3332,7 @@ func (e *DuckDBEngine) buildSearchCriteria(q *search.Query) ([]string, []any) {
 	conditions, args = appendAccountScopeConditions(conditions, args, q.AccountScopes, "msg")
 	for _, filename := range q.Filenames {
 		conditions = append(conditions, e.filenameCondition())
-		args = append(args, "%"+escapeILIKE(filename)+"%")
+		args = append(args, "%"+search.EscapeLike(filename)+"%")
 	}
 
 	// Label filter - case-insensitive substring match
@@ -3351,7 +3343,7 @@ func (e *DuckDBEngine) buildSearchCriteria(q *search.Query) ([]string, []any) {
 				JOIN lbl ON lbl.id = ml.label_id
 				WHERE ml.message_id = msg.id AND lbl.name ILIKE ? ESCAPE '\'
 			)`)
-			args = append(args, "%"+escapeILIKE(label)+"%")
+			args = append(args, "%"+search.EscapeLike(label)+"%")
 		}
 	}
 
@@ -3417,7 +3409,7 @@ func appendDuckDBRecipientSearchCondition(
 		address = strings.ToLower(address)
 		if strings.HasPrefix(address, "@") {
 			addressParts = append(addressParts, `LOWER(p_recipient.email_address) LIKE ? ESCAPE '\'`)
-			recipientArgs = append(recipientArgs, "%"+escapeILIKE(address))
+			recipientArgs = append(recipientArgs, "%"+search.EscapeLike(address))
 		} else {
 			addressParts = append(addressParts,
 				"(LOWER(p_recipient.email_address) = ? OR p_recipient.phone_number = ?)")
@@ -3462,9 +3454,10 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 }
 
 func appendDuckDBSenderConditions(conditions []string, args []any, addresses []string) ([]string, []any) {
-	for _, address := range addresses {
-		from, fromArgs := search.SenderCondition(address, "p.email_address", "p.phone_number", "p.display_name", "mr.display_name")
-		direct, directArgs := search.SenderCondition(address, "p.email_address", "p.phone_number", "p.display_name")
+	if len(addresses) > 0 {
+		lower := func(column string) string { return "LOWER(" + column + ")" }
+		from, fromArgs := search.SenderCondition(addresses, "p.email_address", "p.phone_number", lower, "p.display_name", "mr.display_name")
+		direct, directArgs := search.SenderCondition(addresses, "p.email_address", "p.phone_number", lower, "p.display_name")
 		conditions = append(conditions, `(EXISTS (
 			SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id AND mr.recipient_type = 'from' AND `+from+`)

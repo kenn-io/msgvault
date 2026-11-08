@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -61,8 +62,8 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
-	for _, term := range f.SenderTerms {
-		predicate, senderArgs := search.SenderCondition(term, "p.email_address", "p.phone_number", "p.display_name", "mr.display_name")
+	if len(f.SenderTerms) > 0 {
+		predicate, senderArgs := search.SenderCondition(f.SenderTerms, "p.email_address", "p.phone_number", (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "p.display_name", "mr.display_name")
 		for _, arg := range senderArgs {
 			predicate = strings.Replace(predicate, "?", bind(arg), 1)
 		}

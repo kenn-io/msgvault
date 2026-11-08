@@ -4,17 +4,13 @@ package mcp
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -244,8 +240,9 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
 	db, _ := sqlobserve.Open(t, nil)
 	seedMetadataSearch(t, db)
-	_, err := db.ExecContext(t.Context(), `INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Alex Kim'), (2,'jimbob@example.com','Jim Bob');
- INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from'), (2,2,'from');`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Élodie Alex Kim'), (2,'jimbob@example.com','Jim Bob');
+ INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from'), (2,2,'from');
+ UPDATE message_recipients SET display_name = 'Álvaro Header' WHERE message_id = 1;`)
 	require.NoError(t, err)
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
@@ -254,6 +251,8 @@ func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
 		want  []int64
 	}{
 		{"from:alex", []int64{1}}, {"from:kim", []int64{1}}, {"from:bob@example.com", nil},
+		{"from:élodie", []int64{1}}, {"from:álvaro", []int64{1}}, {"from:alex@exam", []int64{1}},
+		{"from:alex@example.com from:jimbob@example.com", []int64{1, 2}},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": tc.query})
@@ -281,7 +280,7 @@ func TestSearchMetadataSenderParquetRoundTrip(t *testing.T) {
 	datasets := map[string]string{
 		"relationship_activity": `SELECT 1::BIGINT message_id, NULL::BIGINT canonical_id, false unsent WHERE false`,
 		"messages":              `SELECT id, 1::BIGINT source_id, CAST(id AS VARCHAR) source_message_id, 1::BIGINT conversation_id, 'senderfixture' subject, '' snippet, TIMESTAMP '2026-01-01' sent_at, 10::BIGINT size_estimate, false has_attachments, false archive_only, NULL::TIMESTAMP deleted_from_source_at FROM range(1,6) t(id)`,
-		"participants":          `SELECT * FROM (VALUES (1,'alex@example.com','example.com','Alex Kim'),(2,'jimbob@example.com','example.com','Jim Bob')) t(id,email_address,domain,display_name)`,
+		"participants":          `SELECT * FROM (VALUES (1,'alex@example.com','example.com','Élodie Alex Kim'),(2,'jimbob@example.com','example.com','Jim Bob')) t(id,email_address,domain,display_name)`,
 		"message_recipients":    `SELECT id message_id, CASE WHEN id=5 THEN 2 ELSE 1 END participant_id, 'from' recipient_type, '' display_name FROM range(1,6) t(id)`,
 		"sources":               `SELECT 1::BIGINT id, 'reader@example.com' identifier`,
 		"conversations":         `SELECT 1::BIGINT id, 'thread' source_conversation_id`,
@@ -289,22 +288,7 @@ func TestSearchMetadataSenderParquetRoundTrip(t *testing.T) {
 		"message_labels":        `SELECT 1::BIGINT message_id, 1::BIGINT label_id WHERE false`,
 		"attachments":           `SELECT 1::BIGINT message_id, 10::BIGINT size WHERE false`,
 	}
-	for _, dataset := range query.RequiredParquetDirs {
-		path := filepath.Join(dir, dataset)
-		require.NoError(os.MkdirAll(path, 0o700))
-		rows := datasets[dataset]
-		if rows == "" {
-			rows = "SELECT 1 AS unused WHERE false"
-		}
-		file := strings.ReplaceAll(filepath.ToSlash(filepath.Join(path, "rows.parquet")), "'", "''")
-		_, err = db.ExecContext(t.Context(), "COPY ("+rows+") TO '"+file+"' (FORMAT PARQUET)")
-		require.NoError(err)
-	}
-	fingerprint, err := query.CacheDatasetFingerprint(dir)
-	require.NoError(err)
-	state, err := json.Marshal(query.CacheSyncState{LastSyncAt: time.Now().UTC(), PublishedAt: time.Now().UTC(), SchemaVersion: query.CacheSchemaVersion, DatasetFingerprint: fingerprint})
-	require.NoError(err)
-	require.NoError(os.WriteFile(query.CacheStatePath(dir), state, 0o600))
+	writeSearchParquetFixture(t, db, dir, datasets)
 	engine, err := query.NewDuckDBEngine(t.Context(), dir, "", nil, query.DuckDBOptions{DisableLegacyAnalyticalViews: true})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(engine.Close()) })
@@ -313,7 +297,7 @@ func TestSearchMetadataSenderParquetRoundTrip(t *testing.T) {
 	for _, tc := range []struct {
 		input string
 		want  []int64
-	}{{"from:alex", []int64{1, 2, 3, 4}}, {"from:bob@example.com", nil}} {
+	}{{"from:alex", []int64{1, 2, 3, 4}}, {"from:bob@example.com", nil}, {"from:élodie", []int64{1, 2, 3, 4}}, {"from:alex@exam", []int64{1, 2, 3, 4}}, {"from:alex@example.com from:jimbob@example.com", []int64{1, 2, 3, 4, 5}}} {
 		t.Run(tc.input, func(t *testing.T) {
 			response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": tc.input})
 			ids := make([]int64, 0, len(response.Data))
