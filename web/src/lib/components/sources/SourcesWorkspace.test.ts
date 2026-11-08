@@ -337,6 +337,17 @@ describe('SourcesWorkspace', () => {
     expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
   });
 
+  it('links a source without attachment rules to Settings without an empty rules section', async () => {
+    const onOpenSettings = vi.fn();
+    const fetchFn = api([source({ source_type: 'github', identifier: 'github.com:user:1', display_name: 'octocat', scheduled: true, schedule: '*/15 * * * *' })]);
+    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, []), onOpenSettings });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details for octocat' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit in Settings › Sources' }));
+    expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith('sources');
+    expect(screen.queryByText('Attachment rules')).toBeNull();
+    expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/settings'))).toBe(false);
+  });
+
   it('keeps contacts usable when mail status fails', async () => {
     const fetch = api([], url => url.pathname.endsWith('/sources/status') ? Response.json({ message: 'Mail status unavailable' }, { status: 500 }) : undefined, [contact]);
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });

@@ -59,7 +59,7 @@ export function syncCommand(source: Pick<SourceStatus, 'id' | 'source_type' | 's
   return `msgvault ${source.source_type !== 'msmail' && !source.last_successful_sync ? 'sync-full' : 'sync'} --source-id ${source.id}`;
 }
 
-/** Source types whose schedule, filters, and attachment rules live in the settings catalog. */
+/** Source types whose settings live in the settings catalog, by the catalog's key prefix. */
 export const SOURCE_SETTING_PREFIX: Readonly<Record<string, string>> = {
   beeper: 'beeper',
   slack: 'slack',
@@ -68,6 +68,9 @@ export const SOURCE_SETTING_PREFIX: Readonly<Record<string, string>> = {
   discord: 'discord',
   teams: 'teams',
 };
+
+/** Source types whose catalog settings include attachment rules. */
+export const SOURCE_ATTACHMENT_RULES: ReadonlySet<string> = new Set(['beeper', 'slack', 'inline', 'discord', 'teams']);
 
 
 const SYNC_UNAVAILABLE: Readonly<Record<string, string>> = {

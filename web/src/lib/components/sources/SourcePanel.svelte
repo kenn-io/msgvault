@@ -6,7 +6,7 @@
   import type { SourceStatus, Setting } from '../../api/generated/models';
   import { persistedValue, readOnlyValue } from '../../settings/catalog';
   import { scheduleSummary } from '../../settings/cron';
-  import { isOnDemandSourceType, sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
+  import { isOnDemandSourceType, sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_ATTACHMENT_RULES, SOURCE_SETTING_PREFIX } from '../../sources/labels';
   import { operationStateChip } from '../../operations/labels';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
@@ -31,6 +31,7 @@
   let error = $state('');
   let controller: AbortController | undefined;
   const prefix = $derived(SOURCE_SETTING_PREFIX[source.source_type]);
+  const hasAttachmentRules = $derived(SOURCE_ATTACHMENT_RULES.has(source.source_type));
   const title = $derived(source.display_name || source.identifier);
   const failure = $derived(sourceFailure(source));
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
@@ -41,7 +42,7 @@
     const setting = settings.find(setting => setting.key === `${prefix}.${suffix}`);
     return setting ? [{ setting, label }] : [];
   }));
-  onMount(() => { if (prefix) void load(); });
+  onMount(() => { if (hasAttachmentRules) void load(); });
   onDestroy(() => controller?.abort());
   async function load(): Promise<void> {
     controller?.abort();
@@ -89,13 +90,15 @@
       {#if source.scheduled && source.next_sync_at}<span class="muted">Next sync <time datetime={source.next_sync_at} title={formatDateTime(source.next_sync_at, 'long')}>{formatDateTime(source.next_sync_at)}</time></span>{/if}
     </section>
     {#if prefix}
-      <section class="block" aria-label="Attachments">
-        <h3>Attachment rules</h3>
-        <span class="muted">Defaults for {sourceTypeLabel(source.source_type)} accounts. Account settings can override these values.</span>
-        {#if loading}<span class="muted">Loading…</span>{:else if error}<p class="failure" role="alert">{error}</p><Button label="Retry" onclick={() => void load()} />{:else}
-          {#each attachments as { setting, label } (setting.key)}<div class="field"><span class="label">{label}</span><span>{setting.kind === 'boolean' ? persistedValue(setting) ? 'On' : 'Off' : readOnlyValue(setting)}</span></div>{/each}
-        {/if}
-      </section>
+      {#if hasAttachmentRules}
+        <section class="block" aria-label="Attachments">
+          <h3>Attachment rules</h3>
+          <span class="muted">Defaults for {sourceTypeLabel(source.source_type)} accounts. Account settings can override these values.</span>
+          {#if loading}<span class="muted">Loading…</span>{:else if error}<p class="failure" role="alert">{error}</p><Button label="Retry" onclick={() => void load()} />{:else}
+            {#each attachments as { setting, label } (setting.key)}<div class="field"><span class="label">{label}</span><span>{setting.kind === 'boolean' ? persistedValue(setting) ? 'On' : 'Off' : readOnlyValue(setting)}</span></div>{/each}
+          {/if}
+        </section>
+      {/if}
       <Button size="sm" label="Edit in Settings › Sources" onclick={onOpenSettings} />
     {/if}
     {#if runs.length > 0}
