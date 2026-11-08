@@ -116,6 +116,7 @@ func (s *Store) ReconcileImportantDateIdentityContext(ctx context.Context, reque
 			switch delivery.State {
 			case ImportantDateClaimed, ImportantDateIssueInFlight, ImportantDateIssueCreated, ImportantDateNotifyInFlight, ImportantDateUnknown:
 				return errors.New("resolve uncertain or pending deliveries before reconciliation")
+			case ImportantDateRetryIssue, ImportantDateDelivered, ImportantDateCancelled:
 			}
 		}
 		return s.recordImportantDateReconciliationTx(fenced, tx, request, lineage, requestHash, id.String(), &result)
@@ -152,7 +153,7 @@ func validateImportantDateSplitEvidence(lineage ImportantDateLineage, reviewed [
 			return errors.New("clear current contact frequency before resolving ambiguous split evidence")
 		}
 		for _, relationship := range person.Relationships {
-			if relationship.Relationship.TypeSlug == "parent" && relationship.Relationship.Status == RelationshipStatusActive {
+			if relationship.Relationship.TypeSlug == relationshipTypeParent && relationship.Relationship.Status == RelationshipStatusActive {
 				return errors.New("withdraw active parent relationships before resolving ambiguous split evidence")
 			}
 		}
@@ -324,7 +325,7 @@ func (s *Store) recordImportantDateReconciliationTx(ctx context.Context, tx *log
 	for _, person := range lineage.People {
 		for _, view := range person.Relationships {
 			relationship := view.Relationship
-			if relationship.TypeSlug == "parent" && relationship.Status == RelationshipStatusActive && relationship.SourcePersonID == person.ID {
+			if relationship.TypeSlug == relationshipTypeParent && relationship.Status == RelationshipStatusActive && relationship.SourcePersonID == person.ID {
 				if _, err := tx.ExecContext(ctx, `UPDATE important_date_consents SET granted = 0 WHERE subject_uid = ?`, "person/"+view.CounterpartVCardUID); err != nil {
 					return fmt.Errorf("revoke reconciled child consent: %w", err)
 				}

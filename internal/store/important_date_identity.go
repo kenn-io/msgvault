@@ -80,7 +80,7 @@ func (s *Store) importantDateOccurrenceGuardedContext(ctx context.Context, key s
 			AND other.original_subject = b.original_subject AND other.meaning = b.meaning
 		JOIN important_date_deliveries d ON d.occurrence_key = other.resolved_subject || ':' || other.meaning || ':' || CAST(? AS TEXT)
 		WHERE b.resolved_subject = ? AND b.meaning = ? AND other.resolved_subject <> b.resolved_subject
-		AND d.state <> 'retry_issue')`, year, subject, meaning).Scan(&guarded)
+		AND d.state <> 'retry_issue')`, strconv.Itoa(year), subject, meaning).Scan(&guarded)
 	if err != nil {
 		return false, fmt.Errorf("check equivalent important-date occurrences: %w", err)
 	}

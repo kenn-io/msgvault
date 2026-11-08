@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const relationshipTypeParent = "parent"
+
 var (
 	ErrRelationshipTypeNotFound = errors.New("relationship type not found")
 )
@@ -41,7 +43,7 @@ const relatedTypeFriend = "friend"
 // that cross-checks this list against that snapshot once it exists.
 var relatedTypeValues = []string{
 	"contact", "acquaintance", relatedTypeFriend, "met", "co-worker", "colleague",
-	"co-resident", "neighbor", "child", "parent", "sibling", "spouse", "kin",
+	"co-resident", "neighbor", "child", relationshipTypeParent, "sibling", "spouse", "kin",
 	"muse", "crush", "date", "sweetheart", "me", "agent", "emergency",
 }
 

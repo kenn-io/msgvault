@@ -213,7 +213,7 @@ func (s *Store) addPersonRelationshipTx(
 	); err != nil {
 		return nil, err
 	}
-	if relationshipType.Slug == "parent" {
+	if relationshipType.Slug == relationshipTypeParent {
 		if err := s.revokePersonImportantDateConsentTx(ctx, tx, targetID); err != nil {
 			return nil, err
 		}
@@ -347,7 +347,7 @@ func (s *Store) patchPersonRelationshipOnce(
 		if txErr != nil {
 			return txErr
 		}
-		if updated.TypeSlug == "parent" {
+		if updated.TypeSlug == relationshipTypeParent {
 			return s.revokePersonImportantDateConsentTx(ctx, tx, targetID)
 		}
 		return nil
@@ -404,7 +404,7 @@ func (s *Store) deletePersonRelationshipOnce(ctx context.Context, id, expectedRe
 		if err := s.bumpPersonVCardProjectionsTx(ctx, tx, sourceID, targetID); err != nil {
 			return err
 		}
-		if current.TypeSlug == "parent" {
+		if current.TypeSlug == relationshipTypeParent {
 			return s.revokePersonImportantDateConsentTx(ctx, tx, targetID)
 		}
 		return nil
