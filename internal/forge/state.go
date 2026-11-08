@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"slices"
+	"time"
 )
 
 // stateVersion is the version of the resume state's shape.
@@ -33,6 +34,10 @@ type syncState struct {
 type queuedThread struct {
 	Ref          ThreadRef      `json:"ref"`
 	Continuation jsontext.Value `json:"continuation,omitempty"`
+	// ReadAt is when the fetch read the thread's first page. A fetch that
+	// pauses keeps it, since a change made since to a page already read is
+	// not in the archive.
+	ReadAt time.Time `json:"read_at,omitzero"`
 }
 
 func decodeState(blob string) (syncState, error) {
@@ -83,6 +88,7 @@ func (s *syncState) queue(found []ThreadRef) int {
 			// earlier post may be what changed.
 			queued.Ref = ref
 			queued.Continuation = nil
+			queued.ReadAt = time.Time{}
 		}
 		if queued.Ref.Reason == "" {
 			queued.Ref.Reason = reason

@@ -20,16 +20,17 @@ const conversationMetadataKey = "forge"
 
 // threadFacts is what a thread's conversation records about it: enough to
 // fetch it again, its URL, why the forge last notified the account, and
-// when a sync last fetched it.
+// when a sync last fetched it, from reading its first page to finishing.
 type threadFacts struct {
 	Ref       ThreadRef `json:"ref"`
 	URL       string    `json:"url,omitempty"`
+	ReadAt    time.Time `json:"read_at"`
 	CheckedAt time.Time `json:"checked_at"`
 }
 
 // recordThread stores a fetched thread's facts on its conversation. A
 // thread found by search keeps the reason its last notification gave.
-func recordThread(ctx context.Context, st *store.Store, sourceID int64, head ThreadHead, ref ThreadRef, checkedAt time.Time) error {
+func recordThread(ctx context.Context, st *store.Store, sourceID int64, head ThreadHead, ref ThreadRef, readAt, checkedAt time.Time) error {
 	conversationID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, head.ConversationID, ConversationType, head.Title)
 	if err != nil {
 		return fmt.Errorf("resolve conversation of %s: %w", ref.Name(), err)
@@ -50,7 +51,7 @@ func recordThread(ctx context.Context, st *store.Store, sourceID int64, head Thr
 			ref.Reason = previous.Ref.Reason
 		}
 	}
-	encoded, err := json.Marshal(threadFacts{Ref: ref, URL: head.URL, CheckedAt: checkedAt.UTC()}, json.Deterministic(true))
+	encoded, err := json.Marshal(threadFacts{Ref: ref, URL: head.URL, ReadAt: readAt.UTC(), CheckedAt: checkedAt.UTC()}, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode facts of %s: %w", ref.Name(), err)
 	}
@@ -89,7 +90,11 @@ func (k *knownThreads) load(ctx context.Context) error {
 	for _, id := range ids {
 		facts, ok := decodeFacts(metadata[id])
 		if ok {
-			k.loaded = append(k.loaded, KnownThread{Ref: facts.Ref, CheckedAt: facts.CheckedAt})
+			readAt := facts.ReadAt
+			if readAt.IsZero() || readAt.After(facts.CheckedAt) {
+				readAt = facts.CheckedAt
+			}
+			k.loaded = append(k.loaded, KnownThread{Ref: facts.Ref, ReadAt: readAt, CheckedAt: facts.CheckedAt})
 			k.updated[facts.Ref.Key] = facts.Ref.UpdatedAt
 		}
 	}

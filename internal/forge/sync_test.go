@@ -840,3 +840,45 @@ func TestAPIFollowsRedirectsOnlyOnItsInstance(t *testing.T) {
 	}
 	assert.Empty(local, "nothing reaches the other host")
 }
+
+func TestAThreadFetchedAcrossSyncsIsKnownFromWhenItsFirstPageWasRead(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{
+		{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")},
+		{post("c1", "issue_comment", ann, "", "Two.", "2026-11-02T10:00:00Z")},
+	}
+	read := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	clock := read
+	syncer := NewSyncer(st, f, nil)
+	syncer.now = func() time.Time { return clock }
+
+	// The first sync reads the opening post, then reaches a rate limit.
+	f.failures["i1"] = fetchFailure{page: 1, err: &RateLimitError{Resource: "core", Reset: read.Add(time.Hour)}}
+	paused, err := syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	require.True(paused.Paused)
+
+	// An hour later the next sync finishes the thread.
+	delete(f.failures, "i1")
+	clock = read.Add(time.Hour)
+	_, err = syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	var known []KnownThread
+	f.discover = func(ctx context.Context, threads KnownThreads, _ func([]ThreadRef, []byte) error) error {
+		return threads.Each(ctx, func(k KnownThread) error {
+			known = append(known, k)
+			return nil
+		})
+	}
+	_, err = syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	require.Len(known, 1)
+	assert.True(read.Equal(known[0].ReadAt), "an edit to the opening post during the pause is after ReadAt")
+	assert.True(read.Add(time.Hour).Equal(known[0].CheckedAt))
+}

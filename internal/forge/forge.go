@@ -163,9 +163,12 @@ type KnownThreads interface {
 	Each(ctx context.Context, fn func(KnownThread) error) error
 }
 
-// KnownThread is an archived thread and when a sync last fetched it.
+// KnownThread is an archived thread and when a sync last fetched it:
+// ReadAt is when that fetch read the thread's first page, so a change made
+// since may be missing from the archive, and CheckedAt is when it finished.
 type KnownThread struct {
 	Ref       ThreadRef
+	ReadAt    time.Time
 	CheckedAt time.Time
 }
 

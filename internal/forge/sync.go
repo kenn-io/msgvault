@@ -334,6 +334,9 @@ func (r *run) archive(ctx context.Context, thread *queuedThread) error {
 	if !r.owners.Allows(owner) {
 		return errExcluded
 	}
+	if thread.Continuation == nil {
+		thread.ReadAt = r.syncer.now()
+	}
 	var head ThreadHead
 	err = forge.Fetch(ctx, thread.Ref, thread.Continuation, func(page ThreadHead, posts []Post, next []byte) error {
 		head = page
@@ -358,7 +361,7 @@ func (r *run) archive(ctx context.Context, thread *queuedThread) error {
 	if err != nil {
 		return err
 	}
-	return recordThread(ctx, r.scoped, r.source.ID, head, thread.Ref, r.syncer.now())
+	return recordThread(ctx, r.scoped, r.source.ID, head, thread.Ref, thread.ReadAt, r.syncer.now())
 }
 
 // write archives one post. A post the archive can't store, such as one
