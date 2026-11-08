@@ -1035,8 +1035,8 @@ anyway: the response sets `"counts_pending": true`, and every account's
 
 Once an account-count snapshot exists, listings return it at once while a
 refresh runs, even after a long gap between listings. The response carries
-the actual previous counts, `"counts_pending": false`, `"stale": true`, and
-the original `as_of`. This also applies to fast archives after new mail arrives.
+the actual previous counts, `"stale": true`, and the original `as_of`.
+It omits `counts_pending`. This also applies to fast archives after new mail arrives.
 Virtual-account catalogs stay current for their existing two-minute interval.
 An expired catalog returns at once with `"virtual_accounts_unavailable": true`
 while refreshing, unless confirmed account identities have changed. Identity
