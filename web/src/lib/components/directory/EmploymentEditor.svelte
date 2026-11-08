@@ -99,20 +99,34 @@
     });
   }
 
+  // The fields Edit job changes, as the form holds them, so the draft and a saved job compare field by field.
+  const jobFields = (job: Employment) => ({ title: job.title ?? '', role: job.role ?? '', department: job.department ?? '', location: job.location ?? '', description: job.description ?? '', start_date: partialDate(job.start_date), end_date: partialDate(job.end_date), is_current: job.is_current });
+  type JobFields = ReturnType<typeof jobFields>;
+
+  // Yours is only what the person changed since opening; every other field keeps the version being written.
+  function merged(current: Employment | undefined): JobFields {
+    const draft: JobFields = { title, role, department, location, description, start_date: startDate, end_date: endDate, is_current: isCurrent };
+    if (!current || !opened) return draft;
+    const was = jobFields(opened.data), now = jobFields(current);
+    const same = (a: string | boolean, b: string | boolean) => typeof a === 'string' && typeof b === 'string' ? a.trim() === b.trim() : a === b;
+    return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, same(draft[key], was[key]) ? now[key] : draft[key]])) as JobFields;
+  }
+
   function body(current: Employment | undefined = undefined): EmploymentBody {
+    const job = merged(current);
     return {
       person_id: current?.person_id ?? personID,
       organization_id: current?.organization_id ?? Number(organizationID),
       source: (current?.source ?? 'user') as EmploymentBody['source'],
       ...(current?.source_ref === undefined ? {} : { source_ref: current.source_ref }),
-      ...(title.trim() ? { title: title.trim() } : { title: null }),
-      ...(role.trim() ? { role: role.trim() } : { role: null }),
-      ...(department.trim() ? { department: department.trim() } : { department: null }),
-      ...(location.trim() ? { location: location.trim() } : { location: null }),
-      ...(description.trim() ? { description: description.trim() } : { description: null }),
-      ...(startDate.trim() ? { start_date: startDate.trim() } : { start_date: null }),
-      ...(isCurrent ? {} : { end_date: endDate.trim() || null }),
-      is_current: isCurrent,
+      title: job.title.trim() || null,
+      role: job.role.trim() || null,
+      department: job.department.trim() || null,
+      location: job.location.trim() || null,
+      description: job.description.trim() || null,
+      start_date: job.start_date.trim() || null,
+      ...(job.is_current ? {} : { end_date: job.end_date.trim() || null }),
+      is_current: job.is_current,
       ...(showPrimary ? { is_primary: isPrimary } : {}),
       ...(current?.address_id !== undefined ? { address_id: current.address_id } : {}),
       ...(current?.confidence !== undefined ? { confidence: current.confidence } : {})
@@ -186,8 +200,10 @@
   {#snippet notice()}
     {#if attempt.conflict}
       {@const facts = employmentFacts({ title, role, start_date: startDate, end_date: endDate, is_current: isCurrent, department, location, description })}
-      {@const yours = Object.fromEntries(['Job title', 'Role on the team', 'Start date', 'End date', 'Department', 'Location', 'Description'].map(label => [label, facts[label]]))}
-      <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, controller), employmentFacts(opened?.data ?? initialEmployment!, controller), yours)} message={attempt.details} />
+      {@const openedFacts = employmentFacts(opened?.data ?? initialEmployment!, controller)}
+      <!-- Yours lists only the fields the person changed, the ones Keep yours writes. -->
+      {@const yours = Object.fromEntries(['Job title', 'Role on the team', 'Start date', 'End date', 'Department', 'Location', 'Description'].filter(label => facts[label] !== openedFacts[label]).map(label => [label, facts[label]]))}
+      <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, controller), openedFacts, yours)} message={attempt.details} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
       <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void controller.refreshOrganizations().then(() => { if (!controller.createBlocked.organizations) attempt.details = ''; }); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}

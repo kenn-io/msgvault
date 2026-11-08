@@ -88,9 +88,13 @@
     profileUnsaved = false;
     let saved = currentProfile?.organization;
     const ok = await attempt.run(async current => {
-      const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
+      const draft = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       let prepared = current ?? opened;
-      if (!saved || Object.entries(body).some(([key, value]) => value !== ((prepared?.data.organization ?? saved)?.[key as keyof Organization] ?? null))) {
+      const target = prepared?.data.organization ?? saved;
+      const field = (from: Organization | undefined, key: string) => from?.[key as keyof Organization] ?? null;
+      // Yours is only what the person changed since opening; every other field keeps the version being written.
+      const body = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, saved && value === field(currentProfile?.organization, key) ? field(target, key) : value])) as typeof draft;
+      if (!saved || Object.entries(body).some(([key, value]) => value !== field(target, key))) {
         const result = saved ? await controller.updateOrganization(saved.id, body, prepared) : await controller.createOrganization(body);
         if (!result.ok) return result;
         saved = result.entity!;
@@ -99,15 +103,11 @@
         prepared = opened = result.etag ? { data: { ...EMPTY_PROFILE, ...prepared?.data, organization: saved }, etag: result.etag } : prepared;
         attempt.prepared = prepared;
       }
-      // Yours is the opened lists with the person's edits; write them when the version being written holds anything else.
-      const lists = draftLists();
-      const target = prepared?.data ?? currentProfile!;
-      if (listKey(lists.names, lists.categories) !== listKey(target.names ?? [], target.categories ?? [])) {
-        const result = await controller.putOrganizationProfile(saved!.id, fresh => ({
-          ...profileBody(fresh),
-          names: [...(fresh.names ?? []).filter(item => item.name_kind !== 'alias').map(nameBody), ...lists.names.filter(item => item.name_kind === 'alias')],
-          categories: lists.categories,
-        }), prepared);
+      // A list the person changed is written whole, as Yours shows it; one they didn't keeps the version being written.
+      const profile = prepared?.data ?? currentProfile!;
+      const next = listsFor(profile);
+      if (listKey(next.names, next.categories) !== listKey(profile.names ?? [], profile.categories ?? [])) {
+        const result = await controller.putOrganizationProfile(saved!.id, fresh => ({ ...profileBody(fresh), ...listsFor(fresh) }), prepared);
         if (!result.ok) profileUnsaved = true;
         return result;
       }
@@ -121,9 +121,26 @@
     return JSON.stringify([names.filter(item => item.name_kind === 'alias').map(item => item.name), categories.map(item => item.category)]);
   }
 
-  function draftLists() {
-    const profile = currentProfile!;
-    return { names: namesWithDelta(profile, aliasDelta), categories: categoriesWithDelta(profile, categoryDelta) };
+  // The aliases and categories to write over a version: the person's lists where they changed them, its own otherwise.
+  // A value the version still holds keeps its envelope there; a new one is the person's.
+  function listsFor(profile: OrganizationProfile): { names: NameBody[]; categories: CategoryBody[] } {
+    const aliasNames = (profile.names ?? []).filter(item => item.name_kind === 'alias');
+    const nextName = Math.max(-1, ...(profile.names ?? []).map(item => item.envelope.ordinal)) + 1;
+    const nextCategory = Math.max(-1, ...(profile.categories ?? []).map(item => item.envelope.ordinal)) + 1;
+    const aliasValues = changed(aliasDelta) ? draftValues(baselineAliases, aliasDelta) : aliasNames.map(item => item.name);
+    const categoryValues = changed(categoryDelta) ? draftValues(baselineCategories, categoryDelta) : (profile.categories ?? []).map(item => item.category);
+    const newNames = aliasValues.filter(name => !aliasNames.some(item => item.name === name));
+    const newCategories = categoryValues.filter(category => !(profile.categories ?? []).some(item => item.category === category));
+    return {
+      names: [
+        ...(profile.names ?? []).filter(item => item.name_kind !== 'alias' || aliasValues.includes(item.name)).map(nameBody),
+        ...newNames.map((name, index): NameBody => ({ name, name_kind: 'alias', ordinal: nextName + index, source: 'user' })),
+      ],
+      categories: [
+        ...(profile.categories ?? []).filter(item => categoryValues.includes(item.category)).map(categoryBody),
+        ...newCategories.map((category, index): CategoryBody => ({ category, ordinal: nextCategory + index, source: 'user' })),
+      ],
+    };
   }
 
   async function checkDeletion(): Promise<void> {
@@ -282,27 +299,11 @@
     };
   }
 
-  function namesWithDelta(profile: OrganizationProfile, delta: ValueDelta): NameBody[] {
-    const retained = (profile.names ?? []).filter((item) => item.name_kind !== 'alias' || !delta.removed.has(item.name)).map(nameBody);
-    const freshAliases = new Set((profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name));
-    const nextOrdinal = Math.max(-1, ...(profile.names ?? []).map((item) => item.envelope.ordinal)) + 1;
-    return [...retained, ...delta.added.filter((name) => !freshAliases.has(name)).map((name, index) => {
-      const created: NameBody = { name, name_kind: 'alias', ordinal: nextOrdinal + index, source: 'user' };
-      return created;
-    })];
-  }
+  const changed = (delta: ValueDelta) => delta.added.length > 0 || delta.removed.size > 0;
+  const draftValues = (baseline: string[], delta: ValueDelta) => [...new Set([...baseline.filter(value => !delta.removed.has(value)), ...delta.added])];
 
   function nameBody(item: Name): NameBody {
     return { name: item.name, name_kind: item.name_kind as NameBody['name_kind'], ...envelopeBody(item.envelope) };
-  }
-
-  function categoriesWithDelta(profile: OrganizationProfile, delta: ValueDelta): CategoryBody[] {
-    const retained = (profile.categories ?? []).filter((item) => !delta.removed.has(item.category)).map(categoryBody);
-    const freshCategories = new Set((profile.categories ?? []).map((item) => item.category));
-    const nextOrdinal = Math.max(-1, ...(profile.categories ?? []).map((item) => item.envelope.ordinal)) + 1;
-    return [...retained, ...delta.added.filter((category) => !freshCategories.has(category)).map((category, index) => ({
-      category, ordinal: nextOrdinal + index, source: 'user' as const
-    }))];
   }
 
   function categoryBody(item: Category): CategoryBody {
@@ -423,8 +424,9 @@
     {#if attempt.conflict}
       {@const savedFacts = organizationFacts(attempt.conflict.data)}
       {@const openedFacts = organizationFacts(currentProfile!)}
-      {@const draft = draftLists()}
-      {@const yours = { Name: name.trim(), Kind: sentenceCase(kind), Domain: primaryDomain.trim(), Description: description.trim(), Aliases: draft.names.filter(item => item.name_kind === 'alias').map(item => item.name).join(', '), Categories: draft.categories.map(item => item.category).join(', ') }}
+      {@const draft = { Name: name.trim(), Kind: sentenceCase(kind), Domain: primaryDomain.trim(), Description: description.trim(), Aliases: draftValues(baselineAliases, aliasDelta).join(', '), Categories: draftValues(baselineCategories, categoryDelta).join(', ') }}
+      <!-- Yours lists only the fields the person changed, the ones Keep yours writes. -->
+      {@const yours = Object.fromEntries(Object.entries(draft).filter(([label, value]) => value !== openedFacts[label]))}
       <ConflictNotice noun="organization" saved={attempt.conflict.data.organization} {...conflict(savedFacts, openedFacts, yours)} message={attempt.details}>
         {#snippet more()}
           {@const groups = profileGroups(attempt.conflict!.data, [...STRUCTURED])}

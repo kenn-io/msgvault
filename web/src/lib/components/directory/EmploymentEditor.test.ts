@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it } from 'vitest';
 import { controllerWith, organization, organizationProfile, employment, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEditor from './EmploymentEditor.svelte';
@@ -107,6 +107,43 @@ it('saves against the opened job version and retries against the conflict versio
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(tags).toHaveLength(2));
   expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r3"']);
+});
+
+it('Keep yours writes only the fields the person changed and keeps a department changed elsewhere', async () => {
+  let reads = 0;
+  const bodies: Record<string, unknown>[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      bodies.push(await request.json());
+      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3));
+    }
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    return Response.json(employment(11, ++reads, { department: reads === 1 ? 'Sales' : 'Ops' }), { headers: { ETag: `"employment-11-r${reads}"` } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies[0]).toMatchObject({ title: 'Lead', department: 'Sales' });
+  expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Ops' });
+});
+
+it('lists under Yours only the fields the person changed', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    return Response.json(employment(11, ++reads, { department: reads === 1 ? 'Sales' : 'Ops' }), { headers: { ETag: `"employment-11-r${reads}"` } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  const table = await screen.findByRole('table', { name: 'What changed' });
+  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Job title']);
+  expect(screen.getByText('Other details also changed')).toBeDefined();
 });
 
 it('describes a job moved to an unloaded person without showing their ID', async () => {

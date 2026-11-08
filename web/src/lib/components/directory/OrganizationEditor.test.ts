@@ -247,7 +247,7 @@ describe('OrganizationEditor', () => {
     expect(body.retired).toBeUndefined();
   });
 
-  it('keeps read-only profile details from the saved conflict while replacing draft lists', async () => {
+  it('keeps read-only profile details and untouched lists from the saved conflict while writing the draft aliases', async () => {
     let reads = 0, puts = 0;
     const saved = richOrganizationProfile(2);
     const onDone = vi.fn();
@@ -270,7 +270,7 @@ describe('OrganizationEditor', () => {
       expect.objectContaining({ name: 'Synthetic Legal Ltd', name_kind: 'legal', source_ref: 'card-42', vcard_property: 'FN' }),
       expect.objectContaining({ name: 'Draft alias', name_kind: 'alias', source: 'user' }),
     ]));
-    expect(bodies[1].categories).toEqual([]);
+    expect(bodies[1].categories).toEqual([expect.objectContaining({ category: 'Research', source_ref: 'card-42' })]);
     expect(bodies[1].contact_points).toEqual([expect.objectContaining({ original_value: 'concurrent@example.test', source_ref: 'card-42' })]);
     expect(bodies[1].media).toEqual([expect.objectContaining({ original_value: 'Concurrent logo', content_hash: 'sha256:concurrent' })]);
   });
@@ -434,7 +434,7 @@ it('retries a failed DELETE directly and keeps Delete available', async () => {
   expect(deletes).toBe(2);
 });
 
-it('Keep yours replaces a concurrent rename and alias additions with the whole draft', async () => {
+it('Keep yours writes the changed aliases whole and keeps a concurrent rename', async () => {
   let reads = 0;
   let puts = 0;
   const bodies: { names: { name: string }[] }[] = [];
@@ -458,7 +458,44 @@ it('Keep yours replaces a concurrent rename and alias additions with the whole d
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   expect(bodies[0].names.map((item: { name: string }) => item.name)).toEqual(['Draft alias']);
-  expect(patches).toEqual([{ name: 'Synthetic Org', kind: 'company', primary_domain: 'synthetic.example', description: 'A synthetic organization.' }]);
+  expect(patches).toEqual([]);
+});
+
+it('Keep yours keeps fields and value metadata the person did not change', async () => {
+  let reads = 0;
+  const writes: { method: string; tag: string | null; body: Record<string, unknown> }[] = [];
+  const onDone = vi.fn();
+  const opening = organizationProfile();
+  // Elsewhere: a new domain, and the alias the person keeps re-imported with new provenance.
+  const newer = {
+    ...opening, organization: { ...opening.organization, revision: 2, primary_domain: 'concurrent.example' },
+    names: [{ ...opening.names[0], envelope: envelope(31, { source: 'vcard_import', source_ref: 'resource-current' }) }],
+  };
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH' || request.method === 'PUT') {
+      writes.push({ method: request.method, tag: request.headers.get('If-Match'), body: await request.json() });
+      if (request.headers.get('If-Match') === '"organization-21-r1"') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      return request.method === 'PATCH' ? Response.json(newer.organization, { headers: { ETag: '"organization-21-r3"' } }) : Response.json(newer);
+    }
+    return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"organization-21-r${reads === 1 ? 1 : 2}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, Draft alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  const table = within(alert).getByRole('table', { name: 'What changed' });
+  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Name', 'Aliases']);
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  const [patch, put] = writes.slice(1);
+  expect(patch).toMatchObject({ method: 'PATCH', tag: '"organization-21-r2"', body: { name: 'Draft name', primary_domain: 'concurrent.example' } });
+  expect(put).toMatchObject({ method: 'PUT', tag: '"organization-21-r3"' });
+  expect(put.body.names).toEqual([
+    expect.objectContaining({ name: 'Synthetic Works', source: 'vcard_import', source_ref: 'resource-current' }),
+    expect.objectContaining({ name: 'Draft alias', source: 'user' }),
+  ]);
 });
 
 it('retries the alias replacement accepted with Keep yours after the profile write fails', async () => {
@@ -488,8 +525,8 @@ it('retries the alias replacement accepted with Keep yours after the profile wri
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   expect(puts).toEqual([
     { tag: '"organization-21-r1"', names: ['Draft alias'] },
-    { tag: '"organization-21-r3"', names: ['Draft alias'] },
-    { tag: '"organization-21-r3"', names: ['Draft alias'] },
+    { tag: '"organization-21-r2"', names: ['Draft alias'] },
+    { tag: '"organization-21-r2"', names: ['Draft alias'] },
   ]);
 });
 
