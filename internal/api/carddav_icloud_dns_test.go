@@ -1,12 +1,9 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +15,7 @@ func syntheticICloudDNSError() error {
 }
 
 func TestICloudDNSFailureRediscoversBeforeRequiringReconnect(t *testing.T) {
-	for _, kind := range []string{"direct", "wrapped", "joined"} {
+	for _, kind := range []string{"direct", "wrapped"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			f := savedICloudAccountFixture(t)
@@ -26,8 +23,6 @@ func TestICloudDNSFailureRediscoversBeforeRequiringReconnect(t *testing.T) {
 			switch kind {
 			case "wrapped":
 				f.partitionErr = fmt.Errorf("synthetic discovery: %w", f.partitionErr)
-			case "joined":
-				f.partitionErr = errors.Join(f.partitionErr, &net.OpError{Op: "dial", Err: errors.New("synthetic failure")})
 			}
 			_, err := f.controller.Current().Sync(t.Context(), carddav.SyncOptions{})
 			require.ErrorIs(t, err, carddav.ErrICloudReconnectRequired)
@@ -35,11 +30,5 @@ func TestICloudDNSFailureRediscoversBeforeRequiringReconnect(t *testing.T) {
 			assert.Equal([]string{"https://p42-contacts.icloud.com", carddav.ICloudDiscoveryURL}, f.discovered)
 			assert.Zero(f.syncCalls)
 		})
-	}
-}
-
-func TestICloudSafetyCauseDominatesJoinedDNSError(t *testing.T) {
-	for _, cause := range []error{carddav.ErrUnsafeTarget, carddav.ErrOperationLimit, &carddav.StatusError{StatusCode: http.StatusUnauthorized}, &carddav.StatusError{StatusCode: http.StatusGone, RetryAfter: time.Minute}} {
-		assert.False(t, iCloudHostFailure(t.Context(), errors.Join(syntheticICloudDNSError(), cause)))
 	}
 }

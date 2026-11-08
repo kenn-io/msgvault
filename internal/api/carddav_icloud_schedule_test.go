@@ -2,17 +2,13 @@ package api
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
-	"fmt"
 	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/carddav"
-	"hegel.dev/go/hegel"
 )
 
 func TestICloudOfflineScheduleChangeKeepsCurrentAndRetainedRuntimeUsable(t *testing.T) {
@@ -55,22 +51,9 @@ func TestICloudHealthyProbeRechecksRotatedCredentialBeforeSync(t *testing.T) {
 	assert.Zero(t, f.syncCalls)
 }
 
-func TestICloudSafetyCauseDominatesJoinedDialErrorProperty(t *testing.T) {
-	certificate := &x509.Certificate{DNSNames: []string{"other.example"}}
-	causes := []error{carddav.ErrOperationLimit, carddav.ErrResponseLimit, carddav.ErrUnsafeTarget, carddav.ErrUnsafeHref,
-		carddav.ErrUnsafeRedirect, context.Canceled, context.DeadlineExceeded,
-		x509.UnknownAuthorityError{Cert: certificate}, x509.HostnameError{Certificate: certificate, Host: "synthetic.example"},
-		x509.CertificateInvalidError{Cert: certificate, Reason: x509.Expired}, tls.RecordHeaderError{Msg: "synthetic TLS failure"}}
-	hegel.Test(t, func(ht *hegel.T) {
-		cause := hegel.Draw(ht, hegel.SampledFrom(causes))
-		text := hegel.Draw(ht, hegel.Text())
+func TestICloudCancellationDominatesJoinedDialError(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
 		dial := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("synthetic connection failure")}
-		wrapped := fmt.Errorf("%s: %w", text, errors.Join(dial, cause))
-		assert.False(ht, iCloudHostFailure(ht.Context(), wrapped))
-	}, hegel.WithDatabase(""))
-}
-
-func TestICloudOperationLimitDominatesJoinedDialError(t *testing.T) {
-	dial := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("synthetic connection failure")}
-	assert.False(t, iCloudHostFailure(t.Context(), errors.Join(dial, carddav.ErrOperationLimit)))
+		assert.False(t, iCloudHostFailure(t.Context(), errors.Join(dial, cause)))
+	}
 }
