@@ -17,7 +17,7 @@ func TestICloudConnectionsRejectCaseOnlyDuplicate(t *testing.T) {
 	next.BaseURL = "https://p43-contacts.icloud.com:443/"
 	require.ErrorIs(cfg.ValidateCardDAVConnectionIdentity("other", next), ErrDuplicateCardDAVAccount)
 	next.Username = "different@example.net"
-	assert.NoError(cfg.ValidateCardDAVConnectionIdentity("other", next))
+	require.NoError(cfg.ValidateCardDAVConnectionIdentity("other", next))
 	assert.False((CardDAVConfig{BaseURL: "https://contacts.example.test", Username: "Synthetic@Example.net"}).SameAccount(
 		CardDAVConfig{BaseURL: "https://contacts.example.test", Username: "synthetic@example.net"}))
 	for _, baseURL := range []string{"https://p42-contacts.icloud.com.example.test", "https://p42-contacts.icloud.com/private/"} {
