@@ -722,8 +722,8 @@ func (s *Store) resolveEmploymentPrimaryTx(ctx context.Context, tx *loggedTx, in
 	if !current {
 		return false, fmt.Errorf("%w: a historical employment cannot be primary", ErrEmploymentInvalid)
 	}
-	if primaryExists {
-		return false, ErrEmploymentPrimaryConflict
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND id <> ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, input.PersonID, excludeID); err != nil {
+		return false, fmt.Errorf("demote primary employment: %w", err)
 	}
 	return true, nil
 }

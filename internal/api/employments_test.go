@@ -57,12 +57,6 @@ func TestEmploymentHTTPLifecycleAndProjection(t *testing.T) {
 	require.NoError(json.Unmarshal(sideResponse.Body.Bytes(), &side))
 	assert.False(side.IsPrimary)
 
-	conflictResponse := organizationRequest(t, srv, http.MethodPost, employmentsPath,
-		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"title":"Consultant","is_primary":true,"source":"user"}`,
-			person.ID, sideJob.ID), "")
-	require.Equal(http.StatusConflict, conflictResponse.Code)
-	assert.Contains(conflictResponse.Body.String(), "employment_primary_conflict")
-
 	rotateResponse := organizationRequest(t, srv, http.MethodPost,
 		fmt.Sprintf("%s/%d/primary", employmentsPath, side.ID), nil,
 		sideResponse.Header().Get("ETag"))

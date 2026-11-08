@@ -40,7 +40,7 @@ it('passes organization search loading and failures to the employer picker', asy
   }
 });
 
-it.each(['first job', 'existing primary', 'no primary'])('sends primary only when offered for %s', async scenario => {
+it.each(['first job', 'no primary'])('sends primary only when offered for %s', async scenario => {
   let body: Record<string, unknown> | undefined;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -48,7 +48,7 @@ it.each(['first job', 'existing primary', 'no primary'])('sends primary only whe
     return Response.json({ employments: [], organizations: [organization()] });
   });
   controller.organizations = [organization()];
-  controller.employments = scenario === 'first job' ? [] : [employment(12, 1, { is_primary: scenario === 'existing primary' })];
+  controller.employments = scenario === 'first job' ? [] : [employment(12, 1, { is_primary: false })];
   render(EmploymentEditor, { controller, personID: 7 });
   const checkbox = screen.queryByRole('checkbox', { name: 'Primary job' });
   if (scenario === 'no primary') {

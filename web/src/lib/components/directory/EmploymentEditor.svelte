@@ -47,7 +47,7 @@
   const loading = $derived(!!initialEmployment && !opened && !attempt.details);
   const loadFailed = $derived(!!initialEmployment && !opened && !!attempt.details);
   let selectedOrganization = $state<Organization>();
-  const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
+  const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current));
   let datesInvalid = $state(false);
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
