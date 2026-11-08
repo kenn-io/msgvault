@@ -26,6 +26,7 @@ func TestNextOccurrence(t *testing.T) {
 		{"leap february", store.PartialDate{Month: new(2), Day: new(29)}, time.Date(2027, 1, 1, 0, 0, 0, 0, newYork), LeapFebruary28, "2027-02-28", true},
 		{"leap march", store.PartialDate{Month: new(2), Day: new(29)}, time.Date(2027, 1, 1, 0, 0, 0, 0, newYork), LeapMarch1, "2027-03-01", true},
 		{"leap only", store.PartialDate{Month: new(2), Day: new(29)}, time.Date(2027, 1, 1, 0, 0, 0, 0, newYork), LeapOnly, "2028-02-29", true},
+		{"century leap gap", store.PartialDate{Month: new(2), Day: new(29)}, time.Date(2097, 3, 1, 0, 0, 0, 0, newYork), LeapOnly, "2104-02-29", true},
 		{"missing day", store.PartialDate{Month: new(2)}, time.Date(2027, 1, 1, 0, 0, 0, 0, newYork), LeapFebruary28, "", false},
 		{"invalid date", store.PartialDate{Month: new(4), Day: new(31)}, time.Date(2027, 1, 1, 0, 0, 0, 0, newYork), LeapFebruary28, "", false},
 		{"event before birth year", store.PartialDate{Year: new(2029), Month: new(5), Day: new(3)}, time.Date(2027, 1, 1, 0, 0, 0, 0, newYork), LeapFebruary28, "2029-05-03", true},

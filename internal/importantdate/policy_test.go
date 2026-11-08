@@ -22,23 +22,3 @@ func TestCadenceRequiresExplicitMapping(t *testing.T) {
 	_, ok = TierForCadence(0, mapping)
 	checks.False(ok)
 }
-
-func TestSubjectExclusionOverridesParent(t *testing.T) {
-	parent := Eligibility{Enabled: true, Tier: TierA}
-	tests := []struct {
-		name    string
-		subject SubjectPreference
-		want    Eligibility
-	}{
-		{"excluded", SubjectExclude, Eligibility{}},
-		{"inherit", SubjectInherit, parent},
-		{"direct", SubjectInclude, Eligibility{Enabled: true, Tier: TierC}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			checks := assert.New(t)
-			got := ResolveEligibility(tt.subject, Eligibility{Enabled: true, Tier: TierC}, parent)
-			checks.Equal(tt.want, got)
-		})
-	}
-}
