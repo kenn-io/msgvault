@@ -5,6 +5,53 @@ import { requestOf, pathOf, organization, organizationProfile, envelope, richOrg
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
+  it('detects a profile change between the details and profile writes', async () => {
+    let revision = 1;
+    const onDone = vi.fn();
+    const profile = organizationProfile();
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PATCH') {
+        revision = 3;
+        return Response.json({ ...profile.organization, name: 'Draft' }, { headers: { ETag: '"organization-21-r2"' } });
+      }
+      if (request.method === 'PUT') {
+        expect(request.headers.get('If-Match')).toBe('"organization-21-r2"');
+        return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      }
+      return Response.json(profile, { headers: { ETag: `"organization-21-r${revision}"` } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('button', { name: 'Keep yours' })).toBeDefined();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('shows a changed organization before deleting its newer revision', async () => {
+    let reads = 0;
+    const tags: (string | null)[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
+      if (request.method === 'DELETE') {
+        tags.push(request.headers.get('If-Match'));
+        return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
+      }
+      const profile = organizationProfile();
+      return Response.json(++reads === 1 ? profile : { ...profile, organization: { ...profile.organization, name: 'New name' } }, { headers: { ETag: `"organization-21-r${reads}"` } });
+    });
+    render(OrganizationEditor, { controller, organization: organization() });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('New name')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r3"']));
+  });
   it('saves details, aliases, and categories with one action and retries only unsaved changes', async () => {
     let saved = organizationProfile();
     let patches = 0;
@@ -436,7 +483,7 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
   await fireEvent.click(screen.getByRole('button', { name: 'Delete organization…' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(reads).toBe(2));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+  await screen.findByRole('button', { name: 'Reload' });
   await fireEvent.click(screen.getByRole('button', { name: /^Back to / }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(tags).toHaveLength(1));

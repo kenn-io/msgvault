@@ -217,7 +217,7 @@ describe('DirectoryEntityController', () => {
       };
     });
 
-    expect(result).toEqual({ ok: true, entity: employment(11, 3) });
+    expect(result).toMatchObject({ ok: true, entity: employment(11, 3) });
     expect(employmentSeenByBuilder).toEqual(freshEmployment);
     expect(individualRead).toBe(1);
     const write = requests.find((request) => request.method === 'PATCH')!;

@@ -19,7 +19,7 @@
 </script>
 
 <div class="date-range form-pair">
-  <DateField label="Start date" bind:value={start} {disabled} bind:error={startError} note={startNote}
+  <DateField label="Start date" bind:value={start} {disabled} bind:error={startError} note={startNote} holdNoteLine={false}
     onfocuschange={value => focused = value ? 'start' : undefined} />
   <DateField bind:value={end} {start} disabled={disabled || !endOpen} bind:error={endError}
     note={endNote} holdNoteLine={showCurrent} onfocuschange={value => focused = value ? 'end' : undefined}>

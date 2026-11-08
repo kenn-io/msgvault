@@ -55,7 +55,7 @@ it('shows date hints and places Current under the end date', async () => {
   expect(screen.getByText('Mar 2024')).toBeDefined();
   expect(secondEnd.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
   await fireEvent.input(secondEnd, { target: { value: '2025' } });
-  expect(screen.getByText('2025')).toBeDefined();
+  expect(screen.queryByText('2025')).toBeNull();
   expect(hints()).toHaveLength(0);
   first.unmount();
 
@@ -70,7 +70,7 @@ it('shows date hints and places Current under the end date', async () => {
   expect(parts()).toEqual(['kit-form-field', 'note', 'current']);
   await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2025' } });
   expect(parts()).toEqual(['kit-form-field', 'note', 'current']);
-  expect(endField.querySelector('.note')!.textContent).toBe('2025');
+  expect(endField.querySelector('.note')!.textContent).toBe('');
   // An error takes the hint line's place.
   await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-13' } });
   expect(parts()).toEqual(['kit-form-field', 'current']);

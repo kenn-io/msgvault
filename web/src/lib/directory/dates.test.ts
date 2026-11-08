@@ -46,6 +46,8 @@ describe('date readings', () => {
     expect(spokenDate('2026-02-30', today)).toBe('');
     expect(dateNote('2024-03', true, today)).toBe(DATE_HINT);
     expect(dateNote('2024-03', false, today)).toBe('Mar 2024');
+    expect(dateNote('2024', false, today)).toBe('');
+    expect(dateNote('2024', true, today)).toBe(DATE_HINT);
     expect(dateNote('invalid', false, today)).toBe('');
   });
 });

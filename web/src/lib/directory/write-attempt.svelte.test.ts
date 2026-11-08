@@ -14,6 +14,10 @@ it('clears failures before a retry and carries the saved version into the send',
     return { ok: false, kind: 'error', status: 500, message: 'Unavailable' };
   });
   expect(attempt.details).toBe('Unavailable');
+  await attempt.run(async current => {
+    expect(current).toEqual({ revision: 2 });
+    return { ok: true };
+  });
   attempt.reset();
   expect(attempt.failed).toBe(false);
   expect(attempt.details).toBe('');

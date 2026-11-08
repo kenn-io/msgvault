@@ -106,7 +106,9 @@ export function spokenDate(value: string, today: Date = new Date()): string {
  */
 export function dateNote(value: string, focused: boolean, today: Date = new Date()): string {
   if (intervalDateError(value)) return '';
-  return focused || !value.trim() ? DATE_HINT : spokenDate(value, today);
+  if (focused || !value.trim()) return DATE_HINT;
+  const reading = spokenDate(value, today);
+  return reading === value.trim() ? '' : reading;
 }
 
 /** Sort partial dates latest first, placing an unknown month or day at the end of its period. */

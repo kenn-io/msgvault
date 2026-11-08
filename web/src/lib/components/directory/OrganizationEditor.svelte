@@ -46,7 +46,7 @@
   // The organization saved but its aliases and categories didn't.
   let profileUnsaved = $state(false);
   let currentProfile = $state<OrganizationProfile>();
-  // The version a write sends as If-Match. Saving the details moves past it, so the next write reads afresh.
+  // The version a write sends as If-Match.
   let opened: Prepared<OrganizationProfile> | undefined;
   let deleteProfile = $state<Prepared<OrganizationProfile>>();
   let loading = $state(!!initialOrganization);
@@ -98,14 +98,15 @@
     const ok = await attempt.run(async newer => {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       let prepared = newer ?? opened;
-      if (newer || !saved || Object.entries(body).some(([key, value]) => value !== (saved?.[key as keyof Organization] ?? null))) {
+      if (!saved || Object.entries(body).some(([key, value]) => value !== ((newer?.data.organization ?? saved)?.[key as keyof Organization] ?? null))) {
         const result = initialOrganization || saved
           ? await controller.updateOrganization((initialOrganization ?? saved)!.id, body, prepared)
           : await controller.createOrganization(body);
         if (!result.ok) return result;
         saved = result.entity!;
-        currentProfile = { names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [], ...currentProfile, organization: saved };
-        prepared = opened = undefined;
+        currentProfile = { names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [], ...currentProfile, ...prepared?.data, organization: saved };
+        prepared = opened = result.etag ? { data: currentProfile, etag: result.etag } : prepared;
+        attempt.prepared = prepared;
       }
       if (newer || aliasDelta.added.length || aliasDelta.removed.size || categoryDelta.added.length || categoryDelta.removed.size) {
         const draft = draftLists();
@@ -148,15 +149,22 @@
     let collided = false;
     const ok = await removal.run(async () => {
       const result = await controller.deleteOrganization(initialOrganization.id, deleteProfile);
-      collided = !result.ok && (result.kind === 'conflict' || (result.kind === 'error' && result.status === 409));
+      collided = !result.ok && result.kind === 'error' && result.status === 409;
       return result;
     });
     if (ok) { onDone(); return; }
     if (collided) {
-      if (removal.conflict) deleteProfile = removal.conflict;
       removal.reset();
       await checkDeletion();
     }
+  }
+
+  async function reloadDelete(): Promise<void> {
+    await loadCurrent();
+    if (!currentProfile || attempt.details) return;
+    deleteProfile = opened;
+    removal.reset();
+    await checkDeletion();
   }
 
   async function refreshAfterUnknown(): Promise<void> {
@@ -371,7 +379,7 @@
 {#snippet deleteStart()}{#if initialOrganization && currentProfile && !confirmDelete}<Button tone="danger" label="Delete organization…" disabled={submitting} onclick={() => void checkDeletion()} />{/if}{/snippet}
 {#if confirmDelete}
   <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; attempt.reset(); removal.reset(); }} backLabel={`Back to ${name}`}
-    primaryLabel={deleteBlocked ? undefined : 'Delete'} primaryTone="danger" cancellable={false} busy={submitting} onprimary={() => void remove()}>
+    primaryLabel={deleteBlocked ? undefined : 'Delete'} primaryDisabled={!!removal.conflict} primaryTone="danger" cancellable={false} busy={submitting} onprimary={() => void remove()}>
     <div class="delete-step">
       {#if checkingDelete}<p role="status">Checking jobs…</p>{/if}
       {#if checkError}<InlineNotice message="Couldn't check jobs." details={checkError} actionLabel="Check again" onaction={() => void checkDeletion()} />{/if}
@@ -388,7 +396,9 @@
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}
     </div>
-    {#snippet notice()}{#if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
+    {#snippet notice()}{#if removal.conflict && deleteProfile}
+      <ConflictNotice noun="organization" saved={removal.conflict.data.organization} {...conflict(organizationFacts(removal.conflict.data), organizationFacts(deleteProfile.data), organizationFacts(deleteProfile.data))} message={removal.details} actionLabel="Reload" onaction={() => void reloadDelete()} />
+    {:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
   </Dialog>
 {:else}
 <Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}
