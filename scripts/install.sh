@@ -69,7 +69,7 @@ configure_path() {
             done
             profiles+=("$HOME/$profile")
             ;;
-        zsh) profiles=("${ZDOTDIR:-$HOME}/.zshenv") ;;
+        zsh) profiles=("$HOME/.zshenv" "${ZDOTDIR:-$HOME}/.zshenv") ;;
         fish)
             quoted="${install_dir//\\/\\\\}"
             quoted="'${quoted//\'/\\\'}'"

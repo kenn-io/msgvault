@@ -91,9 +91,9 @@ esac
 			profiles := map[string]string{".bashrc": "# preserved", ".profile": "# preserved"}
 			switch tc.shell {
 			case "zsh":
-				profiles = map[string]string{"zsh/.zshenv": "# preserved"}
+				profiles = map[string]string{".zshenv": "# preserved", "zsh/.zshenv": "# preserved"}
 				if tc.name == "zsh redirects directory" {
-					profiles = map[string]string{".zshenv": `ZDOTDIR="$HOME/zsh"`}
+					profiles[".zshenv"] = `export ZDOTDIR="$HOME/zsh"`
 				}
 			case "fish":
 				profiles = map[string]string{"config/fish/config.fish": "# preserved"}
@@ -122,6 +122,9 @@ esac
 			for run := range 2 {
 				cmd := exec.CommandContext(ctx, bash, script)
 				cmd.Env = append(append([]string{}, env...), "PATH="+transport+":"+path)
+				if tc.name == "zsh redirects directory" {
+					cmd.Env = append(cmd.Env, "ZDOTDIR="+filepath.Join(home, "zsh"))
+				}
 				cmd.Dir = home
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, string(output))
