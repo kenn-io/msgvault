@@ -37,12 +37,20 @@ type ImportantDateLineagePerson struct {
 }
 
 type ImportantDateLineageSubject struct {
-	UID         string      `json:"uid"`
-	OwnerUID    string      `json:"owner_uid"`
-	Kind        string      `json:"kind"`
+	UID         string                                `json:"uid"`
+	OwnerUID    string                                `json:"owner_uid"`
+	Kind        string                                `json:"kind"`
+	DisplayName string                                `json:"display_name"`
+	Date        PartialDate                           `json:"date"`
+	Revision    int64                                 `json:"revision"`
+	Withdrawn   bool                                  `json:"withdrawn"`
+	History     []ImportantDateLineageSubjectRevision `json:"history"`
+}
+
+type ImportantDateLineageSubjectRevision struct {
+	Revision    int64       `json:"revision"`
 	DisplayName string      `json:"display_name"`
 	Date        PartialDate `json:"date"`
-	Revision    int64       `json:"revision"`
 	Withdrawn   bool        `json:"withdrawn"`
 }
 
@@ -218,6 +226,36 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		}
 		if err := rows.Close(); err != nil {
 			return result, fmt.Errorf("close lineage owned subjects: %w", err)
+		}
+	}
+	for i := range result.OwnedSubjects {
+		subject := &result.OwnedSubjects[i]
+		rows, err := s.db.QueryContext(ctx, `SELECT revision, display_name, birth_year, birth_month, birth_day, withdrawn FROM important_date_subject_history WHERE subject_uid = ? ORDER BY revision`, subject.UID)
+		if err != nil {
+			return result, fmt.Errorf("read owned-subject history: %w", err)
+		}
+		for rows.Next() {
+			var previous ImportantDateLineageSubjectRevision
+			var year sql.NullInt64
+			var month, day, withdrawn int
+			if err := rows.Scan(&previous.Revision, &previous.DisplayName, &year, &month, &day, &withdrawn); err != nil {
+				_ = rows.Close()
+				return result, fmt.Errorf("scan owned-subject history: %w", err)
+			}
+			previous.Date = PartialDate{Month: &month, Day: &day}
+			if year.Valid {
+				value := int(year.Int64)
+				previous.Date.Year = &value
+			}
+			previous.Withdrawn = withdrawn != 0
+			subject.History = append(subject.History, previous)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return result, fmt.Errorf("iterate owned-subject history: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return result, fmt.Errorf("close owned-subject history: %w", err)
 		}
 	}
 	var prefixes []string

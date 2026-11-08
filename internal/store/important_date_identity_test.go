@@ -41,6 +41,9 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	must.NoError(err)
 	owned, err := st.CreateImportantDateSubjectContext(ctx, store.ImportantDateSubjectInput{OwnerUID: second.VCardUID, Kind: "pet", DisplayName: "Example pet", Date: store.PartialDate{Month: new(10), Day: new(23)}})
 	must.NoError(err)
+	changed, err := st.UpdateImportantDateSubjectContext(ctx, owned.UID, owned.Revision, "Example pet", store.PartialDate{Month: new(11), Day: new(5)}, false)
+	must.NoError(err)
+	must.True(changed)
 	key := "person/" + second.VCardUID + ":birthday:2027"
 	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, key, "example-fingerprint")
 	must.NoError(err)
@@ -82,7 +85,9 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	must.Len(lineage.OwnedSubjects, 1)
 	checks.Equal(owned.UID, lineage.OwnedSubjects[0].UID)
 	checks.Equal(second.VCardUID, lineage.OwnedSubjects[0].OwnerUID)
-	checks.Equal(owned.Revision, lineage.OwnedSubjects[0].Revision)
+	checks.Equal(owned.Revision+1, lineage.OwnedSubjects[0].Revision)
+	must.Len(lineage.OwnedSubjects[0].History, 1)
+	checks.Equal(owned.Date, lineage.OwnedSubjects[0].History[0].Date)
 	must.Len(lineage.Deliveries, 1)
 	checks.Equal(key, lineage.Deliveries[0].OccurrenceKey)
 }
