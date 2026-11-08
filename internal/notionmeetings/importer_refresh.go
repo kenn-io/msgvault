@@ -39,7 +39,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 		return false, nil
 	}
 	var meeting MeetingNote
-	if block == nil || json.Unmarshal(block.Raw, &meeting) != nil || meeting.ID != id || meeting.Type != "meeting_notes" {
+	if block == nil || json.Unmarshal(block.Raw, &meeting) != nil || meeting.ID != id || meeting.Type != meetingNotesType {
 		sum.Errors++
 		state.reason("malformed_response", "meeting")
 		if exists {
@@ -110,7 +110,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 		state.Known[id] = known
 		state.reason("legacy_unscoped", "meeting")
 		state.updateTranscriptPending(id, hydrated, providerTranscriptIncomplete, now)
-		progress("legacy_unscoped: archived meeting retained unchanged; current sections are incomplete")
+		progress("Archived meeting retained unchanged; current sections are incomplete")
 		return true, nil
 	}
 	known.LastEditedTime = meeting.LastEditedTime
@@ -121,7 +121,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 	}
 	for name, section := range map[string]blockTree{"summary": hydrated.SummaryTree, "notes": hydrated.NotesTree, "transcript": hydrated.TranscriptTree} {
 		sectionIDs := meeting.MeetingNotes.Children
-		if (name == "summary" && sectionIDs.SummaryBlockID == "") || (name == "notes" && sectionIDs.NotesBlockID == "") || (name == "transcript" && sectionIDs.TranscriptBlockID == "") {
+		if !section.Preserved && ((name == "summary" && sectionIDs.SummaryBlockID == "") || (name == "notes" && sectionIDs.NotesBlockID == "") || (name == "transcript" && sectionIDs.TranscriptBlockID == "")) {
 			continue
 		}
 		if section.Complete && !section.Filtered && !section.Preserved {

@@ -557,7 +557,7 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 	if err := json.Unmarshal(block.Raw, &meeting); err != nil {
 		return MeetingNote{}, fmt.Errorf("decode meeting-note block: %w", err)
 	}
-	if meeting.ID != id || meeting.Type != "meeting_notes" {
+	if meeting.ID != id || meeting.Type != meetingNotesType {
 		return MeetingNote{}, errors.New("retrieved block has unexpected ID or type")
 	}
 	return meeting, nil
@@ -621,12 +621,12 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, bool) {
 	}
 	var discovery MeetingNote
 	if json.Unmarshal(evidence.Discovery, &discovery) != nil ||
-		discovery.ID != expectedID || discovery.Type != "meeting_notes" {
+		discovery.ID != expectedID || discovery.Type != meetingNotesType {
 		return rawEvidence{}, false
 	}
 	var meetingBlock Block
 	if json.Unmarshal(evidence.MeetingBlock, &meetingBlock) != nil ||
-		meetingBlock.ID != expectedID || meetingBlock.Type != "meeting_notes" {
+		meetingBlock.ID != expectedID || meetingBlock.Type != meetingNotesType {
 		return rawEvidence{}, false
 	}
 	if evidence.SchemaVersion == 1 {
@@ -686,7 +686,7 @@ func preserveArchivedSections(meeting *HydratedMeeting, archived archivedMeeting
 		{"transcript", &meeting.TranscriptTree, &meeting.Transcript, old.Transcript, oldTexts.Transcript},
 	}
 	for _, section := range sections {
-		if strings.TrimSpace(section.priorText) == "" || (section.tree.Complete && !section.tree.Filtered && strings.TrimSpace(*section.text) != "") {
+		if strings.TrimSpace(section.priorText) == "" || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
 			continue
 		}
 		if !archived.HasEvidence || old.SchemaVersion != 2 {
@@ -712,14 +712,14 @@ func restoreArchivedTree(raw rawBlockTree) (blockTree, bool) {
 		return blockTree{}, false
 	}
 	var root Block
-	if json.Unmarshal(raw.Root, &root) != nil || root.ID == "" || root.Object != "block" || root.Type == "meeting_notes" {
+	if json.Unmarshal(raw.Root, &root) != nil || root.ID == "" || root.Object != "block" || root.Type == meetingNotesType {
 		return blockTree{}, false
 	}
 	tree := blockTree{Root: &root, Complete: raw.Complete, Filtered: raw.Filtered, SourceLastEditedTime: raw.SourceLastEditedTime, SourceMeetingBlock: raw.SourceMeetingBlock}
 	seen := map[string]bool{}
 	for _, item := range raw.Blocks {
 		var block Block
-		if json.Unmarshal(item, &block) != nil || block.ID == "" || block.Object != "block" || block.Type == "meeting_notes" || seen[block.ID] {
+		if json.Unmarshal(item, &block) != nil || block.ID == "" || block.Object != "block" || block.Type == meetingNotesType || seen[block.ID] {
 			return blockTree{}, false
 		}
 		seen[block.ID] = true

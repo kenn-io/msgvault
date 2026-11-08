@@ -103,7 +103,7 @@ func (c *Client) QueryMeetingNotesFiltered(ctx context.Context, limit int, filte
 		return nil, ErrMalformedResponse
 	}
 	for index := range result.Results {
-		if err := validateBlockResponse(result.Results[index].Raw, "", "meeting_notes"); err != nil {
+		if err := validateBlockResponse(result.Results[index].Raw, "", meetingNotesType); err != nil {
 			return nil, fmt.Errorf("validate meeting-note query result %d: %w", index, err)
 		}
 	}
