@@ -3,7 +3,6 @@ package github
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -35,7 +34,7 @@ type Forge struct {
 // New returns GitHub for token, calling the API at apiBase.
 func New(apiBase *url.URL, token, userAgent string) *Forge {
 	return &Forge{
-		client: newClient(apiBase, token, userAgent, &http.Client{Timeout: 60 * time.Second}),
+		client: newClient(apiBase, token, userAgent, forge.NewHTTPClient(60*time.Second)),
 		owners: map[string]string{},
 	}
 }

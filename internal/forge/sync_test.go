@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -796,4 +797,46 @@ func TestAFullSyncThatPausesStillFetchesEveryThreadWhenItResumes(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, resumed.Archived, "the full sync's discovery finishes as a full one")
 	assert.False(resumeState(t, st, source.ID).Full)
+}
+
+func TestAPIFollowsRedirectsOnlyOnItsInstance(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	// A service on this machine, which no forge may send a sync to.
+	var local []string
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		local = append(local, r.URL.Path)
+		_, _ = w.Write([]byte(`{"secret":true}`))
+	}))
+	t.Cleanup(service.Close)
+	instance := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/moved":
+			http.Redirect(w, r, "/thing", http.StatusMovedPermanently)
+		case "/away":
+			http.Redirect(w, r, service.URL+"/admin", http.StatusFound)
+		case "/numeric":
+			// 2130706433 is 127.0.0.1 written as one number.
+			http.Redirect(w, r, strings.Replace(service.URL, "127.0.0.1", "2130706433", 1)+"/admin", http.StatusFound)
+		default:
+			_, _ = w.Write([]byte(`{"name":"thing"}`))
+		}
+	}))
+	t.Cleanup(instance.Close)
+	base, err := url.Parse(instance.URL)
+	require.NoError(err)
+	api := &API{Base: base, Client: NewHTTPClient(time.Minute)}
+
+	var thing struct {
+		Name string `json:"name"`
+	}
+	_, err = api.GetJSON(t.Context(), "/moved", nil, nil, &thing)
+	require.NoError(err, "a move on the instance is followed")
+	assert.Equal("thing", thing.Name)
+
+	for _, path := range []string{"/away", "/numeric"} {
+		_, err = api.GetJSON(t.Context(), path, nil, nil, &struct{}{})
+		require.ErrorContains(err, "redirected outside its instance", path)
+	}
+	assert.Empty(local, "nothing reaches the other host")
 }

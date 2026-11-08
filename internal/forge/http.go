@@ -27,7 +27,29 @@ const (
 	maxErrorBodyBytes = 512
 	// maxResponseBytes bounds one API response.
 	maxResponseBytes = 64 << 20
+	// maxRedirects bounds the redirects one request follows.
+	maxRedirects = 10
 )
+
+// NewHTTPClient returns the client a forge's API requests go through. It
+// gives up on a request after timeout, and follows a redirect only on the
+// host the request started on, as URL keeps the links a forge returns: a
+// forge can't send a sync to another host or to this machine's own
+// services. The one change of scheme it follows is http to https.
+func NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, CheckRedirect: redirectOnHost}
+}
+
+func redirectOnHost(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	from, to := via[0].URL, req.URL
+	if !strings.EqualFold(to.Host, from.Host) || to.Scheme != from.Scheme && (from.Scheme != "http" || to.Scheme != "https") {
+		return fmt.Errorf("the forge redirected outside its instance: %s", to.Redacted())
+	}
+	return nil
+}
 
 // API sends one forge's API requests with an account's token. It sends the
 // token only to the forge's own origin, retries server errors and short rate
