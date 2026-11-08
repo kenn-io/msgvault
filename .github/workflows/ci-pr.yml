@@ -1,6 +1,6 @@
 name: CI
 
-# Temporarily run the PR's workflow revision; restore the main pin after measurement.
+# The PR dispatcher always calls the main-pinned workflow.
 on:
   pull_request:
   merge_group:
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   run:
     cache-mode: read
-    uses: ./.github/workflows/ci.yml
+    uses: kenn-io/msgvault/.github/workflows/ci.yml@main
 
   gate:
     name: CI gate
