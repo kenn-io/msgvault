@@ -282,7 +282,7 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 			snapshot.SenderIdentifierType, sender.ID, sender.Name)
 	default:
 		id, err = st.EnsureParticipantByIdentifierContext(ctx,
-			SenderIdentifierType, senderIdentifier(snapshot.SourceIdentifier, sender), sender.Name)
+			SenderIdentifierType, senderIdentifier(snapshot.SourceType, snapshot.SourceIdentifier, sender), sender.Name)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("resolve message sender: %w", err)

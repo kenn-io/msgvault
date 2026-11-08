@@ -52,6 +52,35 @@ func TestWriterSharesSendersOfASharedIdentifierType(t *testing.T) {
 	assert.Equal("1001", identifierValue)
 }
 
+func TestWriterKeepsSendersOfSourcesOfDifferentTypesApart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	// A message import and a connector's source share an identifier.
+	write := func(sourceType, externalID string, sender MessageImportSender) int64 {
+		source, err := st.GetOrCreateSourceContext(t.Context(), sourceType, "shared")
+		require.NoError(err)
+		syncID, err := st.StartSyncContext(t.Context(), source.ID, sourceType)
+		require.NoError(err)
+		scoped := st.ScopedToSync(source.ID, syncID)
+		result, err := NewWriter(scoped, source).Write(t.Context(), examplePost(externalID, sender))
+		require.NoError(err)
+		require.NoError(scoped.CompleteSyncContext(t.Context(), syncID, ""))
+		var senderID int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT sender_id FROM messages WHERE id = ?`), result.MessageID).Scan(&senderID))
+		return senderID
+	}
+
+	named := MessageImportSender{Name: "Alice"}
+	assert.NotEqual(write(SourceType, "post-1", named), write("example_forge", "post-1", named),
+		"a name means something only inside its own source")
+	linked := MessageImportSender{URL: "https://example.com/alice"}
+	assert.Equal(write(SourceType, "post-2", linked), write("example_forge", "post-2", linked),
+		"a URL names the same sender in every source")
+}
+
 // startWriter starts a sync run of an example_forge source and returns a
 // writer scoped to it, as a connector's sync builds one.
 func startWriter(t *testing.T, st *store.Store) *Writer {
