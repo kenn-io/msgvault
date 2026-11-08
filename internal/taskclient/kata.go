@@ -181,8 +181,17 @@ func (c *KataClient) CreateTask(ctx context.Context, project, idempotencyKey str
 	return task, err
 }
 
+// KataCreateAcknowledgedError means creation was acknowledged but the
+// follow-up issue fetch failed. The returned task contains the acknowledged
+// identity and status; the caller must still check its reused flag.
+type KataCreateAcknowledgedError struct{ Err error }
+
+func (e *KataCreateAcknowledgedError) Error() string { return "fetch acknowledged Kata issue: " + e.Err.Error() }
+func (e *KataCreateAcknowledgedError) Unwrap() error { return e.Err }
+
 // CreateTaskReused also reports whether Kata answered with the issue an
-// earlier request under the same key created.
+// earlier request under the same key created. When its error is a
+// KataCreateAcknowledgedError, the returned task contains the POST result.
 func (c *KataClient) CreateTaskReused(ctx context.Context, project, idempotencyKey string, create KataCreate) (KataTask, bool, error) {
 	if strings.TrimSpace(idempotencyKey) == "" {
 		return KataTask{}, false, ErrIdempotencyKeyRequired
@@ -204,8 +213,15 @@ func (c *KataClient) CreateTaskReused(ctx context.Context, project, idempotencyK
 	if err := c.transport.doJSON(ctx, http.MethodPost, path, request, http.Header{"Idempotency-Key": {idempotencyKey}}, &response, http.StatusOK); err != nil {
 		return KataTask{}, false, err
 	}
+	reused := response.Reused != nil && *response.Reused
 	task, err := c.GetTask(ctx, project, response.Issue.UID)
-	return task, response.Reused != nil && *response.Reused, err
+	if err != nil && validatePathSegment(response.Issue.UID) == nil &&
+		(response.Issue.Status == "open" || response.Issue.Status == "closed") &&
+		path == fmt.Sprintf("/api/v1/projects/%d/issues", response.Issue.ProjectID) {
+		acknowledged := KataTask{UID: response.Issue.UID, Project: project, Status: response.Issue.Status}
+		return acknowledged, reused, &KataCreateAcknowledgedError{Err: err}
+	}
+	return task, reused, err
 }
 
 func (c *KataClient) GetTask(ctx context.Context, project, taskID string) (KataTask, error) {

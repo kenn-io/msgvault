@@ -97,7 +97,8 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 				personUID = subjectUID
 			}
 			issue, reused, err = s.Kata.CreateTaskReused(fenced, input.Project, marker, taskclient.KataCreate{Title: "Prepare for an upcoming date", Metadata: map[string]any{taskclient.ActionMetadataKey: marker, personagenda.PersonMetadataKey: personUID, "msgvault.important_date.subject": input.SubjectUID}})
-			confirmed = err == nil
+			var acknowledged *taskclient.KataCreateAcknowledgedError
+			confirmed = err == nil || errors.As(err, &acknowledged)
 		}
 		return err
 	})
