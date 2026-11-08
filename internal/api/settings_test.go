@@ -1938,6 +1938,7 @@ func TestPutPersonEnrichmentProviderRequiresValidKindEvenWhenDisabled(t *testing
 			"/api/v1/settings/person-enrichment/providers/new-provider", body, get.Header().Get("ETag"), "")
 		assertions.Equal(http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
 		assertions.Contains(rejected.Body.String(), "validation_failed")
+		assertions.Equal("application/json", rejected.Header().Get("Content-Type"))
 	}
 	written, err := os.ReadFile(path)
 	requirements.NoError(err)
