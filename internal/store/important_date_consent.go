@@ -51,9 +51,11 @@ func (s *Store) HasImportantDateConsentContext(ctx context.Context, subject, pro
 
 // WithImportantDateConsentContext holds the identity mutation fence while it
 // checks consent and dispatches. The callback must revalidate the event and
-// routing before its external write. An error can mean the external write
+// routing using the provided transaction context before its external write.
+// Record the in-flight state in a separate committed transaction before calling.
+// An error can mean the external write
 // committed; callers must retain an unknown delivery state rather than retry.
-func (s *Store) WithImportantDateConsentContext(ctx context.Context, subject, project, recipient string, dispatch func() error) (bool, error) {
+func (s *Store) WithImportantDateConsentContext(ctx context.Context, subject, project, recipient string, dispatch func(context.Context) error) (bool, error) {
 	if !validImportantDateConsent(subject, project, recipient) || dispatch == nil {
 		return false, errors.New("invalid important-date consent dispatch")
 	}
@@ -68,7 +70,7 @@ func (s *Store) WithImportantDateConsentContext(ctx context.Context, subject, pr
 		if !active {
 			return nil
 		}
-		return dispatch()
+		return dispatch(withWritableSnapshot(ctx, s.db.DB, tx))
 	})
 	return active, err
 }

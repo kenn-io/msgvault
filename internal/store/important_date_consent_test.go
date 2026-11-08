@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,7 +35,13 @@ func TestImportantDateConsentDispatchRequiresGrant(t *testing.T) {
 	st := storetest.New(t).Store
 	ctx := t.Context()
 	calls := 0
-	dispatch := func() error { calls++; return nil }
+	dispatch := func(fenced context.Context) error {
+		active, err := st.HasImportantDateConsentContext(fenced, "subject-example", "private-example", "owner/agent")
+		require.NoError(t, err)
+		assert.True(t, active)
+		calls++
+		return nil
+	}
 	active, err := st.WithImportantDateConsentContext(ctx, "subject-example", "private-example", "owner/agent", dispatch)
 	require.NoError(t, err)
 	assert.False(t, active)
