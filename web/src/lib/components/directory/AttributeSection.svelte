@@ -1,6 +1,6 @@
 <script lang="ts">
   import { historyProvenance } from './history-format';
-  import { Button } from '@kenn-io/kit-ui';
+  import { Disclosure, Button } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { AttributeDefinition } from '../../api/generated/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
@@ -38,8 +38,7 @@
         </ul>
       {/if}
       {#if field.history.length > 0}
-      <details>
-      <summary>{field.history.length} earlier {field.history.length === 1 ? 'value' : 'values'}</summary>
+      <Disclosure variant="plain">{#snippet summary()}{field.history.length} earlier {field.history.length === 1 ? 'value' : 'values'}{/snippet}
       <ul class="history-rows">
         {#each field.history as value (value.id)}
           <li>
@@ -48,7 +47,7 @@
           </li>
         {/each}
       </ul>
-      </details>
+      </Disclosure>
       {/if}
     </section>
   {/each}
@@ -56,8 +55,7 @@
   .history-field { display: grid; gap: var(--space-2); }
   .section-header { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: space-between; }
   h3, ul { margin: 0; }
-  summary { cursor: pointer; color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .history-field summary { padding: var(--space-2) 0; }
+  .history-field :global(.kit-disclosure__summary) { color: var(--text-secondary); }
   .history-rows { display: grid; padding: 0; list-style: none; }
   .history-rows li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); color: var(--text-secondary); }
   .history-rows .meta, .concealed { color: var(--text-muted); font-size: var(--font-size-sm); }

@@ -72,6 +72,7 @@ type setupProvidersOptions struct {
 
 // ollamaProbeResult is what a local Ollama server reports about itself.
 type ollamaProbeResult struct {
+	Catalog   bool
 	Reachable bool
 	Models    []string
 }
@@ -215,7 +216,7 @@ func probeOllamaServer(ctx context.Context, server string) ollamaProbeResult {
 	if err := json.UnmarshalRead(io.LimitReader(response.Body, ollamaProbeMaxBody), &payload); err != nil {
 		return ollamaProbeResult{Reachable: true}
 	}
-	result := ollamaProbeResult{Reachable: true}
+	result := ollamaProbeResult{Reachable: true, Catalog: payload.Models != nil}
 	for _, model := range payload.Models {
 		if name := strings.TrimSpace(model.Name); name != "" {
 			result.Models = append(result.Models, name)
@@ -529,7 +530,7 @@ func setupScheduleEdits(keys toml.MetaData, lane string) []config.TableEdit {
 }
 
 func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePlan {
-	lane := setupLanePlan{Lane: laneTextSearch, Label: "Text search"}
+	lane := setupLanePlan{Lane: laneTextSearch, Label: "Search by meaning"}
 	embeddings := loaded.Vector.Embeddings
 	switch {
 	case loaded.Vector.Enabled && !detection.localEmbeddings:
@@ -635,14 +636,14 @@ func planPersonSearch(loaded *config.Config, plan *setupProvidersPlan, options s
 		lane.Reason = "already enabled"
 	case !plan.laneOn(laneTextSearch):
 		lane.Action = planActionSkip
-		lane.Reason = "requires the text-search lane"
+		lane.Reason = "requires search by meaning"
 	case textLaneProvider(plan) == "custom":
 		lane.Action = planActionSkip
 		lane.Reason = "custom hosted provider: configure [vector.people] and its postures explicitly, then run `msgvault person provider consent --semantic-embeddings --yes`"
 	default:
 		lane.Action = planActionEnable
 		lane.Gate = textLaneGate(plan)
-		lane.Reason = "one curated, non-sensitive attribute document per person rides the text-search generation"
+		lane.Reason = "one curated, non-sensitive attribute document per person is embedded for search by meaning"
 		lane.edits = []config.TableEdit{{
 			Path: []string{tomlTableVector, "people"},
 			Values: map[string]any{
@@ -759,14 +760,14 @@ func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupL
 		lane.Reason = "requires the document lane"
 	case !plan.laneOn(laneTextSearch):
 		lane.Action = planActionSkip
-		lane.Reason = "requires the text-search lane"
+		lane.Reason = "requires search by meaning"
 	case textLaneProvider(plan) == "custom":
 		lane.Action = planActionSkip
 		lane.Reason = "custom hosted provider: configure [attachments.documents.index.embeddings] explicitly and consent separately to document and query text"
 	default:
 		lane.Action = planActionEnable
 		lane.Gate = textLaneGate(plan)
-		lane.Reason = "document chunks and search query text are sent to the text-search provider after separate document and query consents"
+		lane.Reason = "document chunks and search query text are sent to the provider for search by meaning after separate document and query consents"
 		lane.edits = []config.TableEdit{{
 			Path: []string{"attachments", "documents", "index", "embeddings"}, Values: map[string]any{"enabled": true},
 		}}
@@ -1001,14 +1002,14 @@ func newSetupProvidersCommand(deps setupProvidersDeps) *cobra.Command {
 		Short: "Configure retrieval and people inference providers",
 		Long: `Read the environment and configure every lane that is still unset:
 
-  ` + setupVoyageKeyEnv + `   text search with Voyage contextual embeddings (conversation
+  ` + setupVoyageKeyEnv + `   search by meaning with Voyage contextual embeddings (conversation
                    windows for chats, turn-aware chunks for meetings), semantic
                    people search, and the visual attachment lane once its probe
                    manifest exists
-  ` + setupOpenAIKeyEnv + `   text search on the OpenAI-compatible path when no Voyage key
+  ` + setupOpenAIKeyEnv + `   search by meaning on the OpenAI-compatible path when no Voyage key
                    is present
-  MISTRAL_API_KEY  document attachment extraction, plus document vectors when a
-                   text lane is on
+  MISTRAL_API_KEY  document attachment extraction, plus document vectors when
+                   search by meaning is on
   (no keys)        Ollama with nomic-embed-text, or the shared local embedding server
 
 Choose a hosted people inference provider with --provider openai, openrouter,
@@ -1037,7 +1038,7 @@ The people sweep can send archive excerpts and infer personal attributes.
 		},
 	}
 	flags := command.Flags()
-	flags.BoolVar(&options.localEmbeddings, "local-embeddings", false, "Switch text search to the shared local embedding server")
+	flags.BoolVar(&options.localEmbeddings, "local-embeddings", false, "Use the shared local embedding server for search by meaning")
 	flags.BoolVar(&options.yes, "yes", false, "Accept every provider disclosure without prompting")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "Print the plan and the current lane report without writing anything")
 	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")

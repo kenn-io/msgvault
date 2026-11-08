@@ -82,7 +82,7 @@ func assertSQLiteBodyHitWins(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("gmail", "divergence@example.com")
 	require.NoError(t, err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "divergence-thread", "Divergence Fixture")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "divergence-thread", "Divergence Fixture")
 	require.NoError(t, err, "EnsureConversation")
 
 	mk := func(label, subject, body string) int64 {
@@ -164,7 +164,7 @@ SELECT label, ts_rank(v, plainto_tsquery('simple', 'zappa')) AS score FROM (
 WHERE v @@ plainto_tsquery('simple', 'zappa')
 ORDER BY score DESC`
 
-	rows, err := db.Query(q, longPadding)
+	rows, err := db.QueryContext(t.Context(), q, longPadding)
 	require.NoError(t, err, "query ts_rank")
 	defer func() { _ = rows.Close() }()
 

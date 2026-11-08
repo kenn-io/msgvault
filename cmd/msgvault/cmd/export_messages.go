@@ -156,7 +156,7 @@ func (s exportMessagesJSONLSink) Message(message store.MessageExportMessage) err
 
 func defaultExportMessagesDeps() exportMessagesDeps {
 	return exportMessagesDeps{openStore: func(ctx context.Context) (*store.Store, func(), error) {
-		return openWritableStoreAndInitForIngestInvocation(invocationFromContext(ctx))
+		return openReadOnlyStoreForInvocation(ctx, invocationFromContext(ctx))
 	}}
 }
 
@@ -238,7 +238,13 @@ func runExportMessages(
 	}
 	defer cleanup()
 
-	sourceIDs, err := resolveMessageExportSources(st, selectors)
+	ctx, release, err := st.BeginReadSnapshotContext(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	sourceIDs, err := resolveMessageExportSources(ctx, st, selectors)
 	if err != nil {
 		return err
 	}
@@ -246,7 +252,7 @@ func runExportMessages(
 	var scope *personscope.Scope
 	var personID *int64
 	if cmd.Flags().Changed("person-id") {
-		resolved, err := personresolver.Resolve(cmd.Context(), st, personresolver.Reference{Kind: personresolver.ReferencePerson, ID: opts.PersonID}, nil)
+		resolved, err := personresolver.Resolve(ctx, st, personresolver.Reference{Kind: personresolver.ReferencePerson, ID: opts.PersonID}, nil)
 		if err != nil {
 			return fmt.Errorf("resolve --person-id: %w", err)
 		}
@@ -269,7 +275,7 @@ func runExportMessages(
 		return fmt.Errorf("encode message export manifest: %w", err)
 	}
 
-	counts, err := st.ExportMessages(cmd.Context(), store.MessageExportFilter{
+	counts, err := st.ExportMessages(ctx, store.MessageExportFilter{
 		PersonScope:  scope,
 		Start:        start,
 		End:          end,
@@ -350,12 +356,13 @@ func normalizeMessageExportSelectors(
 }
 
 func resolveMessageExportSources(
+	ctx context.Context,
 	st *store.Store,
 	selectors []exportMessagesSourceSelector,
 ) ([]int64, error) {
 	sourceIDs := make([]int64, 0, len(selectors))
 	for _, selector := range selectors {
-		sources, err := st.ListSources(selector.SourceType)
+		sources, err := st.ListSourcesContext(ctx, selector.SourceType)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"list sources of type %q: %w", selector.SourceType, err,

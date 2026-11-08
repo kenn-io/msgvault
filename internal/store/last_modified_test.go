@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -45,7 +44,8 @@ func seedMessageForLM(t *testing.T, st *store.Store) int64 {
 func baselineLM(t *testing.T, st *store.Store, id int64) string {
 	t.Helper()
 	const past = "2000-01-01 00:00:00+00"
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET last_modified = ? WHERE id = ?`), past, id)
 	require.NoError(t, err, "set baseline last_modified")
 	return readLM(t, st, id)
@@ -59,7 +59,8 @@ func readLM(t *testing.T, st *store.Store, id int64) string {
 	t.Helper()
 	expr := "CAST(last_modified AS TEXT)"
 	var s string
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT `+expr+` FROM messages WHERE id = ?`), id).Scan(&s),
 		"read last_modified")
 	return s
@@ -73,7 +74,8 @@ func TestLastModified_MessageUpdateBumps(t *testing.T) {
 	base := baselineLM(t, st, id)
 
 	// A content UPDATE that does NOT touch last_modified must trigger a bump.
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "changed subject", id)
 	require.NoError(t, err, "update subject")
 
@@ -102,13 +104,15 @@ func TestLastModified_ExplicitWriteSurvivesContentUpdate(t *testing.T) {
 	// Control: an explicit write naming no content column. Both backends
 	// already yield to this, so its stored form is the canonical rendering of
 	// the literal on this backend — which is what the real case must match.
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET last_modified = ? WHERE id = ?`), explicit, control)
 	require.NoError(t, err, "explicit last_modified write alone")
 
 	// The real case: the same explicit write, in a statement that also changes
 	// a content column and so trips the content_changed_at trigger.
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ?, last_modified = ? WHERE id = ?`),
 		"changed subject", explicit, withContent)
 	require.NoError(t, err, "explicit last_modified write beside a content column")
@@ -127,7 +131,8 @@ func TestLastModified_EmbedGenUpdateBumps(t *testing.T) {
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
 
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET embed_gen = ? WHERE id = ?`), int64(7), id)
 	require.NoError(t, err, "update embed_gen")
 
@@ -142,7 +147,8 @@ func TestLastModified_BodyUpdateBumpsParent(t *testing.T) {
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
 
-	_, err := st.DB().Exec(
+	_, err := st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`),
 		"corrected body", id)
 	require.NoError(t, err, "update body")
@@ -215,10 +221,10 @@ func TestLastModified_UpgradePathMissingColumn(t *testing.T) {
 
 	// 1. Build a real schema, seed two messages (with bodies), then strip the
 	//    last_modified column to reproduce a pre-last_modified archive.
-	seed, err := store.OpenForTest(dbPath)
+	seed, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open seed store")
 	require.NoError(seed.InitSchema(), "seed InitSchema")
-	_, err = seed.DB().Exec(`
+	_, err = seed.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'alice@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject)
@@ -237,18 +243,20 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 		"trg_message_bodies_last_modified_upd",
 		"trg_message_bodies_last_modified_ins",
 	} {
-		_, err = seed.DB().Exec(`DROP TRIGGER IF EXISTS ` + trg)
+		_, err = seed.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS `+trg)
 		require.NoErrorf(err, "drop trigger %s", trg)
 	}
-	_, err = seed.DB().Exec(`ALTER TABLE messages DROP COLUMN last_modified`)
+	_, err = seed.DB().ExecContext(t.Context(), `ALTER TABLE messages DROP COLUMN last_modified`)
 	require.NoError(err, "drop last_modified to simulate pre-upgrade schema")
-	_, err = seed.DB().Exec(
+	_, err = seed.DB().ExecContext(
+		t.Context(),
 		seed.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
 		messageWatermarkTriggersMigration)
 	require.NoError(err, "restore the pre-trigger-migration ledger state")
 
 	var preCols int
-	require.NoError(seed.DB().QueryRow(
+	require.NoError(seed.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'last_modified'`).Scan(&preCols),
 		"check column dropped")
 	require.Equal(0, preCols, "precondition: messages must lack last_modified before upgrade")
@@ -260,7 +268,7 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 	//    adds the column. trg_messages_last_modified is not in that window —
 	//    EnsureTriggers creates it after the migrations — as the preamble above
 	//    describes.
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "reopen upgraded store")
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(),
@@ -269,13 +277,15 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 	// (b) The column now exists and the pre-existing rows were backfilled to a
 	//     non-NULL value (a NULL CAS token would loop "needs embedding" forever).
 	var postCols int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'last_modified'`).Scan(&postCols),
 		"check column added")
 	assert.Equal(1, postCols, "InitSchema must add last_modified")
 
 	var nullCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE last_modified IS NULL`).Scan(&nullCount),
 		"count NULL last_modified")
 	assert.Equal(0, nullCount, "backfill must populate last_modified for pre-existing rows")
@@ -283,7 +293,8 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 	// (c) The re-created trigger functions: a content UPDATE bumps last_modified.
 	//     Baseline to a fixed far-past value so the bump is an unambiguous change.
 	base := baselineLM(t, st, 1)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "changed one", int64(1))
 	require.NoError(err, "update subject after upgrade")
 	got := readLM(t, st, 1)
@@ -307,11 +318,12 @@ INSERT INTO message_bodies (message_id, body_text) VALUES (1, 'body one'), (2, '
 			}
 			require.NoError(err)
 			var stamp sql.NullTime
-			require.NoError(st.DB().QueryRow(
+			require.NoError(st.DB().QueryRowContext(
+				t.Context(),
 				`SELECT last_modified FROM messages WHERE id = ?`, id).Scan(&stamp))
 			assert.True(stamp.Valid, "bodyless upsert must stamp last_modified (reimport=%t)", reimport)
 			if !reimport {
-				_, err = st.DB().Exec(`UPDATE messages SET last_modified = NULL WHERE id = ?`, id)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET last_modified = NULL WHERE id = ?`, id)
 				require.NoError(err)
 			}
 		}
@@ -347,10 +359,10 @@ func TestLastModified_UpgradeReplacesBlanketTrigger(t *testing.T) {
 	// 1. Build a real archive, then wind it back to its pre-feature shape: no
 	//    content_changed_at column, and schema.sql's original blanket
 	//    last_modified trigger in place of the scoped one.
-	seed, err := store.OpenForTest(dbPath)
+	seed, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open seed store")
 	require.NoError(seed.InitSchema(), "seed InitSchema")
-	_, err = seed.DB().Exec(`
+	_, err = seed.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'alice@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject)
@@ -359,13 +371,8 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 `)
 	require.NoError(err, "seed rows")
 
+	dropContentChangedAtColumn(t, seed)
 	for _, stmt := range []string{
-		`DROP TRIGGER IF EXISTS trg_messages_content_changed_ins`,
-		`DROP TRIGGER IF EXISTS trg_messages_content_changed_at`,
-		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_ins`,
-		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_upd`,
-		`DROP INDEX IF EXISTS idx_messages_content_changed_at`,
-		`ALTER TABLE messages DROP COLUMN content_changed_at`,
 		`DROP TRIGGER IF EXISTS trg_messages_last_modified`,
 		// Verbatim from schema.sql before this change moved it to EnsureTriggers.
 		`CREATE TRIGGER trg_messages_last_modified
@@ -375,16 +382,18 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 		     UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
 		 END`,
 	} {
-		_, err = seed.DB().Exec(stmt)
+		_, err = seed.DB().ExecContext(t.Context(), stmt)
 		require.NoErrorf(err, "wind the archive back: %s", stmt)
 	}
-	_, err = seed.DB().Exec(
+	_, err = seed.DB().ExecContext(
+		t.Context(),
 		seed.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
 		messageWatermarkTriggersMigration)
 	require.NoError(err, "restore the pre-trigger-migration ledger state")
 
 	var preSQL string
-	require.NoError(seed.DB().QueryRow(
+	require.NoError(seed.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_messages_last_modified'`).
 		Scan(&preSQL), "read the reconstructed trigger")
 	require.NotContains(preSQL, "UPDATE OF",
@@ -393,7 +402,7 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 	require.NoError(seed.Close(), "close seed store")
 
 	// 2. Open it with this build. InitSchema is the production upgrade path.
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "reopen the archive")
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(), "InitSchema on an archive with the blanket trigger")
@@ -402,7 +411,8 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 	//     writing last_modified — a replacement, not a second trigger racing the
 	//     first.
 	var postSQL string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_messages_last_modified'`).
 		Scan(&postSQL), "read the upgraded trigger")
 	assert.Contains(postSQL, "AFTER UPDATE OF",
@@ -412,7 +422,8 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 			"the watermark stamp from re-entering this trigger")
 
 	var writers int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM sqlite_master
 		 WHERE type = 'trigger' AND tbl_name = 'messages'
 		   AND sql LIKE '%SET last_modified%'`).Scan(&writers),
@@ -427,10 +438,12 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 	//     that writes the same literal alone, so the assertion is about the
 	//     clobber and not about how this backend renders the literal.
 	const explicit = "2000-06-15 12:30:45+00"
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET last_modified = ? WHERE id = ?`), explicit, int64(2))
 	require.NoError(err, "control: explicit last_modified write alone")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ?, last_modified = ? WHERE id = ?`),
 		"changed one", explicit, int64(1))
 	require.NoError(err, "explicit last_modified write beside a content column")
@@ -442,7 +455,8 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 	// 3c. And the watermark the upgrade was for still works: the backfilled
 	//     column advances on a content change.
 	base := stampContentChangedAt(t, st, 1)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "changed snippet", int64(1))
 	require.NoError(err, "content update after upgrade")
 	assert.Greater(readContentChangedAt(t, st, 1), base,
@@ -467,19 +481,21 @@ func openArchiveWithMessagesColumn(t *testing.T, name string) (*store.Store, err
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "hostile.db")
 
-	seed, err := store.OpenForTest(dbPath)
+	seed, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(t, err, "open seed store")
 	require.NoError(t, seed.InitSchema(), "seed InitSchema")
-	_, err = seed.DB().Exec(
-		`ALTER TABLE messages ADD COLUMN ` + quoteSQLiteIdentifier(name) + ` TEXT`)
+	_, err = seed.DB().ExecContext(
+		t.Context(),
+		`ALTER TABLE messages ADD COLUMN `+quoteSQLiteIdentifier(name)+` TEXT`)
 	require.NoErrorf(t, err, "add column %q — SQLite accepts any name inside quotes", name)
-	_, err = seed.DB().Exec(
+	_, err = seed.DB().ExecContext(
+		t.Context(),
 		seed.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
 		messageWatermarkTriggersMigration)
 	require.NoError(t, err, "queue the trigger migration")
 	require.NoError(t, seed.Close(), "close seed store")
 
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(t, err, "reopen archive")
 	t.Cleanup(func() { _ = st.Close() })
 	return st, st.InitSchema()
@@ -491,7 +507,7 @@ func TestLastModified_TriggerMigrationDoesNotRunOnEveryOpen(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		DROP TRIGGER trg_messages_last_modified;
 		CREATE TRIGGER trg_messages_last_modified
 		AFTER UPDATE ON messages BEGIN SELECT 1; END;
@@ -501,7 +517,8 @@ func TestLastModified_TriggerMigrationDoesNotRunOnEveryOpen(t *testing.T) {
 	require.NoError(st.InitSchema(), "second InitSchema")
 
 	var ddl string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_messages_last_modified'`,
 	).Scan(&ddl))
 	assert.Contains(ddl, "SELECT 1",
@@ -513,7 +530,8 @@ func TestLastModified_TriggerMigrationDoesNotRunOnEveryOpen(t *testing.T) {
 func messagesTableExists(t *testing.T, st *store.Store) bool {
 	t.Helper()
 	var n int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'messages'`).Scan(&n),
 		"read sqlite_master")
 	return n == 1
@@ -553,7 +571,8 @@ func TestLastModified_TriggerScopeEscapesAQuoteInAColumnName(t *testing.T) {
 	// And the trigger the scope belongs to still works on that archive.
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "changed", id)
 	require.NoError(err, "update subject")
 	assert.NotEqual(base, readLM(t, st, id),
@@ -575,13 +594,15 @@ func TestLastModified_TriggerScopeRoundTripsAQuotedColumnName(t *testing.T) {
 	require.NoError(err, `a column named we"ird must open`)
 
 	var present int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = ?`, weird).Scan(&present),
 		"read the column back")
 	require.Equal(1, present, "the archive still declares the column under its own name")
 
 	var ddl string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?`,
 		"trg_messages_last_modified").Scan(&ddl), "read the trigger DDL")
 	assert.Contains(ddl, `"we""ird"`,
@@ -590,7 +611,8 @@ func TestLastModified_TriggerScopeRoundTripsAQuotedColumnName(t *testing.T) {
 	// The scope reaches it: an UPDATE naming only that column bumps last_modified.
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET "we""ird" = ? WHERE id = ?`), "changed", id)
 	require.NoError(err, "update the oddly named column")
 	assert.NotEqual(base, readLM(t, st, id),
@@ -623,7 +645,8 @@ func TestLastModified_TriggerScopeQuotesAHostileColumnName(t *testing.T) {
 	// And the trigger the scope belongs to still works on that archive.
 	id := seedMessageForLM(t, st)
 	base := baselineLM(t, st, id)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "changed", id)
 	require.NoError(err, "update subject")
 	assert.NotEqual(base, readLM(t, st, id),
@@ -650,7 +673,8 @@ func TestLastModified_TriggerScopeAcceptsAwkwardButLegalColumnNames(t *testing.T
 
 			id := seedMessageForLM(t, st)
 			base := baselineLM(t, st, id)
-			_, err = st.DB().Exec(
+			_, err = st.DB().ExecContext(
+				t.Context(),
 				st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "changed", id)
 			require.NoError(t, err, "update subject")
 			assert.NotEqual(t, base, readLM(t, st, id),
@@ -665,7 +689,7 @@ func TestLastModified_TriggerScopeAcceptsAwkwardButLegalColumnNames(t *testing.T
 func TestLastModified_NoInfiniteRecursion(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
-	ctx := context.Background()
+	ctx := t.Context()
 	for range 5 {
 		_, err := st.DB().ExecContext(ctx,
 			st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "s", id)

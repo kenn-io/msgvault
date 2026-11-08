@@ -1,9 +1,9 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +14,53 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestConversationWindowRoomLinksRequirePerson(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "room-reply", "Declined: Planning")
+	requirements.NoError(err)
+	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	requirements.NoError(err)
+	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
+	requirements.NoError(err)
+	otherRoom, err := st.EnsureParticipant("room2@resource.calendar.google.com", "Room 2", "resource.calendar.google.com")
+	requirements.NoError(err)
+	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "room-reply", MessageType: "email", SenderID: sql.NullInt64{Int64: otherRoom, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC), Valid: true}})
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(message, "from", []int64{otherRoom}, []string{"Room 2"}))
+	requirements.NoError(st.ReplaceMessageRecipients(message, "to", []int64{room, otherRoom, alice}, []string{"Room", "Room 2", "Alice"}))
+	for _, phase := range []struct {
+		name                    string
+		link                    [2]int64
+		wantRoom, wantOtherRoom int64
+	}{
+		{name: "unlinked"},
+		{name: "linked_person", link: [2]int64{otherRoom, alice}, wantOtherRoom: otherRoom},
+	} {
+		if phase.link[0] != 0 {
+			_, err := st.LinkParticipants(phase.link[0], phase.link[1])
+			requirements.NoError(err)
+		}
+		t.Run(phase.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			window, err := st.GetConversationWindow(conversation, message, 0, 0)
+			requirements.NoError(err)
+			requirements.Len(window.Messages, 1)
+			row := window.Messages[0]
+			assertions.Equal(phase.wantOtherRoom, row.FromParticipantID)
+			assertions.Equal("room2@resource.calendar.google.com", row.FromEmail)
+			assertions.Equal("Room 2 <room2@resource.calendar.google.com>", row.From)
+			assertions.ElementsMatch([]store.ParticipantDisplay{
+				{ParticipantID: phase.wantRoom, Display: "Room <room@resource.calendar.google.com>"},
+				{ParticipantID: phase.wantOtherRoom, Display: "Room 2 <room2@resource.calendar.google.com>"},
+				{ParticipantID: alice, Display: "Alice <alice@example.com>"},
+			}, row.ToParticipants)
+		})
+	}
+}
+
 func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -21,7 +68,7 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "portable-thread", "Portable thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "portable-thread", "Portable thread")
 	require.NoError(err)
 	senderID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	require.NoError(err)
@@ -33,8 +80,8 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(err)
 
 	var duplicateID, nameOnlyID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO participants (email_address, display_name) VALUES ($1, 'Bob') RETURNING id`, "Bob@example.com").Scan(&duplicateID))
-	require.NoError(st.DB().QueryRow(`INSERT INTO participants (email_address, display_name) VALUES (NULL, 'Bob') RETURNING id`).Scan(&nameOnlyID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO participants (email_address, display_name) VALUES ($1, 'Bob') RETURNING id`, "Bob@example.com").Scan(&duplicateID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO participants (email_address, display_name) VALUES (NULL, 'Bob') RETURNING id`).Scan(&nameOnlyID))
 
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -56,10 +103,10 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{toID, duplicateID, nameOnlyID}, []string{"Bob", "Bob", "Bob"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "cc", []int64{ccID}, []string{"Carol"}))
 	require.NoError(st.ReplaceMessageRecipients(messageID, "bcc", []int64{bccID}, []string{"Dave"}))
-	labelID, err := st.EnsureLabel(source.ID, "STARRED", "Starred", "system")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "STARRED", "Starred", "system")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageLabels(messageID, []int64{labelID}))
-	require.NoError(st.UpsertAttachment(messageID, "report.pdf", "application/pdf",
+	require.NoError(st.UpsertAttachment(t.Context(), messageID, "report.pdf", "application/pdf",
 		"", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 42))
 	require.NoError(st.RecomputeMessageAttachmentStats(messageID))
 
@@ -94,7 +141,7 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "nullable-attribution-thread", "Nullable attribution")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "nullable-attribution-thread", "Nullable attribution")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -103,7 +150,7 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 		MessageType:     "email",
 	})
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET is_from_me = NULL WHERE id = ?"), messageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET is_from_me = NULL WHERE id = ?"), messageID)
 	require.NoError(err)
 
 	message, err := st.GetMessage(messageID)
@@ -116,43 +163,20 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 	assert.False(t, window.Messages[0].IsFromMe)
 }
 
-func TestConversationWindowIncludesSourceDeletedArchiveEntries(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
-	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "retained-thread", "Retained thread")
-	requirements.NoError(err)
-	messageID, err := st.UpsertMessage(&store.Message{
-		ConversationID: conversationID, SourceID: source.ID, SourceMessageID: "retained-message",
-		MessageType: "email", SentAt: sql.NullTime{Time: time.Now().UTC(), Valid: true},
-	})
-	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), messageID)
-	requirements.NoError(err)
-
-	window, err := st.GetConversationWindow(conversationID, messageID, 1, 1)
-	requirements.NoError(err)
-	requirements.NotNil(window)
-	requirements.Len(window.Messages, 1)
-	assertions.Equal(messageID, window.Messages[0].ID)
-}
-
 func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "ranged-thread", "Ranged thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "ranged-thread", "Ranged thread")
 	require.NoError(err)
 
 	day1 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	day2 := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	sentTimes := []time.Time{
 		day1, day1.Add(time.Minute), day1.Add(2 * time.Minute),
-		day2, day2.Add(time.Minute), day2.Add(2 * time.Minute),
+		day2, day2, day2.Add(time.Minute),
 	}
 	ids := make([]int64, 0, len(sentTimes))
 	for i, sentAt := range sentTimes {
@@ -167,10 +191,13 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 		ids = append(ids, id)
 	}
 
-	start := day2.Truncate(24 * time.Hour)
-	end := start.AddDate(0, 0, 1)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sent_at = NULL, received_at = ? WHERE id = ?`), day2.Add(time.Minute), ids[5])
+	require.NoError(err)
 
-	window, err := st.GetConversationWindowContext(context.Background(), conversationID, ids[4], 25, 25, &start, &end)
+	start := day2
+	end := day2.Add(2 * time.Minute)
+
+	window, err := st.GetConversationWindowContext(t.Context(), conversationID, ids[4], 25, 25, &start, &end)
 	require.NoError(err)
 	require.NotNil(window)
 	require.Len(window.Messages, 3)
@@ -180,7 +207,7 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 	})
 	assert.Equal(int64(2), window.AnchorPosition)
 
-	_, err = st.GetConversationWindowContext(context.Background(), conversationID, ids[0], 25, 25, &start, &end)
+	_, err = st.GetConversationWindowContext(t.Context(), conversationID, ids[0], 25, 25, &start, &end)
 	require.ErrorIs(err, store.ErrConversationAnchorOutsideRange)
 }
 
@@ -192,7 +219,7 @@ func seedBudgetConversation(t *testing.T, bodySizes []int) (*store.Store, int64,
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, "budget-thread", "Budget thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "budget-thread", "Budget thread")
 	require.NoError(t, err)
 	ids := make([]int64, 0, len(bodySizes))
 	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -349,11 +376,11 @@ func TestConversationTitlesBatchContext(t *testing.T) {
 	require.NoError(err)
 	second, err := st.GetOrCreateSource("beeper", "second")
 	require.NoError(err)
-	_, err = st.EnsureConversation(first.ID, "shared", "First title")
+	_, err = st.EnsureConversation(t.Context(), first.ID, "shared", "First title")
 	require.NoError(err)
-	_, err = st.EnsureConversation(second.ID, "shared", "Second title")
+	_, err = st.EnsureConversation(t.Context(), second.ID, "shared", "Second title")
 	require.NoError(err)
-	_, err = st.EnsureConversation(first.ID, "empty", "")
+	_, err = st.EnsureConversation(t.Context(), first.ID, "empty", "")
 	require.NoError(err)
 	titles, err := st.ConversationTitlesBatchContext(t.Context(), first.ID, []string{"shared", "empty", "missing"})
 	require.NoError(err)
@@ -364,4 +391,68 @@ func TestConversationTitlesBatchContext(t *testing.T) {
 	titles, err = st.ConversationTitlesBatchContext(t.Context(), first.ID, nil)
 	require.NoError(err)
 	assert.Empty(titles)
+}
+
+func TestConversationWindowOrderAndCounts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "window@example.com")
+	requirements.NoError(err)
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "window-order", "Window order")
+	requirements.NoError(err)
+	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	ids := make([]int64, 9)
+	for i := range ids {
+		message := &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: strconv.Itoa(i), MessageType: "email"}
+		switch i {
+		case 0, 1, 6, 7:
+			message.SentAt = sql.NullTime{Time: base, Valid: true}
+		case 2:
+			message.ReceivedAt = sql.NullTime{Time: base.Add(time.Minute), Valid: true}
+		case 5:
+			message.InternalDate = sql.NullTime{Time: base.Add(2 * time.Minute), Valid: true}
+		}
+		ids[i], err = st.UpsertMessage(message)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), base, ids[5])
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), base, ids[6])
+	requirements.NoError(err)
+	// Importers can persist a zero timestamp as a non-NULL SQL value.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Time{}, ids[8])
+	requirements.NoError(err)
+	// A second timestamp tie remains visible after the hidden message.
+	order := []int{3, 4, 8, 0, 1, 7, 2, 5}
+	if st.IsPostgreSQL() {
+		order = []int{8, 0, 1, 7, 2, 5, 3, 4}
+	}
+	for pos, anchor := range order {
+		for _, limits := range []struct{ before, after int }{{0, 0}, {1, 1}, {25, 25}, {0, 25}, {25, 0}} {
+			t.Run(fmt.Sprintf("anchor%d/%d/%d", anchor, limits.before, limits.after), func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				window, err := st.GetConversationWindow(conv, ids[anchor], limits.before, limits.after)
+				requirements.NoError(err)
+				want := []int64{}
+				for _, i := range order[max(0, pos-limits.before):min(len(order), pos+limits.after+1)] {
+					want = append(want, ids[i])
+				}
+				got := []int64{}
+				for _, message := range window.Messages {
+					got = append(got, message.ID)
+				}
+				assertions.Equal(want, got)
+				assertions.Equal(int64(8), window.Total)
+				assertions.Equal(int64(pos+1), window.AnchorPosition)
+			})
+		}
+	}
+	for _, anchor := range []int64{ids[6], ids[7] + 1000} {
+		window, err := st.GetConversationWindow(conv, anchor, 25, 25)
+		requirements.NoError(err)
+		assertions.Empty(window.Messages)
+		assertions.Zero(window.Total)
+	}
 }

@@ -229,9 +229,9 @@ go test -tags "fts5 sqlite_vec" ./cmd/msgvault/cmd ./internal/api \
 - [ ] Keep all preflight validation before the manifest. If a store, encoding,
   or output error occurs after the manifest, return nonzero without writing a
   completion record.
-- [ ] Register the command in the root tree and daemon CLI allowlist. Retain
-  normal operation gating so the multi-phase export observes one coherent
-  archive state.
+- [ ] Register the command in the root tree and daemon CLI allowlist. Read all
+  export phases from one read-only snapshot so the export observes one coherent
+  archive state while imports and syncs continue.
 - [ ] Prove the existing provider-specific compatibility command and schema
   remain unchanged:
 

@@ -21,7 +21,7 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 	mainDB, err := sql.Open("sqlite3", mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mainDB.Close() })
-	_, err = mainDB.Exec(`
+	_, err = mainDB.ExecContext(t.Context(), `
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
 			deleted_at DATETIME,
@@ -57,7 +57,7 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 	activeAccelerator := installReadyFlatAccelerator(t, backend, active, 4)
 	buildingAccelerator := installReadyFlatAccelerator(t, backend, building, 5)
 
-	_, err = mainDB.Exec(`
+	_, err = mainDB.ExecContext(t.Context(), `
 		UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 2;
 		DELETE FROM messages WHERE id = 3;`)
 	require.NoError(t, err)
@@ -69,22 +69,23 @@ func TestBackend_PruneOrphanEmbeddingsRemovesOnlyHardDeletedMessages(t *testing.
 	assert.Equal(t, int64(2), pruned, "generation/message pairs pruned")
 
 	var embeddings, vectors4, vectors5 int64
-	require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM embeddings`).Scan(&embeddings))
-	require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM vectors_vec_d4`).Scan(&vectors4))
-	require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM vectors_vec_d5`).Scan(&vectors5))
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings`).Scan(&embeddings))
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vectors_vec_d4`).Scan(&vectors4))
+	require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM vectors_vec_d5`).Scan(&vectors5))
 	assert.Equal(t, int64(3), embeddings, "live and soft-deleted chunks remain")
 	assert.Equal(t, int64(2), vectors4, "active generation vec0 rows")
 	assert.Equal(t, int64(1), vectors5, "building generation vec0 rows")
 	assert.Equal(t, embeddings, vectors4+vectors5, "metadata and vec0 rows stay aligned")
 	for tableName, want := range map[string]int64{activeAccelerator: 2, buildingAccelerator: 1} {
 		var acceleratorRows int64
-		require.NoError(t, backend.db.QueryRow(`SELECT COUNT(*) FROM `+tableName).Scan(&acceleratorRows))
+		require.NoError(t, backend.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+tableName).Scan(&acceleratorRows))
 		assert.Equal(t, want, acceleratorRows, "accelerator rows in %s", tableName)
 	}
 
 	for _, generation := range []vector.GenerationID{active, building} {
 		var messageCount int64
-		require.NoError(t, backend.db.QueryRow(
+		require.NoError(t, backend.db.QueryRowContext(
+			t.Context(),
 			`SELECT message_count FROM index_generations WHERE id = ?`, generation,
 		).Scan(&messageCount))
 		assert.Equal(t, int64(1), messageCount, "generation %d message_count", generation)

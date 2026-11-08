@@ -800,12 +800,12 @@ func (s *Store) contactStateFreshnessTxContext(
 	ctx context.Context,
 	tx *loggedTx,
 ) (ContactRevisions, bool, error) {
-	identity, err := s.currentIdentityRevisionTx(tx)
+	identity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 	if err != nil {
 		return ContactRevisions{}, false,
 			fmt.Errorf("read contact identity revision: %w", err)
 	}
-	account, err := readAccountIdentityRevision(tx)
+	account, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 	if err != nil {
 		return ContactRevisions{}, false,
 			fmt.Errorf("read contact account identity revision: %w", err)
@@ -821,11 +821,7 @@ func (s *Store) contactStateFreshnessTxContext(
 	}
 	var pending int
 	if err := tx.QueryRowContext(ctx, `
-		SELECT CASE WHEN EXISTS (
-			SELECT 1
-			FROM activity_projection_queue
-			WHERE revision > processed_revision
-		) OR EXISTS (
+		SELECT CASE WHEN `+activityProjectionPendingSQL+` OR EXISTS (
 			SELECT 1
 			FROM archive_metadata
 			WHERE key IN (?, ?)

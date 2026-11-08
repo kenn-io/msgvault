@@ -323,7 +323,7 @@ func TestPersonSweepStateMachineParity(t *testing.T) {
 			return
 		}
 		revoked, revokeErr := f.store.RevokePersonInferenceConsent(
-			context.Background(), f.profile.Fingerprint, "parity-revocation")
+			t.Context(), f.profile.Fingerprint, "parity-revocation")
 		require.NoError(revokeErr)
 		assert.True(revoked)
 	}
@@ -627,7 +627,7 @@ func paritySyncMutation(t *testing.T, f *personSweepParityFixture, mutate func()
 func parityEditMessage(t *testing.T, f *personSweepParityFixture, body string) {
 	t.Helper()
 	paritySyncMutation(t, f, func() {
-		err := f.store.UpdateMessageDerivedText(f.messageID,
+		err := f.store.UpdateMessageDerivedText(t.Context(), f.messageID,
 			sql.NullString{String: body, Valid: true}, sql.NullString{}, sql.NullString{},
 			store.FTSDoc{Subject: "Synthetic parity", Body: body,
 				FromAddr: "alice.alias@example.test"})

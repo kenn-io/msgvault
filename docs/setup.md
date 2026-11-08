@@ -10,9 +10,6 @@ terminal. The Gmail walkthrough below includes Google OAuth setup. For other
 mail providers, chats, meetings, contacts, or local exports, use
 [Choose a Source](guides/sources.md) after installation.
 
-Already have an archive? Read [the upgrade notes](changelog.md#before-upgrading) before
-opening an existing archive with a newer build.
-
 ## Install Release
 
 **macOS / Linux:**
@@ -26,6 +23,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 ```
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary.
+
+The Unix installer adds msgvault to your Bash, Zsh, or Fish profile; `MSGVAULT_NO_MODIFY_PATH=1` skips the profile edit.
 
 Windows releases include native AMD64 and ARM64 packages. On Windows ARM64,
 the PowerShell installer selects the native package when the release provides
@@ -51,12 +50,12 @@ the archive or its checksum entry is missing.
 Archives use `msgvault_<version>_<os>_<arch>`, with the version's leading `v`
 removed. Use `darwin` for macOS, `linux` for Linux, and `windows` for Windows;
 architectures are `amd64` and `arm64`. macOS and Linux archives end in `.tar.gz`;
-Windows archives end in `.zip`, such as `msgvault_0.21.0_windows_arm64.zip`.
+Windows archives end in `.zip`, such as `msgvault_0.23.0_windows_arm64.zip`.
 
 ### Migrate before replacing the executable
 
-The following commands are new on `main` and are not in v0.21.0. Use a candidate
-binary that includes them. Run maintenance on the archive host; for a configured
+These commands are available in 0.22.0 and later; run them from the candidate
+binary. Run maintenance on the archive host; for a configured
 remote server, use `--local` only when intentionally selecting this host's archive.
 
 1. Download, verify, and extract the candidate into a separate directory.
@@ -441,18 +440,21 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Start the daemon:
+Start the daemon, or find the one already running:
 
 ```bash
-msgvault serve
+msgvault daemon start
 ```
 
-The daemon builds a missing or stale analytical cache during startup. Open the
-`API server` URL it prints. With the default loopback bind,
+Open the URL it prints in your browser. The daemon builds a missing or stale
+analytical cache during startup. With the default loopback bind,
 the browser is trusted locally. A daemon bound to another interface must use an
 API key; the browser presents a login screen and stores only an in-memory
 daemon session. The release binary contains the complete UI, so no frontend
 runtime or separately installed web files are required.
+
+To run in the foreground, stop the daemon with `msgvault daemon stop`, then run
+`msgvault serve`.
 
 For a server or NAS, prefer HTTPS at a reverse proxy and configure only that
 proxy in `server.trusted_proxies`. Plain HTTP is an explicit private-network

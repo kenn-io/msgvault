@@ -27,7 +27,7 @@ const cacheReadLockRetryInterval = 50 * time.Millisecond
 // AcquireCacheReadLock takes the shared cache lock for the duration of one
 // read, blocking only while a writer holds it exclusively: the brief
 // rename+marker publication step of a cache build, or destructive
-// maintenance (account removal, date repair) for its whole operation.
+// maintenance while draining readers and invalidating the cache marker.
 // Build staging and index construction run under a separate builder lock,
 // so readers keep querying the committed generation during a rebuild.
 // Shared holders do not conflict with each other, so concurrent queries and

@@ -307,6 +307,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[StatsResponse](apiV1, "getStats", http.MethodGet, "/stats", "Get archive statistics", s.handleStats)
 	s.registerImportJobRoutes(apiV1)
+	s.registerLocalEmbeddingsRoutes(apiV1)
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)
@@ -331,6 +332,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerOrganizationRoutes(apiV1)
 	s.registerEmploymentRoutes(apiV1)
 	s.registerActivityRoutes(apiV1)
+	s.registerLoopRoutes(apiV1)
 	s.registerPersonProfileValueRoutes(apiV1)
 	s.registerCommunicationServiceRoutes(apiV1)
 	s.registerAttributeDefinitionRoutes(apiV1)
@@ -405,7 +407,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithErrors[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage, http.StatusRequestEntityTooLarge)
 	registerAPIV1RawHumaJSONRouteWithErrors[cliOriginalMessageResponse](apiV1, "getCLIMessageOriginal", http.MethodGet, "/cli/message/original", "Get one message's original MIME for export", s.handleCLIMessageOriginal,
 		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
-	registerAPIV1RawHumaJSONRouteWithErrors[query.ThreadPage](apiV1, "getCLIMessageThread", http.MethodGet, "/cli/message/thread", "List one conversation in chronological order for export", s.handleCLIMessageThread,
+	registerAPIV1RawHumaJSONRouteWithErrors[query.ThreadPage](apiV1, "getCLIMessageThread", http.MethodGet, "/cli/message/thread", "List one conversation in chronological order for export. SQLite compares instants to the millisecond, with ties in message-ID order.", s.handleCLIMessageThread,
 		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
 	// Agent-token management routes: owner API key required.
 	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)

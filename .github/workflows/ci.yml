@@ -20,7 +20,7 @@ on:
 jobs:
   changes:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-26.04
+    runs-on: namespace-profile-linux-1cpu
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -36,6 +36,8 @@ jobs:
               - '!{web/**,docs/**,*.md}'
               - 'docs/assets/**'
               - 'docs/screenshots/**'
+              - 'docs/*.go'
+              - 'docs/guides/agent-quickstart.md'
               - 'web/src/lib/settings/cron-corpus.json'
               - 'web/tests/e2e/fixtures/operations-public.json'
               - 'web/tests/e2e/fixtures/operations-private-sentinels.json'
@@ -64,13 +66,14 @@ jobs:
     container:
       image: ubuntu:26.04
     steps:
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install build tools
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          kit-retry 3 5 apt-get -o APT::Update::Error-Mode=any update
+          # CI only needs Ubuntu packages; runner-added repositories can fail independently.
+          kit-retry 3 5 apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update
           kit-retry 3 5 apt-get install -y gcc g++ make git curl tar gzip file binutils libsqlite3-dev
 
       - uses: actions/checkout@v7.0.1
@@ -122,8 +125,20 @@ jobs:
       - name: Test built CLI on a synthetic archive
         run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
+      - name: Check for test reruns
+        if: always()
+        id: check-reruns
+        shell: bash
+        run: |
+          for report in gotestsum/*-reruns.txt; do
+            if [ -s "$report" ]; then
+              echo "reruns=true" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-cli-e2e-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
@@ -150,12 +165,13 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
+          trim: "true"
           extra-path: .git/golangci-lint-cache
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       - name: Check PostgreSQL build coverage
         run: make pg-shipped-only-check
@@ -174,6 +190,9 @@ jobs:
       - name: Check OpenAPI artifacts
         run: make openapi-check
 
+      - name: Check MCP guide
+        run: make agent-guide-check
+
       - name: Lint
         run: |
           cache=$(git rev-parse --git-path golangci-lint-cache)
@@ -187,7 +206,7 @@ jobs:
 
       - name: Log cache sizes
         if: github.event_name != 'pull_request'
-        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
+        run: du -sh "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -209,11 +228,12 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
+          trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       # Go's test cache keys repo files by mtime.
       # Checkout rewrites them, so derive stable times from file contents.
@@ -225,8 +245,17 @@ jobs:
       - name: Test
         run: make test-unsharded TEST_TIMEOUT=17m
 
+      - name: Check for test reruns
+        if: always()
+        id: check-unsharded-reruns
+        shell: bash
+        run: |
+          if [ -s gotestsum/unsharded-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/unsharded-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || steps.check-unsharded-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-unsharded-attempt-${{ github.run_attempt }}
@@ -240,8 +269,17 @@ jobs:
           --packages ./cmd/msgvault/cmd --
           -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1
 
+      - name: Check for test reruns
+        if: always()
+        id: check-vector-stub-reruns
+        shell: bash
+        run: |
+          if [ -s gotestsum/vector-stub-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/vector-stub-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || steps.check-vector-stub-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-vector-stub-attempt-${{ github.run_attempt }}
@@ -292,10 +330,10 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install test dependencies
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
@@ -325,12 +363,25 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: macos
+          trim: "true"
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
 
+      - name: Check for test reruns
+        if: always()
+        id: check-reruns
+        shell: bash
+        run: |
+          for report in gotestsum/*-reruns.txt; do
+            if [ -s "$report" ]; then
+              echo "reruns=true" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-macos-attempt-${{ github.run_attempt }}
@@ -367,7 +418,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -387,7 +438,8 @@ jobs:
             --workdir "$GITHUB_WORKSPACE/web" \
             "$image" node "$cli" run-server --host 127.0.0.1 --port 3000)
           echo "container_id=$container_id" >> "$GITHUB_OUTPUT"
-          for attempt in {1..30}; do
+          # Allow slow container startup to finish while polling for readiness.
+          for attempt in {1..120}; do
             if [ "$(docker inspect --format '{{.State.Running}}' "$container_id")" != true ]; then
               echo 'Browser server container exited before becoming ready.' >&2
               exit 1
@@ -398,7 +450,7 @@ jobs:
             fi
             sleep 1
           done
-          echo 'Browser server did not become ready within 30 attempts.' >&2
+          echo 'Browser server did not become ready within 120 attempts.' >&2
           exit 1
 
       - name: Check and test frontend
@@ -478,7 +530,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -575,8 +627,9 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: windows
+          trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default include path. Install it from MSYS2 and point
@@ -605,7 +658,7 @@ jobs:
 
       - name: Test
         shell: pwsh
-        env:
+        env: &windows-test-env
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
@@ -613,12 +666,30 @@ jobs:
           $separatePackages = @(
             "go.kenn.io/msgvault/cmd/msgvault/cmd"
             "go.kenn.io/msgvault/internal/api"
+            "go.kenn.io/msgvault/internal/backupapp"
+            "go.kenn.io/msgvault/internal/beeper"
+            "go.kenn.io/msgvault/internal/carddav"
+            "go.kenn.io/msgvault/internal/chatwoot"
+            "go.kenn.io/msgvault/internal/circleback"
+            "go.kenn.io/msgvault/internal/deletion"
+            "go.kenn.io/msgvault/internal/discord"
+            "go.kenn.io/msgvault/internal/imazingcsv"
             "go.kenn.io/msgvault/internal/importer"
+            "go.kenn.io/msgvault/internal/matrix"
+            "go.kenn.io/msgvault/internal/mcp"
+            "go.kenn.io/msgvault/internal/muesli"
+            "go.kenn.io/msgvault/internal/omi"
+            "go.kenn.io/msgvault/internal/peoplesweep"
+            "go.kenn.io/msgvault/internal/query"
+            "go.kenn.io/msgvault/internal/rederive"
+            "go.kenn.io/msgvault/internal/slack"
             "go.kenn.io/msgvault/internal/store"
             "go.kenn.io/msgvault/internal/sync"
+            "go.kenn.io/msgvault/internal/teams"
             "go.kenn.io/msgvault/internal/vector/embed"
             "go.kenn.io/msgvault/internal/vector/sqlitevec"
             "go.kenn.io/msgvault/scripts"
+            "go.kenn.io/msgvault/scripts/contextual-retrieval-eval"
           )
           $packages = go list -tags "fts5 sqlite_vec" ./... |
             Where-Object { $_ -notin $separatePackages }
@@ -627,13 +698,22 @@ jobs:
             --packages "$packages" -- -timeout 20m -tags "fts5 sqlite_vec"
 
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-attempt-${{ github.run_attempt }}
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
+
+      - name: Print slowest tests
+        if: always()
+        shell: bash
+        run: |
+          for f in gotestsum/*.json; do
+            [ -f "$f" ] || continue
+            go tool gotestsum tool slowest --jsonfile "$f" --num 10 || true
+          done
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -664,7 +744,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
         shell: bash
@@ -713,7 +793,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
         shell: bash
@@ -729,8 +809,20 @@ jobs:
           go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-slow.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-slow-reruns.txt
           --packages "./internal/api ./internal/importer ./scripts" -- -timeout 9m -tags "fts5 sqlite_vec"
 
+      - name: Check for test reruns
+        if: always()
+        id: check-reruns
+        shell: bash
+        run: |
+          for report in gotestsum/*-reruns.txt; do
+            if [ -s "$report" ]; then
+              echo "reruns=true" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-slow-attempt-${{ github.run_attempt }}
@@ -748,8 +840,8 @@ jobs:
         include:
           # A 4-core runner is already saturated by one package's shards, so the
           # two slowest packages each split across 3 runners.
-          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 45 }
-          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 45 }
+          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 64, extra_packages: ./internal/peoplesweep ./internal/mcp ./internal/matrix ./internal/discord ./internal/omi ./internal/teams ./internal/imazingcsv ./internal/backupapp ./internal/muesli ./internal/rederive ./internal/circleback ./internal/carddav }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 64, extra_packages: ./internal/deletion ./internal/beeper ./scripts/contextual-retrieval-eval ./internal/chatwoot ./internal/slack }
           - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 36m, job_timeout: 64 }
           - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 30m, job_timeout: 38 }
           - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 30m, job_timeout: 38 }
@@ -760,8 +852,9 @@ jobs:
             package2: ./internal/vector/embed
             timeout: 40m
           - name: vector-sqlite
-            job_timeout: 30
+            job_timeout: 47
             package: ./internal/vector/sqlitevec
+            extra_packages: ./internal/query
             timeout: 9m
     runs-on: windows-2025
     timeout-minutes: ${{ matrix.job_timeout }}
@@ -780,7 +873,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
         shell: bash
@@ -807,8 +900,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Test additional packages
+        if: matrix.extra_packages && !cancelled()
+        shell: pwsh
+        env: *windows-test-env
+        run: |
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-additional.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-additional-reruns.txt `
+            --packages "${{ matrix.extra_packages }}" -- -timeout 20m -tags "fts5 sqlite_vec"
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1
+        if: failure() || github.run_attempt > 1 || matrix.extra_packages
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
@@ -835,7 +936,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
         shell: bash
@@ -901,10 +1002,10 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install test dependencies
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Enable pgvector extension
         run: |
@@ -921,8 +1022,17 @@ jobs:
           --packages "./internal/vector/... ./internal/whoknows/... ./internal/scheduler/..." --
           -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1
 
+      - name: Check for test reruns
+        if: always()
+        id: check-pgvector-reruns
+        shell: bash
+        run: |
+          if [ -s gotestsum/pgvector-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/pgvector-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || steps.check-pgvector-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pgvector-attempt-${{ github.run_attempt }}
@@ -980,11 +1090,12 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-postgres
+          trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite development headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
       - *stable-mtimes
 
@@ -1001,8 +1112,20 @@ jobs:
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
+      - name: Check for test reruns
+        if: always()
+        id: check-reruns
+        shell: bash
+        run: |
+          for report in gotestsum/*-reruns.txt; do
+            if [ -s "$report" ]; then
+              echo "reruns=true" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-shipped-unsharded-attempt-${{ github.run_attempt }}
@@ -1072,10 +1195,10 @@ jobs:
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install test dependencies
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
@@ -1096,8 +1219,17 @@ jobs:
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
         run: make test-pg-nocgo TEST_TIMEOUT=5m
 
+      - name: Check for test reruns
+        if: always()
+        id: check-pg-nocgo-reruns
+        shell: bash
+        run: |
+          if [ -s gotestsum/pg-nocgo-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload test events
-        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || hashFiles('gotestsum/pg-nocgo-reruns.txt') != '') }}
+        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || steps.check-pg-nocgo-reruns.outputs.reruns == 'true') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-nocgo-attempt-${{ github.run_attempt }}
@@ -1113,8 +1245,17 @@ jobs:
           go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/store-concurrency.json --rerun-fails=2 --rerun-fails-report gotestsum/store-concurrency-reruns.txt
           --packages ./internal/store -- -timeout 7m -tags fts5 -count=5 -run 'Concurrent'
 
+      - name: Check for test reruns
+        if: always()
+        id: check-store-concurrency-reruns
+        shell: bash
+        run: |
+          if [ -s gotestsum/store-concurrency-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload test events
-        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || hashFiles('gotestsum/store-concurrency-reruns.txt') != '') }}
+        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || steps.check-store-concurrency-reruns.outputs.reruns == 'true') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-store-concurrency-attempt-${{ github.run_attempt }}

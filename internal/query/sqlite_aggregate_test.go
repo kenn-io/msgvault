@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -68,6 +67,67 @@ func TestAggregations(t *testing.T) {
 			require.NoError(t, err, tc.aggName)
 			assertAggRows(t, rows, tc.want)
 		})
+	}
+}
+
+func TestAggregateByTime_AttachmentPlan(t *testing.T) {
+	t.Parallel()
+	t.Run("DateFilter", func(t *testing.T) {
+		env := newTestEnv(t)
+		opts := DefaultAggregateOptions()
+		opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
+		opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
+
+		plan := aggregatePlan(t, env, opts)
+		assert.Contains(t, plan, "idx_attachments_message", plan)
+		assert.NotContains(t, plan, "SCAN attachments", plan)
+	})
+
+	t.Run("Unfiltered", func(t *testing.T) {
+		env := newTestEnv(t)
+		plan := aggregatePlan(t, env, DefaultAggregateOptions())
+		assert.Contains(t, plan, "SCAN attachments", plan)
+	})
+}
+
+func aggregatePlan(t *testing.T, env *testEnv, opts AggregateOptions) string {
+	t.Helper()
+	conditions, args := optsToFilterConditions(env.Engine.dialect, opts, "m.")
+	conditions = append(conditions, emailOnlyFilterM)
+	dim, err := aggDimensionForView(env.Engine.dialect, ViewTime, opts.TimeGranularity)
+	require.NoError(t, err)
+	sort, err := sortClause(opts)
+	require.NoError(t, err)
+	sqlText := buildAggregateSQL(dim, "", conditions, sort)
+	return dbtest.ExplainQueryPlan(t, env.DB, sqlText, append(args, 100)...)
+}
+
+func TestAggregateByLabel_AttachmentFields(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+
+	// Message 2 has two attachments and both INBOX and IMPORTANT labels.
+	for _, filtered := range []bool{false, true} {
+		opts := DefaultAggregateOptions()
+		if filtered {
+			opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
+			opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
+		}
+		rows, err := env.Engine.Aggregate(env.Ctx, ViewLabels, opts)
+		require.NoError(t, err)
+		want := map[string][2]int64{
+			"INBOX":     {35000, 3},
+			"IMPORTANT": {15000, 2},
+			"Work":      {20000, 1},
+		}
+		if filtered {
+			want = map[string][2]int64{"INBOX": {15000, 2}, "IMPORTANT": {15000, 2}}
+		}
+		got := make(map[string][2]int64, len(rows))
+		for _, row := range rows {
+			got[row.Key] = [2]int64{row.AttachmentSize, row.AttachmentCount}
+		}
+		assert.Equal(t, want, got, "filtered=%t", filtered)
 	}
 }
 
@@ -143,7 +203,7 @@ func TestAggregateExplicitEmailMessageTypeIncludesLegacyRows(t *testing.T) {
 		FromID:  legacySenderID,
 		ToIDs:   []int64{bobID},
 	})
-	_, err := env.DB.Exec(`UPDATE messages SET message_type = '' WHERE id = ?`, legacyMessageID)
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET message_type = '' WHERE id = ?`, legacyMessageID)
 	require.NoError(t, err, "clear message_type")
 
 	opts := DefaultAggregateOptions()
@@ -348,7 +408,7 @@ func TestSQLiteEngine_ListsAggregateAndDrill(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = CASE id
 		WHEN 1 THEN '<dev_1@example.test>'
 		WHEN 2 THEN '<DEV_1@EXAMPLE.TEST>'
 		WHEN 3 THEN '<devA1@example.test>'
@@ -387,7 +447,7 @@ func TestSQLiteEngine_ListsUnicodeCaseFold(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
-	_, err := env.DB.Exec(`UPDATE messages SET list_id = CASE id
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET list_id = CASE id
 		WHEN 1 THEN '<ÉCOLE@example.test>'
 		WHEN 2 THEN '<école@example.test>'
 		ELSE NULL END`)
@@ -821,7 +881,7 @@ func TestAggregateDeterministicOrderOnTies(t *testing.T) {
 	env := &testEnv{
 		TestDB: tdb,
 		Engine: NewSQLiteEngine(tdb.DB),
-		Ctx:    context.Background(),
+		Ctx:    t.Context(),
 	}
 
 	// Default sort is by count DESC. Both labels have count=1, so they should

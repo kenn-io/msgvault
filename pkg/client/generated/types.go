@@ -2709,6 +2709,7 @@ type CliMessageResponse struct {
 	ReceivedAt           *time.Time             `json:"received_at" validate:"required"`
 	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Rfc822MessageID      *string                `json:"rfc822_message_id,omitzero"`
+	SenderAuth           *SenderAuthVerdict     `json:"sender_auth,omitempty"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`
@@ -2786,6 +2787,13 @@ func (c CliMessageResponse) Validate() error {
 			errors = errors.Append("ReceivedAt", err)
 		}
 	}
+	if c.SenderAuth != nil {
+		if v, ok := any(c.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(c.SentAt, "required"); err != nil {
 		errors = errors.Append("SentAt", err)
 	}
@@ -2851,6 +2859,8 @@ func (c CliRebuildFTSEvent) Validate() error {
 }
 
 type CliSearchResponse struct {
+	HasMore          *bool                    `json:"has_more,omitempty"`
+	Hints            []SearchHint             `json:"hints,omitempty"`
 	HybridAvailable  *bool                    `json:"hybrid_available,omitempty"`
 	IndexBuilt       *bool                    `json:"index_built,omitempty"`
 	IndexState       *string                  `json:"index_state,omitzero"`
@@ -2862,6 +2872,13 @@ type CliSearchResponse struct {
 
 func (c CliSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range c.Hints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hints[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(c.Results, "required"); err != nil {
 		errors = errors.Append("Results", err)
 	}
@@ -4821,6 +4838,7 @@ type EntryRow struct {
 	ParticipantIds             []int64      `json:"participant_ids,omitempty"`
 	ParticipantLabels          []string     `json:"participant_labels,omitempty"`
 	Preview                    string       `json:"preview" validate:"required"`
+	SenderLabel                *string      `json:"sender_label,omitzero"`
 	SourceID                   int64        `json:"source_id"`
 	SourceIdentifier           string       `json:"source_identifier" validate:"required"`
 	SourceType                 string       `json:"source_type" validate:"required"`
@@ -5808,6 +5826,7 @@ type FileSearchRow struct {
 	ParticipantIds     []int64                   `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string                  `json:"participant_labels,omitempty"`
 	SearchExplain      *FileSearchExplain        `json:"search_explain,omitempty"`
+	SenderLabel        *string                   `json:"sender_label,omitzero"`
 	SizeBytes          int64                     `json:"size_bytes"`
 	SourceID           int64                     `json:"source_id"`
 	SourceIdentifier   string                    `json:"source_identifier" validate:"required"`
@@ -6489,18 +6508,20 @@ func (h HybridSearchMatch) Validate() error {
 }
 
 type HybridSearchResponse struct {
-	Accelerator      *string                 `json:"accelerator,omitzero"`
-	Generation       HybridGenerationSummary `json:"generation"`
-	HasMore          bool                    `json:"has_more"`
-	Mode             string                  `json:"mode" validate:"required"`
-	PoolSaturated    bool                    `json:"pool_saturated"`
-	Query            string                  `json:"query" validate:"required"`
-	Results          []HybridSearchItem      `json:"results" validate:"required"`
-	Returned         int64                   `json:"returned"`
-	ScopeLabel       *string                 `json:"scope_label,omitzero"`
-	ScopeSourceCount *int64                  `json:"scope_source_count,omitempty"`
-	Timings          HybridSearchTimings     `json:"timings"`
-	TookMs           int64                   `json:"took_ms"`
+	Accelerator           *string                 `json:"accelerator,omitzero"`
+	CandidateLimitReached *int64                  `json:"candidate_limit_reached,omitempty"`
+	Generation            HybridGenerationSummary `json:"generation"`
+	HasMore               bool                    `json:"has_more"`
+	Mode                  string                  `json:"mode" validate:"required"`
+	PoolSaturated         bool                    `json:"pool_saturated"`
+	Query                 string                  `json:"query" validate:"required"`
+	RankingLimitReached   *int64                  `json:"ranking_limit_reached,omitempty"`
+	Results               []HybridSearchItem      `json:"results" validate:"required"`
+	Returned              int64                   `json:"returned"`
+	ScopeLabel            *string                 `json:"scope_label,omitzero"`
+	ScopeSourceCount      *int64                  `json:"scope_source_count,omitempty"`
+	Timings               HybridSearchTimings     `json:"timings"`
+	TookMs                int64                   `json:"took_ms"`
 }
 
 func (h HybridSearchResponse) Validate() error {
@@ -7331,6 +7352,149 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type LocalEmbeddingsStatus struct {
+	DoneBytes     int64                      `json:"done_bytes"`
+	DownloadBytes int64                      `json:"download_bytes"`
+	Enabled       bool                       `json:"enabled"`
+	ErrorData     *string                    `json:"error,omitzero"`
+	Host          string                     `json:"host" validate:"required"`
+	Phase         LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
+	Provider      string                     `json:"provider" validate:"required"`
+	Running       *bool                      `json:"running,omitempty"`
+	TotalBytes    int64                      `json:"total_bytes"`
+}
+
+func (l LocalEmbeddingsStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Host, "required"); err != nil {
+		errors = errors.Append("Host", err)
+	}
+	if v, ok := any(l.Phase).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Phase", err)
+		}
+	}
+	if err := typesValidator.Var(l.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopCounterparty struct {
+	Address       string `json:"address"`
+	DisplayName   string `json:"display_name"`
+	ParticipantID int64  `json:"participant_id"`
+	PersonID      *int64 `json:"person_id,omitempty"`
+}
+
+func (l LoopCounterparty) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type LoopDecisionResponse struct {
+	AnchorMessageID int64                     `json:"anchor_message_id"`
+	SnoozedUntil    *time.Time                `json:"snoozed_until,omitempty"`
+	State           LoopDecisionResponseState `json:"state" validate:"required"`
+}
+
+func (l LoopDecisionResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopItem struct {
+	// AnchorMessageID The message that started the wait. Done and snooze use it as the loop ID.
+	AnchorMessageID int64            `json:"anchor_message_id"`
+	Channel         LoopItemChannel  `json:"channel" validate:"required"`
+	ConversationID  int64            `json:"conversation_id"`
+	Counterparty    LoopCounterparty `json:"counterparty"`
+
+	// Kind reply_owed waits on you; awaiting_reply waits on them
+	Kind           LoopItemKind `json:"kind" validate:"required"`
+	LastActivityAt time.Time    `json:"last_activity_at" validate:"required"`
+	OwedSinceAt    time.Time    `json:"owed_since_at" validate:"required"`
+
+	// QuestionMessageIds The questions this loop covers, oldest first. Pass them to done or snooze so a question that appeared later stays open.
+	QuestionMessageIds []int64 `json:"question_message_ids" validate:"required"`
+	SourceID           int64   `json:"source_id"`
+
+	// Summary The email subject, or the chat message text
+	Summary string `json:"summary" validate:"required"`
+}
+
+func (l LoopItem) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.Channel).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Channel", err)
+		}
+	}
+	if v, ok := any(l.Counterparty).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Counterparty", err)
+		}
+	}
+	if v, ok := any(l.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
+	}
+	if err := typesValidator.Var(l.LastActivityAt, "required"); err != nil {
+		errors = errors.Append("LastActivityAt", err)
+	}
+	if err := typesValidator.Var(l.OwedSinceAt, "required"); err != nil {
+		errors = errors.Append("OwedSinceAt", err)
+	}
+	if err := typesValidator.Var(l.QuestionMessageIds, "required"); err != nil {
+		errors = errors.Append("QuestionMessageIds", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopListResponse struct {
+	// CoverageIncomplete True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
+	CoverageIncomplete bool       `json:"coverage_incomplete"`
+	Items              []LoopItem `json:"items" validate:"required"`
+
+	// SkippedUnparseable Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop
+	SkippedUnparseable int64 `json:"skipped_unparseable"`
+
+	// Truncated True when more loops are open than limit returned
+	Truncated bool `json:"truncated"`
+}
+
+func (l LoopListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range l.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MCPCapabilities struct {
 	Routes  []MCPRouteDescriptor `json:"routes" validate:"required"`
 	Version int64                `json:"version"`
@@ -8021,22 +8185,23 @@ type MessageDetail struct {
 	FromName          *string `json:"from_name,omitzero"`
 
 	// FromParticipantID Sender participant ID, populated for conversation windows.
-	FromParticipantID *int64   `json:"from_participant_id,omitempty"`
-	FromPhone         *string  `json:"from_phone,omitzero"`
-	HasAttachments    bool     `json:"has_attachments"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
-	ID                int64    `json:"id"`
-	IsFromMe          *bool    `json:"is_from_me,omitempty"`
-	Labels            []string `json:"labels" validate:"required"`
-	MessageType       *string  `json:"message_type,omitzero"`
-	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
-	SentAt            string   `json:"sent_at" validate:"required"`
-	SizeBytes         int64    `json:"size_bytes"`
-	Snippet           string   `json:"snippet" validate:"required"`
-	SourceID          *int64   `json:"source_id,omitempty"`
-	SourceMessageID   *string  `json:"source_message_id,omitzero"`
-	Subject           string   `json:"subject" validate:"required"`
-	To                []string `json:"to" validate:"required"`
+	FromParticipantID *int64             `json:"from_participant_id,omitempty"`
+	FromPhone         *string            `json:"from_phone,omitzero"`
+	HasAttachments    bool               `json:"has_attachments"`
+	HiddenTextPresent bool               `json:"hidden_text_present"`
+	ID                int64              `json:"id"`
+	IsFromMe          *bool              `json:"is_from_me,omitempty"`
+	Labels            []string           `json:"labels" validate:"required"`
+	MessageType       *string            `json:"message_type,omitzero"`
+	RelatedMessageID  *int64             `json:"related_message_id,omitempty"`
+	SenderAuth        *SenderAuthVerdict `json:"sender_auth,omitempty"`
+	SentAt            string             `json:"sent_at" validate:"required"`
+	SizeBytes         int64              `json:"size_bytes"`
+	Snippet           string             `json:"snippet" validate:"required"`
+	SourceID          *int64             `json:"source_id,omitempty"`
+	SourceMessageID   *string            `json:"source_message_id,omitzero"`
+	Subject           string             `json:"subject" validate:"required"`
+	To                []string           `json:"to" validate:"required"`
 
 	// ToParticipants Recipient participants, populated for conversation windows.
 	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`
@@ -8069,6 +8234,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
+	}
+	if m.SenderAuth != nil {
+		if v, ok := any(m.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.SentAt, "required"); err != nil {
 		errors = errors.Append("SentAt", err)
@@ -12097,6 +12269,7 @@ type PersonFileSearchRow struct {
 	ParticipantLabels  []string                        `json:"participant_labels,omitempty"`
 	PersonProvenance   PersonFileProvenance            `json:"person_provenance"`
 	SearchExplain      *FileSearchExplain              `json:"search_explain,omitempty"`
+	SenderLabel        *string                         `json:"sender_label,omitzero"`
 	SizeBytes          int64                           `json:"size_bytes"`
 	SourceID           int64                           `json:"source_id"`
 	SourceIdentifier   string                          `json:"source_identifier" validate:"required"`
@@ -14785,6 +14958,7 @@ func (s SearchCoverageResponse) Validate() error {
 
 type SearchFastResponse struct {
 	AppliedSourceIds []int64             `json:"applied_source_ids,omitempty"`
+	Hints            []SearchHint        `json:"hints,omitempty"`
 	IndexState       *string             `json:"index_state,omitzero"`
 	Messages         []MessageSummary    `json:"messages" validate:"required"`
 	Query            string              `json:"query" validate:"required"`
@@ -14795,6 +14969,13 @@ type SearchFastResponse struct {
 
 func (s SearchFastResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range s.Hints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hints[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(s.Messages, "required"); err != nil {
 		errors = errors.Append("Messages", err)
 	}
@@ -14819,6 +15000,39 @@ func (s SearchFastResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SearchHint struct {
+	Code      string                    `json:"code" validate:"required"`
+	Message   string                    `json:"message" validate:"required"`
+	RetryWith SearchHintRetryWithStruct `json:"retry_with"`
+}
+
+func (s SearchHint) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Code, "required"); err != nil {
+		errors = errors.Append("Code", err)
+	}
+	if err := typesValidator.Var(s.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if v, ok := any(s.RetryWith).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RetryWith", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SearchHintRetryWithStruct struct {
+	Query string `json:"query" validate:"required"`
+}
+
+func (s SearchHintRetryWithStruct) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type SearchProvenance struct {
@@ -14964,6 +15178,15 @@ func (s Selector) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SenderAuthVerdict struct {
+	AuthservID *string `json:"authserv_id,omitzero"`
+	Dkim       *string `json:"dkim,omitzero"`
+	Dmarc      *string `json:"dmarc,omitzero"`
+	Domain     *string `json:"domain,omitzero"`
+	Spf        *string `json:"spf,omitzero"`
+	Verified   bool    `json:"verified"`
 }
 
 type SenderCount struct {
@@ -15406,6 +15629,14 @@ func (s SimilarSearchResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SnoozeLoopRequest struct {
+	Until time.Time `json:"until" validate:"required"`
+}
+
+func (s SnoozeLoopRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type Source struct {

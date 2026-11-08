@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -36,7 +35,7 @@ func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
 }
 
 func TestRunBuildCacheSubprocessCommandStreamsStderrOnSuccess(t *testing.T) {
-	cmd := helperProcessCommand(context.Background(), "stdout-stderr-ok")
+	cmd := helperProcessCommand(t.Context(), "stdout-stderr-ok")
 	var stderr bytes.Buffer
 
 	err := runBuildCacheSubprocessCommand(cmd, &stderr)
@@ -50,7 +49,7 @@ func TestBuildCacheAcceptsSQLiteFileURI(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	dbURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}).String()
 
-	result, err := buildCache(dbURI, filepath.Join(tmpDir, "analytics"), true)
+	result, err := buildCache(t.Context(), dbURI, filepath.Join(tmpDir, "analytics"), true)
 
 	require.NoError(t, err, "buildCache with file URI")
 	assert.NotNil(t, result)
@@ -65,7 +64,7 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 	dbURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}).String()
 
 	result, err := buildCacheLocked(
-		dbURI, filepath.Join(tmpDir, "analytics"), true, false, acquirePublishLock,
+		t.Context(), dbURI, filepath.Join(tmpDir, "analytics"), true, false,
 	)
 
 	require.NoError(t, err, "buildCacheLocked with file URI")
@@ -226,7 +225,7 @@ func setupTestSQLite(t *testing.T) string {
 		);
 	`
 
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.ExecContext(t.Context(), schema); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		require.NoError(t, err, "create schema")
 	}
@@ -312,7 +311,7 @@ func setupTestSQLite(t *testing.T) string {
 			(103, 1), (103, 2), (104, 1), (104, 2);
 	`
 
-	_, err = db.Exec(testData)
+	_, err = db.ExecContext(t.Context(), testData)
 	require.NoError(t, err, "insert test data")
 
 	return tmpDir
@@ -322,7 +321,7 @@ func enableSQLiteWAL(t *testing.T, dbPath string) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec("PRAGMA journal_mode=WAL")
+	_, err = db.ExecContext(t.Context(), "PRAGMA journal_mode=WAL")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 }
@@ -340,7 +339,7 @@ func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
 	c, s := openTestDaemonAnalyticsStore(t)
 	testCtx := withTUIConfig(t, c)
 	cfg.Identity.Addresses = []string{"legacy@example.com"}
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
 			VALUES (1, 1, 'thread1', 'email_thread', 'Hello');
@@ -350,12 +349,12 @@ func TestRunBuildCacheLocalSkipsDeferredIdentityMigration(t *testing.T) {
 	require.NoError(err, "insert test data")
 
 	require.NoError(
-		runBuildCacheLocal(false, false, invocationFromContext(testCtx)),
+		runBuildCacheLocal(t.Context(), false, false, invocationFromContext(testCtx)),
 		"runBuildCacheLocal",
 	)
 
 	var identities int
-	require.NoError(s.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
+	require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM account_identities").Scan(&identities))
 	assert.Zero(identities,
 		"build-cache child must not apply the deferred legacy identity migration")
 }
@@ -397,7 +396,7 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err, "read committed state")
@@ -406,7 +405,7 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 
 	exportFailure := errors.New("simulated export failure")
 	buildCacheBeforeMessagesExportHook = func() error { return exportFailure }
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	buildCacheBeforeMessagesExportHook = nil
 	require.ErrorIs(err, exportFailure, "incremental build must surface the export failure")
 
@@ -429,7 +428,7 @@ func TestBuildCacheFailedIncrementalStaysServableAndRebuildsCleanly(t *testing.T
 	assert.False(staleness.FullRebuild,
 		"a failed staged export leaves the committed cache eligible for incremental retry")
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
 	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
 		"retry after a failed incremental build must not duplicate message rows")
@@ -444,7 +443,7 @@ func TestBuildCacheDefaultRetryRepairsFailedDeletionRebuild(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	committedState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err, "read committed state")
@@ -452,18 +451,18 @@ func TestBuildCacheDefaultRetryRepairsFailedDeletionRebuild(t *testing.T) {
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
 	deletedAt := committedState.LastSyncAt.Add(time.Second).UTC().Format("2006-01-02 15:04:05")
-	_, err = db.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = 5`, deletedAt)
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at = ? WHERE id = 5`, deletedAt)
 	require.NoError(err, "mark cached message deleted")
 	require.NoError(db.Close())
 
 	exportFailure := errors.New("simulated deletion rebuild failure")
 	buildCacheBeforeMessagesExportHook = func() error { return exportFailure }
 	t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.ErrorIs(err, exportFailure, "deletion rebuild must surface the export failure")
 	buildCacheBeforeMessagesExportHook = nil
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "default retry build")
 	assert.False(result.Skipped, "default retry must re-evaluate deletion staleness")
 	assert.Equal(int64(5), result.ExportedCount,
@@ -476,14 +475,14 @@ func TestBuildCacheStagingCleanupRemovesAbandonedBuild(t *testing.T) {
 	tmpDir := setupTestSQLite(t)
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 
 	abandoned := filepath.Join(filepath.Dir(analyticsDir), cacheStagingPrefix(analyticsDir)+"abandoned")
 	require.NoError(os.MkdirAll(abandoned, 0o755))
 	require.NoError(os.WriteFile(filepath.Join(abandoned, "partial.parquet"), []byte("partial"), 0o600))
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	assert.True(result.Skipped, "cleanup must also run on the no-op path")
 	assert.Empty(cacheStagingPaths(t, analyticsDir))
@@ -495,9 +494,9 @@ func TestBuildCachePublishInterruptionKeepsCommittedCacheReadable(t *testing.T) 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err, "open committed cache")
 	t.Cleanup(func() { _ = engine.Close() })
 	insertSixthMessage(t, dbPath)
@@ -505,13 +504,13 @@ func TestBuildCachePublishInterruptionKeepsCommittedCacheReadable(t *testing.T) 
 	publishErr := errors.New("simulated publish interruption")
 	buildCacheBeforePublicationMovesHook = func() error { return publishErr }
 	t.Cleanup(func() { buildCacheBeforePublicationMovesHook = nil })
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.ErrorIs(err, publishErr)
 
 	readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
 	require.NoError(inspectErr)
 	assert.Equal(t, query.CacheReady, readiness)
-	_, err = engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
+	_, err = engine.Aggregate(t.Context(), query.ViewSenders, query.DefaultAggregateOptions())
 	require.NoError(err)
 }
 
@@ -522,11 +521,11 @@ func TestBuildCacheEmptyStatelessReplacesStaleShards(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		DELETE FROM attachments;
 		DELETE FROM message_labels;
 		DELETE FROM message_recipients;
@@ -540,7 +539,7 @@ func TestBuildCacheEmptyStatelessReplacesStaleShards(t *testing.T) {
 	require.NoError(db.Close())
 	require.NoError(os.Remove(query.CacheStatePath(analyticsDir)))
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	assert.False(result.Skipped)
 	assert.Zero(result.ExportedCount)
@@ -557,7 +556,7 @@ func TestBuildCacheSnapshotDefersConcurrentDeletion(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	insertSixthMessage(t, dbPath)
 	enableSQLiteWAL(t, dbPath)
@@ -567,7 +566,7 @@ func TestBuildCacheSnapshotDefersConcurrentDeletion(t *testing.T) {
 	}
 	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
 		"the completed snapshot must retain a message deleted after its source read began")
@@ -576,7 +575,7 @@ func TestBuildCacheSnapshotDefersConcurrentDeletion(t *testing.T) {
 	assert.True(staleness.FullRebuild, "repairing a deletion requires replacing all shards")
 
 	buildCacheAfterSnapshotHook = nil
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	assert.Zero(countCachedMessages(t, analyticsDir, 6),
 		"the next automatic build must repair the post-snapshot deletion")
@@ -626,7 +625,7 @@ func countCachedMessages(t *testing.T, analyticsDir string, id int64) int {
 		where = fmt.Sprintf(" WHERE id = %d", id)
 	}
 	var rows int
-	require.NoError(t, duck.QueryRow(fmt.Sprintf(
+	require.NoError(t, duck.QueryRowContext(t.Context(), fmt.Sprintf(
 		"SELECT COUNT(*) FROM read_parquet('%s', hive_partitioning=true)%s", pattern, where,
 	)).Scan(&rows), "count message rows")
 	return rows
@@ -639,7 +638,7 @@ func insertSixthMessage(t *testing.T, dbPath string) {
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err, "open sqlite")
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
 			VALUES (6, 1, 'msg6', 104, 'New', 'Preview 6', '2024-03-02 10:00:00', 700, 0);
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
@@ -658,7 +657,7 @@ func TestBuildCacheFailedStateWriteLeavesIncrementalDrift(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err)
@@ -667,7 +666,7 @@ func TestBuildCacheFailedStateWriteLeavesIncrementalDrift(t *testing.T) {
 	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
 		return errors.New("simulated state write failure")
 	}
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	buildCacheWriteStateFile = writeCacheStateFile
 	require.ErrorContains(err, "simulated state write failure",
 		"incremental build must fail when the sync state cannot be persisted")
@@ -679,7 +678,7 @@ func TestBuildCacheFailedStateWriteLeavesIncrementalDrift(t *testing.T) {
 		"dataset moves precede the marker commit")
 	assert.Equal(query.CacheDrifted, mustInspectCacheReadiness(t, analyticsDir))
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
 	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
 		"retry after a failed state write must not duplicate message rows")
@@ -694,7 +693,7 @@ func TestBuildCacheFailedStateWriteLeavesFullRebuildDrift(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 	require.NoError(err)
@@ -703,7 +702,7 @@ func TestBuildCacheFailedStateWriteLeavesFullRebuildDrift(t *testing.T) {
 	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
 		return errors.New("simulated state write failure")
 	}
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	buildCacheWriteStateFile = writeCacheStateFile
 	require.ErrorContains(err, "simulated state write failure",
 		"full rebuild must fail when the sync state cannot be persisted")
@@ -715,7 +714,7 @@ func TestBuildCacheFailedStateWriteLeavesFullRebuildDrift(t *testing.T) {
 		"dataset replacement precedes the marker commit")
 	assert.Equal(query.CacheDrifted, mustInspectCacheReadiness(t, analyticsDir))
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "retry build")
 	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
 		"retry after a failed full rebuild must not duplicate message rows")
@@ -733,10 +732,10 @@ func TestBuildCacheRecoversFromInterruptedIncrementalBuild(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 	insertSixthMessage(t, dbPath)
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "incremental build")
 
 	// Simulate a crash inside the publish window, after live file moves but
@@ -744,7 +743,7 @@ func TestBuildCacheRecoversFromInterruptedIncrementalBuild(t *testing.T) {
 	require.NoError(os.Remove(filepath.Join(analyticsDir, "_last_sync.json")),
 		"simulate interruption after append, before state write")
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "recovery build")
 	assert.Equal(1, countCachedMessages(t, analyticsDir, 6),
 		"recovery build must clear leftover shards instead of duplicating their rows")
@@ -764,12 +763,12 @@ func TestBuildCacheEmptyArchiveKeepsMessagesGlobReadable(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial build")
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		DELETE FROM message_recipients;
 		DELETE FROM message_labels;
 		DELETE FROM attachments;
@@ -778,7 +777,7 @@ func TestBuildCacheEmptyArchiveKeepsMessagesGlobReadable(t *testing.T) {
 	require.NoError(err, "empty the archive")
 	require.NoError(db.Close(), "close sqlite")
 
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "full rebuild over the empty archive")
 
 	assert.Equal(0, countCachedMessages(t, analyticsDir, 0),
@@ -827,18 +826,18 @@ func TestBuildCacheAutoReevaluatesUnderLock(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	first, err := buildCache(dbPath, analyticsDir, true)
+	first, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "initial full build")
 	require.False(first.Skipped)
 
 	// Simulates a waiter whose pre-lock probe saw "no cache exists" while
 	// the build above was running: by the time it holds the lock, the cache
 	// is fresh and the stale full-rebuild decision must be dropped.
-	auto, err := buildCacheAuto(dbPath, analyticsDir)
+	auto, err := buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err, "auto build over fresh cache")
 	assert.True(auto.Skipped, "auto build must re-evaluate staleness under the lock and skip a fresh cache")
 
-	explicit, err := buildCache(dbPath, analyticsDir, true)
+	explicit, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "explicit full rebuild over fresh cache")
 	assert.False(explicit.Skipped, "explicit --full-rebuild must stay unconditional")
 }
@@ -850,7 +849,7 @@ func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	first, err := buildCache(dbPath, analyticsDir, true)
+	first, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	requirements.NoError(err)
 	requirements.False(first.Skipped)
 	state, err := query.ReadCacheSyncState(analyticsDir)
@@ -858,7 +857,7 @@ func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
 
 	db, err := sql.Open("sqlite3", dbPath)
 	requirements.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (
 			id, source_id, source_message_id, sent_at, subject, snippet
 		) VALUES (6, 1, 'msg6', ?, 'New subject', 'New snippet')
@@ -867,6 +866,7 @@ func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
 	requirements.NoError(db.Close())
 
 	result, err := buildCacheScheduled(
+		t.Context(),
 		dbPath,
 		analyticsDir,
 		6*time.Hour,
@@ -881,6 +881,7 @@ func TestBuildCacheScheduledReevaluatesIntervalUnderLock(t *testing.T) {
 	assertions.Equal(state.PublishedAt, after.PublishedAt)
 
 	result, err = buildCacheScheduled(
+		t.Context(),
 		dbPath,
 		analyticsDir,
 		6*time.Hour,
@@ -920,7 +921,7 @@ func TestBuildCache_WaitsForCacheLockHolders(t *testing.T) {
 
 			done := make(chan error, 1)
 			go func() {
-				_, err := buildCache(dbPath, analyticsDir, false)
+				_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 				done <- err
 			}()
 
@@ -950,7 +951,7 @@ func TestBuildCache_BasicExport(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 
 	require.False(result.Skipped, "expected export to run, but was skipped")
@@ -985,14 +986,15 @@ func TestBuildCache_PublishesConversationParticipants(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	duckdb, err := sql.Open("duckdb", "")
 	require.NoError(err)
 	defer func() { _ = duckdb.Close() }()
 	var count int64
-	err = duckdb.QueryRow(
+	err = duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?)`,
 		filepath.Join(analyticsDir, "conversation_participants", "*.parquet"),
 	).Scan(&count)
@@ -1032,7 +1034,7 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
 
-			_, err := buildCache(dbPath, analyticsDir, false)
+			_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 			require.NoError(err)
 
 			duckdb, err := sql.Open("duckdb", "")
@@ -1041,7 +1043,8 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 			glob := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
 
 			var envelope, resolved string
-			err = duckdb.QueryRow(
+			err = duckdb.QueryRowContext(
+				t.Context(),
 				`SELECT envelope_address, email_address FROM read_parquet(?)
 				 WHERE message_id = 1 AND recipient_type = 'from'`, glob,
 			).Scan(&envelope, &resolved)
@@ -1051,7 +1054,8 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 				"a recorded header address is also the resolved address")
 
 			var withoutSnapshot int64
-			err = duckdb.QueryRow(
+			err = duckdb.QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM read_parquet(?)
 				 WHERE envelope_address IS NULL`, glob,
 			).Scan(&withoutSnapshot)
@@ -1062,7 +1066,8 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 			// Message 4's from row recorded no header address, so it resolves
 			// to the sending participant's current address.
 			var resolvedFallback string
-			err = duckdb.QueryRow(
+			err = duckdb.QueryRowContext(
+				t.Context(),
 				`SELECT email_address FROM read_parquet(?)
 				 WHERE message_id = 4 AND recipient_type = 'from'`, glob,
 			).Scan(&resolvedFallback)
@@ -1071,7 +1076,8 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 				"a row without a header address resolves to its participant's address")
 
 			var unresolved int64
-			err = duckdb.QueryRow(
+			err = duckdb.QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM read_parquet(?)
 				 WHERE email_address IS NULL`, glob,
 			).Scan(&unresolved)
@@ -1080,7 +1086,8 @@ func TestBuildCache_ExportsRecipientEnvelopeAddress(t *testing.T) {
 				"every fixture participant carries an email address, so every row resolves")
 
 			var emptyString int64
-			err = duckdb.QueryRow(
+			err = duckdb.QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM read_parquet(?)
 				 WHERE envelope_address = '' OR email_address = ''`, glob,
 			).Scan(&emptyString)
@@ -1112,18 +1119,18 @@ func TestBuildCache_ExportsListID(t *testing.T) {
 
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE messages SET list_id = '<announce.example.test>' WHERE id = 1`)
+			_, err = db.ExecContext(t.Context(), `UPDATE messages SET list_id = '<announce.example.test>' WHERE id = 1`)
 			require.NoError(err)
 			require.NoError(db.Close())
 
-			_, err = buildCache(dbPath, analyticsDir, false)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 			require.NoError(err)
 
 			duckdb, err := sql.Open("duckdb", "")
 			require.NoError(err)
 			defer func() { _ = duckdb.Close() }()
 			var listID string
-			err = duckdb.QueryRow(`SELECT list_id FROM read_parquet(?) WHERE id = 1`,
+			err = duckdb.QueryRowContext(t.Context(), `SELECT list_id FROM read_parquet(?) WHERE id = 1`,
 				filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&listID)
 			require.NoError(err)
 			assert.Equal("<announce.example.test>", listID)
@@ -1140,7 +1147,7 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 
 	// Open DuckDB to query the Parquet files
@@ -1152,7 +1159,7 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 	countRows := func(pattern string) int64 {
 		var count int64
 		query := "SELECT COUNT(*) FROM read_parquet('" + pattern + "')"
-		require.NoError(db.QueryRow(query).Scan(&count), "count %s", pattern)
+		require.NoError(db.QueryRowContext(t.Context(), query).Scan(&count), "count %s", pattern)
 		return count
 	}
 
@@ -1179,24 +1186,77 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 	// Verify message data integrity
 	var subject string
 	msgQuery := "SELECT subject FROM read_parquet('" + filepath.Join(analyticsDir, "messages", "**", "*.parquet") + "') WHERE id = 1"
-	require.NoError(db.QueryRow(msgQuery).Scan(&subject), "query message")
+	require.NoError(db.QueryRowContext(t.Context(), msgQuery).Scan(&subject), "query message")
 	assert.Equal("Hello World", subject)
 
 	// Verify participant data
 	var email string
 	partQuery := "SELECT email_address FROM read_parquet('" + filepath.Join(analyticsDir, "participants", "*.parquet") + "') WHERE id = 1"
-	require.NoError(db.QueryRow(partQuery).Scan(&email), "query participant")
+	require.NoError(db.QueryRowContext(t.Context(), partQuery).Scan(&email), "query participant")
 	assert.Equal("alice@example.com", email)
 
 	// Verify attachment sizes
 	var totalSize int64
 	attQuery := "SELECT SUM(size) FROM read_parquet('" + filepath.Join(analyticsDir, "attachments", "*.parquet") + "')"
-	require.NoError(db.QueryRow(attQuery).Scan(&totalSize), "query attachments")
+	require.NoError(db.QueryRowContext(t.Context(), attQuery).Scan(&totalSize), "query attachments")
 	assert.Equal(int64(35000), totalSize, "expected total attachment size 10000+5000+20000")
 	var attachmentIDs int64
-	require.NoError(db.QueryRow("SELECT COUNT(DISTINCT attachment_id) FROM read_parquet('" +
-		filepath.Join(analyticsDir, "attachments", "*.parquet") + "')").Scan(&attachmentIDs))
+	require.NoError(db.QueryRowContext(t.Context(), "SELECT COUNT(DISTINCT attachment_id) FROM read_parquet('"+
+		filepath.Join(analyticsDir, "attachments", "*.parquet")+"')").Scan(&attachmentIDs))
 	assert.Equal(int64(3), attachmentIDs, "durable attachment IDs")
+}
+
+func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T) {
+	require := require.New(t)
+	oldGOOS := cacheSnapshotGOOS
+	cacheSnapshotGOOS = "linux"
+	t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+	duck, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { require.NoError(duck.Close()) }()
+	requireSQLiteScanner(t, duck)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	incDir, fullDir := filepath.Join(tmp, "incremental"), filepath.Join(tmp, "full")
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	_, err = db.ExecContext(t.Context(), `INSERT INTO account_identities (source_id, address) VALUES (1, 'alice@example.com');
+		INSERT INTO attachments (message_id, filename, size) VALUES (1, 'old.txt', 42)`)
+	require.NoError(err)
+	_, err = buildCache(t.Context(), dbPath, incDir, true)
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages
+		(id, source_id, source_message_id, conversation_id, sender_id, sent_at, received_at, snippet, size_estimate, has_attachments, is_from_me, deleted_from_source_at)
+		VALUES (6, 1, 'delta-out', 101, 1, '2024-04-01 12:00:00+02:00', '2024-04-01 10:00:00.25', NULL, 1200, 1, 1, '2024-04-02 10:00:00'),
+		(7, 1, 'delta-in', 101, 2, '2024-04-02 10:00:00', '2024-04-02 12:00:00', CAST(X'6869ff' AS TEXT), NULL, 0, 0, NULL);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES
+		(6, 1, 'from', 'alice@example.com'), (6, 2, 'to', 'bob@example.org'),
+		(7, 2, 'from', 'bob@example.org'), (7, 1, 'to', NULL);
+		INSERT INTO message_labels (message_id, label_id) VALUES (6, 2), (7, 1);
+		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES (6, 'delta.txt', 'text/plain', 123)`)
+	require.NoError(err)
+	// The messages export selects size_estimate, so the scanner must decode
+	// this old row unless SQLite bounds the read to the new slice.
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET size_estimate = 'unreadable' WHERE id = 1`)
+	require.NoError(err)
+	_, err = buildCache(t.Context(), dbPath, fullDir, true)
+	require.ErrorContains(err, "export messages:", "a full messages scan must trip over the old row")
+	_, err = db.ExecContext(t.Context(), `UPDATE message_recipients SET participant_id = 'unreadable' WHERE message_id = 1 AND participant_id = 1;
+		UPDATE message_labels SET label_id = 'unreadable' WHERE message_id = 1 AND label_id = 1;
+		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1`)
+	require.NoError(err)
+	_, err = buildCache(t.Context(), dbPath, incDir, false)
+	require.NoError(err, "incremental exports must read only the new slice")
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET size_estimate = 1000 WHERE id = 1;
+		UPDATE message_recipients SET participant_id = 1 WHERE message_id = 1 AND participant_id = 'unreadable';
+		UPDATE message_labels SET label_id = 1 WHERE message_id = 1 AND label_id = 'unreadable';
+		UPDATE attachments SET size = 42 WHERE message_id = 1`)
+	require.NoError(err)
+	_, err = buildCache(t.Context(), dbPath, fullDir, true)
+	require.NoError(err)
+	assertCacheExportParity(t, tmp, incDir, fullDir, []string{"messages", "message_recipients", "message_labels", "attachments"})
 }
 
 // TestBuildCache_IncrementalExport tests that incremental exports only add new messages.
@@ -1209,7 +1269,7 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// First export
-	result1, err := buildCache(dbPath, analyticsDir, false)
+	result1, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "first buildCache")
 	assert.Equal(int64(5), result1.ExportedCount, "first export message count")
 
@@ -1217,7 +1277,7 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
 			(6, 1, 'msg6', 105, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
 			(7, 1, 'msg7', 105, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
@@ -1239,7 +1299,7 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	require.NoError(err, "insert new messages")
 
 	// Second export (incremental)
-	result2, err := buildCache(dbPath, analyticsDir, false)
+	result2, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache")
 
 	require.False(result2.Skipped, "expected incremental export to run, but was skipped")
@@ -1256,7 +1316,7 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 		var count int64
 		// Use forward slashes for DuckDB glob patterns (backslashes fail on Windows)
 		pattern = filepath.ToSlash(pattern)
-		require.NoError(duckdb.QueryRow("SELECT COUNT(*) FROM read_parquet('"+pattern+"')").Scan(&count), "count %s", pattern)
+		require.NoError(duckdb.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM read_parquet('"+pattern+"')").Scan(&count), "count %s", pattern)
 		return count
 	}
 
@@ -1278,8 +1338,9 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	activityPattern := filepath.ToSlash(filepath.Join(
 		analyticsDir, identityindex.DatasetActivity, "**", "*.parquet"))
 	var activityMessages int64
-	require.NoError(duckdb.QueryRow(
-		"SELECT COUNT(DISTINCT message_id) FROM read_parquet('" + activityPattern + "')",
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
+		"SELECT COUNT(DISTINCT message_id) FROM read_parquet('"+activityPattern+"')",
 	).Scan(&activityMessages))
 	assert.Equal(int64(7), activityMessages, "relationship activity messages")
 
@@ -1336,13 +1397,13 @@ func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testin
 	}
 	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
 
-	first, err := buildCache(dbPath, analyticsDir, false)
+	first, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	assert.Equal(int64(5), first.MaxMessageID, "state watermark is the captured all-message maximum")
 	assert.Equal(int64(5), first.ExportedCount, "first build excludes rows newer than its captured snapshot")
 
 	buildCacheAfterSnapshotHook = nil
-	second, err := buildCache(dbPath, analyticsDir, false)
+	second, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	assert.Equal(int64(6), second.MaxMessageID)
 	assert.Equal(int64(6), second.ExportedCount, "next incremental build exports the racing row once")
@@ -1358,7 +1419,8 @@ func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testin
 		if table == tableMessages {
 			pattern = filepath.ToSlash(filepath.Join(analyticsDir, table, "**", "*.parquet"))
 		}
-		require.NoError(duckdb.QueryRow(
+		require.NoError(duckdb.QueryRowContext(
+			t.Context(),
 			"SELECT COUNT(*), COUNT(DISTINCT "+idColumn+") FROM read_parquet(?) WHERE "+idColumn+" = ?",
 			pattern, id,
 		).Scan(&rows, &distinctRows))
@@ -1371,7 +1433,8 @@ func TestBuildCache_SnapshotUpperBoundPreventsDuplicateIncrementalRows(t *testin
 	assertUnique(tableConversations, "id", 105)
 
 	var recipientRows int64
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
 		filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
 	).Scan(&recipientRows))
@@ -1392,7 +1455,7 @@ func TestBuildCache_UsesOneSnapshotForRelatedTables(t *testing.T) {
 	}
 	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	duckDB, err := sql.Open("duckdb", "")
@@ -1400,7 +1463,8 @@ func TestBuildCache_UsesOneSnapshotForRelatedTables(t *testing.T) {
 	defer func() { require.NoError(duckDB.Close()) }()
 
 	var participantName string
-	require.NoError(duckDB.QueryRow(
+	require.NoError(duckDB.QueryRowContext(
+		t.Context(),
 		`SELECT display_name FROM read_parquet(?) WHERE id = 1`,
 		filepath.ToSlash(filepath.Join(analyticsDir, tableParticipants, "*.parquet")),
 	).Scan(&participantName))
@@ -1408,7 +1472,8 @@ func TestBuildCache_UsesOneSnapshotForRelatedTables(t *testing.T) {
 		"participant export must use the metadata snapshot captured before the concurrent update")
 
 	var updatedRecipients int
-	require.NoError(duckDB.QueryRow(
+	require.NoError(duckDB.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = 1 AND display_name = 'Updated During Build'`,
 		filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
 	).Scan(&updatedRecipients))
@@ -1434,9 +1499,9 @@ func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
 	defer func() { require.NoError(t, db.Close()) }()
 	switch os.Getenv(cacheMutationOpEnv) {
 	case cacheMutationDeleteMessage:
-		_, err = db.Exec(`UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
+		_, err = db.ExecContext(t.Context(), `UPDATE messages SET deleted_at = datetime('now') WHERE id = 6`)
 	case cacheMutationInsertMessage:
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments)
 			VALUES (6, 1, 'msg6', 105, 'Racing Message', 'Preview 6', '2024-03-15 10:00:00', 1200, 1);
 			INSERT INTO conversations (id, source_id, source_conversation_id, title)
@@ -1448,7 +1513,7 @@ func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
 			VALUES (6, 'racing.txt', 'text/plain', 100);
 		`)
 	case cacheMutationUpdateRelated:
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			UPDATE participants
 			SET display_name = 'Updated During Build'
 			WHERE id = 1;
@@ -1466,7 +1531,7 @@ func runBuildCacheSQLiteMutation(t *testing.T, dbPath, operation string) {
 	t.Helper()
 	// os.Args[0] is the current Go test binary and the only argument is fixed.
 	//nolint:gosec
-	cmd := exec.Command(os.Args[0], "-test.run=^TestBuildCacheSQLiteMutationHelper$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestBuildCacheSQLiteMutationHelper$")
 	cmd.Env = append(os.Environ(),
 		cacheMutationDBEnv+"="+dbPath,
 		cacheMutationOpEnv+"="+operation,
@@ -1483,7 +1548,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			tmpDir := setupTestSQLite(t)
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
-			_, err := buildCache(dbPath, analyticsDir, false)
+			_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 			require.NoError(err)
 			stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 			require.NoError(err)
@@ -1491,7 +1556,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO conversations (id, source_id, source_conversation_id, title)
 				VALUES (105, 1, 'thread105', 'Partial Meeting');
 				INSERT INTO messages (
@@ -1525,7 +1590,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 				hookDB, hookErr := sql.Open("sqlite3", dbPath)
 				require.NoError(hookErr)
 				defer func() { require.NoError(hookDB.Close()) }()
-				_, hookErr = hookDB.Exec(`
+				_, hookErr = hookDB.ExecContext(t.Context(), `
 					INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
 					VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
 					INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
@@ -1539,7 +1604,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			}
 			t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
 
-			_, err = buildCache(dbPath, analyticsDir, false)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 			require.NoError(err, "a counter change during export publishes the snapshot")
 			buildCacheBeforeStateWriteHook = nil
 			stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
@@ -1556,7 +1621,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 
 			// A sync that overlaps this build also queues another automatic
 			// refresh. It must wait even though the next build must be full.
-			deferred, err := buildCacheScheduled(dbPath, analyticsDir, 6*time.Hour, func() time.Time {
+			deferred, err := buildCacheScheduled(t.Context(), dbPath, analyticsDir, 6*time.Hour, func() time.Time {
 				return published.PublishedAt.Add(time.Hour)
 			})
 			require.NoError(err)
@@ -1566,7 +1631,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			// incremental build above the parent, which would skip its children.
 			db, err = sql.Open("sqlite3", dbPath)
 			require.NoError(err)
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO messages (
 					id, source_id, source_message_id, conversation_id,
 					subject, snippet, sent_at, size_estimate, message_type
@@ -1579,7 +1644,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			require.NoError(db.Close())
 
-			_, err = buildCache(dbPath, analyticsDir, false)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 			require.NoError(err)
 			fresh := cacheNeedsBuild(dbPath, analyticsDir)
 			require.False(fresh.NeedsBuild, "retry must capture the terminal addition: %+v", fresh)
@@ -1591,11 +1656,13 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			defer func() { _ = duckdb.Close() }()
 			var recipientRows, attachmentRows int64
-			require.NoError(duckdb.QueryRow(
+			require.NoError(duckdb.QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
 				filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
 			).Scan(&recipientRows))
-			require.NoError(duckdb.QueryRow(
+			require.NoError(duckdb.QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
 				filepath.ToSlash(filepath.Join(analyticsDir, "attachments", "*.parquet")),
 			).Scan(&attachmentRows))
@@ -1616,7 +1683,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
@@ -1636,7 +1703,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			require.NoError(err)
 			require.NoError(db.Close())
 
-			_, err = buildCache(dbPath, analyticsDir, false)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 			require.NoError(err)
 			stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 			require.NoError(err)
@@ -1645,7 +1712,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 				hookDB, hookErr := sql.Open("sqlite3", dbPath)
 				require.NoError(hookErr)
 				defer func() { require.NoError(hookDB.Close()) }()
-				_, hookErr = hookDB.Exec(`
+				_, hookErr = hookDB.ExecContext(t.Context(), `
 					UPDATE sync_runs
 					SET status = ?, completed_at = datetime('now')
 					WHERE id = 1
@@ -1654,7 +1721,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			}
 			t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
 
-			_, err = buildCache(dbPath, analyticsDir, true)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 			require.NoError(err, "a counter change during export publishes the snapshot")
 			buildCacheBeforeStateWriteHook = nil
 			stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
@@ -1676,7 +1743,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -1698,12 +1765,12 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	require.NoError(err)
 	require.NoError(db.Close())
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	db, err = sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE sync_runs
 		SET status = 'failed', completed_at = datetime('now')
 		WHERE id = 1
@@ -1726,7 +1793,7 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -1748,14 +1815,14 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	require.NoError(err)
 	require.NoError(db.Close())
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	buildCacheBeforeStateWriteHook = func() {
 		hookDB, hookErr := sql.Open("sqlite3", dbPath)
 		require.NoError(hookErr)
 		defer func() { require.NoError(hookDB.Close()) }()
-		_, hookErr = hookDB.Exec(`
+		_, hookErr = hookDB.ExecContext(t.Context(), `
 			UPDATE sync_runs
 			SET status = 'failed', completed_at = datetime('now')
 			WHERE id = 1
@@ -1764,14 +1831,14 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	}
 	t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
 
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "a counter change during export publishes the snapshot")
 	buildCacheBeforeStateWriteHook = nil
 	stale := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.True(stale.NeedsBuild, "older run failing during export leaves the cache stale: %+v", stale)
 	assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	fresh := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.False(fresh.NeedsBuild, "full follow-up build converges: %+v", fresh)
@@ -1784,13 +1851,13 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -1832,11 +1899,11 @@ func TestBuildCache_SkipsWhenNoNewMessages(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// First export
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(t, err, "first buildCache")
 
 	// Second export without any new data
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(t, err, "second buildCache")
 
 	assert.True(t, result.Skipped, "expected export to be skipped when no new messages")
@@ -1855,7 +1922,7 @@ func TestBuildCache_BackfillsMissingConversations(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// First export — creates all tables including conversations.
-	result1, err := buildCache(dbPath, analyticsDir, false)
+	result1, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "first buildCache")
 	require.False(result1.Skipped, "expected first export to run")
 
@@ -1869,7 +1936,7 @@ func TestBuildCache_BackfillsMissingConversations(t *testing.T) {
 
 	// Second export — no new messages, but conversations parquet is missing.
 	// buildCache must NOT skip; it should backfill the missing table.
-	result2, err := buildCache(dbPath, analyticsDir, false)
+	result2, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache")
 
 	require.False(result2.Skipped, "expected backfill rebuild when conversations parquet is missing, but was skipped")
@@ -1886,11 +1953,11 @@ func TestBuildCache_BackfillsMissingConversations(t *testing.T) {
 
 	var count int64
 	q := "SELECT COUNT(*) FROM read_parquet('" + filepath.Join(conversationsDir, "*.parquet") + "')"
-	require.NoError(duckdb.QueryRow(q).Scan(&count), "count conversations")
+	require.NoError(duckdb.QueryRowContext(t.Context(), q).Scan(&count), "count conversations")
 	assert.Equal(int64(4), count, "expected 4 conversations after backfill")
 
 	// Third export — everything is up-to-date, should skip.
-	result3, err := buildCache(dbPath, analyticsDir, false)
+	result3, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "third buildCache")
 	assert.True(result3.Skipped, "expected third export to be skipped (all tables present, no new messages)")
 }
@@ -1908,7 +1975,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Step 1: Initial full export (5 messages, 12 recipients).
-	result1, err := buildCache(dbPath, analyticsDir, false)
+	result1, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "first buildCache")
 	require.Equal(int64(5), result1.ExportedCount, "expected 5 messages in initial export")
 
@@ -1916,7 +1983,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	// adds build-ID-prefixed shards alongside the original full-build files.
 	sqliteDB, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
-	_, err = sqliteDB.Exec(`
+	_, err = sqliteDB.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
 			(6, 1, 'msg6', 101, 'Incremental 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
 			(7, 1, 'msg7', 102, 'Incremental 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
@@ -1930,7 +1997,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	_ = sqliteDB.Close()
 	require.NoError(err, "insert incremental data")
 
-	result2, err := buildCache(dbPath, analyticsDir, false)
+	result2, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache (incremental)")
 	require.Equal(int64(7), result2.ExportedCount, "expected 7 messages after incremental")
 
@@ -1940,7 +2007,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 
 	// Step 4: Backfill — no new messages, but conversations is missing.
 	// This must do a full rebuild, clearing stale incremental shards.
-	result3, err := buildCache(dbPath, analyticsDir, false)
+	result3, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "third buildCache (backfill)")
 	require.False(result3.Skipped, "expected backfill, but was skipped")
 
@@ -1952,7 +2019,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	countRows := func(pattern string) int64 {
 		var count int64
 		pattern = filepath.ToSlash(pattern)
-		require.NoError(duckdb.QueryRow("SELECT COUNT(*) FROM read_parquet('"+pattern+"')").Scan(&count), "count %s", pattern)
+		require.NoError(duckdb.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM read_parquet('"+pattern+"')").Scan(&count), "count %s", pattern)
 		return count
 	}
 
@@ -1982,7 +2049,7 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Step 1: Full export (5 messages, 12 recipients).
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "first buildCache")
 
 	// Step 2: Delete message_recipients dir (simulate missing table).
@@ -1992,7 +2059,7 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 	// Step 3: Add new messages to SQLite (so maxID > lastMessageID).
 	sqliteDB, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
-	_, err = sqliteDB.Exec(`
+	_, err = sqliteDB.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
 			(6, 1, 'msg6', 101, 'New msg', 'Preview 6', '2024-03-15 10:00:00', 1200, 0);
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
@@ -2003,7 +2070,7 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 	require.NoError(err, "insert new data")
 
 	// Step 4: Build — missing table + new messages should force full rebuild.
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache")
 	require.False(result.Skipped, "expected rebuild, but was skipped")
 
@@ -2015,13 +2082,13 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 
 	var count int64
 	q := "SELECT COUNT(*) FROM read_parquet('" + filepath.ToSlash(filepath.Join(recipientsDir, "*.parquet")) + "')"
-	require.NoError(duckdb.QueryRow(q).Scan(&count), "count message_recipients")
+	require.NoError(duckdb.QueryRowContext(t.Context(), q).Scan(&count), "count message_recipients")
 	assert.Equal(int64(14), count, "message_recipients: expected 14 (12 original + 2 new)")
 
 	// Also verify messages count is correct (6 total, no duplicates).
 	var msgCount int64
 	msgQ := "SELECT COUNT(*) FROM read_parquet('" + filepath.ToSlash(filepath.Join(analyticsDir, "messages", "**", "*.parquet")) + "', hive_partitioning=true)"
-	require.NoError(duckdb.QueryRow(msgQ).Scan(&msgCount), "count messages")
+	require.NoError(duckdb.QueryRowContext(t.Context(), msgQ).Scan(&msgCount), "count messages")
 	assert.Equal(int64(6), msgCount, "messages")
 }
 
@@ -2037,7 +2104,7 @@ func TestBuildCache_BackfillMissingMessages(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Step 1: Full export to create all tables.
-	result1, err := buildCache(dbPath, analyticsDir, false)
+	result1, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "first buildCache")
 	require.False(result1.Skipped, "expected first export to run")
 
@@ -2052,7 +2119,7 @@ func TestBuildCache_BackfillMissingMessages(t *testing.T) {
 
 	// Step 3: Build again — messages are missing but other tables exist.
 	// Must detect the broken cache and rebuild, NOT skip.
-	result2, err := buildCache(dbPath, analyticsDir, false)
+	result2, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache")
 	require.False(result2.Skipped, "expected rebuild when messages parquet is missing but other tables exist")
 
@@ -2063,7 +2130,7 @@ func TestBuildCache_BackfillMissingMessages(t *testing.T) {
 
 	var count int64
 	q := "SELECT COUNT(*) FROM read_parquet('" + filepath.ToSlash(filepath.Join(messagesDir, "**", "*.parquet")) + "', hive_partitioning=true)"
-	require.NoError(duckdb.QueryRow(q).Scan(&count), "count messages")
+	require.NoError(duckdb.QueryRowContext(t.Context(), q).Scan(&count), "count messages")
 	assert.Equal(t, int64(5), count, "messages")
 }
 
@@ -2077,7 +2144,7 @@ func TestBuildCache_FullRebuild(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// First export
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "first buildCache")
 
 	// Create a marker file to verify directory is cleared
@@ -2085,7 +2152,7 @@ func TestBuildCache_FullRebuild(t *testing.T) {
 	_ = os.WriteFile(markerFile, []byte("test"), 0644)
 
 	// Full rebuild
-	result, err := buildCache(dbPath, analyticsDir, true)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "full rebuild")
 
 	require.False(result.Skipped, "full rebuild should not be skipped")
@@ -2110,12 +2177,12 @@ func TestBuildCache_DeletedMessagesIncluded(t *testing.T) {
 	// Mark one message as deleted
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
-	_, err = db.Exec("UPDATE messages SET deleted_from_source_at = '2024-06-01 12:00:00' WHERE id = 3")
+	_, err = db.ExecContext(t.Context(), "UPDATE messages SET deleted_from_source_at = '2024-06-01 12:00:00' WHERE id = 3")
 	_ = db.Close()
 	require.NoError(err, "mark deleted")
 
 	// Export
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 
 	// All 5 messages should be exported (including deleted)
@@ -2127,7 +2194,7 @@ func TestBuildCache_DeletedMessagesIncluded(t *testing.T) {
 
 	var deletedCount int64
 	query := "SELECT COUNT(*) FROM read_parquet('" + filepath.Join(analyticsDir, "messages", "**", "*.parquet") + "') WHERE deleted_from_source_at IS NOT NULL"
-	require.NoError(duckdb.QueryRow(query).Scan(&deletedCount), "query deleted")
+	require.NoError(duckdb.QueryRowContext(t.Context(), query).Scan(&deletedCount), "query deleted")
 
 	assert.Equal(int64(1), deletedCount, "expected 1 deleted message in Parquet")
 }
@@ -2143,14 +2210,14 @@ func TestBuildCache_MessagesWithoutSentAt(t *testing.T) {
 	// Add a message without sent_at
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, subject, snippet, size_estimate)
 		VALUES (6, 1, 'msg6', 'No Date', 'Preview', 100)
 	`)
 	_ = db.Close()
 	require.NoError(err, "insert")
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 
 	// Only 5 messages with sent_at should be exported
@@ -2167,7 +2234,7 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
 	// Build cache
-	_, err := buildCache(dbPath, analyticsDir, false)
+	_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 
 	// Open DuckDB and test queries that match what the TUI does
@@ -2200,7 +2267,7 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 	// sqlclosecheck satisfied without leaking rows across the sequential
 	// queries below (which reuse the same connection).
 	queryCounts := func(label, query string) map[string]int64 {
-		rows, err := db.Query(query)
+		rows, err := db.QueryContext(t.Context(), query)
 		require.NoError(err, label+" query")
 		defer func() { _ = rows.Close() }()
 		counts := make(map[string]int64)
@@ -2244,7 +2311,7 @@ func TestBuildCache_EndToEndWithQueryEngine(t *testing.T) {
 		LEFT JOIN att ON att.message_id = msg.id
 	`
 	var msgCount, totalSize, attCount, attSize int64
-	require.NoError(db.QueryRow(statsQuery).Scan(&msgCount, &totalSize, &attCount, &attSize), "stats query")
+	require.NoError(db.QueryRowContext(t.Context(), statsQuery).Scan(&msgCount, &totalSize, &attCount, &attSize), "stats query")
 
 	assert.Equal(int64(5), msgCount, "message count")
 	assert.Equal(int64(8000), totalSize, "total size = 1000+2000+1500+3000+500")
@@ -2263,7 +2330,7 @@ func TestBuildCache_YearPartitioning(t *testing.T) {
 	// Add messages from different years
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, subject, sent_at, size_estimate) VALUES
 			(6, 1, 'msg6', 'Old Message', '2020-06-15 10:00:00', 100),
 			(7, 1, 'msg7', 'Recent Message', '2025-01-15 10:00:00', 100);
@@ -2271,7 +2338,7 @@ func TestBuildCache_YearPartitioning(t *testing.T) {
 	_ = db.Close()
 	require.NoError(err, "insert")
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 
 	// Check for year partitions
@@ -2296,7 +2363,7 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
 	// Note: SQLite3 driver may sanitize, but we test the flow
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE messages SET subject = 'Test émoji 🎉 and unicode' WHERE id = 1;
 		UPDATE participants SET display_name = 'Müller' WHERE id = 1;
 	`)
@@ -2304,7 +2371,7 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 	require.NoError(err, "update")
 
 	// Should not error
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache with unicode")
 
 	assert.Equal(int64(5), result.ExportedCount)
@@ -2315,7 +2382,7 @@ func TestBuildCache_UTF8Handling(t *testing.T) {
 
 	var subject string
 	query := "SELECT subject FROM read_parquet('" + filepath.Join(analyticsDir, "messages", "**", "*.parquet") + "') WHERE id = 1"
-	require.NoError(duckdb.QueryRow(query).Scan(&subject), "read unicode subject")
+	require.NoError(duckdb.QueryRowContext(t.Context(), query).Scan(&subject), "read unicode subject")
 
 	assert.Equal("Test émoji 🎉 and unicode", subject, "unicode should be preserved")
 }
@@ -2337,18 +2404,18 @@ func TestBuildCacheCSVInvalidUTF8IsRepairedWithWarning(t *testing.T) {
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
-			_, err = db.Exec(tc.setup)
+			_, err = db.ExecContext(t.Context(), tc.setup)
 			require.NoError(err)
 			require.NoError(db.Close())
 			var buildErr error
-			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(t.Context(), dbPath, analyticsDir, true) })
 			require.NoError(buildErr)
 			assert.Contains(stderr, "msgvault repair-encoding")
 			duckDB, err := sql.Open("duckdb", "")
 			require.NoError(err)
 			defer func() { _ = duckDB.Close() }()
 			var got string
-			require.NoError(duckDB.QueryRow(fmt.Sprintf(tc.check, filepath.ToSlash(analyticsDir))).Scan(&got))
+			require.NoError(duckDB.QueryRowContext(t.Context(), fmt.Sprintf(tc.check, filepath.ToSlash(analyticsDir))).Scan(&got))
 			assert.Equal("�", got)
 		})
 	}
@@ -2369,19 +2436,19 @@ func TestBuildCacheSQLiteScannerInvalidUTF8KeepsFastSearchWorking(t *testing.T) 
 	dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`UPDATE messages SET snippet = CAST(X'43616c656e6461723a206c756e636820f09f' AS TEXT) WHERE id = 1`)
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET snippet = CAST(X'43616c656e6461723a206c756e636820f09f' AS TEXT) WHERE id = 1`)
 	require.NoError(err)
 	require.NoError(db.Close())
 	var buildErr error
-	stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+	stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(t.Context(), dbPath, analyticsDir, true) })
 	require.NoError(buildErr)
 	assert.NotContains(stderr, "using CSV fallback")
 	assert.Contains(stderr, "msgvault repair-encoding")
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
 	q := search.Parse("from:alice@example.com")
-	result, err := engine.SearchFastWithStats(context.Background(), q, "from:alice@example.com", query.MessageFilter{}, query.ViewSenders, 50, 0)
+	result, err := engine.SearchFastWithStats(t.Context(), q, "from:alice@example.com", query.MessageFilter{}, query.ViewSenders, 50, 0)
 	require.NoError(err)
 	var snippet string
 	for _, m := range result.Messages {
@@ -2428,36 +2495,36 @@ func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
 				"identifier\x80@example.com", "handle\x80",
 				"a\x80@example.com",
 			} {
-				_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, CAST(? AS TEXT))`, []byte(address))
+				_, err = db.ExecContext(t.Context(), `INSERT INTO account_identities (source_id, address) VALUES (1, CAST(? AS TEXT))`, []byte(address))
 				require.NoError(err)
 			}
-			_, err = db.Exec(`UPDATE message_recipients SET email_address = CAST(? AS TEXT)
+			_, err = db.ExecContext(t.Context(), `UPDATE message_recipients SET email_address = CAST(? AS TEXT)
 			WHERE message_id = 1 AND recipient_type = 'from'`, []byte("envelope\x80@example.com"))
 			require.NoError(err)
 			// a\x81 and a\x80 sanitize to the same U+FFFD string; the
 			// envelope-equality path must not match them.
-			_, err = db.Exec(`UPDATE message_recipients SET email_address = CAST(? AS TEXT)
+			_, err = db.ExecContext(t.Context(), `UPDATE message_recipients SET email_address = CAST(? AS TEXT)
 			WHERE message_id = 2 AND recipient_type = 'from'`, []byte("a\x81@example.com"))
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE participants SET email_address = CAST(? AS TEXT) WHERE id = 4`, []byte("primary\x80@example.com"))
+			_, err = db.ExecContext(t.Context(), `UPDATE participants SET email_address = CAST(? AS TEXT) WHERE id = 4`, []byte("primary\x80@example.com"))
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE participants SET email_address = '' WHERE id = 2`)
+			_, err = db.ExecContext(t.Context(), `UPDATE participants SET email_address = '' WHERE id = 2`)
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE participant_identifiers SET identifier_value = CAST(? AS TEXT)
+			_, err = db.ExecContext(t.Context(), `UPDATE participant_identifiers SET identifier_value = CAST(? AS TEXT)
 			WHERE participant_id = 2`, []byte("identifier\x80@example.com"))
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
 			VALUES (3, 'handle', CAST(? AS TEXT))`, []byte("handle\x80"))
 			require.NoError(err)
 			// Distinct invalid bytes against the a\x80 identity exercise the
 			// primary-email and non-email identifier paths.
-			_, err = db.Exec(`INSERT INTO participants (id, email_address, domain)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO participants (id, email_address, domain)
 			VALUES (5, CAST(? AS TEXT), 'example.com')`, []byte("a\x81@example.com"))
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
 			VALUES (5, 'handle', CAST(? AS TEXT))`, []byte("a\x81@example.com"))
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE messages SET sender_id = CASE id WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 5 THEN 2 END
+			_, err = db.ExecContext(t.Context(), `UPDATE messages SET sender_id = CASE id WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 5 THEN 2 END
 			WHERE id IN (3, 4, 5)`)
 			require.NoError(err)
 			// Reviewer scenario: the From envelope exists but its bytes are
@@ -2465,28 +2532,28 @@ func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
 			// address that byte-equals a valid account identity. The recorded
 			// envelope is authoritative, so the participant fallback must not
 			// reclassify the message as sent by the owner.
-			_, err = db.Exec(`INSERT INTO participants (id, email_address, domain)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO participants (id, email_address, domain)
 			VALUES (6, 'owner@example.com', 'example.com')`)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, 'owner@example.com')`)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO account_identities (source_id, address) VALUES (1, 'owner@example.com')`)
 			require.NoError(err)
 			// A nonblank primary address must suppress email-alias fallback,
 			// even when its invalid bytes cannot be used as a matching key.
-			_, err = db.Exec(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value)
 			VALUES (4, 'email', 'owner@example.com')`)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
 			VALUES (6, 1, 'msg6', 101, 'Damaged envelope', 'Preview 6', '2024-03-05 09:00:00', 400, 6)`)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES
+			_, err = db.ExecContext(t.Context(), `INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES
 			(6, 6, 'from', 'Owner Account', CAST(? AS TEXT))`, []byte("owner-damaged\x80@example.com"))
 			require.NoError(err)
 			// Control: the same sender without any recorded envelope still
 			// attributes through the participant fallback with valid keys.
-			_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, sender_id)
 			VALUES (7, 1, 'msg7', 101, 'No envelope', 'Preview 7', '2024-03-06 09:00:00', 400, 6)`)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
+			_, err = db.ExecContext(t.Context(), `INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(7, 6, 'from', 'Owner Account')`)
 			require.NoError(err)
 			messageIDs := []struct {
@@ -2498,18 +2565,18 @@ func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
 				{"broken-\uFFFD@example.test", sql.NullString{String: "broken-\uFFFD@example.test", Valid: true}},
 			}
 			for i, messageID := range messageIDs {
-				_, err = db.Exec(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, messageID.raw, i+1)
+				_, err = db.ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, messageID.raw, i+1)
 				require.NoError(err)
 			}
 			require.NoError(db.Close())
 
-			_, err = buildCache(dbPath, analyticsDir, true)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 			require.NoError(err)
 
 			duckDB, err := sql.Open("duckdb", "")
 			require.NoError(err)
 			defer func() { _ = duckDB.Close() }()
-			rows, err := duckDB.Query(`SELECT id, is_from_me, owner_participant_id
+			rows, err := duckDB.QueryContext(t.Context(), `SELECT id, is_from_me, owner_participant_id
 				FROM read_parquet(?, hive_partitioning=true) ORDER BY id`, filepath.Join(analyticsDir, "messages", "**", "*.parquet"))
 			require.NoError(err)
 			defer func() { _ = rows.Close() }()
@@ -2542,7 +2609,7 @@ func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
 				"an absent envelope with valid keys still attributes via the participant fallback")
 			for i, messageID := range messageIDs {
 				var gotID sql.NullString
-				err = duckDB.QueryRow(`SELECT rfc822_message_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+				err = duckDB.QueryRowContext(t.Context(), `SELECT rfc822_message_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 					filepath.Join(analyticsDir, "messages", "**", "*.parquet"), i+1).Scan(&gotID)
 				require.NoError(err)
 				assert.Equal(messageID.want, gotID, "invalid IDs must not collapse onto a valid replacement-character ID")
@@ -2551,14 +2618,14 @@ func TestBuildCacheInvalidUTF8IdentityKeysNeverMatch(t *testing.T) {
 			// The damaged from-row exports no address at all: substituting the
 			// participant's current address would mis-attribute the message.
 			var resolvedAddr, envelopeAddr sql.NullString
-			err = duckDB.QueryRow(`SELECT email_address, envelope_address FROM read_parquet(?)
+			err = duckDB.QueryRowContext(t.Context(), `SELECT email_address, envelope_address FROM read_parquet(?)
 				WHERE message_id = 6 AND recipient_type = 'from'`,
 				filepath.Join(analyticsDir, "message_recipients", "*.parquet")).Scan(&resolvedAddr, &envelopeAddr)
 			require.NoError(err)
 			assert.False(resolvedAddr.Valid, "a present-but-invalid envelope must not resolve to the participant address")
 			assert.False(envelopeAddr.Valid, "a present-but-invalid envelope exports NULL")
 
-			ownerRows, err := duckDB.Query(`SELECT participant_id FROM read_parquet(?) WHERE source_id = 1 ORDER BY participant_id`,
+			ownerRows, err := duckDB.QueryContext(t.Context(), `SELECT participant_id FROM read_parquet(?) WHERE source_id = 1 ORDER BY participant_id`,
 				filepath.Join(analyticsDir, "owner_participants", "*.parquet"))
 			require.NoError(err)
 			defer func() { _ = ownerRows.Close() }()
@@ -2594,7 +2661,7 @@ func TestBuildCacheInvalidIdentifiersDoNotMatchValidKeys(t *testing.T) {
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				UPDATE messages SET source_message_id = CAST(X'80' AS TEXT) WHERE id = 1;
 				UPDATE messages SET source_message_id = CAST(X'81' AS TEXT) WHERE id = 2;
 				UPDATE messages SET source_message_id = '�' WHERE id = 3;
@@ -2610,12 +2677,12 @@ func TestBuildCacheInvalidIdentifiersDoNotMatchValidKeys(t *testing.T) {
 			require.NoError(err)
 			require.NoError(db.Close())
 			var buildErr error
-			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(t.Context(), dbPath, analyticsDir, true) })
 			require.NoError(buildErr)
 			assert.Contains(stderr, "8 identity value(s) exported as unknown")
 			assert.NotContains(stderr, "repair(s) applied")
 
-			engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+			engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 			require.NoError(err)
 			defer func() { _ = engine.Close() }()
 			for _, key := range []struct {
@@ -2673,28 +2740,28 @@ func TestBuildCacheCountsOnlyRepairedExportValues(t *testing.T) {
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO participants (id, email_address, domain, display_name)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO participants (id, email_address, domain, display_name)
 				VALUES (6, CAST(? AS TEXT), 'example.com', CAST(? AS TEXT))`,
 				[]byte("primary\x80@example.com"), []byte("Display\x80Name"))
 			require.NoError(err)
-			_, err = db.Exec(`UPDATE messages SET sender_id = 6 WHERE id = 4`)
+			_, err = db.ExecContext(t.Context(), `UPDATE messages SET sender_id = 6 WHERE id = 4`)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, ?), (1, CAST(? AS TEXT))`,
+			_, err = db.ExecContext(t.Context(), `INSERT INTO account_identities (source_id, address) VALUES (1, ?), (1, CAST(? AS TEXT))`,
 				"primary�@example.com", []byte("unmatched\x80@example.com"))
 			require.NoError(err)
 			// One envelope contributes two unknown output columns. One person
 			// name is exported once for each of its two linked participants.
-			_, err = db.Exec(`UPDATE message_recipients SET email_address = CAST(X'80' AS TEXT)
+			_, err = db.ExecContext(t.Context(), `UPDATE message_recipients SET email_address = CAST(X'80' AS TEXT)
 				WHERE message_id = 1 AND recipient_type = 'from'`)
 			require.NoError(err)
-			_, err = db.Exec(`INSERT INTO persons (id, vcard_uid, display_name)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO persons (id, vcard_uid, display_name)
 				VALUES (1, '00000000-0000-0000-0000-000000000001', CAST(X'80' AS TEXT));
 				INSERT INTO person_participants (person_id, participant_id) VALUES (1, 1), (1, 2)`)
 			require.NoError(err)
 			require.NoError(db.Close())
 
 			var buildErr error
-			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(t.Context(), dbPath, analyticsDir, true) })
 			require.NoError(buildErr)
 			assert.Contains(stderr, "Warning: 3 invalid UTF-8 repair(s) applied while building the analytics cache",
 				"count each exported display value, including the two joined person-name rows")
@@ -2704,12 +2771,12 @@ func TestBuildCacheCountsOnlyRepairedExportValues(t *testing.T) {
 			require.NoError(err)
 			defer func() { _ = duckDB.Close() }()
 			var fromMe bool
-			err = duckDB.QueryRow(`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = 4`,
+			err = duckDB.QueryRowContext(t.Context(), `SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = 4`,
 				filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&fromMe)
 			require.NoError(err)
 			assert.False(fromMe, "a sanitized-literal identity must not match an invalid participant email")
 			var emailAddress, displayName string
-			err = duckDB.QueryRow(`SELECT email_address, display_name FROM read_parquet(?) WHERE id = 6`,
+			err = duckDB.QueryRowContext(t.Context(), `SELECT email_address, display_name FROM read_parquet(?) WHERE id = 6`,
 				filepath.Join(analyticsDir, "participants", "*.parquet")).Scan(&emailAddress, &displayName)
 			require.NoError(err)
 			assert.Empty(emailAddress, "invalid identity text exports as unknown, not as a repair")
@@ -2742,7 +2809,7 @@ func corruptEveryExportedTextColumn(t *testing.T, dbPath string) {
 		`INSERT INTO person_participants (person_id, participant_id) VALUES (1, 2)`,
 	}
 	for _, stmt := range stmts {
-		_, err := db.Exec(stmt)
+		_, err := db.ExecContext(t.Context(), stmt)
 		require.NoError(t, err, stmt)
 	}
 }
@@ -2774,7 +2841,7 @@ func requireEveryCachedStringDecodes(t *testing.T, analyticsDir string) {
 		glob := filepath.ToSlash(filepath.Join(root, "**", "*.parquet"))
 		source := fmt.Sprintf("read_parquet('%s', hive_partitioning=true, union_by_name=true)", glob)
 		cols := func() []string {
-			rows, err := duckDB.Query("SELECT column_name FROM (DESCRIBE SELECT * FROM " + source + ") WHERE column_type = 'VARCHAR'")
+			rows, err := duckDB.QueryContext(t.Context(), "SELECT column_name FROM (DESCRIBE SELECT * FROM "+source+") WHERE column_type = 'VARCHAR'")
 			require.NoError(t, err, dir.Name())
 			defer func() { require.NoError(t, rows.Close()) }()
 			var cols []string
@@ -2788,7 +2855,7 @@ func requireEveryCachedStringDecodes(t *testing.T, analyticsDir string) {
 		}()
 		for _, c := range cols {
 			var n sql.NullInt64
-			require.NoError(t, duckDB.QueryRow(fmt.Sprintf(`SELECT max(length("%s")) FROM %s`, c, source)).Scan(&n), "%s.%s must decode", dir.Name(), c)
+			require.NoError(t, duckDB.QueryRowContext(t.Context(), fmt.Sprintf(`SELECT max(length("%s")) FROM %s`, c, source)).Scan(&n), "%s.%s must decode", dir.Name(), c)
 			checked++
 		}
 	}
@@ -2814,7 +2881,7 @@ func TestBuildCacheExportsValidUTF8InEveryTextColumn(t *testing.T) {
 			dbPath, analyticsDir := filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics")
 			corruptEveryExportedTextColumn(t, dbPath)
 			var buildErr error
-			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(dbPath, analyticsDir, true) })
+			stderr := captureStderrDuring(t, func() { _, buildErr = buildCache(t.Context(), dbPath, analyticsDir, true) })
 			require.NoError(buildErr)
 			assert.Contains(stderr, "invalid UTF-8")
 			assert.Contains(stderr, "msgvault repair-encoding")
@@ -2837,7 +2904,7 @@ func TestBuildCacheExportsValidUTF8InEveryTextColumn(t *testing.T) {
 				} {
 					var got sql.NullString
 					path := filepath.ToSlash(filepath.Join(analyticsDir, check.dataset, "*.parquet"))
-					err := duckDB.QueryRow(fmt.Sprintf("SELECT %s FROM read_parquet('%s') WHERE %s", check.column, path, check.where)).Scan(&got)
+					err := duckDB.QueryRowContext(t.Context(), fmt.Sprintf("SELECT %s FROM read_parquet('%s') WHERE %s", check.column, path, check.where)).Scan(&got)
 					require.NoError(err)
 					assert.Equal(check.want, got)
 				}
@@ -2863,31 +2930,31 @@ func TestBuildCacheCSVQuotedFieldPastSniffSampleRoundTrips(t *testing.T) {
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, sent_at)
 		WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < ?)
 		SELECT 1000 + i, 1, 'bulk-' || i, datetime('2024-04-01', '+' || i || ' minutes') FROM seq;
 	`, bulkRows)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
 		WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM seq WHERE i < ?)
 		SELECT 1000 + i, 1, 'to', 'Recipient ' || i FROM seq;
 	`, bulkRows)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, sent_at)
 		VALUES (?, 1, 'quoted', '2024-05-01 12:00:00')
 	`, 1000+bulkRows+1)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
 		VALUES (?, 2, 'from', ?)
 	`, 1000+bulkRows+1, quotedName)
 	require.NoError(err)
 	require.NoError(db.Close())
 
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "a quoted CSV field past the sniffer sample must not break the rebuild")
 
 	duckdb, err := sql.Open("duckdb", "")
@@ -2896,7 +2963,8 @@ func TestBuildCacheCSVQuotedFieldPastSniffSampleRoundTrips(t *testing.T) {
 	glob := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
 
 	var got string
-	err = duckdb.QueryRow(
+	err = duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT display_name FROM read_parquet(?) WHERE message_id = ? AND recipient_type = 'from'`,
 		glob, 1000+bulkRows+1,
 	).Scan(&got)
@@ -2904,7 +2972,7 @@ func TestBuildCacheCSVQuotedFieldPastSniffSampleRoundTrips(t *testing.T) {
 	assert.Equal(quotedName, got, "commas, embedded quotes, and newlines must round-trip through the CSV snapshot")
 
 	var total int64
-	err = duckdb.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)`, glob).Scan(&total)
+	err = duckdb.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM read_parquet(?)`, glob).Scan(&total)
 	require.NoError(err)
 	assert.Equal(int64(12+bulkRows+1), total, "every fixture, bulk, and quoted recipient row is exported")
 }
@@ -2931,23 +2999,23 @@ func TestBuildCacheExportsAttachmentMetadataForRawQuery(t *testing.T) {
 			analyticsDir := filepath.Join(tmpDir, "analytics")
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err, "open SQLite fixture")
-			_, err = db.Exec(`ALTER TABLE attachments ADD COLUMN attachment_metadata JSON`)
+			_, err = db.ExecContext(t.Context(), `ALTER TABLE attachments ADD COLUMN attachment_metadata JSON`)
 			require.NoError(err, "add attachment metadata column")
-			_, err = db.Exec(`UPDATE attachments SET attachment_metadata = '{"shared_url":"https://example.com/post"}' WHERE id = 1`)
+			_, err = db.ExecContext(t.Context(), `UPDATE attachments SET attachment_metadata = '{"shared_url":"https://example.com/post"}' WHERE id = 1`)
 			require.NoError(err, "set link-preview metadata")
-			_, err = db.Exec(`UPDATE attachments SET attachment_metadata = '{"source_transcript":{"provider":"beeper","text":"voice note"}}' WHERE id = 2`)
+			_, err = db.ExecContext(t.Context(), `UPDATE attachments SET attachment_metadata = '{"source_transcript":{"provider":"beeper","text":"voice note"}}' WHERE id = 2`)
 			require.NoError(err, "set transcript metadata")
-			_, err = db.Exec(`UPDATE messages SET message_type = 'beeper' WHERE id = 2`)
+			_, err = db.ExecContext(t.Context(), `UPDATE messages SET message_type = 'beeper' WHERE id = 2`)
 			require.NoError(err, "mark fixture message as Beeper")
 			require.NoError(db.Close(), "close SQLite fixture")
 
-			_, err = buildCache(dbPath, analyticsDir, true)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 			require.NoError(err, "build analytics cache")
-			engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+			engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 			require.NoError(err, "open analytics query engine")
 			defer func() { _ = engine.Close() }()
 
-			result, err := engine.QuerySQL(context.Background(), `
+			result, err := engine.QuerySQL(t.Context(), `
 				SELECT CASE WHEN COALESCE(json_extract_string(a.attachment_metadata, '$.shared_url'), '') <> '' THEN 1 ELSE 0 END AS is_share,
 				       COUNT(*), SUM(a.size)
 				FROM attachments a
@@ -2979,7 +3047,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 
 	// Create empty database with schema
 	db, _ := sql.Open("sqlite3", dbPath)
-	_, _ = db.Exec(`
+	_, _ = db.ExecContext(t.Context(), `
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
 		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
@@ -3015,7 +3083,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	`)
 	_ = db.Close()
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache on empty db")
 
 	assert.False(result.Skipped, "an empty stateless database must publish an empty cache")
@@ -3030,7 +3098,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	defer func() { _ = duckDB.Close() }()
 	messageGlob := filepath.Join(analyticsDir, tableMessages, "**", "*.parquet")
 	var count int
-	require.NoError(duckDB.QueryRow("SELECT COUNT(*) FROM read_parquet(?)", messageGlob).Scan(&count))
+	require.NoError(duckDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM read_parquet(?)", messageGlob).Scan(&count))
 	assert.Zero(count)
 }
 
@@ -3080,7 +3148,7 @@ func TestCSVFallbackPath(t *testing.T) {
 	require.NoError(err, "open duckdb")
 	defer func() { _ = duckDB.Close() }()
 
-	_, err = duckDB.Exec("CREATE SCHEMA sqlite_db")
+	_, err = duckDB.ExecContext(t.Context(), "CREATE SCHEMA sqlite_db")
 	require.NoError(err, "create schema")
 
 	for _, tbl := range tables {
@@ -3095,19 +3163,19 @@ func TestCSVFallbackPath(t *testing.T) {
 			`CREATE VIEW sqlite_db."%s" AS SELECT * FROM read_csv_auto('%s', %s)`,
 			tbl.name, escaped, csvOpts,
 		)
-		_, err := duckDB.Exec(viewSQL)
+		_, err := duckDB.ExecContext(t.Context(), viewSQL)
 		require.NoError(err, "create view %s", tbl.name)
 	}
 
 	// 3. Verify sent_at is correctly typed as TIMESTAMP
 	var year int
-	err = duckDB.QueryRow(`SELECT CAST(EXTRACT(YEAR FROM sent_at) AS INTEGER) FROM sqlite_db.messages WHERE id = 1`).Scan(&year)
+	err = duckDB.QueryRowContext(t.Context(), `SELECT CAST(EXTRACT(YEAR FROM sent_at) AS INTEGER) FROM sqlite_db.messages WHERE id = 1`).Scan(&year)
 	require.NoError(err, "EXTRACT(YEAR FROM sent_at) failed — sent_at may not be typed as TIMESTAMP")
 	assert.Equal(2024, year)
 
 	// 4. Verify NULLs round-trip correctly (deleted_from_source_at should be NULL)
 	var deletedAt sql.NullTime
-	err = duckDB.QueryRow(`SELECT deleted_from_source_at FROM sqlite_db.messages WHERE id = 1`).Scan(&deletedAt)
+	err = duckDB.QueryRowContext(t.Context(), `SELECT deleted_from_source_at FROM sqlite_db.messages WHERE id = 1`).Scan(&deletedAt)
 	require.NoError(err, "query deleted_from_source_at")
 	assert.False(deletedAt.Valid, "expected deleted_from_source_at to be NULL, got %v", deletedAt.Time)
 
@@ -3124,7 +3192,7 @@ func TestCSVFallbackPath(t *testing.T) {
 	}
 	for tbl, expected := range counts {
 		var count int64
-		require.NoError(duckDB.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM sqlite_db."%s"`, tbl)).Scan(&count), "count %s", tbl)
+		require.NoError(duckDB.QueryRowContext(t.Context(), fmt.Sprintf(`SELECT COUNT(*) FROM sqlite_db."%s"`, tbl)).Scan(&count), "count %s", tbl)
 		assert.Equal(expected, count, "sqlite_db.%s row count", tbl)
 	}
 
@@ -3161,7 +3229,7 @@ func TestCSVFallbackPath(t *testing.T) {
 		)
 	`, escapedDir)
 
-	_, err = duckDB.Exec(copySQL)
+	_, err = duckDB.ExecContext(t.Context(), copySQL)
 	require.NoError(err, "COPY messages to Parquet via CSV views failed")
 
 	// Verify Parquet files were created with correct year partitions
@@ -3183,7 +3251,7 @@ func BenchmarkBuildCache(b *testing.B) {
 	db, _ := sql.Open("sqlite3", dbPath)
 
 	// Create schema
-	_, _ = db.Exec(`
+	_, _ = db.ExecContext(b.Context(), `
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
@@ -3199,12 +3267,12 @@ func BenchmarkBuildCache(b *testing.B) {
 
 	// Insert conversations to match messages
 	for i := 1; i <= 100; i++ {
-		_, _ = db.Exec("INSERT INTO conversations VALUES (?, ?)", i, "thread"+string(rune('0'+i%10)))
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO conversations VALUES (?, ?)", i, "thread"+string(rune('0'+i%10)))
 	}
 
 	// Insert 1000 participants
 	for i := 1; i <= 1000; i++ {
-		_, _ = db.Exec("INSERT INTO participants VALUES (?, ?, ?, ?)",
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO participants VALUES (?, ?, ?, ?)",
 			i, "user"+string(rune('0'+i%10))+"@domain"+string(rune('0'+i%5))+".com",
 			"domain"+string(rune('0'+i%5))+".com", "User "+string(rune('0'+i%10)))
 	}
@@ -3213,18 +3281,18 @@ func BenchmarkBuildCache(b *testing.B) {
 	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 1; i <= 10000; i++ {
 		sentAt := baseTime.Add(time.Duration(i) * time.Hour)
-		_, _ = db.Exec("INSERT INTO messages VALUES (?, 1, ?, ?, ?, 0, ?, ?, ?, NULL)",
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO messages VALUES (?, 1, ?, ?, ?, 0, ?, ?, ?, NULL)",
 			i, "msg"+string(rune('0'+i%10)), sentAt, 1000+i%5000,
 			"Subject "+string(rune('0'+i%10)), "Snippet", i%100+1)
 
 		// Add sender and recipient
-		_, _ = db.Exec("INSERT INTO message_recipients VALUES (?, ?, 'from', NULL)", i, i%1000+1)
-		_, _ = db.Exec("INSERT INTO message_recipients VALUES (?, ?, 'to', NULL)", i, (i+1)%1000+1)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_recipients VALUES (?, ?, 'from', NULL)", i, i%1000+1)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_recipients VALUES (?, ?, 'to', NULL)", i, (i+1)%1000+1)
 
 		// Add labels
-		_, _ = db.Exec("INSERT INTO message_labels VALUES (?, 1)", i)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_labels VALUES (?, 1)", i)
 		if i%3 == 0 {
-			_, _ = db.Exec("INSERT INTO message_labels VALUES (?, 2)", i)
+			_, _ = db.ExecContext(b.Context(), "INSERT INTO message_labels VALUES (?, 2)", i)
 		}
 	}
 	_ = db.Close()
@@ -3233,7 +3301,7 @@ func BenchmarkBuildCache(b *testing.B) {
 	for range b.N {
 		// Clear analytics dir between runs
 		_ = os.RemoveAll(analyticsDir)
-		if _, err := buildCache(dbPath, analyticsDir, true); err != nil {
+		if _, err := buildCache(b.Context(), dbPath, analyticsDir, true); err != nil {
 			b.Fatalf("buildCache: %v", err)
 		}
 	}
@@ -3378,7 +3446,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			UNIQUE(participant_id)
 		);
 	`
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "create schema")
 
 	// Insert metadata but NO messages
@@ -3387,7 +3455,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 		INSERT INTO participants (id, email_address, domain, display_name) VALUES (1, 'alice@example.com', 'example.com', 'Alice');
 		INSERT INTO labels (id, source_id, name) VALUES (1, 1, 'INBOX');
 	`
-	_, err = db.Exec(metadata)
+	_, err = db.ExecContext(t.Context(), metadata)
 	require.NoError(t, err, "insert metadata")
 
 	return tmpDir
@@ -3407,7 +3475,7 @@ func TestBuildCache_ZeroMessagesNoRepeatedRebuilds(t *testing.T) {
 
 	// Step 1: Full rebuild creates metadata plus a schema-compatible empty
 	// message shard.
-	result1, err := buildCache(dbPath, analyticsDir, true)
+	result1, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "first buildCache (full)")
 	assert.Equal(int64(0), result1.ExportedCount, "expected 0 exported messages")
 
@@ -3417,7 +3485,7 @@ func TestBuildCache_ZeroMessagesNoRepeatedRebuilds(t *testing.T) {
 	require.NotEmpty(matches, "expected sources parquet to exist after full rebuild")
 
 	// Step 3: Run non-full build — should skip, NOT trigger another full rebuild.
-	result2, err := buildCache(dbPath, analyticsDir, false)
+	result2, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache")
 	assert.True(result2.Skipped, "expected second build to be skipped (no new messages), but it ran")
 }
@@ -3430,7 +3498,7 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 
 	t.Run("populated", func(t *testing.T) {
 		tmpDir := setupTestSQLite(t)
-		result, err := buildCache(filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics"), true)
+		result, err := buildCache(t.Context(), filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics"), true)
 		require.NoError(t, err)
 		assert.Positive(t, result.ExportedCount)
 	})
@@ -3444,7 +3512,7 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 
 		db, err := sql.Open("sqlite3", dbPath)
 		require.NoError(err)
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			ALTER TABLE messages ADD COLUMN source_is_from_me BOOLEAN DEFAULT FALSE;
 			UPDATE messages
 			SET is_from_me = FALSE, source_is_from_me = TRUE
@@ -3453,7 +3521,7 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 		require.NoError(err)
 		require.NoError(db.Close())
 
-		result, err := buildCache(dbPath, analyticsDir, true)
+		result, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 		require.NoError(err)
 		assert.Positive(result.ExportedCount)
 
@@ -3462,7 +3530,8 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 		defer func() { require.NoError(duckDB.Close()) }()
 
 		var isFromMe bool
-		require.NoError(duckDB.QueryRow(
+		require.NoError(duckDB.QueryRowContext(
+			t.Context(),
 			`SELECT is_from_me
 			 FROM read_parquet(?, hive_partitioning=true)
 			 WHERE id = 1`,
@@ -3473,7 +3542,7 @@ func TestBuildCacheCSVSnapshotFallback(t *testing.T) {
 
 	t.Run("empty", func(t *testing.T) {
 		tmpDir := setupTestSQLiteEmpty(t)
-		result, err := buildCache(filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics"), true)
+		result, err := buildCache(t.Context(), filepath.Join(tmpDir, "test.db"), filepath.Join(tmpDir, "analytics"), true)
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), result.ExportedCount)
 	})
@@ -3499,7 +3568,7 @@ func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
 		var snapshot *cacheSourceSnapshot
 		var snapshotErr error
 		stderr := captureStderrDuring(t, func() {
-			snapshot, snapshotErr = openCacheSourceSnapshot(duckDB, dbPath)
+			snapshot, snapshotErr = openCacheSourceSnapshot(t.Context(), duckDB, dbPath)
 		})
 		require.NoError(snapshotErr, "open cache source snapshot")
 		require.NotNil(snapshot)
@@ -3511,7 +3580,7 @@ func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
 		t.Helper()
 		require := newRequire(t)
 		var count int64
-		require.NoError(snapshot.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+		require.NoError(snapshot.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
 		return count
 	}
 
@@ -3574,7 +3643,7 @@ func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
 
 			messagePattern := filepath.ToSlash(filepath.Join(
 				analyticsDir, tableMessages, "**", "*.parquet"))
-			rows, err := duckDB.Query(`
+			rows, err := duckDB.QueryContext(t.Context(), `
 				SELECT id, source_id, source_message_id, subject, snippet,
 					CAST(sent_at AS VARCHAR), size_estimate, has_attachments,
 					attachment_count
@@ -3607,7 +3676,8 @@ func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
 							return nil
 						}
 						var fileCount int64
-						if err := duckDB.QueryRow(
+						if err := duckDB.QueryRowContext(
+							t.Context(),
 							"SELECT COUNT(*) FROM read_parquet(?)",
 							filepath.ToSlash(path),
 						).Scan(&fileCount); err != nil {
@@ -3629,7 +3699,7 @@ func TestOpenCacheSourceSnapshotPlatformPolicy(t *testing.T) {
 			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", forceCSV)
 			tmpDir := setupTestSQLite(t)
 			analyticsDir := filepath.Join(tmpDir, "analytics")
-			result, err := buildCache(filepath.Join(tmpDir, "test.db"), analyticsDir, true)
+			result, err := buildCache(t.Context(), filepath.Join(tmpDir, "test.db"), analyticsDir, true)
 			require.NoError(err, "build cache for parity")
 			assert.Equal(int64(5), result.ExportedCount)
 			return readCache(t, analyticsDir)
@@ -3661,14 +3731,14 @@ func TestBuildCacheDerivesAttributionFromEnvelopeAliasSnapshot(t *testing.T) {
 
 		db, err := sql.Open("sqlite3", dbPath)
 		require.NoError(err)
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			INSERT INTO account_identities (source_id, address)
 			VALUES (1, 'Alice-Envelope@Example.com')
 		`)
 		require.NoError(err)
 		require.NoError(db.Close())
 
-		result, err := buildCache(dbPath, analyticsDir, true)
+		result, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 		require.NoError(err)
 		assert.Positive(result.ExportedCount)
 
@@ -3679,7 +3749,8 @@ func TestBuildCacheDerivesAttributionFromEnvelopeAliasSnapshot(t *testing.T) {
 		pattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 		readIsFromMe := func(messageID int64) bool {
 			var isFromMe bool
-			require.NoError(duckDB.QueryRow(
+			require.NoError(duckDB.QueryRowContext(
+				t.Context(),
 				`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 				pattern, messageID,
 			).Scan(&isFromMe))
@@ -3707,7 +3778,7 @@ func TestBuildCacheDoesNotFallbackFromEnvelopeToCurrentParticipant(t *testing.T)
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO account_identities (source_id, address)
 		VALUES (1, 'alice@example.com');
 		UPDATE messages SET sender_id = 1, is_from_me = FALSE WHERE id = 1;
@@ -3718,7 +3789,7 @@ func TestBuildCacheDoesNotFallbackFromEnvelopeToCurrentParticipant(t *testing.T)
 	require.NoError(err)
 	require.NoError(db.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, true)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err)
 	assert.Positive(result.ExportedCount)
 
@@ -3726,7 +3797,8 @@ func TestBuildCacheDoesNotFallbackFromEnvelopeToCurrentParticipant(t *testing.T)
 	require.NoError(err)
 	defer func() { require.NoError(duckDB.Close()) }()
 	var isFromMe bool
-	require.NoError(duckDB.QueryRow(
+	require.NoError(duckDB.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me
 		 FROM read_parquet(?, hive_partitioning=true)
 		 WHERE id = 1`,
@@ -3744,7 +3816,7 @@ func TestBuildCacheSnapshotPredicateAcceptsCSVStringIDs(t *testing.T) {
 	defer func() { require.NoError(db.Close()) }()
 
 	var count int
-	err = db.QueryRow(`
+	err = db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*)
 		FROM (VALUES ('1'), ('2'), ('not-an-id')) AS m(id)
 		WHERE TRY_CAST(m.id AS BIGINT) <= 2
@@ -3857,7 +3929,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
 				createFakeParquet(t, analyticsDir)
@@ -3874,7 +3946,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 10)
 				createFakeParquet(t, analyticsDir)
@@ -3890,7 +3962,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
 				// No Parquet files created, so readiness reports an absent cache.
@@ -3906,7 +3978,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at, deleted_from_source_at) VALUES (10, 1, 'msg10', datetime('now'), datetime('now', '-1 hour'))`)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, sent_at, deleted_from_source_at) VALUES (10, 1, 'msg10', datetime('now'), datetime('now', '-1 hour'))`)
 				require.NoError(t, err, "insert message")
 				writeSyncState(t, analyticsDir, 0)
 				createFakeParquet(t, analyticsDir)
@@ -3921,7 +3993,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`
+				_, err = db.ExecContext(t.Context(), `
 					INSERT INTO messages (id, source_id, source_message_id, sent_at, message_type)
 					VALUES (10, 1, 'calendar-10', datetime('now'), 'calendar_event')
 				`)
@@ -3940,7 +4012,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				require.NoError(t, err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`
+				_, err = db.ExecContext(t.Context(), `
 					INSERT INTO messages (
 						id, source_id, source_message_id, sent_at,
 						deleted_from_source_at, deleted_at
@@ -3990,7 +4062,7 @@ func TestCacheNeedsBuild(t *testing.T) {
 				db, err := sql.Open("sqlite3", dbPath)
 				requirementsForTest.NoError(err, "open db")
 				defer func() { _ = db.Close() }()
-				_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (5, 1, 'msg5', datetime('now'))`)
 				requirementsForTest.NoError(err, "insert message")
 				writeSyncState(t, analyticsDir, 5)
 				// Only create messages parquet — other required dirs missing
@@ -4068,7 +4140,7 @@ func TestCacheNeedsBuild_IdentityRevisionChangeRequiresIncrementalBuild(t *testi
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '1')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '1')`)
 	require.NoError(err, "bump identity revision")
 	require.NoError(db.Close())
 
@@ -4097,7 +4169,7 @@ func TestCacheNeedsBuild_AccountIdentityRevisionChangeForcesFullRebuild(t *testi
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('account_identity_revision', '1')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO archive_metadata (key, value) VALUES ('account_identity_revision', '1')`)
 	require.NoError(err, "bump account identity revision")
 	require.NoError(db.Close())
 
@@ -4148,7 +4220,7 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -4163,7 +4235,7 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	`)
 	require.NoError(err, "create sync_runs")
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO sync_runs (
 			id, source_id, started_at, completed_at, status,
 			messages_processed, messages_added, messages_updated, errors_count
@@ -4194,7 +4266,7 @@ func TestCacheNeedsBuild_CalendarUpdateRebuildsModalityNeutralCache(t *testing.T
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gcal', 'user@example.com/primary');
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
@@ -4263,7 +4335,7 @@ func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
 			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
 			defer func() { _ = db.Close() }()
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
 					source_id INTEGER,
@@ -4277,7 +4349,7 @@ func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
 				)
 			`)
 			require.NoError(err)
-			_, err = db.Exec(`
+			_, err = db.ExecContext(t.Context(), `
 				INSERT INTO sync_runs (
 					id, source_id, started_at, completed_at, status,
 					messages_processed, messages_added, messages_updated, errors_count
@@ -4311,7 +4383,7 @@ func TestCacheNeedsBuild_UpdateCounterDecreaseRequiresRebuild(t *testing.T) {
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -4363,7 +4435,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -4378,7 +4450,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	`)
 	require.NoError(err, "create sync_runs")
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO sync_runs (
 			id, source_id, started_at, completed_at, status,
 			messages_processed, messages_added, messages_updated, errors_count
@@ -4410,7 +4482,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, source_id, source_message_id, sent_at) VALUES (10, 1, 'msg10', datetime('now'))`)
 	require.NoError(err, "insert message")
 	require.NoError(db.Close(), "close db")
 
@@ -4432,7 +4504,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.True(got.FullRebuild, "cacheNeedsBuild() = %+v, want FullRebuild=true on schema mismatch", got)
 	require.Contains(got.Reason, "schema", "cacheNeedsBuild() reason should mention schema")
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "upgrade v11 cache through normal build")
 	require.False(result.Skipped, "schema mismatch must execute a full rebuild")
 	upgraded, err := query.ReadCacheSyncState(analyticsDir)
@@ -4446,7 +4518,7 @@ func TestCacheNeedsBuild_SchemaVersionMismatch(t *testing.T) {
 	require.NoError(err)
 	defer func() { require.NoError(duckdb.Close()) }()
 	var identifiers int64
-	require.NoError(duckdb.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)`, identifierParquet).Scan(&identifiers))
+	require.NoError(duckdb.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM read_parquet(?)`, identifierParquet).Scan(&identifiers))
 	require.Zero(identifiers, "synthetic archive has no explicit identifier rows")
 }
 
@@ -4472,7 +4544,8 @@ func TestCacheNeedsBuild_DedupHidesAfterLastSync(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Insert one live row and one row dedup-hidden after LastSyncAt.
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		`INSERT INTO messages
 			(id, source_id, source_message_id, sent_at, deleted_at)
 		 VALUES (1, 1, 'msg1', datetime('now'), NULL)`,
@@ -4480,7 +4553,8 @@ func TestCacheNeedsBuild_DedupHidesAfterLastSync(t *testing.T) {
 	require.NoError(err, "insert live row")
 	hiddenAt := stateTime.Add(1 * time.Hour).
 		Format("2006-01-02 15:04:05")
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		`INSERT INTO messages
 			(id, source_id, source_message_id, sent_at, deleted_at)
 		 VALUES (2, 1, 'msg2', datetime('now'), ?)`,
@@ -4504,7 +4578,7 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -4519,7 +4593,7 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 	`)
 	require.NoError(err, "create sync_runs")
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO sync_runs (
 			id, source_id, started_at, completed_at, status,
 			messages_processed, messages_added, messages_updated, errors_count
@@ -4532,7 +4606,7 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 	)
 	require.NoError(err, "insert sync_run")
 
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "buildCache")
 
 	data, err := os.ReadFile(filepath.Join(analyticsDir, "_last_sync.json"))
@@ -4554,7 +4628,7 @@ func TestBuildCache_ErrorDoesNotWriteStateFile(t *testing.T) {
 	stateFile := filepath.Join(analyticsDir, "_last_sync.json")
 
 	// Use a nonexistent DB path to force an error during cache build.
-	_, err := buildCache(filepath.Join(tmpDir, "nonexistent.db"), analyticsDir, false)
+	_, err := buildCache(t.Context(), filepath.Join(tmpDir, "nonexistent.db"), analyticsDir, false)
 	require.Error(t, err, "expected error from nonexistent DB")
 
 	// Verify state file was NOT written.
@@ -4572,7 +4646,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 	db, _ := sql.Open("sqlite3", dbPath)
 
 	// Create schema and initial data (10000 messages)
-	_, _ = db.Exec(`
+	_, _ = db.ExecContext(b.Context(), `
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, identifier TEXT);
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
@@ -4590,30 +4664,30 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 
 	// Insert conversations to match messages
 	for i := 1; i <= 100; i++ {
-		_, _ = db.Exec("INSERT INTO conversations VALUES (?, ?)", i, "thread"+string(rune('0'+i%10)))
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO conversations VALUES (?, ?)", i, "thread"+string(rune('0'+i%10)))
 	}
 
 	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 1; i <= 10000; i++ {
 		sentAt := baseTime.Add(time.Duration(i) * time.Hour)
-		_, _ = db.Exec("INSERT INTO messages VALUES (?, 1, ?, ?, ?, 0, ?, ?, ?, NULL)",
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO messages VALUES (?, 1, ?, ?, ?, 0, ?, ?, ?, NULL)",
 			i, "msg"+string(rune('0'+i%10)), sentAt, 1000, "Subject", "Snippet", 1)
-		_, _ = db.Exec("INSERT INTO message_recipients VALUES (?, 1, 'from', NULL)", i)
-		_, _ = db.Exec("INSERT INTO message_recipients VALUES (?, 2, 'to', NULL)", i)
-		_, _ = db.Exec("INSERT INTO message_labels VALUES (?, 1)", i)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_recipients VALUES (?, 1, 'from', NULL)", i)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_recipients VALUES (?, 2, 'to', NULL)", i)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_labels VALUES (?, 1)", i)
 	}
 
 	// Initial export
-	_, _ = buildCache(dbPath, analyticsDir, true)
+	_, _ = buildCache(b.Context(), dbPath, analyticsDir, true)
 
 	// Add 100 new messages for incremental test
 	for i := 10001; i <= 10100; i++ {
 		sentAt := baseTime.Add(time.Duration(i) * time.Hour)
-		_, _ = db.Exec("INSERT INTO messages VALUES (?, 1, ?, ?, ?, 0, ?, ?, ?, NULL)",
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO messages VALUES (?, 1, ?, ?, ?, 0, ?, ?, ?, NULL)",
 			i, "msg"+string(rune('0'+i%10)), sentAt, 1000, "Subject", "Snippet", 1)
-		_, _ = db.Exec("INSERT INTO message_recipients VALUES (?, 1, 'from', NULL)", i)
-		_, _ = db.Exec("INSERT INTO message_recipients VALUES (?, 2, 'to', NULL)", i)
-		_, _ = db.Exec("INSERT INTO message_labels VALUES (?, 1)", i)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_recipients VALUES (?, 1, 'from', NULL)", i)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_recipients VALUES (?, 2, 'to', NULL)", i)
+		_, _ = db.ExecContext(b.Context(), "INSERT INTO message_labels VALUES (?, 1)", i)
 	}
 	_ = db.Close()
 
@@ -4628,7 +4702,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 		}
 		_ = os.WriteFile(stateFile, data, 0644)
 
-		if _, err := buildCache(dbPath, analyticsDir, false); err != nil {
+		if _, err := buildCache(b.Context(), dbPath, analyticsDir, false); err != nil {
 			b.Fatalf("buildCache: %v", err)
 		}
 	}
@@ -4730,17 +4804,17 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 				if mode == "identity" {
 					statement = `UPDATE messages SET rfc822_message_id=CAST(X'80' AS TEXT) WHERE id=1`
 				}
-				_, err = db.Exec(statement)
+				_, err = db.ExecContext(t.Context(), statement)
 				require.NoError(err)
 				var result *buildResult
-				stderr := captureStderrDuring(t, func() { result, err = buildCache(dbPath, cache, true) })
+				stderr := captureStderrDuring(t, func() { result, err = buildCache(t.Context(), dbPath, cache, true) })
 				require.NoError(err)
 				if mode == "identity" {
 					duck, err := sql.Open("duckdb", "")
 					require.NoError(err)
 					defer func() { _ = duck.Close() }()
 					var got sql.NullString
-					require.NoError(duck.QueryRow(`SELECT rfc822_message_id FROM read_parquet(?, hive_partitioning=true) WHERE id=1`, filepath.Join(cache, "messages", "**", "*.parquet")).Scan(&got))
+					require.NoError(duck.QueryRowContext(t.Context(), `SELECT rfc822_message_id FROM read_parquet(?, hive_partitioning=true) WHERE id=1`, filepath.Join(cache, "messages", "**", "*.parquet")).Scan(&got))
 					assert.False(got.Valid)
 					assert.Contains(stderr, "1 identity value(s) exported as unknown")
 					t.Logf("invalid identity exported NULL; warning=%q", stderr)
@@ -4752,9 +4826,9 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 				original, err := os.ReadFile(shards[0])
 				require.NoError(err)
 				if mode == "incremental" {
-					_, err = db.Exec(`INSERT INTO messages(id,source_id,source_message_id,conversation_id,subject,sent_at) VALUES(6,1,'probe-clean',101,'clean','2025-01-01')`)
+					_, err = db.ExecContext(t.Context(), `INSERT INTO messages(id,source_id,source_message_id,conversation_id,subject,sent_at) VALUES(6,1,'probe-clean',101,'clean','2025-01-01')`)
 					require.NoError(err)
-					stderr = captureStderrDuring(t, func() { result, err = buildCache(dbPath, cache, false) })
+					stderr = captureStderrDuring(t, func() { result, err = buildCache(t.Context(), dbPath, cache, false) })
 					require.NoError(err)
 					assert.Equal(int64(6), result.ExportedCount)
 					after, err := os.ReadFile(shards[0])
@@ -4765,10 +4839,10 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 					if mode == "derived damaged" {
 						title = "changed\x80title"
 					}
-					_, err = db.Exec(`UPDATE conversations SET title=CAST(? AS TEXT) WHERE id=101`, []byte(title))
+					_, err = db.ExecContext(t.Context(), `UPDATE conversations SET title=CAST(? AS TEXT) WHERE id=101`, []byte(title))
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() {
-						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, acquirePublishLock, false)
+						result, err = refreshDerivedDatasetsOnly(t.Context(), dbPath, cache, false)
 					})
 					require.NoError(err)
 					assert.True(result.IdentityOnly)

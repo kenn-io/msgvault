@@ -104,8 +104,9 @@ test("production imports expose archived actions, summary totals, and exact cont
   expect(explicit.meetings[0].content.actions).toEqual([]);
   expect(JSON.stringify(explicit)).not.toContain("Generic transcript evidence");
   await page
-    .getByRole("button", { name: "Select all 5 matching items", exact: true })
+    .getByRole("button", { name: "Select all 5 matching", exact: true })
     .click();
+  await meetingContext.click();
   const all = await downloadContext(page, info, "all-matching-context");
   expect(
     all.meetings
@@ -213,10 +214,10 @@ test("production imports expose archived actions, summary totals, and exact cont
   await expect(reader).toHaveCount(0);
 
   await page.goto(`${daemon.origin}/messages/${daemon.meetings.circleback.message_id}`);
-  const standaloneEvidence = page.getByRole('link', { name: 'Circleback provider half hour', exact: true });
-  await standaloneEvidence.click();
-  await expect(page).toHaveURL(new RegExp(`/messages/${daemon.meetings.circleback.message_id}$`));
-  await expect(page.getByRole('article', { name: `Message ${daemon.meetings.circleback.message_id}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('grid', { name: 'Messages results' }).getByText('Generic unknown duration', { exact: true })).toBeVisible();
+  const linkedEvidence = page.getByRole('link', { name: 'Circleback provider half hour', exact: true });
+  await linkedEvidence.click();
+  await expect(page.getByRole('dialog', { name: 'Archived meeting', exact: true })).toBeVisible();
 
   const deleted = await daemon.post("meetings/metrics", {
     scope: { deletion: "deleted" },

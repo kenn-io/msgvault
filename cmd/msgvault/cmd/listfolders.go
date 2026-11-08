@@ -41,7 +41,7 @@ func runListFoldersLocal(cmd *cobra.Command, args []string) error {
 	}
 	cfg := state.cfg
 	logger := state.logger
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openReadOnlyStoreForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}

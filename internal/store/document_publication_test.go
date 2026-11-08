@@ -43,7 +43,7 @@ func TestDoclingExpiredClaimIsReclaimedAutomatically(t *testing.T) {
 	// Simulate a crashed worker whose lease ran out mid-job.
 	past := time.Now().UTC().Add(-time.Minute)
 	for _, table := range []string{"document_extractions", "document_extraction_claims"} {
-		_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE "+table+" SET lease_until = ? WHERE profile_id = ?"), past, profile.ID)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE "+table+" SET lease_until = ? WHERE profile_id = ?"), past, profile.ID)
 		require.NoError(err)
 	}
 	input.ExtractionID = "docling-resumed"
@@ -152,7 +152,7 @@ func TestDocumentExtractionPublicationKeepsOldHeadUntilAtomicSwitch(t *testing.T
 	}))
 	require.ErrorIs(err, store.ErrDocumentExtractionClaimed)
 	var concurrentRows int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM document_extractions WHERE id = ?`), "extraction-concurrent").Scan(&concurrentRows))
 	assert.Zero(concurrentRows, "failed owner claims must roll back their staging revision")
 
@@ -205,11 +205,11 @@ func TestDocumentExtractionPublicationRejectsInvalidSpanBeforeMutation(t *testin
 	require.ErrorContains(f.Store.PublishDocumentExtraction(t.Context(), publication), "span 0 is invalid")
 
 	var units int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM document_units WHERE extraction_id = ?`), claim.ExtractionID).Scan(&units))
 	assert.Zero(t, units)
 	var state string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT state FROM document_extractions WHERE id = ?`), claim.ExtractionID).Scan(&state))
 	assert.Equal(t, "staging", state)
 }
@@ -222,7 +222,7 @@ func TestMistralCSVPublicationRequiresConversionReceipt(t *testing.T) {
 		"UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?",
 		"UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?",
 	} {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(update), hash)
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(update), hash)
 		require.NoError(err)
 	}
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
@@ -242,10 +242,10 @@ func TestDocumentExtractionPublicationPersistsCSVReceiptAndCountsGeneratedBytes(
 	assert := assert.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
 	require.NoError(err)
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
@@ -267,7 +267,7 @@ func TestDocumentExtractionPublicationPersistsCSVReceiptAndCountsGeneratedBytes(
 
 	var providerMedia, pdfHash string
 	var pdfBytes, pages int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT provider_media_type, pdf_sha256, pdf_bytes, pages
 		FROM document_extraction_conversions WHERE extraction_id = ?`), claim.ExtractionID).Scan(
 		&providerMedia, &pdfHash, &pdfBytes, &pages))
@@ -289,10 +289,10 @@ func TestDocumentExtractionPublicationRejectsConflictingCSVReceipt(t *testing.T)
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
 	require.NoError(err)
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
@@ -302,7 +302,7 @@ func TestDocumentExtractionPublicationRejectsConflictingCSVReceipt(t *testing.T)
 		LocalBytes: 128, SourceSequence: 1,
 	}))
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO document_extraction_conversions
 			(extraction_id, provider_media_type, pdf_sha256, pdf_bytes, pages,
 			 policy_fingerprint, converter_version, spans)
@@ -322,11 +322,11 @@ func TestDocumentExtractionPublicationRejectsConflictingCSVReceipt(t *testing.T)
 	require.ErrorContains(f.Store.PublishDocumentExtraction(t.Context(), publication), "conflicts with existing evidence")
 
 	var state string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT state FROM document_extractions WHERE id = ?`), claim.ExtractionID).Scan(&state))
 	require.Equal("staging", state)
 	var units int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM document_units WHERE extraction_id = ?`), claim.ExtractionID).Scan(&units))
 	require.Zero(units)
 }
@@ -335,10 +335,10 @@ func TestDocumentExtractionPublicationAcceptsIdenticalCSVReceipt(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
 	require.NoError(err)
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
@@ -349,7 +349,7 @@ func TestDocumentExtractionPublicationAcceptsIdenticalCSVReceipt(t *testing.T) {
 	}))
 	require.NoError(err)
 	receiptSpans := `[ {"page":1,"record":1,"cell":1} ]`
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO document_extraction_conversions
 			(extraction_id, provider_media_type, pdf_sha256, pdf_bytes, pages,
 			 policy_fingerprint, converter_version, spans)
@@ -373,10 +373,10 @@ func TestFailDocumentExtractionPersistsCSVReceipt(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	profile, hash := seedDocumentPublicationAuthority(t, f)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET mime_type = 'text/csv' WHERE content_hash = ?`), hash)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_occurrences SET mime_type = 'text/csv' WHERE canonical_blob_hash = ?`), hash)
 	require.NoError(err)
 	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
@@ -399,7 +399,7 @@ func TestFailDocumentExtractionPersistsCSVReceipt(t *testing.T) {
 
 	var providerMedia, pdfHash string
 	var pdfBytes int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT provider_media_type, pdf_sha256, pdf_bytes
 		FROM document_extraction_conversions WHERE extraction_id = ?`), claim.ExtractionID).Scan(
 		&providerMedia, &pdfHash, &pdfBytes))
@@ -457,7 +457,7 @@ func TestDocumentExtractionClaimRequiresAuthoritativeRoleProvenance(t *testing.T
 				LeaseOwner: "worker-untrusted-role", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
 				LocalBytes: 128, SourceSequence: 1,
 			})
-			_, err := f.Store.DB().Exec(f.Store.Rebind(test.update), input.OccurrenceAttachmentID)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(test.update), input.OccurrenceAttachmentID)
 			require.NoError(t, err)
 
 			_, err = f.Store.ClaimDocumentExtraction(t.Context(), input)
@@ -504,7 +504,7 @@ func TestDocumentExtractionPublicationRechecksClaimedOccurrenceScope(t *testing.
 			_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), otherAttachmentID, 2)
 			require.NoError(err)
 			require.True(eligible)
-			_, err = f.Store.DB().Exec(f.Store.Rebind(test.update), claim.OccurrenceAttachmentID)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(test.update), claim.OccurrenceAttachmentID)
 			require.NoError(err)
 
 			err = f.Store.PublishDocumentExtraction(t.Context(), publicationFor(t,
@@ -525,7 +525,7 @@ func TestDocumentExtractionPublicationAcceptsTrustedHashlessCASAlias(t *testing.
 		LeaseOwner: "worker-hashless-alias", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
 		LocalBytes: 128, SourceSequence: 1,
 	})
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attachments SET content_hash = '' WHERE id = ?`), input.OccurrenceAttachmentID)
 	require.NoError(err)
 
@@ -777,7 +777,7 @@ func TestGarbageCollectDocumentDerivativesKeepsCurrentUntilFinalOccurrenceIsGone
 	profile, hash := seedDocumentPublicationAuthority(t, f)
 	publishSearchDocument(t, f, profile, hash, "old quasar evidence", "gc-old")
 	publishSearchDocument(t, f, profile, hash, "current nebula evidence", "gc-current")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_extractions SET updated_at = ? WHERE id = ?`),
 		time.Now().UTC().Add(-48*time.Hour), "gc-old")
 	require.NoError(err)
@@ -789,21 +789,21 @@ func TestGarbageCollectDocumentDerivativesKeepsCurrentUntilFinalOccurrenceIsGone
 	assert.Equal(store.DocumentDerivativeGCResult{ExtractionsRemoved: 1}, result)
 	assert.Equal([]string{"current nebula evidence"}, currentDocumentTexts(t, f, profile.ID, hash))
 	var oldExtractions int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM document_extractions WHERE id = ?`), "gc-old").Scan(&oldExtractions))
 	assert.Zero(oldExtractions)
 
 	var attachmentID, messageID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT attachment_id, message_id FROM document_occurrences
 		WHERE canonical_blob_hash = ?`), hash).Scan(&attachmentID, &messageID))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
 	require.NoError(err)
 	assert.False(eligible)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_extractions SET updated_at = ? WHERE id = ?`),
 		time.Now().UTC().Add(-48*time.Hour), "gc-current")
 	require.NoError(err)
@@ -818,9 +818,11 @@ func TestGarbageCollectDocumentDerivativesKeepsCurrentUntilFinalOccurrenceIsGone
 		ExtractionsRemoved: 1, CurrentHeadsRemoved: 1,
 	}, result)
 	var heads, chunks int
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM document_extraction_heads`).Scan(&heads))
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM document_chunks`).Scan(&chunks))
 	assert.Zero(heads)
 	assert.Zero(chunks)
@@ -844,7 +846,7 @@ func TestGarbageCollectDocumentDerivativesKeepsTerminalSuppressionUntilFinalOccu
 	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
 		Claim: claim, ReasonCode: "provider_rejected", Terminal: true,
 	}))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE document_extractions SET updated_at = ? WHERE id = ?`),
 		time.Now().UTC().Add(-48*time.Hour), claim.ExtractionID)
 	require.NoError(err)
@@ -861,10 +863,10 @@ func TestGarbageCollectDocumentDerivativesKeepsTerminalSuppressionUntilFinalOccu
 	assert.Equal(revisionBefore, revisionAfter)
 
 	var attachmentID, messageID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT attachment_id, message_id FROM document_occurrences
 		WHERE canonical_blob_hash = ?`), hash).Scan(&attachmentID, &messageID))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
 	_, eligible, err := f.Store.ReconcileDocumentOccurrence(t.Context(), attachmentID, 2)
@@ -897,9 +899,9 @@ func TestPurgeDocumentDerivedByHashKeepsOccurrenceReadyForRebuild(t *testing.T) 
 	require.NoError(err)
 	assert.Equal(store.DocumentDerivedPurgeResult{ExtractionsRemoved: 1, HeadsRemoved: 1}, result)
 	var occurrences, heads, chunks int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM document_occurrences`).Scan(&occurrences))
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM document_extraction_heads`).Scan(&heads))
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM document_chunks`).Scan(&chunks))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM document_occurrences`).Scan(&occurrences))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM document_extraction_heads`).Scan(&heads))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM document_chunks`).Scan(&chunks))
 	assert.Equal(1, occurrences)
 	assert.Zero(heads)
 	assert.Zero(chunks)
@@ -1022,7 +1024,7 @@ func documentClaimInputForHash(
 	input store.DocumentExtractionClaimInput,
 ) store.DocumentExtractionClaimInput {
 	t.Helper()
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT o.attachment_id, COALESCE(o.mime_type, ''), COALESCE(m.message_type, '')
 		FROM document_occurrences o
 		JOIN messages m ON m.id = o.message_id
@@ -1037,7 +1039,7 @@ func documentClaimInputForHash(
 func currentDocumentTexts(t *testing.T, f *storetest.Fixture, profileID, hash string) []string {
 	t.Helper()
 	require := require.New(t)
-	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`
 		SELECT c.text
 		FROM document_extraction_heads h
 		JOIN document_chunks c ON c.extraction_id = h.extraction_id

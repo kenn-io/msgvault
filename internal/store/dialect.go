@@ -200,6 +200,7 @@ type Dialect interface {
 	// "rank" is an implicit FTS5 column; PostgreSQL: 1 for ts_rank).
 	// Callers compose these with their own SQL and must run Rebind on the
 	// final query before execution.
+	// The order expression sorts ascending and has no direction suffix.
 	// rowIDs uses a self-contained predicate so MATCH can appear inside OR.
 	FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int)
 
@@ -233,7 +234,7 @@ type Dialect interface {
 	// turn an operator's SIGINT into a store that silently believes search is
 	// gone. Implementations must bind the probe to ctx and must not reach around
 	// it to a contextless handle.
-	FTSAvailable(ctx context.Context, db *sql.DB) (bool, error)
+	FTSAvailable(ctx context.Context, db SQLReader) (bool, error)
 
 	// FTSNeedsBackfill reports whether the FTS index needs to be populated.
 	FTSNeedsBackfill(db *sql.DB) bool

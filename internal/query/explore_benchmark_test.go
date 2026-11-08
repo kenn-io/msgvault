@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"testing"
@@ -25,7 +24,7 @@ import (
 // without an unbounded cross-engine message-ID transfer.
 func BenchmarkExploreLargeArchive(b *testing.B) {
 	engine := buildBenchData(b)
-	ctx := context.Background()
+	ctx := b.Context()
 
 	b.Run("first_page", func(b *testing.B) {
 		benchmarkWithMinimumMemory(b, engine, func() error {
@@ -125,26 +124,39 @@ func BenchmarkExploreLargeArchive(b *testing.B) {
 		}
 	})
 
-	b.Run("broad_chat_search_projection", func(b *testing.B) {
-		require.Equal(b, 10_000, MaxExploreCandidateMessageIDs, "the benchmark must track the fixed production transfer contract")
-		candidateIDs := make([]int64, MaxExploreCandidateMessageIDs)
-		for index := range candidateIDs {
-			candidateIDs[index] = int64(index + 1)
-		}
-		require.Len(b, candidateIDs, MaxExploreCandidateMessageIDs)
-		_, leaksArchiveSizedIDs := reflect.TypeFor[EntryRow]().FieldByName("MatchedMessageIDs")
-		require.False(b, leaksArchiveSizedIDs)
+	for _, tc := range []struct {
+		name string
+		mode SearchMode
+	}{
+		{"broad_chat_search_projection", SearchFullText},
+		{"broad_chat_semantic_search_projection", SearchSemantic},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			require.Equal(b, 10_000, MaxExploreCandidateMessageIDs, "the benchmark must track the fixed production transfer contract")
+			candidateIDs := make([]int64, MaxExploreCandidateMessageIDs)
+			for index := range candidateIDs {
+				candidateIDs[index] = int64(index + 1)
+			}
+			require.Len(b, candidateIDs, MaxExploreCandidateMessageIDs)
+			_, leaksArchiveSizedIDs := reflect.TypeFor[EntryRow]().FieldByName("MatchedMessageIDs")
+			require.False(b, leaksArchiveSizedIDs)
+			search := SearchSpec{Mode: tc.mode, Query: "synthetic", CandidateMessageIDs: candidateIDs}
+			if tc.mode == SearchSemantic {
+				search.VectorGeneration = new(int64(1))
+			} else {
+				search.LexicalIndexRevision = fmt.Sprintf("benchmark:%d", MaxExploreCandidateMessageIDs)
+			}
 
-		for b.Loop() {
-			result, err := engine.Explore(ctx, ExploreRequest{
-				Search: SearchSpec{Mode: SearchFullText, Query: "synthetic", CandidateMessageIDs: candidateIDs,
-					LexicalIndexRevision: fmt.Sprintf("benchmark:%d", MaxExploreCandidateMessageIDs)},
-				Page: PageSpec{Limit: 50},
-			})
-			require.NoError(b, err)
-			require.LessOrEqual(b, len(result.Rows), 50)
-		}
-	})
+			for b.Loop() {
+				result, err := engine.Explore(ctx, ExploreRequest{
+					Search: search,
+					Page:   PageSpec{Limit: 50},
+				})
+				require.NoError(b, err)
+				require.LessOrEqual(b, len(result.Rows), 50)
+			}
+		})
+	}
 }
 
 // benchmarkWithMinimumMemory times run, then reports its min-memory-MB.
@@ -166,22 +178,22 @@ func benchmarkWithMinimumMemory(b *testing.B, engine *DuckDBEngine, run func() e
 func minimumMemoryLimitMB(b *testing.B, engine *DuckDBEngine, run func() error) float64 {
 	b.Helper()
 	var memoryLimit, threads string
-	require.NoError(b, engine.db.QueryRow(
+	require.NoError(b, engine.db.QueryRowContext(b.Context(),
 		"SELECT current_setting('memory_limit'), current_setting('threads')::VARCHAR",
 	).Scan(&memoryLimit, &threads))
 	defer func() {
-		_, err := engine.db.Exec("SET memory_limit = '" + memoryLimit + "'")
+		_, err := engine.db.ExecContext(b.Context(), "SET memory_limit = '"+memoryLimit+"'")
 		require.NoError(b, err)
-		_, err = engine.db.Exec("SET threads = " + threads)
+		_, err = engine.db.ExecContext(b.Context(), "SET threads = "+threads)
 		require.NoError(b, err)
 	}()
-	_, err := engine.db.Exec("SET threads = 4")
+	_, err := engine.db.ExecContext(b.Context(), "SET threads = 4")
 	require.NoError(b, err)
 
 	low, high := 1, 1024
 	for low < high {
 		mid := (low + high) / 2
-		_, err = engine.db.Exec(fmt.Sprintf("SET memory_limit = '%dMB'", mid))
+		_, err = engine.db.ExecContext(b.Context(), fmt.Sprintf("SET memory_limit = '%dMB'", mid))
 		require.NoError(b, err)
 		err = run()
 		if err == nil {

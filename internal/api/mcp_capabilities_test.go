@@ -24,7 +24,7 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	requirements.NoError(err)
 	router := srv.Router()
 	read := func(owner, delegated bool) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/mcp/capabilities", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/mcp/capabilities", nil)
 		if owner {
 			req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 		}

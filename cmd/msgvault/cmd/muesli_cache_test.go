@@ -25,7 +25,7 @@ func TestMuesliScheduledScanRechecksCacheAfterEarlierImport(t *testing.T) {
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
 	require.NoError(err)
 	off := false
 	source := config.MuesliSource{Identifier: "recorder", AccountEmail: "user@example.com", DBPath: path, Contacts: &off}
@@ -61,9 +61,10 @@ func TestMuesliRemoteDefaultUnchangedSkipAndExplicitRefresh(t *testing.T) {
 	defer cancel()
 	modes := make(chan buildCacheMode, 2)
 	jobs := newCacheBuildJobs(ctx, nil, func(_ context.Context, mode buildCacheMode) error { modes <- mode; return nil })
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		cancel()
-		wait, stop := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		wait, stop := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 		defer stop()
 		require.True(jobs.waitContext(wait))
 	})
@@ -118,7 +119,11 @@ func TestMuesliRemoteUnchangedPreservesDeferredCacheRefresh(t *testing.T) {
 	}, nil)
 	previous := daemonCacheRefresher
 	daemonCacheRefresher = refresher
-	t.Cleanup(func() { daemonCacheRefresher = previous; require.NoError(refresher.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() {
+		daemonCacheRefresher = previous
+		require.NoError(refresher.Shutdown(context.WithoutCancel(t.Context())))
+	})
 	source := meetingimport.Source{Identifier: "recorder", AccountEmail: "user@example.com"}
 	_, err := adapter.ImportMuesli(t.Context(), muesli.RemoteRequest{Action: "register", Source: source})
 	require.NoError(err)

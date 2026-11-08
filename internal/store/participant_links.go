@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
@@ -77,8 +76,8 @@ func (s *Store) loadLinkEdgesContext(ctx context.Context) ([]linkEdge, error) {
 }
 
 // loadLinkEdgesTx reads every participant_links row within tx. Used by
-// Link/UnlinkParticipants so the redundant-edge check sees a consistent
-// snapshot with the write that follows it.
+// UnlinkParticipants so the cluster split sees a consistent snapshot with the
+// write that follows it.
 func (s *Store) loadLinkEdgesTx(tx *loggedTx) ([]linkEdge, error) {
 	return s.loadLinkEdgesTxContext(context.Background(), tx)
 }
@@ -91,6 +90,29 @@ func (s *Store) loadLinkEdgesTxContext(
 		`SELECT participant_a, participant_b FROM participant_links`)
 	if err != nil {
 		return nil, fmt.Errorf("query participant links: %w", err)
+	}
+	return scanLinkEdges(rows)
+}
+
+func (s *Store) loadComponentEdgesTxContext(ctx context.Context, tx *loggedTx, a, b int64) ([]linkEdge, error) {
+	return s.loadComponentEdgesContext(ctx, func(ctx context.Context, query string, args ...any) (rowsScanner, error) {
+		return tx.QueryContext(ctx, query, args...)
+	}, a, b)
+}
+
+func (s *Store) loadComponentEdgesContext(ctx context.Context, query sourceIdentityQuery, a, b int64) ([]linkEdge, error) {
+	rows, err := query(ctx, `WITH RECURSIVE walk(id, parent) AS (
+		SELECT id, CAST(0 AS BIGINT) FROM participants WHERE id IN (?, ?)
+		UNION
+		SELECT CASE WHEN l.participant_a = walk.id THEN l.participant_b ELSE l.participant_a END, walk.id
+		FROM walk JOIN participant_links l ON l.participant_a = walk.id OR l.participant_b = walk.id
+		WHERE l.participant_a <> walk.parent AND l.participant_b <> walk.parent
+	)
+	SELECT DISTINCT CASE WHEN id < parent THEN id ELSE parent END,
+		CASE WHEN id < parent THEN parent ELSE id END
+	FROM walk WHERE parent <> 0`, a, b)
+	if err != nil {
+		return nil, fmt.Errorf("query participant component links: %w", err)
 	}
 	return scanLinkEdges(rows)
 }
@@ -372,7 +394,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, lo, hi); err != nil {
 			return err
 		}
-		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+		edges, err := s.loadComponentEdgesTxContext(ctx, tx, lo, hi)
 		if err != nil {
 			return err
 		}
@@ -875,7 +897,7 @@ func (s *Store) rewriteLinksForMergeContext(
 	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 		return err
 	}
-	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	edges, err := s.loadComponentEdgesTxContext(ctx, tx, loser, winner)
 	if err != nil {
 		return err
 	}
@@ -890,11 +912,7 @@ func (s *Store) rewriteLinksForMergeContext(
 		// simply disappears rather than being replaced by a self-loop.
 		return deleteMergeEdge(ctx, tx, loser, winner)
 	}
-	owners, err := loadParticipantLinkOwnersTxContext(ctx, tx)
-	if err != nil {
-		return err
-	}
-	return rebuildClusterAsSpanningTree(ctx, tx, members, owners, loser, winner)
+	return rebuildClusterAsSpanningTree(ctx, tx, members, loser, winner)
 }
 
 // linksReference reports whether any edge in edges has loser or winner as
@@ -940,12 +958,13 @@ type participantLinkOwner struct {
 }
 
 func loadParticipantLinkOwnersTxContext(
-	ctx context.Context, tx *loggedTx,
+	ctx context.Context, tx *loggedTx, ids []int64,
 ) ([]participantLinkOwner, error) {
+	filter, args := clusterEdgeFilter(ids)
 	rows, err := tx.QueryContext(ctx,
 		`SELECT participant_a, participant_b,
 			COALESCE(identity_match_candidate_id, 0)
-		 FROM participant_links`)
+		 FROM participant_links WHERE `+filter, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query participant link ownership: %w", err)
 	}
@@ -971,13 +990,17 @@ func loadParticipantLinkOwnersTxContext(
 // edge is invented, every rebuilt edge retains real provenance.
 func rebuildClusterAsSpanningTree(
 	ctx context.Context, tx *loggedTx, members map[int64]struct{},
-	owners []participantLinkOwner, loser, winner int64,
+	loser, winner int64,
 ) error {
 	ids := make([]int64, 0, len(members))
 	for m := range members {
 		ids = append(ids, m)
 	}
 	slices.Sort(ids)
+	owners, err := loadParticipantLinkOwnersTxContext(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
 
 	contributions := mergeParticipantLinkOwners(owners, loser, winner)
 	newEdges := participantLinkSpanningTree(members, contributions)
@@ -1095,22 +1118,24 @@ func participantLinkSpanningTree(
 	return tree
 }
 
-// deleteClusterEdges removes every link edge with an endpoint in ids. Any
-// edge touching a merge's loser has its other endpoint in ids (that
-// endpoint is in componentOf(loser) by construction), so this also removes
-// the loser's edges without the loser needing to appear in ids.
-func deleteClusterEdges(ctx context.Context, tx *loggedTx, ids []int64) error {
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+func clusterEdgeFilter(ids []int64) (string, []any) {
+	marks := placeholders(len(ids))
 	args := make([]any, 0, 2*len(ids))
 	for range 2 {
 		for _, id := range ids {
 			args = append(args, id)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-		`DELETE FROM participant_links WHERE participant_a IN (%s) OR participant_b IN (%s)`,
-		placeholders, placeholders,
-	), args...); err != nil {
+	return fmt.Sprintf(`participant_a IN (%s) OR participant_b IN (%s)`, marks, marks), args
+}
+
+// deleteClusterEdges removes every link edge with an endpoint in ids. Any
+// edge touching a merge's loser has its other endpoint in ids (that
+// endpoint is in componentOf(loser) by construction), so this also removes
+// the loser's edges without the loser needing to appear in ids.
+func deleteClusterEdges(ctx context.Context, tx *loggedTx, ids []int64) error {
+	filter, args := clusterEdgeFilter(ids)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM participant_links WHERE `+filter, args...); err != nil {
 		return fmt.Errorf("delete affected cluster links: %w", err)
 	}
 	return nil
@@ -1153,8 +1178,8 @@ func clustersFromEdges(edges []linkEdge) map[int64]int64 {
 // ParticipantClusters returns participant_id → canonical cluster ID
 // (the smallest member ID) for every participant that appears in a link
 // edge. Unlinked participants are their own cluster and are not returned.
-func (s *Store) ParticipantClusters() (map[int64]int64, error) {
-	edges, err := s.loadLinkEdges()
+func (s *Store) ParticipantClusters(ctx context.Context) (map[int64]int64, error) {
+	edges, err := s.loadLinkEdgesContext(ctx)
 	if err != nil {
 		return nil, err
 	}

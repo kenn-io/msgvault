@@ -98,7 +98,7 @@ func TestSynctechSMSDriveRunUsesSingleOuterSyncRun(t *testing.T) {
 	assert.Equal(1, item.RecordsImported, "records imported")
 	assert.False(item.ErrorMessage.Valid, "source import error")
 	assertSourceMessageCount(t, f.Store, source.ID, 1)
-	assertSourceConversationMessageCount(t, f.Store, source.ID, 1)
+	assertSourceConversationCountsOneMessage(t, f.Store, source.ID)
 }
 
 func TestSynctechSMSDriveRunSetsUpIdentityAndPostSourceMigration(t *testing.T) {
@@ -226,16 +226,22 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 	cfg.Data.DataDir = home
 	st := testutil.NewSQLiteTestStore(t)
 	var dbPath string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT file FROM pragma_database_list WHERE name = 'main'`,
 	).Scan(&dbPath), "find test database path")
 	cfg.Data.DatabaseURL = dbPath
 	refreshErr := errors.New("cache refresh failed")
 	refreshCalls := 0
 	var refreshContextErr error
+	importCtx, cancelImport := context.WithCancel(testCtx)
+	t.Cleanup(cancelImport)
 	oldRunBuild := runScheduledBuildCacheSubprocess
 	runScheduledBuildCacheSubprocess = func(ctx context.Context) error {
 		refreshCalls++
+		// Cancel the import once it has finished; the refresh context must
+		// not inherit that cancellation.
+		cancelImport()
 		refreshContextErr = ctx.Err()
 		return refreshErr
 	}
@@ -267,9 +273,7 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
   <sms`,
 		},
 	}
-	ctx, cancel := context.WithCancel(testCtx)
-	cancel()
-	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx, st, src, client)
+	err := runConfiguredSynctechSMSSourceWithStoreDriveClient(importCtx, st, src, client)
 	require.Error(err, "runConfiguredSynctechSMSSourceWithStoreDriveClient")
 	assert.Contains(err.Error(), "import backup file", "partial parse error")
 	require.ErrorIs(err, refreshErr, "partial import must preserve the refresh failure")
@@ -288,7 +292,8 @@ func TestSynctechSMSDrivePartialFailureEnqueuesImportedMessages(t *testing.T) {
 	assert.Equal("failed", failed.Status, "second source import status")
 
 	var unstamped int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND embed_gen IS NULL`),
 		source.ID,
 	).Scan(&unstamped), "count unstamped messages")
@@ -443,7 +448,7 @@ func getSynctechSource(t *testing.T, st *store.Store, ownerPhone string) *store.
 func countSyncRuns(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var got int
-	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&got)
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&got)
 	require.NoError(t, err, "count sync runs")
 	return got
 }
@@ -451,7 +456,7 @@ func countSyncRuns(t *testing.T, st *store.Store, sourceID int64) int {
 func getOnlySyncRun(t *testing.T, st *store.Store, sourceID int64) store.SyncRun {
 	t.Helper()
 	var run store.SyncRun
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after
@@ -476,17 +481,19 @@ func getDriveSourceImportItem(t *testing.T, st *store.Store, sourceID int64, pro
 func assertSourceMessageCount(t *testing.T, st *store.Store, sourceID int64, want int) {
 	t.Helper()
 	var got int
-	err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), sourceID).Scan(&got)
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), sourceID).Scan(&got)
 	require.NoError(t, err, "count source messages")
 	assert.Equal(t, want, got, "source message count")
 }
 
-func assertSourceConversationMessageCount(t *testing.T, st *store.Store, sourceID int64, want int) {
+// assertSourceConversationCountsOneMessage checks that the source's
+// conversation statistics count its single committed message.
+func assertSourceConversationCountsOneMessage(t *testing.T, st *store.Store, sourceID int64) {
 	t.Helper()
 	var got int
-	err := st.DB().QueryRow(st.Rebind(`SELECT COALESCE(MAX(message_count), 0) FROM conversations WHERE source_id = ?`), sourceID).Scan(&got)
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(MAX(message_count), 0) FROM conversations WHERE source_id = ?`), sourceID).Scan(&got)
 	require.NoError(t, err, "read conversation message_count")
-	assert.Equal(t, want, got, "conversation message_count")
+	assert.Equal(t, 1, got, "conversation message_count")
 }
 
 func TestSynctechSMSDriveRepairsMalformedFileToken(t *testing.T) {
@@ -504,4 +511,144 @@ func TestSynctechSMSDriveRepairsMalformedFileToken(t *testing.T) {
 	err := ensureSynctechSMSDriveToken(ctx, "reader@example.com", "")
 	require.ErrorIs(err, context.Canceled)
 	assert.NotErrorIs(err, oauth.ErrInvalidTokenJSON)
+}
+
+// cancelingSynctechDriveClient cancels the run when asked to download
+// cancelID, as a stop request arriving during that download would.
+type cancelingSynctechDriveClient struct {
+	fakeSynctechDriveClient
+
+	cancelID string
+	cancel   context.CancelFunc
+}
+
+func (c cancelingSynctechDriveClient) DownloadToFile(ctx context.Context, fileID, path string) error {
+	if fileID == c.cancelID {
+		c.cancel()
+		return ctx.Err()
+	}
+	return c.fakeSynctechDriveClient.DownloadToFile(ctx, fileID, path)
+}
+
+// A cancel during a later file's download must still recompute conversation
+// statistics for the files already imported. If the run returned on the
+// cancel, or recomputed on the cancelled context, message_count would stay at
+// zero for a conversation holding a committed message.
+func TestSynctechSMSDriveCancelRecomputesStatsForImportedFiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	f := storetest.New(t)
+	src := synctechDriveTestSource()
+	ctx, cancel := context.WithCancel(testCtx)
+	defer cancel()
+	client := cancelingSynctechDriveClient{
+		files: []synctechsms.DriveFile{
+			{ID: "backup-1", Name: "sms-1.xml", Checksum: "sum-1", Size: 128, ModifiedTime: time.Now().Add(-30 * time.Minute)},
+			{ID: "backup-2", Name: "sms-2.xml", Checksum: "sum-2", Size: 128, ModifiedTime: time.Now().Add(-20 * time.Minute)},
+		},
+		downloads: map[string]string{
+			"backup-1": `<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="imported before cancel" read="1" status="-1" contact_name="Alice" />
+</smses>`,
+		},
+		cancelID: "backup-2",
+		cancel:   cancel,
+	}
+
+	summary, err := runSynctechSMSDriveSourceWithClient(ctx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
+	require.ErrorIs(err, context.Canceled, "runSynctechSMSDriveSourceWithClient")
+	require.Equal(1, summary.FilesImported, "the first file imports before the cancel")
+
+	source := getSynctechSource(t, f.Store, src.OwnerPhone)
+	assertSourceMessageCount(t, f.Store, source.ID, 1)
+	assertSourceConversationCountsOneMessage(t, f.Store, source.ID)
+	assert.Equal(store.SyncStatusFailed, getOnlySyncRun(t, f.Store, source.ID).Status, "sync status")
+}
+
+// A backup that fails partway through the first file still leaves the records
+// committed before the failure, so their conversation needs current
+// statistics. If the recompute waited for a whole file to import,
+// message_count would stay at zero for a conversation holding a saved message.
+func TestSynctechSMSDriveFailureInFirstFileRecomputesStatsForSavedRecords(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	f := storetest.New(t)
+	src := synctechDriveTestSource()
+	// The download stops mid-record, as a truncated backup would, after the
+	// first message is complete.
+	client := fakeSynctechDriveClient{
+		files: []synctechsms.DriveFile{
+			{ID: "backup-1", Name: "sms-1.xml", Checksum: "sum-1", Size: 128, ModifiedTime: time.Now().Add(-30 * time.Minute)},
+		},
+		downloads: map[string]string{
+			"backup-1": `<smses count="2">
+  <sms address="+15551234567" date="1717214400000" type="1" body="saved before the failure" read="1" status="-1" contact_name="Alice" />
+  <sms address="+15551234567" date="17172`,
+		},
+	}
+
+	summary, err := runSynctechSMSDriveSourceWithClient(testCtx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
+	require.ErrorContains(err, "unexpected EOF", "runSynctechSMSDriveSourceWithClient")
+	require.Equal(0, summary.FilesImported, "the truncated file does not finish importing")
+	require.Equal(1, summary.SMSImported, "one record commits before the failure")
+
+	source := getSynctechSource(t, f.Store, src.OwnerPhone)
+	assertSourceMessageCount(t, f.Store, source.ID, 1)
+	assertSourceConversationCountsOneMessage(t, f.Store, source.ID)
+	assert.Equal(store.SyncStatusFailed, getOnlySyncRun(t, f.Store, source.ID).Status, "sync status")
+}
+
+// A cancel right after the first message row commits fails that message's
+// body and recipient writes. Its conversation still holds the committed row,
+// so it needs current statistics. If the failed record dropped the message
+// ID, the recompute would be skipped and message_count would stay at zero.
+// Not parallel: it replaces the process-wide slog default and SQL log options.
+func TestSynctechSMSDriveCancelAfterFirstMessageRowRecomputesStats(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	f := storetest.New(t)
+	src := synctechDriveTestSource()
+	client := fakeSynctechDriveClient{
+		files: []synctechsms.DriveFile{
+			{ID: "backup-1", Name: "sms-1.xml", Checksum: "sum-1", Size: 128, ModifiedTime: time.Now().Add(-30 * time.Minute)},
+		},
+		downloads: map[string]string{
+			"backup-1": `<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="row saved before cancel" read="1" status="-1" contact_name="Alice" />
+</smses>`,
+		},
+	}
+	queryCtx := context.WithoutCancel(t.Context())
+	ctx, cancel := context.WithCancel(testCtx)
+	defer cancel()
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var count int
+		require.NoError(f.Store.DB().QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages`).Scan(&count))
+		return count > 0
+	})
+
+	summary, err := runSynctechSMSDriveSourceWithClient(ctx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
+	require.ErrorIs(err, context.Canceled, "runSynctechSMSDriveSourceWithClient")
+	require.True(canceled(), "the cancel must land after the first message row commits")
+	require.Equal(0, summary.SMSImported, "the cancel stops the record before it finishes")
+
+	source := getSynctechSource(t, f.Store, src.OwnerPhone)
+	assertSourceMessageCount(t, f.Store, source.ID, 1)
+	assertSourceConversationCountsOneMessage(t, f.Store, source.ID)
+	assert.Equal(store.SyncStatusFailed, getOnlySyncRun(t, f.Store, source.ID).Status, "sync status")
 }

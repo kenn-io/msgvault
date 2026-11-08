@@ -1,8 +1,12 @@
 package store_test
 
 import (
+	"context"
+	"database/sql"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +28,7 @@ func TestEnsureConversationConflictDoesNotRequeueThread(t *testing.T) {
 	before := activityQueueRevision(t, f.Store, messageID)
 
 	conversationID, err := f.Store.EnsureConversation(
+		t.Context(),
 		f.Source.ID, "default-thread", "Default Thread")
 	require.NoError(err)
 	assert.Equal(f.ConvID, conversationID,
@@ -80,14 +85,17 @@ func TestConversationParticipantSnapshotRequeuesOnlyOnRealChange(t *testing.T) {
 		{ParticipantID: second, Role: "member"},
 	}
 	require.NoError(f.Store.ReplaceConversationParticipants(f.ConvID, snapshot))
+	expandActivityConversations(t, f.Store)
 	before := activityQueueRevision(t, f.Store, messageID)
 
 	require.NoError(f.Store.ReplaceConversationParticipants(f.ConvID, snapshot))
+	expandActivityConversations(t, f.Store)
 	assert.Equal(before, activityQueueRevision(t, f.Store, messageID),
 		"an unchanged membership snapshot must write nothing")
 
 	require.NoError(f.Store.ReplaceConversationParticipants(f.ConvID,
 		[]store.ConversationParticipantRef{{ParticipantID: first, Role: "member"}}))
+	expandActivityConversations(t, f.Store)
 	assert.Greater(activityQueueRevision(t, f.Store, messageID), before,
 		"a removed member changes co-presence and must requeue the thread")
 }
@@ -130,9 +138,10 @@ func TestReplaceConversationParticipantsHandlesHugeMemberships(t *testing.T) {
 			values[index] = "('Member', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
 		}
 		func() {
-			rows, err := f.Store.DB().Query(
-				`INSERT INTO participants (display_name, created_at, updated_at) VALUES ` +
-					strings.Join(values, ",") + ` RETURNING id`)
+			rows, err := f.Store.DB().QueryContext(
+				t.Context(),
+				`INSERT INTO participants (display_name, created_at, updated_at) VALUES `+
+					strings.Join(values, ",")+` RETURNING id`)
 			require.NoError(err, "seed participants")
 			defer func() { require.NoError(rows.Close()) }()
 			for rows.Next() {
@@ -155,8 +164,165 @@ func TestReplaceConversationParticipantsHandlesHugeMemberships(t *testing.T) {
 	require.NoError(f.Store.ReplaceConversationParticipants(f.ConvID, refs[:100]),
 		"shrinking the membership must delete through the JSON set parameter")
 	var remaining int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`),
 		f.ConvID).Scan(&remaining))
 	assert.Equal(100, remaining)
+}
+
+func expandActivityConversations(t *testing.T, st *store.Store) {
+	t.Helper()
+	for {
+		expanded, err := st.ExpandActivityConversationQueueContext(t.Context(), func() error { return nil })
+		require.NoError(t, err)
+		if !expanded {
+			return
+		}
+	}
+}
+
+func TestConversationActivityExpansionBoundsAndRestarts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ids := f.CreateMessages(1001)
+	firstBefore := activityQueueRevision(t, f.Store, ids[0])
+	lastBefore := activityQueueRevision(t, f.Store, ids[1000])
+	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
+	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
+	var count int
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&count))
+	assert.Equal(1, count, "fresh schema installs the membership marker trigger")
+	assert.Equal(firstBefore, activityQueueRevision(t, f.Store, ids[0]))
+	assert.Equal(lastBefore, activityQueueRevision(t, f.Store, ids[1000]))
+
+	expanded, err := f.Store.ExpandActivityConversationQueueContext(t.Context(), func() error { return nil })
+	require.NoError(err)
+	assert.True(expanded)
+	assert.Equal(firstBefore+1, activityQueueRevision(t, f.Store, ids[0]))
+	assert.Equal(lastBefore, activityQueueRevision(t, f.Store, ids[1000]))
+	var cursor int64
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
+	assert.Equal(ids[999], cursor)
+
+	// A membership change restarts the chunk already expanded.
+	second := f.EnsureParticipant("second@example.com", "Second", "example.com")
+	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, second, "member"))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
+	assert.Zero(cursor)
+	expandActivityConversations(t, f.Store)
+	assert.Equal(firstBefore+2, activityQueueRevision(t, f.Store, ids[0]))
+	assert.Equal(lastBefore+1, activityQueueRevision(t, f.Store, ids[1000]))
+	expandActivityConversations(t, f.Store)
+	assert.Equal(firstBefore+2, activityQueueRevision(t, f.Store, ids[0]))
+	assert.Equal(lastBefore+1, activityQueueRevision(t, f.Store, ids[1000]))
+}
+
+func TestConversationActivityExpansionSkipsSnapshotPersistencePG(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL row-lock regression")
+	}
+	id := f.CreateMessage("snapshot")
+	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
+	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
+	second := f.EnsureParticipant("second@example.com", "Second", "example.com")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	blocker, err := f.Store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	_, err = blocker.ExecContext(ctx, f.Store.Rebind(`SELECT message_id FROM activity_projection_queue WHERE message_id = ? FOR UPDATE`), id)
+	require.NoError(err)
+	var wg sync.WaitGroup
+	defer func() {
+		_ = blocker.Rollback()
+		cancel()
+		wg.Wait()
+	}()
+	done := make(chan error, 1)
+	wg.Go(func() {
+		_, err := f.Store.PersistMessageContext(ctx, &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: f.Source.ID, SourceMessageID: "snapshot", MessageType: "email",
+				Subject: sql.NullString{String: "after", Valid: true},
+				SentAt:  sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+			},
+			Conversation: &store.ConversationPersistData{
+				SourceConversationID: "default-thread", ConversationType: "email_thread", Title: "Default Thread",
+				Participants: []store.ConversationParticipantRef{{ParticipantID: member, Role: "member"}, {ParticipantID: second, Role: "member"}},
+			},
+		})
+		done <- err
+	})
+	waitForLockWait(t, f.Store, "WITH attribution", "snapshot must reach the message queue while holding its membership marker")
+	expanded, err := f.Store.ExpandActivityConversationQueueContext(ctx, func() error { return nil })
+	require.NoError(err)
+	assert.False(expanded, "a locked marker is skipped before touching message queue rows")
+	require.NoError(blocker.Rollback())
+	require.NoError(<-done, "snapshot must commit without a deadlock")
+	var subject string
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT subject FROM messages WHERE id = ?`), id).Scan(&subject))
+	assert.Equal("after", subject)
+}
+
+func TestConversationActivityExpansionWithSourceRemoval(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL lock coordination requires MSGVAULT_TEST_DB")
+	}
+	f.CreateMessage("removal-race")
+	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
+	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	var blockerPID int
+	_, err := f.Store.DB().ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '0') ON CONFLICT DO NOTHING`)
+	require.NoError(err)
+	blocker, err := f.Store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	defer func() {
+		_ = blocker.Rollback()
+		cancel()
+		wg.Wait()
+	}()
+	require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
+	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value = value WHERE key = 'identity_revision'`)
+	require.NoError(err)
+	removeDone := make(chan error, 1)
+	wg.Go(func() {
+		_, _, err := f.Store.RemoveSourceSerialized(ctx, f.Source.ID)
+		removeDone <- err
+	})
+	waitForLockWait(t, f.Store, "archive_metadata", "source removal must reach the identity lock")
+	expandDone := make(chan error, 1)
+	wg.Go(func() {
+		_, err := f.Store.ExpandActivityConversationQueueContext(ctx, func() error { return nil })
+		expandDone <- err
+	})
+	// Both operations must wait before touching the queues. Without this
+	// coordination, expansion can hold a marker while removal locks the
+	// message queue first, producing a cycle in PostgreSQL's lock graph.
+	completed := false
+	require.Eventually(func() bool {
+		select {
+		case err := <-expandDone:
+			assert.NoError(err)
+			expandDone <- err
+			completed = true
+			return true
+		default:
+		}
+		var waiting int
+		err := f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`, blockerPID).Scan(&waiting)
+		return err == nil && waiting == 2
+	}, pgWaitBudget, 10*time.Millisecond, "expansion and removal must reach their coordination lock")
+	assert.False(completed, "expansion must wait for the identity lock before claiming a membership marker")
+	require.NoError(blocker.Rollback())
+	require.NoError(<-expandDone, "expansion must complete without a deadlock")
+	require.NoError(<-removeDone, "source removal must complete without a deadlock")
 }

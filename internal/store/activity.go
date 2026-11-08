@@ -211,6 +211,13 @@ func validActivityDate(value string) bool {
 	return err == nil && parsed.Format(time.DateOnly) == value
 }
 
+// activityProjectionPendingSQL includes roster changes awaiting message expansion.
+const activityProjectionPendingSQL = `EXISTS (
+    SELECT 1 FROM activity_projection_queue WHERE revision > processed_revision
+) OR EXISTS (SELECT 1 FROM activity_projection_conversation_queue)`
+
+const activityProjectionPendingQuery = `SELECT CASE WHEN ` + activityProjectionPendingSQL + ` THEN 1 ELSE 0 END`
+
 type ActivityProjectionQueueItem struct {
 	MessageID int64
 	Revision  int64
@@ -394,10 +401,7 @@ func (s *Store) CompleteActivityDirectLimitTransitionContext(
 			}
 		}
 		var pending int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM activity_projection_queue
-			WHERE revision > processed_revision
-		`).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, activityProjectionPendingQuery).Scan(&pending); err != nil {
 			return fmt.Errorf("check pending activity queue: %w", err)
 		}
 		if pending != 0 {
@@ -560,10 +564,7 @@ func (s *Store) CompleteActivityTimezoneTransitionContext(
 			}
 		}
 		var pending int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM activity_projection_queue
-			WHERE revision > processed_revision
-		`).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, activityProjectionPendingQuery).Scan(&pending); err != nil {
 			return fmt.Errorf("check pending activity queue: %w", err)
 		}
 		if pending != 0 {
@@ -789,11 +790,11 @@ func (s *Store) CompareAndSetActivityReconciledRevisionsContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		identity, err := s.currentIdentityRevisionTx(tx)
+		identity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		account, err := readAccountIdentityRevision(tx)
+		account, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}
@@ -939,11 +940,11 @@ func (s *Store) StaleContactStatePersonsContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		identityRevision, err := s.currentIdentityRevisionTx(tx)
+		identityRevision, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		accountRevision, err := readAccountIdentityRevision(tx)
+		accountRevision, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}
@@ -1229,11 +1230,11 @@ func (s *Store) projectActivityBatchOnce(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		currentIdentity, err := s.currentIdentityRevisionTx(tx)
+		currentIdentity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		currentAccount, err := readAccountIdentityRevision(tx)
+		currentAccount, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}
@@ -2104,11 +2105,11 @@ func (s *Store) RecomputeContactStateContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		identity, err := s.currentIdentityRevisionTx(tx)
+		identity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		account, err := readAccountIdentityRevision(tx)
+		account, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}
@@ -2120,11 +2121,7 @@ func (s *Store) RecomputeContactStateContext(
 			return err
 		}
 		var pending int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*)
-			FROM activity_projection_queue
-			WHERE revision > processed_revision
-		`).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, activityProjectionPendingQuery).Scan(&pending); err != nil {
 			return fmt.Errorf("count pending activity projections: %w", err)
 		}
 		if pending > 0 {
@@ -2166,7 +2163,7 @@ func (s *Store) lockActivityProjectionQueueFreshnessTx(
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx,
-		`LOCK TABLE activity_projection_queue IN SHARE MODE`); err != nil {
+		`LOCK TABLE activity_projection_queue, activity_projection_conversation_queue IN SHARE MODE`); err != nil {
 		return fmt.Errorf("lock activity projection queue freshness: %w", err)
 	}
 	return nil

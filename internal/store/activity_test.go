@@ -72,7 +72,7 @@ func TestActivityMetadataProtocolsRoundTrip(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	watermark, err := st.ActivityWatermarkContext(ctx)
 	require.NoError(err)
@@ -136,12 +136,12 @@ func TestActivityCandidateLoadingPreservesExactTimezoneAndQueueObservations(t *t
 		WithSentAt(time.Date(2026, 7, 31, 13, 0, 0, 0, time.UTC)).
 		Create(t, f.Store)
 
-	_, err := activityExec(f.Store, `
+	_, err := activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, first)
 	require.NoError(err)
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`DELETE FROM activity_projection_queue WHERE message_id = ?`, second)
 	require.NoError(err)
 
@@ -246,7 +246,7 @@ func TestActivityTimezoneTransitionRejectsOlderProjectionAndCompletesExactly(t *
 
 func TestActivityTimezoneTransitionRejectsCorruptActiveMetadata(t *testing.T) {
 	f := storetest.New(t)
-	_, err := activityExec(f.Store, `
+	_, err := activityExec(t.Context(), f.Store, `
 		INSERT INTO archive_metadata (key, value) VALUES
 			('activity_spine_timezone_active', 'Not/AZone'),
 			('activity_spine_timezone_generation', '0')
@@ -292,12 +292,12 @@ func TestMessageMutationsDurablyQueueProjection(t *testing.T) {
 	initial := activityQueueRevision(t, f.Store, messageID)
 	require.Positive(initial)
 
-	_, err := activityExec(f.Store,
+	_, err := activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("changed"), messageID)
 	require.NoError(err)
 	assert.Greater(activityQueueRevision(t, f.Store, messageID), initial)
 
-	items, err := f.Store.ListActivityProjectionQueueContext(context.Background(), 10)
+	items, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
 	require.NoError(err)
 	require.Len(items, 1)
 	assert.Equal(messageID, items[0].MessageID)
@@ -307,9 +307,9 @@ func TestMessageMutationsDurablyQueueProjection(t *testing.T) {
 func TestExistingMessageMutationQueuesBelowWatermark(t *testing.T) {
 	f := storetest.New(t)
 	messageID := f.CreateMessage("queue-below-watermark")
-	require.NoError(t, f.Store.SetActivityWatermarkContext(context.Background(), messageID+1000))
+	require.NoError(t, f.Store.SetActivityWatermarkContext(t.Context(), messageID+1000))
 
-	_, err := activityExec(f.Store,
+	_, err := activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("repaired"), messageID)
 	require.NoError(t, err)
 	assert.Positive(t, activityQueueRevision(t, f.Store, messageID))
@@ -322,6 +322,7 @@ func TestActivitySchemaReinitKeepsQueueTriggers(t *testing.T) {
 
 	require.NoError(t, f.Store.InitSchema())
 	_, err := activityExec(
+		t.Context(),
 		f.Store, `UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("after reinit"), messageID)
 	require.NoError(t, err)
 	assert.Greater(t, activityQueueRevision(t, f.Store, messageID), before)
@@ -342,7 +343,7 @@ func TestRecipientMutationsQueueOldAndNewMessages(t *testing.T) {
 	firstAfterInsert := activityQueueRevision(t, f.Store, firstMessageID)
 	assert.Greater(firstAfterInsert, firstBefore)
 
-	_, err := activityExec(f.Store, `
+	_, err := activityExec(t.Context(), f.Store, `
 		UPDATE message_recipients SET message_id = ? WHERE message_id = ? AND participant_id = ?
 	`, secondMessageID, firstMessageID, participantID)
 	require.NoError(err)
@@ -361,6 +362,7 @@ func TestConversationMemberMutationsQueueEveryAffectedMessage(t *testing.T) {
 	firstMessageID := f.CreateMessage("queue-member-first")
 	secondMessageID := f.CreateMessage("queue-member-second")
 	otherConversationID, err := f.Store.EnsureConversation(
+		t.Context(),
 		f.Source.ID, "other-thread", "Other Thread")
 	require.NoError(err)
 	otherMessageID, err := f.Store.UpsertMessage(&store.Message{
@@ -377,26 +379,29 @@ func TestConversationMemberMutationsQueueEveryAffectedMessage(t *testing.T) {
 	otherBefore := activityQueueRevision(t, f.Store, otherMessageID)
 	require.NoError(f.Store.EnsureConversationParticipant(
 		f.ConvID, participantID, "member"))
+	expandActivityConversations(t, f.Store)
 	firstAfterInsert := activityQueueRevision(t, f.Store, firstMessageID)
 	secondAfterInsert := activityQueueRevision(t, f.Store, secondMessageID)
 	assert.Greater(firstAfterInsert, firstBefore)
 	assert.Greater(secondAfterInsert, secondBefore)
 
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE conversation_participants SET conversation_id = ?
 		WHERE conversation_id = ? AND participant_id = ?
 	`, otherConversationID, f.ConvID, participantID)
 	require.NoError(err)
+	expandActivityConversations(t, f.Store)
 	assert.Greater(activityQueueRevision(t, f.Store, firstMessageID), firstAfterInsert)
 	assert.Greater(activityQueueRevision(t, f.Store, secondMessageID), secondAfterInsert)
 	assert.Greater(activityQueueRevision(t, f.Store, otherMessageID), otherBefore)
 
 	otherAfterMove := activityQueueRevision(t, f.Store, otherMessageID)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		DELETE FROM conversation_participants
 		WHERE conversation_id = ? AND participant_id = ?
 	`, otherConversationID, participantID)
 	require.NoError(err)
+	expandActivityConversations(t, f.Store)
 	assert.Greater(activityQueueRevision(t, f.Store, otherMessageID), otherAfterMove)
 }
 
@@ -414,7 +419,7 @@ func TestConversationTypeMutationReopensEveryAffectedActivityCandidate(t *testin
 		WithSentAt(sent).
 		Create(t, f.Store)
 	for _, messageID := range []int64{first, second} {
-		_, err := activityExec(f.Store, `
+		_, err := activityExec(t.Context(), f.Store, `
 			UPDATE activity_projection_queue SET processed_revision = revision
 			WHERE message_id = ?
 		`, messageID)
@@ -478,7 +483,7 @@ func TestProcessedActivityQueueRowsReopenWithoutRevisionABA(t *testing.T) {
 		f := storetest.New(t)
 		messageID := f.CreateMessage("queue-processed-message")
 		assertActivityQueueReopensAfterProcessed(t, f.Store, messageID, func() error {
-			_, err := activityExec(f.Store,
+			_, err := activityExec(t.Context(), f.Store,
 				`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("changed"), messageID)
 			return err
 		})
@@ -501,7 +506,11 @@ func TestProcessedActivityQueueRowsReopenWithoutRevisionABA(t *testing.T) {
 		participantID := f.EnsureParticipant(
 			"processed-member@example.com", "Processed Member", "example.com")
 		assertActivityQueueReopensAfterProcessed(t, f.Store, messageID, func() error {
-			return f.Store.EnsureConversationParticipant(f.ConvID, participantID, "member")
+			if err := f.Store.EnsureConversationParticipant(f.ConvID, participantID, "member"); err != nil {
+				return err
+			}
+			expandActivityConversations(t, f.Store)
+			return nil
 		})
 	})
 }
@@ -510,13 +519,13 @@ func TestActivityProjectionQueueRejectsInvalidProcessedRevision(t *testing.T) {
 	f := storetest.New(t)
 	messageID := f.CreateMessage("queue-invalid-processed-revision")
 
-	_, err := activityExec(f.Store, `
+	_, err := activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = -1
 		WHERE message_id = ?
 	`, messageID)
 	require.Error(t, err)
 
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision + 1
 		WHERE message_id = ?
 	`, messageID)
@@ -528,7 +537,7 @@ func TestHardMessageDeleteCascadesProjectionQueue(t *testing.T) {
 	messageID := f.CreateMessage("queue-cascade")
 	require.Positive(t, activityQueueRevision(t, f.Store, messageID))
 
-	_, err := activityExec(f.Store, `DELETE FROM messages WHERE id = ?`, messageID)
+	_, err := activityExec(t.Context(), f.Store, `DELETE FROM messages WHERE id = ?`, messageID)
 	require.NoError(t, err)
 	assert.Zero(t, activityQueueRows(t, f.Store, messageID))
 }
@@ -536,12 +545,12 @@ func TestHardMessageDeleteCascadesProjectionQueue(t *testing.T) {
 func TestDirectActivityLinkHardCascadeMarksExistingContactStateDirty(t *testing.T) {
 	f, personID, messageID := activityLinkFixture(t, store.EvidenceDirect)
 
-	_, err := activityExec(f.Store,
+	_, err := activityExec(t.Context(), f.Store,
 		`DELETE FROM messages WHERE id = ?`, messageID)
 	require.NoError(t, err)
 
 	var dirtyAt sql.NullTime
-	require.NoError(t, activityQueryRow(f.Store,
+	require.NoError(t, activityQueryRow(t.Context(), f.Store,
 		`SELECT dirty_at FROM person_contact_state WHERE person_id = ?`, personID,
 	).Scan(&dirtyAt))
 	assert.True(t, dirtyAt.Valid)
@@ -550,13 +559,13 @@ func TestDirectActivityLinkHardCascadeMarksExistingContactStateDirty(t *testing.
 func TestCoPresenceActivityLinkDeleteDoesNotDirtyContactState(t *testing.T) {
 	f, personID, messageID := activityLinkFixture(t, store.EvidenceCoPresence)
 
-	_, err := activityExec(f.Store,
+	_, err := activityExec(t.Context(), f.Store,
 		`DELETE FROM activity_event_persons WHERE message_id = ? AND person_id = ?`,
 		messageID, personID)
 	require.NoError(t, err)
 
 	var dirtyAt sql.NullTime
-	require.NoError(t, activityQueryRow(f.Store,
+	require.NoError(t, activityQueryRow(t.Context(), f.Store,
 		`SELECT dirty_at FROM person_contact_state WHERE person_id = ?`, personID,
 	).Scan(&dirtyAt))
 	assert.False(t, dirtyAt.Valid)
@@ -566,14 +575,15 @@ func TestDirectLinkCascadeDoesNotResurrectContactStateDuringPersonDelete(t *test
 	require := require.New(t)
 	f, personID, _ := activityLinkFixture(t, store.EvidenceDirect)
 	_, err := activityExec(
+		t.Context(),
 		f.Store, `DELETE FROM person_contact_state WHERE person_id = ?`, personID)
 	require.NoError(err)
 
-	_, err = activityExec(f.Store, `DELETE FROM persons WHERE id = ?`, personID)
+	_, err = activityExec(t.Context(), f.Store, `DELETE FROM persons WHERE id = ?`, personID)
 	require.NoError(err)
 
 	var rows int
-	require.NoError(activityQueryRow(f.Store,
+	require.NoError(activityQueryRow(t.Context(), f.Store,
 		`SELECT COUNT(*) FROM person_contact_state WHERE person_id = ?`, personID,
 	).Scan(&rows))
 	assert.Zero(t, rows)
@@ -582,7 +592,7 @@ func TestDirectLinkCascadeDoesNotResurrectContactStateDuringPersonDelete(t *test
 func TestActivityEventPersonAllowsOnlyOneStablePersonReference(t *testing.T) {
 	f, personID, messageID := activityLinkFixture(t, store.EvidenceDirect)
 
-	_, err := activityExec(f.Store, `
+	_, err := activityExec(t.Context(), f.Store, `
 		INSERT INTO activity_event_persons (message_id, person_id, role, evidence, local_date)
 		VALUES (?, ?, ?, ?, ?)
 	`, messageID, personID, store.RoleAddressed, store.EvidenceDirect, "2026-07-30")
@@ -647,7 +657,7 @@ func TestActivitySchemaRejectsInvalidEnumAndDateValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := storetest.New(t)
 			messageID := f.CreateMessage("invalid-" + test.name)
-			_, err := activityExec(f.Store, `
+			_, err := activityExec(t.Context(), f.Store, `
 				INSERT INTO activity_events (
 					message_id, ref_kind, source_id, channel, occurred_at,
 					date_origin, date_precision, timezone, utc_offset_minutes,
@@ -676,7 +686,7 @@ func TestActivitySchemaRejectsInvalidRoleAndEvidence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			f, personID, messageID := activityLinkFixture(t, store.EvidenceDirect)
-			_, err := activityExec(f.Store, `
+			_, err := activityExec(t.Context(), f.Store, `
 				UPDATE activity_event_persons SET role = ?, evidence = ?
 				WHERE message_id = ? AND person_id = ?
 			`, test.role, test.evidence, messageID, personID)
@@ -691,7 +701,7 @@ func TestActivitySchemaRejectsNonDigitLocalDates(t *testing.T) {
 		messageID := f.CreateMessage("invalid-event-date-digits")
 		now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 
-		_, err := activityExec(f.Store, `
+		_, err := activityExec(t.Context(), f.Store, `
 			INSERT INTO activity_events (
 				message_id, ref_kind, source_id, channel, occurred_at, date_origin,
 				date_precision, timezone, utc_offset_minutes, local_date, direction,
@@ -706,7 +716,7 @@ func TestActivitySchemaRejectsNonDigitLocalDates(t *testing.T) {
 	t.Run("activity event person", func(t *testing.T) {
 		f, personID, messageID := activityLinkFixture(t, store.EvidenceDirect)
 
-		_, err := activityExec(f.Store, `
+		_, err := activityExec(t.Context(), f.Store, `
 			UPDATE activity_event_persons SET local_date = ?
 			WHERE message_id = ? AND person_id = ?
 		`, "nope-no-pe", messageID, personID)
@@ -721,14 +731,15 @@ func activityColumns(t *testing.T, st *store.Store, table string) []string {
 		err  error
 	)
 	if st.IsPostgreSQL() {
-		rows, err = st.DB().Query(st.Rebind(`
+		rows, err = st.DB().QueryContext(t.Context(), st.Rebind(`
 			SELECT column_name
 			FROM information_schema.columns
 			WHERE table_schema = current_schema() AND table_name = ?
 			ORDER BY ordinal_position
 		`), table)
 	} else {
-		rows, err = st.DB().Query(
+		rows, err = st.DB().QueryContext(
+			t.Context(),
 			fmt.Sprintf(`SELECT name FROM pragma_table_info('%s') ORDER BY cid`, table))
 	}
 	require.NoError(t, err)
@@ -747,7 +758,7 @@ func activityColumns(t *testing.T, st *store.Store, table string) []string {
 func activityQueueRevision(t *testing.T, st *store.Store, messageID int64) int64 {
 	t.Helper()
 	var revision int64
-	require.NoError(t, activityQueryRow(st,
+	require.NoError(t, activityQueryRow(t.Context(), st,
 		`SELECT revision FROM activity_projection_queue WHERE message_id = ?`, messageID,
 	).Scan(&revision))
 	return revision
@@ -756,7 +767,7 @@ func activityQueueRevision(t *testing.T, st *store.Store, messageID int64) int64
 func activityQueueRows(t *testing.T, st *store.Store, messageID int64) int {
 	t.Helper()
 	var count int
-	require.NoError(t, activityQueryRow(st,
+	require.NoError(t, activityQueryRow(t.Context(), st,
 		`SELECT COUNT(*) FROM activity_projection_queue WHERE message_id = ?`, messageID,
 	).Scan(&count))
 	return count
@@ -766,7 +777,7 @@ func activityQueueState(
 	t *testing.T, st *store.Store, messageID int64,
 ) (revision int64, processedRevision int64) {
 	t.Helper()
-	require.NoError(t, activityQueryRow(st, `
+	require.NoError(t, activityQueryRow(t.Context(), st, `
 		SELECT revision, processed_revision
 		FROM activity_projection_queue
 		WHERE message_id = ?
@@ -780,10 +791,10 @@ func assertActivityQueueReopensAfterProcessed(
 	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	oldToken := activityQueueRevision(t, st, messageID)
-	_, err := activityExec(st, `
+	_, err := activityExec(t.Context(), st, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, messageID)
@@ -817,7 +828,7 @@ func activityLinkFixture(
 	require.True(t, created)
 	messageID := f.CreateMessage("activity-link")
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		INSERT INTO activity_events (
 			message_id, ref_kind, source_id, channel, occurred_at, date_origin,
 			date_precision, timezone, utc_offset_minutes, local_date, direction,
@@ -827,12 +838,12 @@ func activityLinkFixture(
 			'UTC', 0, '2026-07-30', 'inbound', '', ?, 1, 1)
 	`, messageID, f.Source.ID, now, now)
 	require.NoError(t, err)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		INSERT INTO activity_event_persons (message_id, person_id, role, evidence, local_date)
 		VALUES (?, ?, 'sender', ?, '2026-07-30')
 	`, messageID, person.ID, evidence)
 	require.NoError(t, err)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		INSERT INTO person_contact_state (person_id, interaction_count)
 		VALUES (?, 1)
 	`, person.ID)
@@ -850,12 +861,12 @@ func activityTouch(marker string) string {
 	return `{"touch":` + strconv.Quote(marker) + `}`
 }
 
-func activityExec(st *store.Store, query string, args ...any) (sql.Result, error) {
-	return st.DB().Exec(st.Rebind(query), args...)
+func activityExec(ctx context.Context, st *store.Store, query string, args ...any) (sql.Result, error) {
+	return st.DB().ExecContext(ctx, st.Rebind(query), args...)
 }
 
-func activityQueryRow(st *store.Store, query string, args ...any) *sql.Row {
-	return st.DB().QueryRow(st.Rebind(query), args...)
+func activityQueryRow(ctx context.Context, st *store.Store, query string, args ...any) *sql.Row {
+	return st.DB().QueryRowContext(ctx, st.Rebind(query), args...)
 }
 
 func TestListActivityProjectionQueueIsOrderedAndLimited(t *testing.T) {
@@ -867,7 +878,7 @@ func TestListActivityProjectionQueueIsOrderedAndLimited(t *testing.T) {
 	}
 	slices.Sort(messageIDs)
 
-	items, err := f.Store.ListActivityProjectionQueueContext(context.Background(), 2)
+	items, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 2)
 	require.NoError(t, err)
 	require.Len(t, items, 2)
 	gotMessageIDs := []int64{items[0].MessageID, items[1].MessageID}
@@ -885,7 +896,7 @@ func TestLoadQueuedActivityCandidatesPreservesRevisionOrderAndLimit(t *testing.T
 		f.NewMessage().WithSourceMessageID("candidate-third").WithSentAt(sent).Create(t, f.Store),
 	}
 	slices.Sort(messageIDs)
-	_, err := activityExec(f.Store, `
+	_, err := activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, messageIDs[0])
@@ -1205,7 +1216,7 @@ func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *t
 			name: "dedup soft delete",
 			mutate: func(t *testing.T, f *storetest.Fixture, messageID int64) {
 				t.Helper()
-				_, err := activityExec(f.Store,
+				_, err := activityExec(t.Context(), f.Store,
 					`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, messageID)
 				require.NoError(t, err)
 			},
@@ -1214,7 +1225,7 @@ func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *t
 			name: "source soft delete",
 			mutate: func(t *testing.T, f *storetest.Fixture, messageID int64) {
 				t.Helper()
-				_, err := activityExec(f.Store,
+				_, err := activityExec(t.Context(), f.Store,
 					`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, messageID)
 				require.NoError(t, err)
 			},
@@ -1223,7 +1234,7 @@ func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *t
 			name: "cancelled calendar event",
 			mutate: func(t *testing.T, f *storetest.Fixture, messageID int64) {
 				t.Helper()
-				_, err := activityExec(f.Store,
+				_, err := activityExec(t.Context(), f.Store,
 					`UPDATE messages SET message_type = 'calendar_event' WHERE id = ?`, messageID)
 				require.NoError(t, err)
 				require.NoError(t, f.Store.SetMessageMetadata(messageID,
@@ -1234,7 +1245,7 @@ func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *t
 			name: "missing timestamp",
 			mutate: func(t *testing.T, f *storetest.Fixture, messageID int64) {
 				t.Helper()
-				_, err := activityExec(f.Store, `
+				_, err := activityExec(t.Context(), f.Store, `
 					UPDATE messages SET sent_at = NULL, received_at = NULL, internal_date = NULL
 					WHERE id = ?
 				`, messageID)
@@ -1250,7 +1261,7 @@ func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *t
 			f := storetest.New(t)
 			sent := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 			messageID := f.NewMessage().WithSentAt(sent).Create(t, f.Store)
-			_, err := activityExec(f.Store, `
+			_, err := activityExec(t.Context(), f.Store, `
 				UPDATE activity_projection_queue SET processed_revision = revision
 				WHERE message_id = ?
 			`, messageID)
@@ -1263,7 +1274,7 @@ func TestQueuedActivityCandidateEligibilitySupportsRetractionAndRestoration(t *t
 			assert.False(retraction[0].Eligible)
 			deletedRevision := retraction[0].Queue.Revision
 
-			_, err = activityExec(f.Store, `
+			_, err = activityExec(t.Context(), f.Store, `
 				UPDATE messages
 				SET deleted_at = NULL, deleted_from_source_at = NULL,
 				    sent_at = ?, message_type = 'email', metadata = NULL
@@ -1326,7 +1337,7 @@ func TestScanForActivityProjectionFindsForwardAndRevisionMismatchBelowWatermark(
 	require.NoError(err)
 	accountRevision, err := f.Store.AccountIdentityRevision()
 	require.NoError(err)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		INSERT INTO activity_events (
 			message_id, ref_kind, source_id, channel, occurred_at, date_origin,
 			date_precision, timezone, utc_offset_minutes, local_date, direction,
@@ -1338,12 +1349,12 @@ func TestScanForActivityProjectionFindsForwardAndRevisionMismatchBelowWatermark(
 		FROM messages WHERE id = ?
 	`, identityRevision, accountRevision, staleID)
 	require.NoError(err)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, staleID)
 	require.NoError(err)
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`DELETE FROM activity_projection_queue WHERE message_id = ?`, forwardID)
 	require.NoError(err)
 	require.NoError(f.Store.AddAccountIdentity(
@@ -1389,12 +1400,12 @@ func TestScanForActivityProjectionSkipsDrainedEventlessIneligibleRows(t *testing
 		WithSourceMessageID("candidate-drained-deleted").
 		WithSentAt(sent).
 		Create(t, f.Store)
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, deleted)
 	require.NoError(err)
 
 	for _, messageID := range []int64{missingTimestamp, cancelled, deleted} {
-		_, err = activityExec(f.Store, `
+		_, err = activityExec(t.Context(), f.Store, `
 			UPDATE activity_projection_queue SET processed_revision = revision
 			WHERE message_id = ?
 		`, messageID)
@@ -1429,7 +1440,7 @@ func TestScanForActivityProjectionReopensEventlessCandidateAfterRestoration(t *t
 	assert.Equal(messageID, pending[0].MessageID)
 	assert.False(pending[0].Eligible)
 
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, messageID)
@@ -1439,7 +1450,7 @@ func TestScanForActivityProjectionReopensEventlessCandidateAfterRestoration(t *t
 	assert.Empty(drained)
 
 	sent := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET sent_at = ? WHERE id = ?`, sent, messageID)
 	require.NoError(err)
 	restored, err := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 10)
@@ -1463,7 +1474,7 @@ func TestLoadQueuedActivityCandidatesKeepsProjectedIneligibleRetractionDiscovera
 	require.NoError(err)
 	accountRevision, err := f.Store.AccountIdentityRevision()
 	require.NoError(err)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		INSERT INTO activity_events (
 			message_id, ref_kind, source_id, channel, occurred_at, date_origin,
 			date_precision, timezone, utc_offset_minutes, local_date, direction,
@@ -1475,12 +1486,12 @@ func TestLoadQueuedActivityCandidatesKeepsProjectedIneligibleRetractionDiscovera
 		FROM messages WHERE id = ?
 	`, identityRevision, accountRevision, messageID)
 	require.NoError(err)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, messageID)
 	require.NoError(err)
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, messageID)
 	require.NoError(err)
 
@@ -1509,8 +1520,8 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 			id := f.NewMessage().WithSentAt(at).Create(t, f.Store)
 			labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
 			if scan {
-				require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
-				require.NoError(f.Store.RemoveMessageLabels(id, []int64{labels["DRAFT"]}))
+				require.NoError(f.Store.AddMessageLabels(t.Context(), id, []int64{labels["DRAFT"]}))
+				require.NoError(f.Store.RemoveMessageLabels(t.Context(), id, []int64{labels["DRAFT"]}))
 			}
 			initial := activityProjectionForMessage(t, f, id, personID, at)
 			if scan {
@@ -1522,7 +1533,7 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 			if scan {
 				candidates, err = f.Store.ScanAllActivityCandidatesContext(t.Context(), 0, 10)
 			} else {
-				require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+				require.NoError(f.Store.AddMessageLabels(t.Context(), id, []int64{labels["DRAFT"]}))
 				candidates, err = f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
 			}
 			require.NoError(err)
@@ -1530,11 +1541,11 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 			old := activityProjectionFromCandidate(t, candidates[0], personID, at)
 			if scan {
 				require.Equal(candidates[0].Queue.Revision, candidates[0].Queue.ProcessedRevision)
-				require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+				require.NoError(f.Store.AddMessageLabels(t.Context(), id, []int64{labels["DRAFT"]}))
 			} else {
 				require.False(candidates[0].Eligible)
 				old.Event = nil
-				_, err = f.Store.ReconcileMessageLabels(id, []int64{labels["SENT"]}, true)
+				_, err = f.Store.ReconcileMessageLabels(t.Context(), id, []int64{labels["SENT"]}, true)
 				require.NoError(err)
 			}
 			if scan {
@@ -1562,7 +1573,7 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 			require.NoError(err)
 			if scan {
 				var count int
-				require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, id).Scan(&count))
+				require.NoError(activityQueryRow(t.Context(), f.Store, `SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, id).Scan(&count))
 				assert.Zero(count)
 			}
 		})
@@ -1598,12 +1609,12 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 			}
 			require := require.New(t)
 			f, _ := activityProjectionFixture(t)
-			_, err := activityExec(f.Store, `UPDATE sources SET source_type = ? WHERE id = ?`, tc.sourceType, f.Source.ID)
+			_, err := activityExec(t.Context(), f.Store, `UPDATE sources SET source_type = ? WHERE id = ?`, tc.sourceType, f.Source.ID)
 			require.NoError(err)
 			id := f.NewMessage().WithSentAt(time.Now()).Create(t, f.Store)
 			var labels map[string]int64
 			if tc.sourceType == "imap" {
-				labels, err = f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+				labels, err = f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, map[string]store.LabelInfo{
 					"DRAFT": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
 					"SENT":  {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 				})
@@ -1612,16 +1623,16 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 				labels = f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
 			}
 			for _, label := range tc.labels {
-				require.NoError(f.Store.AddMessageLabels(id, []int64{labels[label]}))
+				require.NoError(f.Store.AddMessageLabels(t.Context(), id, []int64{labels[label]}))
 			}
 			if tc.draftMembership {
-				_, err = activityExec(f.Store, `INSERT INTO imap_message_memberships
+				_, err = activityExec(t.Context(), f.Store, `INSERT INTO imap_message_memberships
 					(source_id, mailbox, uidvalidity, uid, message_id, flags)
 					VALUES (?, 'Drafts', 1, 1, ?, ?)`, f.Source.ID, id, `["\\Draft"]`)
 				require.NoError(err)
 			}
 			if tc.extraSQL != "" {
-				_, err = activityExec(f.Store, tc.extraSQL, id)
+				_, err = activityExec(t.Context(), f.Store, tc.extraSQL, id)
 				require.NoError(err)
 			}
 			if tc.metadata != "" {
@@ -1654,9 +1665,9 @@ func TestActivityFlagReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 				f, personID := activityProjectionFixture(t)
 				occurredAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 				messageID := f.NewMessage().WithSourceMessageID("former-draft").WithSentAt(occurredAt).Create(t, f.Store)
-				_, err := activityExec(f.Store, `UPDATE sources SET source_type = 'imap' WHERE id = ?`, f.Source.ID)
+				_, err := activityExec(t.Context(), f.Store, `UPDATE sources SET source_type = 'imap' WHERE id = ?`, f.Source.ID)
 				require.NoError(err)
-				labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+				labels, err := f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, map[string]store.LabelInfo{
 					"DRAFT": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
 					"SENT":  {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 				})
@@ -1674,7 +1685,7 @@ func TestActivityFlagReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 				if tc.update != "" {
 					args := tc.args
 					args = append(args, messageID)
-					_, err = activityExec(f.Store, `UPDATE messages SET `+tc.update+` WHERE id = ?`, args...)
+					_, err = activityExec(t.Context(), f.Store, `UPDATE messages SET `+tc.update+` WHERE id = ?`, args...)
 					require.NoError(err)
 				}
 				candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
@@ -1740,7 +1751,7 @@ func TestUnsentCandidatePredicateParity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			f := storetest.New(t)
-			_, err := f.Store.DB().Exec(`UPDATE sources SET source_type = ? WHERE id = ?`, tc.sourceType, f.Source.ID)
+			_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE sources SET source_type = ? WHERE id = ?`, tc.sourceType, f.Source.ID)
 			require.NoError(err)
 			replacement := f.NewMessage().WithSourceMessageID("replacement").WithSentAt(time.Now()).Create(t, f.Store)
 			id := f.NewMessage().WithSourceMessageID("target").WithSentAt(time.Now()).Create(t, f.Store)
@@ -1748,13 +1759,13 @@ func TestUnsentCandidatePredicateParity(t *testing.T) {
 			for i := range args {
 				args[i] = id
 			}
-			_, err = f.Store.DB().Exec(tc.evidence, args...)
+			_, err = f.Store.DB().ExecContext(t.Context(), tc.evidence, args...)
 			require.NoError(err)
 			predicate := `SELECT m.id FROM messages m JOIN sources src ON src.id = m.source_id WHERE ` + store.UnsentMessageSQL()
 			sets := make([][]int64, 2)
 			for i, query := range []string{predicate, predicate + ` AND m.id IN (` + store.UnsentCandidateMessageIDsSQL() + `)`} {
 				func() {
-					rows, err := f.Store.DB().Query(query + ` ORDER BY m.id`)
+					rows, err := f.Store.DB().QueryContext(t.Context(), query+` ORDER BY m.id`)
 					require.NoError(err)
 					defer func() { require.NoError(rows.Close()) }()
 					for rows.Next() {
@@ -1785,7 +1796,7 @@ func TestActivityDraftSendFlipRequeuesProjection(t *testing.T) {
 	initial := activityProjectionForMessage(t, f, id, personID, at)
 	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{initial})
 	require.NoError(err)
-	require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+	require.NoError(f.Store.AddMessageLabels(t.Context(), id, []int64{labels["DRAFT"]}))
 	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
 	require.NoError(err)
 	require.Len(candidates, 1)
@@ -1797,7 +1808,7 @@ func TestActivityDraftSendFlipRequeuesProjection(t *testing.T) {
 	queued, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
 	require.NoError(err)
 	require.Empty(queued)
-	_, err = f.Store.ReconcileMessageLabels(id, []int64{labels["SENT"]}, true)
+	_, err = f.Store.ReconcileMessageLabels(t.Context(), id, []int64{labels["SENT"]}, true)
 	require.NoError(err)
 	candidates, err = f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
 	require.NoError(err)
@@ -1808,7 +1819,7 @@ func TestActivityDraftSendFlipRequeuesProjection(t *testing.T) {
 	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{fresh})
 	require.NoError(err)
 	var count int
-	require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, id).Scan(&count))
+	require.NoError(activityQueryRow(t.Context(), f.Store, `SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, id).Scan(&count))
 	assert.Equal(1, count)
 }
 
@@ -1927,7 +1938,7 @@ func cleanContactStates(
 func contactDirtyAt(t *testing.T, st *store.Store, personID int64) sql.NullTime {
 	t.Helper()
 	var dirty sql.NullTime
-	require.NoError(t, activityQueryRow(st,
+	require.NoError(t, activityQueryRow(t.Context(), st,
 		`SELECT dirty_at FROM person_contact_state WHERE person_id = ?`,
 		personID,
 	).Scan(&dirty))
@@ -2172,7 +2183,7 @@ func TestDeletePersonCascadesContactLinksButPreservesActivityEvent(t *testing.T)
 		{`SELECT COUNT(*) FROM person_contact_state WHERE person_id = ?`, personID, 0},
 	} {
 		var got int64
-		require.NoError(activityQueryRow(f.Store, check.query, check.arg).Scan(&got))
+		require.NoError(activityQueryRow(t.Context(), f.Store, check.query, check.arg).Scan(&got))
 		assert.Equal(check.want, got, check.query)
 	}
 }
@@ -2211,7 +2222,7 @@ func TestProjectActivityBatchMaintainsMonotoneExtremaAndReplayCount(t *testing.T
 	assert.Equal(fmt.Sprintf("message:%d", newerMessage), state.LastContactRef)
 	assert.Equal(int64(2), state.InteractionCount)
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("replayed"), newerMessage)
 	require.NoError(err)
 	replay := activityProjectionForMessage(t, f, newerMessage, personID, newer)
@@ -2240,7 +2251,7 @@ func TestProjectActivityBatchExactQueueReplayReportsNoContactWork(t *testing.T) 
 	require.NoError(err)
 	assert.Equal(1, first.ContactPersons)
 
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue
 		SET revision = revision + 1
 		WHERE message_id = ?
@@ -2334,7 +2345,7 @@ func TestProjectActivityBatchRetractsAndMovesDirectEvidenceAuthoritatively(t *te
 		t.Context(), []store.ActivityProjection{initial})
 	require.NoError(err)
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("move"), messageID)
 	require.NoError(err)
 	moved := activityProjectionForMessage(t, f, messageID, newPerson.ID, occurredAt)
@@ -2352,7 +2363,7 @@ func TestProjectActivityBatchRetractsAndMovesDirectEvidenceAuthoritatively(t *te
 	require.NotNil(newState.LastContactAt)
 	assert.Equal(occurredAt, newState.LastContactAt.UTC())
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("retract"), messageID)
 	require.NoError(err)
 	retractionCandidate, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
@@ -2407,7 +2418,7 @@ func TestProjectActivityBatchRollsBackEveryItemOnLaterFailure(t *testing.T) {
 
 	for _, messageID := range []int64{firstMessage, secondMessage} {
 		var eventCount int
-		require.NoError(activityQueryRow(f.Store,
+		require.NoError(activityQueryRow(t.Context(), f.Store,
 			`SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, messageID,
 		).Scan(&eventCount))
 		assert.Zero(t, eventCount)
@@ -2432,7 +2443,7 @@ func TestProjectActivityBatchRestoresContactAfterAuthoritativeRetraction(t *test
 	require.NoError(err)
 
 	for _, subject := range []string{"retract", "restore"} {
-		_, err = activityExec(f.Store,
+		_, err = activityExec(t.Context(), f.Store,
 			`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch(subject), messageID)
 		require.NoError(err)
 		if subject == "retract" {
@@ -2483,7 +2494,7 @@ func TestProjectActivityBatchStaleItemRollsBackWholeBatch(t *testing.T) {
 	second := activityProjectionForMessage(
 		t, f, secondMessage, personID, occurredAt.Add(time.Hour))
 
-	_, err := activityExec(f.Store,
+	_, err := activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("changed"), secondMessage)
 	require.NoError(err)
 	_, err = f.Store.ProjectActivityBatchContext(
@@ -2494,7 +2505,7 @@ func TestProjectActivityBatchStaleItemRollsBackWholeBatch(t *testing.T) {
 
 	for _, messageID := range []int64{firstMessage, secondMessage} {
 		var count int
-		require.NoError(activityQueryRow(f.Store,
+		require.NoError(activityQueryRow(t.Context(), f.Store,
 			`SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, messageID,
 		).Scan(&count))
 		assert.Zero(count)
@@ -2523,7 +2534,7 @@ func TestProjectActivityBatchRejectsIdentityEpochMismatchWithoutAcknowledging(t 
 	require.ErrorAs(err, &stale)
 	assert.Zero(stale.MessageID, "the whole identity epoch is stale")
 	var eventCount int
-	require.NoError(activityQueryRow(f.Store,
+	require.NoError(activityQueryRow(t.Context(), f.Store,
 		`SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, messageID,
 	).Scan(&eventCount))
 	assert.Zero(eventCount)
@@ -2545,15 +2556,15 @@ func TestProjectActivityBatchRejectsRetainedDrainedGenerationABA(t *testing.T) {
 		t.Context(), []store.ActivityProjection{initial})
 	require.NoError(err)
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("generation-2"), messageID)
 	require.NoError(err)
 	staleProjection := activityProjectionForMessage(
 		t, f, messageID, personID, occurredAt)
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("generation-3"), messageID)
 	require.NoError(err)
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, messageID)
@@ -2578,7 +2589,7 @@ func TestProjectActivityBatchReservesAbsentLegacyQueueAtomically(t *testing.T) {
 		WithSourceMessageID("projection-legacy-queue").
 		WithSentAt(occurredAt).
 		Create(t, f.Store)
-	_, err := activityExec(f.Store,
+	_, err := activityExec(t.Context(), f.Store,
 		`DELETE FROM activity_projection_queue WHERE message_id = ?`, messageID)
 	require.NoError(err)
 	candidates, err := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 10)
@@ -2688,7 +2699,7 @@ func TestProjectActivityBatchRacingMutationLeavesPendingGeneration(t *testing.T)
 	}()
 	go func() {
 		<-start
-		_, err := activityExec(f.Store,
+		_, err := activityExec(t.Context(), f.Store,
 			`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("raced"), messageID)
 		mutationResult <- err
 	}()
@@ -2746,7 +2757,7 @@ func TestProjectActivityBatchLocksMessageBeforeQueueOnPostgreSQL(t *testing.T) {
 
 	mutationResult := make(chan error, 1)
 	go func() {
-		_, mutationErr := activityExec(f.Store,
+		_, mutationErr := activityExec(t.Context(), f.Store,
 			`UPDATE messages SET metadata = ? WHERE id = ?`,
 			activityTouch("blocked-behind-projection"), messageID)
 		mutationResult <- mutationErr
@@ -2871,7 +2882,7 @@ func TestRecomputeContactStateLocksDifferentMessageEvidenceBeforeClearingDirty(
 
 	deleteResult := make(chan error, 1)
 	go func() {
-		_, deleteErr := activityExec(f.Store,
+		_, deleteErr := activityExec(t.Context(), f.Store,
 			`DELETE FROM activity_event_persons
 			 WHERE message_id = ? AND person_id = ?`, secondMessage, personID)
 		deleteResult <- deleteErr
@@ -2924,7 +2935,7 @@ func TestRecomputeContactStateLocksEvidenceWhenContactRowIsMissing(t *testing.T)
 			t, f, secondMessage, personID, base.Add(time.Hour)),
 	})
 	require.NoError(err)
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`DELETE FROM person_contact_state WHERE person_id = ?`, personID)
 	require.NoError(err)
 	if f.Store.IsPostgreSQL() {
@@ -2954,7 +2965,7 @@ func TestRecomputeContactStateLocksEvidenceWhenContactRowIsMissing(t *testing.T)
 		deletingDone = true
 		require.NoError(<-recomputeResult)
 	} else {
-		_, err = activityExec(f.Store,
+		_, err = activityExec(t.Context(), f.Store,
 			`DELETE FROM messages WHERE id = ?`, secondMessage)
 		require.NoError(err)
 		require.NoError(f.Store.RecomputeContactStateContext(
@@ -3012,7 +3023,7 @@ func TestProjectActivityBatchRacingHardDeleteLeavesNoFreshGhostState(t *testing.
 	}()
 	go func() {
 		<-start
-		_, err := activityExec(f.Store,
+		_, err := activityExec(t.Context(), f.Store,
 			`DELETE FROM messages WHERE id = ?`, messageID)
 		deleteResult <- err
 	}()
@@ -3025,7 +3036,7 @@ func TestProjectActivityBatchRacingHardDeleteLeavesNoFreshGhostState(t *testing.
 	}
 
 	var eventCount int
-	require.NoError(activityQueryRow(f.Store,
+	require.NoError(activityQueryRow(t.Context(), f.Store,
 		`SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, messageID,
 	).Scan(&eventCount))
 	assert.Zero(eventCount)
@@ -3036,7 +3047,7 @@ func TestProjectActivityBatchRacingHardDeleteLeavesNoFreshGhostState(t *testing.
 	// non-NULL dirty marker; cast the aggregate to the portable representation
 	// and keep that assertion independent of driver type metadata.
 	var dirty sql.NullString
-	err := activityQueryRow(f.Store, `
+	err := activityQueryRow(t.Context(), f.Store, `
 		SELECT COUNT(*), CAST(MAX(dirty_at) AS TEXT)
 		FROM person_contact_state
 		WHERE person_id = ?
@@ -3126,7 +3137,7 @@ func TestProjectActivityBatchRecomputesEveryContactRelevantChange(t *testing.T) 
 				otherSource, err := f.Store.GetOrCreateSource(
 					"gmail", "other-owner@example.com")
 				require.NoError(t, err)
-				_, err = activityExec(f.Store,
+				_, err = activityExec(t.Context(), f.Store,
 					`UPDATE messages SET source_id = ? WHERE id = ?`,
 					otherSource.ID, projection.Token.MessageID)
 				require.NoError(t, err)
@@ -3167,7 +3178,7 @@ func TestProjectActivityBatchRecomputesEveryContactRelevantChange(t *testing.T) 
 				t.Context(), []store.ActivityProjection{initial})
 			require.NoError(err)
 
-			_, err = activityExec(f.Store,
+			_, err = activityExec(t.Context(), f.Store,
 				`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch(test.name), messageID)
 			require.NoError(err)
 			replacement := activityProjectionForMessage(
@@ -3194,7 +3205,7 @@ func seedActivityReconciledEpoch(
 		"activity_spine_reconciled_identity_revision":         revisions.IdentityRevision,
 		"activity_spine_reconciled_account_identity_revision": revisions.AccountIdentityRevision,
 	} {
-		_, err := activityExec(st, `
+		_, err := activityExec(t.Context(), st, `
 			INSERT INTO archive_metadata (key, value) VALUES (?, ?)
 			ON CONFLICT(key) DO UPDATE SET value = excluded.value
 		`, key, strconv.FormatInt(revision, 10))
@@ -3239,7 +3250,7 @@ func TestProjectActivityBatchPreservesDirtyStateUntilEpochReconciles(t *testing.
 	require.NoError(err)
 	assert.True(state.Stale, "a pure addition cannot clear pre-existing dirtiness")
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("still-dirty"), messageID)
 	require.NoError(err)
 	replacement := activityProjectionForMessage(
@@ -3273,7 +3284,7 @@ func TestProjectActivityBatchClearsOnlyTransactionLocalDirtyAtReconciledEpoch(t 
 		t.Context(), []store.ActivityProjection{initial})
 	require.NoError(err)
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("redated"), messageID)
 	require.NoError(err)
 	replacement := activityProjectionForMessage(
@@ -3285,7 +3296,7 @@ func TestProjectActivityBatchClearsOnlyTransactionLocalDirtyAtReconciledEpoch(t 
 	require.NoError(err)
 	assert.False(state.Stale)
 	var dirty sql.NullTime
-	require.NoError(activityQueryRow(f.Store,
+	require.NoError(activityQueryRow(t.Context(), f.Store,
 		`SELECT dirty_at FROM person_contact_state WHERE person_id = ?`, personID,
 	).Scan(&dirty))
 	assert.False(dirty.Valid)
@@ -3345,7 +3356,7 @@ func TestRecomputeContactStateRejectsPendingProjectionQueue(t *testing.T) {
 	require.NoError(err)
 	require.NoError(f.Store.MarkAllContactStateDirtyContext(t.Context()))
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`,
 		activityTouch("pending repair"), messageID)
 	require.NoError(err)
@@ -3421,7 +3432,7 @@ func TestRecomputeContactStateSerializesPostgreSQLQueueInsertBeforeFreshCommit(
 
 	mutationResult := make(chan error, 1)
 	go func() {
-		_, mutationErr := activityExec(f.Store,
+		_, mutationErr := activityExec(t.Context(), f.Store,
 			`UPDATE messages SET metadata = ? WHERE id = ?`,
 			activityTouch("queued behind recompute"), messageID)
 		mutationResult <- mutationErr

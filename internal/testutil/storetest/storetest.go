@@ -5,6 +5,7 @@ package storetest
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
 var globalCounter atomic.Int64
@@ -31,9 +33,9 @@ type Fixture struct {
 func New(t *testing.T) *Fixture {
 	t.Helper()
 	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gmail", "test@example.com")
+	source, err := st.GetOrCreateSource("gmail", OwnerAddress)
 	require.NoError(t, err, "setup: GetOrCreateSource")
-	convID, err := st.EnsureConversation(source.ID, "default-thread", "Default Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "default-thread", "Default Thread")
 	require.NoError(t, err, "setup: EnsureConversation")
 	return &Fixture{T: t, Store: st, Source: source, ConvID: convID}
 }
@@ -69,7 +71,7 @@ func (f *Fixture) EnsureLabels(labels map[string]string, typ string) map[string]
 	for sourceLabelID, name := range labels {
 		require.NotEmptyf(f.T, name, "EnsureLabels: label name is required (sourceLabelID=%q)", sourceLabelID)
 		require.NotEmpty(f.T, sourceLabelID, "EnsureLabels: sourceLabelID is required")
-		lid, err := f.Store.EnsureLabel(f.Source.ID, sourceLabelID, name, typ)
+		lid, err := f.Store.EnsureLabel(f.T.Context(), f.Source.ID, sourceLabelID, name, typ)
 		require.NoError(f.T, err, "EnsureLabel "+sourceLabelID)
 		result[sourceLabelID] = lid
 	}
@@ -127,7 +129,7 @@ func (f *Fixture) GetMessageBody(msgID int64) (sql.NullString, sql.NullString) {
 // GetSyncRun returns the status and error_message for a sync run by ID.
 func (f *Fixture) GetSyncRun(syncID int64) (status, errorMsg string) {
 	f.T.Helper()
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
 		f.Store.Rebind("SELECT status, error_message FROM sync_runs WHERE id = ?"), syncID,
 	).Scan(&status, &errorMsg)
 	require.NoError(f.T, err, "GetSyncRun")
@@ -138,7 +140,7 @@ func (f *Fixture) GetSyncRun(syncID int64) (status, errorMsg string) {
 func (f *Fixture) GetSingleLabelID(msgID int64) int64 {
 	f.T.Helper()
 	var labelID int64
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
 		f.Store.Rebind("SELECT label_id FROM message_labels WHERE message_id = ?"), msgID,
 	).Scan(&labelID)
 	require.NoError(f.T, err, "GetSingleLabelID")
@@ -149,7 +151,7 @@ func (f *Fixture) GetSingleLabelID(msgID int64) int64 {
 func (f *Fixture) GetSingleRecipientID(msgID int64, typ string) int64 {
 	f.T.Helper()
 	var pid int64
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
 		f.Store.Rebind("SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = ?"), msgID, typ,
 	).Scan(&pid)
 	require.NoError(f.T, err, "GetSingleRecipientID")
@@ -162,7 +164,7 @@ func (f *Fixture) GetSingleRecipientID(msgID int64, typ string) int64 {
 func (f *Fixture) AssertLabelCount(msgID int64, want int) {
 	f.T.Helper()
 	var count int
-	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ?"), msgID).Scan(&count)
+	err := f.Store.DB().QueryRowContext(f.T.Context(), f.Store.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ?"), msgID).Scan(&count)
 	require.NoError(f.T, err, "count message_labels")
 	assert.Equal(f.T, want, count, "message_labels count")
 }
@@ -171,7 +173,7 @@ func (f *Fixture) AssertLabelCount(msgID int64, want int) {
 func (f *Fixture) AssertMessageHasLabel(msgID, labelID int64) {
 	f.T.Helper()
 	var count int
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(f.T.Context(),
 		f.Store.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?"),
 		msgID, labelID,
 	).Scan(&count)
@@ -183,7 +185,7 @@ func (f *Fixture) AssertMessageHasLabel(msgID, labelID int64) {
 func (f *Fixture) AssertRecipientCount(msgID int64, typ string, want int) {
 	f.T.Helper()
 	var count int
-	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM message_recipients WHERE message_id = ? AND recipient_type = ?"), msgID, typ).Scan(&count)
+	err := f.Store.DB().QueryRowContext(f.T.Context(), f.Store.Rebind("SELECT COUNT(*) FROM message_recipients WHERE message_id = ? AND recipient_type = ?"), msgID, typ).Scan(&count)
 	require.NoError(f.T, err, "count message_recipients")
 	assert.Equalf(f.T, want, count, "message_recipients(%s) count", typ)
 }
@@ -192,7 +194,7 @@ func (f *Fixture) AssertRecipientCount(msgID int64, typ string, want int) {
 func (f *Fixture) AssertMessageDeleted(msgID int64) {
 	f.T.Helper()
 	var deletedAt sql.NullTime
-	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT deleted_from_source_at FROM messages WHERE id = ?"), msgID).Scan(&deletedAt)
+	err := f.Store.DB().QueryRowContext(f.T.Context(), f.Store.Rebind("SELECT deleted_from_source_at FROM messages WHERE id = ?"), msgID).Scan(&deletedAt)
 	require.NoError(f.T, err, "check deleted_from_source_at")
 	assert.True(f.T, deletedAt.Valid, "deleted_from_source_at should be set")
 }
@@ -201,7 +203,7 @@ func (f *Fixture) AssertMessageDeleted(msgID int64) {
 func (f *Fixture) AssertMessageNotDeleted(msgID int64) {
 	f.T.Helper()
 	var deletedAt sql.NullTime
-	err := f.Store.DB().QueryRow(f.Store.Rebind("SELECT deleted_from_source_at FROM messages WHERE id = ?"), msgID).Scan(&deletedAt)
+	err := f.Store.DB().QueryRowContext(f.T.Context(), f.Store.Rebind("SELECT deleted_from_source_at FROM messages WHERE id = ?"), msgID).Scan(&deletedAt)
 	require.NoError(f.T, err, "check deleted_from_source_at")
 	assert.False(f.T, deletedAt.Valid, "deleted_from_source_at should be NULL")
 }
@@ -321,5 +323,79 @@ func (b *MessageBuilder) Create(t *testing.T, st *store.Store) int64 {
 	m := b.msg
 	id, err := st.UpsertMessage(&m)
 	require.NoError(t, err, "MessageBuilder.Create")
+	return id
+}
+
+// OwnerAddress is the account the Fixture's source archives. An email from it
+// is outbound; an email to it is inbound.
+const OwnerAddress = "test@example.com"
+
+// EmailSpec describes one archived email in a thread.
+type EmailSpec struct {
+	Thread  string
+	From    string
+	To      []string
+	Bcc     []string
+	Subject string
+	Body    string
+	// Raw is the stored original. Empty stores a plain message built from
+	// the other fields unless NoRaw is set.
+	Raw      string
+	NoRaw    bool
+	ListID   string
+	SentAt   time.Time
+	FileName string
+}
+
+// PersistEmail archives spec with its participants, recipients, body, raw
+// MIME, and optional file attachment, and returns the message ID.
+func (f *Fixture) PersistEmail(spec EmailSpec) int64 {
+	f.T.Helper()
+	if spec.Thread == "" {
+		spec.Thread = "default-thread"
+	}
+	require.NoError(f.T, f.Store.AddAccountIdentity(f.Source.ID, OwnerAddress, "manual"), "PersistEmail: owner identity")
+	convID, err := f.Store.EnsureConversation(f.T.Context(), f.Source.ID, spec.Thread, spec.Subject)
+	require.NoError(f.T, err, "PersistEmail: conversation")
+	from := f.EnsureParticipant(spec.From, "", "example.com")
+	var to []int64
+	for _, address := range spec.To {
+		to = append(to, f.EnsureParticipant(address, "", "example.com"))
+	}
+	var bcc []int64
+	for _, address := range spec.Bcc {
+		bcc = append(bcc, f.EnsureParticipant(address, "", "example.com"))
+	}
+	data := &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.Source.ID, ConversationID: convID, MessageType: store.MessageTypeEmail,
+			SourceMessageID: fmt.Sprintf("email-%d", f.msgCounter.Add(1)),
+			SenderID:        sql.NullInt64{Int64: from, Valid: true},
+			SentAt:          sql.NullTime{Time: spec.SentAt, Valid: true},
+			Subject:         sql.NullString{String: spec.Subject, Valid: spec.Subject != ""},
+			ListID:          sql.NullString{String: spec.ListID, Valid: spec.ListID != ""},
+			IsFromMe:        spec.From == OwnerAddress,
+		},
+		BodyText: sql.NullString{String: spec.Body, Valid: spec.Body != ""},
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{spec.From}},
+			{Type: "to", ParticipantIDs: to, EmailAddresses: spec.To},
+			{Type: "bcc", ParticipantIDs: bcc, EmailAddresses: spec.Bcc},
+		},
+	}
+	if spec.Raw == "" && !spec.NoRaw {
+		spec.Raw = string(email.NewMessage().From(spec.From).To(strings.Join(spec.To, ", ")).Bcc(strings.Join(spec.Bcc, ", ")).
+			Subject(spec.Subject).Date(spec.SentAt.Format(time.RFC1123Z)).Body(spec.Body).CRLF().Bytes())
+	}
+	if spec.Raw != "" {
+		data.RawMIME = []byte(spec.Raw)
+	}
+	id, err := f.Store.PersistMessageContext(f.T.Context(), data)
+	require.NoError(f.T, err, "PersistEmail: message")
+	if spec.FileName != "" {
+		_, err = f.Store.DB().ExecContext(f.T.Context(), f.Store.Rebind(`INSERT INTO attachments (message_id, filename, storage_path, attachment_role)
+			VALUES (?, ?, 'ab/file', 'standalone')`), id, spec.FileName)
+		require.NoError(f.T, err, "PersistEmail: attachment")
+	}
 	return id
 }

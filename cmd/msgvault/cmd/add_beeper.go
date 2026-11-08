@@ -91,7 +91,7 @@ Examples:
 				return fmt.Errorf("save beeper token: %w", err)
 			}
 
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -111,14 +111,14 @@ Examples:
 					return fmt.Errorf("set display name for %s: %w", acct.AccountID, err)
 				}
 				if !noDefaultIdentityAddBeeper {
-					confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID,
+					confirmDefaultIdentity(cmd.Context(), cmd.OutOrStdout(), s, source.ID,
 						acct.AccountID, beeperSelfIdentity(acct), "account-identifier", state.logger)
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Added %s (%s)%s\n",
 					acct.AccountID, beeperSourceDisplayName(acct), beeperAccountOrigin(acct))
 				added++
 			}
-			if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 
@@ -203,7 +203,7 @@ func readAddBeeperToken(cmd *cobra.Command) (string, error) {
 	)
 	switch method {
 	case passwordInteractive:
-		return readPasswordInteractive(prompt, promptOut)
+		return readPasswordInteractive(prompt, promptOut, false)
 	case passwordNoPrompt:
 		return "", errors.New("cannot read token: no terminal available for prompt (try --token-file, piping the token via stdin, or setting MSGVAULT_BEEPER_TOKEN)")
 	case passwordPipe:

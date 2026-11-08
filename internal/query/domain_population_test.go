@@ -25,16 +25,24 @@ type domainPopulationProfile struct {
 // and parameter binding, rather than manually selecting a query-builder mode.
 func profileDomainPopulation(t *testing.T, engine *DuckDBEngine, request ExploreRequest) (domainPopulationProfile, error) {
 	t.Helper()
+	return profileQuery(t, engine, func() error {
+		_, err := engine.Explore(t.Context(), request)
+		return err
+	})
+}
+
+func profileQuery(t *testing.T, engine *DuckDBEngine, query func() error) (domainPopulationProfile, error) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "listing.json")
-	_, err := engine.db.Exec("SET enable_profiling = 'json'")
+	_, err := engine.db.ExecContext(t.Context(), "SET enable_profiling = 'json'")
 	require.NoError(t, err)
-	_, err = engine.db.Exec("SET profiling_output = '" + escapePath(path) + "'")
+	_, err = engine.db.ExecContext(t.Context(), "SET profiling_output = '"+escapePath(path)+"'")
 	require.NoError(t, err)
-	_, exploreErr := engine.Explore(t.Context(), request)
-	_, err = engine.db.Exec("PRAGMA disable_profiling")
+	queryErr := query()
+	_, err = engine.db.ExecContext(t.Context(), "PRAGMA disable_profiling")
 	require.NoError(t, err)
-	if exploreErr != nil {
-		return domainPopulationProfile{}, exploreErr
+	if queryErr != nil {
+		return domainPopulationProfile{}, queryErr
 	}
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -255,4 +263,12 @@ func FuzzExploreDomainGroupFormsAgree(f *testing.F) {
 		require.NoError(t, additionalErr)
 		assert.Equal(t, primary, additional)
 	})
+}
+
+func (p domainPopulationProfile) maxCardinality() int {
+	count := int(p.IntermediateRows)
+	for _, child := range p.Children {
+		count = max(count, child.maxCardinality())
+	}
+	return count
 }

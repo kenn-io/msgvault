@@ -49,21 +49,21 @@ func TestMessageBookkeepingUpdatesDoNotRequeueActivity(t *testing.T) {
 	assert.Equal(before, activityQueueRevision(t, f.Store, messageID),
 		"an embed_gen stamp must not requeue the message")
 
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`),
 		messageID)
 	require.NoError(err)
 	assert.Equal(before, activityQueueRevision(t, f.Store, messageID),
 		"the ingest attachment-counter re-stamp must not requeue the message")
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET last_modified = CURRENT_TIMESTAMP WHERE id = ?`),
 		messageID)
 	require.NoError(err)
 	assert.Equal(before, activityQueueRevision(t, f.Store, messageID),
 		"a last_modified bump must not requeue the message")
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = message_type, sent_at = sent_at,
 		        deleted_at = deleted_at WHERE id = ?`),
 		messageID)
@@ -93,10 +93,10 @@ func TestActivityMessagesTriggerUpgradeReplacesBlanketDefinition(t *testing.T) {
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "blanket-activity.db")
 
-	seed, err := store.OpenForTest(dbPath)
+	seed, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open seed store")
 	require.NoError(seed.InitSchema(), "seed InitSchema")
-	_, err = seed.DB().Exec(`
+	_, err = seed.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'alice@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject)
@@ -116,31 +116,32 @@ VALUES (1, 1, 1, 'm1', 'email', 'seeded');
 		         revision = activity_projection_queue.revision + 1,
 		         queued_at = CURRENT_TIMESTAMP;
 		 END`,
-		`DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v5'`,
+		`DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v6'`,
 	} {
-		_, err = seed.DB().Exec(stmt)
+		_, err = seed.DB().ExecContext(t.Context(), stmt)
 		require.NoErrorf(err, "wind the archive back: %s", stmt)
 	}
 	require.NoError(seed.Close(), "close seed store")
 
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "reopen the archive")
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(), "InitSchema on an archive with the blanket trigger")
 
 	var postSQL string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type = 'trigger'
 		   AND name = 'trg_activity_queue_messages_update'`).Scan(&postSQL))
 	assert.Contains(postSQL, "AFTER UPDATE OF",
 		"the blanket definition must be replaced by the scoped one on open")
 
-	_, err = st.DB().Exec(`UPDATE messages SET embed_gen = 1 WHERE id = 1`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = 1 WHERE id = 1`)
 	require.NoError(err)
 	assert.Equal(0, activityQueueRows(t, st, 1),
 		"an embed_gen stamp must not enqueue on the upgraded archive")
 
-	_, err = st.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 1`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = 1`)
 	require.NoError(err)
 	assert.Equal(1, activityQueueRows(t, st, 1),
 		"a deleted_at change must still enqueue on the upgraded archive")

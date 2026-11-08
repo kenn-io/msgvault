@@ -129,13 +129,13 @@ func TestImportPublicChannelsWithoutSearch(t *testing.T) {
 			now := tsBase.Add(24 * time.Hour)
 			imp.now = func() time.Time { return now }
 
-			sum, err := imp.Import(context.Background(), opts)
+			sum, err := imp.Import(t.Context(), opts)
 			requirements.NoError(err)
 			assertions.Equal(2, sum.ConversationsProcessed)
 			var count int
-			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+			requirements.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 			assertions.Equal(11, count, "public messages and replies, including an unjoined channel")
-			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_conversation_id IN ('C02', 'G01', 'D01')`).Scan(&count))
+			requirements.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversations WHERE source_conversation_id IN ('C02', 'G01', 'D01')`).Scan(&count))
 			assertions.Zero(count, "private conversations must not enter the archive")
 
 			// The first reply to an old, previously unthreaded message cannot be
@@ -147,18 +147,18 @@ func TestImportPublicChannelsWithoutSearch(t *testing.T) {
 			now = now.Add(2 * time.Hour)
 			opts.Limit = tc.limit
 			for range tc.runs {
-				sum, err = imp.Import(context.Background(), opts)
+				sum, err = imp.Import(t.Context(), opts)
 				requirements.NoError(err)
 			}
 			if tc.limit == 0 {
 				assertions.Positive(sum.RepliesFetched)
 			}
-			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+			requirements.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 			assertions.Equal(tc.wantCount, count, "resumed thread walks must leave room for new channel messages")
 
-			_, err = imp.Import(context.Background(), opts)
+			_, err = imp.Import(t.Context(), opts)
 			requirements.NoError(err)
-			requirements.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+			requirements.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 			assertions.Equal(tc.wantCount, count, "re-reading threads must not duplicate messages")
 		})
 	}
@@ -221,7 +221,7 @@ func TestImportPrivateChannelsAndDMsAreIndependent(t *testing.T) {
 			_, err := imp.Import(t.Context(), opts)
 			requirements.NoError(err)
 			var ids []string
-			rows, err := imp.store.DB().Query(`SELECT source_conversation_id FROM conversations ORDER BY source_conversation_id`)
+			rows, err := imp.store.DB().QueryContext(t.Context(), `SELECT source_conversation_id FROM conversations ORDER BY source_conversation_id`)
 			requirements.NoError(err)
 			defer func() { requirements.NoError(rows.Close()) }()
 			for rows.Next() {
@@ -258,7 +258,7 @@ func TestExcludedDMRetainsResumeStateAndThreadDebt(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	limited := opts
 	limited.Limit = 1
-	_, err := imp.Import(context.Background(), limited)
+	_, err := imp.Import(t.Context(), limited)
 	requirements.NoError(err)
 	src, err := imp.store.GetOrCreateSource(sourceTypeSlack, "T01:UME")
 	requirements.NoError(err)
@@ -273,7 +273,7 @@ func TestExcludedDMRetainsResumeStateAndThreadDebt(t *testing.T) {
 	f.mu.Unlock()
 	excluded := opts
 	excluded.ExcludeDMs = true
-	sum, err := imp.Import(context.Background(), excluded)
+	sum, err := imp.Import(t.Context(), excluded)
 	requirements.NoError(err)
 	assertions.Zero(sum.ConversationsProcessed)
 	assertions.Zero(f.historyCalls)
@@ -302,15 +302,15 @@ func TestReincludedDMRepaysThreadDebt(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	limited := opts
 	limited.Limit = 1
-	_, err := imp.Import(context.Background(), limited)
+	_, err := imp.Import(t.Context(), limited)
 	requirements.NoError(err)
 
 	excluded := opts
 	excluded.ExcludeDMs = true
-	_, err = imp.Import(context.Background(), excluded)
+	_, err = imp.Import(t.Context(), excluded)
 	requirements.NoError(err)
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	requirements.NoError(err)
 	assertions.Equal(1, sum.ConversationsProcessed)
 	src, err := imp.store.GetOrCreateSource(sourceTypeSlack, "T01:UME")
@@ -318,7 +318,7 @@ func TestReincludedDMRepaysThreadDebt(t *testing.T) {
 	state := requireResumeState(t, imp, src.ID)
 	assertions.Empty(state.Conversations["D01"].PendingThreads)
 	var replies int
-	requirements.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	requirements.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "D01:"+ts(1)).Scan(&replies))
 	assertions.Equal(1, replies)
 }
@@ -331,47 +331,47 @@ func TestImportEndToEnd(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(4, sum.ConversationsProcessed)
 	assert.Equal(2, sum.RepliesFetched)
 	assert.Zero(sum.FetchErrors)
 
 	var msgCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&msgCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&msgCount))
 	assert.Equal(totalWorkspaceMessages, msgCount)
 
 	// Conversation types and titles.
 	var title, convType string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT title, conversation_type FROM conversations WHERE source_conversation_id = ?`), "C01").
 		Scan(&title, &convType))
 	assert.Equal("#general", title)
 	assert.Equal("channel", convType)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT title, conversation_type FROM conversations WHERE source_conversation_id = ?`), "D01").
 		Scan(&title, &convType))
 	assert.Equal("Alice", title)
 	assert.Equal("direct_chat", convType)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT title, conversation_type FROM conversations WHERE source_conversation_id = ?`), "C02").
 		Scan(&title, &convType))
 	assert.Equal("#secrets", title, "private channels archive like channels")
 	assert.Equal("channel", convType)
 	var privateMsgs int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id
 		WHERE c.source_conversation_id = ?`), "C02").Scan(&privateMsgs))
 	assert.Equal(1, privateMsgs)
 
 	// Email-based identity: Alice deduped against mail archives by address.
 	var aliceID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM participants WHERE email_address = ?`), "alice@example.com").Scan(&aliceID))
 
 	// Thread replies linked to their root.
 	var linked int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages child
 		JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
@@ -380,7 +380,7 @@ func TestImportEndToEnd(t *testing.T) {
 
 	// Reactions: two users on message 2.
 	var reactions int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM reactions r
 		JOIN messages m ON m.id = r.message_id
 		WHERE m.source_message_id = ? AND r.reaction_value = 'thumbsup'`), "C01:"+ts(2)).Scan(&reactions))
@@ -388,13 +388,13 @@ func TestImportEndToEnd(t *testing.T) {
 
 	// Mention row for <@UME>, with mrkdwn rendered in the body.
 	var mentions int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'mention'`), "C01:"+ts(1)).Scan(&mentions))
 	assert.Equal(1, mentions)
 	var fromRows int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(DISTINCT m.id)
 		FROM messages m
 		JOIN message_recipients mr ON mr.message_id = m.id
@@ -402,7 +402,7 @@ func TestImportEndToEnd(t *testing.T) {
 	assert.Equal(totalWorkspaceMessages, fromRows,
 		"every Slack sender must use the shared from-recipient model as well as messages.sender_id")
 	var directRecipients int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*)
 		FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
@@ -410,7 +410,7 @@ func TestImportEndToEnd(t *testing.T) {
 		WHERE c.source_conversation_id = ? AND mr.recipient_type = 'to'`), "D01").Scan(&directRecipients))
 	assert.Equal(1, directRecipients, "a direct message must address the other member")
 	var groupRecipients int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*)
 		FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
@@ -418,7 +418,7 @@ func TestImportEndToEnd(t *testing.T) {
 		WHERE c.source_conversation_id = ? AND mr.recipient_type = 'to'`), "G01").Scan(&groupRecipients))
 	assert.Equal(2, groupRecipients, "a group DM must address every member except its sender")
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(1)).Scan(&body))
@@ -426,30 +426,30 @@ func TestImportEndToEnd(t *testing.T) {
 
 	// Edited flag, bot sender, raw archive format.
 	var edited bool
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT is_edited FROM messages WHERE source_message_id = ?`), "C01:"+ts(3)).Scan(&edited))
 	assert.True(edited)
 	var botSender string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT p.display_name FROM messages m JOIN participants p ON p.id = m.sender_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(4)).Scan(&botSender))
 	assert.Equal("deploybot", botSender)
 	// The bot message's content lives in a legacy attachment (empty text);
 	// its fallback must be the searchable body.
 	var botBody string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(4)).Scan(&botBody))
 	assert.Equal("Build #42 failed on main", botBody)
 	var rawFormat string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mr.raw_format FROM message_raw mr JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&rawFormat))
 	assert.Equal("slack_json", rawFormat)
 
 	// Membership recorded.
 	var members int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id
 		WHERE c.source_conversation_id = ?`), "C01").Scan(&members))
@@ -463,7 +463,7 @@ func TestImportUsesNextCursorWhenHasMoreIsFalse(t *testing.T) {
 	f.forceHasMoreFalse = true
 	imp, opts := testImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(t, totalWorkspaceMessages, sum.MessagesAdded,
 		"a non-empty next_cursor must continue history and reply pagination regardless of has_more")
@@ -477,7 +477,7 @@ func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A new top-level message and a late reply to the (old) thread root —
@@ -493,13 +493,13 @@ func TestImportIncrementalCatchesNewMessagesAndLateReplies(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(1, sum.RepliesFetched, "only the late reply is new; earlier replies are behind the thread cursor")
 
 	for _, id := range []string{"C01:" + newTop, "C01:" + lateReply} {
 		var n int
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), id).Scan(&n))
 		assert.Equal(1, n, id)
 	}
@@ -512,7 +512,7 @@ func TestReplySweepPersistsDirectChatRecipients(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	dmReply := tsFresh(0)
@@ -527,11 +527,11 @@ func TestReplySweepPersistsDirectChatRecipients(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var dmRecipients int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
@@ -539,7 +539,7 @@ func TestReplySweepPersistsDirectChatRecipients(t *testing.T) {
 	assert.Equal(t, 1, dmRecipients, "late DM reply addresses the other member")
 
 	var mpimRecipients int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
@@ -554,7 +554,7 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// Five new messages arriving "now": an incremental window of two pages
@@ -571,7 +571,7 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "a run with fetch errors must not report success")
 
 	// The cursor must not have advanced past the unfetched older page: after
@@ -579,11 +579,11 @@ func TestImportIncrementalMidWindowFailureDoesNotAdvanceCursor(t *testing.T) {
 	f.mu.Lock()
 	f.failHistoryContinuations = false
 	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	for i := range 5 {
 		var n int
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+burst[i]).Scan(&n))
 		assert.Equal(t, 1, n, "burst message %d", i)
 	}
@@ -601,13 +601,13 @@ func TestBackfillThreadFetchFailureParksDrainDebt(t *testing.T) {
 	// advances; a reply-fetch failure parks the debt entry at its resume
 	// point, and the run must not report success.
 	f.failReplies[ts(5)] = true
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(err, "a run with fetch errors must not report success")
 	assert.Positive(sum.FetchErrors)
 
 	// The replies never landed.
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(100)).Scan(&n))
 	assert.Zero(n)
 
@@ -615,15 +615,15 @@ func TestBackfillThreadFetchFailureParksDrainDebt(t *testing.T) {
 	f.mu.Lock()
 	delete(f.failReplies, ts(5))
 	f.mu.Unlock()
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(2, sum.RepliesFetched)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(100)).Scan(&n))
 	assert.Equal(1, n)
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total, "page refetch after thread failure must not duplicate")
 }
 
@@ -636,22 +636,22 @@ func TestImportHistoryFailureLeavesConversationResumable(t *testing.T) {
 	st := imp.store
 
 	f.failHistory["C01"] = true
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.Error(err)
 
 	// The healthy conversations still synced.
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "D01:"+ts(20)).Scan(&n))
 	assert.Equal(1, n)
 
 	f.mu.Lock()
 	delete(f.failHistory, "C01")
 	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	assert.Equal(totalWorkspaceMessages, total)
 }
 
@@ -665,7 +665,7 @@ func TestImportInterruptResumesWithoutDuplicates(t *testing.T) {
 
 	// Cancel partway through the first run when the fake serves the second
 	// history page, mid-conversation-walk.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	historyCalls := 0
 	f.mu.Lock()
@@ -682,11 +682,11 @@ func TestImportInterruptResumesWithoutDuplicates(t *testing.T) {
 	f.mu.Unlock()
 
 	// Resume to completion: every message exactly once.
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(totalWorkspaceMessages, total)
 	assert.Equal(distinct, total)
 }
@@ -699,7 +699,7 @@ func TestImportFullReUpsertsInPlace(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	first, err := imp.Import(context.Background(), opts)
+	first, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	require.Equal(totalWorkspaceMessages, first.MessagesAdded)
 	require.Zero(first.MessagesUpdated)
@@ -711,18 +711,18 @@ func TestImportFullReUpsertsInPlace(t *testing.T) {
 
 	full := opts
 	full.Full = true
-	second, err := imp.Import(context.Background(), full)
+	second, err := imp.Import(t.Context(), full)
 	require.NoError(err)
 	assert.Zero(second.MessagesAdded)
 	assert.Equal(totalWorkspaceMessages, second.MessagesUpdated)
 
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&body))
 	assert.Equal("hello 0 (edited)", body)
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	assert.Equal(totalWorkspaceMessages, total, "full run must upsert, not duplicate")
 }
 
@@ -740,18 +740,18 @@ func TestImportLimitLeavesBackfillResumable(t *testing.T) {
 	limited := opts
 	limited.Limit = 4
 	limited.NoThreads = true
-	_, err := imp.Import(context.Background(), limited)
+	_, err := imp.Import(t.Context(), limited)
 	require.NoError(err)
 	var partial int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&partial))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&partial))
 	assert.Less(partial, 11, "limited run must stop before all top-level messages are archived")
 
 	// An uncapped run completes the backfill: every message exactly once.
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(totalWorkspaceMessages, total, "limited first run must not lose messages")
 	assert.Equal(distinct, total)
 }
@@ -784,7 +784,7 @@ func TestSweepFindsLateReplyToAncientThread(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A NEW reply lands on the ~10-day-old thread after backfill. No
@@ -797,10 +797,10 @@ func TestSweepFindsLateReplyToAncientThread(t *testing.T) {
 	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
 	f.mu.Unlock()
 
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var linked int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages child
 		JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
@@ -819,7 +819,7 @@ func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	lateReply := tsFresh(0)
@@ -830,11 +830,11 @@ func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
 	f.failReplies[rootTS] = true
 	f.mu.Unlock()
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(err, "a sweep with a failed canonical fetch must not report success")
 	assert.Positive(sum.FetchErrors)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Zero(n)
 
@@ -843,14 +843,14 @@ func TestSweepFetchFailureParksAsDrainDebt(t *testing.T) {
 	f.mu.Lock()
 	delete(f.failReplies, rootTS)
 	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	assert.Equal(1, n)
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total)
 }
 
@@ -861,7 +861,7 @@ func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A reply lands, but the search index has not served it yet when the
@@ -878,10 +878,10 @@ func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Zero(n, "test setup: the reply must be invisible to search on this run")
 	state := requireResumeState(t, imp, sum.SourceID)
@@ -893,9 +893,9 @@ func TestSweepOverlapRecoversLateIndexedReplies(t *testing.T) {
 	f.searchIndexedThrough = ""
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Equal(1, n, "the overlapped floor must re-cover replies the index served late")
 }
@@ -907,7 +907,7 @@ func TestCanonicalThreadAuditRecoversReplyNeverServedBySearch(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The reply remains absent from search well beyond the overlap margin.
@@ -921,17 +921,17 @@ func TestCanonicalThreadAuditRecoversReplyNeverServedBySearch(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Zero(n, "test setup: search must still hide the reply when the periodic audit is scheduled")
 
 	imp.now = func() time.Time { return time.Now().Add(8*24*time.Hour + time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Equal(1, n,
 		"a canonical history/thread audit must eventually recover replies regardless of search indexing lag")
@@ -948,7 +948,7 @@ func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	// clock) lands above message ts values (Slack's clock) that don't exist
 	// yet. A message then arrives with a ts BELOW the stored pin.
 	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	skewed := tsFresh(0) // real-clock ts, below run 1's skewed pin
@@ -959,10 +959,10 @@ func TestWindowOverlapAbsorbsClockSkew(t *testing.T) {
 	// The next window's floor overlaps back by the lag margin, so a
 	// message hidden under the pin by clock skew is still fetched.
 	imp.now = func() time.Time { return time.Now().Add(6 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+skewed).Scan(&n))
 	require.Equal(1, n, "a message below the pin by clock skew must be recovered by the window overlap")
 }
@@ -1025,7 +1025,7 @@ func TestImportRejectsMalformedNewestResumeState(t *testing.T) {
 	require.NoError(st.UpdateSyncCheckpoint(runID, &store.Checkpoint{PageToken: `{"version":`}))
 	require.NoError(st.FailSync(runID, "interrupted"))
 
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err)
 	assert.Contains(t, err.Error(), "load Slack resume state")
 }
@@ -1055,11 +1055,11 @@ func TestFullImportRepairsMalformedNewestResumeState(t *testing.T) {
 			require.NoError(st.FailSync(runID, "interrupted"))
 
 			opts.Full = true
-			_, err = imp.Import(context.Background(), opts)
+			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err, "--full must replace malformed durable state with a fresh repair session")
 
 			var messages int
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&messages))
 			assert.Positive(messages, "the repair must traverse and archive the workspace")
 		})
@@ -1116,7 +1116,7 @@ func TestImportRestartsExpiredPersistedWindowCursorAtPinnedBound(t *testing.T) {
 	require.NoError(err)
 	require.NoError(imp.store.CompleteSync(runID, mustMarshal(t, state)))
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(sum.FetchErrors)
 
@@ -1126,9 +1126,9 @@ func TestImportRestartsExpiredPersistedWindowCursorAtPinnedBound(t *testing.T) {
 	assert.Empty(got.BackfillLatest)
 
 	var inside, above int
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(0)).Scan(&inside))
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(2)).Scan(&above))
 	assert.Equal(1, inside)
 	assert.Zero(above, "restarting an expired page cursor must not widen the pinned window")
@@ -1170,7 +1170,7 @@ func TestImportRestartsExpiredPersistedCatchUpCursorAtPinnedBound(t *testing.T) 
 	require.NoError(err)
 	require.NoError(imp.store.CompleteSync(runID, mustMarshal(t, state)))
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(sum.FetchErrors)
 
@@ -1181,7 +1181,7 @@ func TestImportRestartsExpiredPersistedCatchUpCursorAtPinnedBound(t *testing.T) 
 	assert.Empty(got.CatchUpLatest)
 
 	var replies int
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+replyTS).Scan(&replies))
 	assert.Equal(1, replies)
 }
@@ -1200,7 +1200,7 @@ func TestImportSurfacesInvalidCursorWithoutPersistedPageCursor(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	opts.NoThreads = true
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "partial Slack sync")
 	assert.Positive(t, sum.FetchErrors, "cursorless invalid_cursor must remain a visible fetch failure")
@@ -1238,19 +1238,19 @@ func TestBackfillMediaReportsInvalidRaw(t *testing.T) {
 
 	// Import with media deferred: the file becomes a pending marker.
 	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The archived raw JSON is corrupted at rest. The media backfill must
 	// report the run as PARTIAL with the pending work still counted — not
 	// silently skip the message and report a clean, zero-pending sweep.
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
 	require.NoError(st.UpsertMessageRawWithFormat(messageID, []byte("{not json"), "slack_json"))
 
 	opts.NoMedia = false
-	sum, err := imp.BackfillMedia(context.Background(), opts)
+	sum, err := imp.BackfillMedia(t.Context(), opts)
 	require.Error(err, "invalid archived raw must fail the media backfill as partial, not report success")
 	require.Positive(sum.AttachmentsPending, "the skipped message's markers must stay in the pending count")
 
@@ -1276,16 +1276,16 @@ func TestBackfillMediaReportsMissingRaw(t *testing.T) {
 	opts.NoMedia = true
 	opts.AttachmentsDir = t.TempDir()
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "C01:"+ts(6)).Scan(&messageID))
-	_, err = st.DB().Exec(st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
 	require.NoError(err)
 
-	sum, err := imp.BackfillMedia(context.Background(), opts)
+	sum, err := imp.BackfillMedia(t.Context(), opts)
 	require.Error(err, "missing archived raw must report a partial media backfill")
 	require.Positive(sum.AttachmentsPending,
 		"missing raw is a per-item repair condition and must retain/count its pending marker")
@@ -1298,7 +1298,7 @@ func TestSweepDebtSurvivesDeletedAnchorReply(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// Two late replies are discovered together; the budget defers their
@@ -1320,10 +1320,10 @@ func TestSweepDebtSurvivesDeletedAnchorReply(t *testing.T) {
 	imp.now = func() time.Time { return time.Now().Add(15 * time.Minute) }
 	limited := opts
 	limited.Limit = 1
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r2).Scan(&n))
 	require.Zero(n, "test setup: the drain must have been deferred")
 
@@ -1336,13 +1336,13 @@ func TestSweepDebtSurvivesDeletedAnchorReply(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(16 * time.Minute) }
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.NoError(err)
 	imp.now = func() time.Time { return time.Now().Add(17 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r2).Scan(&n))
 	require.Equal(1, n, "the surviving sibling must be drained via the root anchor despite the deleted hit")
 }
@@ -1373,11 +1373,11 @@ func TestGapRecoveryResetsInFlightCatchUp(t *testing.T) {
 	// starts the walk and leaves it MID-FLIGHT under its original pin.
 	noThreads := opts
 	noThreads.NoThreads = true
-	_, err := imp.Import(context.Background(), noThreads)
+	_, err := imp.Import(t.Context(), noThreads)
 	require.NoError(err)
 	limited := opts
 	limited.Limit = 4
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.NoError(err)
 
 	// A new root arrives ABOVE the walk's pin and is archived by a window
@@ -1391,7 +1391,7 @@ func TestGapRecoveryResetsInFlightCatchUp(t *testing.T) {
 	f.conv("G05").Msgs = append(f.conv("G05").Msgs, fakeMsg{TS: newRoot, User: "UME", Text: "root above pin"})
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.NoError(err)
 
 	gapReply := tsFresh(5)
@@ -1401,7 +1401,7 @@ func TestGapRecoveryResetsInFlightCatchUp(t *testing.T) {
 	excluded := opts
 	excluded.ExcludeChannels = []string{"legacy"}
 	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
-	_, err = imp.Import(context.Background(), excluded)
+	_, err = imp.Import(t.Context(), excluded)
 	require.NoError(err)
 
 	// Re-entry: gap recovery fires while the old walk is still mid-flight.
@@ -1409,16 +1409,16 @@ func TestGapRecoveryResetsInFlightCatchUp(t *testing.T) {
 	// would never anchor the new root, then clear the flag as if done,
 	// and the stamped-forward boundary would certify the reply covered.
 	imp.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.NoError(err)
 	imp.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
 	for range 8 {
-		_, err = imp.Import(context.Background(), opts)
+		_, err = imp.Import(t.Context(), opts)
 		require.NoError(err)
 	}
 
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "G05:"+gapReply).Scan(&n))
 	require.Equal(1, n, "gap recovery must re-pin an in-flight catch-up walk so absence-era replies to post-pin roots are anchored")
 }
@@ -1443,7 +1443,7 @@ func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
 	imp.checkpointMinInterval = 0
 
 	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
@@ -1454,7 +1454,7 @@ func TestFileWithoutPermalinkKeepsPendingMarker(t *testing.T) {
 
 	// And the backfill can pay it.
 	opts.NoMedia = false
-	sum, err := imp.BackfillMedia(context.Background(), opts)
+	sum, err := imp.BackfillMedia(t.Context(), opts)
 	require.NoError(err)
 	require.Equal(1, sum.AttachmentsDownloaded)
 }
@@ -1481,7 +1481,7 @@ func TestCatchUpDebtNotStarvedBySaturatedWindows(t *testing.T) {
 
 	noThreads := opts
 	noThreads.NoThreads = true
-	_, err := imp.Import(context.Background(), noThreads)
+	_, err := imp.Import(t.Context(), noThreads)
 	require.NoError(err)
 
 	// Top-level traffic saturates the --limit budget EVERY run. Catch-up
@@ -1498,13 +1498,13 @@ func TestCatchUpDebtNotStarvedBySaturatedWindows(t *testing.T) {
 		f.mu.Unlock()
 		warp := time.Duration(k) * time.Minute
 		imp.now = func() time.Time { return time.Now().Add(warp) }
-		_, err = imp.Import(context.Background(), limited)
+		_, err = imp.Import(t.Context(), limited)
 		require.NoError(err)
 	}
 
 	for i := range 3 {
 		var n int
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C70:"+ts(i+1)).Scan(&n))
 		require.Equal(1, n, "catch-up debt must converge even when windows saturate the budget (reply %d)", i)
 	}
@@ -1530,11 +1530,11 @@ func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
 	f.mu.Lock()
 	f.onHistory = func(channelID string) {
 		if channelID == "D01" {
-			_ = dropReactionsTable(st.DB())
+			_ = dropReactionsTable(t.Context(), st.DB())
 		}
 	}
 	f.mu.Unlock()
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(err, "the store failure at the last conversation is fatal")
 	state := requireResumeState(t, imp, sum.SourceID)
 	require.True(state.EnsureConv("C01").Done, "the first conversation's walk completed")
@@ -1553,10 +1553,10 @@ func TestCrashBeforeSweepStampsCoverage(t *testing.T) {
 	require.NoError(st.InitSchema())
 
 	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+intervalReply).Scan(&n))
 	require.Equal(1, n, "a reply created between a crash-before-sweep and the restart must not fall below the boundary")
 }
@@ -1590,14 +1590,14 @@ func TestLegacyStampLessStateTriggersCatchUp(t *testing.T) {
 	require.NoError(st.CompleteSync(runA, mustMarshal(t, legacy)))
 
 	imp.now = func() time.Time { return time.Now().Add(31 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	imp.now = func() time.Time { return time.Now().Add(32 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+legacyReply).Scan(&n))
 	require.Equal(1, n, "a stamp-less legacy state must recover via the conservative catch-up walk, not a Cursor-guessed boundary")
 }
@@ -1610,7 +1610,7 @@ func TestMaintenanceRepairsReplyEdits(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A REPLY is edited at the source. Plain runs ignore post-capture
@@ -1620,12 +1620,12 @@ func TestMaintenanceRepairsReplyEdits(t *testing.T) {
 	f.conv("C09").findRoot(rootTS).Replies[0].Text = "ancient reply (stealth edit)"
 	f.mu.Unlock()
 
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	replyID := "C09:" + f.conv("C09").findRoot(rootTS).Replies[0].TS
 	readBody := func() string {
 		var body string
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT mb.body_text FROM message_bodies mb
 			JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), replyID).Scan(&body))
 		return body
@@ -1634,7 +1634,7 @@ func TestMaintenanceRepairsReplyEdits(t *testing.T) {
 
 	maint := opts
 	maint.Maintenance = true
-	_, err = imp.Import(context.Background(), maint)
+	_, err = imp.Import(t.Context(), maint)
 	require.NoError(err)
 	assert.Equal("ancient reply (stealth edit)", readBody(), "--maintenance must repair reply edits, not only top-level messages")
 }
@@ -1647,7 +1647,7 @@ func TestMaintenanceNoThreadsRepairsOnlyTopLevelMessages(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	f.mu.Lock()
@@ -1658,12 +1658,12 @@ func TestMaintenanceNoThreadsRepairsOnlyTopLevelMessages(t *testing.T) {
 	combined := opts
 	combined.Maintenance = true
 	combined.NoThreads = true
-	_, err = imp.Import(context.Background(), combined)
+	_, err = imp.Import(t.Context(), combined)
 	require.NoError(err)
 
 	readBody := func(sourceMessageID string) string {
 		var body string
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT mb.body_text FROM message_bodies mb
 			JOIN messages m ON m.id = mb.message_id
 			WHERE m.source_message_id = ?`), sourceMessageID).Scan(&body))
@@ -1695,7 +1695,7 @@ func TestFirstReplyToUnthreadedMessageRecoveredByCatchUp(t *testing.T) {
 
 	noThreads := opts
 	noThreads.NoThreads = true
-	_, err := imp.Import(context.Background(), noThreads)
+	_, err := imp.Import(t.Context(), noThreads)
 	require.NoError(err)
 
 	// The old message gains its FIRST reply, and further --no-threads
@@ -1709,15 +1709,15 @@ func TestFirstReplyToUnthreadedMessageRecoveredByCatchUp(t *testing.T) {
 	f.conv("C60").findRoot(ts(0)).Replies = []fakeMsg{{TS: firstReply, ThreadTS: ts(0), User: "UME", Text: "first ever reply"}}
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
-	_, err = imp.Import(context.Background(), noThreads)
+	_, err = imp.Import(t.Context(), noThreads)
 	require.NoError(err)
 
 	imp.now = func() time.Time { return time.Now().Add(21 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var linked int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages child
 		JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
@@ -1733,7 +1733,7 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	before := requireResumeState(t, imp, sum.SourceID)
 
@@ -1751,13 +1751,13 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 	f.conv("D01").Msgs = append(f.conv("D01").Msgs, fakeMsg{TS: badMsg, User: "UALICE", Text: "plain"})
 	f.onHistory = func(channelID string) {
 		if channelID == "D01" {
-			_ = dropReactionsTable(st.DB())
+			_ = dropReactionsTable(t.Context(), st.DB())
 		}
 	}
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "the reactions write failure is fatal")
 
 	after := requireResumeState(t, imp, sum.SourceID)
@@ -1768,11 +1768,11 @@ func TestFailedRunPersistsFinalState(t *testing.T) {
 	f.onHistory = nil
 	f.mu.Unlock()
 	require.NoError(st.InitSchema())
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	require.Equal(distinct, total)
 }
 
@@ -1791,7 +1791,7 @@ func TestInitialWalkPinPersistsAcrossResumedRuns(t *testing.T) {
 	// adopted floor forever.
 	limited := opts
 	limited.Limit = 2
-	_, err := imp.Import(context.Background(), limited)
+	_, err := imp.Import(t.Context(), limited)
 	require.NoError(err)
 
 	midBackfillReply := tsFresh(0)
@@ -1804,15 +1804,15 @@ func TestInitialWalkPinPersistsAcrossResumedRuns(t *testing.T) {
 	// adopted boundary (minus the overlap margin) above the reply.
 	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
 	for range 8 {
-		_, err = imp.Import(context.Background(), limited)
+		_, err = imp.Import(t.Context(), limited)
 		require.NoError(err)
 	}
 	imp.now = func() time.Time { return time.Now().Add(21 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+midBackfillReply).Scan(&n))
 	require.Equal(1, n, "a reply created mid-backfill must stay above the adopted sweep boundary (original pin)")
 }
@@ -1824,7 +1824,7 @@ func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A new message arrives carrying reactions, and the reactions table is
@@ -1836,26 +1836,26 @@ func TestStoreWriteFailureHoldsCursorAndResumes(t *testing.T) {
 	f.conv("C01").Msgs = append(f.conv("C01").Msgs, fakeMsg{TS: fresh, User: "UALICE", Text: "reacted",
 		Reactions: []map[string]any{{"name": "tada", "users": []string{"UME", "UBOB"}, "count": 2}}})
 	f.mu.Unlock()
-	err = dropReactionsTable(st.DB())
+	err = dropReactionsTable(t.Context(), st.DB())
 	require.NoError(err)
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "a failed auxiliary store write must fail the run, not count and continue")
 
 	// The database heals (InitSchema is idempotent); the held cursor makes
 	// the next run refetch the message and persist everything exactly once.
 	require.NoError(st.InitSchema())
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var reactions int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM reactions r JOIN messages m ON m.id = r.message_id
 		WHERE m.source_message_id = ?`), "C01:"+fresh).Scan(&reactions))
 	require.Equal(2, reactions, "the held cursor must let the healed run recover the lost rows")
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	require.Equal(distinct, total)
 }
 
@@ -1866,7 +1866,7 @@ func TestAttachmentRowFailureFailsRun(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A new message carries a file, and the attachment rows cannot be
@@ -1883,14 +1883,14 @@ func TestAttachmentRowFailureFailsRun(t *testing.T) {
 	releaseFailure := installAttachmentInsertFailure(t, st)
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "a failed attachment row write must fail the run — the marker was never durable")
 
 	releaseFailure()
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var marker int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM attachments WHERE source_attachment_id = ?`), "slack:F_HELD").Scan(&marker))
 	require.Equal(1, marker, "the healed run must persist the (pending) attachment row exactly once")
 }
@@ -1902,33 +1902,33 @@ func installAttachmentInsertFailure(t *testing.T, st *store.Store) func() {
 	require := require.New(t)
 
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_slack_attachment_insert()
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_slack_attachment_insert()
 			RETURNS trigger LANGUAGE plpgsql AS $$
 			BEGIN
 				RAISE EXCEPTION 'forced attachment insert failure';
 			END;
 			$$`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_slack_attachment_insert
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_slack_attachment_insert
 			BEFORE INSERT ON attachments
 			FOR EACH ROW EXECUTE FUNCTION fail_slack_attachment_insert()`)
 		require.NoError(err)
 		return func() {
-			_, err := st.DB().Exec(`DROP TRIGGER IF EXISTS fail_slack_attachment_insert ON attachments`)
+			_, err := st.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS fail_slack_attachment_insert ON attachments`)
 			require.NoError(err)
-			_, err = st.DB().Exec(`DROP FUNCTION IF EXISTS fail_slack_attachment_insert()`)
+			_, err = st.DB().ExecContext(t.Context(), `DROP FUNCTION IF EXISTS fail_slack_attachment_insert()`)
 			require.NoError(err)
 		}
 	}
 
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_slack_attachment_insert
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_slack_attachment_insert
 		BEFORE INSERT ON attachments
 		FOR EACH ROW BEGIN
 			SELECT RAISE(ABORT, 'forced attachment insert failure');
 		END`)
 	require.NoError(err)
 	return func() {
-		_, err := st.DB().Exec(`DROP TRIGGER IF EXISTS fail_slack_attachment_insert`)
+		_, err := st.DB().ExecContext(t.Context(), `DROP TRIGGER IF EXISTS fail_slack_attachment_insert`)
 		require.NoError(err)
 	}
 }
@@ -1943,11 +1943,11 @@ func TestMembershipFetchFailureMarksRunPartial(t *testing.T) {
 
 	// Membership failures stay ISOLATED (message archiving proceeds) but
 	// honest: the run reports partial instead of success.
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(err, "a members-listing outage is a fetch failure; the run must not report success")
 	require.Positive(sum.FetchErrors)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+ts(0)).Scan(&n))
 	require.Equal(1, n, "isolation: the channel's messages still archive despite the membership failure")
 }
@@ -1961,12 +1961,12 @@ func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T)
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(err, "an MPIM membership outage must leave the run partial")
 	require.Positive(sum.FetchErrors)
 
 	var messages int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE c.source_conversation_id = ?`), "G01").Scan(&messages))
@@ -1977,11 +1977,11 @@ func TestMPIMMembershipFailureHoldsHistoryUntilRecipientsAvailable(t *testing.T)
 	assert.Empty(state.Cursor)
 
 	f.failMembers["G01"] = false
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var recipients int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr
 		JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_message_id = ? AND mr.recipient_type = 'to'`),
@@ -1997,7 +1997,7 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A swept thread grows a 30-reply tail. A limited sweep must not fetch
@@ -2015,29 +2015,35 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
 	limited := opts
 	limited.Limit = 4
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.NoError(err)
 	// Count just the tail replies present after one limited run.
+	tailIDs := make([]string, len(tail))
+	for i, ts := range tail {
+		tailIDs[i] = "C09:" + ts
+	}
 	tailCount := func() int {
-		n := 0
-		for _, ts := range tail {
-			var c int
-			require.NoError(st.DB().QueryRow(st.Rebind(
-				`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+ts).Scan(&c))
-			n += c
-		}
-		return n
-	}
-	assert.LessOrEqual(tailCount(), 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
-
-	for range 15 {
-		_, err = imp.Import(context.Background(), limited)
+		archived, err := st.ArchivedSourceMessageIDs(t.Context(), sum.SourceID, tailIDs)
 		require.NoError(err)
+		return len(archived)
 	}
-	assert.Equal(30, tailCount(), "repeated limited runs must drain the whole tail")
+	count := tailCount()
+	assert.LessOrEqual(count, 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
+
+	runs := 0
+	for ; runs < 15 && count < 30; runs++ {
+		_, err = imp.Import(t.Context(), limited)
+		require.NoError(err)
+		count = tailCount()
+	}
+	require.Equal(30, count, "the tail must drain within 15 further limited runs")
+	t.Logf("tail drained in %d limited runs after the first", runs)
+	_, err = imp.Import(t.Context(), limited)
+	require.NoError(err)
+	assert.Equal(30, tailCount(), "a further limited import keeps the tail complete")
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total)
 }
 
@@ -2049,14 +2055,14 @@ func TestRepairCompletesDespiteDepartedConversations(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A repair session starts and partially walks #general…
 	full := opts
 	full.Full = true
 	full.Limit = 3
-	_, err = imp.Import(context.Background(), full)
+	_, err = imp.Import(t.Context(), full)
 	require.NoError(err)
 
 	// …then #general is excluded from scope. Completion is a question
@@ -2066,7 +2072,7 @@ func TestRepairCompletesDespiteDepartedConversations(t *testing.T) {
 	excluded := opts
 	excluded.ExcludeChannels = []string{"general"}
 	for range 3 {
-		_, err = imp.Import(context.Background(), excluded)
+		_, err = imp.Import(t.Context(), excluded)
 		require.NoError(err)
 	}
 
@@ -2084,7 +2090,7 @@ func TestLimitOneSweepConverges(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	lateReply := tsFresh(0)
@@ -2100,11 +2106,11 @@ func TestLimitOneSweepConverges(t *testing.T) {
 	limited := opts
 	limited.Limit = 1
 	for range 3 {
-		_, err = imp.Import(context.Background(), limited)
+		_, err = imp.Import(t.Context(), limited)
 		require.NoError(err)
 	}
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Equal(1, n, "--limit 1 sweeps must still make durable progress every run")
 }
@@ -2117,11 +2123,11 @@ func TestFullRepairSurvivesInterruption(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// An old message is edited at the source; --full is the repair path.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	historyCalls := 0
 	f.mu.Lock()
@@ -2146,17 +2152,17 @@ func TestFullRepairSurvivesInterruption(t *testing.T) {
 	f.mu.Unlock()
 
 	// A PLAIN run continues (and completes) the repair session.
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&body))
 	assert.Equal("hello 0 (repaired)", body, "an interrupted --full must be finished by later runs, not abandoned")
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total)
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
@@ -2173,7 +2179,7 @@ func TestScopedFullRepairConverges(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The OLDEST message is edited: a --full that restarts at the newest
@@ -2186,12 +2192,12 @@ func TestScopedFullRepairConverges(t *testing.T) {
 	full.Full = true
 	full.Limit = 3
 	for range 12 {
-		_, err = imp.Import(context.Background(), full)
+		_, err = imp.Import(t.Context(), full)
 		require.NoError(err)
 	}
 
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(0)).Scan(&body))
 	assert.Equal("hello 0 (deep repair)", body, "repeated --full --limit runs must converge on the repair, not restart it")
@@ -2209,7 +2215,7 @@ func TestSweepProcessesUnarchivedParent(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A brand-new root gets an instant reply, and the window walk that
@@ -2225,11 +2231,11 @@ func TestSweepProcessesUnarchivedParent(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "the failed window walk keeps the run partial")
 
 	var linked int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages child
 		JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
@@ -2244,7 +2250,7 @@ func TestSoloSweepEntryReanchorsToTrueRoot(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A brand-new root gets an instant reply, the window walk that would
@@ -2263,11 +2269,11 @@ func TestSoloSweepEntryReanchorsToTrueRoot(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "the failed window walk keeps the run partial")
 
 	var linked int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages child
 		JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_message_id = ? AND parent.source_message_id = ?`),
@@ -2283,7 +2289,7 @@ func TestSweepFetchDoesNotRefreshArchivedParent(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A reaction lands on the archived root, then a late reply arrives.
@@ -2298,15 +2304,15 @@ func TestSweepFetchDoesNotRefreshArchivedParent(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	require.Equal(1, n, "the late reply itself is archived")
 	var reactions int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM reactions r JOIN messages m ON m.id = r.message_id
 		WHERE m.source_message_id = ?`), "C09:"+rootTS).Scan(&reactions))
 	assert.Zero(reactions, "a sweep fetch must not refresh the archived parent's reactions outside --maintenance")
@@ -2320,7 +2326,7 @@ func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The day gains a reachable reply and — on a DIFFERENT thread — one
@@ -2337,13 +2343,13 @@ func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.Error(err, "a truncated sweep day must fail the run loudly")
 	assert.Positive(sum.FetchErrors)
 	// The reachable results (the day's earliest, ascending) were archived,
 	// and the unreachable tail became durable catch-up debt.
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+reachable).Scan(&n))
 	assert.Equal(1, n)
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
@@ -2356,17 +2362,17 @@ func TestSweepTruncatedDayFailsOnceAndConvergesViaCatchUp(t *testing.T) {
 	// reply search could never serve. The tool converges with NO manual
 	// --full.
 	imp.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err, "the converted day must not fail again on its overlap retry")
 	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err, "past the truncated day the sweep must converge without --full")
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+unreachable).Scan(&n))
 	assert.Equal(1, n, "the catch-up walk must recover the reply beyond the search ceiling")
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total)
 }
 
@@ -2378,7 +2384,7 @@ func TestSweepLimitOneConvergesPastTruncatedDayOverlap(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	unreachable := tsFresh(5)
@@ -2399,7 +2405,7 @@ func TestSweepLimitOneConvergesPastTruncatedDayOverlap(t *testing.T) {
 	limited := opts
 	limited.Limit = 1
 	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.Error(err, "the first truncated search must remain caller-visible")
 
 	dayStart := time.Date(
@@ -2411,7 +2417,7 @@ func TestSweepLimitOneConvergesPastTruncatedDayOverlap(t *testing.T) {
 	nextDay := dayStart.AddDate(0, 0, 1)
 	firstRetryNow := nextDay.Add(time.Hour)
 	imp.now = func() time.Time { return firstRetryNow }
-	_, err = imp.Import(context.Background(), limited)
+	_, err = imp.Import(t.Context(), limited)
 	require.NoError(err, "overlap retries must not re-report a truncation already converted to catch-up debt")
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
@@ -2427,11 +2433,11 @@ func TestSweepLimitOneConvergesPastTruncatedDayOverlap(t *testing.T) {
 	for run := 2; run <= 10; run++ {
 		runNow := nextDay.Add(time.Duration(run) * time.Hour)
 		imp.now = func() time.Time { return runNow }
-		_, err = imp.Import(context.Background(), limited)
+		_, err = imp.Import(t.Context(), limited)
 		require.NoError(err, "overlap retries must not re-report a truncation already converted to catch-up debt")
 
 		var archived int
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+unreachable).Scan(&archived))
 		if archived == 1 {
 			converged = true
@@ -2455,7 +2461,7 @@ func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A repair session overlaps a persistently truncated day. The session
@@ -2476,7 +2482,7 @@ func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
 	full := opts
 	full.Full = true
 	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
-	_, err = imp.Import(context.Background(), full)
+	_, err = imp.Import(t.Context(), full)
 	require.Error(err, "the truncated day fails the repair run loudly")
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
@@ -2485,15 +2491,15 @@ func TestTruncatedSweepDuringRepairUnwedgesSession(t *testing.T) {
 	// Plain runs continue the session. Once the truncated day is behind
 	// the boundary, a clean pass pays the catch-up debt and closes it.
 	imp.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
-	_, _ = imp.Import(context.Background(), opts)
+	_, _ = imp.Import(t.Context(), opts)
 	imp.now = func() time.Time { return time.Now().Add(26 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err, "the session must converge; a permanently re-truncating sweep wedges RepairPending forever")
 	state := requireResumeState(t, imp, src.ID)
 	assert.False(state.RepairPending, "the clean pass closes the repair session")
 	assert.False(state.EnsureConv("C09").ThreadsPending)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+unreachable).Scan(&n))
 	assert.Equal(1, n)
 }
@@ -2511,7 +2517,7 @@ func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// While #archive is excluded, a reply lands on its ancient thread, and
@@ -2526,14 +2532,14 @@ func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
 	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
 	excluded := opts
 	excluded.ExcludeChannels = []string{"archive"}
-	_, err = imp.Import(context.Background(), excluded)
+	_, err = imp.Import(t.Context(), excluded)
 	require.NoError(err)
 
 	state := requireResumeState(t, imp, sum.SourceID)
 	require.True(tsLess(gapReply, state.SweepWatermark),
 		"test setup: the watermark must have certified past the excluded channel's reply")
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+gapReply).Scan(&n))
 	require.Zero(n, "test setup: the reply must not be archived while its channel is excluded")
 
@@ -2541,9 +2547,9 @@ func TestSweepRecoversGapForReIncludedChannel(t *testing.T) {
 	// channel-scoped gap sweep must recover the reply that the workspace
 	// sweep — floored at the watermark — will never revisit.
 	imp.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+gapReply).Scan(&n))
 	assert.Equal(t, 1, n, "a reply created while its channel was excluded must be recovered on re-entry")
 }
@@ -2579,12 +2585,12 @@ func TestStandingLimitConvergesThroughThreadDebt(t *testing.T) {
 	limited := opts
 	limited.Limit = 4
 	for range 12 {
-		_, err := imp.Import(context.Background(), limited)
+		_, err := imp.Import(t.Context(), limited)
 		require.NoError(err)
 	}
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(18, total, "repeated limited runs must drain the whole archive, thread included")
 	assert.Equal(distinct, total)
 }
@@ -2614,10 +2620,10 @@ func TestImportLimitBoundsThreadRepliesThenConverges(t *testing.T) {
 	// One discovered thread must stay within the reply budget.
 	limited := opts
 	limited.Limit = 3
-	_, err := imp.Import(context.Background(), limited)
+	_, err := imp.Import(t.Context(), limited)
 	require.NoError(err)
 	var partial int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&partial))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&partial))
 	assert.Positive(partial)
 	assert.LessOrEqual(partial, 4, "--limit 3 must bound thread replies, not just top-level history")
 
@@ -2634,12 +2640,12 @@ func TestImportLimitBoundsThreadRepliesThenConverges(t *testing.T) {
 	// drain resumed from the per-thread drained-to ts) — no unlimited run
 	// required, no stall.
 	for range 12 {
-		_, err := imp.Import(context.Background(), limited)
+		_, err := imp.Import(t.Context(), limited)
 		require.NoError(err)
 	}
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(18, total, "repeated limited runs must drain the whole archive, thread included")
 	assert.Equal(distinct, total)
 }
@@ -2662,7 +2668,7 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// While #legacy is excluded, a NEW thread starts there — root AND reply
@@ -2678,7 +2684,7 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
 	excluded := opts
 	excluded.ExcludeChannels = []string{"legacy"}
-	_, err = imp.Import(context.Background(), excluded)
+	_, err = imp.Import(t.Context(), excluded)
 	require.NoError(err)
 
 	state := requireResumeState(t, imp, sum.SourceID)
@@ -2688,14 +2694,14 @@ func TestGapCatchUpCoversPostBackfillRoots(t *testing.T) {
 	// Re-entry flags the gap as thread debt; the following run's catch-up
 	// walk must cover roots created AFTER the original backfill pin.
 	imp.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	imp.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "G05:"+gapReply).Scan(&n))
 	require.Equal(1, n, "gap recovery must anchor threads rooted after the backfill pin")
 }
@@ -2724,7 +2730,7 @@ func TestStandingLimitPaysCatchUpDebt(t *testing.T) {
 	// A --no-threads backfill leaves conversation-level thread debt…
 	noThreads := opts
 	noThreads.NoThreads = true
-	_, err := imp.Import(context.Background(), noThreads)
+	_, err := imp.Import(t.Context(), noThreads)
 	require.NoError(err)
 
 	// …which repeated LIMITED threaded runs must pay by themselves: the
@@ -2734,12 +2740,12 @@ func TestStandingLimitPaysCatchUpDebt(t *testing.T) {
 	limited := opts
 	limited.Limit = 4
 	for range 14 {
-		_, err = imp.Import(context.Background(), limited)
+		_, err = imp.Import(t.Context(), limited)
 		require.NoError(err)
 	}
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(17, total, "limited runs must pay --no-threads debt without an unlimited run")
 	assert.Equal(distinct, total)
 
@@ -2762,14 +2768,14 @@ func TestCatchUpClearsDebtForGoneConversation(t *testing.T) {
 	// future workspace sync into partial failure, permanently.
 	noThreads := opts
 	noThreads.NoThreads = true
-	_, err := imp.Import(context.Background(), noThreads)
+	_, err := imp.Import(t.Context(), noThreads)
 	require.NoError(err)
 
 	f.mu.Lock()
 	f.handleGhost(f.conv("C01"))
 	f.mu.Unlock()
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err, "a gone conversation with catch-up debt must not fail the run")
 	assert.Zero(sum.FetchErrors)
 
@@ -2836,7 +2842,7 @@ func TestSweepSkipsNotDoneConversations(t *testing.T) {
 	st := imp.store
 
 	// C09 completes and gets a late reply; C10 never finishes backfill.
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.Error(err) // C10's history failure keeps the run partial
 	lateReply := tsFresh(0)
 	f.mu.Lock()
@@ -2844,13 +2850,13 @@ func TestSweepSkipsNotDoneConversations(t *testing.T) {
 	root.Replies = append(root.Replies, fakeMsg{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "late reply"})
 	f.mu.Unlock()
 
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err) // still partial: C10 still failing
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	assert.Equal(1, n, "done conversations are swept even while others are stuck")
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C10:"+stuckReply).Scan(&n))
 	assert.Zero(n, "not-done conversations are owned by backfill, never the sweep")
 
@@ -2858,9 +2864,9 @@ func TestSweepSkipsNotDoneConversations(t *testing.T) {
 	f.mu.Lock()
 	delete(f.failHistory, "C10")
 	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C10:"+stuckReply).Scan(&n))
 	assert.Equal(1, n)
 }
@@ -2876,13 +2882,13 @@ func TestImportLimitBoundsProcessedMessages(t *testing.T) {
 	limited := opts
 	limited.Limit = 1
 	limited.NoThreads = true
-	_, err := imp.Import(context.Background(), limited)
+	_, err := imp.Import(t.Context(), limited)
 	require.NoError(err)
 
 	// Page requests are sized to the remaining budget, so each conversation
 	// processes at most its limit — not a full server page.
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	assert.LessOrEqual(total, 4, "--limit 1 must not fetch whole pages per conversation")
 	assert.Positive(total)
 }
@@ -2894,7 +2900,7 @@ func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A 9-message backlog arriving "now" against a standing --limit 2:
@@ -2914,12 +2920,12 @@ func TestImportLimitedRunsDrainIncrementalBacklog(t *testing.T) {
 	limited.Limit = 2
 	limited.NoThreads = true
 	for range 8 {
-		_, err = imp.Import(context.Background(), limited)
+		_, err = imp.Import(t.Context(), limited)
 		require.NoError(err)
 	}
 	for i := range 9 {
 		var n int
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C01:"+backlog[i]).Scan(&n))
 		assert.Equal(t, 1, n, "backlog message %d must be drained by repeated limited runs", i)
 	}
@@ -2937,7 +2943,7 @@ func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// First reply arrives long after archiving. The reply sweep must
@@ -2948,10 +2954,10 @@ func TestImportDiscoversFirstReplyToOlderMessage(t *testing.T) {
 	root.Replies = []fakeMsg{{TS: lateReply, ThreadTS: rootTS, User: "UME", Text: "first ever reply"}}
 	f.mu.Unlock()
 
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+lateReply).Scan(&n))
 	assert.Equal(t, 1, n, "a first reply to an older message must be swept in without --full")
 }
@@ -2964,7 +2970,7 @@ func TestMaintenanceRescanIsExplicit(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// Edit the NEWEST archived message: archives ignore post-capture
@@ -2976,11 +2982,11 @@ func TestMaintenanceRescanIsExplicit(t *testing.T) {
 	f.conv("C01").Msgs[last].Text = "hello 7 (stealth edit)"
 	f.mu.Unlock()
 
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var body string
 	readBody := func() string {
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT mb.body_text FROM message_bodies mb
 			JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), "C01:"+ts(7)).Scan(&body))
 		return body
@@ -2989,7 +2995,7 @@ func TestMaintenanceRescanIsExplicit(t *testing.T) {
 
 	maint := opts
 	maint.Maintenance = true
-	_, err = imp.Import(context.Background(), maint)
+	_, err = imp.Import(t.Context(), maint)
 	require.NoError(err)
 	assert.Equal("hello 7 (stealth edit)", readBody(), "--maintenance repairs edits")
 }
@@ -3008,13 +3014,13 @@ func TestImportGoneConversationIsSkippedNotFatal(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err, "a permanently-gone conversation must not fail the run")
 	assert.Zero(sum.FetchErrors)
 
 	// Everything else archived normally.
 	var total int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	assert.Equal(totalWorkspaceMessages, total)
 }
 
@@ -3027,18 +3033,18 @@ func TestImportChannelFilters(t *testing.T) {
 	st := imp.store
 
 	opts.ExcludeChannels = []string{"general"}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversations WHERE source_conversation_id = ?`), "C01").Scan(&n))
 	assert.Zero(n, "excluded channel must not be archived")
 	// Name filters never apply to DMs or group DMs.
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversations WHERE source_conversation_id = ?`), "D01").Scan(&n))
 	assert.Equal(1, n)
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversations WHERE source_conversation_id = ?`), "G01").Scan(&n))
 	assert.Equal(1, n)
 }
@@ -3062,7 +3068,7 @@ func TestSweepRecoversGapForReEnabledDM(t *testing.T) {
 			Msgs: []fakeMsg{{TS: ts(1), User: "UME", Text: "keep hi"}}},
 	}
 	imp, opts := testImporter(t, f)
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	gapReply := tsFresh(0)
@@ -3074,24 +3080,24 @@ func TestSweepRecoversGapForReEnabledDM(t *testing.T) {
 	imp.now = func() time.Time { return time.Now().Add(time.Hour) }
 	excluded := opts
 	excluded.ExcludeDMs = true
-	_, err = imp.Import(context.Background(), excluded)
+	_, err = imp.Import(t.Context(), excluded)
 	require.NoError(err)
 	state := requireResumeState(t, imp, sum.SourceID)
 	require.True(tsLess(gapReply, state.SweepWatermark),
 		"test setup: the watermark must have certified past the excluded DM reply")
 	var n int
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "D09:"+gapReply).Scan(&n))
 	require.Zero(n, "the reply must not be archived while its DM is excluded")
 
 	// The first run's sweep flags the gap; the next run performs the catch-up walk.
 	imp.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	imp.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "D09:"+gapReply).Scan(&n))
 	assert.Equal(1, n, "a reply created while a DM was excluded must be recovered on re-entry")
 }
@@ -3104,22 +3110,22 @@ func TestFullRepairWithExcludedDMsCoversSelectedConversations(t *testing.T) {
 	historyCalls := map[string]int{}
 	f.onHistory = func(channelID string) { historyCalls[channelID]++ }
 	imp, opts := testImporter(t, f)
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var beforeMessages int
-	require.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&beforeMessages))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&beforeMessages))
 
 	full := opts
 	full.Full = true
 	full.ExcludeDMs = true
 	historyCalls["D01"] = 0
 
-	sum, err := imp.Import(context.Background(), full)
+	sum, err := imp.Import(t.Context(), full)
 	require.NoError(err)
 	assert.Equal(3, sum.ConversationsProcessed)
 	assert.Zero(historyCalls["D01"])
 	var afterExcludedMessages int
-	require.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&afterExcludedMessages))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&afterExcludedMessages))
 	assert.Equal(beforeMessages, afterExcludedMessages, "full repair must retain archived messages for an excluded DM")
 
 	state := requireResumeState(t, imp, sum.SourceID)
@@ -3129,12 +3135,12 @@ func TestFullRepairWithExcludedDMsCoversSelectedConversations(t *testing.T) {
 		assert.True(state.Conversations[id].Done, id)
 	}
 
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	state = requireResumeState(t, imp, sum.SourceID)
 	assert.Contains(state.Conversations, "D01")
 	var afterReentryMessages int
-	require.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&afterReentryMessages))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&afterReentryMessages))
 	assert.Equal(beforeMessages, afterReentryMessages, "re-entry must not duplicate archived messages")
 }
 
@@ -3174,7 +3180,7 @@ func TestTombstoneNeverOverwritesArchivedOriginal(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The root is deleted at the source. Slack keeps serving the row as a
@@ -3190,14 +3196,14 @@ func TestTombstoneNeverOverwritesArchivedOriginal(t *testing.T) {
 		var body string
 		var msgID int64
 		var deletedAt sql.NullTime
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT m.id, mb.body_text, m.deleted_from_source_at FROM messages m
 			JOIN message_bodies mb ON mb.message_id = m.id
 			WHERE m.source_message_id = ?`), rootID).Scan(&msgID, &body, &deletedAt))
 		assert.Equal("the original words", body, "%s must not overwrite the archived body with the tombstone", path)
 		assert.True(deletedAt.Valid, "%s must mark the archived message deleted at Slack", path)
 		var reactions int
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COUNT(*) FROM reactions WHERE message_id = ?`), msgID).Scan(&reactions))
 		assert.Equal(1, reactions, "%s must not wipe archived reactions with the tombstone's empty set", path)
 		raw, err := st.GetMessageRaw(msgID)
@@ -3207,21 +3213,21 @@ func TestTombstoneNeverOverwritesArchivedOriginal(t *testing.T) {
 
 	// Incremental: the window's clock-skew overlap re-serves the root.
 	imp.now = func() time.Time { return time.Now().Add(1 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	checkIntact("incremental overlap")
 
 	full := opts
 	full.Full = true
 	imp.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
-	_, err = imp.Import(context.Background(), full)
+	_, err = imp.Import(t.Context(), full)
 	require.NoError(err)
 	checkIntact("--full")
 
 	maint := opts
 	maint.Maintenance = true
 	imp.now = func() time.Time { return time.Now().Add(3 * time.Minute) }
-	_, err = imp.Import(context.Background(), maint)
+	_, err = imp.Import(t.Context(), maint)
 	require.NoError(err)
 	checkIntact("--maintenance")
 }
@@ -3239,29 +3245,29 @@ func TestTombstonePlaceholderKeepsOrphanedReplies(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var body string
 	var deletedAt sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text, m.deleted_from_source_at FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.source_message_id = ?`), "C80:"+rootTS).Scan(&body, &deletedAt))
 	assert.Equal("This message was deleted.", body)
 	assert.True(deletedAt.Valid, "a tombstone placeholder must be excluded from active-message queries")
 	var linked int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages
 		WHERE source_message_id = ? AND reply_to_message_id IS NOT NULL`), "C80:"+replyTS).Scan(&linked))
 	assert.Equal(1, linked, "the orphaned reply must link to the tombstone placeholder")
 
 	// Re-reads of the placeholder skip like any other archived tombstone.
 	imp.now = func() time.Time { return time.Now().Add(1 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C80:"+rootTS).Scan(&n))
 	assert.Equal(1, n)
 }
@@ -3278,14 +3284,14 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	// Break the final auxiliary snapshot write. The message row and body have
 	// already been upserted, but the tombstone is not complete and must remain
 	// eligible for retry.
-	err := dropReactionsTable(st.DB())
+	err := dropReactionsTable(t.Context(), st.DB())
 	require.NoError(err)
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "the auxiliary store failure must abort the run")
 
 	rootID := "C80:" + rootTS
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), rootID).Scan(&messageID))
 	_, err = st.GetMessageRaw(messageID)
 	require.Error(err, "raw JSON is the completion marker and must be written only after fatal auxiliary snapshots")
@@ -3294,7 +3300,7 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	// without the completion marker must be processed rather than mistaken
 	// for a previously archived original.
 	require.NoError(st.InitSchema())
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Positive(sum.MessagesProcessed)
 
@@ -3302,7 +3308,7 @@ func TestTombstonePlaceholderRetriesIncompletePersistence(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(raw), `"subtype":"tombstone"`)
 	var deletedAt sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_from_source_at FROM messages WHERE id = ?`), messageID).Scan(&deletedAt))
 	assert.True(deletedAt.Valid)
 }
@@ -3314,17 +3320,17 @@ func TestMessageReappearanceClearsSlackTombstone(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	rootID := "C80:" + rootTS
 	require.NoError(st.MarkMessageDeleted(sum.SourceID, rootID))
 
 	imp.now = func() time.Time { return time.Now().Add(time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var deletedAt sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), rootID).Scan(&deletedAt))
 	assert.False(t, deletedAt.Valid, "a live message re-served by Slack must clear its stale tombstone")
 }
@@ -3360,7 +3366,7 @@ func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
 	assert.True(archived,
 		"row plus raw archive is a complete parent snapshot")
 
-	_, err = st.DB().Exec(`DROP TABLE message_raw`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE message_raw`)
 	require.NoError(err)
 	_, err = imp.parentArchived(t.Context(), src.ID, "C80", "123.000100")
 	require.Error(err, "a failed completion probe must hold thread debt instead of refreshing the parent")
@@ -3374,7 +3380,7 @@ func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// Two replies land; R1 is indexed LATE (out of order), so the first
@@ -3391,7 +3397,7 @@ func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
 	f.failReplies[rootTS] = true
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "the parked drain is a fetch failure; the run must not report success")
 
 	// R1 surfaces in the next sweep's overlap pass while the entry is
@@ -3400,7 +3406,7 @@ func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
 	delete(f.searchHidden, r1)
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err)
 
 	// By now the certified boundary is far above R1 — no future sweep will
@@ -3409,14 +3415,14 @@ func TestLateIndexedReplyMovesParkedDrainBackward(t *testing.T) {
 	delete(f.failReplies, rootTS)
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(40 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r1).Scan(&n))
 	assert.Equal(1, n, "late-indexed reply below the parked entry's resume point must still be fetched")
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+r2).Scan(&n))
 	assert.Equal(1, n)
 }
@@ -3449,7 +3455,7 @@ func TestCatchUpFullDrainOverridesParkedTailSeed(t *testing.T) {
 	// A --no-threads era leaves the root's old replies as catch-up debt.
 	noThreads := opts
 	noThreads.NoThreads = true
-	_, err := imp.Import(context.Background(), noThreads)
+	_, err := imp.Import(t.Context(), noThreads)
 	require.NoError(err)
 
 	// A NEW reply lands; saturated threaded runs let the sweep record a
@@ -3469,19 +3475,19 @@ func TestCatchUpFullDrainOverridesParkedTailSeed(t *testing.T) {
 		imp.now = func() time.Time { return time.Now().Add(time.Duration(5+i) * time.Minute) }
 		// Partial failures are expected while the drain fetch fails; every
 		// run still persists its state (FailSyncWithCheckpoint).
-		_, _ = imp.Import(context.Background(), limited)
+		_, _ = imp.Import(t.Context(), limited)
 	}
 
 	f.mu.Lock()
 	delete(f.failReplies, rootTS)
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	var n int
 	for _, tsWant := range []string{ts(100), ts(101), r3} {
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C90:"+tsWant).Scan(&n))
 		assert.Equal(1, n, "reply %s must be archived after catch-up", tsWant)
 	}
@@ -3505,7 +3511,7 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 	now := start
 	imp.now = func() time.Time { return now }
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The server serves ONE hit per page, so a 102-hit day claims 102
@@ -3527,7 +3533,7 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 	f.mu.Unlock()
 
 	now = start.Add(5 * time.Minute)
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err, "a day the pager cannot fully consume must fail loudly, not certify past unserved hits")
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
@@ -3537,17 +3543,17 @@ func TestSweepSmallPagesBeyondWalkBoundRecordedAsDebt(t *testing.T) {
 	// The catch-up walk recovers the reply the pager could never serve;
 	// once the day is behind the boundary the sweep runs clean again.
 	now = start.Add(25 * time.Hour)
-	_, _ = imp.Import(context.Background(), opts)
+	_, _ = imp.Import(t.Context(), opts)
 	now = start.Add(26 * time.Hour)
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+beyondWalk).Scan(&n))
 	assert.Equal(1, n, "the reply beyond the 100-page walk must be recovered via catch-up")
 	var total, distinct int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
 	assert.Equal(distinct, total)
 }
 
@@ -3576,15 +3582,15 @@ func TestBackfillMediaDownloadsDespiteNoMediaConfig(t *testing.T) {
 	// honoring the flag would no-op the exact workflow the config
 	// documents (defer now, backfill later).
 	opts := ImportOptions{TeamID: "T01", UserID: "UME", NoMedia: true, AttachmentsDir: t.TempDir()}
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
-	bsum, err := imp.BackfillMedia(context.Background(), opts)
+	bsum, err := imp.BackfillMedia(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(1, bsum.AttachmentsDownloaded, "backfill-slack-media must download even when [slack].media=false shaped its options")
 	assert.Zero(bsum.AttachmentsPending)
 	var hash string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(a.content_hash,'') FROM attachments a
 		WHERE a.source_attachment_id = ?`), "slack:F_CFGOFF").Scan(&hash))
 	assert.NotEmpty(hash)
@@ -3599,7 +3605,7 @@ func TestSweepPagesServeOneSnapshotDespiteMidWalkDeletion(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// Three fresh replies on three separate threads, one search page each.
@@ -3628,13 +3634,13 @@ func TestSweepPagesServeOneSnapshotDespiteMidWalkDeletion(t *testing.T) {
 	f.mu.Unlock()
 
 	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var n int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+rB).Scan(&n))
 	assert.Equal(1, n, "a mid-walk deletion must not shift the middle hit out of the page walk")
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+rC).Scan(&n))
 	assert.Equal(1, n)
 }
@@ -3661,7 +3667,7 @@ func TestMaintenanceRepairsRecentReplyUnderAncientRoot(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// A fresh reply lands on the ancient thread and is archived by the
@@ -3673,10 +3679,10 @@ func TestMaintenanceRepairsRecentReplyUnderAncientRoot(t *testing.T) {
 	root.Replies = append(root.Replies, fakeMsg{TS: reply, ThreadTS: ancientRoot, User: "UME", Text: "recent reply"})
 	f.mu.Unlock()
 	imp.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	imp.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 
 	// The reply is edited at the source. Plain runs ignore post-capture
@@ -3687,13 +3693,13 @@ func TestMaintenanceRepairsRecentReplyUnderAncientRoot(t *testing.T) {
 	replyID := "C95:" + reply
 	readBody := func() string {
 		var body string
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT mb.body_text FROM message_bodies mb
 			JOIN messages m ON m.id = mb.message_id WHERE m.source_message_id = ?`), replyID).Scan(&body))
 		return body
 	}
 	imp.now = func() time.Time { return time.Now().Add(31 * time.Minute) }
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal("recent reply", readBody(), "plain runs ignore post-capture reply edits")
 
@@ -3702,7 +3708,7 @@ func TestMaintenanceRepairsRecentReplyUnderAncientRoot(t *testing.T) {
 	maint := opts
 	maint.Maintenance = true
 	imp.now = func() time.Time { return time.Now().Add(32 * time.Minute) }
-	_, err = imp.Import(context.Background(), maint)
+	_, err = imp.Import(t.Context(), maint)
 	require.NoError(err)
 	assert.Equal("recent reply (stealth edit)", readBody(),
 		"--maintenance must repair a recent reply even when its thread root predates the rescan window")
@@ -3710,10 +3716,10 @@ func TestMaintenanceRepairsRecentReplyUnderAncientRoot(t *testing.T) {
 
 // dropReactionsTable breaks reaction writes on both backends; PostgreSQL
 // refuses to drop reactions while reaction_source_events references it.
-func dropReactionsTable(db *sql.DB) error {
-	if _, err := db.Exec(`DROP TABLE IF EXISTS reaction_source_events`); err != nil {
+func dropReactionsTable(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS reaction_source_events`); err != nil {
 		return err
 	}
-	_, err := db.Exec(`DROP TABLE reactions`)
+	_, err := db.ExecContext(ctx, `DROP TABLE reactions`)
 	return err
 }

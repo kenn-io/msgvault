@@ -17,9 +17,10 @@ import (
 // already owned it returns an actionable error instead of silently contending on
 // the database file.
 //
-// The lock is taken non-blocking, so there is no context parameter: a writer
-// either claims the free SQLite archive immediately or is told who holds it.
-func acquireDirectSQLiteWriteLock(cfg *config.Config, state *invocation) (func(), error) {
+// The lock is taken non-blocking: a writer either claims the free SQLite
+// archive immediately or is told who holds it. ctx bounds only the daemon
+// lookup that names the current owner.
+func acquireDirectSQLiteWriteLock(ctx context.Context, cfg *config.Config, state *invocation) (func(), error) {
 	if cfg == nil {
 		return nil, errors.New("nil config")
 	}
@@ -32,7 +33,7 @@ func acquireDirectSQLiteWriteLock(cfg *config.Config, state *invocation) (func()
 	lock, err := tryAcquireWriteOwnerLock(cfg.Data.DataDir)
 	if err != nil {
 		if errors.As(err, &writeOwnerLockHeldError{}) {
-			return nil, archiveOwnedError(cfg.Data.DataDir)
+			return nil, archiveOwnedError(ctx, cfg.Data.DataDir)
 		}
 		return nil, err
 	}
@@ -47,8 +48,8 @@ func acquireDirectSQLiteWriteLock(cfg *config.Config, state *invocation) (func()
 // archiveOwnedError explains that the SQLite archive is owned by another
 // msgvault process and how to proceed. When a local daemon is discoverable the
 // message names it so the remedy ("msgvault daemon stop") is concrete.
-func archiveOwnedError(dataDir string) error {
-	if rt := findDaemonRuntime(dataDir); rt != nil {
+func archiveOwnedError(ctx context.Context, dataDir string) error {
+	if rt := findDaemonRuntime(ctx, dataDir); rt != nil {
 		return fmt.Errorf(
 			"the msgvault archive is owned by the running daemon at %s; "+
 				"stop it with `msgvault daemon stop` (or wait for the active "+
@@ -68,11 +69,11 @@ func archiveOwnedError(dataDir string) error {
 // advertises a runtime record. PostgreSQL deployments do not use this lock. A
 // live daemon legitimately owns the lock, so its presence means this is not a
 // direct-writer situation.
-func directSQLiteWriterOwnsArchive(cfg *config.Config) (bool, error) {
+func directSQLiteWriterOwnsArchive(ctx context.Context, cfg *config.Config) (bool, error) {
 	if cfg == nil || store.IsPostgresURL(cfg.DatabaseDSN()) {
 		return false, nil
 	}
-	records, err := listLiveDaemonRuntimeRecords(cfg.Data.DataDir)
+	records, err := listLiveDaemonRuntimeRecordsContext(ctx, cfg.Data.DataDir)
 	if err != nil {
 		return false, err
 	}
@@ -90,8 +91,8 @@ func directSQLiteWriterOwnsArchive(cfg *config.Config) (bool, error) {
 // daemonAutostartPreflight blocks a daemon autostart when a direct writer
 // already owns the archive, returning an actionable error instead of letting
 // the daemon subprocess fail opaquely on the held write-owner lock.
-func daemonAutostartPreflight(cfg *config.Config) error {
-	owned, err := directSQLiteWriterOwnsArchive(cfg)
+func daemonAutostartPreflight(ctx context.Context, cfg *config.Config) error {
+	owned, err := directSQLiteWriterOwnsArchive(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -105,17 +106,17 @@ func daemonAutostartPreflight(cfg *config.Config) error {
 	return nil
 }
 
-func openStoreAndInitWithInvocation(state *invocation, migrate func(*store.Store) error) (*store.Store, error) {
+func openStoreAndInitWithInvocation(ctx context.Context, state *invocation, migrate func(*store.Store) error) (*store.Store, error) {
 	currentCfg, _ := invocationConfigLogger(state)
 	if currentCfg == nil {
 		return nil, errors.New("configuration is unavailable")
 	}
 	dbPath := currentCfg.DatabaseDSN()
-	st, err := store.Open(dbPath)
+	st, err := store.OpenContext(ctx, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaUnlessCurrentContext(ctx); err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
@@ -155,27 +156,43 @@ func openInitializedStoreForInvocation(ctx context.Context, state *invocation) (
 	return st, func() { _ = st.Close() }, nil
 }
 
-func openWritableStoreAndInitForInvocation(state *invocation) (*store.Store, func(), error) {
-	return openWritableStoreAndInitWithInvocation(state, func(s *store.Store) error {
-		return runStartupMigrationsContext(context.Background(), s, state)
-	})
-}
-
-func openWritableStoreAndInitForIngestInvocation(state *invocation) (*store.Store, func(), error) {
-	return openWritableStoreAndInitWithInvocation(state, runStartupMigrationsForIngest)
-}
-
-func openWritableStoreAndInitWithInvocation(state *invocation, migrate func(*store.Store) error) (*store.Store, func(), error) {
+func openReadOnlyStoreForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
 	currentCfg, _ := invocationConfigLogger(state)
 	if currentCfg == nil {
 		return nil, nil, errors.New("configuration is unavailable")
 	}
-	release, err := acquireDirectSQLiteWriteLock(currentCfg, state)
+	st, err := store.OpenReadOnlyContext(ctx, currentCfg.DatabaseDSN())
+	if err != nil {
+		return nil, nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := st.ValidateSchemaContext(ctx); err != nil {
+		_ = st.Close()
+		return nil, nil, fmt.Errorf("validate archive schema: %w", err)
+	}
+	return st, func() { _ = st.Close() }, nil
+}
+
+func openWritableStoreAndInitForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
+	return openWritableStoreAndInitWithInvocation(ctx, state, func(s *store.Store) error {
+		return runStartupMigrationsContext(ctx, s, state)
+	})
+}
+
+func openWritableStoreAndInitForIngestInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
+	return openWritableStoreAndInitWithInvocation(ctx, state, runStartupMigrationsForIngest)
+}
+
+func openWritableStoreAndInitWithInvocation(ctx context.Context, state *invocation, migrate func(*store.Store) error) (*store.Store, func(), error) {
+	currentCfg, _ := invocationConfigLogger(state)
+	if currentCfg == nil {
+		return nil, nil, errors.New("configuration is unavailable")
+	}
+	release, err := acquireDirectSQLiteWriteLock(ctx, currentCfg, state)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	st, err := openStoreAndInitWithInvocation(state, migrate)
+	st, err := openStoreAndInitWithInvocation(ctx, state, migrate)
 	if err != nil {
 		release()
 		return nil, nil, err

@@ -85,7 +85,7 @@ Examples:
 			return fmt.Errorf("validate Granola API key: %w", err)
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ Examples:
 		); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 
@@ -166,7 +166,7 @@ Examples:
 			})
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -229,7 +229,7 @@ func runConfiguredGranolaSync(ctx context.Context, st *store.Store, src config.G
 	// the importer's existing-source GetOrCreateSource call.
 	notRegistered := fmt.Errorf("granola source %q is not registered; run msgvault add-granola %s",
 		src.Identifier, src.Identifier)
-	registered, err := requireRegisteredMeetingSource(st, granola.SourceType, src.Identifier, notRegistered)
+	registered, err := requireRegisteredMeetingSource(ctx, st, granola.SourceType, src.Identifier, notRegistered)
 	if err != nil {
 		return recordSyncAttempt(ctx, granola.SourceType, src.Identifier, err)
 	}

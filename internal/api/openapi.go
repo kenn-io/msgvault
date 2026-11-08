@@ -396,8 +396,15 @@ import (
 // It also filters participant timelines to events and meetings attended by the owner.
 // 3.41.0 adds body_text for a single message's stored plain-text body, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset.
 // Older servers omit body_text; body keeps its HTML fallback.
-// 3.42.0 adds people/who-knows, a ranking of authors by cited topic evidence.
-const APISchemaVersion = "3.42.0"
+// 3.42.0 adds iMessage participant and attachment-size limits to settings.
+// 3.43.0 adds receiver-reported sender authentication to single-message reads.
+// 3.44.0 adds owner-only open-loop routes and done, snooze, and reopen decisions.
+// 3.45.0 adds sender labels to message and file search rows.
+// 3.46.0 adds measured CLI full-text pagination and semantic ranking cap overflow.
+// 3.47.0 adds retry hints to CLI and fast search.
+// 3.48.0 adds owner-only local message search activation and progress.
+// 3.49.0 adds people/who-knows, a ranking of authors by cited topic evidence.
+const APISchemaVersion = "3.49.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

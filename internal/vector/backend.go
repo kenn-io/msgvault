@@ -373,6 +373,13 @@ type Stats struct {
 	StorageBytes int64
 }
 
+// BuildScopeBackend can pin coverage gates to a new scope over shared storage.
+// The original backend retains ownership of the shared storage handle.
+type BuildScopeBackend interface {
+	Backend
+	WithBuildScope(scope BuildScope) Backend
+}
+
 // Backend is the minimum contract a vector store must implement.
 type Backend interface {
 	EmbeddingCheckpoints() EmbeddingCheckpoints
@@ -461,7 +468,10 @@ type Backend interface {
 // SearchMetadata reports bounded-search behavior that cannot be inferred from
 // result length. Exact backends may omit this optional capability.
 type SearchMetadata struct {
-	PoolSaturated bool
+	// CandidatePoolOmitted reports an eligible identity outside the retained
+	// union after a retrieval method actually exceeded KPerSignal.
+	CandidatePoolOmitted bool
+	PoolSaturated        bool
 	// Accelerator identifies the SQLite retrieval path: vec1_ivf_opq,
 	// exact-filter, exact, or exact-fallback. Other backends leave it empty.
 	Accelerator string

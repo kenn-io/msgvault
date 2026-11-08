@@ -89,7 +89,7 @@ var addTwentyCmd = &cobra.Command{
 		if err := runTwentyProbe(cmd.Context(), cmd.OutOrStdout(), client); err != nil {
 			return err
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -97,7 +97,7 @@ var addTwentyCmd = &cobra.Command{
 		if _, err := registerMeetingSource(cmd.OutOrStdout(), st, sourceTypeTwenty, source.Identifier, email); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nTwenty source %s registered.\nRun: msgvault sync-twenty %s\n", source.Identifier, source.Identifier)
@@ -176,7 +176,7 @@ incomplete scans. --probe validates access without archive writes.`,
 		if !ready {
 			return errors.Join(setupErrors...)
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -235,7 +235,7 @@ func writeTwentySummary(out io.Writer, summary *twenty.ImportSummary) {
 }
 func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config.TwentySource) error {
 	notRegistered := fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty %s first", source.Identifier, source.Identifier)
-	registered, err := requireRegisteredMeetingSource(st, twenty.SourceType, source.Identifier, notRegistered)
+	registered, err := requireRegisteredMeetingSource(ctx, st, twenty.SourceType, source.Identifier, notRegistered)
 	if err != nil {
 		return recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, err)
 	}

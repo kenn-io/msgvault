@@ -1,7 +1,9 @@
 package imessage
 
 import (
+	"encoding/binary"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -237,66 +239,32 @@ func makeAttributedBodyBlob(text string) []byte {
 	return data
 }
 
+// streamtypedPrefix is the NSArchiver header, NSAttributedString class
+// hierarchy, and NSString marker that precede the text length in chat.db.
+const streamtypedPrefix = "\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84" +
+	"\x12NSAttributedString" +
+	"\x00\x84\x84\x08NSObject\x00\x85\x92\x84\x84\x84\x08NSString\x01\x94" +
+	"\x84\x01+"
+
 // makeStreamtypedBlob builds an NSArchiver "streamtyped" blob containing
-// an NSAttributedString with the given text. Mirrors the format produced
-// by macOS Ventura+/Sequoia chat.db.
+// an NSAttributedString with the given text. The length uses typedstream
+// integer encoding: one byte below 128, else 0x81 with a 2-byte or 0x82 with
+// a 4-byte little-endian value. Attribute runs follow the text in real blobs,
+// starting with 0x86.
 func makeStreamtypedBlob(text string) []byte {
-	// Header
-	header := []byte("\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84")
-	// Class name "NSAttributedString"
-	className := []byte("\x12NSAttributedString")
-	// Parent class
-	parent := []byte("\x00\x84\x84\x08NSObject\x00\x85\x92\x84\x84\x84\x08NSString\x01\x94")
-	// Text length prefix + marker
-	marker := []byte("\x84\x01+")
-
-	var buf []byte
-	buf = append(buf, header...)
-	buf = append(buf, className...)
-	buf = append(buf, parent...)
-	buf = append(buf, marker...)
-
-	// Length encoding
-	textBytes := []byte(text)
-	n := len(textBytes)
-	if n < 128 {
+	buf := []byte(streamtypedPrefix)
+	switch n := len(text); {
+	case n < 128:
 		buf = append(buf, byte(n))
-	} else {
-		// Multi-byte little-endian length
-		nBytes := 0
-		tmp := n
-		for tmp > 0 {
-			nBytes++
-			tmp >>= 8
-		}
-		buf = append(buf, 0x80|byte(nBytes))
-		for i := range nBytes {
-			buf = append(buf, byte(n>>(8*i)))
-		}
+	case n <= math.MaxUint16:
+		buf = append(buf, 0x81)
+		buf = binary.LittleEndian.AppendUint16(buf, uint16(n))
+	default:
+		buf = append(buf, 0x82)
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(n))
 	}
-
-	buf = append(buf, textBytes...)
-	return buf
-}
-
-// makeRealStreamtypedBlob builds a blob matching the actual macOS Sequoia
-// format where the multi-byte length has extra framing bytes (0x81, 0x92, 0x00)
-// between the marker and the text. The 0x92 byte is > 0x20, which the
-// original parser couldn't skip.
-func makeRealStreamtypedBlob(text string) []byte {
-	// This matches the real format seen in chat.db:
-	// \x84\x01+ \x81 \x92 \x00 <text> \x86 ...
-	var buf []byte
-	buf = append(buf, "\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84"...)
-	buf = append(buf, "\x12NSAttributedString"...)
-	buf = append(buf, "\x00\x84\x84\x08NSObject\x00\x85\x92\x84\x84\x84\x08NSString\x01\x94"...)
-	buf = append(buf, "\x84\x01+"...) // marker
-	// Multi-byte length prefix with actual 0x92 framing byte (> 0x20)
-	n := len(text)
-	buf = append(buf, 0x81, byte(n), 0x92, 0x00)
 	buf = append(buf, text...)
-	buf = append(buf, 0x86) // terminator
-	return buf
+	return append(buf, 0x86)
 }
 
 func TestExtractAttributedBodyText(t *testing.T) {
@@ -304,6 +272,9 @@ func TestExtractAttributedBodyText(t *testing.T) {
 	longText := "This message is longer than one hundred and twenty-seven bytes " +
 		"to exercise the multi-byte length encoding path in streamtyped format parsing. " +
 		"Extra padding here."
+	text146 := strings.Repeat("Synthetic ", 14) + "sample"
+	accented300 := strings.Repeat("é", 150)
+	text70000 := strings.Repeat("Synthetic ", 7000)
 
 	tests := []struct {
 		name  string
@@ -319,16 +290,41 @@ func TestExtractAttributedBodyText(t *testing.T) {
 		{"streamtyped short", makeStreamtypedBlob("Hello world"), "Hello world"},
 		{"streamtyped long", makeStreamtypedBlob("This is a longer message that tests multi-byte length encoding and should work correctly"), "This is a longer message that tests multi-byte length encoding and should work correctly"},
 		{"streamtyped multi-byte length >127", makeStreamtypedBlob(longText), longText},
-		{"streamtyped real format", makeRealStreamtypedBlob("I am learning Go"), "I am learning Go"},
-		{"streamtyped real format 50 bytes", makeRealStreamtypedBlob("Yeah, we should catch up soon! How about Thursday?"), "Yeah, we should catch up soon! How about Thursday?"},
-		{"streamtyped real format 100 bytes", makeRealStreamtypedBlob("This is exactly one hundred bytes of text for testing the mid-range length encoding in streamtyped!!"), "This is exactly one hundred bytes of text for testing the mid-range length encoding in streamtyped!!"},
-		{"streamtyped real format long", makeRealStreamtypedBlob(longText), longText},
+		// 0x81 0x92 0x00 is the 146-byte length prefix seen in a real chat.db blob.
+		{"streamtyped 146-byte length", []byte(streamtypedPrefix + "\x81\x92\x00" + text146 + "\x86"), text146},
+		// 0x012c is 300; the old parser read only the low byte and kept 44 bytes.
+		{"streamtyped 300-byte non-ASCII", []byte(streamtypedPrefix + "\x81\x2c\x01" + accented300 + "\x86"), accented300},
+		// 0x011170 is 70000.
+		{"streamtyped 4-byte length", []byte(streamtypedPrefix + "\x82\x70\x11\x01\x00" + text70000 + "\x86"), text70000},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractAttributedBodyText(tt.input)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestExtractAttributedBodyTextReportsDecodeStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       []byte
+		want        string
+		wantDecoded bool
+	}{
+		{name: "unsupported blob", input: []byte("not an attributed body")},
+		{name: "empty keyed archive", input: makeAttributedBodyBlob(""), wantDecoded: true},
+		{name: "empty streamtyped archive", input: makeStreamtypedBlob(""), wantDecoded: true},
+		{name: "streamtyped length past end", input: []byte(streamtypedPrefix + "\x81\x2c\x01" + "short")},
+		{name: "streamtyped unknown length tag", input: []byte(streamtypedPrefix + "\x83\x05" + "hello")},
+		{name: "decoded text", input: makeAttributedBodyBlob("Synthetic text"), want: "Synthetic text", wantDecoded: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, decoded := extractAttributedBodyTextWithStatus(tt.input)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantDecoded, decoded)
 		})
 	}
 }

@@ -41,6 +41,16 @@ function renderPane(row: EntryRow) {
 }
 
 describe('ReadingPane header', () => {
+  it('uses a plain title for a missing message selected by ID', () => {
+    render(ReadingPane, {
+      client: createAPIClient(vi.fn<typeof fetch>()),
+      targetKey: 'recording:42001',
+      status: 'missing',
+      predicate: {},
+    });
+    expect(screen.getByRole('complementary', { name: 'Reading pane: Message' })).toBeDefined();
+  });
+
   it.each([
     ['email', 'message', 'Email'],
     ['imessage', 'conversation', 'Conversation'],

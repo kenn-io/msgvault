@@ -39,11 +39,12 @@ func seedRelocationFixtureWithSourceType(
 	source, err := st.GetOrCreateSource(sourceType, "imap-relocation@example.test")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "imap-relocation-thread", "Draft conversation")
 	require.NoError(err)
-	oldLabelID, err := st.EnsureLabel(source.ID, "DRAFT", "Drafts", "system")
+	oldLabelID, err := st.EnsureLabel(t.Context(), source.ID, "DRAFT", "Drafts", "system")
 	require.NoError(err)
-	sentLabelID, err := st.EnsureLabel(source.ID, "SENT", "Sent", "system")
+	sentLabelID, err := st.EnsureLabel(t.Context(), source.ID, "SENT", "Sent", "system")
 	require.NoError(err)
 
 	targetID, err := st.PersistMessageWithParticipantsContext(
@@ -298,6 +299,51 @@ func TestPersistIMAPRelocationRejectsDifferentRFC822Identity(t *testing.T) {
 	assert.Equal(t, before, readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID))
 }
 
+func TestPersistIMAPRelocationHistoricalNULIdentity(t *testing.T) {
+	testutil.SkipIfPostgres(t, "historical NUL identity keys cannot exist in PostgreSQL TEXT")
+	for _, incoming := range []string{"historical\x00id@example.org", "other\x00id@example.org"} {
+		t.Run(incoming, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			fixture := seedIMAPRelocationFixture(t)
+			_, err := fixture.Store.DB().ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, "historical\x00id@example.org", fixture.TargetID)
+			require.NoError(err)
+			before := readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID)
+			var data *store.MessagePersistData
+			build := func(participantIDs []int64) *store.MessagePersistData {
+				data = relocatedIMAPMessageData(fixture, participantIDs)
+				data.Message.RFC822MessageID = sql.NullString{String: incoming, Valid: true}
+				return data
+			}
+			if incoming == "historical\x00id@example.org" {
+				// Clearing the old key must roll back too if a later write fails.
+				_, err = fixture.Scoped.PersistIMAPRelocationWithParticipantsContext(t.Context(), fixture.Guard, imapRelocationParticipants(),
+					func(participantIDs []int64) *store.MessagePersistData {
+						failed := build(participantIDs)
+						failed.LabelIDs = []int64{999999}
+						return failed
+					}, true)
+				require.ErrorContains(err, "reconcile IMAP relocation labels")
+				assert.Equal(before, readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID))
+			}
+			_, err = fixture.Scoped.PersistIMAPRelocationWithParticipantsContext(t.Context(), fixture.Guard, imapRelocationParticipants(), build, true)
+			if incoming != "historical\x00id@example.org" {
+				require.ErrorContains(err, "RFC822 identity mismatch")
+				assert.Equal(before, readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID))
+				return
+			}
+			require.NoError(err)
+			message, err := fixture.Store.GetMessage(fixture.TargetID)
+			require.NoError(err)
+			var storedID sql.NullString
+			require.NoError(fixture.Store.DB().QueryRowContext(t.Context(), `SELECT rfc822_message_id FROM messages WHERE id = ?`, fixture.TargetID).Scan(&storedID))
+			assert.False(storedID.Valid)
+			assert.Equal("Sent|2", message.SourceMessageID)
+			assert.Equal(incoming, data.Message.RFC822MessageID.String, "the guard must not mutate caller evidence")
+		})
+	}
+}
+
 func TestPersistIMAPRelocationRequiresCompleteSnapshotPayload(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -475,7 +521,7 @@ func TestPersistIMAPRelocationRejectsNewSourceIDCollisionWithoutChangingEitherRo
 	)
 	require.ErrorContains(err, "rekey IMAP relocation target")
 	assert.Equal(beforeTarget, readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID))
-	collisionSourceID, sourceErr := fixture.Store.GetMessageSourceID(collisionID)
+	collisionSourceID, sourceErr := fixture.Store.GetMessageSourceID(t.Context(), collisionID)
 	require.NoError(sourceErr)
 	assert.Equal("Sent|2", collisionSourceID)
 }

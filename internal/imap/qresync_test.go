@@ -2,7 +2,6 @@ package imap
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -19,6 +18,9 @@ import (
 )
 
 type qresyncServerConfig struct {
+	// commandHook handles a synthetic response before the normal protocol fixture.
+	commandHook func(net.Conn, int, string) bool
+
 	capabilities            []string
 	mailboxes               []string
 	uidValidity             uint32
@@ -75,7 +77,7 @@ func (s *qresyncTestServer) commandsFor(connID int) []string {
 func startQresyncTestServer(t *testing.T, cfg qresyncServerConfig) (string, *qresyncTestServer) {
 	t.Helper()
 	require.NotEmpty(t, cfg.capabilities)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ln.Close() })
 
@@ -116,6 +118,9 @@ func serveQresyncTestConn(
 		}
 		line = strings.TrimSpace(line)
 		server.record(connID, line)
+		if cfg.commandHook != nil && cfg.commandHook(conn, connID, line) {
+			continue
+		}
 		tag, command, _ := strings.Cut(line, " ")
 		upper := strings.ToUpper(command)
 		switch {
@@ -479,7 +484,7 @@ func TestListMessagesQresyncReconnectDoesNotReuseEnabledState(t *testing.T) {
 	require.Equal([]string{"INBOX|2"}, listQresyncMessages(t, client))
 
 	client.mu.Lock()
-	require.NoError(client.reconnect(context.Background()))
+	require.NoError(client.reconnect(t.Context()))
 	client.messageListCache = nil
 	client.mu.Unlock()
 

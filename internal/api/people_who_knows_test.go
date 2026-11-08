@@ -143,7 +143,7 @@ func TestWhoKnowsPassesMinScoreToTheService(t *testing.T) {
 	srv, st := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{})
 	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
 	require.NoError(err)
 	ana, err := st.EnsureParticipant("ana@example.net", "Ana Lopez", "example.net")
 	require.NoError(err)

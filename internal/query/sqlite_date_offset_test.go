@@ -1,7 +1,6 @@
 package query_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -90,7 +89,7 @@ func TestSQLiteQueryEngineDateBoundsCompareMixedOffsetsAsInstants(t *testing.T) 
 			require.NoError(err, "ListMessages")
 			assert.ElementsMatch(tc.want, ids(listed), "ListMessages")
 
-			searched, err := eng.SearchFast(context.Background(), &search.Query{
+			searched, err := eng.SearchFast(t.Context(), &search.Query{
 				AfterDate:  afterBound,
 				BeforeDate: beforeBound,
 			}, query.MessageFilter{}, 50, 0)

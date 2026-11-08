@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -101,12 +102,12 @@ func TestDaemonMCPOperationsDiscoverAndReadRealScheduler(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	requirements.NoError(err)
-	capabilities, err := client.MCPCapabilities(context.Background())
+	capabilities, err := client.MCPCapabilities(t.Context())
 	requirements.NoError(err)
 	backend := newDaemonMCPOperations(client, capabilities)
 	assertions.Contains(backend.capabilities(), "get_source_scheduler_status")
 	assertions.Contains(backend.capabilities(), "sync_source")
-	result, err := backend.ExecuteOperation(context.Background(), "get_source_scheduler_status", map[string]any{})
+	result, err := backend.ExecuteOperation(t.Context(), "get_source_scheduler_status", map[string]any{})
 	requirements.NoError(err)
 	requirements.NotNil(result)
 	assertions.False(result.IsError)
@@ -127,10 +128,10 @@ func TestDaemonMCPOperationsPreserveRealRefusalWithoutErrorText(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	requirements.NoError(err)
-	capabilities, err := client.MCPCapabilities(context.Background())
+	capabilities, err := client.MCPCapabilities(t.Context())
 	requirements.NoError(err)
 	backend := newDaemonMCPOperations(client, capabilities)
-	result, err := backend.ExecuteOperation(context.Background(), "get_source_scheduler_status", map[string]any{})
+	result, err := backend.ExecuteOperation(t.Context(), "get_source_scheduler_status", map[string]any{})
 	requirements.NoError(err)
 	requirements.NotNil(result)
 	assertions.True(result.IsError)
@@ -155,11 +156,11 @@ func TestDaemonMCPOperationsRealSyncAcceptance(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	requirements.NoError(err)
-	capabilities, err := client.MCPCapabilities(context.Background())
+	capabilities, err := client.MCPCapabilities(t.Context())
 	requirements.NoError(err)
 	backend := newDaemonMCPOperations(client, capabilities)
 	args := map[string]any{"account": "sender@example.com", "source_type": "gmail"}
-	disclosure, err := backend.OperationDisclosure(context.Background(), "sync_source", args)
+	disclosure, err := backend.OperationDisclosure(t.Context(), "sync_source", args)
 	requirements.NoError(err)
 	assertions.Contains(disclosure, "sender@example.com")
 	select {
@@ -167,7 +168,7 @@ func TestDaemonMCPOperationsRealSyncAcceptance(t *testing.T) {
 		assertions.Fail("disclosure started synchronization")
 	default:
 	}
-	result, err := backend.ExecuteOperation(context.Background(), "sync_source", args)
+	result, err := backend.ExecuteOperation(t.Context(), "sync_source", args)
 	requirements.NoError(err)
 	requirements.NotNil(result)
 	assertions.False(result.IsError)
@@ -292,6 +293,31 @@ func TestMCPSyncSourceRejectsUnavailableSourcesBeforeConfirmation(t *testing.T) 
 			assertions.True(result.IsError)
 			assertions.Equal(map[string]any{"error": "source_not_schedulable"}, result.StructuredContent)
 			assertions.Zero(approvals.Load())
+		})
+	}
+}
+
+func TestMCPOperationsLocalRecoveryFailure(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
+		return daemonclient.LocalDaemonEndpoint{}, errors.New("synthetic discovery failure")
+	})
+	backend := &daemonMCPOperations{client: client, supported: []string{"get_source_scheduler_status", "sync_source"}}
+	for _, name := range backend.supported {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			result, err := backend.ExecuteOperation(t.Context(), name, map[string]any{"account": "sender@example.com", "source_type": "gmail"})
+			require.Error(err)
+			require.NotNil(result)
+			assert.True(result.IsError)
+			data, marshalErr := json.Marshal(result.Output)
+			require.NoError(marshalErr)
+			assert.JSONEq(`{"error":"daemon_unavailable","operation_may_have_completed":false}`, string(data))
 		})
 	}
 }

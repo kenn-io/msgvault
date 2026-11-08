@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -55,10 +54,10 @@ func TestDetectDatabaseKind(t *testing.T) {
 			db, err := sql.Open("sqlite3", ":memory:")
 			require.NoError(err)
 			defer func() { require.NoError(db.Close()) }()
-			_, err = db.Exec(tt.schema)
+			_, err = db.ExecContext(t.Context(), tt.schema)
 			require.NoError(err)
 
-			got, err := detectDatabaseKind(db)
+			got, err := detectDatabaseKind(t.Context(), db)
 			if tt.wantErr != "" {
 				require.ErrorContains(err, tt.wantErr)
 			} else {
@@ -73,7 +72,7 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 	require := require.New(t)
 
 	missingPath := filepath.Join(t.TempDir(), "missing.sqlite")
-	_, err := openReadOnlyDatabase(context.Background(), missingPath)
+	_, err := openReadOnlyDatabase(t.Context(), missingPath)
 	require.Error(err)
 	_, err = os.Stat(missingPath)
 	require.ErrorIs(err, os.ErrNotExist)
@@ -85,23 +84,47 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()
 	var journalMode string
-	require.NoError(db.QueryRow(`PRAGMA journal_mode=WAL`).Scan(&journalMode))
+	require.NoError(db.QueryRowContext(t.Context(), `PRAGMA journal_mode=WAL`).Scan(&journalMode))
 	require.Equal("wal", strings.ToLower(journalMode))
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE source_rows (id INTEGER PRIMARY KEY);
 		INSERT INTO source_rows (id) VALUES (1);
 	`)
 	require.NoError(err)
 
-	readOnly, err := openReadOnlyDatabase(context.Background(), path)
+	readOnly, err := openReadOnlyDatabase(t.Context(), path)
 	require.NoError(err)
 	defer func() { require.NoError(readOnly.Close()) }()
 	var count int
-	require.NoError(readOnly.QueryRow(`SELECT COUNT(*) FROM source_rows`).Scan(&count))
+	require.NoError(readOnly.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM source_rows`).Scan(&count))
 	assert.Equal(t, 1, count)
 
-	_, err = readOnly.Exec(`INSERT INTO source_rows (id) VALUES (2)`)
+	_, err = readOnly.ExecContext(t.Context(), `INSERT INTO source_rows (id) VALUES (2)`)
 	require.Error(err)
+}
+
+func TestImportApplePreservesCountersAfterCheckpointFailure(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	chatDBPath := createAppleChatFixture(t)
+	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
+	st := testutil.NewSQLiteTestStore(t)
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs
+		WHEN NEW.status = 'running'
+		BEGIN SELECT RAISE(ABORT, 'synthetic checkpoint failure'); END`)
+	require.NoError(err)
+	summary, err := NewImporter(st, nil).Import(t.Context(), chatDBPath, appleTestOptions())
+	require.ErrorContains(err, "synthetic checkpoint failure")
+	require.NotNil(summary)
+	require.Equal(int64(1), summary.MessagesProcessed)
+	require.Equal(int64(1), summary.MessagesAdded)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), "whatsapp", "+15555550100")
+	require.NoError(err)
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal("failed", run.Status)
+	assert.Equal(int64(1), run.MessagesProcessed)
+	assert.Equal(int64(1), run.MessagesAdded)
+	assert.Equal(int64(1), run.ErrorsCount)
 }
 
 func TestImportAppleTextMessages(t *testing.T) {
@@ -119,7 +142,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 		BatchSize:   2,
 	}
 
-	summary, err := importer.Import(context.Background(), chatDBPath, opts)
+	summary, err := importer.Import(t.Context(), chatDBPath, opts)
 	require.NoError(err)
 	assert.Equal(int64(3), summary.ChatsProcessed)
 	assert.Equal(int64(9), summary.MessagesProcessed)
@@ -140,7 +163,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 	}
 	conversations := func() map[string]conversationRecord {
 		result := make(map[string]conversationRecord)
-		rows, err := st.DB().Query(`
+		rows, err := st.DB().QueryContext(t.Context(), `
 			SELECT source_conversation_id, conversation_type, title
 			FROM conversations
 		`)
@@ -168,7 +191,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 	}
 	messages := func() map[string]messageRecord {
 		result := make(map[string]messageRecord)
-		rows, err := st.DB().Query(`
+		rows, err := st.DB().QueryContext(t.Context(), `
 			SELECT m.source_message_id, p.phone_number, m.is_from_me, m.sent_at,
 			       COALESCE(mb.body_text, '')
 			FROM messages m
@@ -203,7 +226,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 	)
 
 	var rawFormats int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM message_raw WHERE raw_format = 'whatsapp_apple_json'
 	`).Scan(&rawFormats))
 	assert.Equal(4, rawFormats)
@@ -215,7 +238,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 	assert.Equal("group-in", results[0].SourceMessageID)
 
 	var adminRole string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT cp.role
 		FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id
@@ -225,7 +248,7 @@ func TestImportAppleTextMessages(t *testing.T) {
 	`).Scan(&adminRole))
 	assert.Equal("admin", adminRole)
 
-	secondSummary, err := importer.Import(context.Background(), chatDBPath, opts)
+	secondSummary, err := importer.Import(t.Context(), chatDBPath, opts)
 	require.NoError(err)
 	assert.Equal(int64(0), secondSummary.MessagesAdded)
 	assertStoreCount(t, st.DB(), "messages", 4)
@@ -240,7 +263,7 @@ func TestImportAppleType7TextMessages(t *testing.T) {
 
 	chatDBPath := createAppleType7Fixture(t)
 	st := testutil.NewTestStore(t)
-	summary, err := NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+	summary, err := NewImporter(st, nil).Import(t.Context(), chatDBPath, ImportOptions{
 		Phone:       "+15555550100",
 		DisplayName: "Test Owner",
 		BatchSize:   2,
@@ -257,7 +280,7 @@ func TestImportAppleType7TextMessages(t *testing.T) {
 		body   string
 	}
 	messages := make(map[string]messageRecord)
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT id, source_message_id, is_from_me
 		FROM messages
 		ORDER BY source_message_id
@@ -268,7 +291,7 @@ func TestImportAppleType7TextMessages(t *testing.T) {
 		var sourceMessageID string
 		var record messageRecord
 		require.NoError(rows.Scan(&record.id, &sourceMessageID, &record.fromMe))
-		record.body, err = st.GetMessageBodyText(record.id)
+		record.body, err = st.GetMessageBodyText(t.Context(), record.id)
 		require.NoError(err)
 		messages[sourceMessageID] = record
 	}
@@ -285,7 +308,7 @@ func TestImportAppleType7TextMessages(t *testing.T) {
 
 	var messageID int64
 	var rawFormat string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT m.id, mr.raw_format
 		FROM messages m
 		JOIN message_raw mr ON mr.message_id = m.id
@@ -318,7 +341,7 @@ func TestImportAppleType7DuplicateStanzas(t *testing.T) {
 
 	chatDBPath := createAppleType7DuplicateFixture(t)
 	st := testutil.NewTestStore(t)
-	summary, err := NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+	summary, err := NewImporter(st, nil).Import(t.Context(), chatDBPath, ImportOptions{
 		Phone:       "+15555550100",
 		DisplayName: "Test Owner",
 		BatchSize:   2,
@@ -330,7 +353,7 @@ func TestImportAppleType7DuplicateStanzas(t *testing.T) {
 	assert.Equal(int64(1), summary.Errors)
 
 	var sourceMessageIDs []string
-	rows, err := st.DB().Query(`SELECT source_message_id FROM messages ORDER BY source_message_id`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT source_message_id FROM messages ORDER BY source_message_id`)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	for rows.Next() {
@@ -376,14 +399,14 @@ func TestImportApplePushNames(t *testing.T) {
 
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, ImportOptions{
+	_, err := importer.Import(t.Context(), chatDBPath, ImportOptions{
 		Phone:       "+15555550100",
 		DisplayName: "Test Owner",
 	})
 	need.NoError(err)
 
 	names := make(map[string]string)
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT phone_number, COALESCE(display_name, '')
 		FROM participants
 		WHERE phone_number IN ('+15555550103', '+15555550104')
@@ -400,12 +423,13 @@ func TestImportApplePushNames(t *testing.T) {
 	check.Equal("Push Name Only", names["+15555550104"])
 
 	var messageCount int
-	need.NoError(st.DB().QueryRow(
+	need.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages`,
 	).Scan(&messageCount))
 	check.Equal(5, messageCount)
 	var senderPhone string
-	need.NoError(st.DB().QueryRow(`
+	need.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT p.phone_number
 		FROM messages m
 		JOIN participants p ON p.id = m.sender_id
@@ -415,7 +439,8 @@ func TestImportApplePushNames(t *testing.T) {
 
 	t.Run("message_pushname_not_used", func(t *testing.T) {
 		var badNameCount int
-		require.NoError(t, st.DB().QueryRow(
+		require.NoError(t, st.DB().QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM participants WHERE display_name = 'IAA='`,
 		).Scan(&badNameCount))
 		assert.Zero(t, badNameCount)
@@ -430,14 +455,14 @@ func TestImportApplePushNameFallbacks(t *testing.T) {
 
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, ImportOptions{
+	_, err := importer.Import(t.Context(), chatDBPath, ImportOptions{
 		Phone:       "+15555550100",
 		DisplayName: "Test Owner",
 	})
 	need.NoError(err)
 
 	names := make(map[string]string)
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT phone_number, COALESCE(display_name, '')
 		FROM participants
 		WHERE phone_number IN (
@@ -461,13 +486,15 @@ func TestImportApplePushNameFallbacks(t *testing.T) {
 	check.Equal("Push Direct", names["+15555550108"])
 
 	var unmatched int
-	need.NoError(st.DB().QueryRow(
+	need.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM participants WHERE phone_number = '+15555550199'`,
 	).Scan(&unmatched))
 	check.Zero(unmatched)
 
 	var unresolved int
-	need.NoError(st.DB().QueryRow(
+	need.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM participants WHERE display_name = 'Ignored Unresolved LID'`,
 	).Scan(&unresolved))
 	check.Zero(unresolved)
@@ -479,7 +506,7 @@ func TestImportApplePushNameErrors(t *testing.T) {
 		createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 
 		st := testutil.NewTestStore(t)
-		_, err := NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+		_, err := NewImporter(st, nil).Import(t.Context(), chatDBPath, ImportOptions{
 			Phone:       "+15555550100",
 			DisplayName: "Test Owner",
 		})
@@ -492,7 +519,7 @@ func TestImportApplePushNameErrors(t *testing.T) {
 		chatDBPath := createAppleChatFixture(t)
 		db, err := sql.Open("sqlite3", chatDBPath)
 		need.NoError(err)
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			CREATE TABLE ZWAPROFILEPUSHNAME (
 				Z_PK INTEGER PRIMARY KEY,
 				ZJID TEXT
@@ -502,7 +529,7 @@ func TestImportApplePushNameErrors(t *testing.T) {
 		need.NoError(db.Close())
 
 		st := testutil.NewTestStore(t)
-		_, err = NewImporter(st, nil).Import(context.Background(), chatDBPath, ImportOptions{
+		_, err = NewImporter(st, nil).Import(t.Context(), chatDBPath, ImportOptions{
 			Phone:       "+15555550100",
 			DisplayName: "Test Owner",
 		})
@@ -574,7 +601,7 @@ func createAppleType7Fixture(t *testing.T) string {
 	path := createAppleChatFixture(t)
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		DELETE FROM ZWAMESSAGE;
 		DELETE FROM ZWAGROUPMEMBER;
 		DELETE FROM ZWACHATSESSION;
@@ -601,7 +628,7 @@ func createAppleType7DuplicateFixture(t *testing.T) string {
 	path := createAppleChatFixture(t)
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		DELETE FROM ZWAMESSAGE;
 		DELETE FROM ZWAGROUPMEMBER;
 		DELETE FROM ZWACHATSESSION;
@@ -626,7 +653,7 @@ func createAppleLIDFixture(t *testing.T, dir string) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", filepath.Join(dir, "LID.sqlite"))
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE ZWAZACCOUNT (
 			ZIDENTIFIER TEXT,
 			ZPHONENUMBER TEXT
@@ -644,7 +671,7 @@ func createApplePushNameFixture(t *testing.T) string {
 	path := createAppleChatFixture(t)
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		ALTER TABLE ZWAMESSAGE ADD COLUMN ZPUSHNAME TEXT;
 		UPDATE ZWAGROUPMEMBER
 		SET ZCONTACTNAME = '', ZFIRSTNAME = ''
@@ -681,7 +708,7 @@ func createApplePushNameFallbackFixture(t *testing.T) string {
 	path := createAppleChatFixture(t)
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO ZWACHATSESSION
 			(Z_PK, ZCONTACTJID, ZPARTNERNAME, ZSESSIONTYPE, ZLASTMESSAGEDATE)
 		VALUES
@@ -721,6 +748,26 @@ func createApplePushNameFallbackFixture(t *testing.T) string {
 func assertStoreCount(t *testing.T, db *sql.DB, table string, want int) {
 	t.Helper()
 	var got int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&got))
 	assert.Equal(t, want, got, table)
+}
+
+func TestImportAppleSkippedChatWarningsRecorded(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path := createAppleType7DuplicateFixture(t)
+	execAppleFixture(t, path, appleMarkerSchema+`INSERT INTO Z_METADATA VALUES (1, 'store-uuid-a', NULL);`)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	opts := ImportOptions{Phone: "+15555550100", BatchSize: 2}
+	summary, err := importer.Import(t.Context(), path, opts)
+	require.NoError(err)
+	require.Positive(summary.MessagesProcessed)
+	summary, err = importer.Import(t.Context(), path, opts)
+	require.NoError(err)
+	assert.Zero(summary.MessagesProcessed)
+	assert.Equal(int64(1), summary.Errors)
+	run, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(int64(1), run.ErrorsCount)
 }

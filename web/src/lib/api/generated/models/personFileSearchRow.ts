@@ -23,6 +23,7 @@ export interface PersonFileSearchRow {
   participant_labels?: string[];
   person_provenance: PersonFileProvenance;
   search_explain?: FileSearchExplain;
+  sender_label?: string;
   size_bytes: number;
   source_id: number;
   source_identifier: string;

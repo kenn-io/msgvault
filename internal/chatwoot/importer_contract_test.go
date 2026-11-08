@@ -25,14 +25,14 @@ import (
 func contractArchivedMessageID(t *testing.T, st *store.Store, providerID string) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), providerID).Scan(&id))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), providerID).Scan(&id))
 	return id
 }
 
 func contractSender(t *testing.T, st *store.Store, messageID int64) sql.NullInt64 {
 	t.Helper()
 	var sender sql.NullInt64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&sender))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&sender))
 	return sender
 }
 
@@ -90,7 +90,7 @@ func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 	ids := map[int64]int64{}
 	for _, providerID := range []int64{101, 102, 103, 104, 105, 106, 107, 108, 109} {
 		ids[providerID] = contractArchivedMessageID(t, st, strconv.FormatInt(providerID, 10))
-		fromMe, err := st.GetMessageIsFromMe(ids[providerID])
+		fromMe, err := st.GetMessageIsFromMe(t.Context(), ids[providerID])
 		require.NoError(err)
 		assert.Equal(providerID == 106, fromMe, "outgoing is not personal ownership: provider message %d", providerID)
 	}
@@ -118,7 +118,7 @@ func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 	incoming := contractRecipients(t, st, ids[101], "to")
 	require.Len(incoming, 1)
 	assert.NotContains([]int64{contactID.Int64, agentID.Int64, botID.Int64}, incoming[0].ParticipantID)
-	noteBody, err := st.GetMessageBodyText(ids[105])
+	noteBody, err := st.GetMessageBodyText(t.Context(), ids[105])
 	require.NoError(err)
 	assert.Contains(strings.ToLower(noteBody), "private", "ordinary readers visibly mark private notes")
 	note := contractRecipients(t, st, ids[105], "to")
@@ -131,7 +131,7 @@ func TestImportContractActorsSendersAndRecipients(t *testing.T) {
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, SelfAgentIDs: []int64{8}})
 	require.NoError(err)
 	var name string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), contractSender(t, st, ids[109]).Int64).Scan(&name))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), contractSender(t, st, ids[109]).Int64).Scan(&name))
 	assert.Equal("Late Agent", name, "a later sighting fills a blank name")
 	for _, rebuilt := range []bool{false, true} {
 		if rebuilt {
@@ -166,7 +166,7 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 		require.NoError(err)
 		var flags []bool
 		for _, providerID := range providerIDs {
-			fromMe, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, providerID))
+			fromMe, err := st.GetMessageIsFromMe(t.Context(), contractArchivedMessageID(t, st, providerID))
 			require.NoError(err)
 			flags = append(flags, fromMe)
 		}
@@ -185,7 +185,7 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	_, err = st.RemoveAccountIdentity(source.ID, identities[0].Address)
 	require.NoError(err)
 	for _, providerID := range []string{"202", "call:201"} {
-		fromMe, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, providerID))
+		fromMe, err := st.GetMessageIsFromMe(t.Context(), contractArchivedMessageID(t, st, providerID))
 		require.NoError(err)
 		assert.False(fromMe, "removing the identity un-marks %s", providerID)
 	}
@@ -211,7 +211,7 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	opts.SelfAgentIDs = []int64{7, 8}
 	_, err = importer.Import(t.Context(), opts)
 	require.NoError(err)
-	fromMe, err := st.GetMessageIsFromMe(contractArchivedMessageID(t, st, "202"))
+	fromMe, err := st.GetMessageIsFromMe(t.Context(), contractArchivedMessageID(t, st, "202"))
 	require.NoError(err)
 	assert.True(fromMe)
 	require.NoError(st.AddAccountIdentity(source.ID, seven, "manual"))
@@ -221,23 +221,23 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	identities, err = st.ListAccountIdentities(source.ID)
 	require.NoError(err)
 	assert.Len(identities, 2, "manual evidence survives removal from configuration")
-	before, err := st.GetSourceByTypeAndIdentifier(SourceType, source.Identifier)
+	before, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, source.Identifier)
 	require.NoError(err)
 	trigger := `CREATE TRIGGER reject_chatwoot_config BEFORE UPDATE OF sync_config ON sources BEGIN SELECT RAISE(ABORT, 'synthetic config failure'); END`
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		trigger = `CREATE FUNCTION reject_chatwoot_config() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic config failure'; END $$; CREATE TRIGGER reject_chatwoot_config BEFORE UPDATE OF sync_config ON sources FOR EACH ROW EXECUTE FUNCTION reject_chatwoot_config()`
 	}
-	_, err = st.DB().Exec(trigger)
+	_, err = st.DB().ExecContext(t.Context(), trigger)
 	require.NoError(err)
 	nine := importer.actorIdentifier(Actor{ID: 9, Type: actorUser})
 	require.Error(st.SyncChatwootSelfAgents(t.Context(), source.ID, []string{nine}))
-	after, err := st.GetSourceByTypeAndIdentifier(SourceType, source.Identifier)
+	after, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, source.Identifier)
 	require.NoError(err)
 	assert.Equal(before.SyncConfig, after.SyncConfig)
 	afterIdentities, err := st.ListAccountIdentities(source.ID)
 	require.NoError(err)
 	assert.Equal(identities, afterIdentities, "config-write failure rolls back grants and removals together")
-	_, err = st.DB().Exec(`DROP TRIGGER reject_chatwoot_config` + func() string {
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER reject_chatwoot_config`+func() string {
 		if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 			return " ON sources"
 		}
@@ -246,7 +246,7 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	require.NoError(err)
 	_, err = st.RemoveAccountIdentity(source.ID, eight)
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(source.ID, `{"unrelated":true}`))
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"unrelated":true}`))
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 	require.NoError(err)
 	afterIdentities, err = st.ListAccountIdentities(source.ID)
@@ -255,7 +255,7 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	assert.Equal(seven, afterIdentities[0].Address)
 	fresh, err := st.GetOrCreateSource(SourceType, SourceIdentifier(api.server.URL, 3, 8))
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(fresh.ID, `{"no_default_identity":true,"unrelated":true}`))
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), fresh.ID, `{"no_default_identity":true,"unrelated":true}`))
 	require.NoError(st.SyncChatwootSelfAgents(t.Context(), fresh.ID, []string{seven}))
 	empty, err := st.ListAccountIdentities(fresh.ID)
 	require.NoError(err)
@@ -265,7 +265,7 @@ func TestImportContractSelfAgentOwnershipFollowsIdentities(t *testing.T) {
 	require.NoError(err)
 	require.Len(confirmed, 1)
 	assert.Equal(eight, confirmed[0].Address, "a changed configured set explicitly grants a new owner")
-	fresh, err = st.GetSourceByTypeAndIdentifier(SourceType, fresh.Identifier)
+	fresh, err = st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, fresh.Identifier)
 	require.NoError(err)
 	var config map[string]any
 	require.NoError(json.Unmarshal([]byte(fresh.SyncConfig.String), &config))
@@ -345,7 +345,7 @@ func TestImportContractEmailSubjectAndHTMLBody(t *testing.T) {
 					subject = "Example Contact"
 				}
 				assert.Equal(subject, stored.Subject)
-				body, err := st.GetMessageBodyText(id)
+				body, err := st.GetMessageBodyText(t.Context(), id)
 				require.NoError(err)
 				assert.Equal(tc.body, body)
 				assert.Equal("Example Contact", stored.ConversationTitle)
@@ -429,11 +429,11 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	api.Mu.Unlock()
 	_, err = NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 	require.NoError(err)
-	body, err := st.GetMessageBodyText(meetingID)
+	body, err := st.GetMessageBodyText(t.Context(), meetingID)
 	require.NoError(err)
 	assert.Contains(body, "firstquartz recording words\n\nsecondquartz recording words")
 	assert.NotContains(body, "Voice call")
-	chatBody, err := st.GetMessageBodyText(chatID)
+	chatBody, err := st.GetMessageBodyText(t.Context(), chatID)
 	require.NoError(err)
 	assert.Contains(chatBody, "Voice call\n\nfirstquartz recording words\n\nsecondquartz recording words")
 	results, _, err := st.SearchMessages("secondquartz", 0, 10)
@@ -456,7 +456,7 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(err)
 	assert.Equal(int64(1), metrics.Totals.MeetingCount)
 	assert.InDelta(45, metrics.Totals.TotalKnownSeconds, 1e-9)
-	body, err = st.GetMessageBodyText(meetingID)
+	body, err = st.GetMessageBodyText(t.Context(), meetingID)
 	require.NoError(err)
 	assert.Contains(body, "Updated call transcript words")
 	assert.NotContains(body, "firstquartz")
@@ -466,16 +466,16 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(st.AddAccountIdentity(source.ID, "owner.alias@example.com", "manual"))
 	require.NoError(st.MergeParticipants(contractSender(t, st, meetingID).Int64, aliasID))
 	var recipientRow int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), chatID).Scan(&recipientRow))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), chatID).Scan(&recipientRow))
 	for range 2 {
 		sum, err := NewImporter(st, api.client(t)).Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 		require.NoError(err)
 		assert.Zero(sum.Meetings, "unchanged calls keep Store's merged owner attribution")
 		var currentRow int64
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), chatID).Scan(&currentRow))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT MIN(id) FROM message_recipients WHERE message_id = ?`), chatID).Scan(&currentRow))
 		assert.Equal(recipientRow, currentRow, "unchanged call refresh leaves recipient rows in place")
 		for _, id := range []int64{chatID, meetingID} {
-			owned, err := st.GetMessageIsFromMe(id)
+			owned, err := st.GetMessageIsFromMe(t.Context(), id)
 			require.NoError(err)
 			assert.True(owned)
 		}
@@ -506,10 +506,10 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(err)
 	assert.Equal("Renamed Contact", chat.Subject)
 	var conversationTitle string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT title FROM conversations WHERE id = ?`), chat.ConversationID).Scan(&conversationTitle))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT title FROM conversations WHERE id = ?`), chat.ConversationID).Scan(&conversationTitle))
 	assert.Equal("Renamed Contact", conversationTitle)
 	var previousContactID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), chatID).Scan(&previousContactID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), chatID).Scan(&previousContactID))
 	api.Mu.Lock()
 	api.Contact["id"], api.Contact["phone_number"] = int64(50), "+12025550102"
 	api.Mu.Unlock()
@@ -519,8 +519,8 @@ func TestImportContractCallFallbackAndLifecycleKeepsOneLinkedMeeting(t *testing.
 	require.NoError(err)
 	assert.True(meetingarchive.JSONEvidenceEqual(rawBefore, rawAfter), "conversation contact changes leave the outgoing payload unchanged")
 	var chatContactID, meetingContactID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), chatID).Scan(&chatContactID))
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), meetingID).Scan(&meetingContactID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), chatID).Scan(&chatContactID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`), meetingID).Scan(&meetingContactID))
 	assert.NotEqual(previousContactID, chatContactID)
 	assert.Equal(chatContactID, meetingContactID, "the linked meeting follows the reassigned conversation contact")
 	sender, ok := message["sender"].(map[string]any)
@@ -555,7 +555,7 @@ func TestImportContractLateAudioTranscriptReplacesSearchContent(t *testing.T) {
 	require.NoError(err)
 	id := contractArchivedMessageID(t, st, "301")
 	var contentHash string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT content_hash FROM attachments WHERE message_id = ?`), id).Scan(&contentHash))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT content_hash FROM attachments WHERE message_id = ?`), id).Scan(&contentHash))
 
 	// Transcription leaves activity unchanged; corrections need a full sync after the first transcript settles.
 	for index, transcript := range []string{"firstquartz source transcript", "revisedquartz source transcript"} {
@@ -566,7 +566,7 @@ func TestImportContractLateAudioTranscriptReplacesSearchContent(t *testing.T) {
 		runOpts.Full = index > 0
 		_, err = NewImporter(st, api.client(t)).Import(t.Context(), runOpts)
 		require.NoError(err)
-		body, err := st.GetMessageBodyText(id)
+		body, err := st.GetMessageBodyText(t.Context(), id)
 		require.NoError(err)
 		assert.Contains(body, transcript)
 		results, _, err := st.SearchMessages(transcript[:len(transcript)-len(" source transcript")], 0, 10)
@@ -578,7 +578,7 @@ func TestImportContractLateAudioTranscriptReplacesSearchContent(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(stale, "corrected source transcripts replace the old searchable projection")
 	var refreshedHash, metadata string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT content_hash, attachment_metadata FROM attachments WHERE message_id = ?`), id).Scan(&refreshedHash, &metadata))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT content_hash, attachment_metadata FROM attachments WHERE message_id = ?`), id).Scan(&refreshedHash, &metadata))
 	assert.Equal(contentHash, refreshedHash)
 	assert.Contains(metadata, "revisedquartz source transcript")
 }
@@ -601,14 +601,14 @@ func TestImportContractSourceAndActorIsolationAcrossInstances(t *testing.T) {
 		_, err = importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 		require.NoError(err)
 		var sourceID, senderID int64
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.source_id, m.sender_id FROM messages m JOIN sources s ON s.id = m.source_id WHERE s.identifier = ? AND m.source_message_id = '101'`), api.server.URL+"/accounts/3/inboxes/7").Scan(&sourceID, &senderID))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT m.source_id, m.sender_id FROM messages m JOIN sources s ON s.id = m.source_id WHERE s.identifier = ? AND m.source_message_id = '101'`), api.server.URL+"/accounts/3/inboxes/7").Scan(&sourceID, &senderID))
 		sourceIDs = append(sourceIDs, sourceID)
 		senderIDs = append(senderIDs, senderID)
 	}
 	assert.NotEqual(sourceIDs[0], sourceIDs[1])
 	assert.NotEqual(senderIDs[0], senderIDs[1], "bare agent IDs cannot cross instance boundaries")
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id = '101'`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id = '101'`).Scan(&count))
 	assert.Equal(2, count, "message IDs are deduplicated within their source")
 }
 
@@ -628,7 +628,7 @@ func TestImportContractMetadataOnlyAndUnknownAttachmentTypes(t *testing.T) {
 	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true, AttachmentsDir: t.TempDir()})
 	require.NoError(err)
 	id := contractArchivedMessageID(t, st, "601")
-	rows, err := st.DB().Query(st.Rebind(`SELECT COALESCE(mime_type, ''), COALESCE(content_hash, ''), attachment_metadata FROM attachments WHERE message_id = ? ORDER BY source_attachment_id`), id)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT COALESCE(mime_type, ''), COALESCE(content_hash, ''), attachment_metadata FROM attachments WHERE message_id = ? ORDER BY source_attachment_id`), id)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var metadata []string
@@ -715,12 +715,12 @@ func TestImportContractRelatedMessageAvailability(t *testing.T) {
 	must.NoError(st.SetMessageMetadata(chatID, sql.NullString{String: `{"meeting_message_id":` + strconv.FormatInt(meetingID, 10) + `}`, Valid: true}))
 	other, err := st.GetOrCreateSource("chatwoot", "synthetic-other-inbox")
 	must.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, meetingID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, meetingID)
 	must.NoError(err)
 	got, err := st.GetMessage(chatID)
 	must.NoError(err)
 	checks.Nil(got.RelatedMessageID)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), source.ID, meetingID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), source.ID, meetingID)
 	must.NoError(err)
 	must.NoError(st.MarkMessageDeleted(source.ID, "call:201"))
 	got, err = st.GetMessage(chatID)
@@ -735,25 +735,23 @@ func TestImportContractRelatedMessageSubset(t *testing.T) {
 	t.Parallel()
 	must, checks := require.New(t), assert.New(t)
 	sourcePath := filepath.Join(t.TempDir(), "source.db")
-	st, err := store.Open(sourcePath)
-	must.NoError(err)
-	must.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, sourcePath)
 	message := chatwootapi.Message(201, 1767225600, nil)
 	message["content_type"] = "voice_call"
 	message["call"] = map[string]any{"id": 601, "direction": "incoming", "status": "completed", "transcript": "Synthetic transcript"}
 	api := newContractAPI(t, 3, []map[string]any{message})
 	importer, _ := contractRegister(t, st, api)
-	_, err = importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 	must.NoError(err)
 	must.NoError(st.Close())
 	destination := t.TempDir()
-	_, err = store.CopySubset(sourcePath, destination, 1, false)
+	_, err = store.CopySubset(t.Context(), sourcePath, destination, 1, false)
 	must.NoError(err)
 	subset, err := store.Open(filepath.Join(destination, "msgvault.db"))
 	must.NoError(err)
 	t.Cleanup(func() { must.NoError(subset.Close()) })
 	var id int64
-	must.NoError(subset.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
+	must.NoError(subset.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
 	detail, err := subset.GetMessage(id)
 	must.NoError(err)
 	checks.Nil(detail.RelatedMessageID)

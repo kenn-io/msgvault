@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/kit/consolewindow"
 )
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
@@ -30,14 +32,6 @@ func isDaemonCLISubprocess() bool {
 
 func isDaemonConsoleSubprocess() bool {
 	return isDaemonCLISubprocess() || isDaemonBuildCacheChild()
-}
-
-func runDaemonCLISubprocessStream(
-	ctx context.Context,
-	args []string,
-	emit func(stream, data string) error,
-) error {
-	return runDaemonCLISubprocessStreamWithEnv(ctx, args, nil, "", emit)
 }
 
 func runDaemonCLISubprocessStreamWithEnv(
@@ -147,6 +141,7 @@ func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, en
 		return signalDaemonProcess(cmd.Process)
 	}
 	cmd.WaitDelay = 30 * time.Second
+	consolewindow.Hide(cmd)
 	return cmd, nil
 }
 

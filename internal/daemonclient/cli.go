@@ -178,6 +178,8 @@ type CLISearchRequest struct {
 }
 
 type CLISearch struct {
+	HasMore          bool                   `json:"has_more,omitzero"`
+	Hints            []query.SearchHint     `json:"hints,omitempty"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
@@ -205,16 +207,18 @@ type CLIHybridSearchRequest struct {
 }
 
 type CLIHybridSearch struct {
-	Results          []CLIHybridSearchResult
-	Generation       CLIHybridGeneration
-	TookMS           int64
-	Timings          CLIHybridSearchTimings
-	PoolSaturated    bool
-	Accelerator      string
-	ReturnedCount    int
-	ScopeLabel       string
-	ScopeSourceCount int
-	HasMore          bool
+	Results               []CLIHybridSearchResult
+	Generation            CLIHybridGeneration
+	TookMS                int64
+	Timings               CLIHybridSearchTimings
+	PoolSaturated         bool
+	Accelerator           string
+	ReturnedCount         int
+	ScopeLabel            string
+	ScopeSourceCount      int
+	HasMore               bool
+	RankingLimitReached   int
+	CandidateLimitReached int
 }
 
 type CLIHybridSearchTimings struct {
@@ -286,6 +290,8 @@ type CLIAccount struct {
 	OAuthApp           string     `json:"oauth_app,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
+	Stale              bool       `json:"stale,omitempty"`
+	AsOf               *time.Time `json:"as_of,omitempty"`
 	LastSync           *time.Time `json:"last_sync"`
 }
 
@@ -1685,7 +1691,7 @@ func (c *Client) messageWebURL(ctx context.Context, id int64) string {
 	if id <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s/messages/%d", apiprotocol.BrowserOrigin(ctx, c.baseURL), id)
+	return fmt.Sprintf("%s/messages/%d", apiprotocol.BrowserOrigin(ctx, c.currentDaemonURL()), id)
 }
 
 func (c *Client) messageSummariesWithURLs(ctx context.Context, messages []generated.MessageSummary) []query.MessageSummary {

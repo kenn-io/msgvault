@@ -1,10 +1,17 @@
 package cmd
 
 import (
+	"encoding/csv"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestCacheCatchUpRepairsNewlyExportableOldMessage(t *testing.T) {
@@ -12,7 +19,7 @@ func TestCacheCatchUpRepairsNewlyExportableOldMessage(t *testing.T) {
 		t.Run(map[bool]string{false: "within_boundary", true: "with_append"}[withAppend], func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			c, st := openTestDaemonAnalyticsStore(t)
-			_, err := st.DB().Exec(`
+			_, err := st.DB().ExecContext(t.Context(), `
 				INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'owner@example.com');
 				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 					VALUES (1, 1, 'thread', 'email_thread');
@@ -22,11 +29,11 @@ func TestCacheCatchUpRepairsNewlyExportableOldMessage(t *testing.T) {
 				INSERT INTO labels (id, name) VALUES (1, 'synthetic');
 			`)
 			require.NoError(err)
-			_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+			_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 			require.NoError(err)
 			// Finishing this parent changes the message population below the
 			// cache's ID boundary. Its journaled labels alone cannot repair it.
-			_, err = st.DB().Exec(`
+			_, err = st.DB().ExecContext(t.Context(), `
 				UPDATE messages SET sent_at = '2024-01-01 00:00:00' WHERE id = 1;
 				INSERT INTO message_labels (message_id, label_id) VALUES (1, 1);
 				INSERT INTO sync_runs (source_id, started_at, completed_at, status, messages_added)
@@ -35,7 +42,7 @@ func TestCacheCatchUpRepairsNewlyExportableOldMessage(t *testing.T) {
 			require.NoError(err)
 			wantCount := int64(2)
 			if withAppend {
-				_, err = st.DB().Exec(`INSERT INTO messages
+				_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages
 					(id, source_id, source_message_id, conversation_id, message_type, sent_at)
 					VALUES (3, 1, 'message-3', 1, 'email', '2024-01-03 00:00:00')`)
 				require.NoError(err)
@@ -50,11 +57,11 @@ func TestCacheCatchUpRepairsNewlyExportableOldMessage(t *testing.T) {
 				assert.False(light.FullRebuild, "builder verifies the population before repair")
 				assert.True(cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir()).FullRebuild)
 			}
-			built, err := buildCache(c.DatabaseDSN(), c.AnalyticsDir(), false)
+			built, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), false)
 			require.NoError(err)
 			assert.Equal(wantCount, built.StagedCount, "the old missing parent requires a full facts repair")
 			assert.False(cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir()).NeedsBuild)
-			engine, err := openDaemonDuckDBEngine(c, st)
+			engine, err := openDaemonDuckDBEngine(t.Context(), c, st)
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(engine.Close()) })
 			result, err := engine.QuerySQL(t.Context(), "SELECT COUNT(*) FROM messages")
@@ -80,7 +87,7 @@ func TestCacheCatchUpExportsSourceDeletedMessageAboveBoundary(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", tt.csv)
 			c, st := openTestDaemonAnalyticsStore(t)
-			_, err := st.DB().Exec(`
+			_, err := st.DB().ExecContext(t.Context(), `
 				INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'owner@example.com');
 				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 					VALUES (1, 1, 'thread', 'email_thread');
@@ -89,11 +96,11 @@ func TestCacheCatchUpExportsSourceDeletedMessageAboveBoundary(t *testing.T) {
 				INSERT INTO labels (id, name) VALUES (1, 'synthetic');
 			`)
 			require.NoError(err)
-			_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+			_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 			require.NoError(err)
 			// The deletion time predates the cache build, so the deletion check
 			// does not force a full rebuild on its own.
-			_, err = st.DB().Exec(`
+			_, err = st.DB().ExecContext(t.Context(), `
 				INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type,
 					sent_at, deleted_from_source_at)
 					VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00', '2024-01-03 00:00:00');
@@ -106,16 +113,115 @@ func TestCacheCatchUpExportsSourceDeletedMessageAboveBoundary(t *testing.T) {
 			require.False(stale.HasNew, "a source-deleted message is not live")
 			require.True(stale.HasRelatedRowDrift)
 
-			_, err = buildCacheAuto(c.DatabaseDSN(), c.AnalyticsDir())
+			_, err = buildCacheAuto(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 			require.NoError(err)
 			assert.False(cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir()).NeedsBuild)
-			engine, err := openDaemonDuckDBEngine(c, st)
+			engine, err := openDaemonDuckDBEngine(t.Context(), c, st)
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(engine.Close()) })
 			result, err := engine.QuerySQL(t.Context(), "SELECT id FROM messages ORDER BY id")
 			require.NoError(err)
 			require.Len(result.Rows, 2)
 			assert.EqualValues(2, result.Rows[1][0])
+		})
+	}
+}
+
+func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	for _, tt := range []struct {
+		name   string
+		repair bool
+	}{
+		{name: "append"},
+		{name: "repair", repair: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			tmp := t.TempDir()
+			dbPath := filepath.Join(tmp, "msgvault.db")
+			incDir, fullDir := filepath.Join(tmp, "analytics-inc"), filepath.Join(tmp, "analytics-full")
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+			sourceID, alice, bob, _ := cacheExportParityParticipants(t, st)
+			require.NoError(st.SetParticipantIdentifier(bob, "email", "bob@example.com"))
+			_, _, err := st.CreatePersonFromParticipant(bob)
+			require.NoError(err)
+			alias, err := st.EnsureParticipantByIdentifier("email", "bob-alias@example.com", "Bob")
+			require.NoError(err)
+			_, err = st.LinkParticipants(bob, alias)
+			require.NoError(err)
+			label, err := st.EnsureLabel(t.Context(), sourceID, "inbox", "Inbox", "system")
+			require.NoError(err)
+			addMessage := func(i int) {
+				_, id := addCacheExportParityMessage(t, st, sourceID, bob, alice, i)
+				require.Equal(int64(i), id)
+				require.NoError(st.AddMessageLabels(t.Context(), id, []int64{label}))
+				require.NoError(st.UpsertAttachment(t.Context(), id, "document.txt", "text/plain", "", fmt.Sprintf("hash-%d", i), 42))
+			}
+			addMessage(1)
+			require.NoError(st.Close())
+			_, err = buildCache(t.Context(), dbPath, incDir, true)
+			require.NoError(err)
+
+			st, err = store.Open(dbPath)
+			require.NoError(err)
+			addMessage(2)
+			addMessage(3)
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = NULL WHERE id = 2`)
+			require.NoError(err)
+			if tt.repair {
+				require.NoError(st.ReplaceMessageRecipients(1, "to", []int64{bob}, []string{"Updated"}))
+			}
+			_, err = st.DB().ExecContext(t.Context(), `INSERT INTO sync_runs (source_id, started_at, completed_at, status, messages_processed, messages_added)
+				VALUES (?, datetime('now'), datetime('now'), 'completed', 1, 1)`, sourceID)
+			require.NoError(err)
+			require.NoError(st.Close())
+
+			expected := map[string][]string{
+				"message_recipients": {"3", "3"},
+				"message_labels":     {"3"},
+				"attachments":        {"3"},
+			}
+			if tt.repair {
+				expected["message_recipients"] = []string{"1", "1", "2", "2", "3", "3"}
+			}
+			hookCalled := false
+			buildCacheBeforeMessagesExportHook = func() error {
+				hookCalled = true
+				dirs, err := filepath.Glob(filepath.Join(tmp, ".cache-tmp-*"))
+				require.NoError(err)
+				require.Len(dirs, 1)
+				for dataset, want := range expected {
+					f, err := os.Open(filepath.Join(dirs[0], dataset+".csv"))
+					require.NoError(err)
+					records, err := csv.NewReader(f).ReadAll()
+					require.NoError(f.Close())
+					require.NoError(err)
+					require.NotEmpty(records)
+					column := -1
+					for i, name := range records[0] {
+						if name == "message_id" {
+							column = i
+						}
+					}
+					require.GreaterOrEqual(column, 0, dataset)
+					var ids []string
+					for _, row := range records[1:] {
+						ids = append(ids, row[column])
+					}
+					assert.ElementsMatch(want, ids, dataset)
+				}
+				return nil
+			}
+			t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
+			built, err := buildCache(t.Context(), dbPath, incDir, false)
+			buildCacheBeforeMessagesExportHook = nil
+			require.NoError(err)
+			assert.True(hookCalled)
+			assert.Equal(int64(1), built.StagedCount)
+			_, err = buildCache(t.Context(), dbPath, fullDir, true)
+			require.NoError(err)
+			assertCacheExportParity(t, tmp, incDir, fullDir, query.RequiredParquetDirs)
 		})
 	}
 }

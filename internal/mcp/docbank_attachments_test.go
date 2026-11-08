@@ -43,7 +43,7 @@ func TestAttachmentDocbankViewsThroughDaemon(t *testing.T) {
 	createAttachmentFixture(t, cfg.AttachmentsDir(), hash, data)
 	require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{Filename: "report.pdf", MIMEType: "application/pdf", ContentHash: hash, StoragePath: hash[:2] + "/" + hash, Size: int64(len(data))}))
 	var id int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM attachments WHERE message_id=?"), mid).Scan(&id))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind("SELECT id FROM attachments WHERE message_id=?"), mid).Scan(&id))
 	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "destination", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: "version"}, ""))
 	engine := query.NewSQLiteEngine(f.Store.DB())
 	if f.Store.IsPostgreSQL() {

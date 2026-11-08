@@ -3,7 +3,7 @@
     saveCardDAVAccount as generatedSaveCardDAVAccount,
     testCardDAVAccount as generatedTestCardDAVAccount,
   } from '../../api/generated/api/api';
-  import { Button, SettingsSection, TextInput, Toggle, SelectDropdown } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, SettingsSection, TextInput, Toggle, SelectDropdown } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVAccountRequest as GeneratedCardDAVAccountRequest } from '../../api/generated/models';
@@ -282,10 +282,10 @@
       </div>
       <p>Register <code>{window.location.origin}/</code> as an authorized redirect URI in your Google OAuth app. Keep existing permissions checked when granting contacts access.</p>
       <p>Your contacts account and OAuth app can differ from your mail accounts. A matching Google authorization is reused; otherwise, CardDAV stores separate credentials.</p>
-      <details><summary>Authorize from the terminal instead</summary>
+      <Disclosure variant="plain">{#snippet summary()}Authorize from the terminal instead{/snippet}
         {@render terminalCommands()}
         <p>For a remote daemon, copy the authorized token to that host before testing. <a href="https://msgvault.io/docs/usage/people-carddav/#google-contacts" target="_blank" rel="noreferrer">Google Contacts setup</a></p>
-      </details>
+      </Disclosure>
     {:else if microsoft}
       <p>Sign in from the terminal before you save.</p>
       {@render terminalCommands()}

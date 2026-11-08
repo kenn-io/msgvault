@@ -94,8 +94,8 @@ func newMeetingRouteTestServer(t *testing.T, st *meetingRouteStore, engine query
 	})
 }
 
-func meetingRouteRequest(path, body string) *http.Request {
-	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+func meetingRouteRequest(ctx context.Context, path, body string) *http.Request {
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, path, strings.NewReader(body))
 	request.Header.Set("Content-Type", applicationJSONMediaType)
 	return request
 }
@@ -122,6 +122,7 @@ func TestMeetingDirectRoutesPreserveScopeAndDefaults(t *testing.T) {
 
 	contextResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(contextResponse, meetingRouteRequest(
+		t.Context(),
 		"/api/v1/meetings/context", `{"message_ids":[2,1,2]}`,
 	))
 	requirements.Equal(http.StatusOK, contextResponse.Code, contextResponse.Body.String())
@@ -132,6 +133,7 @@ func TestMeetingDirectRoutesPreserveScopeAndDefaults(t *testing.T) {
 
 	actionsResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(actionsResponse, meetingRouteRequest(
+		t.Context(),
 		"/api/v1/meetings/actions", `{"scope":{"message_ids":[]},"limit":2}`,
 	))
 	requirements.Equal(http.StatusOK, actionsResponse.Code, actionsResponse.Body.String())
@@ -140,7 +142,7 @@ func TestMeetingDirectRoutesPreserveScopeAndDefaults(t *testing.T) {
 	assertions.Equal(2, st.actionsQuery.Limit)
 
 	metricsResponse := httptest.NewRecorder()
-	srv.Router().ServeHTTP(metricsResponse, meetingRouteRequest("/api/v1/meetings/metrics", `{}`))
+	srv.Router().ServeHTTP(metricsResponse, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", `{}`))
 	requirements.Equal(http.StatusOK, metricsResponse.Code, metricsResponse.Body.String())
 	assertions.Nil(st.metricsScope.MessageIDs)
 }
@@ -200,7 +202,7 @@ func TestMeetingRoutesRejectNoncanonicalJSONFieldsBeforeResolution(t *testing.T)
 			}}
 			response := httptest.NewRecorder()
 			newMeetingRouteTestServer(t, st, engine).Router().ServeHTTP(
-				response, meetingRouteRequest("/api/v1/meetings/metrics", test.body),
+				response, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", test.body),
 			)
 			assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 			assertions.Zero(personCalls)
@@ -221,7 +223,7 @@ func TestMeetingActionsValidateOptionsBeforeResolvingScope(t *testing.T) {
 		response := httptest.NewRecorder()
 		newMeetingRouteTestServer(t, st, &querytest.MockEngine{}).Router().ServeHTTP(
 			response,
-			meetingRouteRequest("/api/v1/meetings/actions", `{"scope":{"person_id":7},"limit":0}`),
+			meetingRouteRequest(t.Context(), "/api/v1/meetings/actions", `{"scope":{"person_id":7},"limit":0}`),
 		)
 
 		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
@@ -237,7 +239,7 @@ func TestMeetingActionsValidateOptionsBeforeResolvingScope(t *testing.T) {
 		response := httptest.NewRecorder()
 		newMeetingRouteTestServer(t, st, engine).Router().ServeHTTP(
 			response,
-			meetingRouteRequest("/api/v1/meetings/actions", `{"explore":{"predicate":{},"cache_revision":"r","search_provenance":{}},"status":"bad"}`),
+			meetingRouteRequest(t.Context(), "/api/v1/meetings/actions", `{"explore":{"predicate":{},"cache_revision":"r","search_provenance":{}},"status":"bad"}`),
 		)
 
 		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
@@ -256,7 +258,7 @@ func TestMeetingDirectScopeValidatesBeforeResolvingPerson(t *testing.T) {
 	response := httptest.NewRecorder()
 	newMeetingRouteTestServer(t, st, &querytest.MockEngine{}).Router().ServeHTTP(
 		response,
-		meetingRouteRequest("/api/v1/meetings/metrics", `{"scope":{"person_id":7,"domains":[""]}}`),
+		meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", `{"scope":{"person_id":7,"domains":[""]}}`),
 	)
 
 	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
@@ -307,7 +309,7 @@ func TestMeetingExploreMetricsApplyResolvedDeletionToCurrentStoreSnapshot(t *tes
 		}
 	}`, cacheSelection.CacheRevision)
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, meetingRouteRequest("/api/v1/meetings/metrics", body))
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", body))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	var metrics meetingcontent.Metrics
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &metrics))
@@ -366,7 +368,7 @@ func TestMeetingExploreContextRechecksSourceDeletion(t *testing.T) {
 				"predicate":{"filters":%s},
 				"cache_revision":%q,"search_provenance":{}}}`, filters, selection.CacheRevision)
 			before := httptest.NewRecorder()
-			srv.Router().ServeHTTP(before, meetingRouteRequest("/api/v1/meetings/context", body))
+			srv.Router().ServeHTTP(before, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", body))
 			requirements.Equal(http.StatusOK, before.Code, before.Body.String())
 
 			// Provider sync can change source deletion before the committed cache refreshes.
@@ -377,12 +379,12 @@ func TestMeetingExploreContextRechecksSourceDeletion(t *testing.T) {
 			}
 			// Direct IDs intentionally retain archived evidence in either source state.
 			direct := httptest.NewRecorder()
-			srv.Router().ServeHTTP(direct, meetingRouteRequest("/api/v1/meetings/context",
+			srv.Router().ServeHTTP(direct, meetingRouteRequest(t.Context(), "/api/v1/meetings/context",
 				fmt.Sprintf(`{"message_ids":[%d]}`, meetingID)))
 			requirements.Equal(http.StatusOK, direct.Code, direct.Body.String())
 
 			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, meetingRouteRequest("/api/v1/meetings/context", body))
+			srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", body))
 			requirements.Equal(tc.wantStatus, response.Code, response.Body.String())
 			if tc.wantStatus == http.StatusConflict {
 				var failure ErrorResponse
@@ -411,7 +413,7 @@ func TestMeetingRoutesRejectMalformedAndOversizedBodiesBeforeStoreWork(t *testin
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, test.path, strings.NewReader(test.body))
 			request.Header.Set("Content-Type", test.contentType)
 			response := httptest.NewRecorder()
 			srv.Router().ServeHTTP(response, request)
@@ -469,7 +471,7 @@ func TestMeetingRoutesRejectInvalidPublicScopeAndOptionValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			srv := newMeetingRouteTestServer(t, st, &querytest.MockEngine{})
 			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, meetingRouteRequest(test.path, test.body))
+			srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), test.path, test.body))
 			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 		})
 	}
@@ -489,6 +491,7 @@ func TestMeetingScopeResolvesDurablePersonAndPreservesExactPluralIDs(t *testing.
 
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, meetingRouteRequest(
+		t.Context(),
 		"/api/v1/meetings/metrics", `{"scope":{"person_id":7}}`,
 	))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -497,6 +500,7 @@ func TestMeetingScopeResolvesDurablePersonAndPreservesExactPluralIDs(t *testing.
 
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, meetingRouteRequest(
+		t.Context(),
 		"/api/v1/meetings/metrics", `{"scope":{"participant_ids":[11]}}`,
 	))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -519,7 +523,7 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	selection := `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"cache-r1","search_provenance":{}}}`
 
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, meetingRouteRequest("/api/v1/meetings/context", selection))
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", selection))
 	requirements.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 	var failure ErrorResponse
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
@@ -531,7 +535,7 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	}
 	explore := `{"explore":{"predicate":{},"cache_revision":"cache-r1","search_provenance":{}}}`
 	response = httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, meetingRouteRequest("/api/v1/meetings/actions", explore))
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/actions", explore))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	requirements.NotNil(st.actionsQuery.Scope.MessageIDs)
 	assertions.Equal([]int64{41}, *st.actionsQuery.Scope.MessageIDs)
@@ -576,7 +580,7 @@ func TestMeetingExploreScopeUsesSemanticSnapshotAndRejectsSaturatedPool(t *testi
 		}
 	}`, snapshotID)
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, meetingRouteRequest("/api/v1/meetings/actions", body))
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/actions", body))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	assertions.Equal([]int64{41}, engine.request.Explore.Search.CandidateMessageIDs)
 	requirements.NotNil(engine.request.Explore.Search.VectorGeneration)
@@ -590,6 +594,7 @@ func TestMeetingExploreScopeUsesSemanticSnapshotAndRejectsSaturatedPool(t *testi
 	})
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, meetingRouteRequest(
+		t.Context(),
 		"/api/v1/meetings/actions", strings.Replace(body, snapshotID, saturatedID, 1),
 	))
 	requirements.Equal(http.StatusConflict, response.Code, response.Body.String())
@@ -625,7 +630,7 @@ func TestMeetingExploreScopeMapsPopulationAndRevisionFailures(t *testing.T) {
 				body = `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"r","search_provenance":{}}}`
 			}
 			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, meetingRouteRequest(path, body))
+			srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), path, body))
 			require.Equal(t, test.wantStatus, response.Code, response.Body.String())
 			var failure ErrorResponse
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
@@ -643,6 +648,7 @@ func TestMeetingExploreContextMapsEligibilityDriftToScopeChanged(t *testing.T) {
 	srv := newMeetingRouteTestServer(t, st, engine)
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, meetingRouteRequest(
+		t.Context(),
 		"/api/v1/meetings/context",
 		`{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"r","search_provenance":{}}}`,
 	))
@@ -673,6 +679,7 @@ func TestMeetingStoreErrorsUseStableHTTPContracts(t *testing.T) {
 			srv := newMeetingRouteTestServer(t, st, &querytest.MockEngine{})
 			response := httptest.NewRecorder()
 			srv.Router().ServeHTTP(response, meetingRouteRequest(
+				t.Context(),
 				"/api/v1/meetings/context", `{"message_ids":[1]}`,
 			))
 			require.Equal(t, test.wantStatus, response.Code, response.Body.String())
@@ -687,7 +694,7 @@ func TestMeetingRouteContextCancellationIsStructured(t *testing.T) {
 	t.Parallel()
 	st := &meetingRouteStore{mockStore: &mockStore{}, contextErr: context.Canceled}
 	srv := newMeetingRouteTestServer(t, st, &querytest.MockEngine{})
-	request := meetingRouteRequest("/api/v1/meetings/context", `{"message_ids":[1]}`)
+	request := meetingRouteRequest(t.Context(), "/api/v1/meetings/context", `{"message_ids":[1]}`)
 	ctx, cancel := context.WithCancel(request.Context())
 	cancel()
 	response := httptest.NewRecorder()
@@ -701,6 +708,7 @@ func TestMeetingRouteStoreErrorDoesNotLeakDetails(t *testing.T) {
 	srv := newMeetingRouteTestServer(t, st, &querytest.MockEngine{})
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, meetingRouteRequest(
+		t.Context(),
 		"/api/v1/meetings/context", `{"message_ids":[1]}`,
 	))
 	assert.Equal(t, http.StatusInternalServerError, response.Code)

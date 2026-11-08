@@ -1,5 +1,8 @@
 # msgvault Agent Quickstart
 
+For the MCP guide, run `msgvault quickstart --mcp` or read
+https://msgvault.io/docs/guides/agent-quickstart.md.
+
 You have access to `msgvault`, an offline email, chat, and meeting archive
 tool. The user's archive is stored locally in a SQLite database with
 Parquet-based analytics. Use the commands below to help the user set up, sync,
@@ -140,7 +143,7 @@ msgvault search "quarterly report" --limit 100 --offset 50
 
 | Operator      | Description                          | Example                    |
 |---------------|--------------------------------------|----------------------------|
-| `from:`       | Sender email address                 | `from:bob@example.com`     |
+| `from:`       | Sender email address or domain       | `from:bob@example.com`     |
 | `to:`         | Recipient email address              | `to:team@company.com`      |
 | `cc:`         | CC recipient                         | `cc:manager@company.com`   |
 | `bcc:`        | BCC recipient                        | `bcc:hr@company.com`       |

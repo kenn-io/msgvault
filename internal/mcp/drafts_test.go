@@ -223,30 +223,45 @@ func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 
 func TestDraftToolResultShapes(t *testing.T) {
 	for _, tc := range []struct {
-		name, stdout string
-		err          error
-		want         any
-		text         string
+		name, command, stdout string
+		args                  map[string]any
+		err                   error
+		text                  string
 	}{
-		{name: "object", stdout: `{"status":"created"}`, want: map[string]any{"status": "created"}},
-		{name: "array", stdout: `[{"draft_id":"d1"}]`, want: map[string]any{"data": []any{map[string]any{"draft_id": "d1"}}}},
-		{name: "daemon text", err: &DraftCommandError{Message: "not_permitted", Stderr: "{\"status\":\"pending\"}\n"}, text: "not_permitted\n{\"status\":\"pending\"}"},
+		{name: "object", command: "draft-reply", args: map[string]any{"message_id": 7, "body": "reply"}, stdout: `{"status":"created","draft_id":"d1"}`, text: `{"draft_id":"d1","status":"created"}`},
+		{name: "array", command: "draft-get", args: map[string]any{"conversation": 7}, stdout: `[{"draft_id":"d1"}]`, text: `{"data":[{"draft_id":"d1"}]}`},
+		{name: "compose", command: "draft-compose", args: map[string]any{"source_id": 9, "to": []string{"to@example.com"}, "body": "4111111111111111"}, stdout: `{"status":"created","draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
+		{name: "subject only", command: "draft-compose", args: map[string]any{"source_id": 9, "to": []string{"to@example.com"}, "subject": "4111111111111111", "body": "clean"}, stdout: `{"status":"created"}`, text: `{"sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
+		{name: "get", command: "draft-get", args: map[string]any{"draft_id": "d1"}, stdout: `{"body":"4111111111111111"}`, text: `{"body":"4111111111111111"}`},
+		{name: "daemon text", command: "draft-reply", args: map[string]any{"message_id": 7, "body": "4111111111111111"}, err: &DraftCommandError{Message: "not_permitted", Stderr: "{\"status\":\"pending\"}\n"}, text: "not_permitted\n{\"status\":\"pending\"}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			runner := &draftTestRunner{result: DraftCommandResult{Stdout: tc.stdout}, err: tc.err}
-			result := confirmedCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-reply"}}, ToolDraftReply, map[string]any{"message_id": 7, "source_id": 9, "body": "reply", "all": false}, true)
-			if tc.text != "" {
+			result := confirmedCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{tc.command}}, strings.ReplaceAll(tc.command, "-", "_"), tc.args, true)
+			content, ok := result["content"].([]any)
+			require.True(ok)
+			require.NotEmpty(content)
+			text, ok := content[0].(map[string]any)
+			require.True(ok)
+			assert.Equal(tc.text, text["text"])
+			if tc.err != nil {
 				assert.Equal(true, result["isError"])
-				content, ok := result["content"].([]any)
-				require.True(ok)
-				require.NotEmpty(content)
-				text, ok := content[0].(map[string]any)
-				require.True(ok)
-				assert.Equal(tc.text, text["text"])
+				assert.NotContains(result, "structuredContent")
+				assert.NotContains(text["text"], "sensitive_content")
 			} else {
-				assert.Equal(tc.want, result["structuredContent"])
+				assert.NotEqual(true, result["isError"])
+				var want any
+				require.NoError(json.Unmarshal([]byte(tc.text), &want))
+				assert.Equal(want, result["structuredContent"])
+				for _, field := range []string{"subject", "body"} {
+					if value, ok := tc.args[field]; ok {
+						value, ok := value.(string)
+						require.True(ok)
+						assert.Equal([]string{value}, runner.request.Flags[field])
+					}
+				}
 			}
 		})
 	}

@@ -17,6 +17,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("MSGVAULT_TEST_PLANNER_DB") != "" {
+		runPlannerRefreshChild()
+	}
 	// Default configs must never inherit the caller's archive, including an
 	// explicit MSGVAULT_HOME. Individual fixtures can still choose their own paths.
 	testHome, err := os.MkdirTemp("", "msgvault-cli-test-")
@@ -68,7 +71,7 @@ func TestCLITestsDoNotPurgeCallerAttachments(t *testing.T) {
 	path := seedAttachmentFile(t, filepath.Join(callerHome, "attachments"), hash[:2]+"/"+hash, "caller-owned recording")
 	executable, err := os.Executable()
 	require.NoError(err)
-	child := exec.Command(executable, "-test.run=^TestCLITestsDoNotPurgeCallerAttachments$")
+	child := exec.CommandContext(t.Context(), executable, "-test.run=^TestCLITestsDoNotPurgeCallerAttachments$")
 	child.Env = append(os.Environ(), "MSGVAULT_HOME="+callerHome, "MSGVAULT_TEST_ISOLATION_CHILD=1")
 	output, err := child.CombinedOutput()
 	require.NoError(err, "%s", output)

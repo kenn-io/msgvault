@@ -91,7 +91,7 @@ func TestClientContextCancelDuringRetry(t *testing.T) {
 					w.WriteHeader(http.StatusTooManyRequests)
 				}))
 				httpClient := server.Client()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				c := NewClient(server.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 				c.http.Transport = httpClient.Transport

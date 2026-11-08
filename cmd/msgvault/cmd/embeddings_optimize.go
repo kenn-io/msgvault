@@ -13,6 +13,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/consolewindow"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -37,6 +38,7 @@ var runAcceleratorWorkerSubprocess acceleratorWorkerRunner = func(
 	worker := exec.CommandContext(ctx, executable, embeddingsCommandName, embeddingsOptimizeWorkerName,
 		databasePath, strconv.FormatInt(int64(generationID), 10), strconv.Itoa(threads))
 	worker.Stderr = stderr
+	consolewindow.Hide(worker)
 	if err := worker.Run(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -72,13 +74,13 @@ func runEmbeddingsOptimizeManaged(cmd *cobra.Command, args []string, afterBatch 
 		return errors.New("embeddings optimize is only needed for SQLite; PostgreSQL uses its native vector index")
 	}
 	if afterBatch == nil {
-		release, err := acquireDirectSQLiteWriteLock(cfg, state)
+		release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 		if err != nil {
 			return err
 		}
 		defer release()
 	}
-	if err := ensureMainSchema(state); err != nil {
+	if err := ensureMainSchema(cmd.Context(), state); err != nil {
 		return err
 	}
 	backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())

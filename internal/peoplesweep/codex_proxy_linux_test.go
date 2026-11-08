@@ -22,7 +22,7 @@ func TestCodexServiceProxyAllowsOnlyPinnedConnectAuthorities(t *testing.T) {
 	requireChecks := require.New(t)
 	workRoot := t.TempDir()
 	requireChecks.NoError(os.Chmod(workRoot, 0o700))
-	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	upstream, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	requireChecks.NoError(err)
 	t.Cleanup(func() { require.NoError(t, upstream.Close()) })
 	var dials atomic.Int64
@@ -43,7 +43,7 @@ func TestCodexServiceProxyAllowsOnlyPinnedConnectAuthorities(t *testing.T) {
 		"CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
 		"GET http://chatgpt.com/ HTTP/1.1\r\nHost: chatgpt.com\r\n\r\n",
 	} {
-		conn, err := net.Dial("unix", session.SocketPath())
+		conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", session.SocketPath())
 		requireChecks.NoError(err)
 		requireChecks.NoError(conn.SetDeadline(time.Now().Add(2 * time.Second)))
 		_, err = io.WriteString(conn, request)
@@ -56,7 +56,7 @@ func TestCodexServiceProxyAllowsOnlyPinnedConnectAuthorities(t *testing.T) {
 	assertChecks.Zero(dials.Load())
 
 	for index, authority := range []string{"chatgpt.com:443", "auth.openai.com:443"} {
-		conn, err := net.Dial("unix", session.SocketPath())
+		conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", session.SocketPath())
 		requireChecks.NoError(err)
 		requireChecks.NoError(conn.SetDeadline(time.Now().Add(2 * time.Second)))
 		_, err = io.WriteString(conn, "CONNECT "+authority+" HTTP/1.1\r\nHost: "+authority+"\r\n\r\n")

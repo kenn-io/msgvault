@@ -87,7 +87,7 @@ func TestListLabelsRequestsSpecialUseForLocalizedSentMailbox(t *testing.T) {
 		},
 		InsecureAuth: true,
 	})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
@@ -126,7 +126,7 @@ func TestListMailboxesUsesBasicListWithoutSpecialUseCapability(t *testing.T) {
 		},
 		InsecureAuth: true,
 	})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
@@ -150,7 +150,7 @@ func TestListMailboxesUsesBasicListWithoutSpecialUseCapability(t *testing.T) {
 	var mailboxes []string
 	err = client.withConn(t.Context(), func(*imapclient.Client) error {
 		var listErr error
-		mailboxes, listErr = client.listMailboxesLocked()
+		mailboxes, listErr = client.listMailboxesLocked(t.Context())
 		return listErr
 	})
 	require.NoError(err, "legacy mailbox listing")

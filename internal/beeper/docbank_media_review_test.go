@@ -24,7 +24,7 @@ type processDeliveryIdentity struct {
 
 func processDeliveryIdentities(t *testing.T, st *store.Store, destination string) []processDeliveryIdentity {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT processing_key, phase, COALESCE(pending_operation_id, ''),
 		       COALESCE(supplied_input_id, ''), COALESCE(frozen_request_json, ''),
 		       COALESCE(error_code, '')
@@ -106,7 +106,7 @@ func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
 	require.NoError(err)
 	newKey := processingKeyForDestination(t, world.st, destination, "new-asr")
 	assert.NotEqual(oldKey, newKey)
-	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries
 		SET next_action_at = ? WHERE destination_key = ? AND processing_key = ?`),
 		time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), destination, oldKey)
 	require.NoError(err)
@@ -126,7 +126,7 @@ func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
 	assert.Equal("pending-process", findProcessDelivery(t, deliveries, newKey).phase)
 	assert.Empty(findProcessDelivery(t, deliveries, newKey).operationID)
 	var processingOperationID, jobID string
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT processing_operation_id, job_id
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`SELECT processing_operation_id, job_id
 		FROM beeper_media_deliveries WHERE destination_key = ? AND processing_key = ?`), destination, oldKey).
 		Scan(&processingOperationID, &jobID))
 	assert.Equal(prepared.OperationID, processingOperationID)
@@ -169,15 +169,15 @@ func TestStoredMediaPreparedProcessAfterRevocation(t *testing.T) {
 
 			if change == "deleted" {
 				var sourceID int64
-				require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'prepared-revocation'`).Scan(&sourceID))
+				require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT source_id FROM messages WHERE source_message_id = 'prepared-revocation'`).Scan(&sourceID))
 				require.NoError(world.st.MarkMessageDeleted(sourceID, "prepared-revocation"))
 			} else {
-				_, err := world.st.DB().Exec(world.st.Rebind(`UPDATE attachments SET content_hash = ?`), strings.Repeat("f", 64))
+				_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE attachments SET content_hash = ?`), strings.Repeat("f", 64))
 				require.NoError(err)
 			}
 			require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
 			runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, destination, world.dir).WithASRProfile("asr"), 1)
-			_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+			_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries
 				SET next_action_at = ? WHERE destination_key = ? AND processing_key = ?`),
 				time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), destination, operation.ProcessingKey)
 			require.NoError(err)
@@ -293,25 +293,18 @@ func TestBeeperMediaDiscoveryReadsOutsideGate(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "words", data: syntheticWAV(800, 25)})
-	world.st.DB().SetMaxOpenConns(1)
-	conn, err := world.st.DB().Conn(t.Context())
-	require.NoError(err)
 	held, rawReadsUnderGate := false, 0
-	require.NoError(conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		require.True(ok)
-		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if action == sqlite3.SQLITE_READ && table == "message_raw" && held {
-				rawReadsUnderGate++
-			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	}))
-	require.NoError(conn.Close())
+	refreshAuthorizer := sqliteAuthorizerRefresher(t, world.st, func(action int, table, _, _ string) int {
+		if action == sqlite3.SQLITE_READ && table == "message_raw" && held {
+			rawReadsUnderGate++
+		}
+		return sqlite3.SQLITE_OK
+	})
+	refreshAuthorizer()
 	worker := NewMediaSubmitter(world.st, world.blobs, nil, "gate-reads", world.dir).WithOperationGate(
 		func(context.Context) (func(), bool) {
 			held = true
+			refreshAuthorizer()
 			return func() { held = false }, true
 		})
 	result, err := worker.RunBatch(t.Context())
@@ -335,7 +328,7 @@ func TestBeeperMediaRawReadFailure(t *testing.T) {
 	require.ErrorIs(err, context.Canceled)
 	assert.Empty(mapping.Revision, "read failures must leave the gap revision absent")
 
-	_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), candidates[0].MessageID)
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), candidates[0].MessageID)
 	require.NoError(err)
 	mapping, err = worker.mappingForCandidate(t.Context(), "archive", candidates[0])
 	require.NoError(err)
@@ -349,7 +342,7 @@ func TestBeeperMediaRawReadFailure(t *testing.T) {
 
 	// Corrupt archived compression is a source gap, not a database outage that stops the page.
 	require.NoError(world.st.UpsertMessageRawWithFormat(candidates[0].MessageID, []byte(`{"id":"voice1"}`), "beeper_json"))
-	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
 		[]byte("invalid zlib"), candidates[0].MessageID)
 	require.NoError(err)
 	mapping, err = worker.mappingForCandidate(t.Context(), "archive", candidates[0])
@@ -368,7 +361,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		require.NoError(err)
 		require.True(ok)
 		require.Equal(store.BeeperMediaOperationRetain, operation.Kind)
-		_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), operation.MessageID)
+		_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), operation.MessageID)
 		require.NoError(err)
 		docbank := newFakeDocbank(t)
 		server := httptest.NewServer(docbank)
@@ -404,7 +397,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		mappings, err := world.st.ListLiveBeeperMediaMappings(t.Context(), "artifact-gap", operation.ProcessingKey, 100)
 		require.NoError(err)
 		require.Len(mappings, 1)
-		_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), mappings[0].MessageID)
+		_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), mappings[0].MessageID)
 		require.NoError(err)
 		archiveUID, err := world.st.ArchiveUIDContext(t.Context())
 		require.NoError(err)
@@ -494,8 +487,9 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 				docbank.mu.Unlock()
 
 				denyRawRead := false
+				var refreshAuthorizer func()
 				if failure == "database" {
-					installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
+					refreshAuthorizer = installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
 				}
 				calls, finalGate := 0, 1
 				if kind != "retain" {
@@ -508,6 +502,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 					if calls == finalGate {
 						if failure == "database" {
 							denyRawRead = true
+							refreshAuthorizer()
 						} else {
 							cancel()
 						}
@@ -562,11 +557,11 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		worker := world.submitter(t, server, "stale-final-read")
 		_, err := worker.RunBatch(t.Context())
 		require.NoError(err)
-		_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2999-01-01 00:00:00.000'`)
+		_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2999-01-01 00:00:00.000'`)
 		require.NoError(err)
 		_, err = worker.RunBatch(t.Context())
 		require.NoError(err)
-		_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+		_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 		require.NoError(err)
 		operation, ok, err := world.st.NextBeeperMediaOperation(t.Context(), "stale-final-read", time.Now().UTC())
 		require.NoError(err)
@@ -578,16 +573,17 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		stale, sibling := mappings[0], mappings[1]
 		beforeOccurrences := occurrenceRows(t, world.st, "stale-final-read")
 		beforeDeliveries := deliveryRows(t, world.st, "stale-final-read")
-		_, err = world.st.DB().Exec(world.st.Rebind(
+		_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(
 			`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("d", 64), stale.AttachmentID)
 		require.NoError(err)
 		denyRawRead := false
-		installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
+		refreshAuthorizer := installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
 		calls := 0
 		worker.WithOperationGate(func(context.Context) (func(), bool) {
 			calls++
 			if calls == 2 {
 				denyRawRead = true
+				refreshAuthorizer()
 			}
 			return func() { denyRawRead = false }, true
 		})
@@ -656,7 +652,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 				if rawFailure == "malformed-envelope" {
 					require.NoError(world.st.UpsertMessageRawWithFormat(messageID, []byte("{"), "beeper_json"))
 				} else {
-					_, err := world.st.DB().Exec(world.st.Rebind(
+					_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(
 						`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
 						[]byte("corrupt zlib"), messageID)
 					require.NoError(err)
@@ -716,12 +712,12 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 			messageID := mappings[0].MessageID
 			switch rawFailure {
 			case "missing":
-				_, err := world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
+				_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), messageID)
 				require.NoError(err)
 			case "malformed-envelope":
 				require.NoError(world.st.UpsertMessageRawWithFormat(messageID, []byte("{"), "beeper_json"))
 			case "corrupt-compression":
-				_, err := world.st.DB().Exec(world.st.Rebind(
+				_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(
 					`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
 					[]byte("corrupt zlib"), messageID)
 				require.NoError(err)
@@ -837,11 +833,11 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		worker := world.submitter(t, server, "shared-gap")
 		_, err := worker.RunBatch(t.Context())
 		require.NoError(err)
-		_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2999-01-01 00:00:00.000'`)
+		_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2999-01-01 00:00:00.000'`)
 		require.NoError(err)
 		_, err = worker.RunBatch(t.Context())
 		require.NoError(err)
-		_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+		_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 		require.NoError(err)
 		var operation store.BeeperMediaOperation
 		for range 4 {
@@ -858,7 +854,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 		require.NoError(err)
 		require.Len(mappings, 2)
 		withdrawn, surviving := mappings[0], mappings[1]
-		_, err = world.st.DB().Exec(world.st.Rebind(
+		_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(
 			`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`),
 			[]byte("corrupt zlib"), withdrawn.MessageID)
 		require.NoError(err)
@@ -1061,7 +1057,7 @@ func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
 	worker.WithOperationGate(func(context.Context) (func(), bool) {
 		calls++
 		if calls == 2 {
-			require.NoError(world.st.UpsertMessageRawWithFormat(mappings[0].MessageID, []byte(updated), "beeper_json"))
+			require.NoError(world.st.UpsertMessageRawWithFormatContext(t.Context(), mappings[0].MessageID, []byte(updated), "beeper_json"))
 		}
 		return func() {}, true
 	})
@@ -1079,12 +1075,12 @@ func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
 	assert.Equal("pending-artifact", deliveries[0].Phase)
 	assert.Equal("source_changed", deliveries[0].ErrorCode)
 	var nextActionAt time.Time
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`
 		SELECT next_action_at FROM beeper_media_deliveries WHERE destination_key = ?`),
 		"final-read-change").Scan(&nextActionAt))
 	assert.True(nextActionAt.After(time.Now().UTC()))
 
-	_, err = world.st.DB().Exec(world.st.Rebind(`
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 		UPDATE beeper_media_deliveries SET next_action_at = ? WHERE destination_key = ?`),
 		time.Now().UTC().Add(-time.Minute), "final-read-change")
 	require.NoError(err)
@@ -1212,7 +1208,7 @@ func TestBeeperMediaProcessDescriptorRefresh(t *testing.T) {
 
 			// The saved request can finish before the replacement is retained.
 			// Set the order explicitly; equal clock timestamps favor retention.
-			_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+			_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries
 				SET next_action_at = ? WHERE destination_key = ? AND processing_key = ?`),
 				time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), destination, beforeMapping.ProcessingKey)
 			require.NoError(err)
@@ -1265,7 +1261,7 @@ func TestBeeperMediaProcessActionFence(t *testing.T) {
 	worker.WithOperationGate(func(context.Context) (func(), bool) {
 		calls++
 		if calls == 2 {
-			require.NoError(world.st.UpsertMessageRawWithFormat(mappings[0].MessageID, []byte(updated), "beeper_json"))
+			require.NoError(world.st.UpsertMessageRawWithFormatContext(t.Context(), mappings[0].MessageID, []byte(updated), "beeper_json"))
 		}
 		return func() {}, true
 	})
@@ -1283,11 +1279,11 @@ func TestBeeperMediaProcessActionFence(t *testing.T) {
 	assert.Equal(beforeInput, identity.suppliedInputID)
 	assert.Equal(beforeFrozen, identity.frozenRequest)
 	var nextActionAt time.Time
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(
 		`SELECT next_action_at FROM beeper_media_deliveries WHERE destination_key = ? AND processing_key = ?`),
 		destination, operation.ProcessingKey).Scan(&nextActionAt))
 	assert.True(nextActionAt.After(time.Now().UTC()))
-	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = ? WHERE destination_key = ?`),
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = ? WHERE destination_key = ?`),
 		time.Now().UTC().Add(-time.Minute), destination)
 	require.NoError(err)
 	worker.WithOperationGate(nil)
@@ -1328,7 +1324,7 @@ func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {
 	}
 	deliveries := deliveryRows(t, world.st, destination)
 	require.Len(deliveries, 1)
-	_, err := world.st.DB().Exec(world.st.Rebind(`
+	_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 		UPDATE beeper_media_deliveries
 		SET phase = 'pending-artifact', pending_operation_id = NULL,
 		    frozen_request_json = NULL, supplied_input_id = '', next_action_at = ?, error_code = ''
@@ -1404,14 +1400,14 @@ func TestBeeperMediaFullRescanRevokesAllNonRevokedStates(t *testing.T) {
 		assert.Equal("pending", row.State)
 	}
 
-	_, err = world.st.DB().Exec(world.st.Rebind(`
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 		UPDATE beeper_media_occurrences
 		SET retention_state = ?, error_code = ?, next_action_at = ?
 		WHERE destination_key = ? AND source_message_id = ?`),
 		store.BeeperMediaRetentionSourceUnavailable, "source_unavailable", time.Now().UTC().Add(-time.Minute),
 		destination, "source-gap")
 	require.NoError(err)
-	_, err = world.st.DB().Exec(world.st.Rebind(`
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 		UPDATE beeper_media_occurrences
 		SET retention_state = ?, error_code = ?, next_action_at = NULL
 		WHERE destination_key = ? AND source_message_id = ?`),
@@ -1453,26 +1449,37 @@ func TestBeeperMediaFullRescanRevokesAllNonRevokedStates(t *testing.T) {
 	assert.Equal("no_live_occurrence", deliveries[0].ErrorCode)
 }
 
-func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) {
+func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) func() {
 	t.Helper()
 	testutil.SkipIfPostgres(t, "SQLite authorizer injects a message_raw query failure")
-	st.DB().SetMaxOpenConns(1)
-	conn, err := st.DB().Conn(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		if !ok {
-			return fmt.Errorf("expected SQLite connection, got %T", driverConn)
+	refresh := sqliteAuthorizerRefresher(t, st, func(action int, table, _, _ string) int {
+		if *denied && action == sqlite3.SQLITE_READ && table == "message_raw" {
+			return sqlite3.SQLITE_DENY
 		}
-		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if *denied && action == sqlite3.SQLITE_READ && table == "message_raw" {
-				return sqlite3.SQLITE_DENY
+		return sqlite3.SQLITE_OK
+	})
+	refresh()
+	return refresh
+}
+
+// Reinstalling the authorizer expires cached statements so it sees the next execution.
+func sqliteAuthorizerRefresher(t *testing.T, st *store.Store, authorizer func(int, string, string, string) int) func() {
+	t.Helper()
+	st.DB().SetMaxOpenConns(1)
+	return func() {
+		t.Helper()
+		conn, err := st.DB().Conn(t.Context())
+		require.NoError(t, err)
+		require.NoError(t, conn.Raw(func(driverConn any) error {
+			sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+			if !ok {
+				return fmt.Errorf("expected SQLite connection, got %T", driverConn)
 			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	}))
-	require.NoError(t, conn.Close())
+			sqliteConn.RegisterAuthorizer(authorizer)
+			return nil
+		}))
+		require.NoError(t, conn.Close())
+	}
 }
 
 func TestBeeperMediaOperatorRequired(t *testing.T) {

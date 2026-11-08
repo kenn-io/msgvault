@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -32,7 +31,7 @@ func ensureIdentityCacheFixtureDatasets(
 	personDisplayNamesDir := filepath.Join(analyticsDir, "person_display_names")
 	require.NoError(tb, os.MkdirAll(personDisplayNamesDir, 0o755), "create person_display_names fixture directory")
 	personDisplayNamesPath := filepath.ToSlash(filepath.Join(personDisplayNamesDir, "person_display_names.parquet"))
-	_, err := db.Exec(fmt.Sprintf(
+	_, err := db.ExecContext(tb.Context(), fmt.Sprintf(
 		"COPY (SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, ''::VARCHAR AS display_name WHERE false) TO '%s' (FORMAT PARQUET)",
 		personDisplayNamesPath,
 	))
@@ -43,6 +42,6 @@ func ensureIdentityCacheFixtureDatasets(
 		OutputRoot:     analyticsDir,
 		UnsentMessages: options.unsentMessages,
 	}
-	_, err = identityindex.Build(context.Background(), db, buildOptions)
+	_, err = identityindex.Build(tb.Context(), db, buildOptions)
 	require.NoError(tb, err, "derive identity fixture datasets")
 }

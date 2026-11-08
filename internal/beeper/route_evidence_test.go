@@ -57,7 +57,7 @@ func TestImportMessagingRouteBridgeProof(t *testing.T) {
 			_, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a", NoMedia: true})
 			requirements.NoError(err)
 			var peer int64
-			requirements.NoError(st.DB().QueryRow(`SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
 			person, _, err := st.CreatePersonFromParticipant(peer)
 			requirements.NoError(err)
 			page, err := st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
@@ -78,7 +78,7 @@ func TestImportMessagingRouteBridgeProof(t *testing.T) {
 				assertions.Equal("account_lookup_failed", failure)
 			}
 			var raw string
-			requirements.NoError(st.DB().QueryRow(`SELECT metadata FROM conversations`).Scan(&raw))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&raw))
 			var metadata struct {
 				Route *store.MessagingRouteEvidence `json:"messaging_route"`
 			}
@@ -126,11 +126,11 @@ func TestCopySubsetPreservesImportedMessagingRouteFreshness(t *testing.T) {
 	imp := NewImporter(source, NewClient(srv.URL, testToken, 10000))
 	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "account-a", NoMedia: true})
 	requirements.NoError(err)
-	account, err := source.GetSourceByTypeAndIdentifier("beeper", "account-a")
+	account, err := source.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "account-a")
 	requirements.NoError(err)
 	requirements.True(account.LastSyncAt.Valid)
 	var peer int64
-	requirements.NoError(source.DB().QueryRow(`SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
+	requirements.NoError(source.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
 	person, _, err := source.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
 	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
@@ -141,7 +141,7 @@ func TestCopySubsetPreservesImportedMessagingRouteFreshness(t *testing.T) {
 	requirements.NotNil(before.Routes.Items[0].SourceLastSyncAt)
 
 	destinationDir := filepath.Join(t.TempDir(), "subset")
-	result, err := store.CopySubset(sourcePath, destinationDir, 2, false)
+	result, err := store.CopySubset(t.Context(), sourcePath, destinationDir, 2, false)
 	requirements.NoError(err)
 	requirements.EqualValues(2, result.Messages)
 	requirements.EqualValues(2, result.Participants, "the complete route roster must survive the copy")
@@ -155,7 +155,7 @@ func TestCopySubsetPreservesImportedMessagingRouteFreshness(t *testing.T) {
 	assertions.Equal(before.Routes.Items[0].SourceLastSyncAt, after.Routes.Items[0].SourceLastSyncAt)
 
 	stale := now.Add(-8 * 24 * time.Hour)
-	_, err = destination.DB().Exec(`UPDATE sources SET last_sync_at=? WHERE id=?`, stale, account.ID)
+	_, err = destination.DB().ExecContext(t.Context(), `UPDATE sources SET last_sync_at=? WHERE id=?`, stale, account.ID)
 	requirements.NoError(err)
 	aged, err := destination.GetPersonMessagingRoutesContext(t.Context(), query)
 	requirements.NoError(err)
@@ -237,7 +237,7 @@ func TestImportKeepsSourceRouteFailureForInvalidAccountMetadata(t *testing.T) {
 			st := testutil.NewSQLiteTestStore(t)
 			source, err := st.GetOrCreateSource("beeper", "account-a")
 			requirements.NoError(err)
-			_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
 			requirements.NoError(err)
 			participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
 			requirements.NoError(err)
@@ -274,7 +274,7 @@ func TestImportKeepsSourceRouteFailureForInvalidAccountMetadata(t *testing.T) {
 			assertions.Equal("unresolved", after.Routes.Items[0].Status)
 			assertions.Contains(after.Routes.Items[0].Reasons, test.reason)
 			var failure string
-			requirements.NoError(st.DB().QueryRow(`SELECT failure FROM source_messaging_route_failures WHERE source_id=?`, source.ID).Scan(&failure))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT failure FROM source_messaging_route_failures WHERE source_id=?`, source.ID).Scan(&failure))
 			assertions.Equal(test.reason, failure)
 		})
 	}
@@ -299,7 +299,7 @@ func TestImportAccountLookupCancellationInvalidatesMessagingRoutes(t *testing.T)
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "account-a")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
 	requirements.NoError(err)
 	participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
 	requirements.NoError(err)
@@ -341,7 +341,7 @@ func TestImportAccountLookupCancellationInvalidatesMessagingRoutes(t *testing.T)
 	assertions.Equal("unresolved", after.Routes.Items[0].Status)
 	assertions.Contains(after.Routes.Items[0].Reasons, "account_lookup_failed")
 	var failure string
-	requirements.NoError(st.DB().QueryRow(`SELECT failure FROM source_messaging_route_failures WHERE source_id=?`, source.ID).Scan(&failure))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT failure FROM source_messaging_route_failures WHERE source_id=?`, source.ID).Scan(&failure))
 	assertions.Equal("account_lookup_failed", failure)
 }
 
@@ -369,7 +369,7 @@ func TestImportClearsSourceRouteFailureAfterAccountLookupRecovers(t *testing.T) 
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "account-a")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
 	requirements.NoError(err)
 	participantID, err := st.EnsureParticipant("quiet@example.test", "Quiet Example", "example.test")
 	requirements.NoError(err)
@@ -452,17 +452,14 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			sourcePath := filepath.Join(t.TempDir(), "msgvault.db")
-			originalStore, err := store.Open(sourcePath)
-			requirements.NoError(err)
-			t.Cleanup(func() { requirements.NoError(originalStore.Close()) })
-			requirements.NoError(originalStore.InitSchema())
+			originalStore := testutil.NewSQLiteTestStoreAt(t, sourcePath)
 			st := originalStore
 			imp := NewImporter(st, NewClient(srv.URL, testToken, 10000))
 			first, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a", Limit: test.limit, NoMedia: true})
 			requirements.NoError(err)
 			assertions.Equal(int64(2), first.ChatsProcessed)
 			var peer int64
-			requirements.NoError(st.DB().QueryRow(`SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
 			person, _, err := st.CreatePersonFromParticipant(peer)
 			requirements.NoError(err)
 			query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
@@ -482,7 +479,7 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 
 			if test.subset {
 				destinationDir := filepath.Join(t.TempDir(), "subset")
-				result, err := store.CopySubset(sourcePath, destinationDir, 3, false)
+				result, err := store.CopySubset(t.Context(), sourcePath, destinationDir, 3, false)
 				requirements.NoError(err)
 				requirements.EqualValues(3, result.Messages)
 				subset, err := store.Open(filepath.Join(destinationDir, "msgvault.db"))
@@ -491,7 +488,7 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 				st = subset
 				imp = NewImporter(st, NewClient(srv.URL, testToken, 10000))
 				var runs int
-				requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
 				requirements.Zero(runs, "the copy has no cursor history to remember missing chats")
 				copied, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
 				requirements.NoError(err)
@@ -550,7 +547,7 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 
 			if test.completed {
 				var archived int
-				requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id IN ('route-one', 'route-two') AND deleted_at IS NULL`).Scan(&archived))
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id IN ('route-one', 'route-two') AND deleted_at IS NULL`).Scan(&archived))
 				assertions.Equal(2, archived, "chat disappearance must retain archived messages")
 			}
 		})
@@ -602,7 +599,7 @@ func TestImportUnfinishedChatFetchFailureInvalidatesMessagingRoute(t *testing.T)
 	requirements.NoError(err)
 	assertions.Equal(int64(2), first.ChatsProcessed)
 	var peer int64
-	requirements.NoError(st.DB().QueryRow(`SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
 	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
@@ -690,7 +687,7 @@ func testEnumerateUnfinishedChatProbeInterruptionInvalidatesMessagingRoute(t *te
 		imp.client.http.Transport = handlerTransport(handler)
 		source, err := st.GetOrCreateSource("beeper", "account-a")
 		requirements.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
 		requirements.NoError(err)
 		participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
 		requirements.NoError(err)
@@ -774,7 +771,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "account-a")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
 	requirements.NoError(err)
 	imp := NewImporter(st, NewClient(srv.URL, testToken, 10000))
 	opts := ImportOptions{AccountID: "account-a", routeAccount: &Account{AccountID: "account-a", Bridge: &AccountBridge{Type: "whatsapp"}, Status: "connected"}}
@@ -784,7 +781,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	conv, _, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 	requirements.NoError(err)
 	var peer int64
-	requirements.NoError(st.DB().QueryRow(`SELECT participant_id FROM conversation_participants WHERE conversation_id=? ORDER BY participant_id DESC LIMIT 1`, conv).Scan(&peer))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM conversation_participants WHERE conversation_id=? ORDER BY participant_id DESC LIMIT 1`, conv).Scan(&peer))
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
 	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
@@ -841,7 +838,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 				imp.client.http.Transport = handlerTransport(handler)
 				source, err := st.GetOrCreateSource("beeper", "account-a")
 				requirements.NoError(err)
-				_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
 				requirements.NoError(err)
 				opts := ImportOptions{
 					AccountID:    "account-a",
@@ -856,7 +853,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 				conversationID, _, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 				requirements.NoError(err)
 				var participantID int64
-				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM conversation_participants WHERE conversation_id=? ORDER BY participant_id DESC LIMIT 1`), conversationID).Scan(&participantID))
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_id FROM conversation_participants WHERE conversation_id=? ORDER BY participant_id DESC LIMIT 1`), conversationID).Scan(&participantID))
 				person, _, err := st.CreatePersonFromParticipant(participantID)
 				requirements.NoError(err)
 				query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
@@ -932,7 +929,7 @@ func TestMediaChatRefreshInvalidatesPriorRouteProof(t *testing.T) {
 			st := testutil.NewSQLiteTestStore(t)
 			source, err := st.GetOrCreateSource("beeper", "account-a")
 			requirements.NoError(err)
-			_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
 			requirements.NoError(err)
 			participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
 			requirements.NoError(err)
@@ -1052,7 +1049,7 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 	mu.Unlock()
 	requirements.Len(confirmed, 1, "exactly one chat was confirmed gone before the budget expired")
 
-	state = imp.loadResumeState(source.ID)
+	state = imp.loadResumeState(t.Context(), source.ID)
 	chats, second := enumerate(time.Minute)
 	assertions.False(second.Stopped)
 	requirements.Len(chats, 1)
@@ -1131,7 +1128,7 @@ func TestChatMissingDuringMessageFetchInvalidatesMessagingRoute(t *testing.T) {
 	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a", NoMedia: true})
 	requirements.NoError(err)
 	var peer int64
-	requirements.NoError(st.DB().QueryRow(`SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
 	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
@@ -1153,7 +1150,7 @@ func TestChatMissingDuringMessageFetchInvalidatesMessagingRoute(t *testing.T) {
 	assertions.Equal("unresolved", after.Routes.Items[0].Status)
 	assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
 	var archived int
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id='vanishing-one'`).Scan(&archived))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id='vanishing-one'`).Scan(&archived))
 	assertions.Equal(1, archived, "archived messages stay when the chat disappears")
 }
 
@@ -1205,7 +1202,8 @@ func TestScheduledImportSyncsChatsWhenAccountLookupIsThrottled(t *testing.T) {
 	source, err := st.GetOrCreateSource("beeper", "account-a")
 	requirements.NoError(err)
 	var failure string
-	requirements.NoError(st.DB().QueryRow(
+	requirements.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT failure FROM source_messaging_route_failures WHERE source_id=?`, source.ID,
 	).Scan(&failure))
 	assertions.Equal("account_lookup_failed", failure)
@@ -1263,7 +1261,7 @@ func TestReanchorRequiredKeepsRoutesUnresolved(t *testing.T) {
 			_, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a", NoMedia: true})
 			requirements.NoError(err)
 			var peer int64
-			requirements.NoError(st.DB().QueryRow(`SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE display_name='Avery Example'`).Scan(&peer))
 			person, _, err := st.CreatePersonFromParticipant(peer)
 			requirements.NoError(err)
 			query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
@@ -1306,7 +1304,7 @@ func TestResumedTailScanClearsProofForChatMissingSinceItsVisit(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "account-a")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET last_sync_at=CURRENT_TIMESTAMP WHERE id=?`, source.ID)
 	requirements.NoError(err)
 	participantID, err := st.EnsureParticipantByIdentifier("email", "avery@example.test", "Avery Example")
 	requirements.NoError(err)

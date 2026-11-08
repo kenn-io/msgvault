@@ -149,7 +149,7 @@ func runServeStatus(cmd *cobra.Command, dataDir string) error {
 
 func runServeStatusWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string) error {
 	out := cmd.OutOrStdout()
-	if rt := findDaemonRuntime(dataDir); rt != nil {
+	if rt := findDaemonRuntime(cmd.Context(), dataDir); rt != nil {
 		lines := serveStatusLines(rt)
 		if health := fetchDaemonHealthWithAPIKey(cmd.Context(), urlFromDaemonRuntime(rt), apiKey); health != nil {
 			lines = append(lines, vectorStatusLines(health.Vector)...)
@@ -289,6 +289,7 @@ type backgroundServeStartOptions struct {
 }
 
 func prepareBackgroundDaemonStart(
+	ctx context.Context,
 	c *config.Config,
 	restartPolicy string,
 	incompatibleGuidance string,
@@ -300,7 +301,7 @@ func prepareBackgroundDaemonStart(
 	if err := c.ResolveServerKey(); err != nil {
 		return backgroundDaemonStartPreparation{}, err
 	}
-	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil {
+	if rt := findDaemonRuntime(ctx, c.Data.DataDir); rt != nil {
 		if !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 			return backgroundDaemonStartPreparation{Reusable: rt}, nil
 		}
@@ -308,7 +309,7 @@ func prepareBackgroundDaemonStart(
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
 	}
-	rt, foundIncompatible, compatErr := findIncompatibleDaemonRuntime(c.Data.DataDir)
+	rt, foundIncompatible, compatErr := findIncompatibleDaemonRuntime(ctx, c.Data.DataDir)
 	if compatErr != nil && !foundIncompatible {
 		return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect daemon runtimes: %w", compatErr)
 	}
@@ -325,7 +326,7 @@ func prepareBackgroundDaemonStart(
 		return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect daemon ownership: %w", err)
 	}
 	if ownershipHeld {
-		legacy, foundLegacy, legacyCompatErr := findLegacyDaemonRuntimeForLifecycle(c.Data.DataDir)
+		legacy, foundLegacy, legacyCompatErr := findLegacyDaemonRuntimeForLifecycle(ctx, c.Data.DataDir)
 		if legacyCompatErr != nil && !foundLegacy {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect legacy daemon runtime: %w", legacyCompatErr)
 		}
@@ -386,11 +387,12 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, c.Server.DaemonAutoRestart, "run `msgvault daemon stop` before starting this version", loggerFromContext(cmd.Context()))
+	prep, err := prepareBackgroundDaemonStart(cmd.Context(), c, c.Server.DaemonAutoRestart, "run `msgvault daemon stop` before starting this version", loggerFromContext(cmd.Context()))
 	if err != nil {
 		return err
 	}
 	if rt := prep.Reusable; rt != nil {
+		reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 		return nil
 	}
@@ -849,6 +851,7 @@ func acquireBackgroundLaunchLock(dataDir string) (*flock.Flock, bool) {
 
 func reportBackgroundLaunchInProgress(cmd *cobra.Command, dataDir string) {
 	if rt := waitForBackgroundRuntime(cmd.Context(), dataDir, backgroundServeReadyTimeout); rt != nil {
+		reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 		return
 	}

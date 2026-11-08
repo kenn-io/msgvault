@@ -29,7 +29,7 @@ func pstMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
 }
 
 func recordPstMessageHeaders(ctx context.Context, st *store.Store, sourceID int64, sourceMsgID string, raw []byte) error {
-	ids, err := st.MessageExistsBatch(sourceID, []string{sourceMsgID})
+	ids, err := st.MessageExistsBatchContext(ctx, sourceID, []string{sourceMsgID})
 	if err != nil {
 		return fmt.Errorf("find imported PST message: %w", err)
 	}
@@ -42,16 +42,20 @@ func recordPstMessageHeaders(ctx context.Context, st *store.Store, sourceID int6
 
 func recordPstMessageHeadersByID(ctx context.Context, st *store.Store, sourceID, messageID int64, raw []byte) error {
 	rfcID, parent, refs := mime.ParseThreadingHeaders(raw)
-	key := rfcID
-	if parent != "" {
-		key = parent
+	// This is another write boundary, including repair of existing rows.
+	// Keep historical extraction exact, then omit unusable new header facts.
+	parsed := mime.Message{MessageID: rfcID, InReplyTo: parent, References: refs}
+	parsed.OmitNULIdentities()
+	key := parsed.MessageID
+	if parsed.InReplyTo != "" {
+		key = parsed.InReplyTo
 	}
-	if len(refs) > 0 {
-		if root := mime.NormalizeMessageID(refs[0]); root != "" {
+	if len(parsed.References) > 0 {
+		if root := mime.NormalizeMessageID(parsed.References[0]); root != "" {
 			key = root
 		}
 	}
-	if err := st.RecordPstEmailHeadersContext(ctx, sourceID, messageID, rfcID, parent, key); err != nil {
+	if err := st.RecordPstEmailHeadersContext(ctx, sourceID, messageID, parsed.MessageID, parsed.InReplyTo, key); err != nil {
 		return fmt.Errorf("record PST headers for message %d: %w", messageID, err)
 	}
 	return nil

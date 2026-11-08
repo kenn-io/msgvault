@@ -56,7 +56,7 @@ func TestRunIfStaleRecordsAndSkips(t *testing.T) {
 	})
 	t.Cleanup(func() { delete(registry, "test-gate") })
 
-	sum, ran, err := RunIfStale(context.Background(), st, "test-gate", "acct", 1, nil)
+	sum, ran, err := RunIfStale(t.Context(), st, "test-gate", "acct", 1, nil)
 	require.NoError(err)
 	require.True(ran)
 	require.NotNil(sum)
@@ -65,7 +65,7 @@ func TestRunIfStaleRecordsAndSkips(t *testing.T) {
 	assert.Equal(int64(1), derivedDataRevision(t, st),
 		"a sync-triggered repair must invalidate the analytics cache")
 
-	_, ran, err = RunIfStale(context.Background(), st, "test-gate", "acct", 1, nil)
+	_, ran, err = RunIfStale(t.Context(), st, "test-gate", "acct", 1, nil)
 	require.NoError(err)
 	assert.False(ran, "an already-recorded pass must not run again")
 	assert.Equal(1, calls)
@@ -73,7 +73,7 @@ func TestRunIfStaleRecordsAndSkips(t *testing.T) {
 		"skipping an applied pass must not invalidate the cache again")
 
 	// A different account of the same type is tracked separately.
-	_, ran, err = RunIfStale(context.Background(), st, "test-gate", "other", 2, nil)
+	_, ran, err = RunIfStale(t.Context(), st, "test-gate", "other", 2, nil)
 	require.NoError(err)
 	assert.True(ran)
 	assert.Equal(2, calls)
@@ -93,7 +93,7 @@ func TestRunIfStaleEmptyPassRecordsWithoutAdvancingRevision(t *testing.T) {
 	})
 	t.Cleanup(func() { delete(registry, "test-empty") })
 
-	sum, ran, err := RunIfStale(context.Background(), st, "test-empty", "acct", 1, nil)
+	sum, ran, err := RunIfStale(t.Context(), st, "test-empty", "acct", 1, nil)
 	require.NoError(err)
 	require.True(ran)
 	require.NotNil(sum)
@@ -106,7 +106,7 @@ func TestRunIfStaleEmptyPassRecordsWithoutAdvancingRevision(t *testing.T) {
 	require.NoError(err)
 	assert.True(applied, "an empty successful pass must still be recorded")
 
-	_, ran, err = RunIfStale(context.Background(), st, "test-empty", "acct", 1, nil)
+	_, ran, err = RunIfStale(t.Context(), st, "test-empty", "acct", 1, nil)
 	require.NoError(err)
 	assert.False(ran, "the recorded empty pass must not repeat on every sync")
 	assert.Equal(1, calls)
@@ -124,7 +124,7 @@ func TestRunIfStaleRetriesSummaryErrorsWithoutRecordingLedger(t *testing.T) {
 	})
 	t.Cleanup(func() { delete(registry, "test-partial") })
 
-	sum, ran, err := RunIfStale(context.Background(), st, "test-partial", "acct", 1, nil)
+	sum, ran, err := RunIfStale(t.Context(), st, "test-partial", "acct", 1, nil)
 	require.NoError(err)
 	require.True(ran)
 	require.NotNil(sum)
@@ -136,7 +136,7 @@ func TestRunIfStaleRetriesSummaryErrorsWithoutRecordingLedger(t *testing.T) {
 	assert.Equal(int64(1), derivedDataRevision(t, st),
 		"partial writes must still invalidate the analytics cache")
 
-	_, ran, err = RunIfStale(context.Background(), st, "test-partial", "acct", 1, nil)
+	_, ran, err = RunIfStale(t.Context(), st, "test-partial", "acct", 1, nil)
 	require.NoError(err)
 	assert.True(ran, "the next sync must retry an incomplete pass")
 	assert.Equal(2, calls)
@@ -158,7 +158,7 @@ func TestRunRecordsSoASyncDoesNotRepeatIt(t *testing.T) {
 	})
 	t.Cleanup(func() { delete(registry, "test-run") })
 
-	sum, err := Run(context.Background(), st, "test-run", "acct", 1, nil)
+	sum, err := Run(t.Context(), st, "test-run", "acct", 1, nil)
 	require.NoError(err)
 	assert.Equal(int64(7), sum.MessagesScanned)
 	assert.Equal(1, calls)
@@ -166,14 +166,14 @@ func TestRunRecordsSoASyncDoesNotRepeatIt(t *testing.T) {
 		"an on-demand repair must invalidate the analytics cache")
 
 	// A later sync sees the archive as current.
-	_, ran, err := RunIfStale(context.Background(), st, "test-run", "acct", 1, nil)
+	_, ran, err := RunIfStale(t.Context(), st, "test-run", "acct", 1, nil)
 	require.NoError(err)
 	assert.False(ran, "an on-demand repair must record the ledger")
 	assert.Equal(1, calls)
 	assert.Equal(int64(1), derivedDataRevision(t, st))
 
 	// Asking again by hand still re-runs: that is the point of the escape hatch.
-	_, err = Run(context.Background(), st, "test-run", "acct", 1, nil)
+	_, err = Run(t.Context(), st, "test-run", "acct", 1, nil)
 	require.NoError(err)
 	assert.Equal(2, calls)
 	assert.Equal(int64(2), derivedDataRevision(t, st))
@@ -182,7 +182,7 @@ func TestRunRecordsSoASyncDoesNotRepeatIt(t *testing.T) {
 func derivedDataRevision(t *testing.T, st *store.Store) int64 {
 	t.Helper()
 	var revision int64
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `
 		SELECT COALESCE(CAST((
 			SELECT value FROM archive_metadata WHERE key = 'derived_data_revision'
 		) AS BIGINT), 0)

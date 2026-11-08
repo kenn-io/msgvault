@@ -1,0 +1,45 @@
+<script lang="ts">
+  import { Disclosure, Notice } from '@kenn-io/kit-ui';
+
+  interface Props {
+    /** One sentence that says what happened. */
+    message: string;
+    /** The original error, folded under Details inside the notice. */
+    details?: string;
+    actionLabel?: string;
+    onaction?: () => void;
+  }
+
+  let { message, details = undefined, actionLabel = undefined, onaction = undefined }: Props = $props();
+</script>
+
+<!-- The sentence and the error tone say what happened, so Notice's tone heading ("Error") is hidden below. -->
+<div class="inline-notice">
+  <Notice tone="error" {actionLabel} {onaction}>
+    <p>{message}</p>
+    {#if details}<Disclosure variant="plain" title="Details"><pre>{details}</pre></Disclosure>{/if}
+  </Notice>
+</div>
+
+<style>
+  /* A box padded 12, the mark 8 from Meta text, and the action a text action with a 28 target at the right of the
+   * sentence, 12 from the box's edge like the mark. The mark and the sentence pad down to center their line on it.
+   * Classes repeat to outrank Notice's scoped rules, which are as specific as a single class here. */
+  .inline-notice { --notice-line-offset: calc((var(--control-h) - var(--type-meta-line)) / 2); min-width: 0; }
+  .inline-notice :global(.kit-notice.kit-notice) { padding: var(--space-box); gap: var(--space-group); }
+  .inline-notice :global(.kit-notice .kit-notice__tone.kit-notice__tone) { display: none; }
+  .inline-notice :global(.kit-notice .kit-notice__mark.kit-notice__mark) { margin-top: calc((var(--type-meta-line) - 8px) / 2); }
+  .inline-notice :global(.kit-notice:has(> button) .kit-notice__mark.kit-notice__mark) { margin-top: calc(var(--notice-line-offset) + (var(--type-meta-line) - 8px) / 2); }
+  .inline-notice :global(.kit-notice:has(> button) .kit-notice__content) { padding-top: var(--notice-line-offset); }
+  .inline-notice :global(.kit-notice .kit-notice__body.kit-notice__body) { display: grid; gap: var(--space-group); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .inline-notice :global(.kit-notice.kit-notice > button) { min-height: var(--control-h); margin: 0; padding: 0; font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .inline-notice :global(.kit-notice.kit-notice > button:hover) { background: transparent; text-decoration: underline; }
+  .inline-notice :global(.kit-disclosure .kit-disclosure__summary.kit-disclosure__summary) { font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  p { margin: 0; }
+  pre { max-height: 16rem; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--type-small-size); line-height: var(--type-small-line); }
+  /* On a phone the action wraps under the message, so the sentence needs no centering. */
+  @media (max-width: 640px) {
+    .inline-notice :global(.kit-notice:has(> button) .kit-notice__mark.kit-notice__mark) { margin-top: calc((var(--type-meta-line) - 8px) / 2); }
+    .inline-notice :global(.kit-notice:has(> button) .kit-notice__content) { padding-top: 0; }
+  }
+</style>

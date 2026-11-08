@@ -60,7 +60,7 @@ func TestStore_Source_UpdateSyncCursor(t *testing.T) {
 	require.NoError(err, "UpdateSourceSyncCursor()")
 
 	// Verify cursor was updated
-	updated, err := f.Store.GetSourceByIdentifier("test@example.com")
+	updated, err := f.Store.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.NoError(err, "GetSourceByIdentifier()")
 
 	assert.True(updated.SyncCursor.Valid, "SyncCursor should be valid")
@@ -76,7 +76,7 @@ func TestStore_Source_UpdateDisplayName(t *testing.T) {
 	require.NoError(err, "UpdateSourceDisplayName()")
 
 	// Verify display name was updated
-	updated, err := f.Store.GetSourceByIdentifier("test@example.com")
+	updated, err := f.Store.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.NoError(err, "GetSourceByIdentifier()")
 
 	assert.True(updated.DisplayName.Valid, "DisplayName should be valid")
@@ -112,7 +112,7 @@ func TestStore_SourceImportItems(t *testing.T) {
 		Size:       42,
 		Status:     "imported",
 	}
-	require.NoError(f.Store.UpsertSourceImportItem(item), "UpsertSourceImportItem")
+	require.NoError(f.Store.UpsertSourceImportItem(t.Context(), item), "UpsertSourceImportItem")
 
 	got, err := f.Store.GetSourceImportItem(src.ID, "drive", "drive-file-1")
 	require.NoError(err, "GetSourceImportItem")
@@ -124,23 +124,24 @@ func TestStore_SourceImportItems(t *testing.T) {
 	item.Size = 99
 	item.Status = "failed"
 	item.ErrorMessage = sql.NullString{String: "boom", Valid: true}
-	require.NoError(f.Store.UpsertSourceImportItem(item), "UpsertSourceImportItem update")
+	require.NoError(f.Store.UpsertSourceImportItem(t.Context(), item), "UpsertSourceImportItem update")
 	got, err = f.Store.GetSourceImportItem(src.ID, "drive", "drive-file-1")
 	require.NoError(err, "GetSourceImportItem after update")
 	assert.Equal(int64(99), got.Size, "updated Size")
 	assert.Equal("failed", got.Status, "updated Status")
 	assert.Equal("boom", got.ErrorMessage.String, "ErrorMessage")
 
-	checksums, err := f.Store.ListImportedSourceItemChecksums(src.ID, "drive")
+	checksums, err := f.Store.ListImportedSourceItemChecksums(t.Context(), src.ID, "drive")
 	require.NoError(err, "ListImportedSourceItemChecksums")
 	assert.Empty(checksums["drive-file-1"], "failed item should not be returned as imported")
 	item.Status = "imported"
-	require.NoError(f.Store.UpsertSourceImportItem(item), "UpsertSourceImportItem imported")
-	checksums, err = f.Store.ListImportedSourceItemChecksums(src.ID, "drive")
+	require.NoError(f.Store.UpsertSourceImportItem(t.Context(), item), "UpsertSourceImportItem imported")
+	checksums, err = f.Store.ListImportedSourceItemChecksums(t.Context(), src.ID, "drive")
 	require.NoError(err, "ListImportedSourceItemChecksums imported")
 	assert.Equal("abc123", checksums["drive-file-1"], "imported checksum")
 
-	_, err = f.Store.DB().Exec(
+	_, err = f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`UPDATE source_import_items SET checksum = NULL WHERE source_id = ? AND provider = ? AND provider_id = ?`),
 		src.ID, "drive", "drive-file-1",
 	)
@@ -148,7 +149,7 @@ func TestStore_SourceImportItems(t *testing.T) {
 	got, err = f.Store.GetSourceImportItem(src.ID, "drive", "drive-file-1")
 	require.NoError(err, "GetSourceImportItem with NULL checksum")
 	assert.Empty(got.Checksum, "NULL checksum should surface as empty string")
-	checksums, err = f.Store.ListImportedSourceItemChecksums(src.ID, "drive")
+	checksums, err = f.Store.ListImportedSourceItemChecksums(t.Context(), src.ID, "drive")
 	require.NoError(err, "ListImportedSourceItemChecksums with NULL checksum")
 	assert.Empty(checksums["drive-file-1"], "NULL imported checksum should surface as empty string")
 }
@@ -159,13 +160,13 @@ func TestStore_Conversation(t *testing.T) {
 	f := storetest.New(t)
 
 	// Create conversation
-	convID, err := f.Store.EnsureConversation(f.Source.ID, "thread-123", "Test Thread")
+	convID, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "thread-123", "Test Thread")
 	require.NoError(err, "EnsureConversation()")
 
 	assert.NotZero(convID, "conversation ID should be non-zero")
 
 	// Get same conversation (should return existing)
-	convID2, err := f.Store.EnsureConversation(f.Source.ID, "thread-123", "Test Thread")
+	convID2, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "thread-123", "Test Thread")
 	require.NoError(err, "EnsureConversation() second call")
 
 	assert.Equal(convID, convID2, "second call ID")
@@ -283,7 +284,7 @@ func TestStore_MessageMetadataBatch(t *testing.T) {
 		Valid:  true,
 	}))
 
-	got, err := f.Store.MessageMetadataBatch(f.Source.ID, []string{
+	got, err := f.Store.MessageMetadataBatch(t.Context(), f.Source.ID, []string{
 		"with-metadata", "without-metadata", "missing",
 	})
 	require.NoError(err)
@@ -334,7 +335,7 @@ func TestStore_EnsureParticipantsBatch(t *testing.T) {
 		{Email: "", Name: "No Email", Domain: ""}, // Should be skipped
 	}
 
-	result, err := f.Store.EnsureParticipantsBatch(addresses)
+	result, err := f.Store.EnsureParticipantsBatch(t.Context(), addresses)
 	require.NoError(t, err, "EnsureParticipantsBatch()")
 
 	assert.Len(result, 2)
@@ -348,13 +349,13 @@ func TestStore_Label(t *testing.T) {
 	f := storetest.New(t)
 
 	// Create label
-	lid, err := f.Store.EnsureLabel(f.Source.ID, "INBOX", "Inbox", "system")
+	lid, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "INBOX", "Inbox", "system")
 	require.NoError(err, "EnsureLabel()")
 
 	assert.NotZero(lid, "label ID should be non-zero")
 
 	// Get same label
-	lid2, err := f.Store.EnsureLabel(f.Source.ID, "INBOX", "Inbox", "system")
+	lid2, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "INBOX", "Inbox", "system")
 	require.NoError(err, "EnsureLabel() second call")
 
 	assert.Equal(lid, lid2, "second call ID")
@@ -365,16 +366,17 @@ func TestStore_EnsureLabelUpdatesTypeWhenNameUnchanged(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 
-	lid, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "user")
+	lid, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "Sent Messages", "Sent Messages", "user")
 	require.NoError(err, "create stale sent label")
 
-	lid2, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "system")
+	lid2, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "Sent Messages", "Sent Messages", "system")
 	require.NoError(err, "refresh sent label type")
 
 	assert.Equal(lid, lid2, "label ID")
 
 	var labelType string
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT label_type FROM labels WHERE id = ?`), lid,
 	).Scan(&labelType)
 	require.NoError(err, "select label type")
@@ -386,18 +388,19 @@ func TestStore_EnsureLabelUpdatesNullTypeWhenNameUnchanged(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 
-	lid, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "user")
+	lid, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "Sent Messages", "Sent Messages", "user")
 	require.NoError(err, "create stale sent label")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE labels SET label_type = NULL WHERE id = ?`), lid)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE labels SET label_type = NULL WHERE id = ?`), lid)
 	require.NoError(err, "clear label type")
 
-	lid2, err := f.Store.EnsureLabel(f.Source.ID, "Sent Messages", "Sent Messages", "system")
+	lid2, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "Sent Messages", "Sent Messages", "system")
 	require.NoError(err, "refresh sent label type")
 
 	assert.Equal(lid, lid2, "label ID")
 
 	var labelType string
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT label_type FROM labels WHERE id = ?`), lid,
 	).Scan(&labelType)
 	require.NoError(err, "select label type")
@@ -410,18 +413,18 @@ func TestStore_EnsureLabel_NameConflict(t *testing.T) {
 	f := storetest.New(t)
 
 	// Create label L1 with name "Work"
-	lid1, err := f.Store.EnsureLabel(f.Source.ID, "L1", "Work", "user")
+	lid1, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L1", "Work", "user")
 	require.NoError(err, "create L1")
 
 	// Insert a different label L2 with the same name — should upsert,
 	// not crash with UNIQUE constraint violation (#232).
-	lid2, err := f.Store.EnsureLabel(f.Source.ID, "L2", "Work", "user")
+	lid2, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L2", "Work", "user")
 	require.NoError(err, "create L2 with same name")
 
 	assert.Equal(lid1, lid2, "L2 ID (should reuse existing row)")
 
 	// L1's source_label_id was overwritten — looking up L2 should work
-	lid2Again, err := f.Store.EnsureLabel(f.Source.ID, "L2", "Work", "user")
+	lid2Again, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L2", "Work", "user")
 	require.NoError(err, "re-lookup L2")
 	assert.Equal(lid1, lid2Again, "re-lookup L2 ID")
 }
@@ -430,11 +433,11 @@ func TestStore_EnsureLabel_Rename(t *testing.T) {
 	f := storetest.New(t)
 
 	// Create label L1 with name "OldName"
-	lid, err := f.Store.EnsureLabel(f.Source.ID, "L1", "OldName", "user")
+	lid, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L1", "OldName", "user")
 	require.NoError(t, err, "create L1")
 
 	// Same source_label_id, different name (label was renamed in Gmail)
-	lid2, err := f.Store.EnsureLabel(f.Source.ID, "L1", "NewName", "user")
+	lid2, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L1", "NewName", "user")
 	require.NoError(t, err, "rename L1")
 
 	assert.Equal(t, lid, lid2, "renamed label ID")
@@ -444,15 +447,15 @@ func TestStore_EnsureLabel_RenameAndReuse(t *testing.T) {
 	f := storetest.New(t)
 
 	// Scenario: L1 named "Foo" is renamed to "Bar", then L2 takes "Foo".
-	_, err := f.Store.EnsureLabel(f.Source.ID, "L1", "Foo", "user")
+	_, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L1", "Foo", "user")
 	require.NoError(t, err, "create L1=Foo")
 
 	// L1 renamed to "Bar" — should update name in place
-	_, err = f.Store.EnsureLabel(f.Source.ID, "L1", "Bar", "user")
+	_, err = f.Store.EnsureLabel(t.Context(), f.Source.ID, "L1", "Bar", "user")
 	require.NoError(t, err, "rename L1=Bar")
 
 	// New label L2 takes the old name "Foo" — should succeed
-	_, err = f.Store.EnsureLabel(f.Source.ID, "L2", "Foo", "user")
+	_, err = f.Store.EnsureLabel(t.Context(), f.Source.ID, "L2", "Foo", "user")
 	require.NoError(t, err, "create L2=Foo")
 }
 
@@ -463,10 +466,10 @@ func TestStore_EnsureLabel_RenameSwap(t *testing.T) {
 	// L1="Foo" exists, and L1 is renamed to the name of an existing
 	// label "Bar" (which has source_label_id "L2"). The rename merges
 	// L2 into L1 so L1 can take the name.
-	lid1, err := f.Store.EnsureLabel(f.Source.ID, "L1", "Foo", "user")
+	lid1, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L1", "Foo", "user")
 	require.NoError(err, "create L1=Foo")
 
-	lid2, err := f.Store.EnsureLabel(f.Source.ID, "L2", "Bar", "user")
+	lid2, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L2", "Bar", "user")
 	require.NoError(err, "create L2=Bar")
 
 	// Tag a message with L2 so we can verify associations survive merge
@@ -475,7 +478,7 @@ func TestStore_EnsureLabel_RenameSwap(t *testing.T) {
 	require.NoError(err, "tag message with L2")
 
 	// L1 renamed to "Bar" — merges L2 into L1
-	lid1After, err := f.Store.EnsureLabel(f.Source.ID, "L1", "Bar", "user")
+	lid1After, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, "L1", "Bar", "user")
 	require.NoError(err, "rename L1=Bar (was L2's name)")
 
 	assert.Equal(t, lid1, lid1After, "L1 ID")
@@ -494,7 +497,7 @@ func TestStore_EnsureLabelsBatch(t *testing.T) {
 		"Label_12345": {Name: "My Label", Type: "user"},
 	}
 
-	result, err := f.Store.EnsureLabelsBatch(f.Source.ID, labels)
+	result, err := f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, labels)
 	require.NoError(t, err, "EnsureLabelsBatch()")
 
 	assert.Len(t, result, 3)
@@ -513,7 +516,7 @@ func TestStore_EnsureLabelsBatch_CrossRename(t *testing.T) {
 		"L1": {Name: "Foo", Type: "user"},
 		"L2": {Name: "Bar", Type: "user"},
 	}
-	ids, err := f.Store.EnsureLabelsBatch(f.Source.ID, initial)
+	ids, err := f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, initial)
 	require.NoError(err, "initial batch")
 
 	l1ID, l2ID := ids["L1"], ids["L2"]
@@ -531,7 +534,7 @@ func TestStore_EnsureLabelsBatch_CrossRename(t *testing.T) {
 		"L1": {Name: "Bar", Type: "user"},
 		"L2": {Name: "Foo", Type: "user"},
 	}
-	ids2, err := f.Store.EnsureLabelsBatch(f.Source.ID, swapped)
+	ids2, err := f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, swapped)
 	require.NoError(err, "cross-rename batch")
 
 	// IDs should be preserved
@@ -554,11 +557,12 @@ func TestStore_EnsureLabelsBatch_PersistsClearsAndCrossRenamesSystemRole(t *test
 		"L1": {Name: "Envoyes", Type: "system", SystemRole: store.LabelSystemRoleSent},
 		"L2": {Name: "Archive", Type: "system"},
 	}
-	ids, err := f.Store.EnsureLabelsBatch(f.Source.ID, initial)
+	ids, err := f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, initial)
 	require.NoError(err, "initial label refresh")
 
 	var role string
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L1"],
 	).Scan(&role), "read persisted role")
 	assert.Equal(store.LabelSystemRoleSent, role, "L1 role")
@@ -568,24 +572,27 @@ func TestStore_EnsureLabelsBatch_PersistsClearsAndCrossRenamesSystemRole(t *test
 		"L1": {Name: "Archive", Type: "system"},
 		"L2": {Name: "Envoyes", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	}
-	_, err = f.Store.EnsureLabelsBatch(f.Source.ID, swapped)
+	_, err = f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, swapped)
 	require.NoError(err, "cross-rename label refresh")
 
 	var l1Role, l2Role sql.NullString
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L1"],
 	).Scan(&l1Role), "read cleared role")
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L2"],
 	).Scan(&l2Role), "read moved role")
 	assert.False(l1Role.Valid, "L1 role must clear when canonical metadata no longer marks it sent")
 	assert.Equal(store.LabelSystemRoleSent, l2Role.String, "L2 role")
 
-	_, err = f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+	_, err = f.Store.EnsureLabelsBatch(t.Context(), f.Source.ID, map[string]store.LabelInfo{
 		"L2": {Name: "Envoyes", Type: "system"},
 	})
 	require.NoError(err, "repeated refresh clears stale role")
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT system_role FROM labels WHERE id = ?"), ids["L2"],
 	).Scan(&l2Role), "read repeatedly cleared role")
 	assert.False(l2Role.Valid, "repeated refresh must clear stale role")
@@ -599,7 +606,7 @@ func TestStore_InitSchemaAddsLabelRoleWithoutRewritingLegacyRows(t *testing.T) {
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TABLE labels (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -611,7 +618,7 @@ func TestStore_InitSchemaAddsLabelRoleWithoutRewritingLegacyRows(t *testing.T) {
 		)
 	`)
 	require.NoError(err, "create legacy labels")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO labels (source_id, source_label_id, name, label_type)
 		VALUES (1, 'SENT', 'Envoyes', 'system')
 	`)
@@ -620,14 +627,16 @@ func TestStore_InitSchemaAddsLabelRoleWithoutRewritingLegacyRows(t *testing.T) {
 	require.NoError(st.InitSchema(), "migrate legacy labels")
 
 	var role sql.NullString
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		"SELECT system_role FROM labels WHERE source_label_id = 'SENT'",
 	).Scan(&role), "read migrated legacy label")
 	assert.False(role.Valid, "migration must not classify or rewrite existing labels")
 
 	indexCount := func(name string) int {
 		var count int
-		require.NoError(st.DB().QueryRow(
+		require.NoError(st.DB().QueryRowContext(
+			t.Context(),
 			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", name,
 		).Scan(&count), "read index: "+name)
 		return count
@@ -717,11 +726,11 @@ func TestStore_Attachment(t *testing.T) {
 		WithAttachmentCount(1).
 		Create(t, f.Store)
 
-	err := f.Store.UpsertAttachment(msgID, "document.pdf", "application/pdf", "/path/to/file", "abc123hash", 1024)
+	err := f.Store.UpsertAttachment(t.Context(), msgID, "document.pdf", "application/pdf", "/path/to/file", "abc123hash", 1024)
 	require.NoError(err, "UpsertAttachment()")
 
 	// Upsert same attachment (should not error, dedupe by content_hash)
-	err = f.Store.UpsertAttachment(msgID, "document.pdf", "application/pdf", "/path/to/file", "abc123hash", 1024)
+	err = f.Store.UpsertAttachment(t.Context(), msgID, "document.pdf", "application/pdf", "/path/to/file", "abc123hash", 1024)
 	require.NoError(err, "UpsertAttachment() duplicate")
 
 	stats, err := f.Store.GetStats()
@@ -790,7 +799,8 @@ func TestStore_GetMessage_DeletedMessageVisibleByID(t *testing.T) {
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("deleted-msg-1")
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = ? WHERE id = ?"),
 		time.Date(2026, 3, 18, 14, 30, 0, 0, time.UTC),
 		msgID,
@@ -815,19 +825,20 @@ func TestStore_MarkMessagesDeletedByGmailIDBatch(t *testing.T) {
 	}
 
 	// Mark all as deleted in one batch call
-	err := f.Store.MarkMessagesDeletedByGmailIDBatch(ids)
+	err := f.Store.MarkMessagesDeletedByGmailIDBatch(t.Context(), ids)
 	require.NoError(err, "MarkMessagesDeletedByGmailIDBatch")
 
 	// Verify all are marked deleted
 	var deletedCount int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`,
 	).Scan(&deletedCount)
 	require.NoError(err, "count deleted")
 	assert.Equal(t, count, deletedCount, "deleted count")
 
 	// Empty batch should be a no-op
-	err = f.Store.MarkMessagesDeletedByGmailIDBatch(nil)
+	err = f.Store.MarkMessagesDeletedByGmailIDBatch(t.Context(), nil)
 	require.NoError(err, "MarkMessagesDeletedByGmailIDBatch(nil)")
 }
 
@@ -838,41 +849,47 @@ func TestStore_SourceScopedRemoteIDDeletion(t *testing.T) {
 	f := storetest.New(t)
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.invalid")
 	require.NoError(err)
-	otherConversationID, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	otherConversationID, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	require.NoError(err)
 
 	const remoteID = "shared-remote-id"
 	firstID := f.CreateMessage(remoteID)
 	secondID := storetest.NewMessage(other.ID, otherConversationID).WithSourceMessageID(remoteID).Create(t, f.Store)
 
-	require.NoError(f.Store.MarkMessageDeletedBySourceMessageID(f.Source.ID, false, remoteID))
+	require.NoError(f.Store.MarkMessageDeletedBySourceMessageID(t.Context(), f.Source.ID, false, remoteID))
 	var firstDeleted, secondDeleted sql.NullTime
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), firstID,
 	).Scan(&firstDeleted))
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), secondID,
 	).Scan(&secondDeleted))
 	assert.True(firstDeleted.Valid)
 	assert.False(secondDeleted.Valid)
 
-	require.NoError(f.Store.MarkMessagesDeletedBySourceMessageIDBatch(other.ID, []string{remoteID}))
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.MarkMessagesDeletedBySourceMessageIDBatch(t.Context(), other.ID, []string{remoteID}))
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), secondID,
 	).Scan(&secondDeleted))
 	assert.True(secondDeleted.Valid)
 
-	require.NoError(f.Store.MarkMessageDeletedBySourceMessageID(f.Source.ID, true, remoteID))
+	require.NoError(f.Store.MarkMessageDeletedBySourceMessageID(t.Context(), f.Source.ID, true, remoteID))
 	var count int
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), firstID,
 	).Scan(&count))
 	assert.Equal(1, count)
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), firstID,
 	).Scan(&firstDeleted))
 	assert.True(firstDeleted.Valid)
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), secondID,
 	).Scan(&count))
 	assert.Equal(1, count)
@@ -958,13 +975,15 @@ func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
 		"store unchanged body")
 	if f.Store.IsPostgreSQL() {
 		var searchIsNull bool
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			"SELECT search_fts IS NULL FROM messages WHERE id = $1", messageID,
 		).Scan(&searchIsNull), "check unchanged PostgreSQL index")
 		assert.False(searchIsNull, "unchanged body must retain its FTS document")
 	} else {
 		var count int
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			"SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", messageID,
 		).Scan(&count), "check unchanged SQLite index")
 		assert.Equal(1, count, "unchanged body must retain its FTS document")
@@ -976,7 +995,7 @@ func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
 		"replace indexed text with equivalent HTML-only body")
 	if f.Store.IsPostgreSQL() {
 		var searchIsNull, versionIsNull bool
-		require.NoError(f.Store.DB().QueryRow(`
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 			SELECT search_fts IS NULL, indexing_version IS NULL
 			FROM messages WHERE id = $1
 		`, messageID).Scan(&searchIsNull, &versionIsNull), "check PostgreSQL invalidation")
@@ -984,7 +1003,8 @@ func TestStore_UpsertMessageBodyInvalidatesChangedFTS(t *testing.T) {
 		assert.True(versionIsNull, "changed body must require a fresh index version")
 	} else {
 		var count int
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			"SELECT COUNT(*) FROM messages_fts WHERE rowid = ?", messageID,
 		).Scan(&count), "check SQLite invalidation")
 		assert.Zero(count, "changed body must delete its old FTS document")
@@ -1003,7 +1023,7 @@ func TestStore_MessageExistsBatch_Empty(t *testing.T) {
 func TestStore_MessageMetadataBatch_Empty(t *testing.T) {
 	f := storetest.New(t)
 
-	result, err := f.Store.MessageMetadataBatch(f.Source.ID, nil)
+	result, err := f.Store.MessageMetadataBatch(t.Context(), f.Source.ID, nil)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -1023,7 +1043,7 @@ func TestStore_SourceMessageMetadata(t *testing.T) {
 	// Messages that belong to another source must not leak into the result.
 	otherSource, err := f.Store.GetOrCreateSource("imazing_csv", "+15550000009")
 	require.NoError(err)
-	otherConversation, err := f.Store.EnsureConversation(otherSource.ID, "smm-other-thread", "Other Thread")
+	otherConversation, err := f.Store.EnsureConversation(t.Context(), otherSource.ID, "smm-other-thread", "Other Thread")
 	require.NoError(err)
 	_, err = f.Store.UpsertMessage(&store.Message{
 		ConversationID:  otherConversation,
@@ -1034,7 +1054,7 @@ func TestStore_SourceMessageMetadata(t *testing.T) {
 	})
 	require.NoError(err)
 
-	got, err := f.Store.SourceMessageMetadata(f.Source.ID)
+	got, err := f.Store.SourceMessageMetadata(t.Context(), f.Source.ID)
 	require.NoError(err)
 	require.Len(got, 2)
 	assert.Equal(withMetadataID, got["smm-with-metadata"].ID)
@@ -1048,13 +1068,13 @@ func TestStore_SourceMessageMetadata(t *testing.T) {
 
 	// Each source's result stays scoped to that source, and a source with
 	// no archived messages yields an empty result.
-	other, err := f.Store.SourceMessageMetadata(otherSource.ID)
+	other, err := f.Store.SourceMessageMetadata(t.Context(), otherSource.ID)
 	require.NoError(err)
 	require.Len(other, 1)
 	assert.Contains(other, "smm-other-source")
 	emptySource, err := f.Store.GetOrCreateSource("imazing_csv", "+15550000008")
 	require.NoError(err)
-	empty, err := f.Store.SourceMessageMetadata(emptySource.ID)
+	empty, err := f.Store.SourceMessageMetadata(t.Context(), emptySource.ID)
 	require.NoError(err)
 	assert.Empty(empty)
 }
@@ -1136,7 +1156,7 @@ func TestStore_GetLastSuccessfulSync_None(t *testing.T) {
 func TestStore_GetSourceByIdentifier_NotFound(t *testing.T) {
 	f := storetest.New(t)
 
-	source, err := f.Store.GetSourceByIdentifier("nonexistent@example.com")
+	source, err := f.Store.GetSourceByIdentifier(t.Context(), "nonexistent@example.com")
 	require.ErrorIs(t, err, store.ErrSourceNotFound, "GetSourceByIdentifier()")
 	assert.Nil(t, source, "expected nil source")
 }
@@ -1159,7 +1179,8 @@ func TestStore_GetStats_ExcludesDedupHidden(t *testing.T) {
 	ids := f.CreateMessages(3)
 
 	// Soft-delete one via dedup (deleted_at).
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[0])
 	require.NoError(t, err, "set deleted_at")
 
@@ -1173,7 +1194,8 @@ func TestStore_GetStats_ExcludesSourceDeleted(t *testing.T) {
 	ids := f.CreateMessages(3)
 
 	// Mark one as deleted from source.
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[1])
 	require.NoError(t, err, "set deleted_from_source_at")
 
@@ -1199,13 +1221,13 @@ func TestStore_GetStats_MissingTable(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	// Drop a table to simulate missing table scenario
-	_, err := st.DB().Exec("DROP TABLE IF EXISTS document_occurrences")
+	_, err := st.DB().ExecContext(t.Context(), "DROP TABLE IF EXISTS document_occurrences")
 	require.NoError(err, "DROP TABLE document_occurrences")
-	_, err = st.DB().Exec("DROP TABLE IF EXISTS source_merge_attachments")
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE IF EXISTS source_merge_attachments")
 	require.NoError(err, "DROP TABLE source_merge_attachments")
-	_, err = st.DB().Exec("DROP TABLE IF EXISTS source_merge_preserved_attachments")
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE IF EXISTS source_merge_preserved_attachments")
 	require.NoError(err, "DROP TABLE source_merge_preserved_attachments")
-	_, err = st.DB().Exec("DROP TABLE IF EXISTS attachments")
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE IF EXISTS attachments")
 	require.NoError(err, "DROP TABLE attachments")
 
 	// GetStats should ignore missing tables and return partial stats
@@ -1278,53 +1300,29 @@ func TestStore_GetRandomMessageIDs(t *testing.T) {
 	require.NoError(err, "GetRandomMessageIDs(empty)")
 	assert.Empty(ids, "len(ids) for empty source")
 
-	// Add 10 messages
-	allIDs := make(map[int64]bool)
-	createdIDs := f.CreateMessages(10)
-	for _, id := range createdIDs {
-		allIDs[id] = true
-	}
+	createdIDs := f.CreateMessages(5)
 
 	// Sample fewer than available
-	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 5)
+	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 2)
 	require.NoError(err, "GetRandomMessageIDs()")
-	assert.Len(ids, 5)
+	assert.Len(ids, 2)
 
-	// All returned IDs should be valid
-	for _, id := range ids {
-		assert.True(allIDs[id], "returned ID %d is not in allIDs", id)
-	}
-
-	// All returned IDs should be unique
-	seen := make(map[int64]bool)
-	for _, id := range ids {
-		assert.False(seen[id], "duplicate ID %d returned", id)
-		seen[id] = true
-	}
-
-	// Sample more than available - should return all
-	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 20)
-	require.NoError(err, "GetRandomMessageIDs(more than available)")
-	assert.Len(ids, 10)
-}
-
-func TestStore_GetRandomMessageIDs_ExcludesDeleted(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-
-	// Add 5 messages
-	f.CreateMessages(5)
+	otherSource, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	otherConversation, err := f.Store.EnsureConversation(t.Context(), otherSource.ID, "other-thread", "Other Thread")
+	require.NoError(err)
+	storetest.NewMessage(otherSource.ID, otherConversation).Create(t, f.Store)
 
 	// Delete 2 messages
-	err := f.Store.MarkMessageDeleted(f.Source.ID, "msg-0")
+	err = f.Store.MarkMessageDeleted(f.Source.ID, "msg-0")
 	require.NoError(err, "MarkMessageDeleted msg-0")
-	err = f.Store.MarkMessageDeleted(f.Source.ID, "msg-2")
-	require.NoError(err, "MarkMessageDeleted msg-2")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), createdIDs[2])
+	require.NoError(err, "hide msg-2 from the archive")
 
-	// Should only return 3 (non-deleted) messages
-	ids, err := f.Store.GetRandomMessageIDs(f.Source.ID, 10)
+	// Sample more than available: return all live messages from this source.
+	ids, err = f.Store.GetRandomMessageIDs(f.Source.ID, 10)
 	require.NoError(err, "GetRandomMessageIDs()")
-	assert.Len(t, ids, 3, "len(ids) (5 total - 2 deleted)")
+	assert.ElementsMatch([]int64{createdIDs[1], createdIDs[3], createdIDs[4]}, ids)
 }
 
 func TestStore_ReplaceMessageRecipients_LargeBatch(t *testing.T) {
@@ -1381,17 +1379,17 @@ func TestStore_UpsertFTS(t *testing.T) {
 
 	// Verify FTS row exists and is searchable
 	var count int
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'hello'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'hello'").Scan(&count)
 	require.NoError(err, "FTS MATCH query")
 	assert.Equal(1, count, "FTS match count")
 
 	// Search by subject
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'subject'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'subject'").Scan(&count)
 	require.NoError(err, "FTS MATCH subject")
 	assert.Equal(1, count, "FTS match subject count")
 
 	// Search by from address
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'alice'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'alice'").Scan(&count)
 	require.NoError(err, "FTS MATCH from_addr")
 	assert.Equal(1, count, "FTS match from_addr count")
 
@@ -1400,12 +1398,12 @@ func TestStore_UpsertFTS(t *testing.T) {
 	require.NoError(err, "UpsertFTS update")
 
 	// Old content should no longer match
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'hello'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'hello'").Scan(&count)
 	require.NoError(err, "FTS MATCH after update")
 	assert.Equal(0, count, "FTS match 'hello' after update")
 
 	// New content should match
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'updated'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'updated'").Scan(&count)
 	require.NoError(err, "FTS MATCH 'updated'")
 	assert.Equal(1, count, "FTS match 'updated'")
 }
@@ -1444,12 +1442,12 @@ func TestStore_BackfillFTS(t *testing.T) {
 	require.NoError(err, "UpsertMessageBody 2")
 
 	// FTS should already have been auto-populated by InitSchema, so clear it first
-	_, err = f.Store.DB().Exec("DELETE FROM messages_fts")
+	_, err = f.Store.DB().ExecContext(t.Context(), "DELETE FROM messages_fts")
 	require.NoError(err, "clear FTS")
 
 	// Verify FTS is empty
 	var count int
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts").Scan(&count)
 	require.NoError(err, "count FTS")
 	require.Equal(0, count, "FTS count after clear")
 
@@ -1459,22 +1457,22 @@ func TestStore_BackfillFTS(t *testing.T) {
 	assert.Equal(int64(2), rowsInserted, "BackfillFTS rows")
 
 	// Verify FTS is populated
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts").Scan(&count)
 	require.NoError(err, "count FTS after backfill")
 	assert.Equal(2, count, "FTS count after backfill")
 
 	// Search for first message body
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'first'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'first'").Scan(&count)
 	require.NoError(err, "FTS MATCH first")
 	assert.Equal(1, count, "FTS match 'first'")
 
 	// Search for sender email (populated via backfill from participants)
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'sender'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'sender'").Scan(&count)
 	require.NoError(err, "FTS MATCH sender")
 	assert.Equal(1, count, "FTS match 'sender'")
 
 	// Search for second message unique content
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'unique'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'unique'").Scan(&count)
 	require.NoError(err, "FTS MATCH unique")
 	assert.Equal(1, count, "FTS match 'unique'")
 }
@@ -1502,7 +1500,7 @@ func TestStore_NeedsFTSBackfill(t *testing.T) {
 	require.NoError(err, "ReplaceMessageRecipients")
 
 	// Clear FTS to simulate a pre-existing DB without FTS population
-	_, err = f.Store.DB().Exec("DELETE FROM messages_fts")
+	_, err = f.Store.DB().ExecContext(t.Context(), "DELETE FROM messages_fts")
 	require.NoError(err, "clear FTS")
 
 	// NeedsFTSBackfill should return true (empty FTS + existing messages)
@@ -1518,7 +1516,7 @@ func TestStore_NeedsFTSBackfill(t *testing.T) {
 
 	// Verify the backfilled data is searchable
 	var count int
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'backfill'").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'backfill'").Scan(&count)
 	require.NoError(err, "FTS MATCH backfill")
 	assert.Equal(1, count, "FTS match 'backfill'")
 }
@@ -1533,7 +1531,7 @@ func TestStore_ReplaceMessageLabels_LargeBatch(t *testing.T) {
 	labelIDs := make([]int64, numLabels)
 	for i := range numLabels {
 		sourceLabelID := fmt.Sprintf("Label_%d", i)
-		lid, err := f.Store.EnsureLabel(f.Source.ID, sourceLabelID, fmt.Sprintf("Label %d", i), "user")
+		lid, err := f.Store.EnsureLabel(t.Context(), f.Source.ID, sourceLabelID, fmt.Sprintf("Label %d", i), "user")
 		require.NoError(t, err, "EnsureLabel")
 		labelIDs[i] = lid
 	}
@@ -1571,7 +1569,7 @@ func TestStore_AddMessageLabels(t *testing.T) {
 	// Add STARRED — should go from 1 to 2
 	revisionBefore, err := f.Store.DerivedDataRevision()
 	require.NoError(err, "DerivedDataRevision before additive label")
-	err = f.Store.AddMessageLabels(msgID, []int64{labels["STARRED"]})
+	err = f.Store.AddMessageLabels(t.Context(), msgID, []int64{labels["STARRED"]})
 	require.NoError(err, "AddMessageLabels(STARRED)")
 	f.AssertLabelCount(msgID, 2)
 	revisionAfter, err := f.Store.DerivedDataRevision()
@@ -1580,7 +1578,7 @@ func TestStore_AddMessageLabels(t *testing.T) {
 		"additive labels must invalidate exported message facts")
 
 	// Add INBOX again — should be a no-op (INSERT OR IGNORE)
-	err = f.Store.AddMessageLabels(msgID, []int64{labels["INBOX"]})
+	err = f.Store.AddMessageLabels(t.Context(), msgID, []int64{labels["INBOX"]})
 	require.NoError(err, "AddMessageLabels(INBOX duplicate)")
 	f.AssertLabelCount(msgID, 2)
 	revisionAfterDuplicate, err := f.Store.DerivedDataRevision()
@@ -1589,12 +1587,12 @@ func TestStore_AddMessageLabels(t *testing.T) {
 		"duplicate labels must not invalidate unchanged exported message facts")
 
 	// Add multiple labels at once, including one that already exists
-	err = f.Store.AddMessageLabels(msgID, []int64{labels["SENT"], labels["TRASH"], labels["STARRED"]})
+	err = f.Store.AddMessageLabels(t.Context(), msgID, []int64{labels["SENT"], labels["TRASH"], labels["STARRED"]})
 	require.NoError(err, "AddMessageLabels(SENT, TRASH, STARRED)")
 	f.AssertLabelCount(msgID, 4)
 
 	// Empty list is a no-op
-	err = f.Store.AddMessageLabels(msgID, []int64{})
+	err = f.Store.AddMessageLabels(t.Context(), msgID, []int64{})
 	require.NoError(err, "AddMessageLabels(empty)")
 	f.AssertLabelCount(msgID, 4)
 }
@@ -1613,21 +1611,25 @@ func TestStore_ReconcileMessageLabelsReportsChanges(t *testing.T) {
 		messageID, []int64{labels["INBOX"]}))
 
 	changed, err := f.Store.ReconcileMessageLabels(
+		t.Context(),
 		messageID, []int64{labels["INBOX"]}, false)
 	require.NoError(err)
 	assert.False(changed)
 
 	changed, err = f.Store.ReconcileMessageLabels(
+		t.Context(),
 		messageID, []int64{labels["STARRED"]}, false)
 	require.NoError(err)
 	assert.True(changed)
 
 	changed, err = f.Store.ReconcileMessageLabels(
+		t.Context(),
 		messageID, []int64{labels["INBOX"], labels["STARRED"]}, true)
 	require.NoError(err)
 	assert.False(changed)
 
 	changed, err = f.Store.ReconcileMessageLabels(
+		t.Context(),
 		messageID, []int64{labels["SENT"]}, true)
 	require.NoError(err)
 	assert.True(changed)
@@ -1649,25 +1651,28 @@ func TestStore_DedupReconciliationReportsChanges(t *testing.T) {
 		messageID, []int64{labels["INBOX"]}))
 
 	changed, err := f.Store.UpdateMessageOnDedup(
+		t.Context(),
 		messageID, "Archive|2", []int64{labels["Archive"]})
 	require.NoError(err)
 	assert.True(changed)
-	sourceMessageID, err := f.Store.GetMessageSourceID(messageID)
+	sourceMessageID, err := f.Store.GetMessageSourceID(t.Context(), messageID)
 	require.NoError(err)
 	assert.Equal("Archive|2", sourceMessageID)
 	f.AssertLabelCount(messageID, 1)
 	f.AssertMessageHasLabel(messageID, labels["Archive"])
 
 	changed, err = f.Store.UpdateMessageOnDedup(
+		t.Context(),
 		messageID, "Archive|2", []int64{labels["Archive"]})
 	require.NoError(err)
 	assert.False(changed)
 
 	changed, err = f.Store.UpdateMessageOnPartialDedup(
+		t.Context(),
 		messageID, "Trash|3", []int64{labels["Trash"]})
 	require.NoError(err)
 	assert.True(changed)
-	sourceMessageID, err = f.Store.GetMessageSourceID(messageID)
+	sourceMessageID, err = f.Store.GetMessageSourceID(t.Context(), messageID)
 	require.NoError(err)
 	assert.Equal("Trash|3", sourceMessageID)
 	f.AssertLabelCount(messageID, 2)
@@ -1675,6 +1680,7 @@ func TestStore_DedupReconciliationReportsChanges(t *testing.T) {
 	f.AssertMessageHasLabel(messageID, labels["Trash"])
 
 	changed, err = f.Store.UpdateMessageOnPartialDedup(
+		t.Context(),
 		messageID, "Trash|3", []int64{labels["Trash"]})
 	require.NoError(err)
 	assert.False(changed)
@@ -1705,7 +1711,7 @@ func TestStore_MessageMetadataWithRawBatch(t *testing.T) {
 	require.NoError(err)
 
 	got, err := f.Store.MessageMetadataWithRawBatch(
-		f.Source.ID,
+		t.Context(), f.Source.ID,
 		[]string{"INBOX|1", "INBOX|2", "INBOX|3"},
 	)
 	require.NoError(err)
@@ -1724,24 +1730,26 @@ func TestStore_RekeyMessageSourceIDRequiresExpectedID(t *testing.T) {
 	messageID := f.CreateMessage("INBOX|1")
 
 	changed, err := f.Store.RekeyMessageSourceID(
+		t.Context(),
 		messageID,
 		"wrong|1",
 		"msgvault-invalidated:1",
 	)
 	require.NoError(err)
 	assert.False(changed)
-	sourceMessageID, err := f.Store.GetMessageSourceID(messageID)
+	sourceMessageID, err := f.Store.GetMessageSourceID(t.Context(), messageID)
 	require.NoError(err)
 	assert.Equal("INBOX|1", sourceMessageID)
 
 	changed, err = f.Store.RekeyMessageSourceID(
+		t.Context(),
 		messageID,
 		"INBOX|1",
 		"msgvault-invalidated:1",
 	)
 	require.NoError(err)
 	assert.True(changed)
-	sourceMessageID, err = f.Store.GetMessageSourceID(messageID)
+	sourceMessageID, err = f.Store.GetMessageSourceID(t.Context(), messageID)
 	require.NoError(err)
 	assert.Equal("msgvault-invalidated:1", sourceMessageID)
 }
@@ -1755,13 +1763,14 @@ func TestStore_RekeyMessageSourceIDReportsScopedWrite(t *testing.T) {
 	scoped := f.Store.ScopedToSync(f.Source.ID, syncID)
 
 	changed, err := scoped.RekeyMessageSourceID(
+		t.Context(),
 		messageID,
 		"INBOX|1",
 		"msgvault-invalidated:1",
 	)
 	requirements.NoError(err)
 	checks.True(changed)
-	sourceMessageID, err := f.Store.GetMessageSourceID(messageID)
+	sourceMessageID, err := f.Store.GetMessageSourceID(t.Context(), messageID)
 	requirements.NoError(err)
 	checks.Equal("msgvault-invalidated:1", sourceMessageID)
 }
@@ -1784,17 +1793,17 @@ func TestStore_RemoveMessageLabels(t *testing.T) {
 	f.AssertLabelCount(msgID, 4)
 
 	// Remove STARRED — should go from 4 to 3
-	err = f.Store.RemoveMessageLabels(msgID, []int64{labels["STARRED"]})
+	err = f.Store.RemoveMessageLabels(t.Context(), msgID, []int64{labels["STARRED"]})
 	require.NoError(err, "RemoveMessageLabels(STARRED)")
 	f.AssertLabelCount(msgID, 3)
 
 	// Remove STARRED again — should be a no-op (already removed)
-	err = f.Store.RemoveMessageLabels(msgID, []int64{labels["STARRED"]})
+	err = f.Store.RemoveMessageLabels(t.Context(), msgID, []int64{labels["STARRED"]})
 	require.NoError(err, "RemoveMessageLabels(STARRED again)")
 	f.AssertLabelCount(msgID, 3)
 
 	// Remove multiple including INBOX and SENT
-	err = f.Store.RemoveMessageLabels(msgID, []int64{labels["INBOX"], labels["SENT"]})
+	err = f.Store.RemoveMessageLabels(t.Context(), msgID, []int64{labels["INBOX"], labels["SENT"]})
 	require.NoError(err, "RemoveMessageLabels(INBOX, SENT)")
 	f.AssertLabelCount(msgID, 1)
 
@@ -1803,7 +1812,7 @@ func TestStore_RemoveMessageLabels(t *testing.T) {
 	assert.Equal(t, labels["TRASH"], labelID, "remaining label_id (TRASH)")
 
 	// Empty list is a no-op
-	err = f.Store.RemoveMessageLabels(msgID, []int64{})
+	err = f.Store.RemoveMessageLabels(t.Context(), msgID, []int64{})
 	require.NoError(err, "RemoveMessageLabels(empty)")
 	f.AssertLabelCount(msgID, 1)
 }
@@ -1824,7 +1833,7 @@ func TestStore_MarkMessagesDeletedBatch(t *testing.T) {
 	}
 
 	// Batch delete first two
-	err := f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{"batch-del-1", "batch-del-2"})
+	err := f.Store.MarkMessagesDeletedBatch(t.Context(), f.Source.ID, []string{"batch-del-1", "batch-del-2"})
 	require.NoError(t, err, "MarkMessagesDeletedBatch")
 
 	// First two should be deleted, last two should not
@@ -1834,11 +1843,11 @@ func TestStore_MarkMessagesDeletedBatch(t *testing.T) {
 	f.AssertMessageNotDeleted(internalIDs["batch-del-4"])
 
 	// Batch with non-existent IDs should not error
-	err = f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{"nonexistent-1", "nonexistent-2"})
+	err = f.Store.MarkMessagesDeletedBatch(t.Context(), f.Source.ID, []string{"nonexistent-1", "nonexistent-2"})
 	require.NoError(t, err, "MarkMessagesDeletedBatch(nonexistent)")
 
 	// Empty list is a no-op
-	err = f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{})
+	err = f.Store.MarkMessagesDeletedBatch(t.Context(), f.Source.ID, []string{})
 	require.NoError(t, err, "MarkMessagesDeletedBatch(empty)")
 }
 
@@ -1934,10 +1943,10 @@ func TestStore_PersistMessageContext_CancellationRollsBack(t *testing.T) {
 	f := storetest.New(t)
 	f.Store.DB().SetMaxOpenConns(1)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	persistStarted := make(chan struct{})
-	conn, err := f.Store.DB().Conn(context.Background())
+	conn, err := f.Store.DB().Conn(t.Context())
 	require.NoError(err, "get SQLite connection")
 	err = conn.Raw(func(driverConn any) error {
 		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
@@ -1950,7 +1959,7 @@ func TestStore_PersistMessageContext_CancellationRollsBack(t *testing.T) {
 	})
 	require.NoError(err, "register cancellation function")
 	require.NoError(conn.Close(), "return SQLite connection to pool")
-	_, err = f.Store.DB().Exec(`
+	_, err = f.Store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER wait_before_meeting_raw_insert
 		BEFORE INSERT ON message_raw
 		WHEN NEW.raw_format = 'meeting_json'
@@ -2004,7 +2013,7 @@ func TestStore_OAuthAppColumn(t *testing.T) {
 		"new source OAuthApp should be null, got %q", f.Source.OAuthApp.String)
 
 	// Update oauth_app
-	err := f.Store.UpdateSourceOAuthApp(f.Source.ID, sql.NullString{String: "acme", Valid: true})
+	err := f.Store.UpdateSourceOAuthApp(t.Context(), f.Source.ID, sql.NullString{String: "acme", Valid: true})
 	require.NoError(err, "UpdateSourceOAuthApp")
 
 	// Read it back via ListSources
@@ -2027,11 +2036,11 @@ func TestStore_OAuthAppColumn_NullRoundTrip(t *testing.T) {
 	f := storetest.New(t)
 
 	// Set to acme
-	err := f.Store.UpdateSourceOAuthApp(f.Source.ID, sql.NullString{String: "acme", Valid: true})
+	err := f.Store.UpdateSourceOAuthApp(t.Context(), f.Source.ID, sql.NullString{String: "acme", Valid: true})
 	require.NoError(err, "UpdateSourceOAuthApp(acme)")
 
 	// Set back to null
-	err = f.Store.UpdateSourceOAuthApp(f.Source.ID, sql.NullString{})
+	err = f.Store.UpdateSourceOAuthApp(t.Context(), f.Source.ID, sql.NullString{})
 	require.NoError(err, "UpdateSourceOAuthApp(null)")
 
 	// Verify via GetSourcesByIdentifier
@@ -2219,7 +2228,7 @@ func makeSecondSource(t *testing.T, f *storetest.Fixture, identifier string) (*s
 	t.Helper()
 	src, err := f.Store.GetOrCreateSource("gmail", identifier)
 	require.NoError(t, err, "GetOrCreateSource "+identifier)
-	convID, err := f.Store.EnsureConversation(src.ID, "thread-b-1", "Thread B")
+	convID, err := f.Store.EnsureConversation(t.Context(), src.ID, "thread-b-1", "Thread B")
 	require.NoError(t, err, "EnsureConversation "+identifier)
 	return src, convID
 }
@@ -2286,7 +2295,8 @@ func TestStore_GetStatsForScope_ExcludesDedupHidden(t *testing.T) {
 	createMessagesForSource(t, f.Store, srcB.ID, convB, "b-dedup", 1)
 
 	// Soft-delete one message in source A via dedup (deleted_at).
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), idsA[0])
 	require.NoError(err, "set deleted_at")
 
@@ -2306,7 +2316,8 @@ func TestStore_GetStatsForScope_ExcludesSourceDeleted(t *testing.T) {
 	ids := createMessagesForSource(t, f.Store, f.Source.ID, f.ConvID, "a-srcdeleted", 2)
 
 	// Mark one as deleted from source.
-	_, err := f.Store.DB().Exec(
+	_, err := f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), ids[0])
 	require.NoError(t, err, "set deleted_from_source_at")
 

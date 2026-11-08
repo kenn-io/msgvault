@@ -40,7 +40,7 @@ func TestImportRecordsConnectedCallLength(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	importVoice(t, st, voice, "")
 
-	rows, err := st.DB().Query(st.Rebind(`SELECT snippet, metadata FROM messages WHERE message_type = ? ORDER BY sent_at`), store.MessageTypeGoogleVoiceCall)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT snippet, metadata FROM messages WHERE message_type = ? ORDER BY sent_at`), store.MessageTypeGoogleVoiceCall)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	got := map[string]string{}

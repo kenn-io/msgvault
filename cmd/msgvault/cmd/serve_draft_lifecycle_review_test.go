@@ -64,7 +64,7 @@ func TestDraftLifecycleCancelledAfterClaimBeforeAppend(t *testing.T) {
 	slog.SetDefault(slog.New(reviewDraftCommitHandler{
 		Handler: slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}),
 		onCommit: func() {
-			if draft, err := fixture.store.GetIMAPDraftContext(context.Background(), fixture.draft.DraftID); err == nil && draft.Pending != nil {
+			if draft, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID); err == nil && draft.Pending != nil {
 				cancel()
 			}
 		},
@@ -78,7 +78,7 @@ func TestDraftLifecycleCancelledAfterClaimBeforeAppend(t *testing.T) {
 	requirements.ErrorContains(err, "cancelled")
 	requirements.ErrorIs(ctx.Err(), context.Canceled)
 	assertions.Zero(barrier.appendCalls.Load())
-	pending, err := fixture.store.GetIMAPDraftContext(context.Background(), fixture.draft.DraftID)
+	pending, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
 	requirements.NoError(err)
 	assertions.Nil(pending.Pending)
 	assertions.Equal(int64(1), pending.Revision)
@@ -106,7 +106,7 @@ func TestDraftLifecycleRejectedClaimPersistenceEvidence(t *testing.T) {
 			if fault == "clear" {
 				condition = "OLD.pending_operation IS NOT NULL AND NEW.pending_operation IS NULL"
 			}
-			_, err := fixture.store.DB().Exec("CREATE TRIGGER fail_rejected_claim BEFORE UPDATE ON imap_drafts WHEN " + condition + " BEGIN SELECT RAISE(FAIL, 'injected rejection persistence failure'); END")
+			_, err := fixture.store.DB().ExecContext(t.Context(), "CREATE TRIGGER fail_rejected_claim BEFORE UPDATE ON imap_drafts WHEN "+condition+" BEGIN SELECT RAISE(FAIL, 'injected rejection persistence failure'); END")
 			requirements.NoError(err)
 			events, err := runReviewLifecycle(t, fixture.adapter, "draft-edit", fixture.draft.DraftID, "--revision", "1", "--body", "candidate", "--json")
 			requirements.Error(err)
@@ -158,7 +158,7 @@ func TestDraftReplyHumanLifecycleHandle(t *testing.T) {
 	root.SetArgs([]string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--from", testutil.IMAPTestUsername, "--body", "handle"})
 	requirements.NoError(root.ExecuteContext(testCtx))
 	var draftID string
-	requirements.NoError(fixture.store.DB().QueryRow("SELECT draft_id FROM imap_drafts").Scan(&draftID))
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), "SELECT draft_id FROM imap_drafts").Scan(&draftID))
 	assertions.Contains(stdout.String(), "draft "+draftID+" revision 1")
 	draft, err := fixture.store.GetIMAPDraftContext(testCtx, draftID)
 	requirements.NoError(err)
@@ -332,9 +332,9 @@ func TestDraftLifecycleAcceptedReadFailureEvidence(t *testing.T) {
 				var faultErr error
 				barrier.onAppend = func() {
 					if fault == "message" {
-						_, faultErr = fixture.store.DB().Exec("ALTER TABLE message_bodies RENAME TO fault_message_bodies")
+						_, faultErr = fixture.store.DB().ExecContext(t.Context(), "ALTER TABLE message_bodies RENAME TO fault_message_bodies")
 					} else {
-						_, faultErr = fixture.store.DB().Exec("ALTER TABLE messages RENAME COLUMN reply_to_message_id TO fault_reply_to_message_id")
+						_, faultErr = fixture.store.DB().ExecContext(t.Context(), "ALTER TABLE messages RENAME COLUMN reply_to_message_id TO fault_reply_to_message_id")
 					}
 				}
 				server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, Store: fixture.adapter, Logger: slog.New(slog.DiscardHandler)}).Router())
@@ -357,9 +357,9 @@ func TestDraftLifecycleAcceptedReadFailureEvidence(t *testing.T) {
 				requirements.ErrorContains(err, "accepted_local_failed")
 				assertions.Empty(stdout.String())
 				if fault == "message" {
-					_, err = fixture.store.DB().Exec("ALTER TABLE fault_message_bodies RENAME TO message_bodies")
+					_, err = fixture.store.DB().ExecContext(t.Context(), "ALTER TABLE fault_message_bodies RENAME TO message_bodies")
 				} else {
-					_, err = fixture.store.DB().Exec("ALTER TABLE messages RENAME COLUMN fault_reply_to_message_id TO reply_to_message_id")
+					_, err = fixture.store.DB().ExecContext(t.Context(), "ALTER TABLE messages RENAME COLUMN fault_reply_to_message_id TO reply_to_message_id")
 				}
 				requirements.NoError(err)
 				if asJSON {
@@ -399,7 +399,7 @@ func TestDraftLifecyclePublicationFailure(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
 	created := createReviewDraft(t, fixture, adapter, "original")
-	conversationID, err := fixture.store.EnsureConversation(fixture.source.ID, "publication-conflict", "Publication conflict")
+	conversationID, err := fixture.store.EnsureConversation(t.Context(), fixture.source.ID, "publication-conflict", "Publication conflict")
 	requirements.NoError(err)
 	_, err = fixture.store.PersistMessage(&store.MessagePersistData{
 		Message: &store.Message{
@@ -454,7 +454,7 @@ func TestDraftLifecycleHumanAcknowledgedReceiptWhenRecordFails(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
 	created := createReviewDraft(t, fixture, adapter, "original")
-	_, err := fixture.store.DB().Exec(`
+	_, err := fixture.store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_draft_replacement_receipt
 		BEFORE UPDATE OF pending_replacement_uid ON imap_drafts
 		WHEN NEW.pending_replacement_uid IS NOT NULL
@@ -540,17 +540,17 @@ func TestDraftLifecycleUnknownAppend(t *testing.T) {
 	assertions.Contains(events[0].Data, `"candidate_content"`)
 	assertions.Contains(events[0].Data, "candidate")
 	assertions.Equal(uint32(2), reviewDraftMailboxCount(t, fixture.config.Addr()))
-	pending, err := fixture.store.GetIMAPDraftContext(context.Background(), fixture.draft.DraftID)
+	pending, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
 	requirements.NoError(err)
 	requirements.NotNil(pending.Pending)
 	assertions.Equal("remote_unknown", pending.Pending.Code)
 	assertions.Equal(int32(1), providerCalls.Load())
 
 	requirements.NoError(fixture.store.Close())
-	reopened, err := store.OpenForTest(dbPath)
+	reopened, err := store.OpenForTest(t.Context(), dbPath)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = reopened.Close() })
-	reopenedDraft, err := reopened.GetIMAPDraftContext(context.Background(), fixture.draft.DraftID)
+	reopenedDraft, err := reopened.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
 	requirements.NoError(err)
 	requirements.NotNil(reopenedDraft.Pending)
 	assertions.Equal("remote_unknown", reopenedDraft.Pending.Code)
@@ -621,7 +621,7 @@ func TestDraftLifecycleRetainedGet(t *testing.T) {
 		providerCalls.Add(1)
 		return nil, errors.New("draft-get must not connect to IMAP")
 	}
-	_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+	_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`
 		UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?
 	`), created.MessageID)
 	requirements.NoError(err)
@@ -632,7 +632,7 @@ func TestDraftLifecycleRetainedGet(t *testing.T) {
 	assertions.Contains(events[0].Data, `"provider_observation":{"state":"not_checked","code":"not_checked"`)
 	assertions.Zero(providerCalls.Load())
 
-	_, err = fixture.store.ClaimIMAPDraftContext(context.Background(), created.DraftID, 1, store.IMAPDraftOperationEdit, []byte("candidate raw"))
+	_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, 1, store.IMAPDraftOperationEdit, []byte("candidate raw"))
 	requirements.NoError(err)
 	events, err = runReviewLifecycle(t, adapter, api.CLIRunDraftGetCommand, created.DraftID, "--json")
 	requirements.NoError(err)
@@ -688,7 +688,7 @@ func TestDraftLifecycleExactCopy(t *testing.T) {
 	assertions.Equal("absent", err.Error())
 	requirements.Len(events, 1)
 	assertions.Contains(events[0].Data, `"code":"absent"`)
-	draft, err := fixture.store.GetIMAPDraftContext(context.Background(), created.DraftID)
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
 	requirements.NoError(err)
 	assertions.Nil(draft.Pending)
 
@@ -730,7 +730,7 @@ func TestDraftLifecyclePolicy(t *testing.T) {
 	adapter.draftPolicy = []config.IMAPDraftSource{{SourceID: fixture.source.ID, Enabled: true, Mailbox: "Drafts"}}
 	badConfig, err := (&imaplib.Config{Host: "127.0.0.1", Port: 1, Username: testutil.IMAPTestUsername}).ToJSON()
 	requirements.NoError(err)
-	requirements.NoError(fixture.store.UpdateSourceSyncConfig(fixture.source.ID, badConfig))
+	requirements.NoError(fixture.store.UpdateSourceSyncConfig(t.Context(), fixture.source.ID, badConfig))
 	_, err = runReviewLifecycle(t, adapter, api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "1", "--json")
 	requirements.Error(err)
 	assertions.Equal("invalid_source", err.Error())
@@ -753,13 +753,13 @@ func TestDraftLifecycleBoundaries(t *testing.T) {
 			assertions := assert.New(t)
 			switch state {
 			case "pending":
-				_, err := fixture.store.ClaimIMAPDraftContext(context.Background(), created.DraftID, 1, store.IMAPDraftOperationEdit, []byte("pending"))
+				_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, 1, store.IMAPDraftOperationEdit, []byte("pending"))
 				requirements.NoError(err)
 			case "discarded":
-				_, err := fixture.store.ClaimIMAPDraftContext(context.Background(), created.DraftID, 1, store.IMAPDraftOperationDelete, nil)
+				_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, 1, store.IMAPDraftOperationDelete, nil)
 				requirements.NoError(err)
-				requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(context.Background(), created.DraftID, 1, store.IMAPDraftCodeRemoved, nil))
-				_, err = fixture.store.FinishIMAPDraftRemovalContext(context.Background(), created.DraftID, 1)
+				requirements.NoError(fixture.store.RecordIMAPDraftOutcomeContext(t.Context(), created.DraftID, 1, store.IMAPDraftCodeRemoved, nil))
+				_, err = fixture.store.FinishIMAPDraftRemovalContext(t.Context(), created.DraftID, 1)
 				requirements.NoError(err)
 			}
 			events, err := runReviewLifecycle(t, adapter, api.CLIRunDraftGetCommand, created.DraftID, "--json")
@@ -769,7 +769,7 @@ func TestDraftLifecycleBoundaries(t *testing.T) {
 			assertions.Zero(providerCalls.Load())
 		})
 		if state == "pending" {
-			_, err := fixture.store.DB().Exec(fixture.store.Rebind(`UPDATE imap_drafts SET pending_operation = NULL, pending_original_message_id = NULL, pending_original_mailbox = NULL, pending_original_uidvalidity = NULL, pending_original_uid = NULL, pending_raw = NULL, pending_code = NULL WHERE draft_id = ?`), created.DraftID)
+			_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`UPDATE imap_drafts SET pending_operation = NULL, pending_original_message_id = NULL, pending_original_mailbox = NULL, pending_original_uidvalidity = NULL, pending_original_uid = NULL, pending_raw = NULL, pending_code = NULL WHERE draft_id = ?`), created.DraftID)
 			requirements.NoError(err)
 		}
 	}
@@ -801,11 +801,11 @@ func TestDraftLifecycleCleanupOutcomeEvidence(t *testing.T) {
 				<-barrier.stored
 				reviewStoreFlagsForLifecycle(t, addr, 1, emersionimap.StoreFlagsDel, emersionimap.FlagDeleted)
 				if fault == "record" {
-					_, err := fixture.store.DB().Exec(fixture.store.Rebind("UPDATE imap_drafts SET revision = revision + 1 WHERE draft_id = ?"), fixture.draft.DraftID)
+					_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind("UPDATE imap_drafts SET revision = revision + 1 WHERE draft_id = ?"), fixture.draft.DraftID)
 					requirements.NoError(err)
 				}
 				if fault == "read" {
-					_, err := fixture.store.DB().Exec("ALTER TABLE imap_drafts RENAME TO fault_imap_drafts")
+					_, err := fixture.store.DB().ExecContext(t.Context(), "ALTER TABLE imap_drafts RENAME TO fault_imap_drafts")
 					requirements.NoError(err)
 				}
 				close(barrier.release)
@@ -821,7 +821,7 @@ func TestDraftLifecycleCleanupOutcomeEvidence(t *testing.T) {
 				assertions.Equal(uint32(1), output.Observation.UID)
 				assertions.True(output.Observation.Present)
 				if fault == "read" {
-					_, err := fixture.store.DB().Exec("ALTER TABLE fault_imap_drafts RENAME TO imap_drafts")
+					_, err := fixture.store.DB().ExecContext(t.Context(), "ALTER TABLE fault_imap_drafts RENAME TO imap_drafts")
 					requirements.NoError(err)
 				}
 				latest, loadErr := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
@@ -869,7 +869,7 @@ func TestDraftLifecycleCleanup(t *testing.T) {
 			fixture := newReviewManagedLifecycleFixtureOnServer(t, addr, func() {
 				testutil.AppendIMAPRawMessage(t, user, "Drafts", []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Original\r\n\r\noriginal\r\n"))
 			})
-			_, err := fixture.store.DB().Exec(`
+			_, err := fixture.store.DB().ExecContext(t.Context(), `
 				CREATE TRIGGER fail_draft_finish
 				AFTER UPDATE OF pending_code ON imap_drafts
 				WHEN NEW.pending_code = 'removed'
@@ -908,7 +908,7 @@ func TestDraftLifecycleCleanup(t *testing.T) {
 			assertions.Equal(store.IMAPDraftCodeRemoved, latest.Pending.Code)
 			assertions.Equal(operation, "draft-"+latest.Pending.Operation)
 
-			_, err = fixture.store.DB().Exec("DROP TRIGGER fail_draft_finish")
+			_, err = fixture.store.DB().ExecContext(t.Context(), "DROP TRIGGER fail_draft_finish")
 			requirements.NoError(err)
 			fixture.adapter.draftClientFactory = func(context.Context, *store.Source) (*imaplib.Client, error) {
 				return nil, errors.New("local completion must not connect to IMAP")
@@ -958,7 +958,7 @@ func TestDraftLifecycleRemovedOutcomePersistenceFailure(t *testing.T) {
 			fixture := newReviewManagedLifecycleFixtureOnServer(t, addr, func() {
 				testutil.AppendIMAPRawMessage(t, user, "Drafts", []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Original\r\n\r\noriginal\r\n"))
 			})
-			_, err := fixture.store.DB().Exec(`
+			_, err := fixture.store.DB().ExecContext(t.Context(), `
 				CREATE TRIGGER fail_removed_outcome
 				BEFORE UPDATE OF pending_code ON imap_drafts
 				WHEN NEW.pending_code = 'removed'
@@ -1020,7 +1020,7 @@ func TestDraftLifecycleHumanCleanupPartialThroughHTTP(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- root.ExecuteContext(testCtx) }()
 	<-barrier.stored
-	_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+	_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`
 		UPDATE imap_drafts SET revision = 2 WHERE draft_id = ?
 	`), fixture.draft.DraftID)
 	requirements.NoError(err)
@@ -1057,7 +1057,7 @@ func TestDraftLifecycleSyncProjection(t *testing.T) {
 			if err := fixture.store.BackupDatabase(cacheDB); err != nil {
 				return err
 			}
-			_, err := buildCache(cacheDB, analyticsDir, true)
+			_, err := buildCache(t.Context(), cacheDB, analyticsDir, true)
 			return err
 		}
 		requirements.NoError(refreshCache())
@@ -1076,16 +1076,16 @@ func TestDraftLifecycleSyncProjection(t *testing.T) {
 	}
 	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &output))
 	assertions.Equal(int64(2), output.Revision)
-	raw, err := fixture.store.GetMessageRawContext(context.Background(), output.MessageID)
+	raw, err := fixture.store.GetMessageRawContext(t.Context(), output.MessageID)
 	requirements.NoError(err)
 	assertions.Contains(string(raw), "projected")
-	draft, err := fixture.store.GetIMAPDraftContext(context.Background(), created.DraftID)
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
 	requirements.NoError(err)
 	assertions.Equal(output.MessageID, draft.CurrentMessageID)
 	assertions.Equal(output.Receipt.UID, draft.CurrentReceipt.UID)
 	assertions.Nil(draft.Pending)
 	if !fixture.store.IsPostgreSQL() {
-		engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+		engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 		requirements.NoError(err)
 		t.Cleanup(func() { _ = engine.Close() })
 		results, err := engine.SearchFast(t.Context(), search.Parse("projected"), query.MessageFilter{}, 100, 0)
@@ -1122,7 +1122,7 @@ func TestDraftLifecycleSyncProjection(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Zero(summary.Errors)
 	requirements.NoError(syncClient.Close())
-	draft, err = fixture.store.GetIMAPDraftContext(context.Background(), created.DraftID)
+	draft, err = fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
 	requirements.NoError(err)
 	assertions.Equal(output.MessageID, draft.CurrentMessageID)
 	assertions.Equal(output.Receipt.UIDValidity, draft.CurrentReceipt.UIDValidity)
@@ -1170,7 +1170,7 @@ func TestDraftLifecycleCancellation(t *testing.T) {
 	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &created))
 	requirements.Equal(draftReplyStatusCreated, created.Status)
 	requirements.Equal(int64(1), created.Revision)
-	draft, err := fixture.store.GetIMAPDraftContext(context.Background(), created.DraftID)
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
 	requirements.NoError(err)
 	requirements.Equal(created.MessageID, draft.CurrentMessageID)
 	requirements.Equal(created.UID, draft.CurrentReceipt.UID)
@@ -1205,7 +1205,7 @@ func TestDraftLifecycleCleanupCompletesAfterLateCancellation(t *testing.T) {
 	requirements.True(ctx.cancelled.Load())
 	requirements.Len(events, 1)
 	assertions.Contains(events[0].Data, `"status":"deleted"`)
-	draft, err := fixture.store.GetIMAPDraftContext(context.Background(), fixture.draft.DraftID)
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
 	requirements.NoError(err)
 	requirements.NotNil(draft.DiscardedAt)
 	requirements.Nil(draft.Pending)
@@ -1267,9 +1267,9 @@ func newReviewDraftReplyFixtureAtAddr(t *testing.T, addr string) draftReplyFixtu
 	configJSON, err := imapConfig.ToJSON()
 	require.NoError(t, err)
 	configJSON = strings.TrimSuffix(configJSON, "}") + `,"draft_enabled":false,"drafts_mailbox":"AttackerMailbox"}`
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, configJSON))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, configJSON))
 	require.NoError(t, st.AddAccountIdentity(source.ID, testutil.IMAPTestUsername, "manual"))
-	conversationID, err := st.EnsureConversation(source.ID, "thread-666", "Question")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-666", "Question")
 	require.NoError(t, err)
 	senderID, err := st.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	require.NoError(t, err)
@@ -1339,12 +1339,12 @@ func newReviewManagedLifecycleFixtureOnServer(t *testing.T, addr string, appendI
 	require.NoError(t, err)
 	configJSON, err := imapConfig.ToJSON()
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, configJSON))
-	conversationID, err := st.EnsureConversation(source.ID, "lifecycle-review", "Lifecycle review")
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, configJSON))
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "lifecycle-review", "Lifecycle review")
 	require.NoError(t, err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Original\r\nContent-Type: text/plain\r\n\r\noriginal\r\n")
-	draft, err := st.PersistIMAPDraftContext(context.Background(), receipt, nil, func([]int64) *store.MessagePersistData {
+	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
 		return &store.MessagePersistData{
 			Message:  &store.Message{SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt), MessageType: store.MessageTypeEmail, ConversationID: conversationID},
 			BodyText: sql.NullString{String: "original", Valid: true}, RawMIME: raw,
@@ -1373,12 +1373,12 @@ func newReviewManagedLifecycleFixtureOnServerWithDBPath(
 	require.NoError(t, err)
 	configJSON, err := imapConfig.ToJSON()
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, configJSON))
-	conversationID, err := st.EnsureConversation(source.ID, "lifecycle-review", "Lifecycle review")
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, configJSON))
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "lifecycle-review", "Lifecycle review")
 	require.NoError(t, err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Original\r\nContent-Type: text/plain\r\n\r\noriginal\r\n")
-	draft, err := st.PersistIMAPDraftContext(context.Background(), receipt, nil, func([]int64) *store.MessagePersistData {
+	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
 		return &store.MessagePersistData{
 			Message:  &store.Message{SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt), MessageType: store.MessageTypeEmail, ConversationID: conversationID},
 			BodyText: sql.NullString{String: "original", Valid: true}, RawMIME: raw,
@@ -1443,7 +1443,7 @@ func startReviewCustomIMAPServer(
 	wrap func(imapserver.Session) imapserver.Session,
 ) (string, *imapmemserver.User) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := imapmemserver.NewUser(testutil.IMAPTestUsername, testutil.IMAPTestPassword)
 	require.NoError(t, user.Create("Drafts", nil))
@@ -1495,7 +1495,7 @@ func (s *reviewDropAppendSession) Append(
 
 func startReviewDropAppendServer(t *testing.T) (string, *imapmemserver.User) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := imapmemserver.NewUser(testutil.IMAPTestUsername, testutil.IMAPTestPassword)
 	require.NoError(t, user.Create("Drafts", nil))
@@ -1601,7 +1601,7 @@ func (s *reviewCmdStoreBarrierSession) Expunge(
 
 func startReviewCmdStoreBarrierServer(t *testing.T, barrier *reviewCmdStoreBarrier) (string, *imapmemserver.User) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := imapmemserver.NewUser(testutil.IMAPTestUsername, testutil.IMAPTestPassword)
 	require.NoError(t, user.Create("Drafts", nil))

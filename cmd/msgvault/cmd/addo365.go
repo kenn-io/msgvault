@@ -160,7 +160,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 		AuthMethod: imapclient.AuthXOAuth2,
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	}
 
 	if source != nil {
-		if err := s.UpdateSourceIdentifier(source.ID, identifier); err != nil {
+		if err := s.UpdateSourceIdentifier(cmd.Context(), source.ID, identifier); err != nil {
 			return fmt.Errorf("update source identifier: %w", err)
 		}
 	} else {
@@ -201,7 +201,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("serialize config: %w", err)
 	}
-	if err := s.UpdateSourceSyncConfig(source.ID, cfgJSON); err != nil {
+	if err := s.UpdateSourceSyncConfig(cmd.Context(), source.ID, cfgJSON); err != nil {
 		return fmt.Errorf("store config: %w", err)
 	}
 	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
@@ -210,13 +210,13 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment in account_identity.go.
-	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddO365); err != nil {
+	if err := setDefaultIdentityOptOut(cmd.Context(), cmd, s, source, noDefaultIdentityAddO365); err != nil {
 		return err
 	}
 	if !noDefaultIdentityAddO365 {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
+		confirmDefaultIdentity(cmd.Context(), cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -296,7 +296,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) erro
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -309,13 +309,13 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) erro
 	if err := updateSourceDisplayNameForRegistration(s, source.ID, email, state.logger); err != nil {
 		return fmt.Errorf("set display name: %w", err)
 	}
-	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddO365); err != nil {
+	if err := setDefaultIdentityOptOut(cmd.Context(), cmd, s, source, noDefaultIdentityAddO365); err != nil {
 		return err
 	}
 	if !noDefaultIdentityAddO365 {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
+		confirmDefaultIdentity(cmd.Context(), cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 

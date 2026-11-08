@@ -83,7 +83,7 @@ func runRepairDatesLocal(
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForInvocation(ctx, state)
 	if err != nil {
 		return err
 	}
@@ -179,11 +179,11 @@ func runRepairDatesLocal(
 	cacheRebuilt := false
 	if usesAnalyticsCache {
 		if _, err := buildCacheLocked(
+			ctx,
 			cfg.DatabaseDSN(),
 			cfg.AnalyticsDir(),
 			true,
 			false,
-			publishLockHeld,
 			analyticsBuilderOverrides(cfg.Analytics),
 		); err != nil {
 			ledger.Status = "applied-cache-failed"
@@ -299,7 +299,7 @@ func scanAndPlanDateRepairs(
 			return nil, err
 		}
 		parsed := &mime.Message{}
-		raw, rawErr := st.GetMessageRaw(candidate.ID)
+		raw, rawErr := st.GetMessageRawContext(ctx, candidate.ID)
 		if rawErr != nil {
 			plan.rawMIMEFailures++
 		} else {

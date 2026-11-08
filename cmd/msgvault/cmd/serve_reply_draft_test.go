@@ -96,7 +96,7 @@ func setDraftParentRecipient(t *testing.T, st *store.Store, parentID int64, role
 	t.Helper()
 	const address = "shop@example.test"
 	requirements := require.New(t)
-	_, err := st.DB().Exec(st.Rebind("UPDATE message_recipients SET recipient_type = ?, email_address = ? WHERE message_id = ? AND recipient_type IN ('to', 'cc', 'bcc')"), role, address, parentID)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET recipient_type = ?, email_address = ? WHERE message_id = ? AND recipient_type IN ('to', 'cc', 'bcc')"), role, address, parentID)
 	requirements.NoError(err)
 	raw, err := st.GetMessageRaw(parentID)
 	requirements.NoError(err)
@@ -122,7 +122,7 @@ func TestDraftReplyInfersRecipientIdentity(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(events, 1)
 			var id int64
-			requirements.NoError(f.store.DB().QueryRow(f.store.Rebind("SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?"), f.source.ID, "Drafts|1").Scan(&id))
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind("SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?"), f.source.ID, "Drafts|1").Scan(&id))
 			raw, err := f.store.GetMessageRaw(id)
 			requirements.NoError(err)
 			message, err := mail.ReadMessage(bytes.NewReader(raw))
@@ -175,7 +175,7 @@ func TestDraftReplyUsesStructuredRecipientIdentity(t *testing.T) {
 				setDraftParentRecipient(t, f.store, f.parentID, "cc")
 			}
 			if mode != "preserved" {
-				_, err = f.store.DB().Exec(f.store.Rebind("UPDATE message_recipients SET email_address = NULL WHERE message_id = ? AND recipient_type IN ('to', 'cc')"), f.parentID)
+				_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind("UPDATE message_recipients SET email_address = NULL WHERE message_id = ? AND recipient_type IN ('to', 'cc')"), f.parentID)
 				requirements.NoError(err)
 			}
 			requirements.NoError(f.store.MergeParticipants(shopID, primaryID))
@@ -197,7 +197,7 @@ func TestDraftReplyUsesStructuredRecipientIdentity(t *testing.T) {
 			_, err = f.runInferred(t, f.grantedAdapter(), nil, "--body", "reply")
 			requirements.NoError(err)
 			var id int64
-			requirements.NoError(f.store.DB().QueryRow(f.store.Rebind("SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?"), f.source.ID, "Drafts|1").Scan(&id))
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind("SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?"), f.source.ID, "Drafts|1").Scan(&id))
 			raw, err := f.store.GetMessageRaw(id)
 			requirements.NoError(err)
 			message, err := mail.ReadMessage(bytes.NewReader(raw))
@@ -219,7 +219,7 @@ func TestDraftReplyCombinesOriginalRecipientEvidence(t *testing.T) {
 			headers := "To: shop@example.test, " + testutil.IMAPTestUsername
 			if mode != "populated snapshot" {
 				headers = "To: shop@example.test\r\nTo: " + testutil.IMAPTestUsername
-				_, err = f.store.DB().Exec(f.store.Rebind("UPDATE message_recipients SET email_address = NULL WHERE message_id = ?"), f.parentID)
+				_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind("UPDATE message_recipients SET email_address = NULL WHERE message_id = ?"), f.parentID)
 				requirements.NoError(err)
 			}
 			raw = bytes.Replace(raw, []byte("To: shop@example.test"), []byte(headers), 1)
@@ -315,7 +315,7 @@ func TestDraftReplyPolicyStates(t *testing.T) {
 func TestRunCLIReplyDraftUsesTypedRoute(t *testing.T) {
 	run := false
 	adapter := &storeAPIAdapter{}
-	err := adapter.runCLICommandWithRunner(context.Background(), api.CLIRunRequest{
+	err := adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-reply"},
 	}, nil, func(context.Context, []string, map[string]string, string, func(string, string) error) error {
 		run = true
@@ -379,9 +379,9 @@ func newDraftReplyFixture(t *testing.T) draftReplyFixture {
 	require.NoError(t, err)
 	// Request-side draft settings smuggled into the source JSON must be ignored.
 	configJSON = strings.TrimSuffix(configJSON, "}") + `,"draft_enabled":false,"drafts_mailbox":"AttackerMailbox"}`
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, configJSON))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, configJSON))
 	require.NoError(t, st.AddAccountIdentity(source.ID, testutil.IMAPTestUsername, "manual"))
-	conversationID, err := st.EnsureConversation(source.ID, "thread-666", "Question")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-666", "Question")
 	require.NoError(t, err)
 	senderID, err := st.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	require.NoError(t, err)
@@ -461,7 +461,7 @@ func TestDraftReplyOfflineParentWithLiveDestination(t *testing.T) {
 
 	parentSource, err := fixture.store.GetOrCreateSource("mbox", "imported-parent@example.test")
 	requirements.NoError(err)
-	conversationID, err := fixture.store.EnsureConversation(parentSource.ID, "offline-thread", "Imported question")
+	conversationID, err := fixture.store.EnsureConversation(t.Context(), parentSource.ID, "offline-thread", "Imported question")
 	requirements.NoError(err)
 	senderID, err := fixture.store.EnsureParticipant("sender@example.test", "Sender", "example.test")
 	requirements.NoError(err)
@@ -527,7 +527,7 @@ func TestDraftReplyOfflineParentWithLiveDestination(t *testing.T) {
 			"source_ids": sourceIDs, "sender_selections": senderSelections,
 		})
 		requirements.NoError(err)
-		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
 		requirements.NoError(err)
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Api-Key", "owner-test-key")
@@ -547,7 +547,7 @@ func TestDraftReplyOfflineParentWithLiveDestination(t *testing.T) {
 		}
 		body, err := json.Marshal(map[string]any{"args": args})
 		requirements.NoError(err)
-		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 		requirements.NoError(err)
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Msgvault-Agent-Token", secret)
@@ -671,7 +671,7 @@ func TestDelegatedDraftReplyCreatesDraft(t *testing.T) {
 
 	// The draft is durable locally, not merely reported.
 	var localID int64
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`
 		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 	`), fixture.source.ID, "Drafts|1").Scan(&localID))
 	assertions.NotZero(localID)
@@ -699,7 +699,7 @@ func TestRunCLIReplyDraftPublishesRemoteAndLocalRows(t *testing.T) {
 	requirements.Len(events, 1)
 	assertions.Len(*fixture.refreshed, 2)
 	var latestUIDValidity, latestUID uint32
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`
 		SELECT uidvalidity, uid FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? ORDER BY uid DESC LIMIT 1
 	`), fixture.source.ID, "Drafts").Scan(&latestUIDValidity, &latestUID))
@@ -707,23 +707,23 @@ func TestRunCLIReplyDraftPublishesRemoteAndLocalRows(t *testing.T) {
 	assertions.Contains(events[0].Data, fmt.Sprintf("operation %d:Drafts|%d:%d", fixture.source.ID, latestUIDValidity, latestUID))
 
 	var localID int64
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`
 		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 	`), fixture.source.ID, "Drafts|1").Scan(&localID))
 	assertions.NotZero(localID)
 	var replyTo sql.NullInt64
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), localID).Scan(&replyTo))
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), localID).Scan(&replyTo))
 	assertions.Equal(fixture.parentID, replyTo.Int64)
 	assertions.True(replyTo.Valid)
 	var rfc822MessageID string
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), localID).Scan(&rfc822MessageID))
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), localID).Scan(&rfc822MessageID))
 	assertions.True(strings.HasPrefix(rfc822MessageID, "<"))
 	assertions.True(strings.HasSuffix(rfc822MessageID, ">"))
 	var membershipCount, cursorCount int
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE message_id = ?`), localID).Scan(&membershipCount))
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE message_id = ?`), localID).Scan(&membershipCount))
 	var membershipMailbox, membershipFlags string
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`SELECT mailbox, flags FROM imap_message_memberships WHERE message_id = ?`), localID).Scan(&membershipMailbox, &membershipFlags))
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`SELECT COUNT(*) FROM imap_folder_state WHERE source_id = ?`), fixture.source.ID).Scan(&cursorCount))
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`SELECT mailbox, flags FROM imap_message_memberships WHERE message_id = ?`), localID).Scan(&membershipMailbox, &membershipFlags))
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`SELECT COUNT(*) FROM imap_folder_state WHERE source_id = ?`), fixture.source.ID).Scan(&cursorCount))
 	assertions.Equal(1, membershipCount)
 	assertions.Equal("Drafts", membershipMailbox)
 	assertions.Equal(`["\\Draft"]`, membershipFlags)
@@ -852,7 +852,7 @@ func TestRunCLIReplyDraftReportsLocalPersistenceFailure(t *testing.T) {
 	fixture := newDraftReplyFixture(t)
 	// Occupy the provider key the first APPEND into the empty mailbox will
 	// receive, so the remote accepts the draft but local publication conflicts.
-	conversationID, err := fixture.store.EnsureConversation(fixture.source.ID, "thread-stale", "Stale")
+	conversationID, err := fixture.store.EnsureConversation(t.Context(), fixture.source.ID, "thread-stale", "Stale")
 	requirements.NoError(err)
 	_, err = fixture.store.PersistMessage(&store.MessagePersistData{
 		Message: &store.Message{
@@ -877,7 +877,7 @@ func TestRunCLIReplyDraftReportsLocalPersistenceFailure(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("%d:Drafts|%v:%v", fixture.source.ID, result["uidvalidity"], result["uid"]), result["operation_ref"])
 	assertions.NotContains(events[0].Data, "reply body")
 	var membershipCount int
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?`), fixture.source.ID).Scan(&membershipCount))
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?`), fixture.source.ID).Scan(&membershipCount))
 	assertions.Zero(membershipCount)
 	assertions.Empty(*fixture.refreshed)
 }
@@ -931,7 +931,7 @@ func TestDraftReplyCLIFailureOutput(t *testing.T) {
 				switch failure {
 				case "local persistence":
 					// The remote accepts UID 1, but the archive already owns its key.
-					conversationID, err := fixture.store.EnsureConversation(fixture.source.ID, "stale", "Stale")
+					conversationID, err := fixture.store.EnsureConversation(t.Context(), fixture.source.ID, "stale", "Stale")
 					requirements.NoError(err)
 					_, err = fixture.store.PersistMessage(&store.MessagePersistData{
 						Message: &store.Message{
@@ -1133,7 +1133,8 @@ func TestDraftRequiresBothChecks(t *testing.T) {
 	})
 
 	t.Run("non-email parent is refused before MIME parsing", func(t *testing.T) {
-		_, updateErr := fixture.store.DB().Exec(
+		_, updateErr := fixture.store.DB().ExecContext(
+			t.Context(),
 			fixture.store.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"),
 			store.MessageTypeGoogleChat, fixture.parentID,
 		)

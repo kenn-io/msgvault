@@ -513,7 +513,7 @@ func (d *SQLiteDialect) FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.
 // FTSAvailable probes for FTS5 by querying the virtual table.
 // Checking sqlite_master alone is insufficient: a binary built without FTS5
 // support will fail with "no such module: fts5" even if the table exists.
-func (d *SQLiteDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {
+func (d *SQLiteDialect) FTSAvailable(ctx context.Context, db SQLReader) (bool, error) {
 	var probe int
 	err := db.QueryRowContext(ctx, "SELECT 1 FROM messages_fts LIMIT 1").Scan(&probe)
 	if err != nil && ctx.Err() != nil {
@@ -1832,6 +1832,33 @@ func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
 		         ON CONFLICT(message_id) DO UPDATE SET
 		             revision = activity_projection_queue.revision + 1,
 		             queued_at = CURRENT_TIMESTAMP;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_insert`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_insert
+		     AFTER INSERT ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (NEW.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_update`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_update
+		     AFTER UPDATE ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (OLD.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (NEW.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_delete`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_delete
+		     AFTER DELETE ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (OLD.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
 		     END`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
 		`CREATE TRIGGER trg_activity_queue_conversation_type_update

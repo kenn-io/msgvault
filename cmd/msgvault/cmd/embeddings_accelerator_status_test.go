@@ -26,17 +26,17 @@ func installListAcceleratorRow(
 ) {
 	t.Helper()
 	tableName := fmt.Sprintf("message_ann_g%d", int64(generationID))
-	_, err := backend.DB().Exec(`CREATE VIRTUAL TABLE ` + tableName + ` USING vec1(embedding)`)
+	_, err := backend.DB().ExecContext(t.Context(), `CREATE VIRTUAL TABLE `+tableName+` USING vec1(embedding)`)
 	require.NoError(t, err)
-	_, err = backend.DB().Exec(`INSERT INTO `+tableName+`(rowid, embedding)
+	_, err = backend.DB().ExecContext(t.Context(), `INSERT INTO `+tableName+`(rowid, embedding)
 		SELECT embedding_id, embedding FROM `+sqlitevec.VectorTableName(4)+`
 		WHERE generation_id = ?`, int64(generationID))
 	require.NoError(t, err)
 	var count, revision int64
-	require.NoError(t, backend.DB().QueryRow(`SELECT embedding_count, vector_revision
+	require.NoError(t, backend.DB().QueryRowContext(t.Context(), `SELECT embedding_count, vector_revision
 		FROM index_generations WHERE id = ?`, int64(generationID)).Scan(&count, &revision))
 	now := time.Now().Unix()
-	_, err = backend.DB().Exec(`INSERT INTO vector_accelerators
+	_, err = backend.DB().ExecContext(t.Context(), `INSERT INTO vector_accelerators
 		(generation_id, kind, state, table_name, dimension, indexed_count,
 		 last_embedding_id, source_revision, started_at, completed_at,
 		 model_config, vec1_version)
@@ -101,7 +101,7 @@ func TestReadEmbeddingAcceleratorDisplayStates(t *testing.T) {
 		// trigger, making the stored-ready accelerator ineligible for
 		// search. The stored row still says ready; the CLI must display the
 		// effective state: stale.
-		_, err := backend.DB().Exec(`UPDATE embeddings
+		_, err := backend.DB().ExecContext(t.Context(), `UPDATE embeddings
 			SET message_id = message_id WHERE generation_id = ?`, int64(generationID))
 		require.NoError(t, err)
 		raw, err := backend.Accelerator(t.Context(), generationID)

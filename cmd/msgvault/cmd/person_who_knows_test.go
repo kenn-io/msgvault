@@ -109,7 +109,7 @@ func runWhoKnows(t *testing.T, schema string, handler http.HandlerFunc, args ...
 
 func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 	var query url.Values
-	out, err := runWhoKnows(t, "3.42.0", func(w http.ResponseWriter, r *http.Request) {
+	out, err := runWhoKnows(t, "3.49.0", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/people/who-knows", r.URL.Path)
 		query = r.URL.Query()
@@ -127,7 +127,7 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 
 func TestWhoKnowsCommandPrintsTheAPIJSON(t *testing.T) {
 	body := `{"topic":"cloud","limits":["pool_full"],"people":[],"unsaved_contacts":[]}`
-	out, err := runWhoKnows(t, "3.42.0", func(w http.ResponseWriter, _ *http.Request) {
+	out, err := runWhoKnows(t, "3.49.0", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}, "cloud", "--json")
@@ -136,10 +136,10 @@ func TestWhoKnowsCommandPrintsTheAPIJSON(t *testing.T) {
 }
 
 func TestWhoKnowsCommandExplainsAnOlderDaemon(t *testing.T) {
-	_, err := runWhoKnows(t, "3.41.0", func(http.ResponseWriter, *http.Request) {
+	_, err := runWhoKnows(t, "3.48.0", func(http.ResponseWriter, *http.Request) {
 		assert.Fail(t, "an old daemon has no who-knows route")
 	}, "cloud")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires daemon API schema 3.42.0 or newer")
-	assert.Contains(t, err.Error(), `"3.41.0"`)
+	assert.Contains(t, err.Error(), "requires daemon API schema 3.49.0 or newer")
+	assert.Contains(t, err.Error(), `"3.48.0"`)
 }

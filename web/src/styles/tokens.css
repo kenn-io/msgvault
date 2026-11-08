@@ -1,7 +1,12 @@
 :root {
   --label-gap: var(--space-2);
+  /* The two control heights: a control (button, icon button, segmented,
+   * toolbar select, text action target) and a field (anything a person types
+   * or picks a value in, inside a form). */
   --control-h: 28px;
-  --control-h-lg: 36px;
+  --field-h: 32px;
+  --control-h-lg: var(--field-h);
+  --nav-item-h: 36px;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
@@ -15,7 +20,6 @@
   --link-ink: var(--accent-blue);
   --focus-color: var(--accent-blue);
   --selected-bg: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-surface));
-  --selected-border: var(--accent-blue);
   --artifact-ink: var(--accent-purple);
   --status-success-bg: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
   --status-success-ink: color-mix(in srgb, var(--accent-green) 72%, var(--text-primary));
@@ -34,13 +38,54 @@
   --pane-pad-y: var(--space-4);
   --section-gap: var(--space-6);
   --field-gap: var(--space-4);
-  --detail-label-width: 120px;
-  --control-gap: var(--space-3);
+  /* One label | value column everywhere (L3): 160 fits Score Details' longest label ("No other source agrees"). */
+  --detail-label-width: 160px;
+  --control-gap: var(--space-4);
   --control-pad-x: var(--space-5);
   --chip-pad-x: var(--space-4);
   --chip-min-height: 26px;
+  /* A toolbar's buttons pad 8 at the sides instead of 12, so a full bar
+   * stays on one row. */
+  --toolbar-pad-x: var(--space-group);
+  /* Text in a field or select starts 8 in from its border. */
+  --field-pad-x: var(--space-group);
 
   --scrollbar-ink: var(--text-muted);
+
+  /* The Layout scale. These are the only spacing values between things:
+   * 4 label → field, field → hint, icon → its label;
+   * 8 between controls in a group, section header → first row;
+   * 12 inside a boxed thing, pair column gap, between text links;
+   * 16 dialog and pane padding, field → next field, around a notice. */
+  --space-tight: var(--space-2);
+  --space-group: var(--space-4);
+  --space-box: var(--space-5);
+  --space-pane: var(--space-6);
+
+  /* Type roles, each one size with one line height. Weight beyond these is
+   * Visual's: titles and headings 600, buttons 500, form labels 600. */
+  --type-page-size: 18px;
+  --type-page-line: 24px;
+  --type-title-size: 16px;
+  --type-title-line: 22px;
+  --type-heading-size: 14px;
+  --type-heading-line: 20px;
+  --type-body-size: 14px;
+  --type-body-line: 20px;
+  --type-meta-size: 13px;
+  --type-meta-line: 18px;
+  --type-small-size: 12px;
+  --type-small-line: 16px;
+  /* Field text is Body, and 16 on a phone so iOS doesn't zoom on focus. */
+  --field-text-size: var(--type-body-size);
+
+  /* One list item for menus, pickers, and choice lists. */
+  --list-item-h: 32px;
+  --list-item-pad-x: var(--space-box);
+
+  /* The kit's one 8px bar (public/scrollbar.css). A pane that reserves it
+   * pads its right side by this much less than its left. */
+  --scrollbar-gutter-size: var(--scrollbar-size, 8px);
 }
 
 @media (max-width: 760px) {
@@ -49,14 +94,53 @@
   }
 }
 
+/* Touch screens draw the bar over the content and reserve nothing, so a pane
+ * keeps its full right padding there. */
+@media (hover: none) and (pointer: coarse) {
+  :root {
+    --scrollbar-gutter-size: 0px;
+  }
+}
+
 @media (max-width: 640px) {
   :root {
-    --detail-label-width: 88px;
+    --detail-label-width: 120px;
+    --field-text-size: 16px;
   }
 }
 
 :where(body, button, input, select, textarea) {
   font-family: var(--font-sans);
+}
+
+/* A field centers its line box, so its letters sit as high as the font's
+ * ascent and descent put them. These faces are the UI fonts outside macOS with
+ * those two set so the cap height sits mid-line: ascent minus descent is the
+ * cap height (0.716 for Arial and its twins, 0.7 for Segoe UI), and they sum
+ * to 1.2. macOS keeps its system font, whose metrics already do this. */
+@font-face {
+  font-family: 'Field Segoe UI';
+  src: local('Segoe UI'), local('SegoeUI');
+  ascent-override: 95%;
+  descent-override: 25%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Field Sans';
+  src: local('Helvetica Neue'), local('HelveticaNeue'), local('Helvetica'), local('Arial'), local('ArialMT'), local('Liberation Sans'), local('LiberationSans');
+  ascent-override: 95.8%;
+  descent-override: 24.2%;
+  line-gap-override: 0%;
+}
+
+:root {
+  --font-field: -apple-system, BlinkMacSystemFont, 'Field Segoe UI', Roboto, 'Field Sans', sans-serif;
+}
+
+/* Kit's inputs inherit their wrapper's font; raw inputs take it in app.css. */
+:root:root :is(.kit-text-input, .kit-select-dropdown__trigger, .kit-typeahead__trigger, .kit-typeahead__input) {
+  font-family: var(--font-field);
 }
 
 :where(body, table, [role='grid'], [data-numeric]) {
@@ -82,22 +166,69 @@
   font-weight: 600;
 }
 
-/* Share one horizontal inset across dialog and drawer sections. */
+/* Every dialog's header and footer is a 44 band: a 28 control 8 above and
+ * below, the band's own 1px rule included, and text 12 from the sides. The
+ * header holds the title and the 28 close button; a long title truncates. */
 :root:root .kit-modal-header {
-  padding: var(--control-gap) var(--pane-pad-x);
+  min-height: 44px;
+  padding: calc(var(--space-group) - var(--border-width)) var(--pane-pad-x);
+}
+
+body .kit-modal-header .kit-modal-title.kit-modal-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--type-title-size);
+  line-height: var(--type-title-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :root:root .kit-modal-header .kit-modal-close {
-  margin-right: calc(var(--control-gap) - var(--pane-pad-x));
+  margin-right: calc(var(--space-group) - var(--pane-pad-x));
 }
 
+/* Only the body scrolls. It pads 12 on every side; on the right that is 4
+ * plus the bar's reserved 8. Long words wrap instead of widening it. */
 :root:root .kit-modal-body {
-  padding: var(--pane-pad-x);
+  min-height: 0;
+  padding: var(--pane-pad-x) calc(var(--pane-pad-x) - var(--scrollbar-gutter-size)) var(--pane-pad-x) var(--pane-pad-x);
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
 }
 
 :root:root .kit-modal-footer {
+  flex-wrap: wrap;
   gap: var(--control-gap);
-  padding: var(--pane-pad-x);
+  min-height: 44px;
+  padding: calc(var(--space-group) - var(--border-width)) var(--pane-pad-x) var(--space-group);
+}
+
+/* Rules that set text size start at body and repeat their class: that
+ * outranks the kit's scoped rule, as the doubled root does elsewhere here,
+ * and keeps text sizes off the root element. */
+
+/* Controls are 28 with Body text: every button, icon button, menu trigger,
+ * and toolbar select. The kit's small 24 sizes take the same height, so a
+ * size="sm" left in scope still lines up. */
+body {
+  --kit-control-height: var(--control-h);
+  --kit-control-font-size: var(--type-body-size);
+}
+
+/* The label keeps its own line box; the height comes from min-height and
+ * centering, so a 14px label can't push the button past 28. */
+body :is(.kit-button.kit-button, .kit-menu__trigger.kit-menu__trigger) {
+  min-height: var(--control-h);
+  padding-block: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+
+/* A chip's remove × stays inside the chip's own height. */
+:root:root .kit-icon-button--sm:not(.kit-chip__trailing *) {
+  width: var(--control-h);
+  height: var(--control-h);
 }
 
 /* Kit trims button labels to the x-height, which centers lowercase letters
@@ -109,6 +240,10 @@
 
 :root:root .kit-button {
   padding-inline: var(--control-pad-x);
+}
+
+:root:root [data-toolbar] .kit-button {
+  padding-inline: var(--toolbar-pad-x);
 }
 
 :where(a, [data-link]) {
@@ -131,13 +266,173 @@
 /* Kit centers a short segment inside a taller track, so the active pill floats
  * with a wide gap above and below and a narrow one beside. Stretch the
  * segments to the track and pad them from tokens, so every side of the pill
- * and the text in it is even. */
+ * and the text in it is even: 28 outside, 24 inside, Meta labels. */
+:root:root .kit-segmented:not(.kit-segmented--borderless) {
+  box-sizing: border-box;
+  height: var(--control-h);
+  min-height: var(--control-h);
+}
+
 :root:root .kit-segmented:not(.kit-segmented--borderless):not(.kit-segmented--block) {
   align-items: stretch;
 }
 
+body .kit-segmented .kit-segmented__btn.kit-segmented__btn {
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
+}
+
 :root:root .kit-segmented:not(.kit-segmented--borderless):not(.kit-segmented--block) .kit-segmented__btn {
   padding: 0 var(--control-pad-x);
+}
+
+/* A toolbar select or picker is a 28 control with Body text. */
+body .kit-select-dropdown__trigger.kit-select-dropdown__trigger {
+  height: var(--control-h);
+  padding: 0 var(--field-pad-x);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+
+body {
+  --typeahead-control-height: var(--control-h);
+  --typeahead-control-padding: 0 var(--field-pad-x);
+  --typeahead-control-font-size: var(--type-body-size);
+}
+
+/* Inside a form, a dialog body, or anything marked data-form, a select,
+ * a field picker, a text input, and a picker's search are one 32 field: the
+ * text input's border and radius, 8 of horizontal inset, Body text at 400.
+ * A textarea is at least 80 tall with the same inset and 6 above and below,
+ * so its first line sits where a field's does. The top bar's search form is
+ * a toolbar, so its field stays a 28 control beside Search. A composed
+ * editor's inner input (the schedule's) is sized by its own box, as Kit's
+ * inner inputs are. */
+:is(form:not([role='search']), .kit-modal-body, [data-form]) {
+  --typeahead-control-height: var(--field-h);
+  --typeahead-control-font-size: var(--field-text-size);
+}
+
+/* Typeahead takes its size from the variables above; the select has none. */
+body :is(form:not([role='search']), .kit-modal-body, [data-form]) .kit-select-dropdown__trigger.kit-select-dropdown__trigger {
+  height: var(--field-h);
+  padding: 0 var(--field-pad-x);
+  font-size: var(--field-text-size);
+}
+
+body :is(form:not([role='search']), .kit-modal-body, [data-form]) :is(.kit-select-dropdown__trigger.kit-select-dropdown__trigger, .kit-typeahead__trigger.kit-typeahead__trigger, .kit-typeahead__input.kit-typeahead__input) {
+  border-radius: var(--radius-md);
+  font-weight: 400;
+  line-height: var(--type-body-line);
+}
+
+/* A closed field rests as a text input does. These are the colors Kit's
+ * trigger rests in, so its focused, open, pressed, and disabled states still
+ * replace them, and the open search keeps its blue border. */
+:is(form:not([role='search']), .kit-modal-body, [data-form]) :is(.kit-select-dropdown__trigger, .kit-typeahead__trigger) {
+  --bg-raised: var(--bg-surface);
+  --border-muted: var(--border-default);
+  --shadow-raised: var(--shadow-sunken, none);
+}
+
+body :is(form:not([role='search']), .kit-modal-body, [data-form]) .kit-text-input.kit-text-input,
+body .kit-text-input--lg.kit-text-input--lg {
+  height: var(--field-h);
+  min-height: var(--field-h);
+  padding: 0 var(--field-pad-x);
+  font-size: var(--field-text-size);
+  line-height: var(--type-body-line);
+}
+
+body :is(form:not([role='search']), .kit-modal-body, [data-form]) :is(select, input:not([type='checkbox'], [type='radio'], [type='hidden'], [type='range'], [type='color'], [type='button'], [type='submit'], [type='reset'])):not(.kit-text-input__control, .kit-typeahead__input, .cron__input) {
+  box-sizing: border-box;
+  height: var(--field-h);
+  min-height: var(--field-h);
+  padding: 0 var(--field-pad-x);
+  font-size: var(--field-text-size);
+  line-height: var(--type-body-line);
+}
+
+body :is(form:not([role='search']), .kit-modal-body, [data-form]) textarea:is(textarea, textarea) {
+  min-height: 80px;
+  padding: var(--space-3) var(--field-pad-x);
+  font-size: var(--field-text-size);
+  line-height: var(--type-body-line);
+}
+
+/* A form field: the label (Meta, 600) 4 above the field, the hint or error
+ * (Small) 4 below it. */
+:root:root .kit-form-field {
+  gap: var(--space-tight);
+}
+
+body .kit-form-field.kit-form-field label {
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
+}
+
+body .kit-form-field__error.kit-form-field__error {
+  font-size: var(--type-small-size);
+  line-height: var(--type-small-line);
+}
+
+/* A checkbox row: a 16 box, 8, then Body text on a 20 line. */
+:root:root .kit-checkbox {
+  gap: var(--space-group);
+}
+
+body .kit-checkbox__label.kit-checkbox__label {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+
+/* Menus and pickers: a popover padded 4 and at least 200 wide, around list
+ * items that are 32 for one line (Body, 0/12). */
+:root:root :is(.kit-menu__content, .kit-select-dropdown__list, .kit-typeahead__panel) {
+  min-width: min(200px, calc(100vw - 32px));
+  padding: var(--space-tight);
+}
+
+/* Menu and SelectDropdown write an inline min-width of the trigger's width, which
+ * replaces the one above, so a zero-height strut holds their content at 200 less
+ * the padding and border. They still grow to a wider trigger and stop at Kit's
+ * viewport-bound max-width, and Kit measures the strut when it places them. */
+:root:root :is(.kit-menu__content, .kit-select-dropdown__list)::before {
+  content: '';
+  display: block;
+  width: calc(min(200px, calc(100vw - 32px)) - 2 * (var(--space-tight) + var(--border-width)));
+}
+
+body :is(.kit-menu__item.kit-menu__item, .kit-select-dropdown__option.kit-select-dropdown__option, .kit-typeahead__option.kit-typeahead__option) {
+  box-sizing: border-box;
+  min-height: var(--list-item-h);
+  padding-block: 0;
+  padding-right: var(--list-item-pad-x);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+
+:root:root :is(.kit-menu__item, .kit-select-dropdown__option) {
+  padding-left: var(--list-item-pad-x);
+}
+
+:root:root .kit-typeahead__option {
+  padding-left: calc(var(--list-item-pad-x) + var(--typeahead-depth, 0) * 14px);
+}
+
+:root:root .kit-menu__separator {
+  margin: var(--space-tight) 0;
+}
+
+body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-typeahead__status) {
+  padding: var(--space-group) var(--list-item-pad-x);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
+}
+
+:root:root :is(.kit-typeahead__search, .kit-typeahead__header) {
+  padding: 0 0 var(--space-tight);
+  margin-bottom: var(--space-tight);
 }
 
 /* Kit gives each chip size its own side padding (6px, 6px, and 8px), and

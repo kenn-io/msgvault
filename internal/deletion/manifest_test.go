@@ -907,7 +907,7 @@ func TestManifestListIDsRoundTripAndOmitWhenEmpty(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(claimed.Execution)
 	claimed.Execution.LastProcessedIndex = 1
-	require.NoError(mgr.WriteInProgressCheckpoint(claimed, manifest.ID))
+	require.NoError(mgr.WriteInProgressManifest(claimed, manifest.ID))
 
 	loaded, status, err := mgr.GetManifestWithStatus(manifest.ID)
 	require.NoError(err)
@@ -1046,6 +1046,7 @@ func setupInProgress(t *testing.T, mgr *Manager, desc string) *Manifest {
 	require.NoError(t, mgr.MoveManifest(m.ID, StatusPending, StatusInProgress), "MoveManifest")
 	m.Status = StatusInProgress
 	m.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
+	require.NoError(t, m.Save(filepath.Join(mgr.InProgressDir(), m.ID+".json")))
 	return m
 }
 
@@ -1072,11 +1073,9 @@ func assertSingleValidManifest(t *testing.T, mgr *Manager, id string) {
 }
 
 // TestManager_CheckpointCancelSerialize deterministically drives the
-// rename-vs-write critical section: an in-flight checkpoint holds the
-// per-manifest lock while a cancel attempts to run. The cancel must block until
-// the checkpoint's atomic write completes and the lock is released, after which
-// the whole valid record moves to cancelled/ — never a torn or empty file, and
-// never a resurrected in_progress file.
+// rename-vs-write critical section: a manifest write holds the per-manifest
+// lock while a cancel attempts to run. The cancel waits for the atomic write
+// and lock release, then moves the complete record to cancelled/.
 func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1084,21 +1083,21 @@ func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	m := setupInProgress(t, mgr, "serialize")
 	inProgressPath := filepath.Join(mgr.InProgressDir(), m.ID+".json")
 
-	// Simulate an in-flight checkpoint write by holding the per-manifest lock.
+	// Hold the per-manifest lock during a manifest write.
 	held, err := mgr.acquireManifestLock(m.ID)
 	require.NoError(err, "acquireManifestLock")
 
 	cancelDone := make(chan error, 1)
 	go func() { cancelDone <- mgr.CancelManifest(m.ID) }()
 
-	// The cancel rename must not proceed while the checkpoint holds the lock.
+	// The cancel rename waits while the writer holds the lock.
 	select {
 	case <-cancelDone:
-		require.FailNow("cancel ran while checkpoint held the lock")
+		require.FailNow("cancel ran while the writer held the lock")
 	case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the held manifest lock keeps cancel waiting
 	}
 
-	// Complete the checkpoint's atomic write, then release the lock.
+	// Complete the manifest's atomic write, then release the lock.
 	m.Execution.LastProcessedIndex = 5
 	require.NoError(writeManifestAtomic(m, inProgressPath), "writeManifestAtomic")
 	require.NoError(held.Unlock(), "Unlock")
@@ -1111,32 +1110,45 @@ func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
 	require.NoError(err, "cancelled manifest must be fully parseable")
 	assert.Equal(StatusCancelled, loaded.Status)
-	require.NotNil(loaded.Execution, "checkpoint content preserved")
-	assert.Equal(5, loaded.Execution.LastProcessedIndex, "checkpoint content preserved in cancelled record")
+	require.NotNil(loaded.Execution, "manifest content preserved")
+	assert.Equal(5, loaded.Execution.LastProcessedIndex, "manifest content preserved in cancelled record")
 	assertSingleValidManifest(t, mgr, m.ID)
 }
 
-// TestManager_WriteInProgressCheckpoint_Writes verifies the happy path: a
-// checkpoint on a live in_progress manifest publishes its content atomically.
-func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
+// TestManager_WriteInProgressCheckpoint_FoldsAroundTornTail verifies that loading
+// progress folds complete records before and after an incomplete journal record.
+func TestManager_WriteInProgressCheckpoint_FoldsAroundTornTail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	mgr := testManager(t)
 	m := setupInProgress(t, mgr, "checkpoint happy")
 	m.Execution.LastProcessedIndex = 7
 
-	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID), "WriteInProgressCheckpoint")
+	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0), "WriteInProgressCheckpoint")
 
 	loaded, err := LoadManifest(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
 	require.NoError(err, "reload checkpoint")
 	require.NotNil(loaded.Execution)
 	assert.Equal(7, loaded.Execution.LastProcessedIndex)
-	// No stray temp files left in the status directory.
-	entries, err := os.ReadDir(mgr.InProgressDir())
-	require.NoError(err, "ReadDir")
-	for _, e := range entries {
-		assert.False(strings.HasPrefix(e.Name(), "."), "leftover temp file %s", e.Name())
-	}
+	// A crash can leave an incomplete final record without a newline.
+	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
+	f, err := os.OpenFile(journalPath(path), os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(err)
+	_, err = f.WriteString(`{"last_processed_index":`)
+	require.NoError(err)
+	require.NoError(f.Close())
+
+	loaded, err = LoadManifest(path)
+	require.NoError(err)
+	require.NotNil(loaded.Execution)
+	assert.Equal(7, loaded.Execution.LastProcessedIndex, "ignore the torn tail")
+
+	m.Execution.LastProcessedIndex = 8
+	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
+	loaded, err = LoadManifest(path)
+	require.NoError(err)
+	require.NotNil(loaded.Execution)
+	assert.Equal(8, loaded.Execution.LastProcessedIndex, "read the record appended after the torn tail")
 }
 
 // TestManager_WriteInProgressCheckpoint_Cancelled verifies that a checkpoint on
@@ -1149,11 +1161,11 @@ func TestManager_WriteInProgressCheckpoint_Cancelled(t *testing.T) {
 	m := setupInProgress(t, mgr, "checkpoint cancelled")
 	require.NoError(mgr.CancelManifest(m.ID), "CancelManifest")
 
-	err := mgr.WriteInProgressCheckpoint(m, m.ID)
+	err := mgr.WriteInProgressCheckpoint(m, m.ID, 0)
 	require.ErrorIs(err, ErrManifestCancelled, "checkpoint after cancel")
 
-	_, statErr := os.Stat(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
-	assert.True(os.IsNotExist(statErr), "in_progress must not be resurrected, got err=%v", statErr)
+	_, statErr := os.Stat(journalPath(filepath.Join(mgr.InProgressDir(), m.ID+".json")))
+	require.ErrorIs(statErr, os.ErrNotExist, "rejected checkpoint must leave no journal")
 	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
 	require.NoError(err, "cancelled manifest parseable")
 	assert.Equal(StatusCancelled, loaded.Status)
@@ -1195,7 +1207,7 @@ func TestManager_CheckpointCancelStress(t *testing.T) {
 			defer wg.Done()
 			for i := range 20 {
 				cp.Execution.LastProcessedIndex = i
-				if err := mgr.WriteInProgressCheckpoint(&cp, id); err != nil {
+				if err := mgr.WriteInProgressCheckpoint(&cp, id, 0); err != nil {
 					// assert (not require) inside a goroutine: require's FailNow
 					// is illegal off the test's own goroutine.
 					assert.ErrorIs(t, err, ErrManifestCancelled, "checkpoint error")
@@ -1208,6 +1220,9 @@ func TestManager_CheckpointCancelStress(t *testing.T) {
 			assert.NoError(t, mgr.CancelManifest(id), "CancelManifest")
 		}()
 		wg.Wait()
+
+		_, err := os.Stat(journalPath(filepath.Join(mgr.InProgressDir(), id+".json")))
+		require.ErrorIs(t, err, os.ErrNotExist, "cancel must remove every checkpoint journal")
 
 		assertSingleValidManifest(t, mgr, id)
 	}

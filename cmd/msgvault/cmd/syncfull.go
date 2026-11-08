@@ -101,7 +101,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageErr(cmd, err)
 	}
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,10 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 		}
 
 		var opts []imaplib.Option
-		opts = append(opts, imaplib.WithLogger(logger))
+		opts = append(opts,
+			imaplib.WithLogger(logger),
+			imaplib.WithMaxCommandsPerMinute(cfg.Sync.IMAPMaxCommandsPerMinute),
+		)
 		opts = append(opts, imapOpts...)
 
 		var since, before time.Time
@@ -599,7 +602,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 
 	if src.SourceType == sourceTypeIMAP {
 		imapOpts = append(imapOpts,
-			imapSyncFolderFilter(s, src.Identifier, state, syncFolders, syncSkipFolders),
+			imapSyncFolderFilter(ctx, s, src.Identifier, state, syncFolders, syncSkipFolders),
 			imaplib.WithListProgress(progress.OnIMAPListProgress),
 		)
 	}
@@ -729,14 +732,14 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 
 // imapSyncFolderFilter uses saved exclusions unless command folder flags
 // replace the saved filter for this run.
-func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, folders, skipFolders []string) imaplib.Option {
+func imapSyncFolderFilter(ctx context.Context, s *store.Store, identifier string, state *invocation, folders, skipFolders []string) imaplib.Option {
 	folders = parseFolderFilter(folders)
 	skipFolders = parseFolderFilter(skipFolders)
 	cfg := state.cfg
 	if len(folders) == 0 && len(skipFolders) == 0 {
 		if len(cfg.Sync.IMAPSkipFolders) > 0 {
 			state.imapFolderAccounts.Do(func() {
-				sources, err := s.ListSources(sourceTypeIMAP)
+				sources, err := s.ListSourcesContext(ctx, sourceTypeIMAP)
 				if err != nil {
 					state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
 					return

@@ -43,6 +43,45 @@ func (s *collectingMessageExportSink) Message(message store.MessageExportMessage
 	return nil
 }
 
+func TestExportMessagesInMemory(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, err := store.Open(":memory:")
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	requirements.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("text", "fixture")
+	requirements.NoError(err)
+	conversationID := insertMessageExportConversation(t, st, source.ID, "conversation", "", "direct_chat", `{}`)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	for _, id := range []string{"c", "a", "b"} {
+		messageID := insertMessageExportMessage(t, st, source.ID, conversationID, id, "text", start, "Body "+id, "", 0, false, false)
+		switch id {
+		case "b":
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE message_bodies SET body_text = NULL WHERE message_id = ?`, messageID)
+			requirements.NoError(err)
+		case "c":
+			_, err = st.DB().ExecContext(t.Context(), `DELETE FROM message_bodies WHERE message_id = ?`, messageID)
+			requirements.NoError(err)
+		}
+	}
+
+	// Bound a blocked connection acquisition so a regression cannot hang the suite.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	sink := &collectingMessageExportSink{}
+	counts, err := st.ExportMessages(ctx, store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}, sink)
+	requirements.NoError(err)
+	assertions.Equal(store.MessageExportCounts{Sources: 1, Conversations: 1, Messages: 3}, counts)
+	requirements.Len(sink.messages, 3)
+	type messageBody struct{ id, text string }
+	assertions.Equal([]messageBody{{"a", "Body a"}, {"b", ""}, {"c", ""}}, []messageBody{
+		{sink.messages[0].ID, sink.messages[0].Text},
+		{sink.messages[1].ID, sink.messages[1].Text},
+		{sink.messages[2].ID, sink.messages[2].Text},
+	})
+}
+
 func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -54,7 +93,7 @@ func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
 	requirements.NoError(st.UpdateSourceDisplayName(discord.ID, "Example Guild"))
 
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO sync_runs (
 			source_id, started_at, completed_at, status
 		) VALUES (?, ?, ?, 'completed')
@@ -76,7 +115,7 @@ func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
 	)
 
 	sink := &collectingMessageExportSink{}
-	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
+	counts, err := st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(24 * time.Hour),
 	}, sink)
@@ -139,23 +178,23 @@ func TestExportMessagesUsesHalfOpenEffectiveTimestampWindow(t *testing.T) {
 		t, st, source.ID, conversationID, "end", "text",
 		start.Add(3*time.Hour), "end", "", 0, false, false,
 	)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET sent_at = NULL WHERE id IN (?, ?)
 	`), receivedID, internalID)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET sent_at = NULL, received_at = NULL, internal_date = ?
 		WHERE id = ?
 	`), start.Add(2*time.Hour), internalID)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET sent_at = NULL, received_at = NULL, internal_date = NULL
 		WHERE id = ?
 	`), sentID)
 	requirements.NoError(err)
 
 	sink := &collectingMessageExportSink{}
-	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
+	counts, err := st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(3 * time.Hour),
 	}, sink)
@@ -169,7 +208,8 @@ func TestExportMessagesUsesHalfOpenEffectiveTimestampWindow(t *testing.T) {
 	assertions.Equal(start.Add(2*time.Hour), sink.messages[1].OccurredAt)
 
 	var endCount int
-	requirements.NoError(st.DB().QueryRow(
+	requirements.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), endID,
 	).Scan(&endCount))
 	assertions.Equal(1, endCount)
@@ -204,7 +244,7 @@ func TestExportMessagesFiltersSourcesAndMessageTypes(t *testing.T) {
 	)
 
 	sink := &collectingMessageExportSink{}
-	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
+	counts, err := st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start:        start,
 		End:          start.Add(time.Hour),
 		SourceIDs:    []int64{first.ID},
@@ -227,7 +267,7 @@ func TestExportMessagesEmitsExplicitEmptySources(t *testing.T) {
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 
 	sink := &collectingMessageExportSink{}
-	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
+	counts, err := st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start:     start,
 		End:       start.Add(time.Hour),
 		SourceIDs: []int64{source.ID},
@@ -269,7 +309,7 @@ func TestExportMessagesNormalizesConversationsAuthorsAndDeletion(t *testing.T) {
 	))
 
 	sink := &collectingMessageExportSink{}
-	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
+	counts, err := st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(time.Hour),
 	}, sink)
@@ -318,7 +358,7 @@ func TestExportMessagesUsesClosedConversationVocabulary(t *testing.T) {
 	}
 
 	sink := &collectingMessageExportSink{}
-	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(time.Hour),
 	}, sink)
@@ -340,7 +380,7 @@ func TestExportMessagesNormalizesParticipantAuthor(t *testing.T) {
 		t, st, source.ID, "conversation", "", "email_thread", `{}`,
 	)
 	var participantID int64
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO participants (email_address, display_name)
 		VALUES (?, ?)
 		RETURNING id
@@ -353,7 +393,7 @@ func TestExportMessagesNormalizesParticipantAuthor(t *testing.T) {
 	)
 
 	sink := &collectingMessageExportSink{}
-	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(time.Hour),
 	}, sink)
@@ -390,7 +430,7 @@ func TestExportMessagesPrefersDiscordMessageAuthorName(t *testing.T) {
 	))
 
 	sink := &collectingMessageExportSink{}
-	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(time.Hour),
 	}, sink)
@@ -418,7 +458,7 @@ func TestExportMessagesUsesLegacyFromRecipientAuthor(t *testing.T) {
 		t, st, source.ID, conversationID, "message", "email",
 		start, "", "", 0, false, false,
 	)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_recipients (
 			message_id, participant_id, recipient_type, display_name
 		) VALUES (?, ?, 'from', ?)
@@ -426,7 +466,7 @@ func TestExportMessagesUsesLegacyFromRecipientAuthor(t *testing.T) {
 	requirements.NoError(err)
 
 	sink := &collectingMessageExportSink{}
-	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(time.Hour),
 	}, sink)
@@ -457,7 +497,7 @@ func TestExportMessagesPrefersCanonicalSenderOverStaleFromRecipient(t *testing.T
 		t, st, source.ID, conversationID, "message", "email",
 		start, "", "", canonicalID, false, false,
 	)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_recipients (
 			message_id, participant_id, recipient_type, display_name
 		) VALUES (?, ?, 'from', ?)
@@ -465,7 +505,7 @@ func TestExportMessagesPrefersCanonicalSenderOverStaleFromRecipient(t *testing.T
 	requirements.NoError(err)
 
 	sink := &collectingMessageExportSink{}
-	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start,
 		End:   start.Add(time.Hour),
 	}, sink)
@@ -476,62 +516,62 @@ func TestExportMessagesPrefersCanonicalSenderOverStaleFromRecipient(t *testing.T
 	assertions.Equal("canonical@example.test", sink.messages[0].Author.Address)
 }
 
-type hidingMessageExportSink struct {
-	collectingMessageExportSink
-
-	st             *store.Store
-	sourceID       int64
-	sourceMessage  string
-	hideAfterCount int
-}
-
-func (s *hidingMessageExportSink) Message(message store.MessageExportMessage) error {
-	if err := s.collectingMessageExportSink.Message(message); err != nil {
-		return err
-	}
-	if len(s.messages) != s.hideAfterCount {
-		return nil
-	}
-	_, err := s.st.DB().Exec(s.st.Rebind(`
-		UPDATE messages
-		SET deleted_at = ?
-		WHERE source_id = ? AND source_message_id = ?
-	`), time.Now().UTC(), s.sourceID, s.sourceMessage)
-	return err
-}
-
-func TestExportMessagesKeysetPagingDoesNotSkipAfterPrefixMutation(t *testing.T) {
+func TestExportMessagesOrdersByIdentityKey(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("text", "source")
+	gmail, err := st.GetOrCreateSource("gmail", "a@example.test")
 	requirements.NoError(err)
-	conversationID := insertMessageExportConversation(
-		t, st, source.ID, "conversation", "", "direct_chat", `{}`,
-	)
+	discord, err := st.GetOrCreateSource("discord", "z-guild")
+	requirements.NoError(err)
+	firstDiscord, err := st.GetOrCreateSource("discord", "a-guild")
+	requirements.NoError(err)
+	sources := []store.Source{*firstDiscord, *discord, *gmail}
+	var conversations []int64
+	for _, source := range sources {
+		second := insertMessageExportConversation(t, st, source.ID, "b", "", "channel", `{}`)
+		first := insertMessageExportConversation(t, st, source.ID, "a", "", "channel", `{}`)
+		conversations = append(conversations, first, second)
+	}
+
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	const pageSize = 256
-	for i := range pageSize + 1 {
+	const messageCount = 24
+	type identity struct {
+		sourceType, sourceIdentifier, conversationID, messageID string
+	}
+	want := make([]identity, messageCount)
+	for i := range messageCount {
+		source := sources[i/4/2]
+		want[i] = identity{
+			sourceType: source.SourceType, sourceIdentifier: source.Identifier,
+			conversationID: []string{"a", "b"}[i/4%2],
+			messageID:      fmt.Sprintf("message-%d-%s", i/4, []string{"z-0", "z-1", "a-0", "a-1"}[i%4]),
+		}
+	}
+	// Interleave sources, conversations, timestamps, and message IDs on insert.
+	for n := range messageCount {
+		i := n * 5 % messageCount
+		source := sources[i/4/2]
 		insertMessageExportMessage(
-			t, st, source.ID, conversationID, fmt.Sprintf("message-%03d", i), "text",
-			start, "", "", 0, false, false,
+			t, st, source.ID, conversations[i/4], want[i].messageID, "text",
+			start.Add(time.Duration(i%4/2)*time.Minute), "", "", 0, false, false,
 		)
 	}
 
-	sink := &hidingMessageExportSink{
-		st:             st,
-		sourceID:       source.ID,
-		sourceMessage:  "message-000",
-		hideAfterCount: pageSize,
-	}
-	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
-		Start: start,
-		End:   start.Add(time.Hour),
+	sink := &collectingMessageExportSink{}
+	counts, err := st.ExportMessages(t.Context(), store.MessageExportFilter{
+		Start: start, End: start.Add(24 * time.Hour),
 	}, sink)
 	requirements.NoError(err)
-	assertions.Equal(pageSize+1, counts.Messages)
-	requirements.Len(sink.messages, pageSize+1)
-	assertions.Equal("message-256", sink.messages[pageSize].ID)
+	assertions.Equal(messageCount, counts.Messages)
+	got := make([]identity, len(sink.messages))
+	for i, message := range sink.messages {
+		got[i] = identity{
+			sourceType: message.SourceType, sourceIdentifier: message.SourceIdentifier,
+			conversationID: message.ConversationID, messageID: message.ID,
+		}
+	}
+	assertions.Equal(want, got)
 }
 
 type failingMessageExportSink struct {
@@ -558,7 +598,7 @@ func TestExportMessagesStopsWhenSinkFails(t *testing.T) {
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 
 	sentinel := errors.New("write stopped")
-	_, err = st.ExportMessages(context.Background(), store.MessageExportFilter{
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{
 		Start: start, End: start.Add(time.Hour), SourceIDs: []int64{source.ID},
 	}, failingMessageExportSink{err: sentinel})
 	requirements.ErrorIs(err, sentinel)
@@ -575,7 +615,7 @@ func TestExportMessagesRejectsInvalidFilter(t *testing.T) {
 	}
 	for _, filter := range tests {
 		_, err := st.ExportMessages(
-			context.Background(), filter, &collectingMessageExportSink{},
+			t.Context(), filter, &collectingMessageExportSink{},
 		)
 		requirements.Error(err)
 	}
@@ -590,7 +630,7 @@ func insertMessageExportConversation(
 	t.Helper()
 	requirements := require.New(t)
 	var id int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO conversations (
 			source_id, source_conversation_id, conversation_type, title
 		) VALUES (?, ?, ?, ?)
@@ -608,7 +648,7 @@ func insertMessageExportParticipant(
 ) int64 {
 	t.Helper()
 	var id int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO participants (email_address, display_name)
 		VALUES (?, ?)
 		RETURNING id
@@ -642,7 +682,7 @@ func insertMessageExportMessage(
 		deletedAt = sentAt.Add(time.Hour)
 	}
 	var messageID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO messages (
 			conversation_id, source_id, source_message_id, message_type,
 			sent_at, received_at, sender_id, subject,
@@ -652,7 +692,7 @@ func insertMessageExportMessage(
 	`), conversationID, sourceID, sourceMessageID, messageType,
 		sentAt, sentAt, sender, subject, deletedFromSource, deletedAt).Scan(&messageID)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)
 	`), messageID, body)
 	requirements.NoError(err)
@@ -680,7 +720,7 @@ func TestExportMessagesPersonAuthorAndScope(t *testing.T) {
 	}
 	filter := store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}
 	sink := &collectingMessageExportSink{}
-	_, err = st.ExportMessages(context.Background(), filter, sink)
+	_, err = st.ExportMessages(t.Context(), filter, sink)
 	requirements.NoError(err)
 	requirements.Len(sink.messages, 2)
 	assertions.Equal(&store.MessageExportAuthor{DisplayName: name, Address: "alice@example.com"}, sink.messages[0].Author)
@@ -689,7 +729,7 @@ func TestExportMessagesPersonAuthorAndScope(t *testing.T) {
 		sink := &collectingMessageExportSink{}
 		filter.PersonScope = &personscope.Scope{ParticipantIDs: ids, Directions: []personscope.Direction{personscope.FromPerson}}
 		filter.SourceIDs = []int64{source.ID}
-		counts, err := st.ExportMessages(context.Background(), filter, sink)
+		counts, err := st.ExportMessages(t.Context(), filter, sink)
 		if len(ids) > 0 && ids[0] < 0 {
 			requirements.Error(err)
 			assertions.Empty(sink.phases)

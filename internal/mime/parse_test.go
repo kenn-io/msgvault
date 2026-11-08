@@ -407,8 +407,8 @@ func TestExtractDomain(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.email, func(t *testing.T) {
-			got := extractDomain(tc.email)
-			assert.Equal(t, tc.domain, got, "extractDomain(%q)", tc.email)
+			got := ExtractDomain(tc.email)
+			assert.Equal(t, tc.domain, got, "ExtractDomain(%q)", tc.email)
 		})
 	}
 }

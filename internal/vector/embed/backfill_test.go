@@ -3,7 +3,6 @@
 package embed
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -32,7 +31,7 @@ type backfillFixture struct {
 // the applied_migrations ledger and message_bodies, and opens a backend.
 func newBackfillFixture(t *testing.T, n int) *backfillFixture {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
@@ -46,13 +45,15 @@ CREATE TABLE applied_migrations (
     name TEXT PRIMARY KEY,
     applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );`
-	_, err = mainDB.Exec(schema)
+	_, err = mainDB.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 	for i := 1; i <= n; i++ {
-		_, err := mainDB.Exec(
+		_, err := mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i))
 		require.NoError(t, err, "insert message")
-		_, err = mainDB.Exec(
+		_, err = mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i))
 		require.NoError(t, err, "insert body")
 	}
@@ -83,7 +84,7 @@ CREATE TABLE applied_migrations (
 func embedGenOf(t *testing.T, db *sql.DB, id int64) (val int64, isNull bool) {
 	t.Helper()
 	var v sql.NullInt64
-	require.NoError(t, db.QueryRow(`SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&v))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&v))
 	return v.Int64, !v.Valid
 }
 
@@ -98,7 +99,7 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	// 3 messages: 1 and 2 will be embedded under the active gen; 3 will not.
 	f := newBackfillFixture(t, 3)
 
@@ -186,7 +187,7 @@ func TestBackfillEmbedGen_NoActiveGenerationMarksLedger(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newBackfillFixture(t, 2)
 
 	// newBackfillFixture's Open already marked the ledger (no gen at open
@@ -200,7 +201,8 @@ func TestBackfillEmbedGen_NoActiveGenerationMarksLedger(t *testing.T) {
 		f.Backend.BackfillEmbedGenForUpgrade(ctx), "backfill (no active gen)")
 
 	var n int
-	require.NoError(f.MainDB.QueryRow(
+	require.NoError(f.MainDB.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = ?`,
 		"embed_gen_backfill_active_v1").Scan(&n))
 	assert.Equal(1, n, "ledger marked even with no active generation")

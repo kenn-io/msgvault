@@ -268,6 +268,7 @@ type Server struct {
 	statsSnapshotWait       time.Duration
 	vectorStatsTimeout      time.Duration
 
+	senderAuthPins         map[int64][]string
 	cfg                    *config.Config
 	store                  MessageStore
 	analyticsState         atomic.Pointer[analyticsEngineState]
@@ -320,6 +321,8 @@ type Server struct {
 	importMu                  sync.Mutex
 	importsClosed             bool
 	importWG                  sync.WaitGroup
+	localEmbeddings           LocalEmbeddingsController
+	localSetup                LocalEmbeddingsStatus
 	// ftsIndexComplete memoizes that the FTS index is fully populated so
 	// handleCLISearch stops probing on every request. NeedsFTSBackfill runs an
 	// anti-join that scans every message when the index is complete (the
@@ -630,6 +633,11 @@ func NewServer(cfg *config.Config, store MessageStore, sched SyncScheduler, logg
 
 // NewServerWithOptions creates a new API server with full options including query engine.
 func NewServerWithOptions(opts ServerOptions) *Server {
+	// Before vector initialization, configuration still describes which lanes
+	// are enabled. A supplied runtime keeps its resolved configuration.
+	if opts.Backend == nil && !opts.VectorCfg.AnyLaneEnabled() {
+		opts.VectorCfg = opts.Config.Vector
+	}
 	timeout := opts.RequestTimeout
 	if timeout <= 0 {
 		timeout = 60 * time.Second
@@ -645,6 +653,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	importContext, cancelImports := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:                    opts.Config,
+		senderAuthPins:         opts.Config.SenderAuth.Pins(),
 		store:                  opts.Store,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
@@ -671,7 +680,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		importContext:          importContext,
 		cancelImports:          cancelImports,
 		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
-		accountCountSnapshots:  snapshotCache[map[int64]store.SourceMessageCounts]{logger: opts.Logger},
+		accountCountSnapshots: snapshotCache[map[int64]store.SourceMessageCounts]{
+			logger: opts.Logger, staleWait: 500 * time.Millisecond,
+		},
 		virtualAccountSnapshots: snapshotCache[map[int64][]store.VirtualAccount]{
 			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor,
 		},
@@ -832,13 +843,13 @@ func (s *Server) registerPprofHandlers(mux *http.ServeMux) {
 
 // Start begins listening for HTTP requests.
 // Returns an error if the security posture is invalid.
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	bindAddr := s.cfg.Server.BindAddr
 	if bindAddr == "" {
 		bindAddr = defaultBindAddr
 	}
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(s.cfg.Server.APIPort))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		listenErr := fmt.Errorf("listen %s: %w", addr, err)
 		s.signalStarted(listenErr)

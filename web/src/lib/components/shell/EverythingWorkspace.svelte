@@ -1,8 +1,11 @@
 <script lang="ts">
   import { tasksSettingsDestination } from './navigation';
-  import { Button, PageHeader } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { Button, MEDIA, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
+  import { onDestroy, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
+  import { getLocalEmbeddings } from '../../api/generated/api/api';
+  import type { LocalEmbeddingsStatus } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
@@ -36,6 +39,7 @@
   import GroupTable from '../explore/GroupTable.svelte';
   import SelectionBar from '../explore/SelectionBar.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
+  import { splitHandleSize } from '../layout/split-handle';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import TranscriptHits from '../search/TranscriptHits.svelte';
@@ -51,6 +55,7 @@
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
   type ExplorePreflight = GeneratedExplorePreflightResponse;
+  const stackedListMin = 120, stackedReaderMin = 160;
 
   interface Props {
     meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
@@ -71,6 +76,7 @@
     selectionPreflight: ExplorePreflight | undefined;
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
+    onAddSource?: () => void;
     onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitSearch: (query: string, mode: ExploreSearchMode) => void;
@@ -108,6 +114,7 @@
     selectionPreflight,
     meetingSelection,
     exportSelection,
+    onAddSource,
     onReviewDeletion,
     commitNavigation,
     commitSearch,
@@ -125,6 +132,23 @@
     onSaveView,
     onStatusChange = () => undefined,
   }: Props = $props();
+
+  const compact = new MediaQuery(MEDIA.compact);
+  const solo = $derived(compact.current && Boolean(readingTargetKey) && !loader.error && !loader.unavailable);
+  let resultsSplit: HTMLDivElement | undefined = $state();
+  let previousSolo: boolean | undefined;
+  $effect(() => {
+    const currentSolo = solo;
+    const changed = previousSolo !== undefined && previousSolo !== currentSolo;
+    previousSolo = currentSolo;
+    if (!changed || !untrack(() => readingTargetKey)) return;
+    void tick().then(() => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body &&
+        (focused.checkVisibility?.({ visibilityProperty: true }) ?? !resultsSplit?.querySelector('[data-pane="primary"]')?.contains(focused))) return;
+      resultsSplit?.querySelector<HTMLButtonElement>('[data-reader-dismiss]')?.focus();
+    });
+  });
 
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
@@ -416,6 +440,25 @@
   function reloadGroupMeetings(): void {
     session.readingDetailFingerprint = '';
     readingDetailRetryRevision += 1;
+  }
+
+  let localSetup = $state<LocalEmbeddingsStatus>();
+  const localSearchOff = $derived(localSetup && localSetup.provider !== 'configured' && !localSetup.enabled && !localSetup.running && localSetup.phase === 'idle' && !loader.loading && Boolean(loader.result) && Boolean(exploreState.current.query.trim()));
+  $effect(() => {
+    localSetup = undefined;
+    if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text') return;
+    const controller = new AbortController();
+    const load = () => void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
+      if (!controller.signal.aborted && response.ok) localSetup = data;
+    }).catch(() => undefined);
+    load();
+    // Another tab may have turned search on while this one was in the background.
+    window.addEventListener('focus', load);
+    return () => { controller.abort(); window.removeEventListener('focus', load); };
+  });
+  // Settings runs and follows the setup; the hint only opens it.
+  function openSearchSettings(): void {
+    commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
   }
 
   const coverageFiltersFingerprint = $derived(canonicalFingerprint(exploreState.current.filters));
@@ -722,6 +765,9 @@
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
+    class:results-split--solo={solo}
+    style:min-height={scope && readingTargetKey && !previewRight && !solo ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
+    bind:this={resultsSplit}
     bind:clientWidth={resultsWidth}
   >
     <SplitPane
@@ -729,8 +775,8 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : 120}
-      minSecondary={previewRight ? 400 : 160}
+      minPrimary={previewRight ? 360 : stackedListMin}
+      minSecondary={previewRight ? 400 : stackedReaderMin}
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
@@ -801,6 +847,7 @@
               />
             {:else}
               <EverythingTable
+                {onAddSource}
                 rows={loader.rows}
                 selection={scope ? undefined : selection}
                 columns={exploreState.current.columns}
@@ -856,6 +903,7 @@
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
+            back={solo}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
@@ -870,9 +918,18 @@
     </SplitPane>
   </div>
 
+  {#if localSearchOff && localSetup}
+    <div class="local-search-hint">
+      <SearchByMeaningHint onturnon={openSearchSettings} />
+    </div>
+  {/if}
+
 </svelte:element>
 
 <style>
+  .local-search-hint { margin: 0; line-height: 1.45; }
+  .local-search-hint :global(.kit-search-by-meaning-hint) { font-size: var(--font-size-xs); text-wrap: balance; }
+  .local-search-hint :global(button) { text-decoration: underline; }
   .everything-workspace {
     display: flex;
     width: 100%;
@@ -921,11 +978,29 @@
   }
 
   .results-split {
+    contain: size;
     display: flex;
     min-width: 0;
     min-height: 200px;
     flex: 1;
     overflow: hidden;
+  }
+
+  .results-split--solo :global([data-split-pane]) { position: relative; }
+  .results-split--solo :global([data-pane='primary']) {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+  }
+  .results-split--solo :global(.handle-reset) { display: none; }
+  .results-split.results-split--solo :global([data-pane='secondary']) {
+    flex-grow: 1;
+    flex-shrink: 1;
+    border: 0;
+  }
+  .results-split--solo :global(.reading-pane) {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
   }
 
   .results-primary {

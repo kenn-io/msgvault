@@ -40,7 +40,7 @@ func TestOperationCursorQueryParsesDefaultsAndNormalizedFilters(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/operations/runs?"+test.rawQuery, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/operations/runs?"+test.rawQuery, nil)
 			parsed, err := parseOperationRunsQuery(request, codec, operationTestArchive)
 			require.NoError(t, err)
 			assert.Equal(test.wantKinds, parsed.Query.Kinds)
@@ -82,7 +82,7 @@ func TestOperationCursorQueryRejectsDuplicateUnknownAndNoncanonicalParameters(t 
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/operations/runs?"+test.rawQuery, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/operations/runs?"+test.rawQuery, nil)
 			_, err := parseOperationRunsQuery(request, codec, operationTestArchive)
 			assert.Error(t, err)
 		})
@@ -94,7 +94,7 @@ func TestOperationCursorQueryExcludesLimitAndBindsCompleteNormalizedFilters(t *t
 	assert := assert.New(t)
 	require := require.New(t)
 	codec := newOperationTokenCodec(operationTokenTestStore(t))
-	first := httptest.NewRequest(http.MethodGet,
+	first := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/operations/runs?state=failed&limit=10&lane=messages&kind=source_sync&started_from=2026-08-01T00%3A00%3A00Z&started_before=2026-09-01T00%3A00%3A00Z", nil)
 	parsedFirst, err := parseOperationRunsQuery(first, codec, operationTestArchive)
 	require.NoError(err)
@@ -110,7 +110,7 @@ func TestOperationCursorQueryExcludesLimitAndBindsCompleteNormalizedFilters(t *t
 	cursor, err := codec.encodeCursor(t.Context(), binding, parsedFirst.filter, operationTestArchive)
 	require.NoError(err)
 
-	second := httptest.NewRequest(http.MethodGet,
+	second := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/operations/runs?cursor="+cursor+"&kind=source_sync&limit=99&lane=messages&state=failed&started_before=2026-09-01T00%3A00%3A00Z&started_from=2026-08-01T00%3A00%3A00Z", nil)
 	parsedSecond, err := parseOperationRunsQuery(second, codec, operationTestArchive)
 	require.NoError(err)
@@ -124,12 +124,12 @@ func TestOperationCursorQueryExcludesLimitAndBindsCompleteNormalizedFilters(t *t
 		"kind=source_sync&lane=messages&state=failed&started_from=2026-08-02T00%3A00%3A00Z&started_before=2026-09-01T00%3A00%3A00Z",
 		"kind=source_sync&lane=messages&state=failed&started_from=2026-08-01T00%3A00%3A00Z&started_before=2026-09-02T00%3A00%3A00Z",
 	} {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/operations/runs?"+changed+"&cursor="+cursor, nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/operations/runs?"+changed+"&cursor="+cursor, nil)
 		_, err = parseOperationRunsQuery(request, codec, operationTestArchive)
 		require.ErrorIs(err, errInvalidOperationCursor)
 	}
 
-	crossArchive := httptest.NewRequest(http.MethodGet,
+	crossArchive := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/operations/runs?kind=source_sync&lane=messages&state=failed&started_from=2026-08-01T00%3A00%3A00Z&started_before=2026-09-01T00%3A00%3A00Z&cursor="+cursor, nil)
 	_, err = parseOperationRunsQuery(crossArchive, codec, "another-archive")
 	assert.ErrorIs(err, errInvalidOperationCursor)

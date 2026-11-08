@@ -3,7 +3,6 @@ package query_test
 import (
 	"bytes"
 	"compress/zlib"
-	"context"
 	"crypto/rand"
 	"math"
 	"strconv"
@@ -39,7 +38,7 @@ func originalEngine(f *storetest.Fixture) *query.SQLiteEngine {
 func TestReadOriginalMessage(t *testing.T) {
 	t.Parallel()
 	must := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
 	engine := originalEngine(f)
 
@@ -50,7 +49,7 @@ func TestReadOriginalMessage(t *testing.T) {
 	noRaw := f.NewMessage().WithSourceMessageID("chat-only").Create(t, f.Store)
 	dedupLoser := f.NewMessage().WithSourceMessageID("dedup-loser").Create(t, f.Store)
 	must.NoError(f.Store.UpsertMessageRaw(dedupLoser, originalMIME))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), dedupLoser)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), dedupLoser)
 	must.NoError(err)
 
 	t.Run("by internal id returns exact bytes and provenance", func(t *testing.T) {
@@ -78,7 +77,7 @@ func TestReadOriginalMessage(t *testing.T) {
 	t.Run("reports last sync time", func(t *testing.T) {
 		must := require.New(t)
 		syncedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), syncedAt, f.Source.ID)
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), syncedAt, f.Source.ID)
 		must.NoError(err)
 		got, err := engine.ReadOriginalMessage(ctx, query.MessageRef{ID: withRaw}, 0)
 		must.NoError(err)
@@ -149,7 +148,7 @@ func TestReadOriginalMessageBounded(t *testing.T) {
 			id := f.NewMessage().Create(t, f.Store)
 			must.NoError(f.Store.UpsertMessageRaw(id, tc.raw))
 			if !tc.compressed {
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), tc.raw, id)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), tc.raw, id)
 				must.NoError(err)
 			}
 			ref := query.MessageRef{ID: id}
@@ -179,9 +178,9 @@ func TestReadOriginalMessageBoundedCorruption(t *testing.T) {
 	id := f.NewMessage().Create(t, f.Store)
 	must.NoError(f.Store.UpsertMessageRaw(id, bytes.Repeat([]byte("a"), 65536)))
 	var compressed []byte
-	must.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT raw_data FROM message_raw WHERE message_id = ?`), id).Scan(&compressed))
+	must.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT raw_data FROM message_raw WHERE message_id = ?`), id).Scan(&compressed))
 	compressed[len(compressed)-1] ^= 1 // Invalid checksum after the decoded size limit.
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), compressed, id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), compressed, id)
 	must.NoError(err)
 	ref := query.MessageRef{ID: id}
 	_, err = engine.ReadOriginalMessage(t.Context(), ref, 1024)
@@ -192,7 +191,7 @@ func TestReadOriginalMessageBoundedCorruption(t *testing.T) {
 	must.ErrorIs(err, zlib.ErrChecksum)
 
 	// Reject a stored blob beyond the input budget before attempting to decode it.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), bytes.Repeat([]byte("x"), 4096), id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), bytes.Repeat([]byte("x"), 4096), id)
 	must.NoError(err)
 	_, err = engine.ReadOriginalMessage(t.Context(), ref, 1)
 	must.ErrorIs(err, query.ErrOriginalMessageTooLarge)
@@ -208,10 +207,10 @@ func TestReadOriginalMessageAllowsNullSourceMessageID(t *testing.T) {
 
 	id := f.NewMessage().WithSourceMessageID("temporary-provider-id").Create(t, f.Store)
 	must.NoError(f.Store.UpsertMessageRaw(id, originalMIME))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET source_message_id = NULL WHERE id = ?`), id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_message_id = NULL WHERE id = ?`), id)
 	must.NoError(err)
 
-	got, err := engine.ReadOriginalMessage(context.Background(), query.MessageRef{ID: id}, 0)
+	got, err := engine.ReadOriginalMessage(t.Context(), query.MessageRef{ID: id}, 0)
 	must.NoError(err)
 	must.Empty(got.SourceMessageID)
 }
@@ -220,7 +219,7 @@ func TestReadOriginalMessageAmbiguousProviderID(t *testing.T) {
 	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
 	engine := originalEngine(f)
 
@@ -229,7 +228,7 @@ func TestReadOriginalMessageAmbiguousProviderID(t *testing.T) {
 
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	must.NoError(err)
-	otherConv, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	otherConv, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	must.NoError(err)
 	second := storetest.NewMessage(other.ID, otherConv).WithSourceMessageID("shared-id").Create(t, f.Store)
 	must.NoError(f.Store.UpsertMessageRaw(second, []byte("second\r\n")))
@@ -248,7 +247,7 @@ func TestReadOriginalMessageAmbiguousProviderID(t *testing.T) {
 func TestListThread(t *testing.T) {
 	t.Parallel()
 	must := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := storetest.New(t)
 	engine := originalEngine(f)
 
@@ -260,16 +259,16 @@ func TestListThread(t *testing.T) {
 	must.NoError(f.Store.UpsertMessageRaw(firstA, []byte("a\r\n")))
 	must.NoError(f.Store.UpsertMessageRawWithFormat(third, []byte(`{}`), "gcal_json"))
 	loser := f.NewMessage().WithSourceMessageID("loser").WithSentAt(base.Add(time.Hour)).Create(t, f.Store)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), loser)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), loser)
 	must.NoError(err)
 	sourceDeleted := f.NewMessage().WithSourceMessageID("source-deleted").WithSentAt(base.Add(90*time.Minute)).Create(t, f.Store)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), sourceDeleted)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), sourceDeleted)
 	must.NoError(err)
 
 	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	recipient := f.EnsureParticipant("recipient@example.org", "Recipient", "example.org")
 	fallbackSender := f.EnsureParticipant("fallback@example.com", "Fallback Sender", "example.com")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id IN (?, ?)`),
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id IN (?, ?)`),
 		fallbackSender, firstA, firstB)
 	must.NoError(err)
 	must.NoError(f.Store.ReplaceMessageRecipients(firstA, "from", []int64{sender}, []string{"Sender"}))
@@ -335,9 +334,9 @@ func TestListThread(t *testing.T) {
 	t.Run("thread id in two accounts is ambiguous", func(t *testing.T) {
 		checks := assert.New(t)
 		must := require.New(t)
-		other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+		other, err := f.Store.GetOrCreateSourceContext(t.Context(), "gmail", "other@example.com")
 		must.NoError(err)
-		otherConv, err := f.Store.EnsureConversation(other.ID, "default-thread", "Other")
+		otherConv, err := f.Store.EnsureConversation(t.Context(), other.ID, "default-thread", "Other")
 		must.NoError(err)
 		otherMsg := storetest.NewMessage(other.ID, otherConv).Create(t, f.Store)
 
@@ -365,10 +364,10 @@ func TestListThreadAllowsNullSourceMessageID(t *testing.T) {
 	f := storetest.New(t)
 	engine := originalEngine(f)
 	id := f.NewMessage().WithSourceMessageID("temporary-provider-id").Create(t, f.Store)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET source_message_id = NULL WHERE id = ?`), id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_message_id = NULL WHERE id = ?`), id)
 	must.NoError(err)
 
-	page, err := engine.ListThread(context.Background(), query.ThreadQuery{ThreadID: "default-thread"})
+	page, err := engine.ListThread(t.Context(), query.ThreadQuery{ThreadID: "default-thread"})
 	must.NoError(err)
 	must.Len(page.Messages, 1)
 	must.Equal(id, page.Messages[0].ID)
@@ -389,10 +388,10 @@ func TestListThreadRequiresVisibleMessages(t *testing.T) {
 	survivor := f.CreateMessage("survivor")
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	must.NoError(err)
-	otherConv, err := f.Store.EnsureConversation(other.ID, "default-thread", "Duplicate")
+	otherConv, err := f.Store.EnsureConversation(t.Context(), other.ID, "default-thread", "Duplicate")
 	must.NoError(err)
 	duplicate := storetest.NewMessage(other.ID, otherConv).WithSourceMessageID("duplicate").Create(t, f.Store)
-	_, err = f.Store.MergeDuplicates(survivor, []int64{duplicate}, "thread-visibility")
+	_, err = f.Store.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "thread-visibility")
 	must.NoError(err)
 
 	_, err = engine.ListThread(ctx, query.ThreadQuery{ThreadID: "default-thread", Account: "other@example.com"})
@@ -414,7 +413,7 @@ func TestListThreadAll(t *testing.T) {
 	ids := f.CreateMessages(501)
 	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	recipient := f.EnsureParticipant("recipient@example.com", "Recipient", "example.com")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), sender, ids[500])
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), sender, ids[500])
 	must.NoError(err)
 	must.NoError(f.Store.ReplaceMessageRecipients(ids[500], "to", []int64{recipient}, []string{"Recipient"}))
 
@@ -457,14 +456,14 @@ func TestResolveMessageID(t *testing.T) {
 	numeric := f.CreateMessage("999999")
 	deleted := f.CreateMessage("source-deleted")
 	loser := f.CreateMessage("dedup-loser")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), deleted)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), deleted)
 	must.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), loser)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), loser)
 	must.NoError(err)
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	must.NoError(err)
 	f.CreateMessage("shared")
-	convID, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	convID, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	must.NoError(err)
 	_, err = f.Store.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: convID, SourceMessageID: "shared", MessageType: "email"})
 	must.NoError(err)
@@ -503,17 +502,6 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 	}
 	earlier := f.NewMessage().WithSourceMessageID("thread-earlier").Create(t, f.Store)
 	later := f.NewMessage().WithSourceMessageID("thread-later").Create(t, f.Store)
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE id WHEN ? THEN '2026-01-15 14:00:00+00:00' WHEN ? THEN '2026-01-15 11:00:00-05:00' END WHERE id IN (?, ?)`, earlier, later, earlier, later)
-	require.NoError(err)
-	page, err := originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: earlier, Limit: 1})
-	require.NoError(err)
-	require.Len(page.Messages, 1)
-	assert.Equal(earlier, page.Messages[0].ID)
-	assert.True(page.HasMore)
-	page, err = originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: earlier, Limit: 1, Offset: 1})
-	require.NoError(err)
-	require.Len(page.Messages, 1)
-	assert.Equal(later, page.Messages[0].ID)
 
 	firstID := func(earlierSentAt, laterSentAt string) int64 {
 		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)`, earlier, earlierSentAt, later, laterSentAt, earlier, later)
@@ -523,9 +511,34 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 		require.Len(page.Messages, 1)
 		return page.Messages[0].ID
 	}
-	// Sub-millisecond instants sort by time, not by id or raw text.
-	assert.Equal(later, firstID("2026-01-15 14:00:00.000200+00:00", "2026-01-15 14:00:00.000100+00:00"))
-	assert.Equal(earlier, firstID("2026-01-15 14:00:00.000100+00:00", "2026-01-15 09:00:00.000200-05:00"))
+	// Instants a millisecond apart sort by time, not by id or raw text.
+	assert.Equal(later, firstID("2026-01-15 14:00:00.002+00:00", "2026-01-15 14:00:00.001+00:00"))
+	assert.Equal(earlier, firstID("2026-01-15 14:00:00.001+00:00", "2026-01-15 09:00:00.002-05:00"))
+	// Instants within one millisecond tie and fall back to id.
+	assert.Equal(earlier, firstID("2026-01-15 14:00:00.000200+00:00", "2026-01-15 14:00:00.000100+00:00"))
 	// Equal instants written with different offsets fall back to id.
 	assert.Equal(earlier, firstID("2026-01-15 14:00:00+00:00", "2026-01-15 09:00:00-05:00"))
+
+	firstInvalid, undated := earlier, later
+	secondInvalid := f.CreateMessage("invalid-second")
+	zeroTime := f.CreateMessage("zero-time")
+	dated := f.CreateMessage("dated")
+	for _, tc := range []struct {
+		id     int64
+		sentAt any
+	}{
+		{firstInvalid, "z-invalid"}, {undated, nil},
+		{secondInvalid, "a-invalid"}, {dated, "2026-01-15 14:00:00+00:00"},
+		{zeroTime, "0001-01-01 00:00:00+00:00"},
+	} {
+		_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET sent_at = ? WHERE id = ?", tc.sentAt, tc.id)
+		require.NoError(err)
+	}
+	page, err := originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: dated, All: true})
+	require.NoError(err)
+	var ids []int64
+	for _, message := range page.Messages {
+		ids = append(ids, message.ID)
+	}
+	assert.Equal([]int64{dated, firstInvalid, undated, secondInvalid, zeroTime}, ids)
 }

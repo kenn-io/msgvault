@@ -25,7 +25,7 @@ func newIMAPMembershipFixture(t *testing.T) imapMembershipFixture {
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "membership@example.com")
 	require.NoError(t, err)
-	convID, err := st.EnsureConversation(source.ID, "membership-thread", "Membership thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "membership-thread", "Membership thread")
 	require.NoError(t, err)
 	return imapMembershipFixture{store: st, source: source, convID: convID}
 }
@@ -48,7 +48,7 @@ func (f imapMembershipFixture) createMessage(
 func membershipCount(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?
 	`), sourceID).Scan(&count))
 	return count
@@ -60,7 +60,7 @@ func membershipMessageAndFlags(
 	t.Helper()
 	var messageID int64
 	var flags string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT message_id, flags FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), sourceID, "INBOX", uidValidity, uid).Scan(&messageID, &flags))
@@ -69,7 +69,7 @@ func membershipMessageAndFlags(
 
 func messageLabels(t *testing.T, st *store.Store, messageID int64) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT l.name
 		FROM labels l
 		JOIN message_labels ml ON ml.label_id = l.id
@@ -91,7 +91,7 @@ func messageLabels(t *testing.T, st *store.Store, messageID int64) []string {
 func messageTombstoned(t *testing.T, st *store.Store, messageID int64) bool {
 	t.Helper()
 	var deleted sql.NullTime
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), messageID).Scan(&deleted))
 	return deleted.Valid
@@ -100,7 +100,7 @@ func messageTombstoned(t *testing.T, st *store.Store, messageID int64) bool {
 func messageIsRead(t *testing.T, st *store.Store, messageID int64) bool {
 	t.Helper()
 	var isRead bool
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_read FROM messages WHERE id = ?
 	`), messageID).Scan(&isRead))
 	return isRead
@@ -112,7 +112,7 @@ func TestApplyIMAPMailboxDeltas_PersistsMembershipsFlagsLabelsAndKnownUIDs(t *te
 	f := newIMAPMembershipFixture(t)
 	exactID := f.createMessage(t, "provider-exact", "<exact@example.com>")
 	fallbackID := f.createMessage(t, "provider-fallback", "<fallback@example.com>")
-	_, err := f.store.DB().Exec(f.store.Rebind(`
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		UPDATE messages SET is_read = FALSE WHERE id = ?
 	`), exactID)
 	require.NoError(err)
@@ -165,6 +165,7 @@ func TestApplyIMAPMailboxDeltas_RFC822FallbackDoesNotCrossSources(t *testing.T) 
 	otherSource, err := f.store.GetOrCreateSource("imap", "other-membership@example.com")
 	require.NoError(err)
 	otherConversationID, err := f.store.EnsureConversation(
+		t.Context(),
 		otherSource.ID, "other-membership-thread", "Other membership thread",
 	)
 	require.NoError(err)
@@ -495,7 +496,7 @@ func TestMergeSourcesIMAPArchiveHistorySurvivesDestinationMembershipReconciliati
 		},
 	}}))
 	tombstoneAt := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		UPDATE messages SET deleted_from_source_at = ? WHERE id = ?
 	`), tombstoneAt, tombstonedID)
 	require.NoError(err)
@@ -507,10 +508,10 @@ func TestMergeSourcesIMAPArchiveHistorySurvivesDestinationMembershipReconciliati
 	require.NoError(err)
 
 	var liveBefore, tombstonedBefore sql.NullTime
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), liveID).Scan(&liveBefore))
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), tombstonedID).Scan(&tombstonedBefore))
 	assert.False(liveBefore.Valid)
@@ -524,10 +525,10 @@ func TestMergeSourcesIMAPArchiveHistorySurvivesDestinationMembershipReconciliati
 	}}))
 
 	var liveAfter, tombstonedAfter sql.NullTime
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), liveID).Scan(&liveAfter))
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), tombstonedID).Scan(&tombstonedAfter))
 	assert.Equal([]string{"INBOX"}, messageLabels(t, f.store, liveID))
@@ -549,6 +550,7 @@ func TestApplyIMAPMailboxDeltas_MergedRFC822HistoryResolvesToLiveMessage(t *test
 			destination, err := f.store.GetOrCreateSource("imap", "destination@example.test")
 			require.NoError(err)
 			liveConversationID, err := f.store.EnsureConversation(
+				t.Context(),
 				destination.ID, "destination-thread", "Destination thread",
 			)
 			require.NoError(err)
@@ -568,7 +570,7 @@ func TestApplyIMAPMailboxDeltas_MergedRFC822HistoryResolvesToLiveMessage(t *test
 			require.NoError(err)
 			f.source = destination
 			var archiveOnly int
-			require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 				SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id = ?
 			`), historyID).Scan(&archiveOnly))
 			require.Equal(1, archiveOnly, "the merged history row must be archive-only")
@@ -618,9 +620,9 @@ func TestApplyIMAPMailboxDeltas_InitialBaselineReconcilesPreviouslyArchivedMessa
 	f := newIMAPMembershipFixture(t)
 	presentID := f.createMessage(t, "INBOX|1", "<baseline-present@example.com>")
 	missingID := f.createMessage(t, "Deleted|1", "<baseline-missing@example.com>")
-	inboxLabelID, err := f.store.EnsureLabel(f.source.ID, "INBOX", "INBOX", "user")
+	inboxLabelID, err := f.store.EnsureLabel(t.Context(), f.source.ID, "INBOX", "INBOX", "user")
 	require.NoError(err)
-	deletedLabelID, err := f.store.EnsureLabel(f.source.ID, "Deleted", "Deleted", "user")
+	deletedLabelID, err := f.store.EnsureLabel(t.Context(), f.source.ID, "Deleted", "Deleted", "user")
 	require.NoError(err)
 	require.NoError(f.store.ReplaceMessageLabels(presentID, []int64{inboxLabelID}))
 	require.NoError(f.store.ReplaceMessageLabels(missingID, []int64{deletedLabelID}))
@@ -658,7 +660,7 @@ func TestApplyIMAPMailboxDeltas_ReconcilesLiveMessageImportedAfterBaseline(t *te
 	}}))
 
 	untrackedID := f.createMessage(t, "Archive|1", "<untracked@example.test>")
-	archiveLabelID, err := f.store.EnsureLabel(f.source.ID, "Archive", "Archive", "user")
+	archiveLabelID, err := f.store.EnsureLabel(t.Context(), f.source.ID, "Archive", "Archive", "user")
 	require.NoError(err)
 	require.NoError(f.store.ReplaceMessageLabels(untrackedID, []int64{archiveLabelID}))
 
@@ -1016,7 +1018,7 @@ const membershipStamp = "1999-01-01 00:00:00"
 // apply can be measured by which rows moved off the stamp.
 func stampMemberships(t *testing.T, st *store.Store, sourceID int64) {
 	t.Helper()
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE imap_message_memberships SET updated_at = ? WHERE source_id = ?
 	`), membershipStamp, sourceID)
 	require.NoError(t, err)
@@ -1027,7 +1029,7 @@ func stampMemberships(t *testing.T, st *store.Store, sourceID int64) {
 func membershipsWritten(t *testing.T, st *store.Store, sourceID int64) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM imap_message_memberships
 		WHERE source_id = ? AND updated_at <> ?
 	`), sourceID, membershipStamp).Scan(&count))
@@ -1091,7 +1093,7 @@ func TestApplyIMAPMailboxDeltas_ReorderedFlagsAfterTagSaveWriteNothing(t *testin
 	_, path := attribution(t, f.st, messageID)
 	require.Equal("sent", path.String)
 	stampMemberships(t, f.st, f.source.ID)
-	_, err = f.st.DB().Exec(`CREATE TABLE reset_write_audit (kind TEXT NOT NULL)`)
+	_, err = f.st.DB().ExecContext(t.Context(), `CREATE TABLE reset_write_audit (kind TEXT NOT NULL)`)
 	require.NoError(err)
 	auditSQL := `
 		CREATE TRIGGER audit_reset_labels AFTER DELETE ON message_labels
@@ -1111,7 +1113,7 @@ func TestApplyIMAPMailboxDeltas_ReorderedFlagsAfterTagSaveWriteNothing(t *testin
 			FOR EACH ROW EXECUTE FUNCTION audit_reset_write();
 		`
 	}
-	_, err = f.st.DB().Exec(auditSQL)
+	_, err = f.st.DB().ExecContext(t.Context(), auditSQL)
 	require.NoError(err)
 
 	delta.Reset = true
@@ -1119,7 +1121,7 @@ func TestApplyIMAPMailboxDeltas_ReorderedFlagsAfterTagSaveWriteNothing(t *testin
 
 	assert.Zero(membershipsWritten(t, f.st, f.source.ID), "flag order must not rewrite a saved membership")
 	var writes int
-	require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM reset_write_audit`).Scan(&writes))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reset_write_audit`).Scan(&writes))
 	assert.Zero(writes, "flag order must not rebuild labels or account attribution")
 }
 
@@ -1207,4 +1209,183 @@ func TestApplyIMAPMailboxDeltas_ResetPersistsFlagChange(t *testing.T) {
 	assert.JSONEq(`["\\Seen","\\Flagged"]`, gotFlags)
 	_, gotSteadyFlags := membershipMessageAndFlags(t, f.store, f.source.ID, 5, 2)
 	assert.JSONEq(`["\\Seen"]`, gotSteadyFlags)
+}
+
+func TestApplyIMAPMailboxDeltas_IncrementalUntrackedReconciliation(t *testing.T) {
+	for _, scenario := range []string{"cleared tombstone", "failed apply", "PostgreSQL session timestamp settings"} {
+		t.Run(scenario, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			if scenario == "PostgreSQL session timestamp settings" {
+				if !st.IsPostgreSQL() {
+					t.Skip("PostgreSQL session timestamp settings")
+				}
+				st.DB().SetMaxOpenConns(1)
+				st.DB().SetMaxIdleConns(1)
+				_, err := st.DB().ExecContext(t.Context(), `SET DateStyle = 'SQL, YMD'`)
+				requirements.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), `SET TimeZone = 'Pacific/Honolulu'`)
+				requirements.NoError(err)
+			}
+			source, err := st.GetOrCreateSource("imap", "incremental@example.test")
+			requirements.NoError(err)
+			convID, err := st.EnsureConversation(t.Context(), source.ID, "incremental", "Incremental")
+			requirements.NoError(err)
+			f := imapMembershipFixture{store: st, source: source, convID: convID}
+			f.createMessage(t, "tracked", "")
+			baseline := store.IMAPMailboxDelta{
+				Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1},
+				Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "tracked"}},
+			}
+			var untrackedID int64
+			if scenario == "cleared tombstone" {
+				untrackedID = f.createMessage(t, "untracked", "")
+			}
+			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{baseline}))
+			if scenario != "cleared tombstone" {
+				untrackedID = f.createMessage(t, "untracked", "")
+			} else {
+				requirements.True(messageTombstoned(t, st, untrackedID))
+				requirements.NoError(st.ClearMessageDeletedFromSource(source.ID, "untracked"))
+			}
+			labelID, err := st.EnsureLabel(t.Context(), source.ID, "Legacy", "Legacy", "user")
+			requirements.NoError(err)
+			requirements.NoError(st.ReplaceMessageLabels(untrackedID, []int64{labelID}))
+			requirements.False(messageTombstoned(t, st, untrackedID))
+			if scenario == "failed apply" {
+				// Put the import before the failed apply's capture bound so a
+				// checkpoint that escaped rollback would skip it on the retry.
+				checkpoint := "2000-01-01T00:00:00Z"
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_checkpoints SET checkpoint_value = ?
+					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), checkpoint, source.ID)
+				requirements.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages
+					SET content_changed_at = '2001-01-01 00:00:00.000' WHERE id = ?`), untrackedID)
+				requirements.NoError(err)
+				failed := baseline
+				failed.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "missing"}}
+				requirements.ErrorIs(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{failed}), sql.ErrNoRows)
+				var after string
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&after))
+				assertions.Equal(checkpoint, after)
+			}
+			baseline.Memberships = nil
+			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{baseline}))
+			assertions.True(messageTombstoned(t, st, untrackedID))
+			assertions.Empty(messageLabels(t, st, untrackedID))
+			assertions.Equal(1, membershipCount(t, st, source.ID))
+		})
+	}
+}
+
+func TestApplyIMAPMailboxDeltas_RetiresMembershipOnlyDraftMailbox(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "draft-only@example.test")
+	requirements.NoError(err)
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "draft-only", "Draft")
+	requirements.NoError(err)
+	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 7, UID: 42}
+	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
+		return &store.MessagePersistData{Message: &store.Message{
+			SourceID: source.ID, ConversationID: convID, MessageType: store.MessageTypeEmail,
+			SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+		}}
+	})
+	requirements.NoError(err)
+	states, err := st.GetIMAPFolderStates(source.ID)
+	requirements.NoError(err)
+	requirements.Empty(states)
+	requirements.Equal(1, membershipCount(t, st, source.ID))
+	requirements.Equal([]string{"Drafts"}, messageLabels(t, st, draft.CurrentMessageID))
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{}))
+	assertions.Zero(membershipCount(t, st, source.ID))
+	assertions.True(messageTombstoned(t, st, draft.CurrentMessageID))
+	assertions.Empty(messageLabels(t, st, draft.CurrentMessageID))
+}
+
+func TestApplyIMAPMailboxDeltas_RedactedWriterRetainsCaptureWindow(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newForeignRoleFeed(t)
+	st := f.store
+	source, err := st.GetOrCreateSource("imap", "redacted-writer@example.test")
+	requirements.NoError(err)
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "redacted-writer", "Capture window")
+	requirements.NoError(err)
+	messages := imapMembershipFixture{store: st, source: source, convID: convID}
+	messages.createMessage(t, "tracked", "")
+	heldID := messages.createMessage(t, "untracked", "")
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "tracked"}},
+	}
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
+	requirements.True(messageTombstoned(t, st, heldID))
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "Legacy", "Legacy", "user")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageLabels(heldID, []int64{labelID}))
+	const checkpoint = "2000-01-01T00:00:00Z"
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_checkpoints SET checkpoint_value = ?
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), checkpoint, source.ID)
+	requirements.NoError(err)
+
+	peer := f.peerConn(t)
+	_, err = peer.ExecContext(t.Context(), "BEGIN")
+	requirements.NoError(err)
+	// Fix the stamp between the old checkpoint and this apply's bound.
+	_, err = peer.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at = NULL,
+		content_changed_at = '2001-01-01 00:00:00.000' WHERE id = $1`, heldID)
+	requirements.NoError(err)
+	var peerPID int
+	requirements.NoError(peer.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&peerPID))
+	var redacted bool
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT xact_start IS NULL AND backend_type IS NULL
+		FROM pg_stat_activity WHERE pid = $1`, peerPID).Scan(&redacted))
+	requirements.True(redacted, "the apply role cannot see the peer writer's transaction start")
+
+	delta.Memberships = nil
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
+	var saved string
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&saved)
+	requirements.NoError(err)
+	assertions.Equal(checkpoint, saved)
+	_, err = peer.ExecContext(t.Context(), "COMMIT")
+	requirements.NoError(err)
+	requirements.False(messageTombstoned(t, st, heldID))
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
+	assertions.True(messageTombstoned(t, st, heldID))
+	assertions.Empty(messageLabels(t, st, heldID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&saved))
+	assertions.NotEqual(checkpoint, saved, "an idle peer connection allows the checkpoint to advance")
+}
+
+func TestApplyIMAPMailboxDeltas_EmptyBaselineCleansLegacyLabelsOnce(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "empty-baseline@example.test")
+	requirements.NoError(err)
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "empty-baseline", "Empty account")
+	requirements.NoError(err)
+	f := imapMembershipFixture{store: st, source: source, convID: convID}
+	messageID := f.createMessage(t, "archived", "")
+	labelID, err := st.EnsureLabel(t.Context(), source.ID, "Legacy", "Legacy", "user")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageLabels(messageID, []int64{labelID}))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
+	requirements.NoError(err)
+
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{}))
+
+	// Reapply a label to make an unnecessary legacy recapture observable.
+	requirements.NoError(st.ReplaceMessageLabels(messageID, []int64{labelID}))
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{}))
+	assertions.Equal([]string{"Legacy"}, messageLabels(t, st, messageID), "an established baseline skips legacy tombstones")
+	assertions.True(messageTombstoned(t, st, messageID))
 }

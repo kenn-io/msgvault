@@ -25,8 +25,8 @@ import (
 // them. Unknown identifiers are a hard error: a silently skipped account
 // would quietly widen the embedded corpus beyond what the operator asked
 // for.
-func resolveEmbedScopeSourceIDs(s *store.Store, state *invocation) error {
-	state = invocationState(context.Background(), state)
+func resolveEmbedScopeSourceIDs(ctx context.Context, s *store.Store, state *invocation) error {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
@@ -34,13 +34,13 @@ func resolveEmbedScopeSourceIDs(s *store.Store, state *invocation) error {
 	var ids []int64
 	switch {
 	case len(embedAccounts) > 0 || len(embedCollections) > 0:
-		resolved, err := resolveEmbedScopeFlags(s)
+		resolved, err := resolveEmbedScopeFlags(ctx, s)
 		if err != nil {
 			return err
 		}
 		ids = resolved
 	case len(cfg.Vector.Embed.Scope.Accounts) > 0:
-		resolved, err := resolveEmbedAccountList(context.Background(), s, cfg.Vector.Embed.Scope.Accounts, true)
+		resolved, err := resolveEmbedAccountList(ctx, s, cfg.Vector.Embed.Scope.Accounts, true)
 		if err != nil {
 			return fmt.Errorf("[vector.embed.scope] accounts: %w", err)
 		}
@@ -56,10 +56,10 @@ func resolveEmbedScopeSourceIDs(s *store.Store, state *invocation) error {
 
 // resolveEmbedScopeFlags resolves the --account and --collection flag values
 // to their union of source IDs.
-func resolveEmbedScopeFlags(s *store.Store) ([]int64, error) {
+func resolveEmbedScopeFlags(ctx context.Context, s *store.Store) ([]int64, error) {
 	var ids []int64
 	if len(embedAccounts) > 0 {
-		accountIDs, err := resolveEmbedAccountList(context.Background(), s, embedAccounts, false)
+		accountIDs, err := resolveEmbedAccountList(ctx, s, embedAccounts, false)
 		if err != nil {
 			return nil, fmt.Errorf("--account: %w", err)
 		}
@@ -139,8 +139,8 @@ func resolveEmbedAccountList(ctx context.Context, s *store.Store, accounts []str
 // vector.ErrScopeUnresolvable so callers latch vector search stale instead
 // of retrying forever against cached source IDs; transient failures (a busy
 // database) pass through unwrapped for retry.
-func configuredEmbedBuildScope(s *store.Store, state *invocation) (vector.BuildScope, error) {
-	state = invocationState(context.Background(), state)
+func configuredEmbedBuildScope(ctx context.Context, s *store.Store, state *invocation) (vector.BuildScope, error) {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return vector.BuildScope{}, errors.New("configuration is unavailable")
 	}
@@ -149,7 +149,7 @@ func configuredEmbedBuildScope(s *store.Store, state *invocation) (vector.BuildS
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 {
 		return vector.NewBuildScope(messageTypes, nil), nil
 	}
-	ids, err := resolveEmbedAccountList(context.Background(), s, cfg.Vector.Embed.Scope.Accounts, true)
+	ids, err := resolveEmbedAccountList(ctx, s, cfg.Vector.Embed.Scope.Accounts, true)
 	if err != nil {
 		if kind := opserr.KindOf(err); kind == opserr.KindInvalid || kind == opserr.KindNotFound {
 			return vector.BuildScope{}, fmt.Errorf("%w: [vector.embed.scope] accounts: %w", vector.ErrScopeUnresolvable, err)
@@ -180,7 +180,7 @@ func ensureEmbedScopeResolved(ctx context.Context, state *invocation) error {
 		return fmt.Errorf("open main db for embed scope resolution: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	return resolveEmbedScopeSourceIDs(s, state)
+	return resolveEmbedScopeSourceIDs(ctx, s, state)
 }
 
 // resolvedVectorConfig returns a copy of the vector config with the
@@ -209,8 +209,8 @@ func resolvedVectorConfig(ctx context.Context, s *store.Store, vecCfg vector.Con
 
 // openResolvedVectorConfig is resolvedVectorConfig for callers without an
 // open store, such as the daemon's CLI-plan HTTP handlers.
-func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
-	state = invocationState(context.Background(), state)
+func openResolvedVectorConfig(ctx context.Context, state *invocation) (vector.Config, error) {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return vector.Config{}, errors.New("configuration is unavailable")
 	}
@@ -218,15 +218,17 @@ func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 && len(cfg.Vector.Multimodal.Scope.Accounts) == 0 {
 		return cfg.Vector, nil
 	}
-	s, err := store.Open(cfg.DatabaseDSN())
+	s, err := store.OpenContext(ctx, cfg.DatabaseDSN())
 	if err != nil {
 		return vector.Config{}, fmt.Errorf("open main db for embed scope resolution: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	return resolvedVectorConfig(context.Background(), s, cfg.Vector)
+	return resolvedVectorConfig(ctx, s, cfg.Vector)
 }
 
 var localEmbeddingsDir = embedlocal.DefaultDir
+
+var localEmbeddingEndpoint = embedlocal.Endpoint
 
 var errLocalEmbeddingDownloadRequired = errors.New("local embedding download required")
 
@@ -240,7 +242,7 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 	if err != nil {
 		return vector.Config{}, fmt.Errorf("local embedding directory: %w", err)
 	}
-	endpoint, err := embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
+	endpoint, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir, SkipOllama: true})
 	if errors.Is(err, embedlocal.ErrNotFound) {
 		installation, installErr := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Confirm: func(context.Context, int64) (bool, error) {
 			return false, errLocalEmbeddingDownloadRequired
@@ -251,7 +253,7 @@ func resolveLocalVectorConfig(ctx context.Context, cfg vector.Config) (vector.Co
 		if installErr != nil {
 			return vector.Config{}, fmt.Errorf("install local embeddings: %w", installErr)
 		}
-		endpoint, err = embedlocal.Endpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
+		endpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
 	}
 	if err != nil {
 		return vector.Config{}, fmt.Errorf("resolve local embeddings: %w", err)

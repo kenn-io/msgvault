@@ -47,22 +47,22 @@ func replaceTestStoreDB(t *testing.T, st *Store, db *sql.DB) {
 // store without running InitSchema. Tests that need to observe a specific
 // schema-initialization boundary use this; ordinary tests use
 // newPGStoreInternal above.
-func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
-	t.Helper()
+func newUninitializedPGStoreInternal(tb testing.TB, dbURL string) *Store {
+	tb.Helper()
 
 	buf := make([]byte, 8)
 	_, err := rand.Read(buf)
-	require.NoError(t, err, "random schema name")
+	require.NoError(tb, err, "random schema name")
 	schemaName := "msgvault_test_" + hex.EncodeToString(buf)
 
 	setupDB, err := sql.Open("pgx", dbURL)
-	require.NoError(t, err, "open setup connection")
-	_, schemaErr := setupDB.Exec("CREATE SCHEMA " + schemaName)
+	require.NoError(tb, err, "open setup connection")
+	_, schemaErr := setupDB.ExecContext(tb.Context(), "CREATE SCHEMA "+schemaName)
 	_ = setupDB.Close()
-	require.NoErrorf(t, schemaErr, "create schema %s", schemaName)
+	require.NoErrorf(tb, schemaErr, "create schema %s", schemaName)
 
 	var st *Store
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if st != nil {
 			_ = st.Close()
 		}
@@ -71,7 +71,7 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 			return
 		}
 		defer func() { _ = cleanupDB.Close() }()
-		_, _ = cleanupDB.Exec(fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
+		_, _ = cleanupDB.ExecContext(context.WithoutCancel(tb.Context()), fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
 	})
 
 	sep := "?"
@@ -81,7 +81,7 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 	testURL := dbURL + sep + "search_path=" + schemaName
 
 	st, err = Open(testURL)
-	require.NoError(t, err, "open store")
+	require.NoError(tb, err, "open store")
 	return st
 }
 
@@ -105,7 +105,7 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 	// Tables with a direct ON DELETE CASCADE FK to sources(id), read from the
 	// catalog (scoped to the test's current schema so sibling schemas can't
 	// leak in).
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT DISTINCT c.conrelid::regclass::text
 		FROM pg_constraint c
 		JOIN pg_class child ON child.oid = c.conrelid
@@ -177,7 +177,7 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
 	require := require.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for i := range 15 {
 		source, err := st.GetOrCreateSource("gmail", fmt.Sprintf("race%d@example.com", i))
@@ -221,7 +221,7 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration(t *tes
 	require := require.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err := st.GetOrCreateSource("gmail", "stable@example.com")
 	require.NoError(err, "create eligible source")
@@ -229,7 +229,7 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration(t *tes
 	for i := range 15 {
 		source, err := st.GetOrCreateSource("imessage", fmt.Sprintf("+1555010%04d", i))
 		require.NoError(err, "iteration %d: create removable source", i)
-		_, err = st.DB().Exec(st.Rebind(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 			`DELETE FROM applied_migrations WHERE name = ?`), migrationLegacyIdentity)
 		require.NoError(err, "iteration %d: clear migration marker", i)
 		address := fmt.Sprintf("me%d@example.com", i)
@@ -264,11 +264,12 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithSetParticipantIdentifier(t *te
 	require := require.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stable, err := st.GetOrCreateSource("gmail", "stable@example.com")
 	require.NoError(err, "create stable source")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		`INSERT INTO account_identities (source_id, address, source_signal)
 		 VALUES ($1, $2, $3)`,
 		stable.ID, "me@example.com", "test")
@@ -308,7 +309,7 @@ func TestMergeSourcesDoesNotDeadlockWithSerializedSourceRemoval(t *testing.T) {
 	require := require.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	from, err := st.GetOrCreateSource("gmail", "merge-history@example.test")
 	require.NoError(err)
 	into, err := st.GetOrCreateSource("gmail", "merge-live@example.test")
@@ -412,7 +413,7 @@ func is57014(err error) bool { return isPgError(err, "57014") }
 func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	d := &PostgreSQLDialect{}
 
@@ -488,22 +489,22 @@ func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
 	assert := assert.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	const (
 		packID = "01hzy3v7q8r9s0t1a2v3w4x6j1"
 		hash   = "aa11223344556677889900aabbccddeeff00112233445566778899aabbccddee"
 	)
 
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
 		VALUES ($1, 1, 64, $2)`, packID, time.Now().UTC().Format(time.RFC3339))
 	require.NoError(err, "insert zero-live pack record")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO attachment_pack_index
 		    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
 		VALUES ($1, $2, 6, 64, 64, 0, 0)`, hash, packID)
 	require.NoError(err, "insert stale mapping")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE FUNCTION slow_repack_maintenance_delete() RETURNS trigger
 		LANGUAGE plpgsql AS $$
 		BEGIN
@@ -511,12 +512,12 @@ func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
 		    RETURN OLD;
 		END $$`)
 	require.NoError(err, "create slow maintenance trigger function")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER slow_repack_mapping_delete
 		BEFORE DELETE ON attachment_pack_index
 		FOR EACH ROW EXECUTE FUNCTION slow_repack_maintenance_delete()`)
 	require.NoError(err, "create slow mapping trigger")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER slow_repack_record_delete
 		BEFORE DELETE ON attachment_packs
 		FOR EACH ROW EXECUTE FUNCTION slow_repack_maintenance_delete()`)

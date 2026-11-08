@@ -58,7 +58,7 @@ func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {
 	require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "from", []int64{owner}, []string{"Owner"}))
 	require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "to", []int64{counterpart}, []string{"Counterpart"}))
 	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
-	require.NoError(f.Store.AddMessageLabels(unsentID, []int64{labels["DRAFT"]}))
+	require.NoError(f.Store.AddMessageLabels(t.Context(), unsentID, []int64{labels["DRAFT"]}))
 	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
 	require.NoError(err)
 	_, err = projector.RunOnce(t.Context())
@@ -99,11 +99,11 @@ func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
 		t, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC), false)
 	unchangedID := f.CreateMessage("already-stamped")
 	undatedID := f.CreateMessage("undated-bodyless")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET last_modified = NULL WHERE id <> ?`), unchangedID)
 	require.NoError(err)
 	unchangedStamp := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET last_modified = ? WHERE id = ?`), unchangedStamp, unchangedID)
 	require.NoError(err)
 	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
@@ -113,12 +113,12 @@ func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
 	require.ErrorContains(err, fmt.Sprintf("message %d", messageID))
 	// Reproduce an archive that already ran the original backfill but has
 	// since imported bodyless messages through a column without a DEFAULT.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "messages_last_modified_null_repair")
 	require.NoError(err)
 	require.NoError(f.Store.InitSchema())
 	var stamp time.Time
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT last_modified FROM messages WHERE id = ?`), unchangedID).Scan(&stamp))
 	assert.Equal(unchangedStamp, stamp.UTC(), "repair must preserve existing timestamps")
 
@@ -205,6 +205,58 @@ func TestProjectorIncludesChannelMembersWhenFromRecipientExists(t *testing.T) {
 		{personID: senderPerson.ID, role: "sender", evidence: "direct"},
 		{personID: memberPerson.ID, role: "member", evidence: "co_presence"},
 	}, got)
+}
+
+func TestProjectorReconcilesConversationMemberMutations(t *testing.T) {
+	req := require.New(t)
+	f := storetest.New(t)
+	req.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
+	existing := f.EnsureParticipant("existing@example.com", "Existing", "example.com")
+	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
+	senderPerson, _, err := f.Store.CreatePersonFromParticipant(sender)
+	req.NoError(err)
+	_, _, err = f.Store.CreatePersonFromParticipant(existing)
+	req.NoError(err)
+	memberPerson, _, err := f.Store.CreatePersonFromParticipant(member)
+	req.NoError(err)
+	first, err := f.Store.EnsureConversationWithType(f.Source.ID, "first-chat", "group_chat", "First chat")
+	req.NoError(err)
+	for _, id := range []int64{sender, existing} {
+		req.NoError(f.Store.EnsureConversationParticipant(first, id, "member"))
+	}
+	var messageIDs []int64
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	for i := range 2 {
+		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("member-mutation-%d", i)).WithSentAt(now).Build()
+		message.ConversationID = first
+		id, err := f.Store.UpsertMessage(message)
+		req.NoError(err)
+		messageIDs = append(messageIDs, id)
+		req.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender"}))
+	}
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	req.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO conversation_participants (conversation_id, participant_id, role) VALUES (?, ?, 'member')`), first, member)
+	req.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), senderPerson.ID, now)
+	req.NoError(err)
+	assert.True(t, state.Stale)
+	_, err = projector.RunOnce(t.Context())
+	req.NoError(err)
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`SELECT message_id FROM activity_event_persons WHERE person_id = ? ORDER BY message_id`), memberPerson.ID)
+	req.NoError(err)
+	defer func() { req.NoError(rows.Close()) }()
+	var got []int64
+	for rows.Next() {
+		var id int64
+		req.NoError(rows.Scan(&id))
+		got = append(got, id)
+	}
+	req.NoError(rows.Err())
+	assert.Equal(t, messageIDs, got)
 }
 
 func TestProjectorReconcilesChangedDirectCounterpartLimit(t *testing.T) {
@@ -664,6 +716,7 @@ func TestConcurrentDifferentTimezoneWorkersRejectStaleGeneration(t *testing.T) {
 	source, err := primary.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err)
 	conversationID, err := primary.EnsureConversation(
+		t.Context(),
 		source.ID, "timezone-race", "Timezone Race")
 	require.NoError(err)
 	f := &storetest.Fixture{
@@ -1090,7 +1143,8 @@ func (r *recomputeRevisionRacingStore) StaleContactStatePersonsContext(
 		return personIDs, err
 	}
 	r.once.Do(func() {
-		r.err = r.AddAccountIdentity(
+		r.err = r.AddAccountIdentityContext(
+			ctx,
 			r.sourceID, "recompute-epoch-owner@example.com", "manual")
 	})
 	return personIDs, r.err
@@ -1101,7 +1155,8 @@ func (r *identityRacingProjectorStore) ProjectActivityBatchContext(
 	items []store.ActivityProjection,
 ) (store.ActivityProjectionResult, error) {
 	r.once.Do(func() {
-		r.err = r.AddAccountIdentity(
+		r.err = r.AddAccountIdentityContext(
+			ctx,
 			items[0].Token.SourceID, "epoch-race-owner@example.com", "manual")
 	})
 	if r.err != nil {
@@ -1240,21 +1295,22 @@ func newConcurrentActivityStores(t *testing.T) (*store.Store, *store.Store) {
 		require.NoError(t, err)
 		second, err = store.Open(testURL)
 		require.NoError(t, err)
+		// Cleanup runs after t.Context() is canceled.
 		t.Cleanup(func() {
 			_ = first.Close()
 			_ = second.Close()
 			cleanup, cleanupErr := sql.Open("pgx", databaseURL)
 			if cleanupErr == nil {
-				_, _ = cleanup.Exec("DROP SCHEMA " + schema + " CASCADE")
+				_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+schema+" CASCADE")
 				_ = cleanup.Close()
 			}
 		})
 	} else {
 		databasePath := filepath.Join(t.TempDir(), "activity-concurrency.db")
 		var err error
-		first, err = store.OpenForTest(databasePath)
+		first, err = store.OpenForTest(t.Context(), databasePath)
 		require.NoError(t, err)
-		second, err = store.OpenForTest(databasePath)
+		second, err = store.OpenForTest(t.Context(), databasePath)
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			_ = first.Close()
@@ -1491,4 +1547,36 @@ type recordActivityScanAllStore struct {
 func (s *recordActivityScanAllStore) ScanAllActivityCandidatesContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error) {
 	s.afterIDs = append(s.afterIDs, afterID)
 	return s.Store.ScanAllActivityCandidatesContext(ctx, afterID, limit)
+}
+
+func TestConversationExpansionHonorsPreemptionAndBatchBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, _ := projectorManyFixture(t, 3)
+	initial, err := NewProjector(f.Store, Options{Timezone: "UTC"})
+	require.NoError(err)
+	_, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	member := f.EnsureParticipant("new-member@example.com", "New Member", "example.com")
+	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
+	var before, after int64
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT SUM(revision) FROM activity_projection_queue`).Scan(&before))
+	ctx, preempt := jobctx.WithPreemption(t.Context())
+	preempt()
+	result, err := initial.RunOnce(ctx)
+	require.ErrorIs(err, ErrWorkRemaining)
+	assert.Zero(result.Batches)
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT SUM(revision) FROM activity_projection_queue`).Scan(&after))
+	assert.Equal(before, after, "preemption leaves membership expansion untouched")
+	var pending int
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
+	assert.Equal(1, pending)
+
+	limited, err := NewProjector(f.Store, Options{Timezone: "UTC", MaxBatches: 1})
+	require.NoError(err)
+	result, err = limited.RunOnce(t.Context())
+	require.ErrorIs(err, ErrWorkRemaining)
+	assert.Zero(result.Processed, "expansion consumes the only batch before projection")
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
+	assert.Zero(pending)
 }

@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,48 +162,47 @@ func TestDirectoryPeopleAddressLookupUnicodeParity(t *testing.T) {
 }
 
 func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T) {
-	assert := Assert.New(t)
 	require := Require.New(t)
 	st := testutil.NewTestStore(t)
+	seedDirectoryLookupPeople(t, st, 0, 2561)
 	var matches []int64
-	for index := range 70 {
-		person := createDirectoryPerson(t, st, fmt.Sprintf("Person %03d", index), fmt.Sprintf("person-%03d@example.test", index), "friend", "active", "Example Co")
-		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_contact_state SET last_contact_at = ? WHERE person_id = ?`),
-			time.Date(2026, 1, 1, 0, index, 0, 0, time.UTC), person.ID)
-		require.NoError(err)
-		if index == 34 || index == 69 {
-			_, err := st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
-				AddressKind: store.ContactAddressUsername, OriginalValue: "shared-handle",
-				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-			})
-			require.NoError(err)
-			matches = append(matches, person.ID)
+	for index := 0; index <= 2560; index += 640 {
+		personID := int64(index + 1)
+		matches = append(matches, personID)
+		original := "+12025550123"
+		if index == 2560 {
+			// Only the normalized value contains the searched fragment.
+			original = "+1 (202) 555-0123"
 		}
+		_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+			AddressKind: store.ContactAddressPhone, OriginalValue: original,
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		})
+		require.NoError(err)
 	}
+	require.NoError(st.RefreshDirectoryProjectionContext(t.Context()))
 	for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
 		t.Run(order, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
-			want := []int64{matches[0], matches[1]}
+			want := append([]int64(nil), matches...)
 			if order == store.DirectoryPeopleSortLastContactDesc {
-				want = []int64{matches[1], matches[0]}
+				slices.Reverse(want)
 			}
-			query := store.DirectoryPeopleQuery{Query: "person", Address: "shared-handle", Sort: order, Limit: 1}
-			first, err := st.DirectoryPeoplePageContext(t.Context(), query)
-			require.NoError(err)
-			assert.Equal(want[:1], directoryPersonIDs(first.People))
-			require.NotEmpty(first.NextCursor)
-			query.Cursor = first.NextCursor
-			second, err := st.DirectoryPeoplePageContext(t.Context(), query)
-			require.NoError(err)
-			assert.Equal(want[1:], directoryPersonIDs(second.People))
-			assert.Empty(second.NextCursor)
+			query := store.DirectoryPeopleQuery{Query: "person", Address: "+12025550123", Sort: order, Limit: 1}
+			for index, id := range want {
+				page, err := st.DirectoryPeoplePageContext(t.Context(), query)
+				require.NoError(err)
+				assert.Equal([]int64{id}, directoryPersonIDs(page.People))
+				if index == len(want)-1 {
+					assert.Empty(page.NextCursor)
+				} else {
+					require.NotEmpty(page.NextCursor)
+				}
+				query.Cursor = page.NextCursor
+			}
 		})
 	}
-	page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Address: "absent-handle", Limit: 1})
-	require.NoError(err)
-	assert.Empty(page.People)
-	assert.Empty(page.NextCursor)
 }
 
 func TestDirectoryPeopleAddressLookupRejectsRevokedAnchor(t *testing.T) {
@@ -251,4 +252,79 @@ func TestDirectoryPeopleAddressLookupRejectsReboundAnchor(t *testing.T) {
 	query.Cursor = page.NextCursor
 	_, err = f.store.DirectoryPeoplePageContext(t.Context(), query)
 	assert.ErrorIs(err, store.ErrInvalidDirectoryCursor)
+}
+
+func TestDirectoryPeopleAddressMissStatementsGrowLogarithmically(t *testing.T) {
+	for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
+		t.Run(order, func(t *testing.T) {
+			assert := Assert.New(t)
+			st := testutil.NewTestStore(t)
+			var baseline int
+			for _, size := range []int{200, 1600} {
+				first := 0
+				if size == 1600 {
+					first = 200
+				}
+				seedDirectoryLookupPeople(t, st, first, size-first)
+				// Refresh the projection before counting the address search itself.
+				Require.NoError(t, st.RefreshDirectoryProjectionContext(t.Context()))
+				logs := captureAttachmentQueryLogs(t)
+				page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Address: "nobody@nowhere", Sort: order, Limit: 50})
+				Require.NoError(t, err)
+				assert.Empty(page.People)
+				assert.Empty(page.NextCursor)
+				count := strings.Count(logs.String(), `"kind":"query"`)
+				if size == 200 {
+					baseline = count
+				} else {
+					// Allow one extra fetch/verification pair beyond the three doublings.
+					assert.Greater(count, baseline)
+					assert.LessOrEqual(count-baseline, 8)
+				}
+			}
+		})
+	}
+}
+
+// Seed scale fixtures in batches so setup avoids per-person write projections.
+func seedDirectoryLookupPeople(t *testing.T, st *store.Store, first, count int) {
+	t.Helper()
+	require := Require.New(t)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	override := ""
+	if st.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	for offset := first; offset < first+count; offset += 200 {
+		var people, participants, points, bindings, states []any
+		var triples, pairs, contactRows []string
+		for index := offset; index < min(offset+200, first+count); index++ {
+			id := int64(index + 1)
+			email := fmt.Sprintf("person-%04d@example.test", index)
+			people = append(people, id, fmt.Sprintf("directory-lookup-%d", index), fmt.Sprintf("Person %04d", index))
+			participants = append(participants, id, email)
+			points = append(points, id, email, email)
+			bindings = append(bindings, id, id)
+			states = append(states, id, time.Date(2026, 1, 1, 0, index, 0, 0, time.UTC))
+			triples = append(triples, "(?, ?, ?)")
+			pairs = append(pairs, "(?, ?)")
+			contactRows = append(contactRows, "(?, ?, ?, 'email', 'user')")
+		}
+		for _, batch := range []struct {
+			query string
+			args  []any
+		}{
+			{"INSERT INTO persons (id, vcard_uid, display_name)" + override + " VALUES " + strings.Join(triples, ","), people},
+			{"INSERT INTO participants (id, email_address)" + override + " VALUES " + strings.Join(pairs, ","), participants},
+			{"INSERT INTO person_participants (person_id, participant_id) VALUES " + strings.Join(pairs, ","), bindings},
+			{"INSERT INTO person_contact_points (person_id, original_value, normalized_value, address_kind, source) VALUES " + strings.Join(contactRows, ","), points},
+			{"INSERT INTO person_contact_state (person_id, last_contact_at) VALUES " + strings.Join(pairs, ","), states},
+		} {
+			_, err = tx.ExecContext(t.Context(), st.Rebind(batch.query), batch.args...)
+			require.NoError(err)
+		}
+	}
+	require.NoError(tx.Commit())
 }

@@ -40,7 +40,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 	src, err := st.GetOrCreateSource("gmail", "pgcompat@example.com")
 	setupRequire.NoError(err, "GetOrCreateSource")
 
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "Thread 1")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "Thread 1")
 	setupRequire.NoError(err, "EnsureConversation")
 
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
@@ -48,7 +48,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
 	setupRequire.NoError(err, "EnsureParticipant bob")
 
-	labelID, err := st.EnsureLabel(src.ID, "Label_1", "Important", "user")
+	labelID, err := st.EnsureLabel(t.Context(), src.ID, "Label_1", "Important", "user")
 	setupRequire.NoError(err, "EnsureLabel")
 
 	base := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -75,7 +75,28 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 	}
 
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	ctx := context.Background()
+	ctx := t.Context()
+
+	t.Run("sender_retry", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		matcher, ok := eng.(query.SenderNameMatcher)
+		requirements.True(ok)
+		hints := matcher.MatchSenderName(ctx, search.Parse("from:alice@exam"))
+		requirements.Len(hints, 1)
+		assertions.Contains(hints[0].Message, "alice@example.com (4 messages)")
+		assertions.Equal("from:alice@example.com", hints[0].RetryWith.Query)
+	})
+
+	t.Run("sender_name_label_page", func(t *testing.T) {
+		msgs, err := eng.ListMessages(ctx, query.MessageFilter{
+			Sender: "alice@example.com", SenderName: "Alice", Label: "Important",
+			Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
+			Pagination: query.Pagination{Limit: 2, Offset: 1},
+		})
+		require.NoError(t, err)
+		require.Len(t, msgs, 2)
+		assert.Equal(t, []string{gmailSourceID(2), gmailSourceID(1)}, []string{msgs[0].SourceMessageID, msgs[1].SourceMessageID})
+	})
 
 	t.Run("pipe_or", func(t *testing.T) {
 		require := require.New(t)
@@ -174,7 +195,7 @@ func TestQueryEngine_CaseInsensitiveSearch_Subject(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "case-search@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "case-thread", "case thread")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "case-thread", "case thread")
 	require.NoError(err, "EnsureConversation")
 	mid, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
@@ -190,7 +211,7 @@ func TestQueryEngine_CaseInsensitiveSearch_Subject(t *testing.T) {
 	_ = mid
 
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, term := range []string{"invoice", "INVOICE", "Invoice"} {
 		got, err := eng.Search(ctx,
@@ -221,7 +242,7 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "multifrom@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-mf", "Thread MF")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-mf", "Thread MF")
 	require.NoError(err, "EnsureConversation")
 
 	// Two distinct 'from' participants that share a domain AND a display
@@ -268,7 +289,7 @@ func TestQueryEngine_MultiFromNoDuplication(t *testing.T) {
 		[]int64{otherFrom}, []string{"Other"}), "ReplaceMessageRecipients other")
 
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("list_messages_domain", func(t *testing.T) {
 		msgs, err := eng.ListMessages(ctx, query.MessageFilter{
@@ -328,7 +349,7 @@ func TestQueryEngine_ListIDCaseInsensitiveParity(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "list-parity@example.test")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(src.ID, "list-parity-thread", "List parity")
+	conversationID, err := st.EnsureConversation(t.Context(), src.ID, "list-parity-thread", "List parity")
 	require.NoError(err)
 
 	addMessage := func(sourceMessageID, listID string) int64 {
@@ -351,7 +372,7 @@ func TestQueryEngine_ListIDCaseInsensitiveParity(t *testing.T) {
 	addMessage("list-decoy", "<devA1@example.test>")
 
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	ctx := context.Background()
+	ctx := t.Context()
 	filter := query.MessageFilter{ListID: "<DEV_1@EXAMPLE.TEST>"}
 
 	rows, err := engine.Aggregate(ctx, query.ViewLists, query.DefaultAggregateOptions())
@@ -402,7 +423,7 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("gmail", "fts-body@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "fts-thread", "fts thread")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "fts-thread", "fts thread")
 	require.NoError(err, "EnsureConversation")
 
 	const bodyOnlyTerm = "zorblax"
@@ -428,7 +449,7 @@ func TestQueryEngine_FTSBodySearch(t *testing.T) {
 	require.NoError(st.UpsertFTS(mid, "Quarterly report", body, "", "", ""), "UpsertFTS")
 
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// (1) Body-only TextTerms search must find the message — only the FTS path
 	// can, since the term is absent from subject/snippet.
@@ -479,18 +500,19 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 		name    string
 		withFTS bool
 	}{{hasSchema, true}, {noSchema, false}} {
-		_, err := setupDB.Exec("CREATE SCHEMA " + s.name)
+		_, err := setupDB.ExecContext(t.Context(), "CREATE SCHEMA "+s.name)
 		require.NoErrorf(err, "create schema %s", s.name)
 		cols := "id BIGINT"
 		if s.withFTS {
 			cols += ", search_fts TSVECTOR"
 		}
-		_, err = setupDB.Exec("CREATE TABLE " + s.name + ".messages (" + cols + ")")
+		_, err = setupDB.ExecContext(t.Context(), "CREATE TABLE "+s.name+".messages ("+cols+")")
 		require.NoErrorf(err, "create messages in %s", s.name)
 	}
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, _ = setupDB.Exec("DROP SCHEMA " + hasSchema + " CASCADE")
-		_, _ = setupDB.Exec("DROP SCHEMA " + noSchema + " CASCADE")
+		_, _ = setupDB.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+hasSchema+" CASCADE")
+		_, _ = setupDB.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+noSchema+" CASCADE")
 	})
 
 	// Connection scoped to the schema WITHOUT search_fts.
@@ -504,7 +526,7 @@ func TestQueryDialect_HasFTSTableSQL_SchemaScoped(t *testing.T) {
 
 	var count int
 	require.NoError(
-		scopedDB.QueryRow(query.PostgreSQLQueryDialect{}.HasFTSTableSQL()).Scan(&count),
+		scopedDB.QueryRowContext(t.Context(), query.PostgreSQLQueryDialect{}.HasFTSTableSQL()).Scan(&count),
 		"run HasFTSTableSQL probe")
 
 	assert.Equal(t, 0, count,
@@ -533,7 +555,7 @@ func TestQueryEngine_SearchDateRange_TimezoneStable(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("gmail", "tz-search@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "tz-thread", "tz thread")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "tz-thread", "tz thread")
 	require.NoError(err, "EnsureConversation")
 
 	mid, err := st.UpsertMessage(&store.Message{
@@ -552,8 +574,9 @@ func TestQueryEngine_SearchDateRange_TimezoneStable(t *testing.T) {
 	// search_path, applied per-connection by pgx) both stick for the search.
 	db := st.DB()
 	db.SetMaxOpenConns(1)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, _ = db.Exec("SET TIME ZONE 'UTC'")
+		_, _ = db.ExecContext(context.WithoutCancel(t.Context()), "SET TIME ZONE 'UTC'")
 		db.SetMaxOpenConns(0)
 	})
 
@@ -562,7 +585,7 @@ func TestQueryEngine_SearchDateRange_TimezoneStable(t *testing.T) {
 	q := &search.Query{AfterDate: &after, BeforeDate: &before}
 
 	eng := query.NewEngine(db, true)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, tz := range []string{"UTC", "America/Los_Angeles"} {
 		_, err := db.ExecContext(ctx, "SET TIME ZONE '"+tz+"'")
@@ -624,7 +647,7 @@ func newPipeORAggregateEngine(t *testing.T) query.Engine {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "analytics@example.com")
 	setupRequire.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "analytics", "Analytics")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "analytics", "Analytics")
 	setupRequire.NoError(err)
 	sender, err := st.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	setupRequire.NoError(err)

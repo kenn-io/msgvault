@@ -58,7 +58,7 @@ func (f *fakeEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, er
 
 func newEngineFixture(t *testing.T) *engineFixture {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
@@ -96,7 +96,7 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = mainDB.Exec(schema)
+	_, err = mainDB.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 	rows := []struct {
 		id      int64
@@ -108,13 +108,16 @@ CREATE TABLE message_recipients (
 		{3, "travel itinerary", "Flight confirmation attached."},
 	}
 	for _, r := range rows {
-		_, err := mainDB.Exec(
+		_, err := mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO messages (id, subject) VALUES (?, ?)`, r.id, r.subject)
 		require.NoError(t, err, "insert msg")
-		_, err = mainDB.Exec(
+		_, err = mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, r.id, r.body)
 		require.NoError(t, err, "insert body")
-		_, err = mainDB.Exec(
+		_, err = mainDB.ExecContext(
+			t.Context(),
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`, r.id, r.subject, r.body)
 		require.NoError(t, err, "insert fts")
 	}
@@ -189,7 +192,7 @@ func TestEngine_Hybrid_CapsEachSignal(t *testing.T) {
 func TestEngine_Hybrid_HappyPath(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 
 	results, meta, err := f.Engine.Search(ctx, SearchRequest{
@@ -206,7 +209,7 @@ func TestEngine_Hybrid_HappyPath(t *testing.T) {
 }
 
 func TestEngine_SearchUsesEmbedQuery(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	client := &fakeEmbedder{dim: 4}
 	f.Engine.client = client
@@ -241,7 +244,7 @@ func TestEngine_VectorPoolSaturationComesFromBackendMetadata(t *testing.T) {
 }
 
 func TestEngine_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	f.Engine.cfg.BuildScope = vector.NewBuildScope([]string{"sms", "mms"}, nil)
 
@@ -306,7 +309,7 @@ func TestFTSTerms(t *testing.T) {
 func TestEngine_Hybrid_PunctuationQuery(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 
 	for _, q := range []string{
@@ -338,7 +341,7 @@ func TestEngine_Hybrid_PunctuationQuery(t *testing.T) {
 func TestEngine_Vector_HappyPath(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 
 	results, meta, err := f.Engine.Search(ctx, SearchRequest{
@@ -361,7 +364,7 @@ func TestEngine_Vector_HappyPath(t *testing.T) {
 }
 
 func TestEngine_StaleIndexRejected(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 
 	badEng := NewEngine(f.Backend, f.MainDB, &fakeEmbedder{dim: 4}, Config{
@@ -377,7 +380,7 @@ func TestEngine_StaleIndexRejected(t *testing.T) {
 }
 
 func TestEngine_FTSMode_Rejected(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeFTS, FreeText: "meeting", Limit: 5,
@@ -386,7 +389,7 @@ func TestEngine_FTSMode_Rejected(t *testing.T) {
 }
 
 func TestEngine_EmptyFreeText_Rejected(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: ModeHybrid, FreeText: "", Limit: 5,
@@ -395,7 +398,7 @@ func TestEngine_EmptyFreeText_Rejected(t *testing.T) {
 }
 
 func TestEngine_UnknownMode_Rejected(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
 		Mode: "bogus", FreeText: "x", Limit: 5,
@@ -410,7 +413,7 @@ func TestEngine_UnknownMode_Rejected(t *testing.T) {
 // pool even when the BM25 branch had more than K candidates.
 func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 
 	// Seed a batch of FTS-matching messages well above KPerSignal=2.
@@ -449,7 +452,7 @@ func TestEngine_PoolSaturated_WhenLimitBelowK(t *testing.T) {
 // API layer can 503 with "vector_not_enabled" instead of a generic
 // ErrNoActiveGeneration.
 func TestEngine_NoGenerations_ReturnsNotEnabled(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	require.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
 	_, _, err := f.Engine.Search(ctx, SearchRequest{
@@ -465,7 +468,7 @@ func TestEngine_NoGenerations_ReturnsNotEnabled(t *testing.T) {
 // vector.ErrEmbeddingTimeout so the API/MCP error mappers can
 // surface a 503 embedding_timeout instead of a generic 500.
 func TestEngine_EmbedTimeout_WrappedAsErrEmbeddingTimeout(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	timingOutEng := NewEngine(f.Backend, f.MainDB, &timeoutEmbedder{}, Config{
 		ExpectedFingerprint: f.Fingerprint,
@@ -494,7 +497,7 @@ func (timeoutEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error
 // differentiate this from ErrNotEnabled so clients can distinguish
 // "configure vector search" from "wait for build".
 func TestEngine_BuildingOnly_ReturnsBuilding(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newEngineFixture(t)
 	require.NoError(t, f.Backend.RetireGeneration(ctx, f.GenID, true), "Retire")
 	// A new building generation must be present; CreateGeneration

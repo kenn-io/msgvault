@@ -50,9 +50,9 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 					assert.Equal(tc.stateAtChange, state, "the worker must mark sending before yielding after its read")
 					switch change {
 					case "source deletion":
-						require.NoError(f.Store.MarkMessagesDeletedBatch(f.Source.ID, []string{"recording"}))
+						require.NoError(f.Store.MarkMessagesDeletedBatch(t.Context(), f.Source.ID, []string{"recording"}))
 					case "archive deletion":
-						_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
+						_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), "2000-01-01 00:00:00.000", id)
 						require.NoError(err)
 					default:
 						require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "Recording link removed", Valid: true}, sql.NullString{}))
@@ -80,7 +80,7 @@ func TestRecordingReferenceRemovalBeforeSend(t *testing.T) {
 				state, _, _ := recordingState(t, f, id)
 				assert.Equal("withdrawn", state)
 				if change == "archive deletion" {
-					_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=NULL WHERE id=?`), id)
+					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=NULL WHERE id=?`), id)
 					require.NoError(err)
 					waitForRecordingChange(t, worker, id)
 					assert.Len(requests, 1)

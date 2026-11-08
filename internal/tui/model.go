@@ -72,6 +72,10 @@ type Options struct {
 	// When nil, embedders retain the three existing modes.
 	PeopleBackend peoplebrowser.Backend
 
+	// LocalTimezone is the IANA name of the system zone that Go reports as
+	// "Local"; empty when unknown.
+	LocalTimezone string
+
 	// ManifestSaver saves staged deletion manifests. When nil, manifests are
 	// saved under DataDir for tests or direct embedding.
 	ManifestSaver DeletionManifestSaver
@@ -397,6 +401,7 @@ type Model struct {
 	// People mode dependencies and state remain separate from every other mode.
 	peopleBackend peoplebrowser.Backend
 	peopleState   peopleState
+	localTimezone string
 
 	// Settings is a global shell surface, deliberately separate from the
 	// content-mode cycle so opening it cannot disturb content navigation.
@@ -430,6 +435,7 @@ type Model struct {
 	// Global Stats (not view specific)
 	stats                 *query.TotalStats // Global stats
 	accounts              []query.AccountInfo
+	accountsLoaded        bool
 	collectionScopeLister query.CollectionScopeLister
 	collectionScopes      []query.CollectionScope
 	sourceScope           sourceScope
@@ -582,6 +588,7 @@ func New(engine query.Engine, opts Options) Model {
 		collectionScopeLister: opts.CollectionScopeLister,
 		sourceScope:           allSourceScope(),
 		peopleBackend:         opts.PeopleBackend,
+		localTimezone:         opts.LocalTimezone,
 		settingsBackend:       opts.SettingsBackend,
 		settings:              newSettingsState(),
 		actions: NewActionControllerWithOptions(engine, ActionControllerOptions{
@@ -1785,6 +1792,7 @@ func (m Model) handleAccountsLoaded(msg accountsLoadedMsg) (tea.Model, tea.Cmd) 
 		}
 		return m, nil
 	}
+	m.accountsLoaded = true
 	if msg.catalogUnavailable {
 		keepKnownVirtualAccounts(msg.accounts, m.accounts)
 	}

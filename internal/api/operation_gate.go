@@ -368,7 +368,8 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // and runs schema init/migrations.
 //
 // Backup freeze begin, meeting import, and historical import jobs coordinate
-// the gate in their handlers.
+// the gate in their handlers. Local search acquires it in its controller after
+// installing shared files.
 // Meeting import first reads and validates its bounded request body so a slow
 // authenticated upload cannot hold the gate. Backup freeze end bypasses the
 // gate so it can release the freeze held by begin. Routing these through the
@@ -394,6 +395,7 @@ var operationGateExemptPaths = map[string]bool{
 	agentTokensPath:                    true,
 	sessionLoginPath:                   true,
 	importJobsEndpointPath:             true,
+	localEmbeddingsEndpointPath:        true,
 	meetingImportEndpointPath:          true,
 	muesliImportEndpointPath:           true,
 	muesliRecordingEndpointPath:        true,
@@ -423,10 +425,11 @@ var operationGateExemptPaths = map[string]bool{
 // registerSearchCoverageRoute (the OpenAPI "Exploration" tag), so a new
 // analytical route forces a conscious classification decision here.
 //
-// The remote-image proxy and CardDAV account test are the non-Exploration
+// The remote-image proxy and CardDAV account test are non-Exploration
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
-// while a long archive operation holds the gate. Kata evidence preparation
+// while a long archive operation holds the gate. Meeting actions, context,
+// and metrics are also non-Exploration read routes. Kata evidence preparation
 // only reads message bodies and extracted document text. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
@@ -463,6 +466,10 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/relationships",
 	"/api/v1/relationships/{id}/calendar",
 	"/api/v1/relationships/{id}/timeline",
+	// Meeting actions, context, and metrics read archived meeting rows in a read snapshot.
+	"/api/v1/meetings/actions",
+	"/api/v1/meetings/context",
+	"/api/v1/meetings/metrics",
 	"/api/v1/search/coverage",
 }
 
@@ -608,6 +615,10 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
+	"export-messages":   true,
+	"export-discord":    true,
+	"list-folders":      true,
+	"policy list":       true,
 	"draft-get":         true,
 	"draft-send-as":     true,
 	"logs":              true,
@@ -681,6 +692,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 // cliRunCommandGroups are proxied parent commands whose second arg is a
 // subcommand name rather than a positional value.
 var cliRunCommandGroups = map[string]bool{
+	"policy":     true,
 	"embeddings": true,
 	"backup":     true,
 	"documents":  true,

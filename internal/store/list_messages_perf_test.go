@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // seedLiveMessages inserts n messages (one source, conversation, participant,
@@ -18,7 +18,7 @@ import (
 // selective, mirroring an archive that retains source-deleted messages.
 func seedLiveMessages(tb testing.TB, s *Store, n int) {
 	tb.Helper()
-	ctx := context.Background()
+	ctx := tb.Context()
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'bench@example.com')`)
 	require.NoError(tb, err)
@@ -32,13 +32,13 @@ func seedLiveMessages(tb testing.TB, s *Store, n int) {
 
 	tx, err := s.db.Begin()
 	require.NoError(tb, err)
-	msgStmt, err := tx.Prepare(`INSERT INTO messages
+	msgStmt, err := tx.PrepareContext(tb.Context(), `INSERT INTO messages
 		(id, conversation_id, source_id, source_message_id, message_type,
 		 sent_at, subject, snippet, size_estimate, deleted_from_source_at)
 		VALUES (?, 1, 1, ?, 'email', ?, ?, ?, ?, ?)`)
 	require.NoError(tb, err)
 	defer func() { _ = msgStmt.Close() }()
-	recStmt, err := tx.Prepare(`INSERT INTO message_recipients
+	recStmt, err := tx.PrepareContext(tb.Context(), `INSERT INTO message_recipients
 		(message_id, participant_id, recipient_type) VALUES (?, 1, 'from')`)
 	require.NoError(tb, err)
 	defer func() { _ = recStmt.Close() }()
@@ -50,10 +50,10 @@ func seedLiveMessages(tb testing.TB, s *Store, n int) {
 		if i%2 == 0 {
 			deleted = sentAt
 		}
-		_, err = msgStmt.Exec(i, fmt.Sprintf("m%d", i), sentAt,
+		_, err = msgStmt.ExecContext(tb.Context(), i, fmt.Sprintf("m%d", i), sentAt,
 			fmt.Sprintf("Subject %d", i), fmt.Sprintf("snippet %d", i), 1000+i, deleted)
 		require.NoError(tb, err)
-		_, err = recStmt.Exec(i)
+		_, err = recStmt.ExecContext(tb.Context(), i)
 		require.NoError(tb, err)
 	}
 	require.NoError(tb, tx.Commit())
@@ -61,19 +61,7 @@ func seedLiveMessages(tb testing.TB, s *Store, n int) {
 
 func explainPlan(t *testing.T, s *Store, sql string, args ...any) string {
 	t.Helper()
-	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+sql, args...)
-	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
-	var b strings.Builder
-	for rows.Next() {
-		var a, c, d int
-		var detail string
-		require.NoError(t, rows.Scan(&a, &c, &d, &detail))
-		b.WriteString(detail)
-		b.WriteString("\n")
-	}
-	require.NoError(t, rows.Err())
-	return b.String()
+	return dbtest.ExplainQueryPlan(t, s.DB(), sql, args...)
 }
 
 // TestListMessages_UsesLiveIndex verifies the ListMessages COUNT and page
@@ -85,7 +73,7 @@ func TestListMessages_UsesLiveIndex(t *testing.T) {
 	assert := assert.New(t)
 
 	dir := t.TempDir()
-	s, err := OpenForTest(filepath.Join(dir, "list.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(dir, "list.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -94,7 +82,7 @@ func TestListMessages_UsesLiveIndex(t *testing.T) {
 
 	// The index InitSchema created must exist.
 	var idxCount int
-	require.NoError(s.db.QueryRow(
+	require.NoError(s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_live_sent_at'`,
 	).Scan(&idxCount))
 	assert.Equal(1, idxCount, "idx_messages_live_sent_at should be created by InitSchema")
@@ -132,7 +120,7 @@ func TestSearchMessages_DateBoundsUseInstantIndex(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "search-date.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "search-date.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -141,7 +129,7 @@ func TestSearchMessages_DateBoundsUseInstantIndex(t *testing.T) {
 
 	const indexName = "idx_messages_live_timestamp_julianday"
 	var idxCount int
-	require.NoError(s.db.QueryRow(
+	require.NoError(s.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, indexName,
 	).Scan(&idxCount))
 	assert.Equal(1, idxCount, "%s should be created by InitSchema", indexName)
@@ -152,4 +140,68 @@ func TestSearchMessages_DateBoundsUseInstantIndex(t *testing.T) {
 	countPlan := explainPlan(t, s, countSQL, "2015-01-01T16:00:00-05:00")
 	assert.Contains(countPlan, indexName,
 		"date-filtered COUNT should seek the instant index:\n%s", countPlan)
+}
+
+func TestConversationWindow_UsesConversationTimelineIndex(t *testing.T) {
+	requirements := require.New(t)
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "window-plan.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(s.Close()) })
+	requirements.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 2000)
+	start := time.Date(2015, 1, 1, 1, 0, 0, 0, time.UTC)
+	for _, dated := range []bool{false, true} {
+		for _, bound := range []*time.Time{nil, &start} {
+			if !dated && bound != nil {
+				continue // Bounded windows reject undated anchors before querying the window.
+			}
+			t.Run(fmt.Sprintf("dated%t/bounded%t", dated, bound != nil), func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				var timestamp any
+				if dated {
+					timestamp = start.Add(940 * time.Minute)
+				}
+				_, err := s.db.ExecContext(t.Context(), `UPDATE messages SET sent_at = ? WHERE id = 1000`, timestamp)
+				requirements.NoError(err)
+
+				// Capture the actual count and hydration statements, including the
+				// segment wrappers, unions, and outer ordering used by the reader.
+				var countSQL, hydrateSQL string
+				rebind := s.db.rebind
+				s.db.rebind = func(query string) string {
+					if strings.HasPrefix(query, "SELECT (SELECT COUNT(*)") {
+						countSQL = query
+					}
+					if strings.Contains(query, "WITH selected AS") {
+						hydrateSQL = query
+					}
+					return rebind(query)
+				}
+				t.Cleanup(func() { s.db.rebind = rebind })
+				_, err = s.GetConversationWindowContext(t.Context(), 1, 1000, 25, 25, bound, nil)
+				requirements.NoError(err)
+				s.db.rebind = rebind
+				requirements.NotEmpty(countSQL)
+				requirements.NotEmpty(hydrateSQL)
+
+				before := s.conversationWindowSegments(t.Context(), 1, 1000, dated, true, bound, nil)
+				after := s.conversationWindowSegments(t.Context(), 1, 1000, dated, false, bound, nil)
+				_, beforeArgs := conversationSegmentCounts(before)
+				_, afterArgs := conversationSegmentCounts(after)
+				countPlan := explainPlan(t, s, countSQL, append(beforeArgs, afterArgs...)...)
+				assertions.Contains(countPlan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
+				assertions.NotContains(countPlan, "SCAN m")
+				assertions.NotContains(countPlan, "TEMP B-TREE")
+
+				_, beforeArgs = conversationSegmentSelection(before, 25, "DESC")
+				_, afterArgs = conversationSegmentSelection(after, 25, "ASC")
+				beforeArgs = append(beforeArgs, int64(1000))
+				beforeArgs = append(beforeArgs, afterArgs...)
+				plan := explainPlan(t, s, hydrateSQL, beforeArgs...)
+				assertions.Contains(plan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
+				assertions.NotContains(plan, "SCAN m")
+			})
+		}
+	}
 }

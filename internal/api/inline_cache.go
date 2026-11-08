@@ -197,7 +197,7 @@ func buildInlineCacheEntry(raw []byte) *inlineCacheEntry {
 	if len(raw) > maxInlineRawBytes {
 		return &inlineCacheEntry{err: errInlineRawTooLarge}
 	}
-	parsed, err := mime.Parse(raw)
+	parsed, err := mime.ParseWithRecovery(raw, "")
 	if err != nil {
 		return &inlineCacheEntry{err: fmt.Errorf("parse inline MIME: %w", err)}
 	}

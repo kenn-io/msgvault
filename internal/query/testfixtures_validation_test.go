@@ -1,13 +1,33 @@
 package query
 
 import (
-	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/tbmock"
 )
+
+func TestBuild_CopiesAreIndependent(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	first, cleanup := buildStandardTestData(t).Build()
+	t.Cleanup(cleanup)
+	second, cleanup := buildStandardTestData(t).Build()
+	t.Cleanup(cleanup)
+	require.NotEqual(first, second)
+
+	require.NoError(os.Remove(filepath.Join(first, "messages", "year=2024", "data.parquet")))
+	readiness, err := InspectCacheReadiness(second)
+	require.NoError(err)
+	assert.Equal(CacheReady, readiness)
+	readiness, err = InspectCacheReadiness(first)
+	require.NoError(err)
+	assert.Equal(CacheInterrupted, readiness)
+}
 
 func TestAddMessage_ExplicitSourceID_BypassesCheck(t *testing.T) {
 	t.Parallel()
@@ -70,7 +90,7 @@ func TestAddMessage_UsesFirstSource(t *testing.T) {
 	engine := b.BuildEngine()
 	defer func() { _ = engine.Close() }()
 
-	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{})
+	stats, err := engine.GetTotalStats(t.Context(), StatsOptions{})
 	require.NoError(err, "GetTotalStats")
 	assert.Equal(int64(1), stats.MessageCount)
 }

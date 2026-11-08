@@ -57,7 +57,7 @@ const parityDim = 4
 // generation.
 func buildSqlitevecParity(t *testing.T, corpus []parityDoc) (*sqlitevec.Backend, context.Context, vector.GenerationID) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
@@ -90,13 +90,14 @@ CREATE TABLE message_recipients (
     recipient_type TEXT NOT NULL,
     participant_id INTEGER NOT NULL
 );`
-	_, err = main.Exec(schema)
+	_, err = main.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
 
 	for _, d := range corpus {
-		_, err := main.Exec(`INSERT INTO messages (id, subject) VALUES (?, ?)`, d.id, d.subject)
+		_, err := main.ExecContext(t.Context(), `INSERT INTO messages (id, subject) VALUES (?, ?)`, d.id, d.subject)
 		require.NoErrorf(t, err, "insert msg %d", d.id)
-		_, err = main.Exec(
+		_, err = main.ExecContext(
+			t.Context(),
 			`INSERT INTO messages_fts (rowid, subject, body) VALUES (?, ?, ?)`,
 			d.id, d.subject, d.body)
 		require.NoErrorf(t, err, "insert fts %d", d.id)
@@ -252,6 +253,49 @@ func TestParity_HybridOrderingMatchesSqlitevec(t *testing.T) {
 			require.NotEmpty(sIDs, "sqlitevec returned no hits")
 			assert.Equalf(t, sIDs, pIDs,
 				"ordering mismatch: sqlitevec=%v pgvector=%v", sIDs, pIDs)
+		})
+	}
+}
+
+func TestParity_CandidatePoolOmissionMatchesAcrossBackends(t *testing.T) {
+	pf, pgGen := buildPgvectorParity(t, parityCorpus)
+	sb, sctx, sGen := buildSqlitevecParity(t, parityCorpus)
+
+	for _, tc := range []struct {
+		name    string
+		terms   []string
+		ids     []int64
+		limit   int
+		omitted bool
+		wantIDs []int64
+	}{
+		{"ann_overflow", nil, nil, 10, true, []int64{1}},
+		{"hybrid_overflow", []string{"delta"}, nil, 10, true, []int64{1, 4}},
+		{"complete_union", []string{"delta"}, []int64{1, 4}, 10, false, []int64{1, 4}},
+		{"page_inside_union", []string{"delta"}, nil, 1, false, []int64{1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := vector.FusedRequest{
+				QueryVec:   unitVec(parityDim, 0),
+				FTSTerms:   tc.terms,
+				Generation: sGen,
+				KPerSignal: 1,
+				Limit:      tc.limit,
+				RRFK:       60,
+				Filter:     vector.Filter{MessageIDs: tc.ids},
+			}
+			sHits, sMeta, err := sb.FusedSearch(sctx, req)
+			require.NoError(t, err, "sqlitevec FusedSearch")
+			req.Generation = pgGen
+			pHits, pMeta, err := pf.b.FusedSearch(pf.ctx, req)
+			require.NoError(t, err, "pgvector FusedSearch")
+
+			assert.Equal(t, tc.omitted, sMeta.CandidatePoolOmitted, "sqlitevec omission")
+			assert.Equal(t, tc.omitted, pMeta.CandidatePoolOmitted, "pgvector omission")
+			assert.True(t, sMeta.PoolSaturated, "sqlitevec ANN pool overflows in every case")
+			assert.True(t, pMeta.PoolSaturated, "pgvector ANN pool overflows in every case")
+			assert.Equal(t, tc.wantIDs, idSeq(sHits), "sqlitevec retained results")
+			assert.Equal(t, tc.wantIDs, idSeq(pHits), "pgvector retained results")
 		})
 	}
 }

@@ -12,20 +12,13 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
-func maildirFixture(t *testing.T, root string) {
-	t.Helper()
-	for _, dir := range []string{"cur", "new", "tmp"} {
-		require.NoError(t, os.MkdirAll(filepath.Join(root, dir), 0700))
-	}
-}
-
 func TestImportMaildirPreservesRawAndMergesFolders(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
-	maildirFixture(t, filepath.Join(root, ".Archive"))
+	email.Maildir(t, root)
+	email.Maildir(t, filepath.Join(root, ".Archive"))
 	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Maildir message\r\nMessage-ID: <one@example.com>\r\n\r\nArchive me.\r\n")
 	seenName := "one:2,S"
 	if runtime.GOOS == "windows" {
@@ -42,15 +35,15 @@ func TestImportMaildirPreservesRawAndMergesFolders(t *testing.T) {
 	assert.Equal(int64(1), summary.MessagesAdded)
 	assert.Equal(int64(1), summary.MessagesSkipped)
 	var sourceType, rawFormat string
-	require.NoError(st.DB().QueryRow(`SELECT s.source_type, mr.raw_format FROM messages m JOIN sources s ON s.id=m.source_id JOIN message_raw mr ON mr.message_id=m.id`).Scan(&sourceType, &rawFormat))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT s.source_type, mr.raw_format FROM messages m JOIN sources s ON s.id=m.source_id JOIN message_raw mr ON mr.message_id=m.id`).Scan(&sourceType, &rawFormat))
 	assert.Equal("maildir", sourceType)
 	assert.Equal("mime", rawFormat)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
 	storedRaw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	assert.Equal(raw, storedRaw)
-	rows, err := st.DB().Query(`SELECT l.name FROM message_labels ml JOIN labels l ON l.id=ml.label_id ORDER BY l.name`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT l.name FROM message_labels ml JOIN labels l ON l.id=ml.label_id ORDER BY l.name`)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var labels []string
@@ -76,7 +69,7 @@ func TestImportMaildirCancellationAndResume(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	require.NoError(os.WriteFile(filepath.Join(root, "new/one"), []byte("Subject: resume\r\n\r\nbody"), 0600))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -94,7 +87,7 @@ func TestImportMaildirEmptyAndOversized(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	opts := MaildirImportOptions{Identifier: "alice@example.com", MaxMessageBytes: 16}
 	empty, err := ImportMaildir(t.Context(), st, root, opts)
 	require.NoError(err)
@@ -112,7 +105,7 @@ func TestImportMaildirStoresAttachment(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	raw := email.NewMessage().WithAttachment("sample.txt", "text/plain", []byte("synthetic attachment")).Bytes()
 	require.NoError(os.WriteFile(filepath.Join(root, "cur/message"), raw, 0600))
 	attachments := filepath.Join(tmp, "attachments")
@@ -120,7 +113,7 @@ func TestImportMaildirStoresAttachment(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), result.MessagesAdded)
 	var path string
-	require.NoError(st.DB().QueryRow(`SELECT storage_path FROM attachments`).Scan(&path))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT storage_path FROM attachments`).Scan(&path))
 	stored, err := os.ReadFile(filepath.Join(attachments, path))
 	require.NoError(err)
 	assert.Equal([]byte("synthetic attachment"), stored)
@@ -131,16 +124,16 @@ func TestImportMaildirRecoveredFailureIsSuccessful(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	require.NoError(os.WriteFile(filepath.Join(root, "new/one"), []byte("Subject: retry\r\n\r\nbody"), 0600))
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_maildir_insert BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT,'transient import failure'); END`)
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_maildir_insert BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT,'transient import failure'); END`)
 	require.NoError(err)
 	opts := MaildirImportOptions{Identifier: "alice@example.com"}
 	first, err := ImportMaildir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.True(first.HardErrors)
 	assert.Equal(int64(1), first.Errors)
-	_, err = st.DB().Exec(`DROP TRIGGER fail_maildir_insert`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_maildir_insert`)
 	require.NoError(err)
 	recovered, err := ImportMaildir(t.Context(), st, root, opts)
 	require.NoError(err)
@@ -157,8 +150,8 @@ func TestImportMaildirFolderNamedLikeFlagLabel(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
-	maildirFixture(t, filepath.Join(root, ".TRASH"))
+	email.Maildir(t, root)
+	email.Maildir(t, filepath.Join(root, ".TRASH"))
 	trashedName := "one:2,T"
 	if runtime.GOOS == "windows" {
 		trashedName = "one-trashed"
@@ -170,7 +163,7 @@ func TestImportMaildirFolderNamedLikeFlagLabel(t *testing.T) {
 	assert.Equal(int64(1), summary.MessagesAdded)
 	assert.Zero(summary.Errors)
 	assert.False(summary.HardErrors)
-	rows, err := st.DB().Query(`SELECT l.name FROM message_labels ml JOIN labels l ON l.id=ml.label_id ORDER BY l.name`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT l.name FROM message_labels ml JOIN labels l ON l.id=ml.label_id ORDER BY l.name`)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var labels []string

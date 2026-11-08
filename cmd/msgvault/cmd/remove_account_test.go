@@ -172,7 +172,7 @@ func seedMessageWithAttachment(
 	require := require.New(t)
 	src, err := s.GetOrCreateSource("gmail", email)
 	require.NoError(err, "GetOrCreateSource(%s)", email)
-	convID, err := s.EnsureConversation(src.ID, threadKey, "Thread")
+	convID, err := s.EnsureConversation(t.Context(), src.ID, threadKey, "Thread")
 	require.NoError(err, "EnsureConversation")
 	msgID, err := s.UpsertMessage(&store.Message{
 		ConversationID:  convID,
@@ -181,7 +181,7 @@ func seedMessageWithAttachment(
 		MessageType:     "email",
 	})
 	require.NoError(err, "UpsertMessage")
-	require.NoError(s.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+	require.NoError(s.UpsertAttachment(t.Context(), msgID, "a.pdf", "application/pdf",
 		storagePath, contentHash, 0), "UpsertAttachment")
 }
 
@@ -192,7 +192,7 @@ func seedQueryableMessageWithAttachment(t *testing.T, s *store.Store) {
 	const storagePath = "aa/bb/a.pdf"
 	src, err := s.GetOrCreateSource(sourceTypeGmail, email)
 	require.NoError(err)
-	convID, err := s.EnsureConversation(src.ID, "thread-1", "Thread")
+	convID, err := s.EnsureConversation(t.Context(), src.ID, "thread-1", "Thread")
 	require.NoError(err)
 	senderID, err := s.EnsureParticipant(email, "Sender", "example.com")
 	require.NoError(err)
@@ -206,7 +206,7 @@ func seedQueryableMessageWithAttachment(t *testing.T, s *store.Store) {
 	})
 	require.NoError(err)
 	require.NoError(s.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}))
-	require.NoError(s.UpsertAttachment(msgID, "a.pdf", "application/pdf", storagePath, "hash-a", 10))
+	require.NoError(s.UpsertAttachment(t.Context(), msgID, "a.pdf", "application/pdf", storagePath, "hash-a", 10))
 }
 
 func executeRemoveAccount(t *testing.T, contexts ...context.Context) error {
@@ -657,9 +657,9 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmpDir, "msgvault.db"))
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a", storagePath, hash)
-	_, err := s.DB().Exec(s.Rebind(`UPDATE attachments SET size = ? WHERE content_hash = ?`), len(content), hash)
+	_, err := s.DB().ExecContext(t.Context(), s.Rebind(`UPDATE attachments SET size = ? WHERE content_hash = ?`), len(content), hash)
 	require.NoError(err)
-	_, err = s.DB().Exec(s.Rebind(`
+	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`
 		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
 		WHERE content_hash = ?`), thumbnailHash, thumbnailPath, hash)
 	require.NoError(err)
@@ -667,7 +667,7 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	seedAttachmentFile(t, attachmentsDir, thumbnailPath, string(thumbnail))
 	maintenance, err := newAttachmentMaintenance(s, attachmentsDir, nil, true)
 	require.NoError(err)
-	packed, err := maintenance.pack(context.Background(), 0)
+	packed, err := maintenance.pack(t.Context(), 0)
 	require.NoError(err)
 	require.Equal(2, packed.BlobsPacked)
 	require.NoError(maintenance.close())
@@ -695,14 +695,14 @@ func TestRemoveAccountCmd_DeletesUniquePackedMappings(t *testing.T) {
 	removed, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
 	require.NoError(err)
 	defer func() { require.NoError(removed.Close()) }()
-	_, err = removed.GetSourceByIdentifier("alice@example.com")
+	_, err = removed.GetSourceByIdentifier(t.Context(), "alice@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound)
 	bs, err := attachmentstore.New(store.NewPackCatalog(removed), attachmentsDir)
 	require.NoError(err)
 	defer func() { require.NoError(bs.Close()) }()
-	_, _, err = bs.Open(hash)
+	_, _, err = bs.Open(t.Context(), hash)
 	require.ErrorIs(err, fs.ErrNotExist, "removed blob is no longer addressable by hash")
-	_, _, err = bs.Open(thumbnailHash)
+	_, _, err = bs.Open(t.Context(), thumbnailHash)
 	require.ErrorIs(err, fs.ErrNotExist, "removed thumbnail is no longer addressable by hash")
 	recs, err := removed.ListPackRecordsContext(t.Context())
 	require.NoError(err)
@@ -754,7 +754,7 @@ func TestRemoveAccountCmd_SkipsDeletionDuringActiveSync(t *testing.T) {
 	require.NoError(err, "reopen store")
 	defer func() { _ = s2.Close() }()
 	require.NoError(s2.InitSchema(), "reinit schema")
-	src, err := s2.GetSourceByIdentifier("alice@example.com")
+	src, err := s2.GetSourceByIdentifier(t.Context(), "alice@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should have been removed from DB despite skipped file deletion")
 }
@@ -775,7 +775,7 @@ func TestRemoveAccountCmd_SkipsDeletionWhenRemovedAccountHasActiveSync(t *testin
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"dd/hashA", "hashA")
-	aliceSrc, err := s.GetSourceByIdentifier("alice@example.com")
+	aliceSrc, err := s.GetSourceByIdentifier(t.Context(), "alice@example.com")
 	require.NoError(err, "GetSourceByIdentifier")
 	require.NotNil(aliceSrc, "expected alice source to exist")
 	// Active sync on the account being removed — this is the row that
@@ -816,7 +816,7 @@ func TestRemoveAccountConfirmedDoesNotBypassActiveSyncGuard(t *testing.T) {
 	seedMessageWithAttachment(t, s,
 		"alice@example.com", "thread-a", "msg-a",
 		"ee/hashA", "hashA")
-	aliceSrc, err := s.GetSourceByIdentifier("alice@example.com")
+	aliceSrc, err := s.GetSourceByIdentifier(t.Context(), "alice@example.com")
 	require.NoError(err, "GetSourceByIdentifier")
 	_, err = s.StartSync(aliceSrc.ID, "full")
 	require.NoError(err, "StartSync")
@@ -918,7 +918,7 @@ func TestRemoveAccountCmd_WithYesFlag(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema(), "reinit schema")
 
-	src, err := s.GetSourceByIdentifier("test@example.com")
+	src, err := s.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(t, src, "account should be removed after --yes")
 }
@@ -961,69 +961,84 @@ func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 	require.NoError(<-lockDone)
 }
 
-func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
+func TestRemoveAccountCmd_LiveSQLWhileRemovalPausedAfterCascade(t *testing.T) {
 	cfg := testConfigValue()
-
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
-	require.NoError(s.Close())
-
+	src, err := s.GetOrCreateSource(sourceTypeGmail, "kept@example.com")
+	require.NoError(err)
+	convID, err := s.EnsureConversation(t.Context(), src.ID, "kept-thread", "Kept")
+	require.NoError(err)
+	senderID, err := s.EnsureParticipant("kept@example.com", "Kept", "example.com")
+	require.NoError(err)
+	msgID, err := s.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "kept-message",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(s.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}))
+	t.Cleanup(func() { require.NoError(s.Close()) })
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
-	require.NoError(err, "initial cache build")
-
-	engine, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", nil)
-	require.NoError(err, "open pre-removal cache engine")
-	t.Cleanup(func() { _ = engine.Close() })
-
+	_, err = buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err)
+	engine, err := query.NewDuckDBEngine(t.Context(), cfg.AnalyticsDir(), "", s.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, LiveSQLWhenCacheUnavailable: true})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
+	strict, err := query.NewDuckDBEngine(t.Context(), cfg.AnalyticsDir(), "", s.DB(), query.DuckDBOptions{DisableSQLiteScanner: true})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(strict.Close()) })
 	cascadePaused := make(chan struct{})
 	resumeRemoval := make(chan struct{})
 	removeAccountAfterCascadeHook = func() {
 		close(cascadePaused)
 		<-resumeRemoval
 	}
-	t.Cleanup(func() { removeAccountAfterCascadeHook = nil })
-
 	removeDone := make(chan error, 1)
 	go func() { removeDone <- executeRemoveAccount(t, testCtx) }()
-
+	resumed := false
+	t.Cleanup(func() {
+		if !resumed {
+			close(resumeRemoval)
+			require.NoError(<-removeDone)
+		}
+		removeAccountAfterCascadeHook = nil
+	})
 	select {
 	case <-cascadePaused:
 	case <-time.After(5 * time.Second):
 		require.FailNow("timed out waiting after account cascade")
 	}
-
-	type aggregateResult struct {
-		rows []query.AggregateRow
-		err  error
-	}
-	aggregateDone := make(chan aggregateResult, 1)
-	go func() {
-		rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
-		aggregateDone <- aggregateResult{rows: rows, err: err}
-	}()
-
-	select {
-	case result := <-aggregateDone:
-		close(resumeRemoval)
-		require.FailNow("cache reader passed the removal writer lock", "rows=%v err=%v", result.rows, result.err)
-	case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the paused removal holds the writer lock
-	}
-
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	releaseRead, err := query.AcquireCacheReadLock(ctx, cfg.AnalyticsDir())
+	require.NoError(err, "removal must release the reader lock before rebuilding")
+	_, markerErr := os.Stat(query.CacheStatePath(cfg.AnalyticsDir()))
+	releaseRead()
+	require.ErrorIs(markerErr, os.ErrNotExist, "removal must invalidate the cache before the cascade")
+	rows, err := engine.Aggregate(ctx, query.ViewSenders, query.DefaultAggregateOptions())
+	require.NoError(err, "analytics must answer while removal is paused")
+	// Keep the paused result check: the rebuilt cache cannot prove the cascade
+	// had already removed the source while maintenance was still in progress.
+	require.Len(rows, 1)
+	assert.Equal("kept@example.com", rows[0].Key)
 	close(resumeRemoval)
-	require.NoError(<-removeDone, "remove account")
-	result := <-aggregateDone
-	require.NoError(result.err, "first aggregate after rebuild")
-	assert.Empty(result.rows, "removed source must not remain in the rebuilt cache")
+	resumed = true
+	require.NoError(<-removeDone)
+	rows, err = strict.Aggregate(t.Context(), query.ViewSenders, query.DefaultAggregateOptions())
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal("kept@example.com", rows[0].Key)
 }
 
 // TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState pins that a
@@ -1053,7 +1068,7 @@ func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
 
-	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 	stateFile := filepath.Join(cfg.AnalyticsDir(), "_last_sync.json")
 	_, err = os.Stat(stateFile)
@@ -1083,7 +1098,7 @@ func TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState(t *testing.T) {
 	s, openErr := store.Open(dbPath)
 	require.NoError(openErr)
 	defer func() { _ = s.Close() }()
-	_, sourceErr := s.GetSourceByIdentifier("test@example.com")
+	_, sourceErr := s.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.ErrorIs(sourceErr, store.ErrSourceNotFound, "source deletion committed")
 
 	_, lockErr := query.AcquireReadyCacheReadLock(testCtx, cfg.AnalyticsDir())
@@ -1101,7 +1116,7 @@ func TestRemoveAccountCmd_CascadeFailureRestoresCache(t *testing.T) {
 
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER abort_source_delete
 		BEFORE DELETE ON sources
 		BEGIN
@@ -1118,7 +1133,7 @@ func TestRemoveAccountCmd_CascadeFailureRestoresCache(t *testing.T) {
 	tokenPath := oauth.TokenFilePath(cfg.TokensDir(), "test@example.com")
 	require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0o755))
 	require.NoError(os.WriteFile(tokenPath, []byte("token"), 0o600))
-	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 
 	err = executeRemoveAccount(t, testCtx)
@@ -1133,7 +1148,7 @@ func TestRemoveAccountCmd_CascadeFailureRestoresCache(t *testing.T) {
 	s, err = store.Open(dbPath)
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
-	_, err = s.GetSourceByIdentifier("test@example.com")
+	_, err = s.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.NoError(err, "source remains after rolled-back cascade")
 	_, err = os.Stat(attachmentPath)
 	require.NoError(err, "attachment cleanup must not run after failed cascade")
@@ -1151,7 +1166,7 @@ func TestRemoveAccountCmd_CascadeFailureJoinsRecoveryFailure(t *testing.T) {
 
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER abort_source_delete
 		BEFORE DELETE ON sources
 		BEGIN
@@ -1165,7 +1180,7 @@ func TestRemoveAccountCmd_CascadeFailureJoinsRecoveryFailure(t *testing.T) {
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
-	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 
 	buildCacheWriteStateFile = func(string, []byte, os.FileMode) error {
@@ -1198,7 +1213,7 @@ func TestRemoveAccountCmd_LockFailureLeavesSourceUntouched(t *testing.T) {
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
-	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 
 	statePath := query.CacheStatePath(cfg.AnalyticsDir())
@@ -1213,7 +1228,7 @@ func TestRemoveAccountCmd_LockFailureLeavesSourceUntouched(t *testing.T) {
 	s, err = store.Open(dbPath)
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
-	_, err = s.GetSourceByIdentifier("test@example.com")
+	_, err = s.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.NoError(err, "source must remain when cache protection cannot be established")
 }
 
@@ -1242,7 +1257,7 @@ func TestRemoveAccountCmd_LastAccountLeavesReadableEmptyCache(t *testing.T) {
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	_ = testCtx
 
-	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err, "initial cache build")
 
 	root := newTestRootCmd()
@@ -1432,8 +1447,8 @@ func TestRemoveAccountCmd_DiscordDeletesTokenOnlyAfterFinalBotReference(t *testi
 	require.NoError(err)
 	second, err := st.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceOAuthApp(first.ID, sql.NullString{String: "archive", Valid: true}))
-	require.NoError(st.UpdateSourceOAuthApp(second.ID, sql.NullString{String: "archive", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), first.ID, sql.NullString{String: "archive", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), second.ID, sql.NullString{String: "archive", Valid: true}))
 	require.NoError(st.Close())
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
@@ -1506,8 +1521,8 @@ func TestRemoveAccountCmd_DiscordPreservesTokenWhenRemainingBindingCannotResolve
 	require.NoError(err)
 	remaining, err := st.GetOrCreateSource(sourceTypeDiscord, "223456789012345678")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceOAuthApp(removed.ID, sql.NullString{String: "archive", Valid: true}))
-	require.NoError(st.UpdateSourceOAuthApp(remaining.ID, sql.NullString{String: "missing", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), removed.ID, sql.NullString{String: "archive", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), remaining.ID, sql.NullString{String: "missing", Valid: true}))
 	require.NoError(st.Close())
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
@@ -1544,7 +1559,7 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	first, err := st.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceOAuthApp(first.ID, sql.NullString{String: "archive", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), first.ID, sql.NullString{String: "archive", Valid: true}))
 
 	manager := discord.NewTokenManager(filepath.Join(tmpDir, "tokens"))
 	record := discord.NewTokenRecord(
@@ -1570,6 +1585,7 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	addDone := make(chan error, 1)
 	go func() {
 		addDone <- saveAndRegisterDiscordCredential(
+			t.Context(),
 			st, manager, record,
 			[]discord.Guild{{ID: "223456789012345678", Name: "Second Guild"}},
 			discordCommandDeps{
@@ -1632,9 +1648,9 @@ func TestDiscordAddLifecycleBlocksFinalCredentialRemovalUntilGuildRegistration(t
 	check, err := store.Open(dbPath)
 	require.NoError(err)
 	defer func() { require.NoError(check.Close()) }()
-	_, err = check.GetSourceByIdentifier(first.Identifier)
+	_, err = check.GetSourceByIdentifier(t.Context(), first.Identifier)
 	require.ErrorIs(err, store.ErrSourceNotFound)
-	second, err := check.GetSourceByIdentifier("223456789012345678")
+	second, err := check.GetSourceByIdentifier(t.Context(), "223456789012345678")
 	require.NoError(err)
 	assert.Equal(sourceTypeDiscord, second.SourceType)
 }
@@ -1666,7 +1682,7 @@ func TestRemoveAccountCmd_RemovesNotionMeetingSource(t *testing.T) {
 	check, err := store.Open(dbPath)
 	require.NoError(err)
 	defer func() { require.NoError(check.Close()) }()
-	_, err = check.GetSourceByTypeAndIdentifier(sourceTypeNotionMeetings, "notion-personal")
+	_, err = check.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeNotionMeetings, "notion-personal")
 	require.ErrorIs(err, store.ErrSourceNotFound)
 }
 

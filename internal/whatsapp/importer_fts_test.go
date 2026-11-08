@@ -3,7 +3,6 @@
 package whatsapp
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,14 +15,14 @@ func TestImportReportsFTSWriteErrors(t *testing.T) {
 	progress := &importProgressRecorder{}
 	st := testutil.NewSQLiteTestStore(t)
 	require.True(t, st.FTS5Available(), "fts5 build tag set but FTS5 unavailable")
-	_, err := st.DB().Exec(`DROP TABLE messages_fts`)
+	_, err := st.DB().ExecContext(t.Context(), `DROP TABLE messages_fts`)
 	require.NoError(t, err)
 
 	opts := DefaultOptions()
 	opts.Phone = "+12025550123"
 	opts.DisplayName = "Example User"
 
-	summary, err := NewImporter(st, progress).Import(context.Background(), waDBPath, opts)
+	summary, err := NewImporter(st, progress).Import(t.Context(), waDBPath, opts)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), summary.MessagesAdded)
 	assert.Equal(t, int64(2), summary.Errors)

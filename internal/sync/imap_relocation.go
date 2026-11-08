@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -36,7 +37,7 @@ func (s *Syncer) relocateIMAPMessageToTarget(
 		raw == nil || raw.ID != target.NewSourceMessageID {
 		return errors.New("invalid IMAP relocation target")
 	}
-	savedOrigin, err := s.savedIMAPContentOrigin(target.InternalID)
+	savedOrigin, err := s.savedIMAPContentOrigin(ctx, target.InternalID)
 	if err != nil {
 		return err
 	}
@@ -52,7 +53,7 @@ func (s *Syncer) relocateIMAPMessageToTarget(
 		return err
 	}
 	expectedID := mime.NormalizeMessageID(target.RFC822MessageID)
-	if expectedID == "" || mime.NormalizeMessageID(prepared.message.RFC822MessageID.String) != expectedID {
+	if expectedID == "" || mime.NormalizeMessageID(prepared.originalMessageID) != expectedID {
 		return fmt.Errorf("IMAP relocation candidate %q changed RFC822 identity", raw.ID)
 	}
 	return s.persistPreparedIMAPRelocation(ctx, store.MessageIdentityGuard{
@@ -118,6 +119,11 @@ func (s *Syncer) persistPreparedIMAPRelocation(
 		func(participantIDs []int64) *store.MessagePersistData {
 			persist := buildPreparedSnapshot(
 				prepared, participantIndex, participantIDs, attachmentWrites)
+			// The store guard compares original identity evidence with the
+			// historical row, then omits an unusable ID from the new projection.
+			persist.Message.RFC822MessageID = sql.NullString{
+				String: prepared.originalMessageID, Valid: prepared.originalMessageID != "",
+			}
 			persist.LabelIDs = labelIDs
 			persist.PreserveLabels = preserveLabels
 			return persist
@@ -160,6 +166,7 @@ func (s *Syncer) publishMIMEAttachments(
 			)
 		}
 		receipt, err := export.StoreAttachmentFileDurable(
+			ctx,
 			s.opts.AttachmentsDir, attachment)
 		if receipt.Created {
 			created[receipt.StoragePath] = receipt

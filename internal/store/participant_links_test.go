@@ -24,9 +24,30 @@ func TestLinkParticipantsCreatesEdgeAndBumpsRevision(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), rev)
 
-	clusters, err := f.Store.ParticipantClusters()
+	clusters, err := f.Store.ParticipantClusters(t.Context())
 	require.NoError(err)
 	assert.Equal(map[int64]int64{a: min(a, b), b: min(a, b)}, clusters)
+}
+
+func TestLinkParticipantsTraversesBothDirectionsAndBindsPerson(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	ids := make([]int64, 7)
+	for i := range ids {
+		ids[i] = f.EnsureParticipant(fmt.Sprintf("participant-%d@example.com", i), "", "example.com")
+	}
+	// Traversal from the chain's end crosses from participant_b to participant_a.
+	for _, pair := range [][2]int{{0, 3}, {1, 3}, {1, 4}, {5, 6}} {
+		_, err := f.Store.LinkParticipants(ids[pair[0]], ids[pair[1]])
+		require.NoError(err)
+	}
+	person, _, err := f.Store.CreatePersonFromParticipant(ids[2])
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(ids[4], ids[2])
+	require.NoError(err)
+	got, err := f.Store.GetPerson(person.ID)
+	require.NoError(err)
+	assert.Equal(t, ids[:5], got.ParticipantIDs)
 }
 
 func TestLinkParticipantsExactEdgeIsIdempotent(t *testing.T) {
@@ -90,7 +111,7 @@ func TestUnlinkParticipantsSplitsClusterDeterministically(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(revBefore+1, rev)
 
-	clusters, err := f.Store.ParticipantClusters()
+	clusters, err := f.Store.ParticipantClusters(t.Context())
 	require.NoError(err)
 	assert.Equal(map[int64]int64{a: min(a, b), b: min(a, b)}, clusters)
 
@@ -218,7 +239,7 @@ func TestParticipantClustersMultipleDisjointComponents(t *testing.T) {
 	_, err = f.Store.LinkParticipants(y, x) // reversed: normalizes to (x, y)
 	require.NoError(err)
 
-	clusters, err := f.Store.ParticipantClusters()
+	clusters, err := f.Store.ParticipantClusters(t.Context())
 	require.NoError(err)
 
 	want := map[int64]int64{
@@ -309,12 +330,12 @@ func TestMergeParticipantsRewritesLinkEdges(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(acctRevBefore+1, acctRevAfter, "account identity revision must bump on every merge")
 
-	clusters, err := f.Store.ParticipantClusters()
+	clusters, err := f.Store.ParticipantClusters(t.Context())
 	require.NoError(err)
 	assert.Equal(map[int64]int64{a: a, c: a}, clusters, "edge must repoint from b to a")
 
 	var loserCount int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM participants WHERE id = ?`), b).
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM participants WHERE id = ?`), b).
 		Scan(&loserCount))
 	assert.Equal(0, loserCount, "merged-away participant must be gone")
 }
@@ -350,7 +371,7 @@ func TestMergeParticipantsPathContractionKeepsForest(t *testing.T) {
 
 	// Exactly 2 edges, forming a star: no self-edges, no duplicate edges.
 	var edgeCount int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM participant_links WHERE participant_a IN (?, ?, ?) OR participant_b IN (?, ?, ?)`),
 		a, x, y, a, x, y).Scan(&edgeCount))
 	assert.Equal(2, edgeCount, "3-node cluster must have exactly 2 edges (a star, not a cycle)")
@@ -397,7 +418,7 @@ func TestMergeParticipantsWithoutLinksStillBumpsRevisionButRewritesNoLinks(t *te
 	assert.Equal(acctRevBefore+1, acctRevAfter, "merge must bump the account identity revision unconditionally")
 
 	var edgeCount int
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM participant_links`).Scan(&edgeCount))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_links`).Scan(&edgeCount))
 	assert.Equal(0, edgeCount, "merge without pre-existing links must not create any link edge")
 }
 
@@ -418,13 +439,13 @@ func TestMergeParticipantsRefreshesSenderAttribution(t *testing.T) {
 	messageID, err := st.UpsertMessage(message)
 	require.NoError(err, "persist owner-attributed message")
 
-	isFromMe, err := st.GetMessageIsFromMe(messageID)
+	isFromMe, err := st.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err, "read attribution before merge")
 	require.True(isFromMe, "confirmed owner sender must begin attributed")
 
 	require.NoError(st.MergeParticipants(owner, survivor), "merge owner into unmatched survivor")
 
-	isFromMe, err = st.GetMessageIsFromMe(messageID)
+	isFromMe, err = st.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err, "read attribution after merge")
 	assert.False(isFromMe, "merge must clear attribution after sender no longer matches")
 }
@@ -503,7 +524,8 @@ func TestLinkParticipants_ConcurrentDisjointClusters(t *testing.T) {
 			"group %d: all four participants must end up in one cluster", i)
 
 		var edgeCount int
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			f.Store.Rebind(`SELECT COUNT(*) FROM participant_links
 				WHERE participant_a IN (?, ?, ?, ?) AND participant_b IN (?, ?, ?, ?)`),
 			g.a, g.b, g.c, g.d, g.a, g.b, g.c, g.d,

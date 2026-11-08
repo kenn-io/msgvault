@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -40,8 +41,8 @@ func (s *Store) GetSourceByIDContext(ctx context.Context, id int64) (*Source, er
 }
 
 // GetSourceByTypeAndIdentifier resolves a source by its portable stable tuple.
-func (s *Store) GetSourceByTypeAndIdentifier(sourceType, identifier string) (*Source, error) {
-	row := s.db.QueryRow(`
+func (s *Store) GetSourceByTypeAndIdentifier(ctx context.Context, sourceType, identifier string) (*Source, error) {
+	row := s.db.QueryRowContext(ctx, `
 		SELECT `+sourceCatalogColumns+`
 		FROM sources
 		WHERE source_type = ? AND identifier = ?
@@ -338,6 +339,9 @@ func (s *Store) RemoveSourceSerialized(
 	); err != nil {
 		return hadActiveSync, 0, err
 	}
+	if err := s.deleteSourceRepairMigrationsContext(ctx, conn.ExecContext, sourceID); err != nil {
+		return hadActiveSync, 0, err
+	}
 
 	res, err := conn.ExecContext(
 		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
@@ -438,7 +442,7 @@ func (s *Store) removeSourceExec(
 		return err
 	}
 	if s.fts5Available {
-		if _, err := tx.Exec(s.dialect.FTSDeleteSQL(), sourceID); err != nil {
+		if _, err := tx.ExecContext(ctx, s.dialect.FTSDeleteSQL(), sourceID); err != nil {
 			return fmt.Errorf("delete FTS rows: %w", err)
 		}
 	}
@@ -447,7 +451,10 @@ func (s *Store) removeSourceExec(
 	); err != nil {
 		return err
 	}
-	res, err := tx.Exec(`DELETE FROM sources WHERE id = ?`, sourceID)
+	if err := s.deleteSourceRepairMigrationsContext(ctx, tx.ExecContext, sourceID); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, sourceID)
 	if err != nil {
 		return fmt.Errorf("delete source: %w", err)
 	}
@@ -472,6 +479,23 @@ func (s *Store) removeSourceExec(
 // connection.
 type sourceIdentityQuery func(context.Context, string, ...any) (rowsScanner, error)
 type sourceIdentityExec func(context.Context, string, ...any) (sql.Result, error)
+
+// Source IDs can be reused after removal. Clear repair completion and progress
+// in the removal transaction so a recreated source cannot inherit either.
+func (s *Store) deleteSourceRepairMigrationsContext(ctx context.Context, exec sourceIdentityExec, sourceID int64) error {
+	_, err := exec(ctx, s.Rebind(`DELETE FROM applied_migrations WHERE EXISTS (
+		SELECT 1 FROM (
+			SELECT 'rederive:' || source_type || ':' || identifier || ':' AS prefix
+			FROM sources WHERE id = ?
+		) repair_source
+		WHERE SUBSTR(name, 1, LENGTH(prefix)) = prefix
+		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%:%'
+	)`), sourceID)
+	if err != nil {
+		return fmt.Errorf("delete source repair progress: %w", err)
+	}
+	return nil
+}
 
 // currentCandidateObservationPairSQL verifies the conjunctive observation
 // behind Beeper's generated participant matches. It deliberately derives the
@@ -524,12 +548,12 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesTxContext(
 		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
 			return tx.ExecContext(ctx, query, args...)
 		},
-		true,
+		true, 0,
 	)
 }
 
 func (s *Store) recomputeUnsupportedCurrentObservationIdentityMatchesTxContext(
-	ctx context.Context, tx *loggedTx,
+	ctx context.Context, tx *loggedTx, participantID int64,
 ) error {
 	return s.recomputeUnsupportedGeneratedIdentityMatchesContext(
 		ctx,
@@ -539,7 +563,7 @@ func (s *Store) recomputeUnsupportedCurrentObservationIdentityMatchesTxContext(
 		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
 			return tx.ExecContext(ctx, query, args...)
 		},
-		false,
+		false, participantID,
 	)
 }
 
@@ -555,7 +579,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesConnContext(
 		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
 			return conn.ExecContext(ctx, s.dialect.Rebind(query), args...)
 		},
-		true,
+		true, 0,
 	)
 }
 
@@ -568,8 +592,17 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesConnContext(
 // express that conjunction.
 func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	ctx context.Context, query sourceIdentityQuery, exec sourceIdentityExec,
-	removeRowsWithoutSourceSupport bool,
+	removeRowsWithoutSourceSupport bool, participantID int64,
 ) error {
+	var evidenceScope, candidateScope string
+	var scopeArgs []any
+	if participantID != 0 {
+		touching := `SELECT id FROM identity_match_candidates WHERE left_kind = 'participant' AND left_id = ?
+			UNION ALL SELECT id FROM identity_match_candidates WHERE right_kind = 'participant' AND right_id = ?`
+		evidenceScope = ` AND identity_match_evidence.candidate_id IN (` + touching + `)`
+		candidateScope = ` AND c.id IN (` + touching + `)`
+		scopeArgs = []any{participantID, participantID}
+	}
 	var evidenceSourceUnsupportedSQL, candidateSourceUnsupportedSQL string
 	if removeRowsWithoutSourceSupport {
 		evidenceSourceUnsupportedSQL = `NOT EXISTS (
@@ -597,7 +630,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	// removal also drops evidence without any remaining source support. Preserve
 	// an explicit candidate decision, not its stale archive explanation rows.
 	if _, err := exec(ctx, `DELETE FROM identity_match_evidence
-		WHERE source IN ('archive_observation', 'extraction', 'enrichment')
+		WHERE source IN ('archive_observation', 'extraction', 'enrichment')`+evidenceScope+`
 		  AND (
 			`+evidenceSourceUnsupportedSQL+`EXISTS (
 				SELECT 1 FROM identity_match_candidates c
@@ -679,14 +712,14 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 					 ))
 				  )
 			)
-		  )`); err != nil {
+		  )`, scopeArgs...); err != nil {
 		return fmt.Errorf("delete unsupported identity match evidence: %w", err)
 	}
 
 	rows, err := query(ctx, `SELECT c.id, c.left_kind, c.left_id,
 		c.right_kind, c.right_id
 		FROM identity_match_candidates c
-		WHERE c.source IN ('archive_observation', 'extraction', 'enrichment')
+		WHERE c.source IN ('archive_observation', 'extraction', 'enrichment')`+candidateScope+`
 		  AND (c.decided_by IS NULL OR c.decided_by <> ?)
 		  AND c.observation_conflict_origin IS NULL
 		  AND (
@@ -696,7 +729,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 				AND NOT `+currentCandidateObservationPairSQL+`
 			)
 		  )
-		ORDER BY c.id`, string(ProvenanceUser))
+		ORDER BY c.id`, append(scopeArgs, string(ProvenanceUser))...)
 	if err != nil {
 		return fmt.Errorf("list unsupported identity matches: %w", err)
 	}
@@ -728,14 +761,41 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	for _, candidate := range unsupported {
 		unsupportedIDs[candidate.id] = struct{}{}
 	}
-	originalRows, err := query(ctx,
-		`SELECT participant_a, participant_b FROM participant_links`)
+	var originalEdges []linkEdge
+	if participantID != 0 {
+		originalEdges, err = s.loadComponentEdgesContext(ctx, query, participantID, participantID)
+	} else {
+		var originalRows rowsScanner
+		originalRows, err = query(ctx, `SELECT participant_a, participant_b FROM participant_links`)
+		if err == nil {
+			originalEdges, err = scanLinkEdges(originalRows)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("list participant links before source cleanup: %w", err)
 	}
-	originalEdges, err := scanLinkEdges(originalRows)
-	if err != nil {
-		return fmt.Errorf("scan participant links before source cleanup: %w", err)
+	var acceptedScope string
+	var acceptedScopeArgs []any
+	var linkScope string
+	if participantID != 0 {
+		// Use the component before withdrawing edges so accepted matches can
+		// reconnect participants on either side of a resulting split.
+		members := map[int64]struct{}{participantID: {}}
+		for _, edge := range originalEdges {
+			members[edge.a] = struct{}{}
+			members[edge.b] = struct{}{}
+		}
+		ids := make([]int64, 0, len(members))
+		for id := range members {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		linkScope, acceptedScopeArgs = clusterEdgeFilter(ids)
+		marks := placeholders(len(ids))
+		acceptedScope = ` AND id IN (
+			SELECT id FROM identity_match_candidates WHERE left_kind = 'participant' AND left_id IN (` + marks + `)
+			UNION SELECT id FROM identity_match_candidates WHERE right_kind = 'participant' AND right_id IN (` + marks + `)
+		)`
 	}
 
 	type replacementOwner struct {
@@ -745,9 +805,9 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	replacements := make(map[linkEdge]replacementOwner)
 	rows, err = query(ctx, `SELECT id, left_id, right_id, decided_by
 		FROM identity_match_candidates
-		WHERE left_kind = ? AND right_kind = ? AND state = ?
-		ORDER BY id`, IdentityMatchParticipant, IdentityMatchParticipant,
-		IdentityMatchStateAccepted)
+		WHERE left_kind = ? AND right_kind = ? AND state = ?`+acceptedScope+`
+		ORDER BY id`, append([]any{IdentityMatchParticipant, IdentityMatchParticipant,
+		IdentityMatchStateAccepted}, acceptedScopeArgs...)...)
 	if err != nil {
 		return fmt.Errorf("list supported accepted identity matches: %w", err)
 	}
@@ -816,8 +876,20 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 			return fmt.Errorf("delete unsupported identity match %d: %w", candidate.id, err)
 		}
 	}
+	currentQuery := `SELECT participant_a, participant_b FROM participant_links`
+	if participantID != 0 {
+		currentQuery += ` WHERE ` + linkScope
+	}
+	currentRows, err := query(ctx, currentQuery, acceptedScopeArgs...)
+	if err != nil {
+		return fmt.Errorf("list participant links after source cleanup: %w", err)
+	}
+	currentEdges, err := scanLinkEdges(currentRows)
+	if err != nil {
+		return fmt.Errorf("scan participant links after source cleanup: %w", err)
+	}
 	reapplied, err := reapplyAcceptedIdentityMatchesAfterSourceCleanupContext(
-		ctx, query, exec, originalEdges,
+		ctx, query, exec, originalEdges, currentEdges, acceptedScope, acceptedScopeArgs,
 	)
 	if err != nil {
 		return err
@@ -847,22 +919,14 @@ func reapplyAcceptedIdentityMatchesAfterSourceCleanupContext(
 	ctx context.Context,
 	query sourceIdentityQuery,
 	exec sourceIdentityExec,
-	originalEdges []linkEdge,
+	originalEdges, currentEdges []linkEdge,
+	acceptedScope string, acceptedScopeArgs []any,
 ) (bool, error) {
-	rows, err := query(ctx,
-		`SELECT participant_a, participant_b FROM participant_links`)
-	if err != nil {
-		return false, fmt.Errorf("list participant links after source cleanup: %w", err)
-	}
-	currentEdges, err := scanLinkEdges(rows)
-	if err != nil {
-		return false, fmt.Errorf("scan participant links after source cleanup: %w", err)
-	}
-	rows, err = query(ctx, `SELECT id, left_id, right_id
+	rows, err := query(ctx, `SELECT id, left_id, right_id
 		FROM identity_match_candidates
-		WHERE state = ? AND left_kind = ? AND right_kind = ?
-		ORDER BY id`, IdentityMatchStateAccepted,
-		IdentityMatchParticipant, IdentityMatchParticipant)
+		WHERE state = ? AND left_kind = ? AND right_kind = ?`+acceptedScope+`
+		ORDER BY id`, append([]any{IdentityMatchStateAccepted,
+		IdentityMatchParticipant, IdentityMatchParticipant}, acceptedScopeArgs...)...)
 	if err != nil {
 		return false, fmt.Errorf("list accepted identity matches after source cleanup: %w", err)
 	}

@@ -111,6 +111,7 @@ HTTP Mode:
 		semanticSearch := tuiSemanticSearcher(cmd.Context(), backend.client, backend.engine)
 		collectionScopes := tuiCollectionScopes(cmd.Context(), backend.client, backend.engine)
 		gate := newTUITelemetryGate(currentCfg.Data.DataDir, backend.client.BaseURL())
+		localTimezone, _ := resolveLocalTimezone()
 		model := tui.New(backend.engine, tui.Options{
 			DataDir:               currentCfg.Data.DataDir,
 			ExportDir:             currentCfg.ExportDir(),
@@ -118,6 +119,7 @@ HTTP Mode:
 			Distribution:          Distribution,
 			TextEngine:            textEngine,
 			PeopleBackend:         peopleBackend,
+			LocalTimezone:         localTimezone,
 			ManifestSaver:         backend.client,
 			AttachmentReader:      tuiAttachmentOpener{client: backend.client},
 			SemanticSearch:        semanticSearch,

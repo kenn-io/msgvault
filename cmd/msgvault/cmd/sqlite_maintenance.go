@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"log/slog"
 
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -27,4 +28,15 @@ func registerSQLiteMaintenanceJob(sched *scheduler.Scheduler, s *store.Store) er
 			return err
 		},
 	})
+}
+
+// startSQLiteMaintenanceJob runs the maintenance job once at daemon startup.
+// PostgreSQL archives never register the job, so there is nothing to start.
+func startSQLiteMaintenanceJob(sched *scheduler.Scheduler, s *store.Store, logger *slog.Logger) {
+	if s.IsPostgreSQL() {
+		return
+	}
+	if _, err := sched.StartJob(sqliteMaintenanceJob, false); err != nil {
+		logger.Error("failed to start SQLite maintenance", "error", err)
+	}
 }

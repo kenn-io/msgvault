@@ -49,13 +49,16 @@ func sentIdentityConditions(conditions string) string {
 // sentIdentityConditions rejects contact reads until the committed exclusion
 // set loads successfully. Base-message lookups can keep using their Parquet.
 func (e *DuckDBEngine) sentIdentityConditions(conditions string) (string, error) {
-	e.optColsMu.RLock()
-	err := e.unsentRefreshErr
-	e.optColsMu.RUnlock()
-	if err != nil {
+	if err := e.relationshipQuerySetsError(); err != nil {
 		return "", err
 	}
 	return sentIdentityConditions(conditions), nil
+}
+
+func (e *DuckDBEngine) relationshipQuerySetsError() error {
+	e.optColsMu.RLock()
+	defer e.optColsMu.RUnlock()
+	return e.unsentRefreshErr
 }
 
 // buildIdentityLogicalSQL renders the context-filtered logical-entry
@@ -406,13 +409,8 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		if len(request.Search.CandidateMessageIDs) == 0 {
 			conditions = append(conditions, "false")
 		} else {
-			placeholders := make([]string, len(request.Search.CandidateMessageIDs))
-			for index, messageID := range request.Search.CandidateMessageIDs {
-				placeholders[index] = "?"
-				args = append(args, messageID)
-			}
-			conditions = append(conditions,
-				"f.message_id IN ("+strings.Join(placeholders, ",")+")")
+			conditions = append(conditions, "f.message_id IN (SELECT UNNEST(?::BIGINT[]))")
+			args = append(args, request.Search.CandidateMessageIDs)
 		}
 	}
 	if len(conditions) == 0 {
@@ -553,18 +551,18 @@ func (e *DuckDBEngine) identityPeopleCandidatesSQL(
 		`, nil
 	}
 	return `
-		SELECT d.*, d.canonical_id AS person_id, matched.match_rank
-		FROM read_parquet('` + directory + `') d
-		CROSS JOIN LATERAL (
-			SELECT min(CASE
-				WHEN searched.value = lower(?) THEN 0
-				WHEN starts_with(searched.value, lower(?)) THEN 1
-				ELSE 2
-			END)::INTEGER AS match_rank
-			FROM unnest(d.search_values) AS searched(value)
-			WHERE contains(searched.value, lower(?))
+		SELECT * FROM (
+			SELECT d.*, d.canonical_id AS person_id,
+			       list_min(list_transform(
+			           list_filter(d.search_values, lambda value: contains(value, lower(?))),
+			           lambda value: CASE
+			               WHEN value = lower(?) THEN 0
+			               WHEN starts_with(value, lower(?)) THEN 1
+			               ELSE 2
+			           END))::INTEGER AS match_rank
+			FROM read_parquet('` + directory + `') d
 		) matched
-		WHERE matched.match_rank IS NOT NULL
+		WHERE match_rank IS NOT NULL
 	`, []any{searchText, searchText, searchText}
 }
 

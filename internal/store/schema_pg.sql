@@ -1478,6 +1478,41 @@ CREATE TABLE IF NOT EXISTS reaction_source_events (
 CREATE INDEX IF NOT EXISTS idx_reaction_source_events_reaction
     ON reaction_source_events(reaction_id);
 
+-- Matrix events archived while encrypted. The ciphertext stays after recovery,
+-- so a replay conflict can return a recovered message to its placeholder.
+CREATE TABLE IF NOT EXISTS matrix_encrypted_events (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    recovered BOOLEAN NOT NULL DEFAULT FALSE,
+    tried_stamp TEXT,   -- key backup state of the last failed attempt
+    tried_at BIGINT     -- Unix seconds of the last failed attempt
+);
+CREATE INDEX IF NOT EXISTS idx_matrix_encrypted_events_pending
+    ON matrix_encrypted_events(conversation_id, message_id) WHERE NOT recovered;
+
+-- The first event to use each Megolm message index in a room. Later events
+-- with the same index are replays and stay encrypted.
+CREATE TABLE IF NOT EXISTS matrix_megolm_claims (
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    message_index BIGINT NOT NULL,
+    event_id TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, session_id, message_index)
+);
+
+-- Edits that arrived for a Matrix message whose keys are still unavailable.
+CREATE TABLE IF NOT EXISTS matrix_pending_edits (
+    target_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    origin_ts BIGINT NOT NULL,
+    event TEXT NOT NULL,
+    PRIMARY KEY (target_message_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matrix_pending_edits_event
+    ON matrix_pending_edits(event_id);
+
 -- ============================================================================
 -- ATTACHMENTS
 -- ============================================================================
@@ -3220,6 +3255,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_match_candidates_edge
         left_kind, left_id, right_kind, right_id, basis,
         service_id, scope_kind, scope_value, normalized_value
     );
+CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_right
+    ON identity_match_candidates(right_kind, right_id);
 CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_state
     ON identity_match_candidates(state, id);
 CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_value
@@ -3880,6 +3917,13 @@ CREATE TABLE IF NOT EXISTS activity_projection_queue (
     queued_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Membership writes mark one conversation; the activity drain expands its messages.
+-- No foreign key: a cascading conversation delete can leave a harmless marker.
+CREATE TABLE IF NOT EXISTS activity_projection_conversation_queue (
+    conversation_id BIGINT PRIMARY KEY,
+    after_message_id BIGINT NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending
     ON activity_projection_queue(message_id)
     WHERE revision > processed_revision;
@@ -3909,6 +3953,7 @@ CREATE INDEX IF NOT EXISTS idx_conversations_type ON conversations(conversation_
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id);
+-- idx_messages_source_sent_at is built by Store.buildLargeIndexesConcurrently.
 -- idx_messages_source_id is built by Store.buildLargeIndexesConcurrently via
 -- CREATE INDEX CONCURRENTLY on a dedicated autocommit connection, outside any
 -- transaction; building it over an existing archive can take a long time,
@@ -4288,3 +4333,42 @@ CREATE TABLE IF NOT EXISTS document_extraction_ranges (
     char_count BIGINT NOT NULL CHECK (char_count >= 0),
     PRIMARY KEY (extraction_id, first_page)
 );
+
+CREATE TABLE IF NOT EXISTS loop_decisions (
+ message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ state TEXT NOT NULL CHECK (state IN ('done', 'snoozed')),
+ snoozed_until TIMESTAMPTZ,
+ CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
+);
+
+-- Retained message facts for bounded request-time loop detection.
+CREATE TABLE IF NOT EXISTS loop_message_evidence (
+ message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ rule_version INTEGER NOT NULL,
+ token TEXT NOT NULL,
+ facts TEXT
+);
+CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_raw() RETURNS TRIGGER AS $$
+BEGIN
+ IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.raw_data IS NOT DISTINCT FROM NEW.raw_data AND OLD.raw_format IS NOT DISTINCT FROM NEW.raw_format AND OLD.compression IS NOT DISTINCT FROM NEW.compression AND OLD.encryption_version IS NOT DISTINCT FROM NEW.encryption_version THEN
+ RETURN NULL;
+ END IF;
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
+ RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_loop_evidence_message_raw ON message_raw;
+CREATE TRIGGER trg_loop_evidence_message_raw AFTER INSERT OR UPDATE OR DELETE ON message_raw
+ FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_raw();
+CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_bodies() RETURNS TRIGGER AS $$
+BEGIN
+ IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.body_text IS NOT DISTINCT FROM NEW.body_text THEN
+ RETURN NULL;
+ END IF;
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
+ RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
+CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
+ FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();

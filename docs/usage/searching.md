@@ -14,7 +14,7 @@ to read a message. On newer `main` builds, `show` is an alias; use
 |---|---|
 | Words in a message or its subject | `msgvault search "quarterly report"` |
 | A topic, even with different wording | [Vector or hybrid message search](/docs/usage/vector-search/) |
-| Text Docbank extracted from a mirrored attachment, on unreleased builds | `msgvault media search "quartz"` |
+| Text Docbank extracted from a mirrored attachment | `msgvault media search "quartz"` |
 | Words or topics inside an attached document | [Document attachment search](/docs/usage/document-indexing/#search-and-inspect-status) |
 | An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
 | A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
@@ -174,6 +174,12 @@ Delivery headers are routing hints, not proof that you own an address, and
 attribution never lets msgvault send from it. The
 [design record](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) lists the headers
 and the order msgvault trusts them in.
+
+### Sender hints
+
+When an incomplete sender name or address such as `from:alex` or `from:alex@exam` finds no messages, SQLite and PostgreSQL searches suggest up to three matching addresses. Each count describes the corrected query within your current filters and account scope. The CLI prints the hint on stderr after its normal output, including with `--json`, whose stdout stays a bare array. MCP metadata search returns the same suggestion in `hints` with `retry_with.query`. DuckDB metadata search already matches sender names.
+
+When retrying in the CLI, keep options such as `--account`, `--collection`, and `--deletion-scope` from your original command.
 
 ### Domain Search
 
@@ -345,7 +351,7 @@ Media search uses lexical retrieval through the configured Docbank integration. 
 
 ## Search mirrored attachment text
 
-On unreleased builds, media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as images, audio, or video. Docbank searches the text it can extract from those files. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
+Media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as images, audio, or video. Docbank searches the text it can extract from those files. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
 
 Use `documents search` for msgvault's local document index and `media search` for text Docbank has extracted from mirrored attachments.
 

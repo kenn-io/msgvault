@@ -31,6 +31,13 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 	}
+	for _, m := range plan.messages {
+		if m.survivor != 0 {
+			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
+				return err
+			}
+		}
+	}
 	// Batch the ordinary row transfer and provenance writes. The values table
 	// keeps provider IDs and hidden-survivor decisions in the same transaction.
 	for start := 0; start < len(plan.messages); start += 100 {
@@ -238,7 +245,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}
-	return s.bumpDerivedDataRevision(tx)
+	return s.bumpDerivedDataRevisionContext(ctx, tx)
 }
 
 func preserveMergedIMAPDrafts(ctx context.Context, tx *loggedTx, from, into int64) error {

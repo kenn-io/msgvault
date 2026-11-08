@@ -34,6 +34,7 @@ import (
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -679,6 +680,8 @@ type cliDeleteDedupedExecuteResponse struct {
 }
 
 type cliSearchResponse struct {
+	HasMore          bool                   `json:"has_more,omitzero"`
+	Hints            []query.SearchHint     `json:"hints,omitempty"`
 	HybridAvailable  bool                   `json:"hybrid_available,omitzero"`
 	Results          []query.MessageSummary `json:"results"`
 	ScopeLabel       string                 `json:"scope_label,omitempty"`
@@ -882,6 +885,7 @@ type cliAccountResponse struct {
 }
 
 type cliMessageResponse struct {
+	SenderAuth           *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	RelatedMessageID     *int64                    `json:"related_message_id,omitempty"`
 	Calendar             *store.CalendarProjection `json:"calendar,omitempty"`
 	ID                   int64                     `json:"id"`
@@ -982,7 +986,7 @@ func (s *Server) handleCLIStats(w http.ResponseWriter, r *http.Request) {
 	}
 	cliStore = bindCLIStoreContext(r.Context(), cliStore)
 
-	scope, err := resolveCLIStatsScope(cliStore, account, collection)
+	scope, err := resolveCLIStatsScope(r.Context(), cliStore, account, collection)
 	if err != nil {
 		writeAPIHTTPError(w, s.cliScopeError(err))
 		return
@@ -1430,7 +1434,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
-	if err := runner.RunCLICommand(r.Context(), req, writeEvent); err != nil {
+	if err := runner.RunCLICommand(s.withPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
 		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
@@ -1587,7 +1591,7 @@ func (s *Server) handleCLIEmbeddingsPlan(w http.ResponseWriter, r *http.Request)
 	if !requireSingleJSONValue(w, dec, "invalid_request") {
 		return
 	}
-	resp, err := planner.PlanCLIEmbeddings(r.Context(), req)
+	resp, err := planner.PlanCLIEmbeddings(s.withPublishedVectorConfig(r.Context()), req)
 	if err != nil {
 		writeAPIHTTPError(w, newAPIHTTPError(http.StatusBadRequest, "embeddings_plan_failed", err.Error()))
 		return
@@ -2456,7 +2460,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 			collection = scope.Collection.Name
 		}
 	} else if account != "" || collection != "" {
-		scope, err = resolveCLIStatsScope(cliStore, account, collection)
+		scope, err = resolveCLIStatsScope(r.Context(), cliStore, account, collection)
 		if err != nil {
 			writeAPIHTTPError(w, s.cliScopeError(err))
 			return
@@ -2491,7 +2495,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	if grant == nil {
 		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore, true)
 	}
-	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit, offset)
+	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit+1, offset)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2499,6 +2503,10 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("CLI search failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "search_failed", err.Error())
 		return
+	}
+	resp.HasMore = len(results) > limit
+	if resp.HasMore {
+		results = results[:limit]
 	}
 	if includeSnippet {
 		metadata, err := s.searchMetadata(r.Context(), resultIDs(results), parsed, true)
@@ -2514,6 +2522,14 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp.Results = results
+	if len(results) == 0 && offset == 0 {
+		if matcher, ok := s.queryEngineForContext(r.Context()).(query.SenderNameMatcher); ok {
+			resp.Hints = matcher.MatchSenderName(r.Context(), parsed)
+			if s.writeIfContextError(w, r.Context().Err()) {
+				return
+			}
+		}
+	}
 	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
@@ -2803,14 +2819,14 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	if s.requestAuthentication(r).Grant != nil {
 		sources = slices.DeleteFunc(sources, func(src *store.Source) bool { return !slices.Contains(agentReadSourceIDs(r), src.ID) })
 	}
+	// Opted-in callers accept placeholder counts and immediate reuse of a matching catalog.
+	allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
 	if counter, ok := s.store.(sourceMessageCounter); ok && !s.sourceScopedRead(r) {
 		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
 			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
 		)
-		// Older clients can't tell placeholder zeros from real counts, so only opted-in callers get them.
-		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
 		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
 		if err != nil && !response.CountsPending {
 			if s.writeIfContextError(w, err) {
@@ -2864,7 +2880,7 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		} else {
 			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
 				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
-				s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+				s.statsSnapshotWait, allowPending, lister.ListVirtualAccountsContext,
 			)
 		}
 		// The catalog is extra detail; a slow or failed read still returns
@@ -2931,7 +2947,7 @@ func (s *Server) updateCLIAccount(
 	if settings, ok := s.store.(accountops.SettingsStore); ok {
 		result, err = accountops.UpdateAccount(ctx, settings, req)
 	} else {
-		result, err = accountops.UpdateDisplayName(cliStore, req)
+		result, err = accountops.UpdateDisplayName(ctx, cliStore, req)
 	}
 	if err != nil {
 		return accountops.UpdateResult{}, s.operationError(
@@ -3016,7 +3032,7 @@ func (s *Server) createCLICollection(
 		return collectionops.MutationResult{}, apiErr
 	}
 	cliStore = bindCLIStoreContext(ctx, cliStore)
-	result, err := collectionops.Create(cliStore, req)
+	result, err := collectionops.Create(ctx, cliStore, req)
 	if err != nil {
 		return collectionops.MutationResult{}, s.operationError(
 			err,
@@ -3037,7 +3053,7 @@ func (s *Server) addCLICollectionSources(
 		return collectionops.MutationResult{}, apiErr
 	}
 	cliStore = bindCLIStoreContext(ctx, cliStore)
-	result, err := collectionops.AddSources(cliStore, name, req)
+	result, err := collectionops.AddSources(ctx, cliStore, name, req)
 	if err != nil {
 		return collectionops.MutationResult{}, s.operationError(
 			err,
@@ -3058,7 +3074,7 @@ func (s *Server) removeCLICollectionSources(
 		return collectionops.MutationResult{}, apiErr
 	}
 	cliStore = bindCLIStoreContext(ctx, cliStore)
-	result, err := collectionops.RemoveSources(cliStore, name, req)
+	result, err := collectionops.RemoveSources(ctx, cliStore, name, req)
 	if err != nil {
 		return collectionops.MutationResult{}, s.operationError(
 			err,
@@ -3133,7 +3149,7 @@ func (s *Server) getCLIIdentities(
 	var sourceIDs []int64
 	switch {
 	case sourceIDSet:
-		src, err := identityops.ResolveSource(cliStore, identityops.SourceSelector{SourceID: sourceID})
+		src, err := identityops.ResolveSource(ctx, cliStore, identityops.SourceSelector{SourceID: sourceID})
 		if err != nil {
 			return cliIdentitiesResponse{}, s.cliScopeError(err)
 		}
@@ -3146,7 +3162,7 @@ func (s *Server) getCLIIdentities(
 				"primary_only requires account scope",
 			)
 		}
-		scope, err := resolveCLIAccountScope(cliStore, account)
+		scope, err := resolveCLIAccountScope(ctx, cliStore, account)
 		if err != nil {
 			return cliIdentitiesResponse{}, s.cliScopeError(err)
 		}
@@ -3159,7 +3175,7 @@ func (s *Server) getCLIIdentities(
 		}
 		sourceIDs = []int64{scope.Account.Source.ID}
 	case account != "" || collection != "":
-		scope, err := resolveCLIStatsScope(cliStore, account, collection)
+		scope, err := resolveCLIStatsScope(ctx, cliStore, account, collection)
 		if err != nil {
 			return cliIdentitiesResponse{}, s.cliScopeError(err)
 		}
@@ -3201,7 +3217,7 @@ func (s *Server) addCLIIdentity(ctx context.Context, req identityops.AddRequest)
 	}
 	cliStore = bindCLIStoreContext(ctx, cliStore)
 
-	result, err := identityops.Add(cliStore, req)
+	result, err := identityops.Add(ctx, cliStore, req)
 	if err != nil {
 		return identityops.AddResult{}, s.operationError(
 			err,
@@ -3297,7 +3313,7 @@ func (s *Server) handleCLIIdentityDiscover(w http.ResponseWriter, r *http.Reques
 
 	var externalEvidence []identityops.ExternalEvidence
 	if req.Provider {
-		source, resolveErr := identityops.ResolveSource(discoveryStore, req.SourceSelector)
+		source, resolveErr := identityops.ResolveSource(r.Context(), discoveryStore, req.SourceSelector)
 		if resolveErr != nil {
 			writeAPIHTTPError(w, s.operationError(
 				resolveErr,
@@ -3446,7 +3462,7 @@ func (s *Server) removeCLIIdentity(ctx context.Context, req identityops.RemoveRe
 	}
 	cliStore = bindCLIStoreContext(ctx, cliStore)
 
-	result, err := identityops.Remove(cliStore, req)
+	result, err := identityops.Remove(ctx, cliStore, req)
 	if err != nil {
 		return identityops.RemoveResult{}, s.operationError(
 			err,
@@ -3550,6 +3566,11 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	from := ""
+	if len(msg.From) == 1 {
+		from = msg.From[0].Email
+	}
+	msg.SenderAuth = s.senderAuth(r.Context(), msg.ID, msg.SourceID, msg.MessageType, from)
 	writeJSON(w, http.StatusOK, cliMessageResponseFromQuery(msg))
 }
 
@@ -3733,6 +3754,7 @@ func (s *Server) resolveCLIMessage(r *http.Request, idStr string) (*query.Messag
 
 func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 	return cliMessageResponse{
+		SenderAuth:           msg.SenderAuth,
 		Calendar:             msg.Calendar,
 		ID:                   msg.ID,
 		SourceMessageID:      msg.SourceMessageID,
@@ -3891,12 +3913,12 @@ func statsResponseFromStore(stats *store.Stats) StatsResponse {
 	}
 }
 
-func resolveCLIStatsScope(st CLIStore, account, collection string) (cliScope, error) {
+func resolveCLIStatsScope(ctx context.Context, st CLIStore, account, collection string) (cliScope, error) {
 	switch {
 	case account != "" && collection != "":
 		return cliScope{}, opserr.Invalid(errMutuallyExclusiveScope)
 	case account != "":
-		return resolveCLIAccountScope(st, account)
+		return resolveCLIAccountScope(ctx, st, account)
 	case collection != "":
 		return resolveCLICollectionScope(st, collection)
 	default:
@@ -3915,8 +3937,8 @@ func cliEmptyScopeMessage(account, collection string) string {
 	}
 }
 
-func resolveCLIAccountScope(st CLIStore, input string) (cliScope, error) {
-	scope, err := collectionops.ResolveAccount(st, input)
+func resolveCLIAccountScope(ctx context.Context, st CLIStore, input string) (cliScope, error) {
+	scope, err := collectionops.ResolveAccountContext(ctx, st, input)
 	return cliScope{Account: scope}, err
 }
 

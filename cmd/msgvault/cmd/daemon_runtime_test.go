@@ -1,13 +1,14 @@
 package cmd
 
 import (
-	"context"
+	"bytes"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,26 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
 )
+
+func TestListLiveDaemonRuntimeRecordsEmptyDoesNotProbeOwnership(t *testing.T) {
+	require := require.New(t)
+	dataDir := t.TempDir()
+	// Denying read-write access makes an ownership probe observable without
+	// racing startup for the lock.
+	lockPath := daemonOwnerLockPath(dataDir)
+	require.NoError(os.WriteFile(lockPath, nil, 0o400))
+	t.Cleanup(func() { require.NoError(os.Chmod(lockPath, 0o600)) })
+	lock, err := os.OpenFile(lockPath, os.O_RDWR, 0)
+	if err == nil {
+		require.NoError(lock.Close())
+		t.Skip("filesystem or user permits read-write access to a read-only lock file")
+	}
+	require.ErrorIs(err, os.ErrPermission)
+
+	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	require.NoError(err)
+	assert.Empty(t, records)
+}
 
 func TestListLiveDaemonRuntimeRecordsKeepsUnjudgedRecords(t *testing.T) {
 	require := require.New(t)
@@ -132,7 +153,7 @@ func TestFindDaemonRuntimeRequiresLiveMsgvaultPing(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 	require.NotNil(rt, "runtime should be discovered")
 	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
 	assert.Equal(host, rt.Host, "host")
@@ -166,7 +187,7 @@ func TestFindDaemonRuntimeRejectsWrongServicePing(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	assert.Nil(findDaemonRuntime(dataDir), "wrong service ping must not match")
+	assert.Nil(findDaemonRuntime(t.Context(), dataDir), "wrong service ping must not match")
 }
 
 func TestFindDaemonRuntimeRejectsUnauthenticatedPingWithoutExactCreateTime(t *testing.T) {
@@ -217,7 +238,7 @@ func TestFindDaemonRuntimeRejectsUnauthenticatedPingWithoutExactCreateTime(t *te
 			})
 			require.NoError(err, "write runtime record")
 
-			rt, found, err := findRespondingDaemonRuntime(context.Background(), dataDir,
+			rt, found, err := findRespondingDaemonRuntime(t.Context(), dataDir,
 				func(*DaemonRuntime, error) bool { return true })
 
 			require.NoError(err, "find responding runtime")
@@ -275,7 +296,7 @@ func TestFindDaemonRuntimeAcceptsRuntimeSecretProofWhenCreateTimeUnknown(t *test
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 
 	require.NotNil(rt, "runtime secret proof recovers an indeterminate identity")
 	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
@@ -329,7 +350,7 @@ func TestFindDaemonRuntimeAcceptsRuntimeSecretProofWhenCreateTimeMismatch(t *tes
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 
 	require.NotNil(rt, "runtime secret proof recovers a clock-stepped identity")
 	assert.Equal(os.Getpid(), rt.Record.PID, "pid")
@@ -392,6 +413,45 @@ func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T
 	assert.Equal(daemonService, records[0].Service, "service")
 }
 
+func TestReportRetainedDaemonVersion(t *testing.T) {
+	withTestVersion(t, "v0.23.0-45-gabc")
+	savedResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/source build/msgvault", nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
+	for _, tt := range []struct {
+		name       string
+		options    invocationOptions
+		restart    string
+		powerShell string
+		daemon     string
+	}{
+		{name: "default archive", daemon: "v0.23.0",
+			restart:    "'/tmp/source build/msgvault' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
+		{name: "both selections", daemon: "v0.23.0", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"},
+			restart:    "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'"},
+		{name: "retained same base source", daemon: "v0.23.0-46-gdef",
+			restart:    "'/tmp/source build/msgvault' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
+		{name: "equal source stays quiet", daemon: "v0.23.0-45-gabc"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			ctx := testInvocationContext(t.Context(), nil, tt.options)
+			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemon}})
+			if runtime.GOOS == "windows" {
+				tt.restart = tt.powerShell
+			}
+			if tt.restart == "" {
+				assert.Empty(t, stderr.String())
+				return
+			}
+			assert.Equal(t, "msgvault: daemon "+tt.daemon+" is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version.\n", stderr.String())
+		})
+	}
+}
+
 func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -429,6 +489,13 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 			currentVersion: "dev",
 			want:           false,
 		},
+		{name: "source replaces unprefixed release", daemonVersion: "0.23.0", currentVersion: "v0.23.0-45-gabc", want: true},
+		{name: "unprefixed source replaces release", daemonVersion: "v0.23.0", currentVersion: "0.23.0-45-gabc", want: true},
+		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},
+		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
+		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
+		{name: "same base later source keeps earlier", daemonVersion: "v0.23.0-44-gdef", currentVersion: "v0.23.0-45-gabc"},
+		{name: "source keeps dirty tag daemon", daemonVersion: "v0.23.0-dirty", currentVersion: "v0.23.0-45-gabc"},
 	}
 
 	for _, tt := range tests {
@@ -615,7 +682,7 @@ func TestListLiveDaemonRuntimeRecordsDoesNotTrustAnotherDaemonsLeaseForServingMi
 	require.NoError(err, "acquire daemon ownership")
 	t.Cleanup(func() { require.NoError(owner.Close(), "release daemon ownership") })
 
-	staleProcess := helperProcessCommand(context.Background(), "block")
+	staleProcess := helperProcessCommand(t.Context(), "block")
 	require.NoError(staleProcess.Start(), "start live reused-pid stand-in")
 	t.Cleanup(func() {
 		_ = staleProcess.Process.Kill()
@@ -793,7 +860,7 @@ func TestFindDaemonRuntimeRejectsRespondingEndpointWithMismatchedCreateTime(t *t
 	})
 	require.NoError(err, "write runtime record")
 
-	rt := findDaemonRuntime(dataDir)
+	rt := findDaemonRuntime(t.Context(), dataDir)
 
 	assert.Nil(rt, "mismatched process identity must outweigh an unauthenticated ping")
 	assertRuntimeRecordFileExists(t, dataDir)

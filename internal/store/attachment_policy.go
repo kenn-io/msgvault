@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
@@ -129,7 +130,7 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			}
 			var messageID int64
 			var sourceAttachmentID string
-			err := tx.QueryRow(`
+			err := tx.QueryRowContext(ctx, `
 				SELECT message_id, COALESCE(source_attachment_id, '')
 				FROM attachments WHERE id = ?
 			`, exclusion.AttachmentID).Scan(&messageID, &sourceAttachmentID)
@@ -145,7 +146,7 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			if sourceAttachmentID == "" {
 				return fmt.Errorf("attachment occurrence %d has no provider identity", exclusion.AttachmentID)
 			}
-			result, err := tx.Exec(`
+			result, err := tx.ExecContext(ctx, `
 				UPDATE attachments
 				SET storage_path = ?, content_hash = NULL,
 				    thumbnail_hash = NULL, thumbnail_path = NULL,
@@ -166,7 +167,7 @@ func (s *Store) ExcludeAttachmentOccurrences(ctx context.Context, exclusions []A
 			messageIDs[messageID] = struct{}{}
 		}
 		for messageID := range messageIDs {
-			if _, err := tx.Exec(`
+			if _, err := tx.ExecContext(ctx, `
 				UPDATE messages
 				SET has_attachments = (SELECT COUNT(*) FROM attachments WHERE message_id = ?) > 0,
 				    attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = ?)
@@ -185,17 +186,26 @@ func (s *Store) AttachmentBlobReferenced(ctx context.Context, contentHash, stora
 	if contentHash == "" && storagePath == "" {
 		return false, nil
 	}
+	query, args := attachmentBlobReferenceQuery(contentHash, storagePath)
 	var exists bool
-	err := s.db.QueryRowContext(ctx, s.Rebind(`
-		SELECT EXISTS (
-			SELECT 1 FROM attachments
-			WHERE (? <> '' AND (content_hash = ? OR thumbnail_hash = ?))
-			   OR (? <> '' AND (storage_path = ? OR thumbnail_path = ?))
-		)
-	`), contentHash, contentHash, contentHash,
-		storagePath, storagePath, storagePath).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, s.Rebind(query), args...).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check attachment blob reference: %w", err)
 	}
 	return exists, nil
+}
+
+func attachmentBlobReferenceQuery(contentHash, storagePath string) (string, []any) {
+	var conditions []string
+	var args []any
+	// Empty-input guards in SQL prevent SQLite from using its multi-index OR plan.
+	if contentHash != "" {
+		conditions = append(conditions, "content_hash = ? OR thumbnail_hash = ?")
+		args = append(args, contentHash, contentHash)
+	}
+	if storagePath != "" {
+		conditions = append(conditions, "storage_path = ? OR thumbnail_path = ?")
+		args = append(args, storagePath, storagePath)
+	}
+	return "SELECT EXISTS (SELECT 1 FROM attachments WHERE " + strings.Join(conditions, " OR ") + ")", args
 }

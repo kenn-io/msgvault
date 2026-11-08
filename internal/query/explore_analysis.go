@@ -221,11 +221,14 @@ func sqlIndexedPersonGroupLabelExpr(peopleGlob string) string {
 }
 
 // sqlPersonGroupLabelExpr applies the shared cluster-name policy only to
-// paged groups missing from the sent-activity directory.
+// paged groups missing from the sent-activity directory. Membership equality
+// lets DuckDB join members without pairing every participant with every group.
 func sqlPersonGroupLabelExpr(participantsGlob, clustersGlob, personDisplayNamesGlob string) string {
-	members := "(SELECT CAST(group_key AS BIGINT) UNION SELECT participant_id FROM read_parquet('" + clustersGlob + "') WHERE canonical_id = CAST(group_key AS BIGINT))"
-	name := sqlClusterBestNameExpr("pbn.id IN " + members)
-	override := sqlPersonNameOverrideExpr(personDisplayNamesGlob, "pnv.participant_id IN "+members)
+	memberFilter := func(id string) string {
+		return "COALESCE((SELECT c.canonical_id FROM read_parquet('" + clustersGlob + "') c WHERE c.participant_id = " + id + "), " + id + ") = CAST(group_key AS BIGINT)"
+	}
+	name := sqlClusterBestNameExpr(memberFilter("pbn.id"))
+	override := sqlPersonNameOverrideExpr(personDisplayNamesGlob, memberFilter("pnv.participant_id"))
 	return "(SELECT COALESCE(" + override + ", " + name + ", " + sqlPersonIdentifierFallbackExpr("pb") + ") FROM read_parquet('" + participantsGlob + "') pb WHERE pb.id = CAST(group_key AS BIGINT))"
 }
 
@@ -312,11 +315,9 @@ func exploreGroupExpressions(
 func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) string {
 	domainCTE := ""
 	directJoin, resultJoin := "", ""
-	rosterJoin := `
-		LEFT JOIN read_parquet('` + quoteIdentitySQLPath(clustersGlob) + `') c
-			ON c.participant_id = p.id`
+	rosterJoin := ""
 	directValue := "a.canonical_id"
-	rosterValue := "COALESCE(c.canonical_id, p.id)"
+	rosterValue := "p.canonical_id"
 	rosterFilter := "le.entry_kind = 'conversation'"
 	resultValue := "gm.group_value AS person_id"
 	if dimension == "domain" {
@@ -328,7 +329,7 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 	FROM participants WHERE domain <> '' GROUP BY lower(domain)`
 		directValue, rosterValue = "d.domain_id", "d.domain_id"
 		directJoin = " JOIN group_domains d ON d.domain = a.participant_domain"
-		rosterJoin = "\n\t\tJOIN group_domains d ON d.domain = lower(p.domain)"
+		rosterJoin = "\n\t\tJOIN group_domains d ON d.domain = p.participant_domain"
 		rosterFilter = "true"
 		resultJoin = " JOIN group_domains d ON d.domain_id = gm.group_value"
 		resultValue = "d.domain AS group_value"
@@ -349,7 +350,7 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 			` + rosterValue + `
 		FROM logical_entries le
 		JOIN conversation_participants cp ON cp.conversation_id = le.conversation_id
-		JOIN participants p ON p.id = cp.participant_id` + rosterJoin + `
+		JOIN (` + identityindex.CanonicalParticipantsSQL("participants", "read_parquet('"+quoteIdentitySQLPath(clustersGlob)+"')") + `) p ON p.participant_id = cp.participant_id` + rosterJoin + `
 		WHERE ` + rosterFilter + `
 	) members
 	WHERE group_value IS NOT NULL
@@ -377,10 +378,10 @@ func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, expl
 	if err := validateIdentityPredicate(explore.Context); err != nil {
 		return explore, err
 	}
-	// Every public Explore/Files consumer prepares its predicate here. SentOnly
-	// requests need current exclusions even when they have no participant filter.
-	if explore.SentOnly {
-		if _, err := e.sentIdentityConditions("true"); err != nil {
+	// Every public Explore/Files consumer prepares its predicate here. SentOnly and
+	// PersonInteractionsOnly requests need current relationship query sets even without a participant filter.
+	if explore.SentOnly || explore.PersonInteractionsOnly {
+		if err := e.relationshipQuerySetsError(); err != nil {
 			return explore, err
 		}
 	}

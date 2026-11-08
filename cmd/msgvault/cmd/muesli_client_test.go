@@ -43,7 +43,7 @@ func TestMuesliCommandsReadRecorderConfiguration(t *testing.T) {
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
 	require.NoError(err)
 	enabledContacts := false
 	clientCfg := config.NewDefaultConfig()
@@ -58,19 +58,19 @@ func TestMuesliCommandsReadRecorderConfiguration(t *testing.T) {
 		require.NoError(command.RunE(invocationCmd, []string{"recorder"}))
 	}
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
-	_, err = db.Exec(`UPDATE meetings SET raw_transcript='Synthetic hook edit' WHERE id=42; INSERT INTO meetings VALUES(43,'Other meeting','2026-09-01T15:00:00Z','2026-09-01 15:00:03','Other synthetic transcript')`)
+	_, err = db.ExecContext(t.Context(), `UPDATE meetings SET raw_transcript='Synthetic hook edit' WHERE id=42; INSERT INTO meetings VALUES(43,'Other meeting','2026-09-01T15:00:00Z','2026-09-01 15:00:03','Other synthetic transcript')`)
 	require.NoError(err)
 	hook := &cobra.Command{Use: "muesli-hook"}
 	hook.SetContext(testInvocationContext(t.Context(), clientCfg, invocationOptions{}))
 	hook.SetIn(strings.NewReader(`{"schemaVersion":1,"event":"meeting.completed","kind":"meeting","id":42,"completedAt":"2026-09-01T16:00:00Z"}`))
 	require.NoError(muesliHookCmd.RunE(hook, nil))
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count, "completion hook must select the named meeting only")
 	var messageID int64
-	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&messageID))
-	body, err := st.GetMessageBodyText(messageID)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
 	require.NoError(err)
 	assert.Contains(body, "Synthetic hook edit")
 	previousID := syncMuesliMeetingID
@@ -80,7 +80,7 @@ func TestMuesliCommandsReadRecorderConfiguration(t *testing.T) {
 	command.SetContext(testInvocationContext(t.Context(), clientCfg, invocationOptions{}))
 	command.SetOut(io.Discard)
 	require.NoError(syncMuesliCmd.RunE(command, []string{"recorder"}))
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count, "remote meeting selector must not scan the whole database")
 }
 
@@ -180,10 +180,10 @@ func TestMuesliBuildCacheRefreshesThroughRegisteredSource(t *testing.T) {
 			}
 
 			var archived int
-			require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&archived))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&archived))
 			assert.Equal(tc.wantArchive, archived)
 			cancel()
-			wait, stop := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+			wait, stop := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 			defer stop()
 			require.True(jobs.waitContext(wait))
 			close(modes)
@@ -260,12 +260,12 @@ func TestMuesliWatchRetriesTransientDaemonFailures(t *testing.T) {
 			}))
 			defer server.Close()
 			// Reserve an address with nothing listening, as during an outage.
-			reserved, err := net.Listen("tcp", "127.0.0.1:0")
+			reserved, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(err)
 			address := reserved.Addr().String()
 			require.NoError(reserved.Close())
 			startDaemon := func() {
-				listener, err := net.Listen("tcp", address)
+				listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", address)
 				require.NoError(err)
 				server.Listener = listener
 				server.Start()
@@ -277,7 +277,7 @@ func TestMuesliWatchRetriesTransientDaemonFailures(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "muesli.db")
 			db, err := sql.Open("sqlite3", path)
 			require.NoError(err)
-			_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
+			_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT);INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
 			require.NoError(err)
 			require.NoError(db.Close())
 			disabled := false
@@ -312,7 +312,7 @@ func TestMuesliWatchRetriesTransientDaemonFailures(t *testing.T) {
 			err = runMuesliWatch(ctx, watched, run.watchScan, wait, func(err error) { reported = append(reported, err) })
 
 			var archived int
-			require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages`).Scan(&archived))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&archived))
 			if tc.wantStop != 0 {
 				apiErr, ok := errors.AsType[*daemonclient.APIError](err)
 				require.True(ok, "an unfixable error ends the watch: %v", err)
@@ -334,10 +334,10 @@ func newMuesliMeetingsFixture(t *testing.T, meetings bool) string {
 	path := filepath.Join(t.TempDir(), "muesli.db")
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT)`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT)`)
 	require.NoError(t, err)
 	if meetings {
-		_, err = db.Exec(`INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','Synthetic transcript')`)
 		require.NoError(t, err)
 	}
 	require.NoError(t, db.Close())

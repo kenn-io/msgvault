@@ -20,10 +20,10 @@ func TestSearchMetadataUsesIndexAndAttachments(t *testing.T) {
 	f := storetest.New(t)
 	id := f.NewMessage().WithSubject("Plan").WithSnippet("prefix without match").Create(t, f.Store)
 	require.NoError(f.Store.UpsertFTS(id, "Plan", strings.Repeat("界", 300)+" needle context", "", "", ""))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?,'plan.pdf','application/pdf',10,'synthetic',NULL),(?,'budget.csv','text/csv',20,'synthetic',NULL)`), id, id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?,'plan.pdf','application/pdf',10,'synthetic',NULL),(?,'budget.csv','text/csv',20,'synthetic',NULL)`), id, id)
 	require.NoError(err)
 	// A third attachment the sync hasn't written yet: the stored count wins over the row count.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET attachment_count = 3 WHERE id = ?`), id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET attachment_count = 3 WHERE id = ?`), id)
 	require.NoError(err)
 	emptyID := f.NewMessage().WithSubject("Empty").Create(t, f.Store)
 	metadata, err := f.Store.GetSearchMetadata(t.Context(), []int64{id, emptyID, -1}, search.Parse("needle"), true)
@@ -42,7 +42,7 @@ func TestSearchMetadataUsesIndexAndAttachments(t *testing.T) {
 		assert.Empty(metadata[id].MatchSnippet)
 	}
 	if !f.Store.IsPostgreSQL() {
-		_, err = f.Store.DB().Exec(`DROP TABLE messages_fts`)
+		_, err = f.Store.DB().ExecContext(t.Context(), `DROP TABLE messages_fts`)
 		require.NoError(err)
 		var logs bytes.Buffer
 		previousLogger := slog.Default()
@@ -63,9 +63,9 @@ func TestSearchMetadataSkipsUnnamedAttachments(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 	id := f.NewMessage().Create(t, f.Store)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path) VALUES (?,NULL,'application/octet-stream',10,'synthetic'),(?,'','application/octet-stream',10,'synthetic')`), id, id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path) VALUES (?,NULL,'application/octet-stream',10,'synthetic'),(?,'','application/octet-stream',10,'synthetic')`), id, id)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET attachment_count = 2 WHERE id = ?`), id)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET attachment_count = 2 WHERE id = ?`), id)
 	require.NoError(err)
 	metadata, err := f.Store.GetSearchMetadata(t.Context(), []int64{id}, nil, false)
 	require.NoError(err)
@@ -85,19 +85,21 @@ func TestSearchMetadataORExcerpts(t *testing.T) {
 		{"First", "alpha beta evidence"},
 		{"Second", "gamma delta evidence"},
 		{"Partial", "alpha unrelated"},
+		{"Prefix", "projection meeting evidence"},
 	} {
 		id := f.NewMessage().WithSubject(fixture.subject).WithSnippet("stored preview").Create(t, f.Store)
 		require.NoError(f.Store.UpsertFTS(id, fixture.subject, strings.Repeat("padding ", 50)+fixture.body, "", "", ""))
 		ids = append(ids, id)
 	}
-	q := search.ParseOR("alpha beta | gamma delta | subject:Partial")
+	q := search.ParseOR("alpha beta | gamma delta | subject:Partial | project meeting")
 	messages, total, err := f.Store.SearchMessagesQueryContext(t.Context(), q, 0, 10)
 	require.NoError(err)
-	require.EqualValues(3, total)
-	require.Len(messages, 3)
+	require.EqualValues(4, total)
+	require.Len(messages, 4)
 	metadata, err := f.Store.GetSearchMetadata(t.Context(), ids, q, true)
 	require.NoError(err)
 	assert.Contains(metadata[ids[0]].MatchSnippet, "alpha beta")
 	assert.Contains(metadata[ids[1]].MatchSnippet, "gamma delta")
 	assert.Empty(metadata[ids[2]].MatchSnippet, "matching one term of a conjunction is not a text match")
+	assert.Contains(metadata[ids[3]].MatchSnippet, "projection meeting")
 }

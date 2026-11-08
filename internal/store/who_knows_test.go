@@ -165,7 +165,7 @@ func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 	post := func(kind, email, metadata, identifierType, identifier string) int64 {
 		chat, err := f.Store.GetOrCreateSource(kind, "workspace")
 		require.NoError(err)
-		conversation, err := f.Store.EnsureConversation(chat.ID, "channel", "Channel")
+		conversation, err := f.Store.EnsureConversation(t.Context(), chat.ID, "channel", "Channel")
 		require.NoError(err)
 		sender := f.EnsureParticipant(email, email, "example.net")
 		if identifier != "" {
@@ -231,7 +231,7 @@ func TestTopicAuthorsLeaveOutDiscordSystemMessages(t *testing.T) {
 	f := storetest.New(t)
 	chat, err := f.Store.GetOrCreateSource("discord", "guild")
 	require.NoError(err)
-	channel, err := f.Store.EnsureConversation(chat.ID, "channel", "Channel")
+	channel, err := f.Store.EnsureConversation(t.Context(), chat.ID, "channel", "Channel")
 	require.NoError(err)
 	member := f.EnsureParticipant("member@example.net", "Member", "example.net")
 	post := func(name string, discordType int) int64 {
@@ -490,7 +490,7 @@ func TestTopicContactsRecognizeOwnerReplies(t *testing.T) {
 				}
 				reply := send(f, "reply", alias)
 				require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{ana}, []string{"Ana"}))
-				fromMe, err := f.Store.GetMessageIsFromMe(reply)
+				fromMe, err := f.Store.GetMessageIsFromMe(t.Context(), reply)
 				require.NoError(err)
 				require.False(fromMe)
 				unrelatedReply := send(f, "unrelated-reply", otherSender)

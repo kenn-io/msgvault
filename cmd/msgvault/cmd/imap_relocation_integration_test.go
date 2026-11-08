@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -46,7 +47,7 @@ func newRelocationFixture(t *testing.T) relocationFixture {
 	const identifier = "imap://overlap-relocation@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(t, first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(t, err)
 	require.Positive(t, id)
 	// Legacy persisted-state fixture: this suite exercises forced
@@ -64,7 +65,7 @@ func newRelocationFixture(t *testing.T) relocationFixture {
 	overlap.Mailboxes[1].ChangedUIDs = []imapapi.UID{1}
 	seedLegacyDraftsCanonicalWithSentMembership(
 		t, st, source, []byte(scriptedRFC7162RawMessage(sent)), "<"+draft.MessageID+">")
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
 	require.Contains(t, body, draft.Body,
 		"the legacy fixture keeps the stale draft snapshot under the Drafts canonical")
@@ -103,7 +104,7 @@ func (f relocationFixture) assertSent(t *testing.T, otherMemberships ...string) 
 	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
-	body, err := f.st.GetMessageBodyText(f.id)
+	body, err := f.st.GetMessageBodyText(t.Context(), f.id)
 	require.NoError(err)
 	assert.Contains(body, f.sent.Body)
 	assert.NotContains(body, f.draft.Body)
@@ -123,6 +124,33 @@ func (f relocationFixture) assertSent(t *testing.T, otherMemberships ...string) 
 	_, total, err = f.st.SearchMessagesQuery(&search.Query{TextTerms: []string{f.draft.Body}}, 0, 10)
 	require.NoError(err)
 	assert.Zero(total)
+}
+
+func TestIMAPRelocationHistoricalNULIdentity(t *testing.T) {
+	testutil.SkipIfPostgres(t, "historical NUL identity keys cannot exist in PostgreSQL TEXT")
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newRelocationFixture(t)
+	const historicalID = "historical\x00id@example.org"
+	// Retain the pre-policy key and MIME, with a saved surviving Sent copy.
+	f.draft.MessageID = historicalID
+	f.sent.MessageID = historicalID
+	_, err := f.st.DB().ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, historicalID, f.id)
+	require.NoError(err)
+	require.NoError(f.st.UpsertMessageRaw(f.id, []byte(scriptedRFC7162RawMessage(f.draft))))
+	f.final.Mailboxes[1].Messages[0] = f.sent
+	f.server.setSnapshot(f.final)
+	client, err := f.sync(t)
+	require.NoError(err)
+	require.NoError(client.Close())
+	f.assertSent(t)
+	var storedID sql.NullString
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT rfc822_message_id FROM messages WHERE id = ?`, f.id).Scan(&storedID))
+	assert.False(storedID.Valid, "validated historical evidence is omitted from the new identity projection")
+	known, err := f.st.GetIMAPKnownUIDs(f.source.ID)
+	require.NoError(err)
+	assert.Empty(known["Drafts"])
+	assert.Equal([]uint32{1}, known["Sent"])
 }
 
 func TestIMAPRelocationAfterOverlapVANISHED(t *testing.T) {
@@ -197,7 +225,7 @@ func TestIMAPRelocationFailureKeepsSnapshotAndCursorsRetryable(t *testing.T) {
 			case "raw body":
 				failed.Mailboxes[1].Messages[0].MissingRaw = true
 			case "source collision":
-				conv, err := f.st.EnsureConversation(f.source.ID, "collision-thread", "Collision")
+				conv, err := f.st.EnsureConversation(t.Context(), f.source.ID, "collision-thread", "Collision")
 				require.NoError(err)
 				collisionID, err = f.st.UpsertMessage(&store.Message{SourceID: f.source.ID, ConversationID: conv, SourceMessageID: "Sent|1", MessageType: "email"})
 				require.NoError(err)
@@ -232,7 +260,7 @@ func TestIMAPRelocationFailureKeepsSnapshotAndCursorsRetryable(t *testing.T) {
 			assert.Equal("Drafts|1", message.SourceMessageID)
 			assert.Contains(message.Labels, "Drafts")
 			if collisionID != 0 {
-				_, err := f.st.DB().Exec(f.st.Rebind("DELETE FROM messages WHERE id = ?"), collisionID)
+				_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind("DELETE FROM messages WHERE id = ?"), collisionID)
 				require.NoError(err)
 			}
 			f.server.setSnapshot(f.final)
@@ -274,7 +302,7 @@ func TestIMAPRelocationBeforeReusedUIDRouting(t *testing.T) {
 			case "raw identity":
 				failed.Mailboxes[1].Messages[0].MessageID = "different-survivor@example.test"
 			case "source collision":
-				conv, err := f.st.EnsureConversation(f.source.ID, "collision-thread", "Collision")
+				conv, err := f.st.EnsureConversation(t.Context(), f.source.ID, "collision-thread", "Collision")
 				require.NoError(err)
 				collisionID, err = f.st.UpsertMessage(&store.Message{SourceID: f.source.ID, ConversationID: conv, SourceMessageID: "Sent|1", MessageType: "email"})
 				require.NoError(err)
@@ -303,11 +331,11 @@ func TestIMAPRelocationBeforeReusedUIDRouting(t *testing.T) {
 				assert.Equal(int64(1), total)
 				require.Len(results, 1)
 				assert.Equal(f.id, results[0].ID)
-				unrelatedID, err := f.st.GetMessageIDByRFC822ID(f.source.ID, "<"+unrelated.MessageID+">")
+				unrelatedID, err := f.st.GetMessageIDByRFC822ID(t.Context(), f.source.ID, "<"+unrelated.MessageID+">")
 				require.NoError(err)
 				assert.Zero(unrelatedID, "ordinary routing waits for forced relocation to succeed")
 				if collisionID != 0 {
-					_, err := f.st.DB().Exec(f.st.Rebind("DELETE FROM messages WHERE id = ?"), collisionID)
+					_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind("DELETE FROM messages WHERE id = ?"), collisionID)
 					require.NoError(err)
 				}
 				f.server.setSnapshot(f.final)
@@ -316,7 +344,7 @@ func TestIMAPRelocationBeforeReusedUIDRouting(t *testing.T) {
 				require.NoError(retry.Close())
 			}
 			f.assertSent(t, "Drafts|1|[\"\\\\Draft\"]")
-			unrelatedID, err := f.st.GetMessageIDByRFC822ID(f.source.ID, "<"+unrelated.MessageID+">")
+			unrelatedID, err := f.st.GetMessageIDByRFC822ID(t.Context(), f.source.ID, "<"+unrelated.MessageID+">")
 			require.NoError(err)
 			require.Positive(unrelatedID)
 			assert.NotEqual(f.id, unrelatedID)
@@ -334,7 +362,7 @@ func TestIMAPRelocationBeforeReusedUIDRouting(t *testing.T) {
 			require.Len(results, 1)
 			assert.Equal(unrelatedID, results[0].ID)
 			var count int
-			require.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), f.source.ID).Scan(&count))
+			require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), f.source.ID).Scan(&count))
 			assert.Equal(2, count, "no invalidated stale archive row is stranded")
 			states, err := f.st.GetIMAPFolderStates(f.source.ID)
 			require.NoError(err)
@@ -383,7 +411,7 @@ func TestIMAPRelocationUIDValidityChangeSameUIDSurvivor(t *testing.T) {
 			const identifier = "imap://uidvalidity-survivor@example.test"
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 
@@ -418,7 +446,7 @@ func TestIMAPRelocationUIDValidityChangeSameUIDSurvivor(t *testing.T) {
 				assert.ElementsMatch([]string{"Drafts"}, message.Labels)
 				assert.ElementsMatch([]string{"Drafts|1|[\"\\\\Seen\"]"}, queryScriptedRFC7162Memberships(t, st, source.ID))
 				var count int
-				require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 				assert.Equal(1, count)
 			} else {
 				message, err := st.GetMessage(id)
@@ -428,9 +456,9 @@ func TestIMAPRelocationUIDValidityChangeSameUIDSurvivor(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(scriptedRFC7162RawMessage(draft), string(raw))
 				var deleted int
-				require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_from_source_at IS NOT NULL"), source.ID).Scan(&deleted))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ? AND deleted_from_source_at IS NOT NULL"), source.ID).Scan(&deleted))
 				assert.Equal(1, deleted, "the superseded original is retired, not rewritten")
-				unrelatedID, err := st.GetMessageIDByRFC822ID(source.ID, "<"+unrelated.MessageID+">")
+				unrelatedID, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+unrelated.MessageID+">")
 				require.NoError(err)
 				require.Positive(unrelatedID)
 				unrelatedMessage, err := st.GetMessage(unrelatedID)
@@ -445,7 +473,7 @@ func TestIMAPRelocationUIDValidityChangeSameUIDSurvivor(t *testing.T) {
 			require.NoError(err)
 			require.NoError(third.Close())
 			var count int
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 			if mode == "edited survivor" {
 				assert.Equal(1, count)
 				message, err := st.GetMessage(id)
@@ -478,10 +506,10 @@ func TestIMAPRelocationSkipsSameCompositeForcedCandidate(t *testing.T) {
 	const identifier = "imap://same-composite-candidate@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags, updated_at)
 		SELECT source_id, mailbox, 99, uid, message_id, flags, updated_at
 		FROM imap_message_memberships
@@ -573,7 +601,7 @@ func TestIMAPRelocationForgedSurvivorPreservesSnapshot(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+victim.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+victim.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 	before, err := st.GetMessage(id)
@@ -607,7 +635,7 @@ func TestIMAPRelocationForgedSurvivorPreservesSnapshot(t *testing.T) {
 	assert.Equal(victim.Raw, string(raw))
 	assert.ElementsMatch([]string{"INBOX"}, message.Labels)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assert.Equal(1, count)
 	results, total, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{victim.Body}}, 0, 10)
 	require.NoError(err)
@@ -652,7 +680,7 @@ func TestIMAPPreferredAllMailForgedCopyPreservesSnapshot(t *testing.T) {
 	const identifier = "imap://forged-all-mail@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+victim.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+victim.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -680,7 +708,7 @@ func TestIMAPPreferredAllMailForgedCopyPreservesSnapshot(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(scriptedRFC7162RawMessage(victim), string(raw))
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assert.Equal(1, count)
 	results, total, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{victim.Body}}, 0, 10)
 	require.NoError(err)
@@ -720,7 +748,7 @@ func TestIMAPRelocationForgedMembershipPreservesSnapshot(t *testing.T) {
 	const identifier = "imap://forged-membership@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+victim.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+victim.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -757,7 +785,7 @@ func TestIMAPRelocationForgedMembershipPreservesSnapshot(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(scriptedRFC7162RawMessage(victim), string(raw))
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assert.Equal(1, count)
 	results, total, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{victim.Body}}, 0, 10)
 	require.NoError(err)
@@ -790,7 +818,7 @@ func TestIMAPRelocationWithoutSpecialUsePreservesEditedSnapshot(t *testing.T) {
 	const identifier = "imap://no-special-use@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -816,7 +844,7 @@ func TestIMAPRelocationWithoutSpecialUsePreservesEditedSnapshot(t *testing.T) {
 	assert.Equal(scriptedRFC7162RawMessage(draft), string(raw))
 	assert.ElementsMatch([]string{"Sent"}, message.Labels)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assert.Equal(1, count)
 }
 
@@ -909,7 +937,7 @@ func TestIMAPRelocationDraftsSentAllMailTopology(t *testing.T) {
 			const identifier = "imap://all-mail-topology@example.test"
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 
@@ -944,7 +972,7 @@ func TestIMAPRelocationDraftsSentAllMailTopology(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
 			var count int
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 			assert.Equal(1, count)
 			results, total, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{sent.Body}}, 0, 10)
 			require.NoError(err)
@@ -969,7 +997,7 @@ func TestIMAPRelocationDraftsSentAllMailTopology(t *testing.T) {
 			require.NoError(err)
 			assert.Contains(message.BodyText, sent.Body)
 			assert.NotContains(message.BodyText, draft.Body)
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 			assert.Equal(1, count)
 			assert.ElementsMatch([]string{"Sent", "All Mail"}, message.Labels)
 
@@ -1014,7 +1042,7 @@ func TestIMAPRelocationConfiguredTrustedOutgoingMailbox(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -1077,7 +1105,7 @@ func TestIMAPRelocationAmbiguousRoleDeniesRefresh(t *testing.T) {
 			const identifier = "imap://ambiguous-role@example.test"
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 
@@ -1157,7 +1185,7 @@ func TestIMAPRelocationRescanOrderingKeepsEditedSent(t *testing.T) {
 	const identifier = "imap://rescan-ordering@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -1264,7 +1292,7 @@ func TestIMAPRelocationRescanOrderingKeepsEditedSent(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assert.Equal(1, count)
 	results, total, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{sent.Body}}, 0, 10)
 	require.NoError(err)
@@ -1317,7 +1345,7 @@ func TestIMAPRelocationConfiguredConflictDenied(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 
@@ -1405,7 +1433,7 @@ func TestIMAPRelocationPersistentFailureKeepsUnrelatedMailFlowing(t *testing.T) 
 	const identifier = "imap://liveness-target@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -1481,7 +1509,7 @@ func TestIMAPRelocationPersistentFailureKeepsUnrelatedMailFlowing(t *testing.T) 
 	require.NoError(err)
 	assert.Zero(total, "the unfetchable survivor's content must not reach the index")
 	for _, held := range []string{"reused-key-holder@example.test", "liveness-target@example.test"} {
-		heldID, err := st.GetMessageIDByRFC822ID(source.ID, "<"+held+">")
+		heldID, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+held+">")
 		require.NoError(err)
 		if held == "reused-key-holder@example.test" {
 			assert.Zero(heldID, "the reused composite key stays deferred while its target fails")
@@ -1522,7 +1550,7 @@ func TestIMAPRelocationPersistentFailureKeepsUnrelatedMailFlowing(t *testing.T) 
 	raw, err = st.GetMessageRaw(id)
 	require.NoError(err)
 	assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
-	reusedID, err := st.GetMessageIDByRFC822ID(source.ID, "<reused-key-holder@example.test>")
+	reusedID, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<reused-key-holder@example.test>")
 	require.NoError(err)
 	require.Positive(reusedID, "the held reused-key message archives after recovery")
 	reusedMessage, err := st.GetMessage(reusedID)
@@ -1585,7 +1613,7 @@ func TestIMAPRelocationDeferredTargetInterruptedRunRestart(t *testing.T) {
 	const identifier = "imap://interrupted-target@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -1635,7 +1663,7 @@ func TestIMAPRelocationDeferredTargetInterruptedRunRestart(t *testing.T) {
 
 	// Interrupt after the first page: the forced target defers, page one
 	// completes, then the listing is canceled mid-run.
-	source2, err := st.GetSourceByIdentifier(identifier)
+	source2, err := st.GetSourceByIdentifier(t.Context(), identifier)
 	require.NoError(err)
 	interrupted := &cancelOnSecondListIMAP{Client: newScriptedRFC7162Client(
 		t, addr, imapFolderStateOptions(st, source2, false, testConfigValue(), testDiscardLogger())...)}
@@ -1674,7 +1702,7 @@ func TestIMAPRelocationDeferredTargetInterruptedRunRestart(t *testing.T) {
 	assert.Equal(before.SourceMessageID, after.SourceMessageID,
 		"protection is rebuilt before ordinary routing on the fresh replan")
 	assert.Equal(before.BodyText, after.BodyText)
-	reusedID, err := st.GetMessageIDByRFC822ID(source.ID, "<interrupted-reused@example.test>")
+	reusedID, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<interrupted-reused@example.test>")
 	require.NoError(err)
 	assert.Zero(reusedID, "the reused old composite stays deferred across the restart")
 	afterStates, err := st.GetIMAPFolderStates(source.ID)
@@ -1737,7 +1765,7 @@ func TestIMAPRelocationFailedTargetAliasDoesNotConsumeOldKey(t *testing.T) {
 	const identifier = "imap://alias-target@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -1879,7 +1907,7 @@ func TestIMAPRelocationUntrustedAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) 
 	const identifier = "imap://atomic-forced@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -1906,7 +1934,7 @@ func TestIMAPRelocationUntrustedAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) 
 	failing.Mailboxes[0].HighestModSeq = 1
 	failing.Mailboxes[0].Messages = nil
 	server.setSnapshot(failing)
-	_, triggerErr := st.DB().Exec(fmt.Sprintf(`
+	_, triggerErr := st.DB().ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_forced_labels_insert
 		BEFORE INSERT ON message_labels
 		WHEN NEW.message_id = %d
@@ -1914,7 +1942,7 @@ func TestIMAPRelocationUntrustedAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) 
 			SELECT RAISE(ABORT, 'forced label write unavailable');
 		END`, id))
 	require.NoError(triggerErr)
-	_, triggerErr = st.DB().Exec(fmt.Sprintf(`
+	_, triggerErr = st.DB().ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_forced_labels_delete
 		BEFORE DELETE ON message_labels
 		WHEN OLD.message_id = %d
@@ -1922,13 +1950,14 @@ func TestIMAPRelocationUntrustedAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) 
 			SELECT RAISE(ABORT, 'forced label write unavailable');
 		END`, id))
 	require.NoError(triggerErr)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, _ = st.DB().Exec(`DROP TRIGGER IF EXISTS fail_forced_labels_insert`)
-		_, _ = st.DB().Exec(`DROP TRIGGER IF EXISTS fail_forced_labels_delete`)
+		_, _ = st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_forced_labels_insert`)
+		_, _ = st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_forced_labels_delete`)
 	})
 
 	runImmediate := func() (*gmail.SyncSummary, error) {
-		src, srcErr := st.GetSourceByIdentifier(identifier)
+		src, srcErr := st.GetSourceByIdentifier(t.Context(), identifier)
 		require.NoError(srcErr)
 		client := &immediateLabelScriptedIMAP{Client: newScriptedRFC7162Client(
 			t, addr, imapFolderStateOptions(st, src, false, testConfigValue(), testDiscardLogger())...)}
@@ -1960,9 +1989,9 @@ func TestIMAPRelocationUntrustedAdoptionKeepsOldKeyOnLabelFailure(t *testing.T) 
 
 	// Removing the fault lets the retry adopt the untrusted location with
 	// reconciled labels and publish topology.
-	_, err = st.DB().Exec(`DROP TRIGGER fail_forced_labels_insert`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_forced_labels_insert`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`DROP TRIGGER fail_forced_labels_delete`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_forced_labels_delete`)
 	require.NoError(err)
 	fixed, _, err := runScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(err)
@@ -2000,7 +2029,7 @@ func TestIMAPRelocationFullEnumerationRefreshesEditedSent(t *testing.T) {
 	const identifier = "imap://full-enum-refresh@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 	stale, err := st.GetMessage(id)
@@ -2036,7 +2065,7 @@ func TestIMAPRelocationFullEnumerationRefreshesEditedSent(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assert.Equal(1, count, "the duplicate copies collapse into one row")
 	results, total, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{sent.Body}}, 0, 10)
 	require.NoError(err)
@@ -2055,7 +2084,7 @@ func TestIMAPRelocationFullEnumerationRefreshesEditedSent(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(message.BodyText, sent.Body)
 	assert.NotContains(message.BodyText, draft.Body)
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assert.Equal(1, count)
 }
 
@@ -2133,7 +2162,7 @@ func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
 	firstA, sourceA, err := runScriptedSourceSync(t, stA, identifierA, addrA, withAttachments, testCtx)
 	require.NoError(err)
 	require.NoError(firstA.Close())
-	idA, err := stA.GetMessageIDByRFC822ID(sourceA.ID, "<"+draftA.MessageID+">")
+	idA, err := stA.GetMessageIDByRFC822ID(t.Context(), sourceA.ID, "<"+draftA.MessageID+">")
 	require.NoError(err)
 	require.Positive(idA)
 
@@ -2182,7 +2211,7 @@ func TestIMAPRelocationSentTrustIsSourceScoped(t *testing.T) {
 	firstB, sourceB, err := runScriptedSourceSync(t, stB, identifierB, addrB, withAttachments, testCtx)
 	require.NoError(err)
 	require.NoError(firstB.Close())
-	idB, err := stB.GetMessageIDByRFC822ID(sourceB.ID, "<"+victimB.MessageID+">")
+	idB, err := stB.GetMessageIDByRFC822ID(t.Context(), sourceB.ID, "<"+victimB.MessageID+">")
 	require.NoError(err)
 	require.Positive(idB)
 	beforeB, err := stB.GetMessage(idB)
@@ -2258,7 +2287,7 @@ func TestIMAPRelocationConfiguredDraftsRoleNotSent(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+sent.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+sent.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -2329,7 +2358,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			const identifier = "imap://sent-precedence@example.test"
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr, testCtx)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 			stale, err := st.GetMessage(id)
@@ -2359,7 +2388,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(scriptedRFC7162RawMessage(sent), string(raw))
 			var count int
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 			assert.Equal(1, count)
 			results, total, err := st.SearchMessagesQuery(&search.Query{TextTerms: []string{sent.Body}}, 0, 10)
 			require.NoError(err)
@@ -2380,7 +2409,7 @@ func TestIMAPRelocationSentOutranksStaleDraftsCanonical(t *testing.T) {
 			require.NoError(err)
 			assert.Contains(message.BodyText, sent.Body)
 			assert.NotContains(message.BodyText, draft.Body)
-			require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 			assert.Equal(1, count)
 
 			// Losing the Sent copy must only relocate the archive to Drafts,
@@ -2449,7 +2478,7 @@ func TestIMAPRelocationConfiguredDraftsCanonicalStillYieldsToSent(t *testing.T) 
 	st := testutil.NewTestStore(t)
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 
@@ -2544,7 +2573,7 @@ func TestIMAPRelocationDualSentDraftsRoleDenied(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 
@@ -2594,7 +2623,7 @@ func TestIMAPRelocationSentContentSurvivesAllAdoption(t *testing.T) {
 	const identifier = "imap://survivors@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	require.NoError(first.Close())
-	id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+sent.MessageID+">")
+	id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+sent.MessageID+">")
 	require.NoError(err)
 	require.Positive(id)
 	before, err := st.GetMessage(id)
@@ -2653,11 +2682,11 @@ func TestIMAPRelocationRetainsOutgoingPrecedence(t *testing.T) {
 			const identifier = "imap://outgoing-precedence@example.test"
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+original.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+original.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 			if tc.missingMetadata {
-				_, err := st.DB().Exec(st.Rebind("UPDATE messages SET metadata = NULL WHERE id = ?"), id)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET metadata = NULL WHERE id = ?"), id)
 				require.NoError(err)
 			}
 			next := baseline.clone()
@@ -2777,7 +2806,7 @@ func TestIMAPRelocationMalformedSentAdvancesFolderStates(t *testing.T) {
 			const identifier = "imap://malformed-relocation@example.test"
 			first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 			require.NoError(first.Close())
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+draft.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+draft.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 			if legacy {
@@ -2806,7 +2835,7 @@ func TestIMAPRelocationMalformedSentAdvancesFolderStates(t *testing.T) {
 				require.NotNil(summary)
 				assert.Zero(summary.Errors)
 				assert.Equal(int64(1), summary.MessagesAdded)
-				inboxID, err := st.GetMessageIDByRFC822ID(source.ID, "<"+inbox.MessageID+">")
+				inboxID, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+inbox.MessageID+">")
 				require.NoError(err)
 				assert.Positive(inboxID)
 				target, err := st.GetMessage(id)
@@ -2858,7 +2887,7 @@ func TestIMAPIdenticalSentKeepsPreferredLocation(t *testing.T) {
 			assert.Zero(summary.MessagesUpdated, "identical content must not trigger relocation persistence")
 			source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 			require.NoError(err)
-			id, err := st.GetMessageIDByRFC822ID(source.ID, "<"+msg.MessageID+">")
+			id, err := st.GetMessageIDByRFC822ID(t.Context(), source.ID, "<"+msg.MessageID+">")
 			require.NoError(err)
 			require.Positive(id)
 			message, err := st.GetMessage(id)

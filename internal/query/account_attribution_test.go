@@ -84,9 +84,9 @@ func TestAccountOperatorsOnLiveEngine(t *testing.T) {
 		SentAt: sql.NullTime{Time: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET account_address = 'work@example.org', account_path = 'calendar' WHERE id = ?`), event)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET account_address = 'work@example.org', account_path = 'calendar' WHERE id = ?`), event)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), work)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), work)
 	require.NoError(err)
 	total := func(rows []query.AggregateRow) int64 {
 		var n int64

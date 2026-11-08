@@ -53,7 +53,7 @@ func TestSyncTriggerAnsweredWhileScheduledRunHoldsGate(t *testing.T) {
 	})
 	trigger := func() *httptest.ResponseRecorder {
 		resp := httptest.NewRecorder()
-		srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/v1/sync/acct-1?source_type=granola", nil))
+		srv.Router().ServeHTTP(resp, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/sync/acct-1?source_type=granola", nil))
 		return resp
 	}
 

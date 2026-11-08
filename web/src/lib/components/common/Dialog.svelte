@@ -39,12 +39,32 @@
   {/if}
 {/snippet}
 
-<Modal
-  {title}
-  {onclose}
-  width="520px"
-  maxWidth="calc(100vw - 32px)"
-  footer={primaryLabel ? footer : undefined}
->
-  {@render children()}
-</Modal>
+<!-- Kit's header, scrolling body, and footer take the shared sizes in tokens.css. -->
+<div class="dialog-shell">
+  <Modal
+    {title}
+    {onclose}
+    closable={true}
+    width="560px"
+    maxWidth="calc(100vw - 2 * var(--dialog-inset))"
+    maxHeight="calc(100svh - var(--dialog-top) - var(--dialog-inset))"
+    footer={primaryLabel ? footer : undefined}
+  >
+    {@render children()}
+  </Modal>
+</div>
+
+<style>
+  /* The dialog stays 16 from the screen's edges and opens 32 from the top (16 on a phone). */
+  .dialog-shell {
+    --dialog-inset: var(--space-6);
+    --dialog-top: 32px;
+  }
+  .dialog-shell :global(.kit-modal-overlay) {
+    align-items: flex-start;
+    padding-top: var(--dialog-top);
+  }
+  @media (max-width: 640px) {
+    .dialog-shell { --dialog-top: var(--space-6); }
+  }
+</style>

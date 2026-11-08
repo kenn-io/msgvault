@@ -193,7 +193,7 @@ func (fakeReranker) Rerank(_ context.Context, _ rerank.Request) (rerank.Result, 
 
 func TestEvalRerankShortlist(t *testing.T) {
 	assert := assert.New(t)
-	keys, result, err := rerankEvalKeys(context.Background(), fakeReranker{}, "query",
+	keys, result, err := rerankEvalKeys(t.Context(), fakeReranker{}, "query",
 		[]string{"first", "second", "tail"}, []string{"one", "two"})
 	require.NoError(t, err)
 	assert.Equal([]string{"second", "first", "tail"}, keys)
@@ -274,15 +274,15 @@ func TestRunEvalRerankQualityMetricsFollowProviderScoresAcrossModes(t *testing.T
 	require.NoError(t, s.InitSchema())
 	seedEmbeddedGeneration(t, dataDir, c.DatabaseDSN(), s, c.Vector, 1, 2)
 	require.NoError(t, sqlitevec.RegisterExtension())
-	backend, err := sqlitevec.Open(context.Background(), sqlitevec.Options{
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
 		Path: filepath.Join(dataDir, "vectors.db"), MainPath: c.DatabaseDSN(),
 		Dimension: 3, MainDB: s.DB(),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, backend.Close()) })
-	generation, err := backend.ActiveGeneration(context.Background())
+	generation, err := backend.ActiveGeneration(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, backend.Upsert(context.Background(), generation.ID, []vector.Chunk{
+	require.NoError(t, backend.Upsert(t.Context(), generation.ID, []vector.Chunk{
 		{MessageID: 1, Vector: []float32{1, 0, 0}, SourceCharLen: 32},
 		{MessageID: 2, Vector: []float32{0, 1, 0}, SourceCharLen: 32},
 	}))

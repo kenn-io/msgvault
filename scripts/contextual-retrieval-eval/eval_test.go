@@ -587,8 +587,8 @@ func TestStructuredCorpus_SeedsProductionFTSAndBM25ChangesVectorOnlyRank(t *test
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	var messages, indexed int
-	require.NoError(t, mainStore.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
-	require.NoError(t, mainStore.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts`).Scan(&indexed))
+	require.NoError(t, mainStore.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(t, mainStore.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts`).Scan(&indexed))
 	assert.Equal(t, messages, indexed, "every evaluated source and distractor must be in production FTS")
 
 	client := &ftsRankingEmbedder{dimension: evaluationDimension}
@@ -980,7 +980,10 @@ func TestHTTPAttemptObserver_CountsRetriesStatusesErrorsAndUsage(t *testing.T) {
 	server := httptest.NewServer(proxy)
 	t.Cleanup(server.Close)
 	for range 2 {
-		response, err := http.Post(server.URL+"/embeddings", "application/json", strings.NewReader(`{"input":["redacted"]}`))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/embeddings", strings.NewReader(`{"input":["redacted"]}`))
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(request)
 		require.NoError(t, err)
 		require.NoError(t, response.Body.Close())
 	}

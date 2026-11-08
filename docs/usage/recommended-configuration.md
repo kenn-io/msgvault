@@ -249,7 +249,7 @@ configure; see [Configuration](/docs/configuration/#activity).
 Chat sources cap collection by conversation size: media from rooms above 20
 participants is skipped with a typed `participant_threshold` marker, direct and
 small-group media is kept. Set `media_max_participants = 0` on a source to lift
-the cap. The per-file default is 250 MiB for Beeper, Slack, and Teams, and 50
+the cap. The per-file default is 250 MiB for Beeper, Slack, Teams, and iMessage, and 50
 MiB for Discord. These limits also apply to existing configurations that omit
 the keys; setup does not need to write them. Explicit values and per-account
 overrides keep their configured policy. See
@@ -335,11 +335,11 @@ credentials, and archive consent records. It does not contact a provider. An
 coverage.
 
 ```text
-LANE                                      STATE    PROVIDER  MODEL             CONSENT  SCHEDULE
-Text search (messages, chats, meetings)   on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
-Semantic people search                    pending  voyage    voyage-context-4  missing  -
-Visual attachment search                  pending  -         -                 -        -
-Document attachments (...)                pending  mistral   mistral-ocr-4-1   missing  -
+LANE                                           STATE    PROVIDER  MODEL             CONSENT  SCHEDULE
+Search by meaning (messages, chats, meetings)  on       voyage    voyage-context-4  -        cron */15 * * * *, after each scheduled sync
+Semantic people search                         pending  voyage    voyage-context-4  missing  -
+Visual attachment search                       pending  -         -                 -        -
+Document attachments (...)                     pending  mistral   mistral-ocr-4-1   missing  -
 ```
 
 `pending` means the lane is configured or the key is present but an operator

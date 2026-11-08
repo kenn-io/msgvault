@@ -132,7 +132,7 @@ Examples:
 			}
 			fmt.Printf("Connected successfully as %s\n", profile.EmailAddress)
 
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -156,7 +156,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("serialize config: %w", err)
 			}
-			if err := s.UpdateSourceSyncConfig(source.ID, cfgJSON); err != nil {
+			if err := s.UpdateSourceSyncConfig(cmd.Context(), source.ID, cfgJSON); err != nil {
 				return fmt.Errorf("store config: %w", err)
 			}
 
@@ -167,13 +167,13 @@ Examples:
 
 			// Auto-default-identity must run BEFORE the legacy migration
 			// retry — see comment in account_identity.go.
-			if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddImap); err != nil {
+			if err := setDefaultIdentityOptOut(cmd.Context(), cmd, s, source, noDefaultIdentityAddImap); err != nil {
 				return err
 			}
 			if !noDefaultIdentityAddImap {
-				confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, imapUsername, imapUsername, "account-identifier", state.logger)
+				confirmDefaultIdentity(cmd.Context(), cmd.OutOrStdout(), s, source.ID, imapUsername, imapUsername, "account-identifier", state.logger)
 			}
-			if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 
@@ -215,7 +215,7 @@ func readAddIMAPPassword(cmd *cobra.Command, announceEnv bool) (string, error) {
 	)
 	switch method {
 	case passwordInteractive:
-		return readPasswordInteractive(prompt, promptOut)
+		return readPasswordInteractive(prompt, promptOut, false)
 	case passwordNoPrompt:
 		return "", errors.New("cannot read password: no terminal available for prompt (try piping the password via stdin or setting MSGVAULT_IMAP_PASSWORD)")
 	case passwordPipe:
@@ -245,7 +245,7 @@ func readPasswordFromPipe(r io.Reader) (string, error) {
 // readPasswordInteractive prompts for a password using a masked
 // input field with asterisk echo. The output writer controls where
 // the TUI renders (typically stderr to avoid polluting stdout).
-func readPasswordInteractive(prompt string, output io.Writer) (string, error) {
+func readPasswordInteractive(prompt string, output io.Writer, allowBlank bool) (string, error) {
 	var password string
 	input := huh.NewInput().
 		Title(prompt).
@@ -257,7 +257,7 @@ func readPasswordInteractive(prompt string, output io.Writer) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
 	}
-	if strings.TrimSpace(password) == "" {
+	if strings.TrimSpace(password) == "" && !allowBlank {
 		return "", errors.New("password is required")
 	}
 	return password, nil

@@ -7,6 +7,9 @@ import (
 
 const TimestampKeyFunction = "msgvault_timestamp_key"
 
+// ZeroTimeJulianDay is the SQLite SQL literal for Go's zero timestamp.
+const ZeroTimeJulianDay = "1721425.5"
+
 // TimestampKey encodes a typed query instant, including the zero-time bound.
 // Stored timestamp parsing separately treats zero as unavailable.
 func TimestampKey(instant time.Time) []byte {

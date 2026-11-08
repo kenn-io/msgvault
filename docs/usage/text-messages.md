@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-11-04"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -73,6 +73,11 @@ msgvault import-whatsapp --phone +447700900000 \
 Reading the native store may require Full Disk Access for your terminal in
 **System Settings → Privacy & Security**.
 
+To keep it current with the daemon, add a scheduled
+[`[[whatsapp_apple]]` entry](/docs/configuration/#apple-whatsapp-sources) and run
+`msgvault serve`. Grant Full Disk Access to the process running the daemon too.
+The first run reads the whole store; later runs pick up changed messages.
+
 Run the same command again to pick up new messages. Each run writes only
 messages that are new or changed: edited text, a sender or chat that
 `LID.sqlite` now resolves to a phone number, or a message that moved to another
@@ -127,6 +132,13 @@ that reports recoverable message errors.
 
 Import messages from the local iMessage database on macOS.
 
+To keep Messages current with the daemon, enable a schedule under
+[`[imessage]`](/docs/configuration/#imessage) and run `msgvault serve`.
+Grant Full Disk Access to the process running the daemon. Every run re-reads
+all of `chat.db` and writes only what changed, including late arrivals
+and edits.
+Choose an interval that allows for the time it takes to read your database. Sources shows run history and offers **Sync now**.
+
 ```bash
 msgvault import-imessage
 ```
@@ -152,6 +164,13 @@ are `.caf` files. They stay in the archive but are not transcribed, because
 Docbank only takes the audio formats listed in
 [Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank).
 Pass `--no-attachments` to record attachment metadata without copying files.
+Set the participant and size limits under `[imessage]` in `config.toml`, or
+override the size for one run with `--max-media-mb`; see
+[Configuration](/docs/configuration/#imessage). Skipped attachments keep their
+metadata and the reason they were skipped. Rerunning with a stricter limit keeps
+the bytes already archived for files that have not changed. With
+`--no-attachments` the limits aren't applied, and attachments are recorded as
+metadata only.
 
 Apple timestamp sentinels and dates outside years 1 through 9999 are stored as
 missing dates. msgvault retains those messages and their raw timestamp
@@ -163,6 +182,16 @@ the same database without `--after`, `--before`, or `--limit`. The import update
 existing messages without creating duplicates. When it clears a previously
 stored date, msgvault rebuilds analytics so the old date is removed there too.
 Keep the original `--db-path` and `--me` options if you supplied them.
+
+Each run reads all of `chat.db` again and updates archived messages to match
+it. Edited text replaces the archived text. When a message no longer has text in
+`chat.db`, the next import clears its archived text and its snippet, and keyword
+search no longer matches that text. Unsending a message on iOS 16, macOS 13, or
+later removes its text this way. The message stays in the archive with its date
+and participants. Messages deleted from `chat.db` also stay in the archive.
+
+If msgvault can't decode a message's text in `chat.db`, it keeps the archived
+text and counts the message under `Unreadable text` in the import summary.
 
 ### Flags
 
@@ -176,6 +205,7 @@ Keep the original `--db-path` and `--me` options if you supplied them.
 | `--contacts` | — | Path to a `.vcf` file used to backfill participant display names |
 | `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
 | `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
+| `--max-media-mb` | `0` | Skip files larger than this many MiB; `0` uses `max_media_mb` from `[imessage]` (default 250) |
 
 ### Examples
 

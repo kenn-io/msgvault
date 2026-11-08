@@ -25,10 +25,10 @@ func TestDeleteDedupedBatch_DeletesHiddenRows(t *testing.T) {
 	labels := f.EnsureLabels(
 		map[string]string{"INBOX": "Inbox", "SENT": "Sent"}, "system",
 	)
-	require.NoError(f.Store.LinkMessageLabel(idDrop, labels["INBOX"]), "link INBOX")
-	require.NoError(f.Store.LinkMessageLabel(idDrop, labels["SENT"]), "link SENT")
+	require.NoError(f.Store.LinkMessageLabel(t.Context(), idDrop, labels["INBOX"]), "link INBOX")
+	require.NoError(f.Store.LinkMessageLabel(t.Context(), idDrop, labels["SENT"]), "link SENT")
 
-	_, err := f.Store.MergeDuplicates(idKeep, []int64{idDrop}, "batch-delete")
+	_, err := f.Store.MergeDuplicates(t.Context(), idKeep, []int64{idDrop}, "batch-delete")
 	require.NoError(err, "MergeDuplicates")
 
 	// idDrop should be hidden before delete.
@@ -40,14 +40,16 @@ func TestDeleteDedupedBatch_DeletesHiddenRows(t *testing.T) {
 
 	// Row should be gone.
 	var count int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id = ?"), idDrop,
 	).Scan(&count)
 	require.NoError(err, "query messages after delete")
 	assert.Equal(0, count, "message %d still present after delete", idDrop)
 
 	// Child message_labels rows should cascade-delete.
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ?"), idDrop,
 	).Scan(&count)
 	require.NoError(err, "query message_labels after delete")
@@ -76,18 +78,18 @@ func TestDeleteDedupedBatchesContext_CancellationRollsBackEveryBatch(t *testing.
 
 	idKeepA := newRFC822Message(t, f, "keep-a", "rfc822-cancel-a")
 	idDropA := newRFC822Message(t, f, "drop-a", "rfc822-cancel-a")
-	_, err := f.Store.MergeDuplicates(idKeepA, []int64{idDropA}, "batch-alpha")
+	_, err := f.Store.MergeDuplicates(t.Context(), idKeepA, []int64{idDropA}, "batch-alpha")
 	require.NoError(err, "MergeDuplicates alpha")
 
 	idKeepB := newRFC822Message(t, f, "keep-b", "rfc822-cancel-b")
 	idDropB := newRFC822Message(t, f, "drop-b", "rfc822-cancel-b")
-	_, err = f.Store.MergeDuplicates(idKeepB, []int64{idDropB}, "batch-beta")
+	_, err = f.Store.MergeDuplicates(t.Context(), idKeepB, []int64{idDropB}, "batch-beta")
 	require.NoError(err, "MergeDuplicates beta")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	secondBatchStarted := make(chan struct{})
-	conn, err := f.Store.DB().Conn(context.Background())
+	conn, err := f.Store.DB().Conn(t.Context())
 	require.NoError(err, "get SQLite connection")
 	err = conn.Raw(func(driverConn any) error {
 		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
@@ -101,7 +103,7 @@ func TestDeleteDedupedBatchesContext_CancellationRollsBackEveryBatch(t *testing.
 	require.NoError(err, "register cancellation function")
 	require.NoError(conn.Close(), "return SQLite connection to pool")
 
-	_, err = f.Store.DB().Exec(`
+	_, err = f.Store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER wait_before_second_dedup_batch
 		BEFORE DELETE ON messages
 		WHEN OLD.delete_batch_id = 'batch-beta'
@@ -136,7 +138,8 @@ func TestDeleteDedupedBatchesContext_CancellationRollsBackEveryBatch(t *testing.
 
 	for _, batchID := range []string{"batch-alpha", "batch-beta"} {
 		var count int64
-		err = f.Store.DB().QueryRow(
+		err = f.Store.DB().QueryRowContext(
+			t.Context(),
 			"SELECT COUNT(*) FROM messages WHERE delete_batch_id = ?",
 			batchID,
 		).Scan(&count)
@@ -155,13 +158,13 @@ func TestDeleteAllDeduped_MultipleBatches(t *testing.T) {
 	// batch-alpha hides one message
 	idKeepA := newRFC822Message(t, f, "keep-a", "rfc822-multi-a")
 	idDropA := newRFC822Message(t, f, "drop-a", "rfc822-multi-a")
-	_, err := f.Store.MergeDuplicates(idKeepA, []int64{idDropA}, "batch-alpha")
+	_, err := f.Store.MergeDuplicates(t.Context(), idKeepA, []int64{idDropA}, "batch-alpha")
 	require.NoError(err, "MergeDuplicates alpha")
 
 	// batch-beta hides one message
 	idKeepB := newRFC822Message(t, f, "keep-b", "rfc822-multi-b")
 	idDropB := newRFC822Message(t, f, "drop-b", "rfc822-multi-b")
-	_, err = f.Store.MergeDuplicates(idKeepB, []int64{idDropB}, "batch-beta")
+	_, err = f.Store.MergeDuplicates(t.Context(), idKeepB, []int64{idDropB}, "batch-beta")
 	require.NoError(err, "MergeDuplicates beta")
 
 	deleted, batches, err := f.Store.DeleteAllDeduped()
@@ -171,7 +174,7 @@ func TestDeleteAllDeduped_MultipleBatches(t *testing.T) {
 
 	// All four messages should still exist (survivors untouched).
 	var count int
-	err = f.Store.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count)
+	err = f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count)
 	require.NoError(err, "count messages after DeleteAllDeduped")
 	assert.Equal(2, count, "messages count (survivors only)")
 }
@@ -190,13 +193,14 @@ func TestDeleteAllDeduped_PreservesBatchlessSoftDelete(t *testing.T) {
 	// One real dedup batch — should be purged.
 	idKeep := newRFC822Message(t, f, "keep", "rfc822-batchless")
 	idDrop := newRFC822Message(t, f, "drop", "rfc822-batchless")
-	_, err := f.Store.MergeDuplicates(idKeep, []int64{idDrop}, "batch-real")
+	_, err := f.Store.MergeDuplicates(t.Context(), idKeep, []int64{idDrop}, "batch-real")
 	require.NoError(err, "MergeDuplicates")
 
 	// One row soft-hidden without a batch ID — simulates a future
 	// non-dedup soft-delete writer. Should survive DeleteAllDeduped.
 	idBatchless := newRFC822Message(t, f, "batchless", "rfc822-other")
-	_, err = f.Store.DB().Exec(
+	_, err = f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"),
 		idBatchless,
 	)
@@ -209,7 +213,8 @@ func TestDeleteAllDeduped_PreservesBatchlessSoftDelete(t *testing.T) {
 
 	// The batchless row must still exist after the purge.
 	var count int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id = ?"), idBatchless,
 	).Scan(&count)
 	require.NoError(err, "query batchless row after delete")
@@ -236,13 +241,13 @@ func TestDeleteDedupedBatch_ThenUndoNoOps(t *testing.T) {
 	idKeep := newRFC822Message(t, f, "keep", "rfc822-undo-noop")
 	idDrop := newRFC822Message(t, f, "drop", "rfc822-undo-noop")
 
-	_, err := f.Store.MergeDuplicates(idKeep, []int64{idDrop}, "batch-noop")
+	_, err := f.Store.MergeDuplicates(t.Context(), idKeep, []int64{idDrop}, "batch-noop")
 	require.NoError(err, "MergeDuplicates")
 
 	_, err = f.Store.DeleteDedupedBatch("batch-noop")
 	require.NoError(err, "DeleteDedupedBatch")
 
-	restored, err := f.Store.UndoDedup("batch-noop")
+	restored, err := f.Store.UndoDedup(t.Context(), "batch-noop")
 	require.NoError(err, "UndoDedup after delete")
 	assert.Equal(t, int64(0), restored, "UndoDedup after delete restored")
 }

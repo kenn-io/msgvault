@@ -39,7 +39,7 @@ const beeperMediaTestKeyEnv = "MSGVAULT_TEST_BEEPER_MEDIA_KEY"
 func storedBeeperVoiceNote(t *testing.T) (*store.Store, *attachmentstore.Store) {
 	t.Helper()
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE sources SET source_type = 'beeper', identifier = ? WHERE id = ?`), "signal", f.Source.ID)
 	require.NoError(t, err)
 	messageID := f.CreateMessage("voice1")
@@ -141,7 +141,7 @@ func (s *retentionServer) requestCount() int {
 
 func retentionRows(t *testing.T, st *store.Store) map[string]string {
 	t.Helper()
-	rows, err := st.DB().Query(`SELECT destination_key, retention_state || ':' || error_code || ':' || source_id
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT destination_key, retention_state || ':' || error_code || ':' || source_id
 		FROM beeper_media_occurrences`)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
@@ -198,7 +198,7 @@ func TestBeeperMediaConfig(t *testing.T) {
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	var state, code, operationID string
 	var scheduled bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT retention_state, error_code, retention_operation_id, next_action_at IS NOT NULL
 		FROM beeper_media_occurrences WHERE destination_key = ?`), destination).
 		Scan(&state, &code, &operationID, &scheduled))
@@ -212,7 +212,7 @@ func TestBeeperMediaConfig(t *testing.T) {
 	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
 	require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), config.DocbankIntegrationConfig{
 		Enabled: true, URL: httpServer.URL, APIKeyEnv: beeperMediaTestKeyEnv, AllSourcesUploadConsent: true}, nil))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT retention_state, error_code, retention_operation_id, next_action_at IS NOT NULL
 		FROM beeper_media_occurrences WHERE destination_key = ?`), destination).
 		Scan(&state, &code, &operationID, &scheduled))
@@ -222,12 +222,12 @@ func TestBeeperMediaConfig(t *testing.T) {
 	assert.True(scheduled)
 
 	server.failStatus.Store(http.StatusServiceUnavailable)
-	_, err = st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 	assert.Equal(map[string]string{destination: "pending:server_error:"}, retentionRows(t, st))
 	var retryScheduled bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT next_action_at IS NOT NULL FROM beeper_media_occurrences WHERE destination_key = ?`), destination).
 		Scan(&retryScheduled))
 	assert.True(retryScheduled)
@@ -349,12 +349,12 @@ func TestStoredMediaSchedulerUsesOtherSourceProfile(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st, blobs := storedBeeperVoiceNote(t)
-	_, err := st.DB().Exec(`UPDATE attachments SET attachment_role = 'preview'
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE attachments SET attachment_role = 'preview'
 		WHERE message_id = (SELECT id FROM messages WHERE source_message_id = 'voice1')`)
 	require.NoError(err)
 	source, err := st.GetOrCreateSource("gmail", "rod@example.com")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "mail-thread-1", "Mail")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "mail-thread-1", "Mail")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID: conversation, SourceID: source.ID, SourceMessageID: "mail-audio-1",
@@ -381,7 +381,7 @@ func TestStoredMediaSchedulerUsesOtherSourceProfile(t *testing.T) {
 	require.NoError(err)
 	destination := docbankmedia.DestinationKey(httpServer.URL, archiveUID)
 	var provider, profile string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT provider, profile FROM beeper_media_deliveries
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT provider, profile FROM beeper_media_deliveries
 		WHERE destination_key = ?`), destination).Scan(&provider, &profile))
 	assert.Equal("gmail", provider)
 	assert.Equal("asr", profile)
@@ -392,7 +392,7 @@ func TestStoredMediaRequiresAllSourcesConsent(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			st, blobs := storedBeeperVoiceNote(t)
-			_, err := st.DB().Exec(st.Rebind(`UPDATE sources SET source_type = ?`), provider)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET source_type = ?`), provider)
 			require.NoError(err)
 			t.Setenv("MSGVAULT_HOME", t.TempDir())
 			t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
@@ -501,7 +501,7 @@ func TestBeeperMediaGatedStoreWrites(t *testing.T) {
 	go func() { stopped <- media.TriggerJob(beeperMediaSubmitJob) }()
 	<-otherServer.arrived
 	require.NoError(shutdownServeRuntime(waitCtx, io.Discard, nil, serveSchedulers{sched, media}, gate))
-	shutdownWait, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownWait, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	select {
 	case err := <-stopped:

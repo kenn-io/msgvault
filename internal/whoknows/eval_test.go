@@ -186,7 +186,7 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	generation, err := backend.CreateGeneration(ctx, "bag-of-words", embedDimension, "")
 	require.NoError(t, err)
 
-	conversation, err := st.EnsureConversation(source.ID, "evaluation", "Evaluation")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "evaluation", "Evaluation")
 	require.NoError(t, err)
 	var chunks []vector.Chunk
 	for _, m := range box.Messages {
