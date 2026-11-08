@@ -12,9 +12,11 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mmcdole/gofeed"
 	"go.kenn.io/msgvault/internal/netguard"
+	"golang.org/x/net/idna"
 )
 
 const (
@@ -211,6 +213,16 @@ func (f *Fetcher) resolve(ctx context.Context, host string) ([]netip.Addr, error
 // the user chose a feed on their own network.
 func privateHost(host string) bool {
 	host = strings.Trim(host, "[]")
+	// net/http connects to a non-ASCII host by its IDNA form, which maps
+	// ideographic full stops (feeds。example。com) to dots. Classify that
+	// name; one IDNA refuses is no local name.
+	if strings.IndexFunc(host, func(r rune) bool { return r >= utf8.RuneSelf }) >= 0 {
+		ascii, err := idna.Lookup.ToASCII(host)
+		if err != nil {
+			return false
+		}
+		host = ascii
+	}
 	if literal, err := netip.ParseAddr(host); err == nil {
 		return netguard.ProhibitedIP(literal)
 	}

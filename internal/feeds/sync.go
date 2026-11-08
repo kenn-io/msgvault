@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"time"
 
+	"github.com/mmcdole/gofeed"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/store"
@@ -323,37 +325,45 @@ func (r *syncRun) report(ctx context.Context, result FeedResult) {
 	})
 }
 
-// archive writes the feed's items that the archive does not hold yet.
+// archive writes the feed's items that the archive does not hold yet. It
+// finds them by key first, and renders a missing item's message only to
+// write it: a rendered body can be as large as a whole message, so the run
+// holds one at a time, and none for items already archived.
 func (r *syncRun) archive(ctx context.Context, feedURL string, fetched *Fetched) (added, skipped, items int, err error) {
 	feed := fetched.Feed
+	documentURL := fetched.URL
+	if documentURL == "" {
+		documentURL = feedURL
+	}
 	firstSeen := r.syncer.now().UTC()
-	messages := make([]messageimport.ImportedMessage, 0, len(feed.Items))
-	seen := make(map[string]bool, len(feed.Items))
+	pending := make([]*gofeed.Item, 0, len(feed.Items))
 	keys := make([]string, 0, len(feed.Items))
+	seen := make(map[string]bool, len(feed.Items))
 	for _, item := range feed.Items {
 		if item == nil {
 			continue
 		}
-		message := itemMessage(feedURL, fetched.URL, feed, item, firstSeen)
-		if seen[message.ExternalID] {
+		key := itemKey(feedURL, item, resolveURL(documentURL, item.Link))
+		if seen[key] {
 			continue
 		}
-		seen[message.ExternalID] = true
-		messages = append(messages, message)
-		keys = append(keys, message.ExternalID)
+		seen[key] = true
+		pending = append(pending, item)
+		keys = append(keys, key)
 	}
 	existing, err := r.scoped.MessageExistsBatchContext(ctx, r.source.ID, keys)
 	if err != nil {
-		return 0, 0, len(messages), fmt.Errorf("look up archived items: %w", err)
+		return 0, 0, len(keys), fmt.Errorf("look up archived items: %w", err)
 	}
-	for _, message := range messages {
+	for i, item := range pending {
 		if ctx.Err() != nil {
-			return added, skipped, len(messages), ctx.Err()
+			return added, skipped, len(keys), ctx.Err()
 		}
 		r.checkpoint.MessagesProcessed++
-		if _, ok := existing[message.ExternalID]; ok {
+		if _, ok := existing[keys[i]]; ok {
 			continue
 		}
+		message := itemMessage(feedURL, documentURL, feed, item, firstSeen)
 		write, err := r.writer.Write(ctx, message)
 		if errors.Is(err, messageimport.ErrValidation) {
 			skipped++
@@ -365,26 +375,27 @@ func (r *syncRun) archive(ctx context.Context, feedURL string, fetched *Fetched)
 			continue
 		}
 		if err != nil {
-			return added, skipped, len(messages), fmt.Errorf("archive %q: %w", itemName(message), err)
+			return added, skipped, len(keys), fmt.Errorf("archive %s: %w", itemName(message), err)
 		}
 		if write.Created {
 			added++
 			r.checkpoint.MessagesAdded++
 		}
 	}
-	return added, skipped, len(messages), nil
+	return added, skipped, len(keys), nil
 }
 
-// itemName names an item in an error: its title, else its link, else its
-// key in the archive.
+// itemName names an item in an error by what a person recognizes: its
+// title, else its link. The key it is archived under means nothing to them,
+// so an item with neither is an untitled item.
 func itemName(message messageimport.ImportedMessage) string {
 	switch {
 	case message.Title != "":
-		return message.Title
+		return strconv.Quote(message.Title)
 	case message.URL != "":
-		return message.URL
+		return strconv.Quote(message.URL)
 	default:
-		return message.ExternalID
+		return "an untitled item"
 	}
 }
 

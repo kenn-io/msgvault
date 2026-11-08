@@ -623,9 +623,9 @@ func TestSyncThatYieldsMidFetchBlamesNoFeed(t *testing.T) {
 
 func TestItemNameNamesAnItemByWhatAPersonRecognizes(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "Release 1.2", itemName(messageimport.ImportedMessage{Title: "Release 1.2", URL: "https://x.example/1", ExternalID: "k"}))
-	assert.Equal(t, "https://x.example/1", itemName(messageimport.ImportedMessage{URL: "https://x.example/1", ExternalID: "k"}))
-	assert.Equal(t, "k", itemName(messageimport.ImportedMessage{ExternalID: "k"}))
+	assert.Equal(t, `"Release 1.2"`, itemName(messageimport.ImportedMessage{Title: "Release 1.2", URL: "https://x.example/1", ExternalID: "k"}))
+	assert.Equal(t, `"https://x.example/1"`, itemName(messageimport.ImportedMessage{URL: "https://x.example/1", ExternalID: "k"}))
+	assert.Equal(t, "an untitled item", itemName(messageimport.ImportedMessage{ExternalID: "k"}), "never the key it is archived under")
 }
 
 func TestFeedsWithTheSameItemIDsKeepTheirOwnItems(t *testing.T) {

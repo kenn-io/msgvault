@@ -69,6 +69,9 @@ func TestFetchKeepsAPublicFeedOffPrivateAddresses(t *testing.T) {
 	_, err = fetcher.Fetch(t.Context(), public+"/moved.atom", Validators{})
 	require.ErrorIs(err, ErrPrivateDestination, "a public feed can't redirect to a loopback address")
 
+	_, err = fetcher.Fetch(t.Context(), "http://feeds\u3002example\u3002com:"+port+"/moved.atom", Validators{})
+	require.ErrorIs(err, ErrPrivateDestination, "nor can one written with ideographic full stops, which net/http connects to as feeds.example.com")
+
 	fetched, err = fetcher.Fetch(t.Context(), server.URL+"/moved.atom", Validators{})
 	require.NoError(err, "a feed the user addressed on their own network may stay there")
 	assert.Equal("Example Project releases", fetched.Feed.Title)
