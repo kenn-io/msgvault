@@ -16,6 +16,7 @@ import (
 
 const (
 	UserLookupTimeout    = time.Minute
+	optionalLookupBudget = 10 * time.Second
 	maxHydrationDepth    = 32
 	maxHydrationRequests = 256
 	maxHydrationBytes    = 32 << 20
@@ -303,6 +304,15 @@ func sectionTemporarilyUnavailable(err error) bool {
 }
 
 func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting) error {
+	// Reserve half of any remaining caller deadline for publishing fetched content.
+	budget := optionalLookupBudget
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline) / 2; remaining < budget {
+			budget = remaining
+		}
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
 	if h.userSource == nil && !h.usersRead {
 		h.usersUnavailable, h.usersIncomplete, h.usersFailure = false, false, nil
 		cursor := ""
@@ -315,11 +325,17 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 				h.usersUnavailable, h.usersIncomplete, h.usersFailure = true, true, err
 				break
 			}
-			page, err := h.source.ListUsers(ctx, cursor)
+			page, err := h.source.ListUsers(lookupCtx, cursor)
 			if err != nil {
-				if errors.Is(err, ErrUnauthorized) || errors.Is(err, context.Canceled) ||
-					errors.Is(err, context.DeadlineExceeded) {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if errors.Is(err, ErrUnauthorized) {
 					return err
+				}
+				if lookupCtx.Err() != nil {
+					h.usersUnavailable, h.usersIncomplete, h.usersFailure = true, true, err
+					break
 				}
 				h.usersUnavailable = true
 				h.usersFailure = err
@@ -385,7 +401,7 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 		}
 		if h.userSource != nil {
 			var err error
-			user, err = h.lookupUser(ctx, id)
+			user, err = h.lookupUser(lookupCtx, id)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
