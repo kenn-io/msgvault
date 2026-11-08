@@ -32,7 +32,7 @@ func TestInstallPath(t *testing.T) {
 	req.NoError(os.Mkdir(transport, 0o700))
 	tools := filepath.Join(fixture, "tools")
 	req.NoError(os.Mkdir(tools, 0o700))
-	for _, name := range strings.Fields("uname mkdir mktemp tar gzip awk sha256sum shasum cut mv chmod grep dirname rm cp id run-parts head tr") {
+	for name := range strings.FieldsSeq("uname mkdir mktemp tar gzip awk sha256sum shasum cut mv chmod grep dirname rm cp id run-parts head tr") {
 		path, err := exec.LookPath(name)
 		if err == nil {
 			req.NoError(os.Symlink(path, filepath.Join(tools, name)))
@@ -83,12 +83,13 @@ esac
 				destination = filepath.Join(home, installDir)
 			}
 			path := tools
-			if tc.pathEntry == "exact" {
+			switch tc.pathEntry {
+			case "exact":
 				require.NoError(os.MkdirAll(filepath.Dir(destination), 0o700))
 				require.NoError(os.Mkdir(filepath.Join(home, "target"), 0o700))
 				require.NoError(os.Symlink(filepath.Join(home, "target"), destination))
 				path += ":" + destination
-			} else if tc.pathEntry == "sibling" {
+			case "sibling":
 				path += ":" + destination + "ary"
 			}
 			profiles := map[string]string{".bashrc": "# preserved", ".profile": "# preserved"}
@@ -183,7 +184,7 @@ esac
 				_, value, found := strings.Cut(string(output), "\nTEST_PATH=")
 				require.True(found, string(output))
 				count := 0
-				for _, entry := range strings.Split(strings.TrimSpace(value), ":") {
+				for entry := range strings.SplitSeq(strings.TrimSpace(value), ":") {
 					if entry == destination {
 						count++
 					}
