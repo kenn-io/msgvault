@@ -87,7 +87,8 @@ func seedThreads(f *fakeGitHub) {
 
 	f.discussions["acme/widgets#9"] = map[string]any{
 		"id": "D_9", "number": 9, "title": "How do I configure widgets?", "url": "https://github.com/acme/widgets/discussions/9",
-		"body": "Where is the config?", "createdAt": "2026-11-05T06:00:00Z", "category": map[string]any{"name": "Q&A"},
+		"updatedAt": "2026-11-05T08:00:00Z",
+		"body":      "Where is the config?", "createdAt": "2026-11-05T06:00:00Z", "category": map[string]any{"name": "Q&A"},
 		"author": bob,
 		"comments": conn(map[string]any{
 			"id": "DC_1", "url": "https://github.com/dc/1", "body": "In config.toml.", "createdAt": "2026-11-05T07:00:00Z",
@@ -298,18 +299,18 @@ func countPrefix(log []string, prefix string) int {
 	return n
 }
 
-func TestADiscussionNotificationFindsItsNumberAcrossResultPages(t *testing.T) {
+func TestADiscussionNotificationFindsItsNumberAcrossListPages(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	f := newFakeGitHub(t)
 	seedThreads(f)
-	f.discussions["acme/widgets#4"] = map[string]any{"id": "D_4", "number": 4, "title": "How do I configure widgets? (old)"}
+	f.discussions["acme/widgets#4"] = map[string]any{"id": "D_4", "number": 4, "title": "Another question", "updatedAt": "2026-11-06T08:00:00Z"}
 	f.discussionPages = 1
 	source := newGitHubSource(t, st)
 
 	_, err := syncGitHub(t, st, f, source, withoutSecretCorp)
 	require.NoError(err)
-	assert.Contains(t, archived(t, st, source.ID), "D_9", "the exact title on the second result page")
+	assert.Contains(t, archived(t, st, source.ID), "D_9", "the exact title on the list's second page")
 }
 
 func TestGraphQLErrorsKeepIncompleteThreadsQueued(t *testing.T) {

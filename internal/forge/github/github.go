@@ -30,7 +30,6 @@ type Forge struct {
 	mu      sync.Mutex
 	account forge.Account
 	owners  map[string]string
-	now     func() time.Time
 }
 
 // New returns GitHub for token, calling the API at apiBase.
@@ -38,7 +37,6 @@ func New(apiBase *url.URL, token, userAgent string) *Forge {
 	return &Forge{
 		client: newClient(apiBase, token, userAgent, &http.Client{Timeout: 60 * time.Second}),
 		owners: map[string]string{},
-		now:    time.Now,
 	}
 }
 

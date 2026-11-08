@@ -48,6 +48,8 @@ type fakeGitHub struct {
 	gqlErrors map[string][]map[string]any
 	// refuse answers a GraphQL operation with a 403 body, by operation.
 	refuse map[string]string
+	// fail answers a GraphQL operation with a server error, by operation.
+	fail map[string]bool
 
 	issueSearch      []searchNode
 	discussionSearch []searchNode
@@ -55,7 +57,7 @@ type fakeGitHub struct {
 	reviewedSearch        []searchNode
 	reviewRequestedSearch []searchNode
 	created               map[int]time.Time
-	// discussionPages splits FindDiscussion results into pages of this size.
+	// discussionPages splits RecentDiscussions results into pages of this size.
 	discussionPages int
 
 	// graphQLRemaining is the GraphQL limit left; each query uses one.
@@ -82,6 +84,7 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 		pages:            map[string]map[string]any{},
 		gqlErrors:        map[string][]map[string]any{},
 		refuse:           map[string]string{},
+		fail:             map[string]bool{},
 		created:          map[int]time.Time{},
 		discussionPages:  100,
 		graphQLRemaining: 5000,
@@ -187,7 +190,6 @@ var (
 	updatedRange = regexp.MustCompile(`updated:(\S+)\.\.(\S+)`)
 	createdRange = regexp.MustCompile(`created:(\S+)\.\.(\S+)`)
 	excludedUser = regexp.MustCompile(`-user:(\S+)`)
-	repoTitle    = regexp.MustCompile(`repo:(\S+) in:title "([^"]*)"`)
 )
 
 func (f *fakeGitHub) serveGraphQL(w http.ResponseWriter, r *http.Request) {
@@ -200,8 +202,10 @@ func (f *fakeGitHub) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 	switch req.OperationName {
 	case "IssueThread", "DiscussionThread":
 		f.log(req.OperationName + " " + key)
-	case "SearchThreads", "FindDiscussion":
+	case "SearchThreads":
 		f.log(fmt.Sprintf("%s %v", req.OperationName, vars["q"]))
+	case "RecentDiscussions":
+		f.log(fmt.Sprintf("%s %v/%v", req.OperationName, vars["owner"], vars["name"]))
 	default:
 		f.log(fmt.Sprintf("%s %v %v", req.OperationName, vars["id"], vars["after"]))
 	}
@@ -210,6 +214,10 @@ func (f *fakeGitHub) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Ratelimit-Limit", "5000")
 	w.Header().Set("X-Ratelimit-Remaining", strconv.Itoa(f.graphQLRemaining))
 	w.Header().Set("X-Ratelimit-Reset", strconv.FormatInt(f.graphQLReset.Unix(), 10))
+	if f.fail[req.OperationName] {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	if body, ok := f.refuse[req.OperationName]; ok {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, body)
@@ -226,8 +234,8 @@ func (f *fakeGitHub) serveGraphQL(w http.ResponseWriter, r *http.Request) {
 	switch req.OperationName {
 	case "SearchThreads":
 		f.serveSearch(w, vars)
-	case "FindDiscussion":
-		f.serveFindDiscussion(w, vars)
+	case "RecentDiscussions":
+		f.serveRecentDiscussions(w, vars)
 	case "IssueThread":
 		thread, ok := f.threads[key]
 		if !ok {
@@ -312,34 +320,26 @@ func (f *fakeGitHub) serveSearch(w http.ResponseWriter, vars map[string]any) {
 	f.writeGraphQL(w, map[string]any{"search": page}, nil)
 }
 
-func (f *fakeGitHub) serveFindDiscussion(w http.ResponseWriter, vars map[string]any) {
-	q, _ := vars["q"].(string)
-	match := repoTitle.FindStringSubmatch(q)
-	if !assert.NotNil(f.t, match, "FindDiscussion query without repo and title: %s", q) {
-		return
-	}
+func (f *fakeGitHub) serveRecentDiscussions(w http.ResponseWriter, vars map[string]any) {
+	prefix := fmt.Sprintf("%v/%v#", vars["owner"], vars["name"])
 	var nodes []map[string]any
-	keys := make([]string, 0, len(f.discussions))
-	for key := range f.discussions {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
-		d := f.discussions[key]
-		title, _ := d["title"].(string)
-		if strings.HasPrefix(key, match[1]+"#") && strings.Contains(title, strings.TrimSpace(match[2])) {
-			nodes = append(nodes, map[string]any{"number": d["number"], "title": title})
+	for key, d := range f.discussions {
+		if strings.HasPrefix(key, prefix) {
+			nodes = append(nodes, map[string]any{"number": d["number"], "title": d["title"], "updatedAt": d["updatedAt"]})
 		}
 	}
+	slices.SortFunc(nodes, func(a, b map[string]any) int {
+		return strings.Compare(fmt.Sprint(b["updatedAt"]), fmt.Sprint(a["updatedAt"]))
+	})
 	offset := 0
 	if after, ok := vars["after"].(string); ok {
 		offset, _ = strconv.Atoi(after)
 	}
 	end := min(offset+f.discussionPages, len(nodes))
-	f.writeGraphQL(w, map[string]any{"search": map[string]any{
+	f.writeGraphQL(w, map[string]any{"repository": map[string]any{"discussions": map[string]any{
 		"pageInfo": map[string]any{"hasNextPage": end < len(nodes), "endCursor": strconv.Itoa(end)},
 		"nodes":    nodes[offset:end],
-	}}, nil)
+	}}}, nil)
 }
 
 func (f *fakeGitHub) writeJSON(w http.ResponseWriter, value any) {

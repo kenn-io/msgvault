@@ -256,16 +256,7 @@ func (f *Forge) firstPage(ctx context.Context, ref forge.ThreadRef) (continuatio
 		return f.release(ctx, ref)
 	case forge.KindDiscussion:
 		if ref.Number == 0 {
-			number, err := f.findDiscussion(ctx, ref)
-			switch {
-			case errors.Is(err, errDiscussionNotFound) && f.now().Sub(ref.UpdatedAt) > discussionIndexLag:
-				return continuation{}, nil, fmt.Errorf("%w: no discussion titled %q in %s", forge.ErrUnavailable,
-					strings.TrimPrefix(ref.Locator, "title:"), ref.Repo)
-			case err != nil:
-				// Search may not have indexed it yet; the thread stays queued.
-				return continuation{}, nil, fmt.Errorf("find the discussion of %s: %w", ref.Name(), err)
-			}
-			ref.Number = number
+			return continuation{}, nil, fmt.Errorf("%w: a discussion without a number: %s", forge.ErrUnavailable, ref.Name())
 		}
 		return f.discussion(ctx, ref)
 	case forge.KindIssue, forge.KindPullRequest:

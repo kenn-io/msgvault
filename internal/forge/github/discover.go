@@ -20,9 +20,6 @@ const (
 	// searchWindow is the most results one GitHub search returns; a longer
 	// history is read in windows of update time.
 	searchWindow = 1000
-	// maxTitleQueryRunes keeps a discussion title within GitHub's search
-	// query limit; the exact title is compared afterwards.
-	maxTitleQueryRunes = 120
 )
 
 // cursor is how far each discovery stream came.
@@ -126,6 +123,10 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 	}
 	latest := state.Notifications.Since
 	lastModified := ""
+	// complete stays true while every notification was turned into a
+	// thread; one that couldn't be holds the cursor, so the next scan tries
+	// it again.
+	complete := true
 	next := "/notifications"
 	for first := true; next != ""; first = false {
 		var batch []notification
@@ -149,15 +150,24 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 				continue
 			}
 			if ref.Kind == forge.KindDiscussion {
-				if ref, err = f.resolveDiscussion(ctx, ref); err != nil {
+				number, err := f.findDiscussion(ctx, ref.Repo, n.Subject.Title, n.UpdatedAt)
+				switch {
+				case errors.Is(err, errDiscussionNotFound):
+					// No such discussion any more: nothing to archive.
+					continue
+				case forge.IsRateLimit(err):
 					return err
+				case err != nil:
+					complete = false
+					continue
 				}
+				ref.Number, ref.Key = number, threadKey(ref.Repo, number)
 			}
 			refs = append(refs, ref)
 		}
 		// The next link carries the query; only the first page is conditional.
 		next, query, header = forge.NextLink(resp.Header.Get("Link")), nil, nil
-		if next == "" {
+		if next == "" && complete {
 			state.Notifications = notificationCursor{LastModified: lastModified, Since: latest}
 		}
 		if err := page(refs, state.encode()); err != nil {
@@ -191,9 +201,9 @@ func notificationRef(n notification) (forge.ThreadRef, bool) {
 		ref.Kind, ref.Locator = forge.KindRelease, n.Subject.URL
 		ref.Key = strings.ToLower(ref.Repo) + "@" + n.Subject.URL
 	case "Discussion":
-		// The number is resolved from the title, see resolveDiscussion.
-		ref.Kind, ref.Locator = forge.KindDiscussion, "title:"+n.Subject.Title
-		ref.Key = strings.ToLower(ref.Repo) + "#title:" + n.Subject.Title
+		// A discussion's notification names no number; scanNotifications
+		// finds it by title.
+		ref.Kind = forge.KindDiscussion
 	default:
 		// CI runs, security alerts, commits: no conversation to archive.
 		return forge.ThreadRef{}, false
@@ -401,75 +411,72 @@ func searchRefs(nodes []searchNode, owners forge.OwnerFilter) []forge.ThreadRef 
 	return refs
 }
 
-// discussionIndexLag is how long a new or renamed discussion may take to
-// appear in GitHub's search; a title not found for longer names no
-// discussion any more.
-const discussionIndexLag = 24 * time.Hour
+// discussionWindow is how long before its notification a discussion may
+// have been updated last; the list is read back that far.
+const discussionWindow = 30 * 24 * time.Hour
 
 var errDiscussionNotFound = errors.New("no discussion with that title")
 
-// resolveDiscussion gives a notified discussion its number, so it is the
-// same thread a search finds. One not found yet keeps its title: Fetch
-// tries again.
-func (f *Forge) resolveDiscussion(ctx context.Context, ref forge.ThreadRef) (forge.ThreadRef, error) {
-	number, err := f.findDiscussion(ctx, ref)
-	switch {
-	case errors.Is(err, errDiscussionNotFound):
-		return ref, nil
-	case err != nil:
-		return forge.ThreadRef{}, err
-	}
-	ref.Number, ref.Locator = number, ""
-	ref.Key = threadKey(ref.Repo, number)
-	return ref, nil
-}
-
-const findDiscussionQuery = `query FindDiscussion($q: String!, $after: String) {
-  search(type: DISCUSSION, query: $q, first: 100, after: $after) {
-    pageInfo { hasNextPage endCursor }
-    nodes { ... on Discussion { number title } }
+const recentDiscussionsQuery = `query RecentDiscussions($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    discussions(first: 100, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number title updatedAt }
+    }
   }
 }`
 
-// findDiscussion returns the number of the discussion a notification names,
-// by its exact title among the repository's discussions updated since the
-// notification's day.
-func (f *Forge) findDiscussion(ctx context.Context, ref forge.ThreadRef) (int, error) {
-	title := strings.TrimPrefix(ref.Locator, "title:")
-	words := strings.ReplaceAll(title, `"`, " ")
-	if runes := []rune(words); len(runes) > maxTitleQueryRunes {
-		words = string(runes[:maxTitleQueryRunes])
-	}
-	q := fmt.Sprintf(`repo:%s in:title "%s" updated:>=%s`,
-		ref.Repo, strings.TrimSpace(words), ref.UpdatedAt.UTC().Format(time.DateOnly))
+// findDiscussion returns the number of the discussion a notification
+// names: the one with its exact title among the repository's discussions,
+// read most recently updated first, back to discussionWindow before the
+// notification. The list, unlike search, has no indexing lag, so a title
+// it doesn't hold names no discussion.
+func (f *Forge) findDiscussion(ctx context.Context, repo, title string, updated time.Time) (int, error) {
+	owner, name, _ := strings.Cut(repo, "/")
+	floor := updated.Add(-discussionWindow)
 	var after any
 	for {
 		var data struct {
-			Search struct {
-				PageInfo struct {
-					HasNextPage bool   `json:"hasNextPage"`
-					EndCursor   string `json:"endCursor"`
-				} `json:"pageInfo"`
-				Nodes []struct {
-					Number int    `json:"number"`
-					Title  string `json:"title"`
-				} `json:"nodes"`
-			} `json:"search"`
+			Repository *struct {
+				Discussions struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						Number    int       `json:"number"`
+						Title     string    `json:"title"`
+						UpdatedAt time.Time `json:"updatedAt"`
+					} `json:"nodes"`
+				} `json:"discussions"`
+			} `json:"repository"`
 		}
-		if err := f.client.graphQL(ctx, graphQLRequest{
-			OperationName: "FindDiscussion", Query: findDiscussionQuery,
-			Variables: map[string]any{"q": q, "after": after},
-		}, &data); err != nil {
+		err := f.client.graphQL(ctx, graphQLRequest{
+			OperationName: "RecentDiscussions", Query: recentDiscussionsQuery,
+			Variables: map[string]any{"owner": owner, "name": name, "after": after},
+		}, &data)
+		var errs *graphQLResponseError
+		switch {
+		case errors.As(err, &errs) && errs.missingAt("repository"), errors.Is(err, forge.ErrUnavailable):
+			return 0, errDiscussionNotFound
+		case err != nil:
 			return 0, err
 		}
-		for _, node := range data.Search.Nodes {
+		if data.Repository == nil {
+			return 0, errDiscussionNotFound
+		}
+		list := data.Repository.Discussions
+		for _, node := range list.Nodes {
 			if node.Title == title && node.Number > 0 {
 				return node.Number, nil
 			}
+			if node.UpdatedAt.Before(floor) {
+				return 0, errDiscussionNotFound
+			}
 		}
-		if !data.Search.PageInfo.HasNextPage {
+		if !list.PageInfo.HasNextPage {
 			return 0, errDiscussionNotFound
 		}
-		after = data.Search.PageInfo.EndCursor
+		after = list.PageInfo.EndCursor
 	}
 }

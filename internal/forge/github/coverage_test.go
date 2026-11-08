@@ -3,7 +3,6 @@ package github
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,22 +176,36 @@ func TestAPullRequestTheAccountOnlyReviewedIsFound(t *testing.T) {
 	assert.Contains(t, archived(t, st, source.ID), "PRR_11")
 }
 
-func TestAnUnresolvedDiscussionWaitsForSearchThenDrops(t *testing.T) {
+func TestAFailedDiscussionLookupHoldsOnlyThatNotification(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	f := newFakeGitHub(t)
-	recent := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	f.notifications = []notification{notified("Discussion", "acme", "widgets", "Not indexed yet", "", "mention", recent)}
+	seedThreads(f)
+	f.issueSearch = nil
+	f.fail["RecentDiscussions"] = true
 	source := newGitHubSource(t, st)
 
-	waiting, err := syncGitHub(t, st, f, source, forge.Options{})
-	require.ErrorIs(err, forge.ErrEveryThreadFailed)
-	assert.Equal(1, waiting.Remaining, "a discussion search hasn't indexed yet stays queued")
+	first, err := syncGitHub(t, st, f, source, withoutSecretCorp)
+	require.NoError(err)
+	assert.Equal(2, first.Archived, "the pull request and the release still sync")
+	assert.NotContains(archived(t, st, source.ID), "D_9")
 
-	f.notifications = []notification{notified("Discussion", "acme", "widgets", "Gone for days", "", "mention", "2026-11-01T08:00:00Z")}
-	f.lastModified = "Sun, 08 Nov 2026 10:00:00 GMT"
-	dropped, err := syncGitHub(t, st, f, source, forge.Options{Full: true})
-	require.ErrorIs(err, forge.ErrEveryThreadFailed, "the recent one still waits")
-	assert.Equal(1, dropped.Unavailable, "a title not found for days names no discussion")
+	delete(f.fail, "RecentDiscussions")
+	second, err := syncGitHub(t, st, f, source, withoutSecretCorp)
+	require.NoError(err)
+	assert.Contains(archived(t, st, source.ID), "D_9", "the held notification is read again")
+	assert.Positive(second.Archived)
+}
+
+func TestADiscussionNoLongerListedIsSkipped(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGitHub(t)
+	f.notifications = []notification{notified("Discussion", "acme", "widgets", "Deleted long ago", "", "mention", "2026-11-05T08:00:00Z")}
+	source := newGitHubSource(t, st)
+
+	summary, err := syncGitHub(t, st, f, source, forge.Options{})
+	require.NoError(err)
+	assert.Zero(t, summary.Remaining, "a title the repository's list doesn't hold is no thread to queue")
 }
