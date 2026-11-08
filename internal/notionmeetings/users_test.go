@@ -197,7 +197,7 @@ func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		client := NewClient("https://notion.example", "users-example")
-		transport := &usersRetryTransport{delay: func() { time.Sleep(30 * time.Second) }}
+		transport := &usersRetryTransport{delay: func() { time.Sleep(3 * time.Second) }}
 		client.http.Transport = transport
 		source := completeHydrationSource()
 		h := NewHydrator(source).WithUserSource(client)
@@ -208,7 +208,7 @@ func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 		first, err := h.Hydrate(t.Context(), meeting)
 		require.NoError(err)
 		require.Len(first.Attendees, 3)
-		assert.Equal(90*time.Second, time.Since(start))
+		assert.Equal(9*time.Second, time.Since(start))
 		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "timeout")
 		installMeetingHeader(t, source, meeting)
 		start = time.Now()
@@ -217,7 +217,7 @@ func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 		assert.Equal("Test Speaker: Ready to ship.", second.Transcript)
 		require.Len(second.Attendees, 3)
 		require.ErrorIs(h.usersFailure, context.DeadlineExceeded)
-		assert.Equal(UserLookupTimeout, time.Since(start))
+		assert.Equal(optionalLookupBudget, time.Since(start))
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err = h.Hydrate(ctx, hydrationMeeting())
@@ -250,4 +250,61 @@ func TestImporterIncompleteDirectoryRespectsFreshUnverifiedAttendee(t *testing.T
 	raw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
 	assert.NotContains(string(raw), "attendee@example.com")
+}
+
+type slowOptionalUserSource struct{}
+
+func (slowOptionalUserSource) RetrieveUser(ctx context.Context, id string) (*User, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(50 * time.Second):
+		return &User{ID: id, Person: UserPerson{Email: id + "@example.com", EmailVerified: true}}, nil
+	}
+}
+
+func TestImporterPublishesContentWhenOptionalLookupBudgetExpires(t *testing.T) {
+	st, source, imp := broadFixture(t)
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "user-3"}
+	source.query.Results = []MeetingNote{meeting}
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	imp.WithUserSource(slowOptionalUserSource{})
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		result, err := imp.Import(ctx, ImportOptions{Identifier: "work", TokenType: "pat"})
+		require.NoError(err)
+		assert.Equal(int64(1), result.MeetingsAdded)
+		var messageID int64
+		require.NoError(st.DB().QueryRowContext(ctx, `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+		body, err := st.GetMessageBodyText(ctx, messageID)
+		require.NoError(err)
+		assert.Contains(body, "Test Speaker: Ready to ship.")
+		assert.NoError(ctx.Err())
+	})
+}
+
+type slowOptionalDirectorySource struct{ *fakeHydrationSource }
+
+func (s slowOptionalDirectorySource) ListUsers(ctx context.Context, _ string) (*UserPage, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestHydratorRetainsContentOnDirectoryBudgetExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		source := slowOptionalDirectorySource{completeHydrationSource()}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		result, err := NewHydrator(source).Hydrate(ctx, hydrationMeeting())
+		require.NoError(err)
+		assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
+		assert.True(result.AttendeeResolutionDegraded)
+		assert.NoError(ctx.Err())
+	})
 }
