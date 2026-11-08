@@ -204,6 +204,24 @@ describe('OrganizationEditor', () => {
     }
   });
 
+  it('keeps a saved comma alias whole when another alias is appended', async () => {
+    const saved = { ...organizationProfile(), names: [{ ...organizationProfile().names[0], name: 'Example, Inc.' }] };
+    const onDone = vi.fn();
+    const puts: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PUT') puts.push(request.clone());
+      return Response.json(saved, { headers: { ETag: '"organization-21-r1"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
+    await fireEvent.input(aliases, { target: { value: 'Example, Inc., Second' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    const body = await puts[0].json();
+    expect(body.names.filter((item: { name_kind: string }) => item.name_kind === 'alias').map((item: { name: string }) => item.name)).toEqual(['Example, Inc.', 'Second']);
+  });
+
   it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);

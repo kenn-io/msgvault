@@ -184,8 +184,14 @@
     if (!submitting) { if (attempt.conflict) void controller.refreshOrganizations(); attempt.reset(); removal.reset(); onClose(); }
   }
 
-  function values(value: string): string[] {
-    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  // Splits on commas, but a saved value that holds one ("Example, Inc.") stays whole.
+  function values(value: string, saved: string[]): string[] {
+    const parts = value.split(','), out: string[] = [];
+    for (let i = 0, j = parts.length; i < parts.length; i = j, j = parts.length) {
+      while (j > i + 1 && !saved.includes(parts.slice(i, j).join(',').trim())) j--;
+      out.push(parts.slice(i, j).join(',').trim());
+    }
+    return out.filter(Boolean);
   }
 
   function present(parts: Array<string | number | undefined>): string {
@@ -277,8 +283,8 @@
     };
   }
 
-  const aliasDelta = $derived(valueDelta(baselineAliases, aliases === baselineAliases.join(', ') ? baselineAliases : values(aliases)));
-  const categoryDelta = $derived(valueDelta(baselineCategories, categories === baselineCategories.join(', ') ? baselineCategories : values(categories)));
+  const aliasDelta = $derived(valueDelta(baselineAliases, values(aliases, baselineAliases)));
+  const categoryDelta = $derived(valueDelta(baselineCategories, values(categories, baselineCategories)));
 
   function envelopeBody(envelope: Name['envelope']): EnvelopeBody {
     return {
