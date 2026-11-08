@@ -112,7 +112,8 @@ export function postalAddressText(input: Partial<Input>): string {
   const parts = [input.post_office_box, input.extended_address, input.street_address, input.locality,
     input.region, input.postal_code, input.country_name, countryCode, input.extended_components].filter((part): part is string => !!part);
   const components = parts.join(', ');
-  const freeText = input.free_text && parts.some(part => part.trim() === input.free_text!.trim()) ? '' : input.free_text;
+  const segments = (value: string) => value.split(/[,\n]+/).map(part => part.trim()).filter(Boolean).join(', ');
+  const freeText = input.free_text && (parts.some(part => part.trim() === input.free_text!.trim()) || segments(input.free_text) === segments(components)) ? '' : input.free_text;
   return (freeText === components ? components : [freeText, components].filter(Boolean).join(', ')) || input.label || input.original_value || '';
 }
 

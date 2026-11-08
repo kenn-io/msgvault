@@ -44,7 +44,7 @@ func TestPostalTextOnlyReplacementDistinguishesNewTextFromOriginal(t *testing.T)
 		wantText                bool
 	}{
 		{"new text", "New address", "Old address", true},
-		{"preserved source", "Old address", "Old address", false},
+		{"preserved source", "Old address", "Old address", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -64,12 +64,14 @@ func TestPostalTextOnlyReplacementDistinguishesNewTextFromOriginal(t *testing.T)
 }
 
 func TestPostalExplicitEmptyCurrentTextIsNotRestored(t *testing.T) {
-	input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: "Old address", FreeText: new("")}
-	request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}}}
-	patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal, FreeText: new("")}}}}
-	require.NoError(t, capturePostalPatchOriginals(request, &patch))
-	require.NotNil(t, patch.Addresses.Add[0].FreeText)
-	assert.Empty(t, *patch.Addresses.Add[0].FreeText)
+	for _, supersede := range [][]int64{nil, {1}} {
+		input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: "Old address", FreeText: new("")}
+		request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}, Supersede: supersede}}
+		patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal, FreeText: new("")}}}}
+		require.NoError(t, capturePostalPatchOriginals(request, &patch))
+		require.NotNil(t, patch.Addresses.Add[0].FreeText)
+		assert.Empty(t, *patch.Addresses.Add[0].FreeText)
+	}
 }
 
 func (v *countingPostalValidator) Check(_ context.Context, input postaladdress.Input) (postaladdress.Assessment, error) {

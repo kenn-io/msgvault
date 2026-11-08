@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -166,7 +166,7 @@ describe('Postal address editor', () => {
     expect(screen.getByLabelText('Current address text')).toHaveProperty('value', '');
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests).toHaveLength(1));
-    expect((await requests[0]!.clone().json()).addresses.add[0]).not.toHaveProperty('free_text');
+    expect((await requests[0]!.clone().json()).addresses.add[0].free_text).toBe('');
   });
 
   it('does not use a synthesized display value as original input', async () => {
@@ -231,6 +231,22 @@ describe('Postal address editor', () => {
     await waitFor(() => expect(requests).toHaveLength(2));
     expect((await requests[1]!.clone().json()).addresses.add[0].free_text).toBe('12 Example Street');
   });
+
+  it.each([false, true])('keeps an explicit clear before the first check or save (check=%s)', async check => {
+    const { controller, requests } = setup();
+    render(StructuredProfileEditor, { controller, section: 'addresses' });
+    await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: 'Old street' } });
+    await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: 'Old street' } });
+    await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '' } });
+    if (check) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+      await screen.findByText('Original address');
+    }
+    expect(screen.getByLabelText('Current address text')).toHaveProperty('value', '');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(check ? 2 : 1));
+    expect((await requests[requests.length - 1]!.clone().json()).addresses.add[0].free_text).toBe('');
+  });
 });
 
 
@@ -266,8 +282,9 @@ it('drops a pending result if the component receives a different person controll
  const nextPerson = { ...person, id: 8 };
  const next = new DirectoryProfileController(createAPIClient(async () => Response.json(emptyProfile(nextPerson))), 8, { person: nextPerson, structuredProfile: emptyProfile(nextPerson), etags: { person: '"person-8-r3"', structuredProfile: '"person-8-r3"' }, errors: {} });
  await view.rerender({ controller: next, section: 'addresses' });
- release({ original: raw, proposed: raw, provider: 'google', status: 'validated', reason_codes: [], fingerprint: await postalFingerprint(raw) });
- await waitFor(() => expect(screen.queryByText('Checking address…')).toBeNull());
+ await act(async () => { release({ original: raw, proposed: { ...raw, street_address: 'Stale suggestion' }, provider: 'google', status: 'validated', checked_at: when, reason_codes: [], fingerprint: await postalFingerprint(raw) }); await pending; });
+ expect(screen.queryByText('Original address')).toBeNull();
+ expect(screen.queryByText('Stale suggestion')).toBeNull();
  expect(screen.queryByText('Google Maps')).toBeNull();
 });
 

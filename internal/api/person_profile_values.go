@@ -505,10 +505,9 @@ func capturePostalPatchOriginals(request PersonProfilePatchRequest, patch *store
 		if input.CountryCode != nil {
 			output.CountryCode = new(proposed.CountryCode)
 		}
-		// A new text-only address needs a current value separate from its
-		// provenance. Replacements must not revive an explicitly cleared value.
-		newText := len(request.Addresses.Supersede) == 0 || input.OriginalInput == nil || current.OriginalValue != raw.OriginalValue
-		if newText && input.FreeText == nil && current.Label == "" && current.OriginalValue != "" && current.PostOfficeBox == "" && current.ExtendedAddress == "" && current.StreetAddress == "" && current.Locality == "" && current.Region == "" && current.PostalCode == "" && current.CountryName == "" && current.ExtendedComponents == "" {
+		// An omitted current value retains text-only input; an explicitly empty
+		// free_text represents a deliberate clear, including on replacement.
+		if input.FreeText == nil && current.Label == "" && current.OriginalValue != "" && current.PostOfficeBox == "" && current.ExtendedAddress == "" && current.StreetAddress == "" && current.Locality == "" && current.Region == "" && current.PostalCode == "" && current.CountryName == "" && current.ExtendedComponents == "" {
 			output.FreeText = new(current.OriginalValue)
 		}
 		output.OriginalValue = encoded

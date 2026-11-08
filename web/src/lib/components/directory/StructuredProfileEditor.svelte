@@ -279,7 +279,7 @@
         } else if (!input.original_value) {
           input.original_value = [locality, region, postalCode, countryName].map(value => value.trim()).filter(Boolean).join(', ');
         }
-        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...((currentTextTouched || initialCandidate || editedAfterCapture) && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
+        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...((currentTextTouched || initialCandidate || currentAddress || editedAfterCapture) && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
         const value = dateValue.trim();
@@ -331,7 +331,7 @@
   function captureOriginal(): void {
     if (!originalInput) {
       originalInput = copyPostalInput(addressDraft());
-      if (!currentText && originalText && !postalAddressText({ ...addressDraft(), original_value: '', free_text: '', country_code: '' })) currentText = originalText;
+      if (!currentTextTouched && !currentText && originalText && !postalAddressText({ ...addressDraft(), original_value: '', free_text: '', country_code: '' })) currentText = originalText;
     }
   }
   function edited(): void {
