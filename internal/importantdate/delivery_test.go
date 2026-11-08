@@ -60,6 +60,7 @@ type deliveryKataFake struct {
 	lookupError            error
 	existing               bool
 	notifyError            error
+	issueStatus            string
 	creates, notifications int
 }
 
@@ -83,7 +84,11 @@ func (f *deliveryKataFake) CreateTaskReused(_ context.Context, project, _ string
 	return taskclient.KataTask{UID: "issue-example", Project: project, Status: "open"}, false, nil
 }
 func (f *deliveryKataFake) GetTask(_ context.Context, project, uid string) (taskclient.KataTask, error) {
-	return taskclient.KataTask{UID: uid, Project: project, Status: "open"}, nil
+	status := f.issueStatus
+	if status == "" {
+		status = "open"
+	}
+	return taskclient.KataTask{UID: uid, Project: project, Status: status}, nil
 }
 func (f *deliveryKataFake) NotifyIssue(context.Context, string, string, string, string) error {
 	f.notifications++
@@ -186,4 +191,27 @@ func TestDeliveryRetriesNotificationPreflightWithoutRecreatingIssue(t *testing.T
 	checks.Equal(store.ImportantDateDelivered, st.state)
 	checks.Equal(1, kata.creates)
 	checks.Equal(1, kata.notifications)
+}
+
+func TestDeliveryDoesNotNotifyClosedIssueAfterPreflightFailure(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := &deliveryStoreFake{consent: true}
+	kata := &deliveryKataFake{}
+	service := DeliveryService{Store: st, Kata: kata}
+	input := DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+	calls := 0
+	revalidate := func(context.Context) (bool, error) {
+		calls++
+		if calls == 2 {
+			return false, errors.New("preflight unavailable")
+		}
+		return true, nil
+	}
+	must.Error(service.Deliver(t.Context(), input, revalidate))
+	kata.issueStatus = "closed"
+	must.NoError(service.Deliver(t.Context(), input, revalidate))
+	checks.Equal(store.ImportantDateCancelled, st.state)
+	checks.Equal(1, kata.creates)
+	checks.Zero(kata.notifications)
 }
