@@ -24,7 +24,7 @@
   <DateField label="Start date" bind:value={start} {disabled} bind:error={startError} note={startNote}
     onfocuschange={value => focused = value ? 'start' : undefined} />
   <DateField bind:value={end} {start} disabled={disabled || !endOpen} bind:error={endError}
-    note={endNote} showNote={!(showCurrent && endLineFree)} onfocuschange={value => focused = value ? 'end' : undefined}>
+    note={endNote} showNote={!(showCurrent && endLineFree)} holdNoteLine={false} onfocuschange={value => focused = value ? 'end' : undefined}>
     {#if showCurrent}<div class="current" class:below={!endLineFree}><Checkbox label="Current" checked={current} {disabled} onchange={(value) => current = value} /></div>{/if}
   </DateField>
 </div>

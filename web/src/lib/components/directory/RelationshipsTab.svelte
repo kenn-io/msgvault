@@ -180,7 +180,7 @@
     { label: 'Edit…', onselect: () => openEditor(view) },
     { label: 'Delete…', danger: true, onselect: () => { removal.reset(); deletingRelationship = view; } }
   ]}>
-    {#if onOpenPerson}<button class="person-link" type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if}
+    {#if onOpenPerson}<button data-link type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if}
   </DetailRow>
 {/snippet}
 {#snippet importedRow(row: typeof imports.rows[number])}
@@ -208,6 +208,4 @@
   .built-in { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
   .built-in ul { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0; list-style: none; }
   .built-in li { padding: var(--space-1) var(--chip-pad-x); border: 1px solid var(--border-muted); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .person-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
-  .person-link:hover { text-decoration: underline; }
 </style>

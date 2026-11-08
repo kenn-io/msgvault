@@ -376,10 +376,12 @@
       {#if checkingDelete}<p role="status">Checking jobs…</p>{/if}
       {#if checkError}<InlineNotice message="Couldn't check jobs." details={checkError} actionLabel="Check again" onaction={() => void checkDeletion()} />{/if}
       {#if holders && holders.count > 0}
-        {@const one = holders.count === 1 && !holders.atLeast}<p>{holders.atLeast ? 'At least ' : ''}{holders.count} {one ? 'job' : 'jobs'}</p><p>{one ? "Delete its job first. Ending it isn't enough." : "Delete its jobs first. Ending them isn't enough."}</p>
+        <p>{holders.count === 1 && !holders.atLeast ? "Delete its job first. Ending it isn't enough." : `Delete its ${holders.count}${holders.atLeast ? ' or more' : ''} jobs first. Ending them isn't enough.`}</p>
+        <!-- Each name opens that person, where the job is; the open person's own job here is one step away. -->
         <div class="holders">{#each holders.holders as holder}{@const job = holderJob?.(holder.personID)}
-          <DetailRow description={holder.job} menu={job ? [{ label: job.label, onselect: () => { job.open(); onClose(); } }] : []}
-            actionLabel={`Open ${holder.name}`} onclick={!job && onOpenPerson ? () => { onClose(); onOpenPerson(holder.personID); } : undefined}>{holder.name}</DetailRow>{/each}</div>
+          <DetailRow description={holder.job} actionLabel={holder.name} menu={job ? [{ label: job.label, onselect: () => { job.open(); onClose(); } }] : []}>
+            {#if onOpenPerson}<button type="button" data-link onclick={() => { onClose(); onOpenPerson(holder.personID); }}>{holder.name}</button>{:else}{holder.name}{/if}
+          </DetailRow>{/each}</div>
         {#if holders.peopleCount > holders.holders.length}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - holders.holders.length} more</p>{/if}
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}

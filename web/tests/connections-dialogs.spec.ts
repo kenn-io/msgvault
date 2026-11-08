@@ -156,3 +156,66 @@ for (const width of [1440, 390]) {
     await page.screenshot({ path: testInfo.outputPath('dialog.png'), fullPage: true });
   });
 }
+
+for (const width of [1440, 390]) {
+  test(`Add connection's pickers keep their words, insets, and fields whole at ${width}px`, async ({ page }) => {
+    await installDirectoryReviewArchive(page);
+    await page.setViewportSize({ width, height: 900 });
+    let typesFail = true;
+    await page.route('**/api/v1/relationship-types', route => typesFail
+      ? route.fulfill({ status: 503, json: { message: 'Synthetic catalog unavailable' } })
+      : route.fulfill({ json: { relationship_types: [relationshipType({ id: 1, slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true, ownership: 'system' })] } }));
+    await page.route('**/api/v1/people/directory*', route => new URL(route.request().url()).searchParams.get('q')
+      ? route.fulfill({ status: 503, json: { message: 'Synthetic search unavailable' } })
+      : route.fulfill({ json: { people: [directoryPerson(9)] } }));
+    await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+    await page.getByRole('radio', { name: 'Details', exact: true }).click();
+    const connections = page.getByRole('heading', { name: 'Open loops', exact: true });
+    const before = (await connections.boundingBox())!.y;
+    await page.getByRole('button', { name: 'Add connection…', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add connection', exact: true });
+    // The page behind the dialog stays where it was.
+    expect((await connections.boundingBox())!.y).toBe(before);
+    // On a phone an empty End date holds no line of its own: Notes is a field gap below it.
+    const end = await dialog.getByRole('textbox', { name: 'End date', exact: true }).evaluate(input => input.closest('.kit-text-input')!.getBoundingClientRect().bottom);
+    const notes = (await dialog.locator('label.notes').boundingBox())!;
+    expect(notes.y - end).toBe(width === 390 ? 16 : 36);
+
+    // The open search shows the closed picker's words, and a failure keeps Retry on its sentence with the panel covering the fields it reaches.
+    await dialog.getByRole('button', { name: 'Connection type: Type', exact: true }).click();
+    const typeSearch = dialog.getByRole('combobox', { name: 'Connection type', exact: true });
+    await expect(typeSearch).toHaveAttribute('placeholder', 'Type');
+    const notice = dialog.getByRole('alert').filter({ hasText: "Couldn't load connection types." });
+    const message = (await notice.getByText("Couldn't load connection types.").boundingBox())!;
+    const retry = (await notice.getByRole('button', { name: 'Retry', exact: true }).boundingBox())!;
+    expect(retry.y + retry.height / 2).toBeCloseTo(message.y + message.height / 2, 0);
+    const uncovered = () => dialog.evaluate(element => {
+      const panel = element.querySelector('.kit-typeahead__panel')!.getBoundingClientRect();
+      return [...element.querySelectorAll('.dialog-content :is(input, textarea, button)')].map(field => field.getBoundingClientRect())
+        .filter(field => field.width && field.left < panel.right && field.right > panel.left && field.top < panel.bottom && field.bottom > panel.bottom + 0.5).length;
+    });
+    await expect.poll(uncovered).toBe(0);
+    typesFail = false;
+    await notice.getByRole('button', { name: 'Retry', exact: true }).click();
+    await page.getByRole('heading', { name: 'Add connection', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Connection type: Type', exact: true }).click();
+    // The highlighted choice sits 4 from both of the panel's sides, as a menu item does.
+    const friend = dialog.getByRole('treeitem', { name: 'Friend', exact: true });
+    await friend.hover();
+    const inset = await friend.evaluate(row => {
+      const panel = row.closest('.kit-typeahead__panel')!, box = panel.getBoundingClientRect(), item = row.getBoundingClientRect(), border = parseFloat(getComputedStyle(panel).borderLeftWidth);
+      return [item.left - box.left - border, box.right - border - item.right];
+    });
+    expect(inset).toEqual([4, 4]);
+    await typeSearch.fill('NoSuchType');
+    // The empty line reads as the app's others: upright Meta in the muted color.
+    const empty = await dialog.locator('.kit-typeahead__empty').evaluate(element => getComputedStyle(element).fontStyle);
+    expect(empty).toBe('normal');
+    await typeSearch.press('Escape');
+
+    await dialog.getByRole('button', { name: 'Person', exact: true }).click();
+    await dialog.getByRole('combobox', { name: 'Person', exact: true }).fill('Sela');
+    await expect(dialog.getByRole('alert').filter({ hasText: "Couldn't search people." })).toBeVisible();
+    await expect.poll(uncovered).toBe(0);
+  });
+}

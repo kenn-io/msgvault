@@ -123,7 +123,7 @@
     ...(employment.is_current && !employment.is_primary ? [{ label: 'Make primary', disabled: acting, onselect: () => void makePrimary(employment) }] : []),
     { label: 'Delete…', danger: true, onselect: () => openDelete(employment) }
   ]}>
-    {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
+    {employmentLabel(employment)} at <button type="button" data-link onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
   </DetailRow>
   {#if primary.details && primaryTarget?.id === employment.id}
     {#if primary.conflict}
@@ -148,7 +148,7 @@
 {/if}
 {#if deletingEmployment}
   <Dialog title={`Delete ${employmentLabel(deletingEmployment)} at ${controller.organizationName(deletingEmployment.organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
-    <p>This permanently removes the job. {#if deletingEmployment.is_current}<button class="org-link" type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
+    <p>This permanently removes the job. {#if deletingEmployment.is_current}<button data-link type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
     {#snippet notice()}
       {#if removal.conflict && deletingEmployment}
         <ConflictNotice noun="job" saved={removal.conflict.data} {...conflict(employmentFacts(removal.conflict.data, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)))} message={removal.details} actionLabel="Reload"
@@ -163,6 +163,4 @@
   .records { display: grid; }
   p { margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); }
   [role="status"] { padding-block: var(--row-pad-y); color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-  .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
-  .org-link:hover { text-decoration: underline; }
 </style>

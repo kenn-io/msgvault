@@ -48,8 +48,16 @@ for (const width of [1440, 390]) {
     await editor.getByRole('button', { name: 'Delete organization…' }).click();
     const deletion = page.getByRole('dialog', { name: 'Delete Example Org?' });
     await expect(deletion.getByText("Delete its job first. Ending it isn't enough.")).toBeVisible();
-    // The job blocking the delete is this person's own, so its row leads straight to it.
+    await expect(deletion.getByText('1 job', { exact: true })).toHaveCount(0);
+    // The job blocking the delete is this person's own, so its row leads straight to it; the name is a link.
     await expect(deletion.getByRole('button', { name: 'Delete job…', exact: true })).toBeVisible();
+    const holder = deletion.locator('.holders').getByRole('button', { name: 'Archive Person', exact: true });
+    expect(await holder.evaluate(element => getComputedStyle(element).color)).toBe(await page.evaluate(() => {
+      const probe = document.body.appendChild(document.createElement('a'));
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }));
     await expect(page.getByRole('dialog')).toHaveCount(1);
     await deletion.getByRole('button', { name:'Back to Example Org', exact:true }).click();
     await expect(editor.getByRole('textbox',{name:'Organization name'})).toHaveValue('Example Org');
@@ -60,12 +68,39 @@ for (const width of [1440, 390]) {
     const search = add.getByRole('combobox',{name:'Organization',exact:true});
     await search.fill('Example School');
     await add.getByRole('option',{name:'Create organization “Example School”',exact:true}).click();
+    if (width === 1440) {
+      // The new organization's Kind | Domain split where Job title | Role below them does.
+      const [kind, domain] = await add.locator('.creation .form-pair > *').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().toJSON() as { x: number; right: number }));
+      const [title, role] = await add.locator('.editor > .form-pair').first().locator('> *').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().toJSON() as { x: number; right: number }));
+      expect([kind.right, domain.x, domain.right]).toEqual([title.right, role.x, role.right]);
+    }
     await add.locator('summary').filter({hasText:'More details'}).click();
     await expect(add.getByRole('textbox',{name:'Department',exact:true})).toBeVisible();
     const geometry = await add.evaluate(element => ({ width:element.clientWidth, scroll:element.scrollWidth }));
     expect(geometry.scroll).toBeLessThanOrEqual(geometry.width);
   });
 }
+
+test('opening Add job leaves the page behind it in place', async ({ page }) => {
+  const connections = page.getByRole('heading', { name: 'Connections', exact: true });
+  const before = (await connections.boundingBox())!.y;
+  await page.getByRole('button', { name: 'Add job…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Add job', exact: true })).toBeVisible();
+  expect((await connections.boundingBox())!.y).toBe(before);
+});
+
+test('a long delete title wraps on a phone instead of cutting off', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/v1/people/42/employments', route => route.fulfill({ json: { employments: [{ ...employment, title: 'Senior landscape garden designer' }] } }));
+  await page.reload();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await page.getByRole('region', { name: 'Work', exact: true }).getByRole('button', { name: /^Actions for / }).click();
+  await page.getByRole('menuitem', { name: 'Delete…', exact: true }).click();
+  const title = page.getByRole('dialog', { name: 'Delete Senior landscape garden designer at Example Org?' }).getByRole('heading');
+  const geometry = await title.evaluate(element => ({ clipped: element.scrollWidth > element.clientWidth, lines: Math.round(element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight)) }));
+  expect(geometry.clipped).toBe(false);
+  expect(geometry.lines).toBeGreaterThan(1);
+});
 
  test('Delete job offers End it instead as a single dialog flow', async ({page}) => {
    await page.getByRole('region',{name:'Work',exact:true}).getByRole('button',{name:/^Actions for / }).click();
@@ -165,7 +200,7 @@ test('Settings opens the person whose job blocks deleting an organization', asyn
   await page.getByRole('button', { name: 'Edit Example Org', exact: true }).click();
   await page.getByRole('button', { name: 'Delete organization…', exact: true }).click();
   const deletion = page.getByRole('dialog', { name: 'Delete Example Org?', exact: true });
-  await deletion.getByRole('button', { name: 'Open Archive Person', exact: true }).click();
+  await deletion.getByRole('button', { name: 'Archive Person', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Archive Person', exact: true })).toBeVisible();
   await expect(deletion).toHaveCount(0);
 });

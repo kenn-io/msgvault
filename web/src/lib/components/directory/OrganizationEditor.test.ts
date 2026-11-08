@@ -242,14 +242,13 @@ describe('OrganizationEditor', () => {
     const onOpenPerson = vi.fn(), onClose = vi.fn();
     render(OrganizationEditor, { controller, organization: organization(), onOpenPerson, onClose });
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-    // The count comes first, followed by the action and the people holding the jobs.
-    const first = await screen.findByText(count === 1 ? "Delete its job first. Ending it isn't enough." : "Delete its jobs first. Ending them isn't enough.");
-    const countLine = screen.getByText(count === 1 ? '1 job' : 'At least 200 jobs');
-    expect(countLine.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // One sentence carries the count and the action, followed by the people holding the jobs.
+    const first = await screen.findByText(count === 1 ? "Delete its job first. Ending it isn't enough." : "Delete its 200 or more jobs first. Ending them isn't enough.");
+    expect(screen.queryByText(/^(1 job|At least 200 jobs)$/)).toBeNull();
     expect(screen.getByRole('button', { name: /^Back to / })).toBeDefined();
     expect(first.compareDocumentPosition(screen.getByText('Example Person 1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     if (count === 200) expect(screen.getByText('and at least 196 more')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Open Example Person 1' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Example Person 1' }));
     expect(onClose).toHaveBeenCalled();
     expect(onOpenPerson).toHaveBeenCalledWith(1);
     const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
@@ -310,7 +309,7 @@ describe('OrganizationEditor', () => {
   });
 });
 
-it('keeps unnamed holders openable and leads blocked deletion with the job count', async () => {
+it('keeps unnamed holders openable as links in a blocked deletion', async () => {
   const onOpenPerson = vi.fn();
   const { controller } = controllerWith(async input => {
     const path = pathOf(requestOf(input));
@@ -321,8 +320,9 @@ it('keeps unnamed holders openable and leads blocked deletion with the job count
   });
   render(OrganizationEditor, { controller, organization: organization(), onOpenPerson });
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-  const open = await screen.findByRole('button', { name: 'Open Unnamed person' });
-  expect(screen.getByText('1 job')).toBeDefined();
+  const open = await screen.findByRole('button', { name: 'Unnamed person' });
+  expect(open.hasAttribute('data-link')).toBe(true);
+  expect(screen.getByText("Delete its job first. Ending it isn't enough.")).toBeDefined();
   await fireEvent.click(open);
   expect(onOpenPerson).toHaveBeenCalledWith(8);
 });
