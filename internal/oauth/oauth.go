@@ -380,27 +380,19 @@ func headlessArgumentSafe(arg string) bool {
 // PrintHeadlessCommand preserves native arguments in the supported shells.
 func PrintHeadlessCommand(out io.Writer, args ...string) {
 	if slices.ContainsFunc(args, func(arg string) bool { return !headlessArgumentSafe(arg) }) {
+		posix, powershell := slices.Clone(args), slices.Clone(args)
+		for i, arg := range args {
+			if !headlessArgumentSafe(arg) {
+				posix[i] = ShellQuote(arg)
+				powershell[i] = "'" + strings.ReplaceAll(arg, "'", "''") + "'"
+			}
+		}
 		_, _ = fmt.Fprintln(out, "    On Windows, use the PowerShell 7.3+ command.")
-		_, _ = fmt.Fprintf(out, "    POSIX shell:\n    %s\n", FormatShellCommand("linux", args...))
-		_, _ = fmt.Fprintf(out, "    PowerShell 7.3+:\n    %s\n", FormatShellCommand("windows", args...))
+		_, _ = fmt.Fprintf(out, "    POSIX shell:\n    %s\n", strings.Join(posix, " "))
+		_, _ = fmt.Fprintf(out, "    PowerShell 7.3+:\n    %s\n", strings.Join(powershell, " "))
 		return
 	}
 	_, _ = fmt.Fprintf(out, "    %s\n", strings.Join(args, " "))
-}
-
-// FormatShellCommand preserves arguments for POSIX shells or PowerShell on Windows.
-func FormatShellCommand(goos string, args ...string) string {
-	args = slices.Clone(args)
-	for i, arg := range args {
-		if !headlessArgumentSafe(arg) {
-			if goos == "windows" {
-				args[i] = "'" + strings.ReplaceAll(arg, "'", "''") + "'"
-			} else {
-				args[i] = ShellQuote(arg)
-			}
-		}
-	}
-	return strings.Join(args, " ")
 }
 
 // PrintHeadlessInstructions prints setup instructions for headless servers.

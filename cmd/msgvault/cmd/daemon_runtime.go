@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/update"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/mod/semver"
 )
 
 const (
@@ -644,39 +642,21 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 		return false
 	}
 	if update.IsDevBuildVersion(currentVersion) || strings.HasSuffix(currentVersion, "-dirty") {
-		currentBase, currentCount, currentOK := daemonSourceVersion(currentVersion)
-		daemonBase, daemonCount, daemonOK := daemonSourceVersion(rt.Record.Version)
-		if !currentOK || !daemonOK {
-			return false
-		}
-		if currentBase != daemonBase {
-			return update.IsNewer(currentBase, daemonBase)
-		}
-		return currentCount > daemonCount || !update.IsDevBuildVersion(rt.Record.Version) && !strings.HasSuffix(rt.Record.Version, "-dirty")
+		// A build without a release version, such as dev or a bare commit hash, can't be ordered.
+		cli, daemon := strings.TrimSuffix(currentVersion, "-dirty"), strings.TrimSuffix(rt.Record.Version, "-dirty")
+		return update.IsNewer(cli, "v0.0.0") && !update.IsNewer(daemon, cli)
 	}
-	return update.IsNewer(currentVersion, strings.TrimSuffix(rt.Record.Version, "-dirty"))
-}
-
-func daemonSourceVersion(version string) (string, int, bool) {
-	parts := strings.Split(strings.TrimSuffix(version, "-dirty"), "-")
-	count := 0
-	if len(parts) >= 3 && strings.HasPrefix(parts[len(parts)-1], "g") {
-		var err error
-		count, err = strconv.Atoi(parts[len(parts)-2])
-		if err != nil {
-			return "", 0, false
-		}
-		parts = parts[:len(parts)-2]
-	}
-	base := "v" + strings.TrimPrefix(strings.Join(parts, "-"), "v")
-	return base, count, semver.IsValid(base)
+	return update.IsNewer(currentVersion, rt.Record.Version)
 }
 
 func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
 	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
 		options := optionsFromContext(ctx)
 		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-		restart := oauth.FormatShellCommand(runtime.GOOS, append([]string{"msgvault"}, args...)...)
+		for i := 1; i < len(args); i += 2 {
+			args[i] = oauth.ShellQuote(args[i])
+		}
+		restart := strings.Join(append([]string{"msgvault"}, args...), " ")
 		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s daemon restart to use this version.\n", rt.Record.Version, Version, restart)
 	}
 }
