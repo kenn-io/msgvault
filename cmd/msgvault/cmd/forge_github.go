@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"net/url"
 
 	"go.kenn.io/msgvault/internal/clirun"
@@ -42,7 +43,7 @@ Examples:
 		open: func(_ *url.URL, token string) (forge.Forge, error) {
 			api, err := url.Parse(github.APIURL)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("parse the GitHub API URL: %w", err)
 			}
 			return github.New(api, token, forgeUserAgent()), nil
 		},
