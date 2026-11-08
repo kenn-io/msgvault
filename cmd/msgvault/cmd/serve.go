@@ -1835,8 +1835,12 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
+func isPersistentDaemonChild() bool {
+	return os.Getenv(serveBackgroundChildEnv) == "1" && os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue
+}
+
 func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
-	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || isPersistentDaemonChild() {
 		return 0
 	}
 	logger = repairLogger(logger)

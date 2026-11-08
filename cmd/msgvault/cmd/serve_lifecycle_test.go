@@ -1793,7 +1793,7 @@ func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 
 func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 	for _, contended := range []bool{false, true} {
-		for _, timeout := range []string{"2s", "0s"} {
+		for _, timeout := range []string{"2s", "0s", ""} {
 			t.Run(fmt.Sprintf("contended=%t/timeout=%s", contended, timeout), func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				c := lifecycleTestConfig(t.TempDir())
@@ -1802,6 +1802,10 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 					runtimeAPIVersion: strconv.Itoa(daemonAPIVersion), runtimeAPISchemaVersion: api.APISchemaVersion, runtimeCreateTime: matchingProcessCreateTime(t),
 					runtimeBackground: "true", runtimePersistent: "false", runtimeIdleTimeout: timeout,
 				}}
+				if timeout == "" {
+					delete(rec.Metadata, runtimePersistent)
+					delete(rec.Metadata, runtimeIdleTimeout)
+				}
 				path, err := daemonRuntimeStore(c.Data.DataDir).Write(rec)
 				require.NoError(err)
 				before, err := os.ReadFile(path)
@@ -1818,6 +1822,10 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 				assert.Equal(before, after, "reuse preserves the runtime and its lifetime")
 				assert.Contains(stdout.String(), "msgvault already running at http://"+rec.Address+" (pid "+strconv.Itoa(rec.PID)+")\n")
 				assert.Contains(stdout.String(), "Run `msgvault daemon restart` to keep it running until stopped.")
+				if timeout == "" {
+					assert.NotContains(stdout.String(), "  Exits after")
+					assert.NotContains(stdout.String(), "  Stays running")
+				}
 				assert.Empty(stderr.String())
 			})
 		}
