@@ -57,6 +57,33 @@ func schedulerFixture(t *testing.T) (*discoveryRun, *discoveryFixture) {
 	run := &discoveryRun{state: &state, client: source, source: source, limits: defaultDiscoveryLimits(), now: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)}
 	return run, source
 }
+
+func TestInterruptedDiscoveryRotatesContinuations(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	run, source := schedulerFixture(t)
+	first := queryWindow{To: run.now.Truncate(time.Minute)}
+	second := queryWindow{To: first.To.Add(time.Minute)}
+	run.state.Windows = []queryWindow{first, second}
+	source.windows = func(context.Context, int, *MeetingFilter) (*QueryResult, error) {
+		return nil, ErrRequestBudget
+	}
+	_, err := run.stepQuery(t.Context())
+	require.ErrorIs(err, ErrRequestBudget)
+	assert.Equal([]queryWindow{second, first}, run.state.Windows)
+
+	run.state.Frontier = []scopeTask{{Kind: "blocks", ID: "slow", Cursor: "next"}, {Kind: "blocks", ID: "other"}}
+	source.childrenErrs = map[string]error{"slow/next": ErrRequestBudget}
+	source.children["other"] = map[string]*BlockPage{"": {}}
+	_, err = run.stepTraversal(t.Context())
+	require.ErrorIs(err, ErrRequestBudget)
+	assert.Equal("other", run.state.Frontier[0].ID)
+	assert.Equal("next", run.state.Frontier[1].Cursor)
+	_, err = run.stepTraversal(t.Context())
+	require.NoError(err)
+	assert.Equal("slow", run.state.Frontier[0].ID)
+}
+
 func TestQueueBackpressureReplaysEveryCandidate(t *testing.T) {
 	run, source := schedulerFixture(t)
 	run.limits.Frontier = 2

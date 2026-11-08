@@ -44,6 +44,9 @@ func (r *discoveryRun) stepQuery(ctx context.Context) (bool, error) {
 	window := s.Windows[0]
 	r.requests++
 	result, err := r.client.QueryMeetingNotesFiltered(ctx, maxQueryResults, window.filter())
+	if err != nil && (ctx.Err() != nil || errors.Is(err, ErrRequestBudget)) && len(s.Windows) > 1 {
+		s.Windows = append(s.Windows[1:], window)
+	}
 	if errors.Is(err, ErrUnauthorized) || ctx.Err() != nil || errors.Is(err, ErrRequestBudget) {
 		return false, err
 	}
@@ -188,6 +191,9 @@ func (r *discoveryRun) stepTraversal(ctx context.Context) (bool, error) {
 		r.admit(task.ID)
 	default:
 		err = ErrMalformedResponse
+	}
+	if err != nil && (ctx.Err() != nil || errors.Is(err, ErrRequestBudget)) && len(s.Frontier) > 1 {
+		s.Frontier = append(s.Frontier[1:], task)
 	}
 	if errors.Is(err, ErrUnauthorized) || ctx.Err() != nil || errors.Is(err, ErrRequestBudget) {
 		return false, err
