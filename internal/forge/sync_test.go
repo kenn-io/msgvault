@@ -495,6 +495,8 @@ func TestParseInstance(t *testing.T) {
 		{raw: "https://GitHub.com/", instance: "github.com", base: "https://github.com"},
 		{raw: "https://git.example.com:443/gitea/", instance: "git.example.com/gitea", base: "https://git.example.com/gitea"},
 		{raw: "http://nas.local:3000", instance: "nas.local:3000", base: "http://nas.local:3000"},
+		{raw: "http://[::1]:3000/", instance: "[::1]:3000", base: "http://[::1]:3000"},
+		{raw: "https://[FD00::1]", instance: "[fd00::1]", base: "https://[fd00::1]"},
 		{raw: "ftp://example.com", bad: true},
 		{raw: "https://user:pass@example.com", bad: true},
 		{raw: "https://example.com/?x=1", bad: true},

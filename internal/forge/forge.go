@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -182,8 +183,12 @@ func ParseInstance(raw string) (Instance, *url.URL, error) {
 	if (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80") {
 		port = ""
 	}
-	if port != "" {
-		host += ":" + port
+	switch {
+	case port != "":
+		host = net.JoinHostPort(host, port)
+	case strings.Contains(host, ":"):
+		// An IPv6 address keeps its brackets, as in a URL.
+		host = "[" + host + "]"
 	}
 	path := strings.TrimRight(parsed.EscapedPath(), "/")
 	base := &url.URL{Scheme: parsed.Scheme, Host: host}
