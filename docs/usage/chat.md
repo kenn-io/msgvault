@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-08"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -834,28 +834,54 @@ and may require a daemon restart; inspect `pending_restart` in the response.
 
 ## Open loops
 
-On unreleased `main`, owner-connected assistants can list unanswered questions
-and make approved decisions through the daemon. Each tool requires discovery of
-its exact daemon route and required fields; API schema 3.44.0 alone does not
-enable it. Delegated sessions expose none of these tools.
+On unreleased `main`, an assistant connected as the owner can see who is
+waiting on a reply and record decisions. See [Open loops](open-loops.md) for
+what counts as a loop. Delegated sessions get none of these tools. A tool
+appears only when the daemon offers its route, which needs HTTP API schema
+3.44.0 or newer.
 
 | Tool | Effect | Parameters |
 |---|---|---|
-| `list_open_loops` | List `reply_owed` and `awaiting_reply` questions. | Optional positive JSON-safe `person_id`; `limit` from 1 to 200, default 50 |
-| `close_open_loop` | Mark done exactly the listed questions. | Required `message_id` and `question_message_ids` |
-| `snooze_open_loop` | Snooze exactly the listed questions. | Required `message_id`, `question_message_ids`, and `until` |
-| `reopen_open_loop` | Clear the saved decision on one exact question. | Required `message_id` from an earlier list or decision receipt |
+| `list_open_loops` | List loops waiting on the owner (`reply_owed`) and on the other person (`awaiting_reply`). | Optional `person_id`; `limit` from 1 to 200, default 50 |
+| `close_open_loop` | Mark the listed questions done. | `message_id` and `question_message_ids` |
+| `snooze_open_loop` | Hide the listed questions until a deadline. | `message_id`, `question_message_ids`, and `until` |
+| `reopen_open_loop` | Clear the decision on one question. | `message_id` |
 
-Use a list item's `anchor_message_id` as `message_id` and pass its
-`question_message_ids`. Done and snooze recheck the conversation before saving,
-and a question that appeared after the list stays open. The tools return the daemon's list or decision
-response. See [Open loops](open-loops.md#use-an-assistant) for evidence
-warnings, deadlines, and retry behavior.
+To act on a loop:
 
-Every decision requires `--allow-loop-writes` and per-call approval identifying
-the action and anchor ID. Snooze approval includes its resolved deadline and
-offset. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or
-newer; older HTTP clients retain the list.
+1. Call `list_open_loops`. Each item has `anchor_message_id`, the message that
+   started the wait, and `question_message_ids`, every question in the loop.
+2. Pass the item's `anchor_message_id` as `message_id`, and its
+   `question_message_ids`, to `close_open_loop` or `snooze_open_loop`. Only
+   those questions are marked. A question that arrived after the list stays
+   open.
+3. For `snooze_open_loop`, give `until` as an RFC3339 time or a `YYYY-MM-DD`
+   date, which means midnight in the MCP server's time zone. Durations such as
+   `24h` are rejected, so the deadline can't move between approval and saving.
+4. To undo a decision, call `reopen_open_loop` with the question's
+   `message_id` from an earlier list or receipt.
+
+Every decision needs `--allow-loop-writes` and approval for that one call. The
+approval shows the action, the message ID, the question IDs, and for snooze
+the exact deadline. For the daemon's built-in endpoint, use
+`msgvault serve --mcp-allow-writes --mcp-allow-loop-writes`; decisions then
+appear on `/mcp/writes`. Over HTTP, decisions also need
+`--http-allow-writes` and protocol `2026-07-28` or newer. Older HTTP clients
+get the list only.
+
+Read the list's warnings before acting:
+
+- `coverage_incomplete`: the daemon stopped before checking all history. Call
+  again to continue.
+- `truncated`: more loops are open than `limit`. Narrow with `person_id`;
+  there is no cursor.
+- `skipped_unparseable`: stored emails the daemon couldn't read. A reply in one
+  of them may have answered a listed loop.
+
+A decision refused with `loop_scan_incomplete` saved nothing. Wait at least
+one second, then make a new call, which needs approval again. MCP never
+retries a write by itself. If a write reports
+`operation_may_have_completed: true`, list the loops again before retrying.
 
 ## Write controls
 
