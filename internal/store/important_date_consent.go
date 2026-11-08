@@ -25,6 +25,28 @@ func (s *Store) SetImportantDateConsentContext(ctx context.Context, subject, pro
 		}
 		value := 0
 		if granted {
+			var personID int64
+			switch {
+			case strings.HasPrefix(subject, "person/"):
+				err := tx.QueryRowContext(ctx, `SELECT id FROM persons WHERE vcard_uid = ?`, strings.TrimPrefix(subject, "person/")).Scan(&personID)
+				if err != nil {
+					return errors.New("important-date subject is unavailable")
+				}
+			case strings.HasPrefix(subject, "owned/"):
+				err := tx.QueryRowContext(ctx, `SELECT p.id FROM important_date_subjects d JOIN persons p ON p.vcard_uid = d.owner_uid WHERE d.uid = ? AND d.withdrawn = 0`, strings.TrimPrefix(subject, "owned/")).Scan(&personID)
+				if err != nil {
+					return errors.New("important-date subject is unavailable")
+				}
+			default:
+				return errors.New("invalid important-date subject")
+			}
+			stable, err := s.ImportantDateIdentityStableContext(withWritableSnapshot(ctx, s.db.DB, tx), personID)
+			if err != nil {
+				return err
+			}
+			if !stable {
+				return errors.New("important-date subject requires identity reconciliation")
+			}
 			value = 1
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO important_date_consents (subject_uid, project, recipient, granted) VALUES (?, ?, ?, ?)
