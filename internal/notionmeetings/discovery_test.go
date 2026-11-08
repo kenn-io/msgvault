@@ -77,10 +77,12 @@ func TestInterruptedDiscoveryRotatesContinuations(t *testing.T) {
 	source.children["other"] = map[string]*BlockPage{"": {}}
 	_, err = run.stepTraversal(t.Context())
 	require.ErrorIs(err, ErrRequestBudget)
+	require.Len(run.state.Frontier, 2)
 	assert.Equal("other", run.state.Frontier[0].ID)
 	assert.Equal("next", run.state.Frontier[1].Cursor)
 	_, err = run.stepTraversal(t.Context())
 	require.NoError(err)
+	require.Len(run.state.Frontier, 1)
 	assert.Equal("slow", run.state.Frontier[0].ID)
 }
 
