@@ -296,6 +296,7 @@ func TestDeliveryRecoversCancelledPreflight(t *testing.T) {
 
 type cancellingWriteKata struct {
 	deliveryKataFake
+
 	cancel       context.CancelFunc
 	cancelCreate bool
 }
@@ -356,6 +357,7 @@ func TestDeliveryFencesCancelledExternalWrites(t *testing.T) {
 
 type cancelAfterDispatchStore struct {
 	*store.Store
+
 	cancel     context.CancelFunc
 	cancelAt   int
 	dispatches int
@@ -416,6 +418,7 @@ func TestDeliveryRecordsSuccessfulWriteAfterCancellation(t *testing.T) {
 
 type cancelAfterClaimStore struct {
 	*store.Store
+
 	cancel context.CancelFunc
 }
 
@@ -456,6 +459,7 @@ func TestDeliveryRecoversCancellationImmediatelyAfterClaim(t *testing.T) {
 
 type confirmThenCancelKata struct {
 	deliveryKataFake
+
 	cancel       context.CancelFunc
 	cancelCreate bool
 }
