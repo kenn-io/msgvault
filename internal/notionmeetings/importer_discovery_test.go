@@ -425,3 +425,36 @@ func TestDeferredRootRetriesDoNotPreventFreshQueries(t *testing.T) {
 	}
 	assert.Greater(queries, 1, "a fresh query must run even when deferred roots keep failing")
 }
+
+func TestKnownRefreshRespectsBacklogRetryCadence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	now := imp.now()
+	state := newSyncState()
+	state.Known["known-backlog"] = knownMeeting{}
+	deadline := now.Add(24 * time.Hour).Format(time.RFC3339)
+	for i := range 200 {
+		state.Pending = append(state.Pending, pendingTranscript{BlockID: fmt.Sprintf("other-%03d", i), NextAttemptAt: now.Add(time.Hour).Format(time.RFC3339), RetryUntil: deadline})
+	}
+	state.PendingBacklog = []pendingTranscript{{BlockID: "known-backlog", NextAttemptAt: now.Add(2 * time.Hour).Format(time.RFC3339), RetryUntil: deadline}}
+	state.initialize()
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	counter := &headerCountingSource{discoveryFixture: source, reads: map[string]int{}}
+	imp.client = counter
+	noSearch := false
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch})
+	require.NoError(err)
+	assert.Zero(counter.reads["known-backlog"])
+	recovered, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	require.Len(recovered.PendingBacklog, 1)
+	assert.Equal("known-backlog", recovered.PendingBacklog[0].BlockID)
+}

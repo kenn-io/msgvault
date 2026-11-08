@@ -361,9 +361,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				continue
 			}
 			waiting := false
-			for _, pending := range state.Pending {
-				if pending.BlockID == id && !pendingDue(pending, started) && !opts.Full && !run.visible[id] {
-					waiting = true
+			for _, queue := range [][]pendingTranscript{state.Pending, state.PendingBacklog} {
+				for _, pending := range queue {
+					if pending.BlockID == id && !pendingDue(pending, started) && !opts.Full && !run.visible[id] {
+						waiting = true
+						break
+					}
+				}
+				if waiting {
 					break
 				}
 			}
