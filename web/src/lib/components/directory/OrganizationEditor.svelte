@@ -311,7 +311,16 @@
   }
 
   const changed = (delta: ValueDelta) => delta.added.length > 0 || delta.removed.size > 0;
-  const draftValues = (baseline: string[], delta: ValueDelta) => [...new Set([...baseline.filter(value => !delta.removed.has(value)), ...delta.added])];
+  function draftValues(baseline: string[], delta: ValueDelta): string[] {
+    const seen = new Set<string>();
+    return [...baseline.filter(value => !delta.removed.has(value)), ...delta.added].filter(value => {
+      // Match Go's simple lowercase and whitespace rules in NormalizeOrganizationName.
+      const key = Array.from(value, char => char === 'İ' ? 'i' : char.toLowerCase()).join('').split(/\p{White_Space}+/u).filter(Boolean).join(' ');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
 
   function nameBody(item: Name): NameBody {
     return { name: item.name, name_kind: item.name_kind as NameBody['name_kind'], ...envelopeBody(item.envelope) };

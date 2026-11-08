@@ -5,6 +5,33 @@ import { requestOf, pathOf, organization, organizationProfile, envelope, richOrg
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
+  it('saves details with aliases and categories that differ only by case or whitespace', async () => {
+    const profile = organizationProfile();
+    const onDone = vi.fn();
+    let body: { names: { name: string; name_kind: string }[]; categories: { category: string }[] } | undefined;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PATCH') return Response.json({ ...profile.organization, name: 'Draft' }, { headers: { ETag: '"organization-21-r2"' } });
+      if (request.method === 'PUT') {
+        body = await request.json();
+        if (body?.names.some(item => item.name === 'acme  labs') || body?.categories.some(item => item.category === 'research')) {
+          return Response.json({ message: 'Duplicate profile value' }, { status: 400 });
+        }
+        return Response.json(profile, { headers: { ETag: '"organization-21-r3"' } });
+      }
+      return Response.json(profile, { headers: { ETag: '"organization-21-r1"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Acme Labs, acme  labs' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add category…' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research, research' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(body?.names.filter(item => item.name_kind === 'alias').map(item => item.name)).toEqual(['Acme Labs']);
+    expect(body?.categories.map(item => item.category)).toEqual(['Research']);
+  });
+
   it('retains the editor when a profile write conflicts after saving details', async () => {
     let revision = 1;
     const onDone = vi.fn();
