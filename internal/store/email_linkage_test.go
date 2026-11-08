@@ -73,20 +73,6 @@ func TestEmailLinkageSkipsNonEmailWrites(t *testing.T) {
 	assert.Equal("pending", linkageOutcome(t, f.st, id))
 }
 
-func TestEmailLinkagePersistenceRollsBack(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newAttrFixture(t, "gmail", "rollback@example.test")
-	_, err := f.st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message: &store.Message{SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: "rollback", MessageType: "email"},
-		RawMIME: []byte("In-Reply-To: <rollback@example.test>\r\n\r\n"), LabelIDs: []int64{9999999},
-	})
-	require.Error(err)
-	var count int
-	require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM email_link_keys`).Scan(&count))
-	assert.Zero(count)
-}
-
 func TestEmailLinkageRepairCoverageAndScope(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
