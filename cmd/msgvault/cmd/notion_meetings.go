@@ -107,7 +107,12 @@ func (e *notionProbeError) Error() string {
 func (e *notionProbeError) Unwrap() error { return e.cause }
 
 func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	return runNotionMeetingsProbeWithTimeout(ctx, out, client, users, 2*time.Minute)
+}
+
+func runNotionMeetingsProbeWithTimeout(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource, timeout time.Duration) error {
+	parentCtx := ctx
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	_, _ = fmt.Fprintln(out, "Notion AI Meeting Notes access probe:")
 	result, err := client.QueryMeetingNotes(ctx, 1)
@@ -147,8 +152,8 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	}
 	if users == nil {
 		page, err := client.ListUsers(ctx, "")
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if parentCtx.Err() != nil {
+			return parentCtx.Err()
 		}
 		if err != nil || page == nil {
 			_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only unless a users token is configured)")
@@ -173,8 +178,8 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	lookupCtx, cancelLookup := context.WithTimeout(ctx, notionmeetings.UserLookupTimeout)
 	defer cancelLookup()
 	user, err := users.RetrieveUser(lookupCtx, attendeeID)
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if parentCtx.Err() != nil {
+		return parentCtx.Err()
 	}
 	if err != nil || user == nil {
 		_, _ = fmt.Fprintln(out, "  Users token: unavailable (attendees remain display-only)")

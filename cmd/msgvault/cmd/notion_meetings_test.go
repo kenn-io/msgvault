@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,11 +20,12 @@ import (
 )
 
 type fakeNotionProbe struct {
-	result   *notionmeetings.QueryResult
-	block    *notionmeetings.Block
-	err      error
-	blockErr error
-	usersErr error
+	result    *notionmeetings.QueryResult
+	block     *notionmeetings.Block
+	err       error
+	blockErr  error
+	usersErr  error
+	usersWait bool
 }
 
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
@@ -42,7 +44,11 @@ func (f fakeNotionProbe) RetrieveBlockChildren(context.Context, string, string) 
 	return &notionmeetings.BlockPage{}, nil
 }
 
-func (f fakeNotionProbe) ListUsers(context.Context, string) (*notionmeetings.UserPage, error) {
+func (f fakeNotionProbe) ListUsers(ctx context.Context, _ string) (*notionmeetings.UserPage, error) {
+	if f.usersWait {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return &notionmeetings.UserPage{}, f.usersErr
 }
 
@@ -404,4 +410,12 @@ func TestNotionMeetingsSummaryReportsActualCoverage(t *testing.T) {
 			assert.NotContains(out.String(), "Notion reports more than")
 		})
 	}
+}
+
+func TestNotionProbeOptionalLookupLocalTimeout(t *testing.T) {
+	var out bytes.Buffer
+	probe := fakeNotionProbe{result: &notionmeetings.QueryResult{}, usersWait: true}
+	err := runNotionMeetingsProbeWithTimeout(t.Context(), &out, probe, nil, time.Millisecond)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "User Information: unavailable")
 }
