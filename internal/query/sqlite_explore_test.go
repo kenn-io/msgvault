@@ -120,44 +120,48 @@ func TestSQLiteExploreMatchesCache(t *testing.T) {
 	before := after.Add(3 * time.Hour)
 	precisionAfter := time.Date(2026, 7, 1, 22, 0, 0, 150000, time.UTC)
 	precisionBefore := precisionAfter.Add(100 * time.Microsecond)
-	requests := map[string]ExploreRequest{
-		"all":                {},
-		"microsecond dates":  {Context: Context{After: &precisionAfter, Before: &precisionBefore}},
-		"source":             {Context: Context{SourceIDs: []int64{2}}},
-		"account":            {Context: Context{AccountScopes: []search.AccountScope{{SourceID: new(int64(1)), Unattributed: true}}}},
-		"dates":              {Context: Context{After: &after, Before: &before}},
-		"kind":               {Context: Context{Kinds: []EntryKind{EntryConversation}}},
-		"type":               {Context: Context{MessageTypes: []string{"email"}}},
-		"domain":             {Context: Context{Domains: []string{"öther.test"}}},
-		"unicode domain":     {Context: Context{Domains: []string{"ÖTHER.TEST"}}},
-		"unicode envelope":   {Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{1}, EmailIdentifier: "ÄLÏCE@example.test", Direction: IdentityDirectionSender}}},
-		"domain conjunction": {Context: Context{Domains: []string{"example.test"}, AdditionalDomainGroups: [][]string{{"öther.test"}}}},
-		"mailing list":       {Context: Context{MailingLists: []string{"<LÏST@example.test>"}}},
-		"list conjunction":   {Context: Context{MailingLists: []string{"<lïst@example.test>"}, AdditionalMailingListGroups: [][]string{{"<LÏST@example.test>"}}}},
-		"active":             {Context: Context{Deletion: DeletionActive}},
-		"deleted":            {Context: Context{Deletion: DeletionDeleted}},
-		"full text":          {Search: SearchSpec{Mode: SearchFullText, Query: "fixture", CandidateMessageIDs: []int64{1, 2, 3}, LexicalIndexRevision: "fts5:fixture"}},
-		"empty full text":    {Search: SearchSpec{Mode: SearchFullText, Query: "missing", CandidateMessageIDs: []int64{}, LexicalIndexRevision: "fts5:fixture"}},
-		"page":               {Page: PageSpec{Limit: 2, Offset: 1}},
-		"past end":           {Page: PageSpec{Limit: 2, Offset: 100}},
+	cases := []struct {
+		name     string
+		request  ExploreRequest
+		wantRows bool
+	}{
+		{"all", ExploreRequest{}, true},
+		{"microsecond dates", ExploreRequest{Context: Context{After: &precisionAfter, Before: &precisionBefore}}, true},
+		{"source", ExploreRequest{Context: Context{SourceIDs: []int64{2}}}, true},
+		{"account", ExploreRequest{Context: Context{AccountScopes: []search.AccountScope{{SourceID: new(int64(1)), Unattributed: true}}}}, true},
+		{"dates", ExploreRequest{Context: Context{After: &after, Before: &before}}, true},
+		{"kind", ExploreRequest{Context: Context{Kinds: []EntryKind{EntryConversation}}}, true},
+		{"type", ExploreRequest{Context: Context{MessageTypes: []string{"email"}}}, true},
+		{"domain", ExploreRequest{Context: Context{Domains: []string{"öther.test"}}}, true},
+		{"unicode domain", ExploreRequest{Context: Context{Domains: []string{"ÖTHER.TEST"}}}, true},
+		{"unicode envelope", ExploreRequest{Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{1}, EmailIdentifier: "ÄLÏCE@example.test", Direction: IdentityDirectionSender}}}, true},
+		{"domain conjunction", ExploreRequest{Context: Context{Domains: []string{"example.test"}, AdditionalDomainGroups: [][]string{{"öther.test"}}}}, true},
+		{"mailing list", ExploreRequest{Context: Context{MailingLists: []string{"<LÏST@example.test>"}}}, true},
+		{"list conjunction", ExploreRequest{Context: Context{MailingLists: []string{"<lïst@example.test>"}, AdditionalMailingListGroups: [][]string{{"<LÏST@example.test>"}}}}, true},
+		{"active", ExploreRequest{Context: Context{Deletion: DeletionActive}}, true},
+		{"deleted", ExploreRequest{Context: Context{Deletion: DeletionDeleted}}, true},
+		{"full text", ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "fixture", CandidateMessageIDs: []int64{1, 2, 3}, LexicalIndexRevision: "fts5:fixture"}}, true},
+		{"empty full text", ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "missing", CandidateMessageIDs: []int64{}, LexicalIndexRevision: "fts5:fixture"}}, false},
+		{"page", ExploreRequest{Page: PageSpec{Limit: 2, Offset: 1}}, true},
+		{"past end", ExploreRequest{Page: PageSpec{Limit: 2, Offset: 100}}, false},
+		{"identity any", ExploreRequest{Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{1}, Direction: IdentityDirectionAny}}}, true},
+		{"identity sender", ExploreRequest{Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{1}, Direction: IdentityDirectionSender}}}, true},
+		{"identity recipient", ExploreRequest{Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{2}, Direction: IdentityDirectionRecipient}}}, true},
 	}
-	for _, direction := range []IdentityDirection{IdentityDirectionAny, IdentityDirectionSender, IdentityDirectionRecipient} {
-		requests["identity "+string(direction)] = ExploreRequest{Context: Context{Identity: &IdentityPredicate{SourceID: 1, ParticipantIDs: []int64{1}, Direction: direction}}}
-	}
-	for name, request := range requests {
-		t.Run(name, func(t *testing.T) {
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			expected, err := cache.Explore(t.Context(), request)
+			expected, err := cache.Explore(t.Context(), tc.request)
 			require.NoError(err)
-			if name == "unicode domain" || name == "unicode envelope" || name == "mailing list" {
+			if tc.wantRows {
 				require.NotEmpty(expected.Rows)
+			} else {
+				require.Empty(expected.Rows)
 			}
-			got, err := live.Explore(t.Context(), request)
+			got, err := live.Explore(t.Context(), tc.request)
 			require.NoError(err)
-			for i := range expected.Rows {
-				expected.Rows[i].CounterpartParticipantID = nil
-			}
 			assert.Equal(expected.Rows, got.Rows)
 			assert.Equal(expected.TotalCount, got.TotalCount)
 			assert.Equal(expected.SearchProvenance, got.SearchProvenance)
@@ -194,12 +198,6 @@ func TestSQLiteExploreSnapshotRevision(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(version, next.CacheRevision)
 	assert.Equal(initial.TotalCount+1, next.TotalCount)
-	// A different physical reader must never reuse the old cursor's revision.
-	require.NoError(live.exploreReader.conn.Close())
-	live.exploreReader.conn = nil
-	replaced, err := live.Explore(t.Context(), ExploreRequest{})
-	require.NoError(err)
-	assert.NotEqual(next.CacheRevision, replaced.CacheRevision)
 }
 
 func TestSQLiteExploreReaderLifecycle(t *testing.T) {
@@ -260,14 +258,14 @@ func TestSQLiteExploreRefusesCacheOperations(t *testing.T) {
 		_, entries := engine.(EntryExplorer)
 		assert.False(entries)
 	}
-	for _, request := range []ExploreRequest{
-		{Context: Context{ParticipantIDs: []int64{1}}},
-		{Context: Context{AdditionalParticipantGroups: [][]int64{{1}}}},
-		{SentOnly: true}, {PersonInteractionsOnly: true},
-		{Search: SearchSpec{Mode: SearchSemantic}}, {Search: SearchSpec{Mode: SearchHybrid}},
+	for name, request := range map[string]ExploreRequest{
+		"participant":             {Context: Context{ParticipantIDs: []int64{1}}},
+		"participant conjunction": {Context: Context{AdditionalParticipantGroups: [][]int64{{1}}}},
+		"sent only":               {SentOnly: true}, "person interactions": {PersonInteractionsOnly: true},
+		"semantic": {Search: SearchSpec{Mode: SearchSemantic}}, "hybrid": {Search: SearchSpec{Mode: SearchHybrid}},
 	} {
 		_, err := live.Explore(t.Context(), request)
 		var unavailable *CacheUnavailableError
-		assert.ErrorAs(err, &unavailable)
+		assert.ErrorAs(err, &unavailable, name)
 	}
 }

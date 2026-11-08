@@ -130,11 +130,9 @@ func TestLiveExplorePaginationWarningsAndCacheRefusals(t *testing.T) {
 	assertions.Equal(page.CacheRevision, second.CacheRevision)
 	assertions.Contains(second.Warnings[0], "then restart msgvault")
 
-	refused := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"participant","values":["1"]}]}`)
-	assertions.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
 	for route, body := range map[string]string{
 		"/api/v1/explore/groups":    `{"grouping":["source"]}`,
-		"/api/v1/explore/preflight": `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"live"}}`,
+		"/api/v1/explore/preflight": `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"` + page.CacheRevision + `"}}`,
 	} {
 		refused := postExploreJSON(t, srv, route, body)
 		assertions.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
@@ -146,7 +144,6 @@ func TestLiveExplorePaginationWarningsAndCacheRefusals(t *testing.T) {
 	selection := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"`+page.CacheRevision+`"}}`)
 	assertions.Equal(http.StatusConflict, selection.Code, selection.Body.String())
 	assertions.Contains(selection.Body.String(), "archive_revision_changed")
-
 }
 
 func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {

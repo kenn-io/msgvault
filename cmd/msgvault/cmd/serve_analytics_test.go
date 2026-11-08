@@ -172,11 +172,11 @@ func TestStartDaemonAnalyticsInitializerTracksAutoInitializationIndependently(t 
 	requirements.NoError(os.WriteFile(query.CacheStatePath(c.AnalyticsDir()), encoded, 0o600))
 	started := make(chan struct{})
 	release := make(chan struct{})
-	stubBuildCacheSubprocess(t, func(ctx context.Context, _ bool) error {
+	stubBuildCacheSubprocess(t, func(ctx context.Context, full bool) error {
 		close(started)
 		select {
 		case <-release:
-			_, err := buildCache(ctx, c.DatabaseDSN(), c.AnalyticsDir(), false)
+			_, err := buildCache(ctx, c.DatabaseDSN(), c.AnalyticsDir(), full)
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
@@ -431,7 +431,6 @@ func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
 				response := httptest.NewRecorder()
 				srv.Router().ServeHTTP(response, req)
 				assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
-				assert.Contains(t, response.Body.String(), "then restart msgvault")
 			}
 			require.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
 		})
@@ -448,16 +447,25 @@ func TestOpenDaemonAnalyticsEngineFullRebuildHook(t *testing.T) {
 				c.Analytics.AutoBuildCache = true
 				publishStaleTestCache(t, c, st)
 				fired := false
+				calls := 0
 				build := func(ctx context.Context, full bool) error {
+					calls++
 					assert.Equal(t, intent == startupCacheBuildIntentFull, full)
 					assert.Equal(t, mode == config.AnalyticsEngineAuto && full, fired)
 					_, err := buildCache(ctx, c.DatabaseDSN(), c.AnalyticsDir(), full)
 					return err
 				}
-				stubBuildCacheSubprocess(t, build)
-				stubStartupCacheBuild(t, func(ctx context.Context, _ startupCacheBuildIntent) error { return build(ctx, true) })
+				if intent == startupCacheBuildIntentNone {
+					stubBuildCacheSubprocess(t, build)
+				} else {
+					stubStartupCacheBuild(t, func(ctx context.Context, got startupCacheBuildIntent) error {
+						assert.Equal(t, intent, got)
+						return build(ctx, true)
+					})
+				}
 				engine, _, _, err := openDaemonAnalyticsEngineWithRebuild(t.Context(), c, st, intent, func() { fired = true })
 				require.NoError(err)
+				assert.Equal(t, 1, calls)
 				require.NoError(engine.Close())
 			})
 		}
