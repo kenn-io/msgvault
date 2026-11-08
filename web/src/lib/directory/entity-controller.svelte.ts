@@ -136,7 +136,7 @@ export class DirectoryEntityController {
   }
   /** The network stays lazy: PersonNetwork requests it when its tab opens. */
   async load(): Promise<void> {
-    await Promise.all([this.refreshEmployments(), this.refreshRelationships(), this.refreshRelationshipTypes()]);
+    await Promise.all([this.loadEmployments(true), this.refreshRelationships(), this.refreshRelationshipTypes()]);
   }
   async refreshOrganizations(query = ''): Promise<void> {
     const { abort, generation } = this.beginCollection('organizations');
@@ -163,7 +163,7 @@ export class DirectoryEntityController {
     }
   }
   async refreshEmployments(): Promise<void> {
-    await this.loadEmployments(true);
+    await Promise.all([this.loadEmployments(true), this.refreshNetwork()]);
   }
   private async loadEmployments(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('employments');
