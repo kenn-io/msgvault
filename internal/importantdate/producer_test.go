@@ -80,6 +80,14 @@ func TestRunCreatesOneNativePreparationIssue(t *testing.T) {
 	issue, err := kata.GetTask(ctx, cfg.Project, deliveries[0].IssueUID)
 	must.NoError(err)
 	checks.Equal(person.VCardUID, issue.Metadata["msgvault.person"])
+	native.Endpoint(server).CloseIssue(t, issue.UID)
+	count, more, err = RunOnce(ctx, st, kata, cfg, time.Now())
+	must.NoError(err)
+	checks.Zero(count)
+	checks.False(more)
+	issue, err = kata.GetTask(ctx, cfg.Project, issue.UID)
+	must.NoError(err)
+	checks.NotEqual("open", issue.Status)
 }
 
 func TestRunContinuesAfterBoundedBatch(t *testing.T) {
