@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,35 @@ func TestFetchErrorLeavesOutOnlyTheFeedsOwnAddress(t *testing.T) {
 	_, err = fetcher.Fetch(t.Context(), server.URL+"/moved.atom", Validators{})
 	require.ErrorIs(err, errNoHost)
 	assert.Contains(err.Error(), gone, "the address a redirect led to stays")
+}
+
+func TestFetchRefusesAFeedWhoseXMLBaseExpandsWithoutBound(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	// gofeed resolves every URL against the xml:base in scope while it
+	// parses, so a long base and many short references grow without bound.
+	longBase := "https://example.com/" + strings.Repeat("a", 16<<10) + "/"
+	atom := func(base, entry string) string {
+		return `<feed xmlns="http://www.w3.org/2005/Atom" xml:base="` + base + `"><title>Base</title>` +
+			`<id>urn:example:base</id><updated>2026-11-07T15:00:00Z</updated><entry><title>Entry</title>` +
+			`<id>urn:example:base:1</id><updated>2026-11-07T15:00:00Z</updated>` + entry + `</entry></feed>`
+	}
+	server := newFeedServer(t, map[string]string{
+		"/links.atom": atom(longBase, strings.Repeat(`<link rel="related" href="x"/>`, 5000)),
+		"/html.atom":  atom(longBase, `<content type="html">`+strings.Repeat("&lt;img src=x&gt;", 1000)+`</content>`),
+		"/short.atom": atom("https://example.com/blog/", `<link href="post"/>`),
+	})
+	fetcher := NewFetcher("msgvault-test")
+
+	for _, path := range []string{"/links.atom", "/html.atom"} {
+		_, err := fetcher.Fetch(t.Context(), server.url(path), Validators{})
+		require.ErrorIs(err, ErrFeedTooLarge, path)
+	}
+	fetched, err := fetcher.Fetch(t.Context(), server.url("/short.atom"), Validators{})
+	require.NoError(err, "an ordinary xml:base is resolved as before")
+	require.Len(fetched.Feed.Items, 1)
+	assert.Equal("https://example.com/blog/post", fetched.Feed.Items[0].Link)
 }
 
 func TestFollowRejectsAnUnsolicitedNotModified(t *testing.T) {

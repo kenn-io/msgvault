@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/mmcdole/gofeed"
 	"github.com/mmcdole/gofeed/atom"
 	gofeedjson "github.com/mmcdole/gofeed/json"
+	"golang.org/x/net/html/charset"
 )
 
 // gofeed's common item keeps an item's content and summary but drops whether
@@ -35,6 +37,88 @@ func parseFeed(body []byte) (*gofeed.Feed, error) {
 	return feed, nil
 }
 
+// newFeedDecoder reads a feed document the way gofeed's parsers do: not
+// strictly, so common mistakes still tokenize, and converting a declared
+// non-UTF-8 charset. A pass of ours over the document then reads what
+// gofeed read.
+func newFeedDecoder(body []byte) *xml.Decoder {
+	d := xml.NewDecoder(bytes.NewReader(body))
+	d.Strict = false
+	d.CharsetReader = charset.NewReaderLabel
+	return d
+}
+
+const (
+	xmlNamespace = "http://www.w3.org/XML/1998/namespace"
+	// maxBaseExpansionBytes bounds what resolving a document's URLs against
+	// its xml:base may cost while gofeed parses it.
+	maxBaseExpansionBytes = 8 * DefaultMaxFeedBytes
+)
+
+// baseResolvedAttributes are the attributes gofeed resolves against
+// xml:base: Atom's URI attributes, and HTML's in content it reads as HTML.
+var baseResolvedAttributes = map[string]bool{
+	"action": true, "background": true, "cite": true, "codebase": true,
+	"data": true, "href": true, "poster": true, "profile": true,
+	"scheme": true, "src": true, "uri": true, "usemap": true,
+}
+
+// checkBaseExpansion refuses a document whose xml:base would make gofeed
+// allocate more than maxBaseExpansionBytes. While it parses, before any
+// limit of ours applies, gofeed resolves against the xml:base in scope each
+// URI attribute, each URI element's text, and each URL attribute of HTML in
+// an element's text. A long base and many short references can turn a small
+// document into gigabytes. The estimate never falls short: a resolved URL is
+// at most as long as its base and its reference together, and each '<' in
+// an element's text starts at most one HTML tag, which resolves at most one
+// URL per attribute name.
+func checkBaseExpansion(body []byte) error {
+	d := newFeedDecoder(body)
+	bases := []int{0} // per open element, the length bound of its xml:base
+	total := int64(0)
+	// The pass ends where the decoder stops. gofeed reads with the same
+	// decoder, so it stops there too.
+	for token, err := d.Token(); err == nil; token, err = d.Token() {
+		cost := int64(0)
+		base := bases[len(bases)-1]
+		switch t := token.(type) {
+		case xml.StartElement:
+			for _, attr := range t.Attr {
+				if attr.Name.Local != "base" || attr.Name.Space != xmlNamespace || attr.Value == "" {
+					continue
+				}
+				if _, err := url.Parse(attr.Value); err == nil {
+					base += len(attr.Value)
+				}
+			}
+			bases = append(bases, base)
+			if base == 0 {
+				continue
+			}
+			cost = int64(base)
+			for _, attr := range t.Attr {
+				if baseResolvedAttributes[strings.ToLower(attr.Name.Local)] {
+					cost += int64(base + len(attr.Value))
+				}
+			}
+		case xml.EndElement:
+			if len(bases) > 1 {
+				bases = bases[:len(bases)-1]
+			}
+		case xml.CharData:
+			if base > 0 {
+				tags := int64(bytes.Count(t, []byte("<")))
+				cost = tags * int64(len(baseResolvedAttributes)) * int64(base)
+			}
+		}
+		if total += cost; total > maxBaseExpansionBytes {
+			return fmt.Errorf("%w: resolving its URLs against its xml:base takes more than %d bytes",
+				ErrFeedTooLarge, maxBaseExpansionBytes)
+		}
+	}
+	return nil
+}
+
 // atomSummaryTypes reads each Atom entry's summary type, which gofeed's
 // atom.Entry doesn't keep.
 type atomSummaryTypes struct {
@@ -46,11 +130,11 @@ type atomSummaryTypes struct {
 }
 
 // markAtomTextSummaries marks summaries whose type is text (RFC 4287
-// §3.1.1: the type defaults to text). A document encoding/xml can't read
+// §3.1.1: the type defaults to text). A document gofeed's decoder can't read
 // leaves summaries as HTML.
 func markAtomTextSummaries(body []byte, feed *gofeed.Feed) {
 	var doc atomSummaryTypes
-	if err := xml.Unmarshal(body, &doc); err != nil || len(doc.Entries) != len(feed.Items) {
+	if err := newFeedDecoder(body).Decode(&doc); err != nil || len(doc.Entries) != len(feed.Items) {
 		return
 	}
 	for i, entry := range doc.Entries {

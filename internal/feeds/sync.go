@@ -258,7 +258,9 @@ func (s *Syncer) run(
 			retErr = errors.Join(retErr, scoped.FailSyncWithCheckpointContext(cleanup, syncID, retErr.Error(), run.checkpoint))
 			return
 		}
-		if err := scoped.CompleteSyncContext(cleanup, syncID, ""); err != nil {
+		// Feeds keep their own validators, so the source has no cursor to
+		// publish; completing through the source records when it last synced.
+		if err := scoped.CompleteSyncAndPreserveSourceCursorContext(cleanup, syncID, source.ID, ""); err != nil {
 			retErr = fmt.Errorf("complete feed sync: %w", err)
 		}
 	}()

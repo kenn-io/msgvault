@@ -203,6 +203,10 @@ func TestFollowArchivesAtomItemsAsFeedMessages(t *testing.T) {
 	require.NoError(summary.Feeds[0].Err)
 	assert.Equal(2, summary.Added())
 
+	source, err := st.GetSourceByID(summary.SourceID)
+	require.NoError(err)
+	assert.True(source.LastSyncAt.Valid, "a completed sync records when the source last synced")
+
 	items := archivedItems(t, st)
 	require.Len(items, 2)
 	release := items["urn:example:release:1.2.0"]
@@ -501,6 +505,10 @@ func TestPlainTextBodiesKeepTheirAngleBrackets(t *testing.T) {
 	server := newFeedServer(t, map[string]string{
 		"/text.json": `{"version": "https://jsonfeed.org/version/1.1", "title": "Text JSON",
 			"items": [{"id": "j-text", "title": "JSON text", "content_text": "Use <widget> here."}]}`,
+		"/latin1.atom": "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>\n" +
+			`<feed xmlns="http://www.w3.org/2005/Atom"><title>Latin-1 Atom</title><id>urn:example:latin1</id>` +
+			`<updated>2026-11-07T15:00:00Z</updated><entry><title>Latin-1 summary</title><id>urn:example:latin1:1</id>` +
+			"<updated>2026-11-07T15:00:00Z</updated><summary>Caf\xe9 &lt;gizmo&gt; here.</summary></entry></feed>",
 		"/text.atom": `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Text Atom</title>
@@ -526,10 +534,11 @@ func TestPlainTextBodiesKeepTheirAngleBrackets(t *testing.T) {
   </entry>
 </feed>`,
 	})
-	_, err := newTestSyncer(st, time.Now()).Follow(t.Context(), []string{server.url("/text.json"), server.url("/text.atom")})
+	_, err := newTestSyncer(st, time.Now()).Follow(t.Context(), []string{server.url("/text.json"), server.url("/text.atom"), server.url("/latin1.atom")})
 	require.NoError(err)
 
 	items := archivedItems(t, st)
+	assert.Equal("Caf\u00e9 <gizmo> here.", items["urn:example:latin1:1"].Body, "a text summary in a non-UTF-8 feed is text")
 	assert.Equal("Use <widget> here.", items["j-text"].Body, "JSON content_text is plain text")
 	assert.False(items["j-text"].BodyHTML.Valid)
 	assert.Equal("Use <gadget> here.", items["urn:example:text:1"].Body, "Atom content without a type is text")

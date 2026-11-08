@@ -129,6 +129,9 @@ func (f *Fetcher) Fetch(ctx context.Context, feedURL string, validators Validato
 	if int64(len(body)) > maxBytes {
 		return Fetched{}, ErrFeedTooLarge
 	}
+	if err := checkBaseExpansion(body); err != nil {
+		return Fetched{}, err
+	}
 	feed, err := parseFeed(body)
 	if err != nil {
 		return Fetched{}, fmt.Errorf("%w: %w", ErrNotAFeed, err)
