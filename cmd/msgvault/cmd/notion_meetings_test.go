@@ -298,7 +298,7 @@ func TestNotionProbeHTTPBlockOwnedHydration(t *testing.T) {
 	assert.Zero(markdownCalls)
 	assert.Contains(out.String(), "Credentials: query verified")
 	assert.Contains(out.String(), "Meeting query: available")
-	assert.Contains(out.String(), "Sample hydration: available")
+	assert.Contains(out.String(), "Sample content: available")
 	assert.Contains(out.String(), "User Information: unavailable")
 	assert.NotContains(out.String(), "Partial coverage: true")
 	for _, private := range []string{"PRIVATE_TITLE", "PRIVATE_TRANSCRIPT", "private-meeting", "private-rows", "synthetic-token", "stale-transcript"} {
@@ -313,7 +313,7 @@ func TestNotionProbeErrorsArePrivate(t *testing.T) {
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{err: cause}, nil)
 	require.Error(t, err)
-	assert.ErrorIs(err, cause)
+	require.ErrorIs(err, cause)
 	assert.NotContains(err.Error(), "PRIVATE_ID")
 	assert.NotContains(err.Error(), "PRIVATE_CURSOR")
 }

@@ -118,7 +118,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			_, _ = fmt.Fprintln(out, "  Credentials: not verified by meeting query")
 		}
 		_, _ = fmt.Fprintln(out, "  Meeting query: unavailable")
-		_, _ = fmt.Fprintln(out, "  Sample hydration: not tested")
+		_, _ = fmt.Fprintln(out, "  Sample content: not tested")
 		return &notionProbeError{stage: "probe Notion meeting query", cause: err}
 	}
 	if result == nil {
@@ -131,12 +131,11 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	var sampled *notionmeetings.HydratedMeeting
 	if len(result.Results) == 0 {
 		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no visible meeting)")
-		_, _ = fmt.Fprintln(out, "  Sample hydration: not tested (no visible meeting)")
 	} else {
 		sampled, err = notionmeetings.NewHydrator(notionProbeContent{client}).Hydrate(ctx, result.Results[0])
 		if err != nil {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: unavailable")
-			return &notionProbeError{stage: "probe Notion sample hydration", cause: err}
+			_, _ = fmt.Fprintln(out, "  Sample content: unavailable")
+			return &notionProbeError{stage: "check sample content", cause: err}
 		}
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
 		children := sampled.Discovery.MeetingNotes.Children
@@ -144,11 +143,11 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			(children.NotesBlockID != "" && (!sampled.NotesTree.Complete || sampled.NotesTree.Filtered)) ||
 			(children.TranscriptBlockID != "" && (!sampled.TranscriptTree.Complete || sampled.TranscriptTree.Filtered))
 		if incomplete {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: incomplete (some meeting sections could not be read)")
+			_, _ = fmt.Fprintln(out, "  Sample content: incomplete (some meeting sections could not be read)")
 		} else if strings.TrimSpace(sampled.Transcript) == "" {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: available (transcript pending)")
+			_, _ = fmt.Fprintln(out, "  Sample content: available (transcript pending)")
 		} else {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: available")
+			_, _ = fmt.Fprintln(out, "  Sample content: available")
 		}
 	}
 	if users == nil {
