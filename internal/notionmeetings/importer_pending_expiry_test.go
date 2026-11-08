@@ -276,7 +276,7 @@ func TestInterruptedDueRetryDoesNotBlockNextMeeting(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), meeting.ID).Scan(&count))
 	assert.Equal(1, count)
 }
 
@@ -336,7 +336,7 @@ func TestInterruptedRetryAlternatesWithKnownRefreshAcrossRuns(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", ready.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), ready.ID).Scan(&count))
 	assert.Equal(1, count)
 	recovered, err := imp.loadState(t.Context(), src.ID)
 	require.NoError(err)

@@ -362,7 +362,7 @@ func TestImporterVisitsDueTranscriptOutsideKnownRefreshWindow(t *testing.T) {
 	require.NoError(err)
 	assert.Positive(counter.reads[meeting.ID])
 	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), meeting.ID).Scan(&count))
 	assert.Equal(1, count)
 }
 
@@ -390,7 +390,7 @@ func TestOversizedEvidenceDefersOneMeetingAndContinues(t *testing.T) {
 	require.NoError(err)
 	assert.Positive(result.CoverageReasons["evidence_limit"])
 	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", next.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), next.ID).Scan(&count))
 	assert.Equal(1, count)
 	state, err := imp.loadState(t.Context(), result.SourceID)
 	require.NoError(err)
@@ -486,7 +486,7 @@ func TestFullRootFrontierAllowsDeferredContinuation(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), result.MeetingsAdded)
 	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", "meeting-1").Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), "meeting-1").Scan(&count))
 	assert.Equal(1, count)
 }
 
