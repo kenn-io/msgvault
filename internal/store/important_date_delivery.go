@@ -159,9 +159,18 @@ type ImportantDateDelivery struct {
 	IssueUID      string                     `json:"issue_uid,omitempty"`
 }
 
-// ListImportantDateDeliveriesContext returns a bounded owner-only status view.
+// ListImportantDateDeliveriesContext returns the first owner-only status page.
 func (s *Store) ListImportantDateDeliveriesContext(ctx context.Context) ([]ImportantDateDelivery, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT occurrence_key, state, issue_uid FROM important_date_deliveries ORDER BY occurrence_key LIMIT 100`)
+	return s.ListImportantDateDeliveriesPageContext(ctx, 100, 0)
+}
+
+// ListImportantDateDeliveriesPageContext lets the owner inspect every retained
+// occurrence, including older uncertain writes.
+func (s *Store) ListImportantDateDeliveriesPageContext(ctx context.Context, limit, offset int) ([]ImportantDateDelivery, error) {
+	if limit < 1 || limit > 500 || offset < 0 {
+		return nil, errors.New("invalid important-date status page")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT occurrence_key, state, issue_uid FROM important_date_deliveries ORDER BY occurrence_key LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list important-date deliveries: %w", err)
 	}

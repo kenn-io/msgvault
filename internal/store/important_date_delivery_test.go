@@ -160,3 +160,24 @@ func TestImportantDateNotificationClaimRequiresOriginalDate(t *testing.T) {
 	must.NoError(err)
 	checks.True(claimed)
 }
+
+func TestImportantDateStatusPagesRetainedOccurrences(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	for _, key := range []string{"person/alpha:birthday:2027", "person/bravo:birthday:2027", "person/charlie:birthday:2027"} {
+		claimed, err := st.ClaimImportantDateDeliveryContext(ctx, key, "fingerprint-example")
+		must.NoError(err)
+		must.True(claimed)
+	}
+	first, err := st.ListImportantDateDeliveriesPageContext(ctx, 2, 0)
+	must.NoError(err)
+	must.Len(first, 2)
+	last, err := st.ListImportantDateDeliveriesPageContext(ctx, 2, 2)
+	must.NoError(err)
+	must.Len(last, 1)
+	checks.Equal("person/charlie:birthday:2027", last[0].OccurrenceKey)
+	_, err = st.ListImportantDateDeliveriesPageContext(ctx, 0, 0)
+	checks.Error(err)
+}

@@ -121,6 +121,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		return err
 	}}
 	consent.Flags().BoolVar(&grant, "grant", false, "Grant recipient-specific consent; omit to revoke")
+	var statusLimit, statusOffset int
 	status := &cobra.Command{Use: "status", Short: "Show retained delivery states", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
@@ -134,12 +135,14 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		rows, err := st.ListImportantDateDeliveriesContext(cmd.Context())
+		rows, err := st.ListImportantDateDeliveriesPageContext(cmd.Context(), statusLimit, statusOffset)
 		if err != nil {
 			return err
 		}
 		return writeJSONOutput(cmd, rows)
 	}}
+	status.Flags().IntVar(&statusLimit, "limit", 100, "Maximum occurrences to show (1-500)")
+	status.Flags().IntVar(&statusOffset, "offset", 0, "Number of occurrences to skip")
 	preview := &cobra.Command{Use: "preview", Short: "Preview currently due eligible dates", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
