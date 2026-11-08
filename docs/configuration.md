@@ -610,7 +610,7 @@ probe, consent, build, and recovery flow.
 Named OAuth apps select separate Google credentials. Each entry can define a
 browser OAuth `client_secret.json`, service account key, or both. Use
 `--oauth-app <name>` with `add-account` to bind an account to a named app.
-Business review targets require an explicit named app for the owner's own
+Google Reviews targets require an explicit named app for the owner's own
 approved project; they never fall back to the default app or a Gmail token.
 
 | Key | Default | Description |
@@ -671,7 +671,7 @@ Token commands receive these environment variables:
 
 | Variable | Meaning |
 |---|---|
-| `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for Google Contacts; `business-reviews-google/<hash>` for business reviews. `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app). |
+| `MSGVAULT_TOKEN_NAMESPACE` | Token namespace: empty for Gmail, Calendar, and Drive tokens; `carddav-google/<hash>` for Google Contacts; `business-reviews-google/<hash>` for Google reviews. The last prefix remains stable for existing authorization files. `<hash>` is the lowercase hex SHA-256 of the OAuth app name (empty for the default app). |
 | `MSGVAULT_ACCOUNT` | Account spelling used for this token; empty for listing |
 
 Key each record by namespace and account. These values do not depend on the data
@@ -1427,18 +1427,19 @@ Scheduled SMS Backup & Restore sources are configured with `[[synctech_sms.sourc
 | `stable_after` | `10m` | How long Drive files must remain unchanged before import |
 | `oauth_app` | — | Named Google OAuth app to use |
 
-### `[[business_reviews]]`
+### `[[google_reviews]]`
 
-Configure live Google Business Profile review targets separately from archive
-sources. Reviews and replies are fetched on demand and never enter message
-storage, search, embeddings, exports, or backups. See
-[Business reviews](usage/business-reviews.md) for project eligibility and setup.
+Configure Google Business Profile review targets separately from message
+sources. Live reads and historical backfill use the same explicitly configured
+owner target. Backfill stores reviews in dedicated main-archive tables and a
+review-specific search index. See [Google Reviews](usage/google-reviews.md) for
+project eligibility, archive behavior, and pagination limits.
 
 ```toml
 [oauth.apps.business]
 client_secrets = "/path/to/own-project-client-secret.json"
 
-[[business_reviews]]
+[[google_reviews]]
 name = "shop"
 provider = "google"
 email = "owner@example.com"
@@ -1456,7 +1457,7 @@ replies_enabled = false
 | `email` | (required) | Google account that owns the separate authorization |
 | `oauth_app` | (required) | Named `[oauth.apps.<name>]` for your own approved Google project |
 | `location` | — | Exact `accounts/ACCOUNT_ID/locations/LOCATION_ID` parent; required when enabled |
-| `enabled` | `false` | Allow live reads for this target |
+| `enabled` | `false` | Allow live reads and owner-triggered archive backfill for this target |
 | `own_project` | `false` | Owner attestation that this is their own approved project; required when enabled |
 | `replies_enabled` | `false` | Allow owner CLI/Web previews and separate per-reply confirmation |
 
@@ -1466,7 +1467,7 @@ make a shared or hosted deployment compliant. Authorization requests
 writes even when `replies_enabled = false`; msgvault's setting restricts its
 workflow, not the underlying grant.
 
-Run `msgvault business-reviews authorize shop` on the daemon host after
+Run `msgvault google-reviews authorize shop` on the daemon host after
 configuring the target. A disabled setup entry may omit `location` while you
 authorize and find the location parent. Authorization and disconnect require
 an authenticated owner daemon so it can invalidate outstanding previews
@@ -1478,7 +1479,7 @@ Every submission requires a fresh exact preview and separate owner consent.
 Previews expire after five minutes; content-free receipts expire after ten
 minutes. Daemon shutdown clears this memory. Keyless access cannot issue
 actionable previews, confirm replies, or read receipts. Delegated and remote
-client credentials cannot access business reviews. Owner API-key holders share
+client credentials cannot access Google reviews. Owner API-key holders share
 one authority; browser sessions have separate consent and receipts.
 
 Use the dedicated authorization and disconnect commands when replacing a

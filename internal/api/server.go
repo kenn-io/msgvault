@@ -25,9 +25,9 @@ import (
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/businessreviews"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/googlereviews"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -256,8 +256,8 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
-	businessReviews *businessreviews.Service
-	nativeMCP       nativeMCPHandlers
+	googleReviews *googlereviews.Service
+	nativeMCP     nativeMCPHandlers
 
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
@@ -542,9 +542,9 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	BusinessReviews *businessreviews.Service
-	Config          *config.Config
-	Store           MessageStore
+	GoogleReviews *googlereviews.Service
+	Config        *config.Config
+	Store         MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -670,7 +670,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		personSearchEngine:     opts.PersonSearchEngine,
 		scheduler:              opts.Scheduler,
 		cardDAV:                opts.CardDAV,
-		businessReviews:        opts.BusinessReviews,
+		googleReviews:          opts.GoogleReviews,
 		logger:                 opts.Logger,
 		requestTimeout:         timeout,
 		readTimeout:            daemonReadTimeout,
@@ -951,8 +951,8 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.businessReviews != nil {
-		s.businessReviews.Close()
+	if s.googleReviews != nil {
+		s.googleReviews.Close()
 	}
 	s.importMu.Lock()
 	s.importsClosed = true

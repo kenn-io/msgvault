@@ -214,7 +214,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
 | `update_person_notes` | profile_write | `--allow-profile-writes` | owner-only |
 | `aggregate` | read | — | search.read |
-| `business_review_capabilities` | read | — | owner-only |
+| `google_review_capabilities` | read | — | owner-only |
 | `calendar_conflicts` | read | — | backend-dependent |
 | `calendar_freebusy` | read | — | backend-dependent |
 | `draft_get` | read | — | backend-dependent |
@@ -226,7 +226,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `find_kata_issues` | read | — | owner-only |
 | `find_similar_messages` | read | — | owner-only |
 | `get_attachment` | read | — | attachment.read |
-| `get_business_review` | read | `--allow-business-review-content` | owner-only |
+| `get_google_review` | read | `--allow-google-review-content` | owner-only |
 | `get_cache_build_status` | read | — | owner-only |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
@@ -251,7 +251,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
-| `list_business_reviews` | read | `--allow-business-review-content` | owner-only |
+| `list_google_reviews` | read | `--allow-google-review-content` | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
@@ -261,7 +261,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
 | `prepare_kata_evidence` | read | — | owner-only |
-| `preview_business_review_reply` | read | `--allow-business-review-content` | owner-only |
+| `preview_google_review_reply` | read | `--allow-google-review-content` | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
 | `preview_person_tiers` | read | — | owner-only |
 | `query_sql` | read | — | owner-only |

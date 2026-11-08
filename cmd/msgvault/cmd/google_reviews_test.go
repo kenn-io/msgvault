@@ -20,35 +20,45 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
-	"go.kenn.io/msgvault/internal/businessreviews"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/googlereviews"
 	"go.kenn.io/msgvault/internal/oauth"
 )
 
-func TestBusinessReviewsCLIExactReplyAndSeparateConfirm(t *testing.T) {
+func TestGoogleReviewsCLIExactReplyAndSeparateConfirm(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	var got businessreviews.Request
-	run := func(_ context.Context, r businessreviews.Request) (*businessreviews.Result, error) {
+	var got googlereviews.Request
+	run := func(_ context.Context, r googlereviews.Request) (*googlereviews.Result, error) {
 		got = r
-		return &businessreviews.Result{}, nil
+		return &googlereviews.Result{}, nil
 	}
-	cmd := newBusinessReviewsCmd(run)
+	cmd := newGoogleReviewsCmd(run)
 	cmd.SetIn(strings.NewReader("Thank you é\n"))
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{"preview-reply", "shop", "review"})
 	require.NoError(cmd.ExecuteContext(t.Context()))
-	assert.Equal(businessreviews.Request{Action: "preview_reply", Target: "shop", ReviewID: "review", Comment: "Thank you é\n"}, got)
-	cmd = newBusinessReviewsCmd(run)
+	assert.Equal(googlereviews.Request{Action: "preview_reply", Target: "shop", ReviewID: "review", Comment: "Thank you é\n"}, got)
+	cmd = newGoogleReviewsCmd(run)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{"confirm-reply", "--confirmation-token", "issued", "--confirmed"})
 	require.NoError(cmd.ExecuteContext(t.Context()))
-	assert.Equal(businessreviews.Request{Action: "confirm_reply", ConfirmationToken: "issued", Confirmed: true}, got)
+	assert.Equal(googlereviews.Request{Action: "confirm_reply", ConfirmationToken: "issued", Confirmed: true}, got)
+	cmd = newGoogleReviewsCmd(run)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"backfill", "shop"})
+	require.NoError(cmd.ExecuteContext(t.Context()))
+	assert.Equal(googlereviews.Request{Action: "backfill", Target: "shop"}, got)
+	cmd = newGoogleReviewsCmd(run)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"archive-status", "shop"})
+	require.NoError(cmd.ExecuteContext(t.Context()))
+	assert.Equal(googlereviews.Request{Action: "archive_status", Target: "shop"}, got)
 }
-func TestBusinessReviewsCLIRejectsBeforeRunner(t *testing.T) {
+func TestGoogleReviewsCLIRejectsBeforeRunner(t *testing.T) {
 	for _, args := range [][]string{{"confirm-reply", "--confirmation-token", "issued"}, {"list", "shop", "--page-size", "51"}, {"get", "shop", "../r"}, {"preview-reply", "shop", "r", "--comment", "unsafe argv"}} {
 		calls := 0
-		cmd := newBusinessReviewsCmd(func(context.Context, businessreviews.Request) (*businessreviews.Result, error) {
+		cmd := newGoogleReviewsCmd(func(context.Context, googlereviews.Request) (*googlereviews.Result, error) {
 			calls++
 			return nil, nil //nolint:nilnil // Rejected input must never reach this runner.
 		})
@@ -59,7 +69,7 @@ func TestBusinessReviewsCLIRejectsBeforeRunner(t *testing.T) {
 		require.Error(t, cmd.ExecuteContext(t.Context()))
 		assert.Zero(t, calls)
 	}
-	cmd := newBusinessReviewsCmd(func(context.Context, businessreviews.Request) (*businessreviews.Result, error) {
+	cmd := newGoogleReviewsCmd(func(context.Context, googlereviews.Request) (*googlereviews.Result, error) {
 		require.Fail(t, "invalid input reached runner")
 		return nil, nil //nolint:nilnil // FailNow above makes this placeholder unreachable.
 	})
@@ -67,14 +77,14 @@ func TestBusinessReviewsCLIRejectsBeforeRunner(t *testing.T) {
 	cmd.SetArgs([]string{"preview-reply", "shop", "r"})
 	require.Error(t, cmd.ExecuteContext(t.Context()))
 }
-func TestBusinessReviewArgsRedacted(t *testing.T) {
-	got := strings.Join(sanitizeArgs([]string{"business-reviews", "preview-reply", "CANARY_TARGET", "CANARY_REVIEW", "--page-token=CANARY_PAGE", "--confirmation-token", "CANARY_TOKEN"}), " ")
+func TestGoogleReviewArgsRedacted(t *testing.T) {
+	got := strings.Join(sanitizeArgs([]string{"google-reviews", "preview-reply", "CANARY_TARGET", "CANARY_REVIEW", "--page-token=CANARY_PAGE", "--confirmation-token", "CANARY_TOKEN"}), " ")
 	assert.NotContains(t, got, "CANARY")
-	assert.Contains(t, got, "business-reviews")
+	assert.Contains(t, got, "google-reviews")
 	assert.Contains(t, got, "preview-reply")
 }
 
-func TestBusinessReviewsStartupLogRedactsLeafPositionals(t *testing.T) {
+func TestGoogleReviewsStartupLogRedactsLeafPositionals(t *testing.T) {
 	previousLogger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	for i, args := range [][]string{
@@ -89,16 +99,16 @@ func TestBusinessReviewsStartupLogRedactsLeafPositionals(t *testing.T) {
 			home := t.TempDir()
 			logPath := filepath.Join(home, "startup.log")
 			root := newRootCommand()
-			root.AddCommand(newBusinessReviewsCmd(func(context.Context, businessreviews.Request) (*businessreviews.Result, error) {
-				return &businessreviews.Result{}, nil
+			root.AddCommand(newGoogleReviewsCmd(func(context.Context, googlereviews.Request) (*googlereviews.Result, error) {
+				return &googlereviews.Result{}, nil
 			}))
 			root.SetIn(strings.NewReader("Exact reply"))
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
-			root.SetArgs(append([]string{"--home", home, "--log-file", logPath, "--log-level", "debug", "business-reviews"}, args...))
+			root.SetArgs(append([]string{"--home", home, "--log-file", logPath, "--log-level", "debug", "google-reviews"}, args...))
 			err := executeRootContext(t.Context(), root)
 			if strings.Contains(args[len(args)-1], "/") {
-				require.ErrorIs(err, businessreviews.ErrInvalid)
+				require.ErrorIs(err, googlereviews.ErrInvalid)
 			} else {
 				require.NoError(err)
 			}
@@ -111,7 +121,7 @@ func TestBusinessReviewsStartupLogRedactsLeafPositionals(t *testing.T) {
 	}
 }
 
-func TestBusinessReviewsDisconnectWithoutClientCredentials(t *testing.T) {
+func TestGoogleReviewsDisconnectWithoutClientCredentials(t *testing.T) {
 	previousLogger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	for _, source := range []string{"missing", "malformed", "command"} {
@@ -135,7 +145,7 @@ api_key = "synthetic-owner-key"
 daemon_auto_start = false
 [oauth.apps.business]
 %s
-[[business_reviews]]
+[[google_reviews]]
 name = "shop"
 provider = "google"
 email = "owner@example.com"
@@ -147,7 +157,7 @@ own_project = false
 			require.NoError(os.WriteFile(path, []byte(content), 0600))
 			cfg, err := config.Load(path, home)
 			require.NoError(err)
-			manager := oauth.NewStoredTokenManager(cfg.TokensDir(), cfg.OAuth.Tokens).WithTokenNamespace(businessReviewNamespace("business"))
+			manager := oauth.NewStoredTokenManager(cfg.TokensDir(), cfg.OAuth.Tokens).WithTokenNamespace(googleReviewNamespace("business"))
 			tokenPath := manager.TokenPath("owner@example.com")
 			require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0700))
 			require.NoError(os.WriteFile(tokenPath, []byte(`{"access_token":"synthetic"}`), 0600))
@@ -160,15 +170,15 @@ own_project = false
 				assert.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
 				w.WriteHeader(http.StatusOK)
 			})
-			mux.HandleFunc("/api/v1/business-reviews/control", func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc("/api/v1/google-reviews/control", func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
 				assert.FileExists(tokenPath, "daemon invalidation must precede credential deletion")
-				var request businessreviews.Request
+				var request googlereviews.Request
 				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
 					http.Error(w, "invalid body", http.StatusBadRequest)
 					return
 				}
-				assert.Equal(businessreviews.Request{Action: "invalidate_target", Target: "shop"}, request)
+				assert.Equal(googlereviews.Request{Action: "invalidate_target", Target: "shop"}, request)
 				invalidations.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{}`)
@@ -182,10 +192,10 @@ own_project = false
 			_, _, err = writeDaemonRuntime(home, host, port, Version, "synthetic-owner-key")
 			require.NoError(err)
 			root := newRootCommand()
-			root.AddCommand(newBusinessReviewsCmd(nil))
+			root.AddCommand(newGoogleReviewsCmd(nil))
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
-			root.SetArgs([]string{"--home", home, "--config", path, "--no-log-file", "business-reviews", "disconnect", "shop"})
+			root.SetArgs([]string{"--home", home, "--config", path, "--no-log-file", "google-reviews", "disconnect", "shop"})
 			assert.NoError(executeRootContext(t.Context(), root)) //nolint:testifylint // Keep the independent cleanup checks running if the command fails.
 			assert.Equal(int32(1), invalidations.Load())
 			assert.NoFileExists(tokenPath)
@@ -194,7 +204,7 @@ own_project = false
 	}
 }
 
-func TestBusinessReviewsAuthorizeRequiresOwnProject(t *testing.T) {
+func TestGoogleReviewsAuthorizeRequiresOwnProject(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	home := t.TempDir()
@@ -203,7 +213,7 @@ func TestBusinessReviewsAuthorizeRequiresOwnProject(t *testing.T) {
 data_dir = %q
 [server]
 daemon_auto_start = false
-[[business_reviews]]
+[[google_reviews]]
 name = "shop"
 provider = "google"
 email = "owner@example.test"
@@ -214,29 +224,29 @@ own_project = false
 `, home)
 	require.NoError(os.WriteFile(path, []byte(content), 0600))
 	root := newRootCommand()
-	root.AddCommand(newBusinessReviewsCmd(nil))
+	root.AddCommand(newGoogleReviewsCmd(nil))
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
-	root.SetArgs([]string{"--home", home, "--config", path, "--no-log-file", "business-reviews", "authorize", "shop", "--headless"})
+	root.SetArgs([]string{"--home", home, "--config", path, "--no-log-file", "google-reviews", "authorize", "shop", "--headless"})
 	assert.ErrorContains(executeRootContext(t.Context(), root), "set own_project = true")
 }
 
-func TestBusinessReviewAuthorizationSuccessMessage(t *testing.T) {
+func TestGoogleReviewAuthorizationSuccessMessage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var output bytes.Buffer
-	require.NoError(writeBusinessReviewAuthorizationResult(&output))
-	assert.Equal("Business-review authorization saved separately.\n", output.String())
+	require.NoError(writeGoogleReviewAuthorizationResult(&output))
+	assert.Equal("Google Reviews authorization saved separately.\n", output.String())
 }
 
-func TestBusinessReviewsSetupFailureStagesAreRedacted(t *testing.T) {
+func TestGoogleReviewsSetupFailureStagesAreRedacted(t *testing.T) {
 	previousLogger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	const canary = "private-canary"
 	for _, tc := range []struct{ name, action, stage string }{
-		{"remove", "disconnect", "remove stored business-review token"},
-		{"load", "authorize", "load configured business-review OAuth app credentials"},
-		{"authorize", "authorize", "authorize business-review app"},
+		{"remove", "disconnect", "remove stored google-review token"},
+		{"load", "authorize", "load configured google-review OAuth app credentials"},
+		{"authorize", "authorize", "authorize google-review app"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -256,7 +266,7 @@ api_key = "synthetic-owner-key"
 daemon_auto_start = false
 [oauth.apps.business]
 client_secrets = %q
-[[business_reviews]]
+[[google_reviews]]
 name = "shop"
 provider = "google"
 email = "private-canary@example.com"
@@ -268,7 +278,7 @@ own_project = true
 			require.NoError(os.WriteFile(configPath, []byte(content), 0600))
 			cfg, err := config.Load(configPath, home)
 			require.NoError(err)
-			manager := oauth.NewStoredTokenManager(cfg.TokensDir(), cfg.OAuth.Tokens).WithTokenNamespace(businessReviewNamespace("business"))
+			manager := oauth.NewStoredTokenManager(cfg.TokensDir(), cfg.OAuth.Tokens).WithTokenNamespace(googleReviewNamespace("business"))
 			tokenPath := manager.TokenPath("private-canary@example.com")
 			// A nonempty directory makes both file deletion and authorization's
 			// initial token read fail locally, before any OAuth browser/network flow.
@@ -278,14 +288,14 @@ own_project = true
 			mux := http.NewServeMux()
 			mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
 			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-			mux.HandleFunc("/api/v1/business-reviews/control", func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc("/api/v1/google-reviews/control", func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
-				var request businessreviews.Request
+				var request googlereviews.Request
 				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
 					http.Error(w, "invalid body", http.StatusBadRequest)
 					return
 				}
-				assert.Equal(businessreviews.Request{Action: "invalidate_target", Target: "shop"}, request)
+				assert.Equal(googlereviews.Request{Action: "invalidate_target", Target: "shop"}, request)
 				invalidations.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{}`)
@@ -300,16 +310,16 @@ own_project = true
 			require.NoError(err)
 			logPath := filepath.Join(home, "setup.log")
 			root := newRootCommand()
-			root.AddCommand(newBusinessReviewsCmd(nil))
+			root.AddCommand(newGoogleReviewsCmd(nil))
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
-			args := []string{"--home", home, "--config", configPath, "--log-file", logPath, "--log-level", "debug", "business-reviews", tc.action, "shop"}
+			args := []string{"--home", home, "--config", configPath, "--log-file", logPath, "--log-level", "debug", "google-reviews", tc.action, "shop"}
 			if tc.action == "authorize" {
 				args = append(args, "--headless")
 			}
 			root.SetArgs(args)
 			err = executeRootContext(t.Context(), root)
-			require.ErrorIs(err, businessreviews.ErrUnavailable)
+			require.ErrorIs(err, googlereviews.ErrUnavailable)
 			assert.Contains(err.Error(), tc.stage)
 			assert.NotContains(err.Error(), canary)
 			assert.Equal(int32(1), invalidations.Load())

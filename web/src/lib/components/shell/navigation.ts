@@ -23,7 +23,7 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
   { id: 'relationships', label: 'People', icon: Users },
   { id: 'files', label: 'Files', icon: Paperclip },
   { id: 'sources', label: 'Sources', icon: Plug },
-  { id: 'business-reviews', label: 'Business reviews', icon: Star },
+  { id: 'google-reviews', label: 'Google Reviews', icon: Star },
 ];
 
 export const DELETIONS_ITEM: NavigationItem = { id: 'deletions', label: 'Staged deletions', icon: Trash2 };

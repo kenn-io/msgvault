@@ -1,20 +1,20 @@
 ---
-last_edited: "2026-11-07"
-title: Business Reviews
-description: Inspect live Google Business Profile reviews and explicitly confirm an owner response without archiving review content.
+last_edited: "2026-11-08"
+title: Google Reviews
+description: Archive and search Google Business Profile reviews, backfill API-available history, and explicitly confirm owner responses.
 ---
 
-Inspect current Google Business Profile reviews and submit an exact owner response
-through the CLI or the Web UI's **Business reviews** workspace. This feature is
-available on `main`; check your installed release before using these commands.
-Facebook Page reviews and recommendations are explicitly unavailable: the current
+Use your own approved Google project to read live Business Profile reviews,
+archive the review pages Google returns, search those records, and submit an exact
+owner response through the CLI or the Web UI's **Google Reviews** workspace.
+Facebook Page reviews and recommendations are unavailable because the current
 official read eligibility and review-specific owner reply contract remain
 unverified. Generic Page post comments are a different feature.
 
-This is a live operational view. Reviews, reviewer details, provider review IDs,
-response text, and confirmation state do not enter the archive, search indexes,
-embeddings, exports, backups, or permanent operation history. There is no review
-sync source, durable draft, incremental sync cursor, or webhook subscription.
+Backfill stores review content and reviewer attribution in the main archive and
+its dedicated full-text index. It does not create synthetic messages, message
+bodies, embeddings, or operation-history entries. Backfill is owner-triggered and
+uses GET requests to the reviews API; it does not submit or edit provider replies.
 
 ## Use your own approved Google project
 
@@ -52,7 +52,7 @@ your own values when you choose to connect:
 [oauth.apps.business]
 client_secrets = "/path/to/your-own-project-client.json"
 
-[[business_reviews]]
+[[google_reviews]]
 name = "shop"
 provider = "google"
 email = "owner@example.com"
@@ -71,9 +71,9 @@ fails, credentials are not changed.
 When you are ready to authorize that account, run:
 
 ```bash
-msgvault business-reviews authorize shop
+msgvault google-reviews authorize shop
 # For a browser on a different machine:
-msgvault business-reviews authorize shop --headless
+msgvault google-reviews authorize shop --headless
 ```
 
 Authorization is an account action. A successful sign-in does not establish project
@@ -102,10 +102,10 @@ with distinct names for additional locations.
 ## Read current reviews
 
 ```bash
-msgvault business-reviews capabilities
-msgvault business-reviews list shop --page-size 20
-msgvault business-reviews list shop --page-token NEXT_PAGE_TOKEN
-msgvault business-reviews get shop REVIEW_ID
+msgvault google-reviews capabilities
+msgvault google-reviews list shop --page-size 20
+msgvault google-reviews list shop --page-token NEXT_PAGE_TOKEN
+msgvault google-reviews get shop REVIEW_ID
 ```
 
 Commands return JSON. List reads use `updateTime desc`, default to 20 reviews, and
@@ -113,12 +113,46 @@ allow at most 50 per page. Pagination is a live sequence, not a stable snapshot.
 Refresh to see edits or deleted reviews; a missing item on one page is not proof
 of deletion. Access and quota errors are not empty review lists.
 
-In the Web UI, open **Business reviews**, choose a configured target, and select a
+In the Web UI, open **Google Reviews**, choose a configured target, and select a
 review. The detail shows reviewer attribution, rating, text when present, and the
 current owner response. Rating-only and anonymous reviews are supported. Profile
 pictures and remote media are not downloaded. Returned moderation information is
 shown when available; Google's `reviews.get` currently omits some moderation
 fields that `reviews.list` may return.
+
+## Backfill and search the archive
+
+Start or resume backfill for an enabled target with an owner API key or owner
+browser session. Keyless loopback, delegated, and remote-client access cannot
+start a backfill:
+
+```bash
+msgvault google-reviews backfill shop
+msgvault google-reviews archive-status shop
+msgvault google-reviews search "delivery helpful" --target shop
+```
+
+Backfill follows each `nextPageToken` until the API returns no next token. Google
+allows up to 50 reviews per page. Every page and its resume checkpoint commit in
+one archive transaction. Re-run the backfill command after a provider error or
+daemon restart to resume. If Google repeats a page cursor, the next explicit run
+restarts from the first page and upserts existing rows. Repeated pages upsert by
+configured target, location, and review ID. A later traversal never deletes
+older archived rows just because an inconsistent page omits them.
+
+Status reports pages fetched, review records returned by those pages, the API's
+reported total, the number of unique archived reviews, and a stable error code
+when backfill is partial. `api_exhausted` means Google returned no next page
+token. Google's documentation notes that later pages can omit reviews, so this
+status does not prove lifetime completeness.
+
+Archive search uses review text, reviewer name, rating, and owner response. It is
+a review-specific API and CLI search and does not mix reviews into the generic
+message search results. The Web workspace offers the same search and displays
+backfill status. Google review records are part of the main archive database and
+its normal archive backups.
+
+Search queries are limited to 256 UTF-8 bytes.
 
 ## Preview and explicitly confirm a response
 
@@ -132,7 +166,7 @@ Provide the exact public response on standard input, never as a command-line bod
 argument:
 
 ```bash
-printf '%s' 'Thank you for visiting.' | msgvault business-reviews preview-reply shop REVIEW_ID
+printf '%s' 'Thank you for visiting.' | msgvault google-reviews preview-reply shop REVIEW_ID
 ```
 
 Inspect the returned review, target, exact `comment`, `expires_at`,
@@ -144,8 +178,8 @@ response; OAuth authorization alone does not provide it.
 After inspecting that exact preview, make a separate confirmation:
 
 ```bash
-msgvault business-reviews confirm-reply --confirmation-token TOKEN --confirmed
-msgvault business-reviews receipt RECEIPT_ID
+msgvault google-reviews confirm-reply --confirmation-token TOKEN --confirmed
+msgvault google-reviews receipt RECEIPT_ID
 ```
 
 In the Web UI, enter the response, choose **Preview response**, inspect the exact
@@ -185,7 +219,7 @@ idempotency guarantee.
 ## Disconnect and retention boundaries
 
 ```bash
-msgvault business-reviews disconnect shop
+msgvault google-reviews disconnect shop
 ```
 
 Disconnect removes the dedicated app-bound Business Profile token and invalidates
@@ -193,29 +227,30 @@ pending previews. Targets sharing that account/app binding lose access together.
 It does not remove unrelated Gmail or Calendar tokens. To revoke the provider grant
 as well, use your Google account's connected-app controls.
 
-Google's [Content storage policy](https://developers.google.com/my-business/content/policies)
-allows limited secure performance storage for at most 30 calendar days and forbids
-manipulating or aggregating that stored Content. It does not permit a permanent
-review archive. msgvault uses ephemeral memory and sends `Cache-Control: no-store`
-for this surface. The browser clears content on target changes, errors, and leaving
-the workspace, and does not save it in local or session storage.
+Backfill makes Google review content a permanent part of the local main archive.
+Google's [Content storage policy](https://developers.google.com/my-business/content/policies#content_storage)
+currently limits stored API content to 30 calendar days. That published limit
+conflicts with permanent retention; this feature does not claim compliance with
+that policy. The live control and archive search API responses use
+`Cache-Control: no-store`; that HTTP header does not change the durable archive.
+The Web UI clears live previews and receipts when leaving the workspace and does
+not save them in browser storage.
 
 Your configured account/location IDs are intentionally durable user-entered
-configuration. Google's interpretation of retained identifiers and wider hosted
-client models remains unresolved. Do not extend this feature into a service for
-third parties without provider clarification.
+configuration. Use the feature only for your own business through your own
+approved project; it does not provide hosted access to another business.
 
 CLI output can be retained by terminal recordings, shell tools, or other clients.
-Those external systems are outside msgvault's retention controls. Avoid pipelines
-that save, index, embed, export, or forward provider content.
+Those external systems are outside msgvault's retention controls.
 
-MCP exposes capability discovery by default. Content reads and non-actionable
-preview assistance require a separate explicit non-retaining-client opt-in:
-`msgvault mcp --allow-business-review-content` for standalone MCP, or
-`msgvault serve --mcp-allow-business-review-content` for native daemon endpoints.
+MCP exposes live capability discovery by default. Live content reads and
+non-actionable preview assistance require a separate explicit non-retaining-client opt-in:
+`msgvault mcp --allow-google-review-content` for standalone MCP, or
+`msgvault serve --mcp-allow-google-review-content` for native daemon endpoints.
 See [the CLI reference](../cli-reference.md) for transport options. Use it only with a
-client that does not persist, index, embed, export, or forward Business Profile
-content outside your own project. Ordinary chat transcripts may retain content
-and are outside this deployment boundary. MCP never returns an executable
-confirmation token or exposes submission or receipt tools. To respond, obtain a
-fresh actionable preview in the CLI or Web UI and confirm there.
+client that does not persist, index, embed, export, or forward live provider
+content outside your own project. MCP tools do not expose archived search or
+backfill. Ordinary chat transcripts may retain live content and are outside this
+boundary. MCP never returns an executable confirmation token or exposes
+submission or receipt tools. To respond, obtain a fresh actionable preview in
+the CLI or Web UI and confirm there.

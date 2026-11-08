@@ -1,4 +1,4 @@
-package businessreviews
+package googlereviews
 
 import (
 	"bytes"

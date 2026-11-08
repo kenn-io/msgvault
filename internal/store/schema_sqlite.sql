@@ -60,3 +60,34 @@ AFTER UPDATE OF text ON document_chunks BEGIN
     VALUES ('delete', old.id, old.text);
     INSERT INTO document_chunks_fts(rowid, text) VALUES (new.id, new.text);
 END;
+
+-- Google reviews have a dedicated index so archive search stays separate from
+-- message search and does not introduce synthetic message rows.
+CREATE VIRTUAL TABLE IF NOT EXISTS google_reviews_fts USING fts5(
+    target_name UNINDEXED,
+    location_name UNINDEXED,
+    review_id UNINDEXED,
+    reviewer,
+    star_rating,
+    comment,
+    reply_comment,
+    tokenize='unicode61 remove_diacritics 1'
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_google_reviews_fts_insert
+AFTER INSERT ON google_reviews BEGIN
+    INSERT INTO google_reviews_fts(rowid, target_name, location_name, review_id, reviewer, star_rating, comment, reply_comment)
+    VALUES (new.id, new.target_name, new.location_name, new.review_id, new.reviewer_display_name, new.star_rating, new.comment, new.reply_comment);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_google_reviews_fts_update
+AFTER UPDATE ON google_reviews BEGIN
+    DELETE FROM google_reviews_fts WHERE rowid = old.id;
+    INSERT INTO google_reviews_fts(rowid, target_name, location_name, review_id, reviewer, star_rating, comment, reply_comment)
+    VALUES (new.id, new.target_name, new.location_name, new.review_id, new.reviewer_display_name, new.star_rating, new.comment, new.reply_comment);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_google_reviews_fts_delete
+AFTER DELETE ON google_reviews BEGIN
+    DELETE FROM google_reviews_fts WHERE rowid = old.id;
+END;

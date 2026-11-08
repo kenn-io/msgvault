@@ -13,15 +13,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/businessreviews"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/googlereviews"
 	"golang.org/x/oauth2"
 )
 
-type businessReviewTransport func(*http.Request) (*http.Response, error)
+type googleReviewTransport func(*http.Request) (*http.Response, error)
 
-func (f businessReviewTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-func TestBusinessReviewsDaemonFactoryChecksActualAccountAndGeneration(t *testing.T) {
+func (f googleReviewTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func TestGoogleReviewsDaemonFactoryChecksActualAccountAndGeneration(t *testing.T) {
 	for _, change := range []string{"actual account", "client", "scope", "snapshot", "disable and restore", "unchanged"} {
 		t.Run(change, func(t *testing.T) {
 			assert := assert.New(t)
@@ -34,7 +34,7 @@ func TestBusinessReviewsDaemonFactoryChecksActualAccountAndGeneration(t *testing
 data_dir = %q
 [oauth.apps.business]
 client_secrets = %q
-[[business_reviews]]
+[[google_reviews]]
 name = "shop"
 provider = "google"
 email = "owner@example.com"
@@ -48,7 +48,7 @@ own_project = true
 			cfg, err := config.Load(path, dir)
 			require.NoError(err)
 			cfg.Data.DataDir = dir
-			manager, err := newBusinessReviewOAuthManager(t.Context(), cfg, cfg.BusinessReviews[0])
+			manager, err := newGoogleReviewOAuthManager(t.Context(), cfg, cfg.GoogleReviews[0])
 			require.NoError(err)
 			tokenPath := manager.TokenPath("owner@example.com")
 			require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0700))
@@ -56,7 +56,7 @@ own_project = true
 			require.NoError(os.WriteFile(tokenPath, []byte(token), 0600))
 			account := "owner@example.com"
 			puts, gets := 0, 0
-			client := &http.Client{Transport: businessReviewTransport(func(r *http.Request) (*http.Response, error) {
+			client := &http.Client{Transport: googleReviewTransport(func(r *http.Request) (*http.Response, error) {
 				assert.Equal("Bearer checked", r.Header.Get("Authorization"))
 				body := ""
 				switch r.URL.Host {
@@ -77,9 +77,9 @@ own_project = true
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 			})}
 			ctx := context.WithValue(t.Context(), oauth2.HTTPClient, client)
-			service := newDaemonBusinessReviews(cfg)
+			service := newDaemonGoogleReviews(cfg)
 			defer service.Close()
-			preview, err := service.Execute(ctx, "owner", businessreviews.Request{Action: "preview_reply", Target: "shop", ReviewID: "r", Comment: "Thanks"})
+			preview, err := service.Execute(ctx, "owner", googlereviews.Request{Action: "preview_reply", Target: "shop", ReviewID: "r", Comment: "Thanks"})
 			require.NoError(err)
 			require.NotNil(preview.Preview)
 			switch change {
@@ -97,13 +97,13 @@ own_project = true
 				future := time.Now().Add(time.Second)
 				require.NoError(os.Chtimes(path, future, future))
 			}
-			_, err = service.Execute(ctx, "owner", businessreviews.Request{Action: "confirm_reply", ConfirmationToken: preview.Preview.ConfirmationToken, Confirmed: true})
+			_, err = service.Execute(ctx, "owner", googlereviews.Request{Action: "confirm_reply", ConfirmationToken: preview.Preview.ConfirmationToken, Confirmed: true})
 			if change == "unchanged" {
 				require.NoError(err)
 				assert.Equal(1, puts)
 				assert.Equal(2, gets)
 			} else {
-				require.ErrorIs(err, businessreviews.ErrConflict)
+				require.ErrorIs(err, googlereviews.ErrConflict)
 				assert.Zero(puts)
 				assert.Equal(1, gets)
 			}

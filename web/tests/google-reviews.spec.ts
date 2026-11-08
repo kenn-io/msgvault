@@ -4,7 +4,7 @@ import { installCardDAV } from './e2e/fixtures/carddav';
 
 const review = { reviewId: 'synthetic-review', reviewer: { displayName: 'Example Reviewer', profilePhotoUrl: 'https://example.invalid/do-not-fetch' }, starRating: 'FIVE', comment: 'Thoughtful service. Thank you!', reviewReply: { comment: 'We appreciate your visit.', reviewReplyState: 'PENDING' } };
 
-test('live business reviews require exact preview and distinct confirmation', async ({ page }, testInfo) => {
+test('live Google reviews require exact preview and distinct confirmation', async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on('pageerror', error => browserErrors.push(error.message));
   // Fixture routes only: no daemon, user archive, OAuth or provider requests.
@@ -14,7 +14,7 @@ test('live business reviews require exact preview and distinct confirmation', as
   let receiptLookups = 0;
   let mediaRequests = 0;
   await page.route('https://example.invalid/**', route => { mediaRequests++; return route.abort(); });
-  await page.route('**/api/v1/business-reviews/control', async route => {
+  await page.route('**/api/v1/google-reviews/control', async route => {
     const body = route.request().postDataJSON();
     expect(new URL(route.request().url()).search).toBe('');
     if (body.action === 'capabilities') return route.fulfill({ json: {
@@ -37,8 +37,8 @@ test('live business reviews require exact preview and distinct confirmation', as
     }
     return route.fulfill({ json: { receipt: { id: 'synthetic-receipt', status: 'submitted', created_at: '2026-11-07T00:00:00Z', updated_at: '2026-11-07T00:00:00Z' } } });
   });
-  await page.goto('/?workspace=business-reviews');
-  await expect(page.getByRole('heading', { name: 'Business reviews' })).toBeVisible();
+  await page.goto('/?workspace=google-reviews');
+  await expect(page.getByRole('heading', { name: 'Google Reviews' })).toBeVisible();
   await expect(page.getByText(/Facebook unavailable/)).toBeVisible();
   await page.getByLabel('Target', { exact: true }).selectOption('example-shop');
   await page.getByRole('button', { name: /Example Reviewer/ }).click();
@@ -61,7 +61,7 @@ test('live business reviews require exact preview and distinct confirmation', as
   expect(confirmations).toBe(1);
   expect(mediaRequests).toBe(0);
   expect(await page.evaluate(() => [localStorage, sessionStorage].some(storage => Object.values(storage).some(value => /Thoughtful service|synthetic-review|synthetic-token|Thank you!/.test(value))))).toBe(false);
-  await page.screenshot({ path: testInfo.outputPath('business-review-receipt.png'), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('google-review-receipt.png'), fullPage: true });
   expect(browserErrors).toEqual([]);
   await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
   const navigation = page.getByRole('dialog', { name: 'Navigation', exact: true });

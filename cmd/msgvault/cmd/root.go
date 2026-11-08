@@ -338,7 +338,7 @@ func agentDelegatedCommand(name string) bool {
 // words that sanitizeArgs can recognize in full argv.
 func sanitizeCommandArgs(cmd *cobra.Command, args []string) []string {
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
-		if ancestor.Name() == "business-reviews" {
+		if ancestor.Name() == "google-reviews" {
 			out := make([]string, len(args))
 			for i := range out {
 				out[i] = "<redacted>"
@@ -355,7 +355,7 @@ func sanitizeCommandArgs(cmd *cobra.Command, args []string) []string {
 // replaced with "<redacted>". Unknown flags pass through so the
 // log still captures the user's intent.
 func sanitizeArgs(args []string) []string {
-	args = sanitizeBusinessReviewArgs(args)
+	args = sanitizeGoogleReviewArgs(args)
 	out := make([]string, 0, len(args))
 	redactNext := false
 	sensitive := map[string]bool{

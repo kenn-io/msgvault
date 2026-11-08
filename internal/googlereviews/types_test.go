@@ -1,4 +1,4 @@
-package businessreviews
+package googlereviews
 
 import (
 	"context"
@@ -32,7 +32,9 @@ func TestReplyByteLimit(t *testing.T) {
 }
 func TestActionFieldIsolation(t *testing.T) {
 	baselines := []Request{
-		{Action: "capabilities"}, {Action: "invalidate_target", Target: "shop"}, {Action: "list", Target: "shop", PageSize: 50},
+		{Action: "capabilities"}, {Action: "invalidate_target", Target: "shop"},
+		{Action: "archive_status", Target: "shop"}, {Action: "backfill", Target: "shop"},
+		{Action: "list", Target: "shop", PageSize: 50},
 		{Action: "get", Target: "shop", ReviewID: "r"}, {Action: "assist_reply", Target: "shop", ReviewID: "r", Comment: "Thanks"},
 		{Action: "preview_reply", Target: "shop", ReviewID: "r", Comment: "Thanks"},
 		{Action: "confirm_reply", ConfirmationToken: strings.Repeat("a", 64), Confirmed: true}, {Action: "receipt", ReceiptID: "receipt"},
@@ -41,7 +43,7 @@ func TestActionFieldIsolation(t *testing.T) {
 		request := hegel.Draw(ht, hegel.SampledFrom(baselines))
 		require.NoError(ht, request.Validate())
 		switch request.Action {
-		case "capabilities", "invalidate_target", "list", "get", "assist_reply", "preview_reply":
+		case "capabilities", "invalidate_target", "archive_status", "backfill", "list", "get", "assist_reply", "preview_reply":
 			request.ReceiptID = "unexpected"
 		case "confirm_reply", "receipt":
 			request.Target = "unexpected"
@@ -61,6 +63,17 @@ func TestActionFieldIsolation(t *testing.T) {
 	require.NoError((Request{Action: "list", Target: "shop", PageSize: 50}).Validate())
 	require.Error((Request{Action: "list", Target: "shop", PageSize: 51}).Validate())
 	require.Error((Request{Action: "list", Target: "shop", PageToken: strings.Repeat("x", 4097)}).Validate())
+	require.Error((Request{Action: "backfill", Target: "shop", PageSize: 50}).Validate())
+}
+
+func TestArchivePageValidationBindsReviewNamesToLocation(t *testing.T) {
+	page := Page{Reviews: []Review{{Name: "accounts/a/locations/l/reviews/r1", ReviewID: "r1", CreateTime: "2025-01-01T00:00:00Z"}}}
+	require.NoError(t, page.ValidateFor("shop", "accounts/a/locations/l"))
+	assert.ErrorIs(t, page.ValidateFor("shop", "accounts/a/locations/other"), ErrInvalid)
+	page.Reviews[0].ReviewID = "../r1"
+	assert.ErrorIs(t, page.ValidateFor("shop", "accounts/a/locations/l"), ErrInvalid)
+	page = Page{Reviews: []Review{{ReviewID: "r1", ReviewReply: &Reply{Comment: strings.Repeat("x", 2<<20)}}}}
+	assert.ErrorIs(t, page.ValidateFor("shop", "accounts/a/locations/l"), ErrInvalid)
 }
 
 func TestTargetPolicy(t *testing.T) {

@@ -464,7 +464,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMuesliImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerCalendarControlRoute(apiV1)
-	s.registerBusinessReviewsRoute(apiV1)
+	s.registerGoogleReviewsRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[store.ChatDiscoveryPage](apiV1, "searchChats", http.MethodGet, "/conversations/search", "Find archived chats by ranked name tokens", s.handleSearchChats)
 	s.registerCalendarEventsRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)

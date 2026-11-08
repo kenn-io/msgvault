@@ -108,7 +108,7 @@ Add to Claude Desktop config:
 		} else {
 			opts = daemonMCPServeOptions(ctx, st, state)
 		}
-		opts.AllowBusinessReviewContent, _ = cmd.Flags().GetBool("allow-business-review-content")
+		opts.AllowGoogleReviewContent, _ = cmd.Flags().GetBool("allow-google-review-content")
 		applyMCPWriteFlags(cmd, "", &opts)
 
 		if httpAddr != "" {
@@ -287,8 +287,8 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if activatable || capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
 		opts.EmbeddingStatus = st
 	}
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, "3.49.0") {
-		opts.BusinessReviews = st
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, "3.50.0") {
+		opts.GoogleReviews = st
 	}
 	if capabilityErr != nil {
 		log.Warn("people tools disabled because the daemon capability probe failed", "error", capabilityErr)
@@ -535,7 +535,7 @@ func init() {
 			"Any configured key still requires bearer authentication. Without a "+
 			"key, any reachable client can read your archive; only set this behind "+
 			"a trusted network boundary or authenticating reverse proxy.")
-	mcpCmd.Flags().Bool("allow-business-review-content", false, "Expose live business-review content only to a client that does not retain, index, export or embed it")
+	mcpCmd.Flags().Bool("allow-google-review-content", false, "Expose live google-review content only to a client that does not retain, index, export or embed it")
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+

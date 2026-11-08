@@ -848,7 +848,7 @@ components:
         - dimension
         - progress
       type: object
-    BusinessReviewsCapability:
+    GoogleReviewsCapability:
       additionalProperties: true
       properties:
         available:
@@ -867,7 +867,7 @@ components:
         - read
         - reply
       type: object
-    BusinessReviewsPreview:
+    GoogleReviewsPreview:
       additionalProperties: true
       properties:
         comment:
@@ -880,12 +880,12 @@ components:
         receipt_id:
           type: string
         review:
-          $ref: "#/components/schemas/BusinessReviewsReview"
+          $ref: "#/components/schemas/GoogleReviewsReview"
       required:
         - review
         - comment
       type: object
-    BusinessReviewsReceipt:
+    GoogleReviewsReceipt:
       additionalProperties: true
       properties:
         created_at:
@@ -904,7 +904,7 @@ components:
         - created_at
         - updated_at
       type: object
-    BusinessReviewsReply:
+    GoogleReviewsReply:
       additionalProperties: true
       properties:
         comment:
@@ -918,7 +918,7 @@ components:
       required:
         - comment
       type: object
-    BusinessReviewsRequest:
+    GoogleReviewsRequest:
       additionalProperties: false
       properties:
         action:
@@ -943,31 +943,31 @@ components:
       required:
         - action
       type: object
-    BusinessReviewsResult:
+    GoogleReviewsResult:
       additionalProperties: true
       properties:
         capabilities:
           items:
-            $ref: "#/components/schemas/BusinessReviewsCapability"
+            $ref: "#/components/schemas/GoogleReviewsCapability"
           type: array
         next_page_token:
           type: string
         preview:
-          $ref: "#/components/schemas/BusinessReviewsPreview"
+          $ref: "#/components/schemas/GoogleReviewsPreview"
         receipt:
-          $ref: "#/components/schemas/BusinessReviewsReceipt"
+          $ref: "#/components/schemas/GoogleReviewsReceipt"
         review:
-          $ref: "#/components/schemas/BusinessReviewsReview"
+          $ref: "#/components/schemas/GoogleReviewsReview"
         reviews:
           items:
-            $ref: "#/components/schemas/BusinessReviewsReview"
+            $ref: "#/components/schemas/GoogleReviewsReview"
           type: array
         targets:
           items:
-            $ref: "#/components/schemas/BusinessReviewsTargetInfo"
+            $ref: "#/components/schemas/GoogleReviewsTargetInfo"
           type: array
       type: object
-    BusinessReviewsReview:
+    GoogleReviewsReview:
       additionalProperties: true
       properties:
         comment:
@@ -979,9 +979,9 @@ components:
         reviewId:
           type: string
         reviewReply:
-          $ref: "#/components/schemas/BusinessReviewsReply"
+          $ref: "#/components/schemas/GoogleReviewsReply"
         reviewer:
-          $ref: "#/components/schemas/BusinessReviewsReviewer"
+          $ref: "#/components/schemas/GoogleReviewsReviewer"
         starRating:
           type: string
         updateTime:
@@ -989,7 +989,7 @@ components:
       required:
         - reviewer
       type: object
-    BusinessReviewsReviewer:
+    GoogleReviewsReviewer:
       additionalProperties: true
       properties:
         displayName:
@@ -999,7 +999,7 @@ components:
         profilePhotoUrl:
           type: string
       type: object
-    BusinessReviewsTargetInfo:
+    GoogleReviewsTargetInfo:
       additionalProperties: true
       properties:
         enabled:
@@ -18382,21 +18382,21 @@ paths:
       summary: End a backup freeze window
       tags:
         - API
-  /api/v1/business-reviews/control:
+  /api/v1/google-reviews/control:
     post:
-      operationId: controlBusinessReviews
+      operationId: controlGoogleReviews
       requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BusinessReviewsRequest"
+              $ref: "#/components/schemas/GoogleReviewsRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BusinessReviewsResult"
+                $ref: "#/components/schemas/GoogleReviewsResult"
           description: OK
         "400":
           content:
@@ -18472,9 +18472,9 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Inspect live business reviews or confirm an exact owner reply
+      summary: Inspect live Google reviews or confirm an exact owner reply
       tags:
-        - Business reviews
+        - Google Reviews
   /api/v1/cache-builds/{job_id}:
     get:
       operationId: getCacheBuildStatus

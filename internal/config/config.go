@@ -22,12 +22,12 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/businessreviews"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/googlereviews"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/omi"
@@ -594,7 +594,7 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
-	BusinessReviews    []businessreviews.Target        `toml:"business_reviews"`
+	GoogleReviews      []googlereviews.Target          `toml:"google_reviews"`
 	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
@@ -1286,7 +1286,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
 	cfg.deferDaemonError(cfg.Sync.Validate())
-	cfg.deferDaemonError(cfg.ValidateBusinessReviews())
+	cfg.deferDaemonError(cfg.ValidateGoogleReviews())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err

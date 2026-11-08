@@ -80,11 +80,12 @@ have their own provider configuration. Message embeddings are enabled through
 configuration; people, visual, and document features also require their stated
 consent steps.
 
-## Live business reviews
+## Google Reviews
 
-[Business reviews](../usage/business-reviews.md) lets an owner inspect current
-Google Business Profile reviews and explicitly confirm a response through their
-own approved project. It is available on `main` and is a live operational view
-outside the archive: there is no review import, sync, search, or export. Facebook
-Page reviews/recommendations remain unavailable while the official operational
-read and owner-reply contract is unverified.
+[Google Reviews](../usage/google-reviews.md) lets an owner inspect live reviews,
+backfill pages returned by the Google Business Profile API into the main archive,
+search archived reviews, and explicitly confirm owner responses through their
+own approved project. Google can omit reviews from later pages, so exhausted
+pagination does not prove lifetime completeness. Facebook Page reviews and
+recommendations remain unavailable while the official read and owner-reply
+contract is unverified.

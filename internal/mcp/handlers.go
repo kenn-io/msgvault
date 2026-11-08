@@ -134,7 +134,7 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
-	businessReviews      BusinessReviewsBackend
+	googleReviews        GoogleReviewsBackend
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
 	downloads            *downloadCache

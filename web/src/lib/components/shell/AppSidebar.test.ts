@@ -41,7 +41,7 @@ describe('AppSidebar', () => {
       primary()
         .getAllByRole('button')
         .map((b) => b.getAttribute('aria-label')),
-    ).toEqual(['Messages', 'People', 'Files', 'Sources', 'Business reviews']);
+    ).toEqual(['Messages', 'People', 'Files', 'Sources', 'Google Reviews']);
     expect(primary().getByRole('button', { name: 'Messages' }).getAttribute('aria-current')).toBe('page');
     expect(primary().getByRole('button', { name: 'Files' }).hasAttribute('aria-current')).toBe(false);
   });

@@ -1,4 +1,4 @@
-package businessreviews
+package googlereviews
 
 import (
 	"context"
@@ -121,7 +121,7 @@ func TestGoogleListAndReplyWire(t *testing.T) {
 			assert.Equal("20", r.URL.Query().Get("pageSize"))
 			assert.Equal("updateTime desc", r.URL.Query().Get("orderBy"))
 			assert.Equal("next+/=", r.URL.Query().Get("pageToken"))
-			return response(200, `{"reviews":[{"reviewId":"r","reviewer":{"isAnonymous":true},"starRating":"FIVE"}],"nextPageToken":"next"}`), nil
+			return response(200, `{"reviews":[{"reviewId":"r","reviewer":{"isAnonymous":true},"starRating":"FIVE"}],"nextPageToken":"next","totalReviewCount":2}`), nil
 		}
 		body, err := io.ReadAll(r.Body)
 		require.NoError(err)
@@ -134,6 +134,7 @@ func TestGoogleListAndReplyWire(t *testing.T) {
 	require.Len(page.Reviews, 1)
 	assert.Empty(page.Reviews[0].Comment)
 	assert.Equal("next", page.NextPageToken)
+	assert.Equal(int64(2), page.TotalReviewCount)
 	reply, err := g.UpdateReply(t.Context(), "accounts/a/locations/l/reviews/r", "Thank you é")
 	require.NoError(err)
 	assert.Equal("now", reply.UpdateTime)

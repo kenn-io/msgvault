@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { Button, PageHeader } from '@kenn-io/kit-ui';
   import Dialog from '../common/Dialog.svelte';
-  import type { BusinessReviewsRequest } from '../../api/generated/models';
+  import type { GoogleReviewsRequest } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
-  import { control, PreviewConflictError, ReceiptUnavailableError, type Result, type Review, type Preview, type Receipt, type Target } from '../../business-reviews/api';
+  import { control, searchArchive, PreviewConflictError, ReceiptUnavailableError, type ArchiveSearchResponse, type BackfillState, type Result, type Review, type Preview, type Receipt, type Target } from '../../google-reviews/api';
 
   let { client }: { client: APIClient } = $props();
   let targets = $state<Target[]>([]);
@@ -25,16 +25,27 @@
   let busy = $state(false);
   let loaded = $state(false);
   let unknown = $state(false);
+  let archiveQuery = $state('');
+  let archiveResult = $state<ArchiveSearchResponse>();
+  let archiveSync = $state<BackfillState>();
+  let archivePage = $state(1);
+  let archiveBusy = $state(false);
+  let archiveError = $state('');
   let generation = 0;
   let active: AbortController | undefined;
+  let archiveGeneration = 0;
+  let archiveController: AbortController | undefined;
   const selected = $derived(targets.find(item => item.name === target));
   const canReply = $derived(selected?.enabled && selected.replies_enabled);
+  const archivePages = $derived(archiveResult ? Math.max(1, Math.ceil(archiveResult.total / archiveResult.page_size)) : 1);
+  const archiveQueryBytes = $derived(new TextEncoder().encode(archiveQuery).length);
 
   function clearContent() {
     reviews = []; review = undefined; nextPage = ''; comment = ''; preview = undefined; loaded = false;
   }
   function invalidate() { generation++; active?.abort(); busy = false; }
-  async function request(body: BusinessReviewsRequest, accept: (result: Result) => void, confirmation = false) {
+  function invalidateArchive() { archiveGeneration++; archiveController?.abort(); archiveBusy = false; }
+  async function request(body: GoogleReviewsRequest, accept: (result: Result) => void, confirmation = false) {
     invalidate();
     const current = generation;
     active = new AbortController();
@@ -50,12 +61,51 @@
         receiptUnavailable = true;
         unknown = true;
       } else if (confirmation && !(cause instanceof PreviewConflictError)) unknown = true;
-      else error = cause instanceof Error ? cause.message : 'Business review request failed.';
+      else error = cause instanceof Error ? cause.message : 'Google Reviews request failed.';
     } finally { if (current === generation) busy = false; }
   }
   function chooseTarget(value: string) {
-    invalidate(); clearContent(); target = value; error = ''; receiptID = ''; receipt = undefined; receiptUnavailable = false; receiptReviewID = ''; receiptTarget = ''; recoveryInspected = false; unknown = false;
-    if (value) void list();
+    invalidate(); invalidateArchive(); clearContent(); target = value; error = ''; archiveError = ''; archiveResult = undefined; archiveSync = undefined; archivePage = 1; receiptID = ''; receipt = undefined; receiptUnavailable = false; receiptReviewID = ''; receiptTarget = ''; recoveryInspected = false; unknown = false;
+    if (value) { void list(); void refreshArchiveStatus(); }
+  }
+
+  async function refreshArchiveStatus() {
+    if (!target) return;
+    invalidateArchive();
+    const current = archiveGeneration;
+    archiveController = new AbortController(); archiveBusy = true; archiveError = '';
+    try {
+      const result = await control(client, { action: 'archive_status', target }, archiveController.signal);
+      if (current === archiveGeneration) archiveSync = result.archive_sync;
+    } catch (cause) {
+      if (current === archiveGeneration) archiveError = cause instanceof Error ? cause.message : 'Google Reviews archive status failed.';
+    } finally { if (current === archiveGeneration) archiveBusy = false; }
+  }
+
+  async function startBackfill() {
+    if (!target) return;
+    invalidateArchive();
+    const current = archiveGeneration;
+    archiveController = new AbortController(); archiveBusy = true; archiveError = '';
+    try {
+      const result = await control(client, { action: 'backfill', target }, archiveController.signal);
+      if (current === archiveGeneration) archiveSync = result.archive_sync;
+    } catch (cause) {
+      if (current === archiveGeneration) archiveError = cause instanceof Error ? cause.message : 'Google Reviews backfill could not start.';
+    } finally { if (current === archiveGeneration) archiveBusy = false; }
+  }
+
+  async function findArchive(page = 1) {
+    if (!archiveQuery.trim() || archiveQueryBytes > 256) return;
+    invalidateArchive();
+    const current = archiveGeneration;
+    archiveController = new AbortController(); archiveBusy = true; archiveError = '';
+    try {
+      const result = await searchArchive(client, { q: archiveQuery, target: target || undefined, page, page_size: 20 }, archiveController.signal);
+      if (current === archiveGeneration) { archiveResult = result; archivePage = page; }
+    } catch (cause) {
+      if (current === archiveGeneration) { archiveResult = undefined; archiveError = cause instanceof Error ? cause.message : 'Google Reviews archive search failed.'; }
+    } finally { if (current === archiveGeneration) archiveBusy = false; }
   }
   function clearResolvedReceipt() {
     if (receipt?.status !== 'submitted' && receipt?.status !== 'failed') return;
@@ -102,18 +152,18 @@
   }
   onMount(() => {
     void request({ action: 'capabilities' }, result => { capabilities = result.capabilities ?? []; targets = result.targets ?? []; });
-    return () => { invalidate(); clearContent(); targets = []; capabilities = []; receiptID = ''; receipt = undefined; };
+    return () => { invalidate(); invalidateArchive(); clearContent(); targets = []; capabilities = []; receiptID = ''; receipt = undefined; archiveResult = undefined; archiveSync = undefined; };
   });
 </script>
 
-<section class="business-reviews" aria-label="Business reviews">
-  <PageHeader title="Business reviews" description="Use your own approved Google project. Content stays in this live view." />
+<section class="google-reviews" aria-label="Google Reviews">
+  <PageHeader title="Google Reviews" description="Use your own approved Google project to read, archive, and search reviews." />
   {#each capabilities.filter(item => !item.available) as capability}
     <p class="notice">{capability.provider === 'facebook' ? 'Facebook' : capability.provider} unavailable: {capability.reason ?? 'Official capability is unverified.'}</p>
   {/each}
   <div class="controls">
-    <label for="business-review-target">Target</label>
-    <select id="business-review-target" value={target} onchange={event => chooseTarget(event.currentTarget.value)}>
+    <label for="google-review-target">Target</label>
+    <select id="google-review-target" value={target} onchange={event => chooseTarget(event.currentTarget.value)}>
       <option value="">Choose a configured target</option>
       {#each targets as item}<option value={item.name} disabled={!item.enabled}>{item.name}{!item.enabled ? ' (disabled)' : ''}</option>{/each}
     </select>
@@ -168,6 +218,46 @@
       </article>
     {/if}
   </div>
+  <section class="archive" aria-label="Google Reviews archive">
+    <div class="archive-heading">
+      <div>
+        <h2>Review archive</h2>
+        <p class="muted">Search locally archived reviews. Backfill follows Google's API pages; page exhaustion does not guarantee lifetime coverage.</p>
+      </div>
+      {#if target}
+        <Button label="Backfill available history" disabled={archiveBusy || !selected?.enabled} onclick={() => void startBackfill()} />
+        <Button label="Refresh archive status" disabled={archiveBusy} onclick={() => void refreshArchiveStatus()} />
+      {/if}
+    </div>
+    {#if archiveSync}
+      <p role="status">Archive status: <strong>{archiveSync.status}</strong>. Pages fetched: {archiveSync.pages_fetched}; reviews fetched: {archiveSync.reviews_fetched}; archived: {archiveSync.archived_review_count}{#if archiveSync.total_review_count} of Google's reported {archiveSync.total_review_count}{/if}.</p>
+      {#if archiveSync.coverage_note}<p class="muted">{archiveSync.coverage_note}</p>{/if}
+      {#if archiveSync.last_error_code}<p role="status">Last backfill error: {archiveSync.last_error_code}. {archiveSync.last_error_code === 'cursor_cycle' ? 'Starting again restarts from the first page and keeps existing records.' : 'Start backfill again to resume.'}</p>{/if}
+    {/if}
+    <div class="archive-search">
+      <label for="google-review-archive-query">Search archived reviews</label>
+      <input id="google-review-archive-query" bind:value={archiveQuery} maxlength="256" onkeydown={event => { if (event.key === 'Enter') { event.preventDefault(); void findArchive(1); } }} />
+      <span class="muted">{archiveQueryBytes} / 256 UTF-8 bytes</span>
+      <Button label="Search archive" disabled={archiveBusy || !archiveQuery.trim() || archiveQueryBytes > 256} onclick={() => void findArchive(1)} />
+    </div>
+    {#if archiveError}<p role="alert">{archiveError}</p>{/if}
+    {#if archiveBusy}<p role="status">Searching archive…</p>{/if}
+    {#if archiveResult}
+      <p>{archiveResult.total} matching archived review{archiveResult.total === 1 ? '' : 's'}.</p>
+      {#if archiveResult.results.length === 0}<p>No archived reviews match this query.</p>{/if}
+      <div class="archive-results">
+        {#each archiveResult.results as item}
+          <article class="archive-result">
+            <p><strong>{item.review.reviewer.isAnonymous ? 'Anonymous reviewer' : item.review.reviewer.displayName || 'Reviewer'}</strong> · {item.review.starRating || 'Rating unavailable'} · {item.target}</p>
+            <p class="exact">{item.review.comment || 'Rating only; no review text.'}</p>
+            {#if item.review.reviewReply}<p><strong>Owner response:</strong> <span class="exact">{item.review.reviewReply.comment}</span></p>{/if}
+            <p class="muted">Created {item.review.createTime || 'unknown'} · Archived {item.archived_at}</p>
+          </article>
+        {/each}
+      </div>
+      {#if archivePages > 1}<div class="archive-pagination"><Button label="Previous" disabled={archiveBusy || archivePage <= 1} onclick={() => void findArchive(archivePage - 1)} /><span>Page {archivePage} of {archivePages}</span><Button label="Next" disabled={archiveBusy || archivePage >= archivePages} onclick={() => void findArchive(archivePage + 1)} /></div>{/if}
+    {/if}
+  </section>
 </section>
 
 {#if preview}
@@ -188,10 +278,10 @@
 {/if}
 
 <style>
-  .business-reviews { flex: 1; min-height: 0; overflow: auto; padding: var(--space-5) var(--page-gutter); display: flex; flex-direction: column; gap: var(--space-4); }
+  .google-reviews { flex: 1; min-height: 0; overflow: auto; padding: var(--space-5) var(--page-gutter); display: flex; flex-direction: column; gap: var(--space-4); }
   .preview-content { display: grid; gap: var(--space-3); }
   .controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
-  select, textarea { border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); font: inherit; padding: var(--space-2); }
+  select, textarea, input { border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); font: inherit; padding: var(--space-2); }
   select { max-width: 100%; }
   .columns { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: var(--space-5); }
   .review-list, article { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); min-width: 0; }
@@ -200,6 +290,14 @@
   .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
   .exact { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
   .notice { padding: var(--space-3); background: var(--bg-subtle); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+  .archive { border-top: 1px solid var(--border-default); padding-top: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); }
+  .archive-heading, .archive-search, .archive-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
+  .archive-heading { justify-content: space-between; }
+  .archive-heading > div { display: grid; gap: var(--space-2); }
+  .archive-search input { min-width: min(24rem, 100%); flex: 1; }
+  .archive-results { display: grid; gap: var(--space-3); }
+  .archive-result { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: var(--space-3); display: grid; gap: var(--space-2); }
+  .archive-pagination { justify-content: flex-end; }
   h2, h3, p { margin: 0; }
   h2 { font-size: var(--font-size-lg); }
   h3 { font-size: var(--font-size-md); }

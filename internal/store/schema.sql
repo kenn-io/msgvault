@@ -4778,3 +4778,62 @@ CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
 AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
+
+-- Google Business Profile reviews belong to the main archive and retain the
+-- configured target/location identity used by resumable provider backfills.
+CREATE TABLE IF NOT EXISTS google_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_name TEXT NOT NULL,
+    location_name TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    review_name TEXT NOT NULL,
+    reviewer_display_name TEXT NOT NULL DEFAULT '',
+    reviewer_profile_photo_url TEXT NOT NULL DEFAULT '',
+    reviewer_is_anonymous BOOLEAN NOT NULL DEFAULT FALSE,
+    star_rating TEXT NOT NULL DEFAULT '',
+    comment TEXT NOT NULL DEFAULT '',
+    create_time TEXT NOT NULL DEFAULT '',
+    update_time TEXT NOT NULL DEFAULT '',
+    has_reply BOOLEAN NOT NULL DEFAULT FALSE,
+    reply_comment TEXT NOT NULL DEFAULT '',
+    reply_update_time TEXT NOT NULL DEFAULT '',
+    reply_state TEXT NOT NULL DEFAULT '',
+    reply_policy_violation TEXT NOT NULL DEFAULT '',
+    archived_at TEXT NOT NULL,
+    UNIQUE (target_name, location_name, review_id)
+);
+CREATE INDEX IF NOT EXISTS idx_google_reviews_target_update
+    ON google_reviews(target_name, location_name, update_time DESC, review_id);
+
+CREATE TABLE IF NOT EXISTS google_reviews_sync_state (
+    target_name TEXT NOT NULL,
+    location_name TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'partial', 'api_exhausted')),
+    run_id INTEGER NOT NULL CHECK (run_id > 0),
+    next_page_token TEXT NOT NULL DEFAULT '',
+    pages_fetched INTEGER NOT NULL DEFAULT 0 CHECK (pages_fetched >= 0),
+    reviews_fetched INTEGER NOT NULL DEFAULT 0 CHECK (reviews_fetched >= 0),
+    total_review_count INTEGER NOT NULL DEFAULT 0 CHECK (total_review_count >= 0),
+    archived_review_count INTEGER NOT NULL DEFAULT 0 CHECK (archived_review_count >= 0),
+    last_error_code TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (target_name, location_name),
+    CHECK ((status = 'running' AND completed_at IS NULL AND last_error_code = '') OR
+           (status = 'partial' AND completed_at IS NULL AND last_error_code <> '') OR
+           (status = 'api_exhausted' AND completed_at IS NOT NULL AND last_error_code = '' AND next_page_token = ''))
+);
+
+-- Store hashes of page cursors for the current run so a provider token cycle
+-- cannot leave a daemon paging forever. The opaque token itself stays only in
+-- the sync checkpoint and is never returned to clients.
+CREATE TABLE IF NOT EXISTS google_reviews_sync_tokens (
+    target_name TEXT NOT NULL,
+    location_name TEXT NOT NULL,
+    run_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL,
+    PRIMARY KEY (target_name, location_name, run_id, token_hash),
+    FOREIGN KEY (target_name, location_name)
+        REFERENCES google_reviews_sync_state(target_name, location_name) ON DELETE CASCADE
+);

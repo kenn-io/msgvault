@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, expect, it, vi } from 'vitest';
 import { tick } from 'svelte';
 import { createAPIClient } from '../../api/client';
-import BusinessReviewsWorkspace from './BusinessReviewsWorkspace.svelte';
+import GoogleReviewsWorkspace from './GoogleReviewsWorkspace.svelte';
 
 const review = { reviewId: 'r1', reviewer: { displayName: 'Example Reviewer', profilePhotoUrl: 'https://example.invalid/photo' }, starRating: 'FIVE', comment: '<b>Helpful service</b>', reviewReply: { comment: 'Previous response', reviewReplyState: 'PENDING', policyViolation: 'OFF_TOPIC' } };
 const capabilities = { capabilities: [{ provider: 'google', available: true, read: true, reply: true }, { provider: 'facebook', available: false, read: false, reply: false, reason: 'Official ratings and reply contract unverified.' }], targets: [{ name: 'shop', provider: 'google', enabled: true, replies_enabled: true }, { name: 'other', provider: 'google', enabled: true, replies_enabled: false }] };
@@ -11,9 +11,17 @@ function fixture(handle: (body: Body) => unknown | Promise<unknown>) {
   const seen: Body[] = [];
   const client = createAPIClient(async input => {
     const request = input as Request;
-    expect(new URL(request.url).pathname).toBe('/api/v1/business-reviews/control');
-    expect(request.method).toBe('POST');
     expect(request.cache).toBe('no-store');
+    if (new URL(request.url).pathname === '/api/v1/google-reviews/archive/search') {
+      expect(request.method).toBe('GET');
+      const params = new URL(request.url).searchParams;
+      const body = { action: 'archive_search', q: params.get('q'), target: params.get('target'), page: Number(params.get('page')), page_size: Number(params.get('page_size')) };
+      seen.push(body);
+      const result = await handle(body);
+      return result instanceof Response ? result : Response.json(result);
+    }
+    expect(new URL(request.url).pathname).toBe('/api/v1/google-reviews/control');
+    expect(request.method).toBe('POST');
     const body = await request.json() as Body;
     seen.push(body);
     const result = body.action === 'capabilities' ? capabilities : await handle(body);
@@ -23,9 +31,59 @@ function fixture(handle: (body: Body) => unknown | Promise<unknown>) {
 }
 afterEach(cleanup);
 
+it('starts backfill, reports API exhaustion limits, and searches archived reviews', async () => {
+  const result = {
+    total: 1,
+    page: 1,
+    page_size: 20,
+    results: [{ target: 'shop', review: { ...review, createTime: '2025-01-02T03:04:05Z' }, archived_at: '2026-11-08T12:00:00Z' }],
+  };
+  const { client, seen } = fixture(body => {
+    if (body.action === 'backfill') return { archive_sync: { target: 'shop', status: 'running', pages_fetched: 1, reviews_fetched: 20, total_review_count: 30, archived_review_count: 20, coverage_note: 'API pagination does not guarantee lifetime coverage.' } };
+    if (body.action === 'archive_status') return { archive_sync: { target: 'shop', status: 'api_exhausted', pages_fetched: 2, reviews_fetched: 30, total_review_count: 30, archived_review_count: 30, coverage_note: 'API pagination does not guarantee lifetime coverage.' } };
+    if (body.action === 'archive_search') return result;
+    return { reviews: [] };
+  });
+  render(GoogleReviewsWorkspace, { client });
+  await fireEvent.change(await screen.findByLabelText('Target'), { target: { value: 'shop' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Backfill available history' }));
+  await screen.findByText(/Archive status: running/);
+  expect(screen.getByText('API pagination does not guarantee lifetime coverage.')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh archive status' }));
+  await screen.findByText(/Archive status: api_exhausted/);
+  await fireEvent.input(screen.getByLabelText('Search archived reviews'), { target: { value: 'helpful service' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Search archive' }));
+  expect(await screen.findByText('<b>Helpful service</b>')).toBeDefined();
+  expect(seen.find(item => item.action === 'archive_search')).toEqual({ action: 'archive_search', q: 'helpful service', target: 'shop', page: 1, page_size: 20 });
+});
+
+it('searches all archived targets when no target filter is selected', async () => {
+  const { client, seen } = fixture(body => body.action === 'archive_search' ? {
+    total: 1,
+    page: 1,
+    page_size: 20,
+    results: [{ target: 'shop', review: { ...review, createTime: '2025-01-02T03:04:05Z' }, archived_at: '2026-11-08T12:00:00Z' }],
+  } : { reviews: [] });
+  render(GoogleReviewsWorkspace, { client });
+  await fireEvent.input(await screen.findByLabelText('Search archived reviews'), { target: { value: 'helpful service' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Search archive' }));
+  expect(await screen.findByText('1 matching archived review.')).toBeDefined();
+  expect(seen.find(item => item.action === 'archive_search')).toEqual({ action: 'archive_search', q: 'helpful service', target: null, page: 1, page_size: 20 });
+});
+
+it('explains that a cursor-cycle retry restarts from the first page', async () => {
+  const { client } = fixture(body => body.action === 'archive_status' ? {
+    archive_sync: { target: 'shop', status: 'partial', pages_fetched: 1, reviews_fetched: 20, archived_review_count: 20, last_error_code: 'cursor_cycle', coverage_note: 'API pagination does not guarantee lifetime coverage.' },
+  } : { reviews: [] });
+  render(GoogleReviewsWorkspace, { client });
+  await fireEvent.change(await screen.findByLabelText('Target'), { target: { value: 'shop' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh archive status' }));
+  expect(await screen.findByText(/Starting again restarts from the first page and keeps existing records\./)).toBeDefined();
+});
+
 it('loads targets, paginates live reviews and escapes detail without fetching profile photos', async () => {
   const { client, seen } = fixture(body => body.action === 'get' ? { review } : { reviews: [review], next_page_token: body.page_token ? undefined : 'page2' });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByText(/Facebook.*unavailable/i);
   await fireEvent.change(screen.getByRole('combobox', { name: 'Target' }), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -49,7 +107,7 @@ it('previews exact text then confirms once, and looks up the pre-issued receipt 
     if (body.action === 'confirm_reply') throw new TypeError('Connection lost');
     return { receipt: { id: 'receipt1', status: 'submitted', created_at: '', updated_at: '' } };
   });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -84,11 +142,11 @@ it.each(['recognized conflict', 'unrecognized conflict', 'forged server error', 
     if (body.action === 'confirm_reply') {
       if (failure === 'lost response') throw new TypeError('private-confirm-canary');
       if (failure === 'plain error') throw new Error('private-confirm-canary');
-      return Response.json({ error: failure === 'unrecognized conflict' ? 'proxy_conflict' : 'business_reviews_preview_changed', message: 'private-confirm-canary' }, { status: failure === 'forged server error' ? 500 : 409 });
+      return Response.json({ error: failure === 'unrecognized conflict' ? 'proxy_conflict' : 'google_reviews_preview_changed', message: 'private-confirm-canary' }, { status: failure === 'forged server error' ? 500 : 409 });
     }
     return { receipt: { id: 'receipt1', status: known ? 'failed' : 'unknown', created_at: '', updated_at: '' } };
   });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -134,7 +192,7 @@ it.each(['lost response', 'unknown', 'submitting', 'pending_confirmation'])('pre
     }
     return { receipt: { id: 'receipt1', status: status === 'lost response' ? 'unknown' : status, created_at: '', updated_at: '' } };
   });
-  const view = render(BusinessReviewsWorkspace, { client });
+  const view = render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -193,7 +251,7 @@ it.each(['lost response', 'unknown'])('allows a deliberate fresh preview after %
     }
     return { receipt: { id: body.action === 'receipt' ? body.receipt_id : 'receipt1', status: 'unknown', created_at: '', updated_at: '' } };
   });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -250,7 +308,7 @@ it.each(['submitted', 'failed'])('allows a fresh preview after navigating from a
     if (body.action === 'preview_reply') return { preview: { review, comment: body.comment, confirmation_token: 'token1', receipt_id: 'receipt1', expires_at: '2099-01-01T00:00:00Z' } };
     return { receipt: { id: 'receipt1', status, created_at: '', updated_at: '' } };
   });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -275,7 +333,7 @@ it('clears unresolved recovery on target switch and ignores a late receipt respo
     if (body.action === 'confirm_reply') throw new TypeError('Connection lost');
     return new Promise(resolve => finish = resolve);
   });
-  const view = render(BusinessReviewsWorkspace, { client });
+  const view = render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -317,11 +375,11 @@ it.each(['expired receipt', 'daemon restart'])('requires live inspection before 
       throw new TypeError('Connection lost');
     }
     if (body.action === 'receipt' && (scenario === 'expired receipt' || daemonRestarted)) {
-      return Response.json({ error: 'business_reviews_receipt_not_found' }, { status: 404 });
+      return Response.json({ error: 'google_reviews_receipt_not_found' }, { status: 404 });
     }
     return { receipt: { id: body.receipt_id, status: 'unknown', created_at: '', updated_at: '' } };
   });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -355,8 +413,8 @@ it('uses the requested workspace copy, preview failure text, and submit label', 
     }
     return {};
   });
-  render(BusinessReviewsWorkspace, { client });
-  expect(screen.getByText('Use your own approved Google project. Content stays in this live view.')).toBeDefined();
+  render(GoogleReviewsWorkspace, { client });
+  expect(screen.getByText('Use your own approved Google project to read, archive, and search reviews.')).toBeDefined();
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   const row = await screen.findByRole('button', { name: /Example Reviewer/ });
@@ -384,7 +442,7 @@ it('ignores late detail and list responses after changing target and clears cont
     if (body.action === 'get') return new Promise(resolve => finish = resolve);
     return { reviews: [review] };
   });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -397,8 +455,8 @@ it('ignores late detail and list responses after changing target and clears cont
 });
 
 it('clears loaded content on a denied detail and allows a fresh read', async () => {
-  const { client } = fixture(body => body.action === 'list' ? { reviews: [review] } : Response.json({ message: 'Business review access denied' }, { status: 403 }));
-  render(BusinessReviewsWorkspace, { client });
+  const { client } = fixture(body => body.action === 'list' ? { reviews: [review] } : Response.json({ message: 'Google Reviews access denied' }, { status: 403 }));
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -410,7 +468,7 @@ it('clears loaded content on a denied detail and allows a fresh read', async () 
 
 it('shows read-only policy without a response editor and clears everything on unmount', async () => {
   const { client } = fixture(body => body.action === 'list' ? { reviews: [review] } : { review });
-  const view = render(BusinessReviewsWorkspace, { client });
+  const view = render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'other' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'other' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
@@ -425,7 +483,7 @@ it('shows read-only policy without a response editor and clears everything on un
 it('ignores a late page after target switch and after unmount', async () => {
   let finish!: (value: unknown) => void;
   const { client } = fixture(body => body.target === 'shop' ? new Promise(resolve => finish = resolve) : { reviews: [] });
-  const view = render(BusinessReviewsWorkspace, { client });
+  const view = render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await waitFor(() => expect(finish).toBeTypeOf('function'));
@@ -448,7 +506,7 @@ it('renders rating-only anonymous reviews and never offers confirmation on a den
     if (body.action === 'get') return { review: anonymous };
     return Response.json({}, { status: 403 });
   });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await fireEvent.click(await screen.findByRole('button', { name: /Anonymous reviewer/ }));
@@ -465,7 +523,7 @@ it('shows moderation from list metadata when the detail endpoint omits it', asyn
   const { reviewReply, ...withoutReply } = review;
   const detail = { ...withoutReply, reviewReply: { comment: reviewReply.comment } };
   const { client } = fixture(body => body.action === 'list' ? { reviews: [review] } : { review: detail });
-  render(BusinessReviewsWorkspace, { client });
+  render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   const row = await screen.findByRole('button', { name: /Example Reviewer/ });

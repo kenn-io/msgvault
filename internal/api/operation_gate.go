@@ -383,8 +383,9 @@ var operationGateExemptPaths = map[string]bool{
 	"/mcp/writes": true,
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
-	// Business reviews use a service-owned write gate and never touch the archive.
-	"/api/v1/business-reviews/control": true,
+	// Reply submissions use a service-owned write gate. Backfill persists one
+	// archive page per Store transaction without holding the HTTP request gate.
+	"/api/v1/google-reviews/control": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.
 	"/api/v1/identity/scoring/run":     true,
 	"/api/v1/identity/scoring/consent": true,

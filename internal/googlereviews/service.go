@@ -1,19 +1,22 @@
-package businessreviews
+package googlereviews
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Options struct {
 	Targets  func(context.Context) ([]Target, error)
 	Provider func(context.Context, Target) (Provider, string, error)
+	Archive  Archive
 }
 type pendingReply struct {
 	principal string
@@ -30,25 +33,33 @@ type storedReceipt struct {
 	expires   time.Time
 }
 
-// Service owns only ephemeral state. It has no Store, config or OAuth dependency.
-// One service belongs to one server, never a process-wide singleton.
+// Service owns ephemeral reply state and coordinates owner-triggered archive
+// backfill through its narrow Archive interface. One service belongs to one
+// server, never a process-wide singleton.
 type Service struct {
-	options      Options
-	mu           sync.Mutex
-	pending      map[string]pendingReply
-	receipts     map[string]storedReceipt
-	writeGate    chan struct{}
-	now          func() time.Time
-	stop         chan struct{}
-	done         chan struct{}
-	closed       bool
-	generation   uint64
-	active       sync.WaitGroup
-	activeCancel context.CancelFunc
+	options        Options
+	mu             sync.Mutex
+	pending        map[string]pendingReply
+	receipts       map[string]storedReceipt
+	writeGate      chan struct{}
+	now            func() time.Time
+	stop           chan struct{}
+	done           chan struct{}
+	closed         bool
+	generation     uint64
+	active         sync.WaitGroup
+	activeCancel   context.CancelFunc
+	backfillCtx    context.Context
+	backfillCancel context.CancelFunc
+	backfillActive map[string]bool
+	backfills      sync.WaitGroup
 }
 
 func NewService(options Options) *Service {
-	s := &Service{options: options, pending: make(map[string]pendingReply), receipts: make(map[string]storedReceipt), writeGate: make(chan struct{}, 1), now: time.Now, stop: make(chan struct{}), done: make(chan struct{})}
+	// Backfills outlive their initiating HTTP request and use this service-lifetime
+	// context until Close cancels the worker during daemon shutdown.
+	backfillCtx, backfillCancel := context.WithCancel(context.Background())
+	s := &Service{options: options, pending: make(map[string]pendingReply), receipts: make(map[string]storedReceipt), writeGate: make(chan struct{}, 1), now: time.Now, stop: make(chan struct{}), done: make(chan struct{}), backfillCtx: backfillCtx, backfillCancel: backfillCancel, backfillActive: make(map[string]bool)}
 	go func() {
 		defer close(s.done)
 		timer := time.NewTicker(time.Minute)
@@ -72,13 +83,16 @@ func (s *Service) Close() {
 		close(s.stop)
 	}
 	cancel := s.activeCancel
+	backfillCancel := s.backfillCancel
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	backfillCancel()
 	// Confirmation admission and Add are serialized with closed under mu.
 	// Retain receipts until any already-admitted write has settled.
 	s.active.Wait()
+	s.backfills.Wait()
 	s.mu.Lock()
 	clear(s.receipts)
 	s.mu.Unlock()
@@ -115,13 +129,27 @@ func (s *Service) setStatusLocked(id, status string) *Receipt {
 	return &receipt
 }
 func (s *Service) target(ctx context.Context, name string) (Target, error) {
+	target, err := s.configuredTarget(ctx, name)
+	if err != nil {
+		return Target{}, err
+	}
+	if !target.Enabled {
+		return Target{}, ErrDenied
+	}
+	return target, nil
+}
+
+func (s *Service) configuredTarget(ctx context.Context, name string) (Target, error) {
+	if s.options.Targets == nil {
+		return Target{}, ErrUnavailable
+	}
 	targets, err := s.options.Targets(ctx)
 	if err != nil {
 		return Target{}, ErrUnavailable
 	}
 	for _, target := range targets {
 		if target.Name == name {
-			if target.Validate() != nil || !target.Enabled {
+			if target.Validate() != nil {
 				return Target{}, ErrDenied
 			}
 			return target, nil
@@ -198,6 +226,15 @@ func (s *Service) Execute(ctx context.Context, principal string, request Request
 		}
 		return s.confirm(ctx, principal, request.ConfirmationToken)
 	}
+	if request.Action == "archive_status" {
+		return s.archiveStatus(ctx, request.Target)
+	}
+	if request.Action == "backfill" {
+		if principal == "" {
+			return nil, ErrDenied
+		}
+		return s.startBackfill(ctx, request.Target)
+	}
 	target, err := s.target(ctx, request.Target)
 	if err != nil {
 		return nil, err
@@ -254,6 +291,179 @@ func (s *Service) Execute(ctx context.Context, principal string, request Request
 	s.pending[token] = pendingReply{principal: principal, target: target, binding: binding, review: cloneReview(review), comment: request.Comment, receiptID: id, expires: preview.ExpiresAt}
 	s.receipts[id] = storedReceipt{principal: principal, receipt: Receipt{ID: id, Status: "pending_confirmation", CreatedAt: now, UpdatedAt: now}, expires: now.Add(10 * time.Minute)}
 	return &Result{Preview: preview}, nil
+}
+
+const backfillCoverageNote = "Google can omit reviews from later API pages. API pagination exhaustion does not guarantee lifetime coverage."
+
+func (s *Service) archiveStatus(ctx context.Context, targetName string) (*Result, error) {
+	if s.options.Archive == nil {
+		return nil, ErrArchive
+	}
+	if _, err := s.configuredTarget(ctx, targetName); err != nil {
+		return nil, err
+	}
+	state, err := s.options.Archive.GoogleReviewsBackfillState(ctx, targetName)
+	if err != nil {
+		return nil, ErrArchive
+	}
+	state = withCoverageNote(state)
+	return &Result{ArchiveSync: &state}, nil
+}
+
+func (s *Service) startBackfill(ctx context.Context, targetName string) (*Result, error) {
+	if s.options.Archive == nil {
+		return nil, ErrArchive
+	}
+	target, err := s.target(ctx, targetName)
+	if err != nil {
+		return nil, err
+	}
+	key := target.Name + "\x00" + target.Location
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, ErrUnavailable
+	}
+	if s.backfillActive[key] {
+		s.mu.Unlock()
+		state, err := s.options.Archive.GoogleReviewsBackfillState(ctx, target.Name)
+		if err != nil {
+			return nil, ErrArchive
+		}
+		state = withCoverageNote(state)
+		return &Result{ArchiveSync: &state}, nil
+	}
+	s.backfillActive[key] = true
+	// Add while holding mu so Close cannot begin Wait before this worker is
+	// accounted for.
+	s.backfills.Add(1)
+	s.mu.Unlock()
+
+	state, err := s.options.Archive.BeginGoogleReviewsBackfill(ctx, target.Name, target.Location)
+	if err != nil {
+		s.finishBackfill(key)
+		if errors.Is(err, ErrArchiveBusy) {
+			return nil, err
+		}
+		return nil, ErrArchive
+	}
+	state = withCoverageNote(state)
+	go s.runBackfill(key, target, state)
+	return &Result{ArchiveSync: &state}, nil
+}
+
+func withCoverageNote(state BackfillState) BackfillState {
+	state.CoverageNote = backfillCoverageNote
+	return state
+}
+
+func (s *Service) runBackfill(key string, target Target, state BackfillState) {
+	defer s.finishBackfill(key)
+	ctx := s.backfillCtx
+	provider, _, err := s.provider(ctx, target)
+	if err != nil {
+		s.failBackfill(ctx, target, archiveErrorCode(err))
+		return
+	}
+	for {
+		if state.PagesFetched == math.MaxInt64 {
+			s.failBackfill(ctx, target, "page_count_limit")
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			s.failBackfill(ctx, target, archiveErrorCode(err))
+			return
+		}
+		page, err := provider.List(ctx, target.Location, state.NextPageToken, 50)
+		if err != nil {
+			s.failBackfill(ctx, target, archiveErrorCode(err))
+			return
+		}
+		if err := page.ValidateFor(target.Name, target.Location); err != nil {
+			s.failBackfill(ctx, target, "invalid_page")
+			return
+		}
+		state, err = s.options.Archive.ApplyGoogleReviewsPage(ctx, target.Name, target.Location, state.NextPageToken, page)
+		if err != nil {
+			s.failBackfill(ctx, target, archiveErrorCode(err))
+			return
+		}
+		if state.Status == "api_exhausted" {
+			return
+		}
+	}
+}
+
+func (s *Service) finishBackfill(key string) {
+	s.mu.Lock()
+	delete(s.backfillActive, key)
+	s.mu.Unlock()
+	s.backfills.Done()
+}
+
+func archiveErrorCode(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, ErrQuota):
+		return "quota"
+	case errors.Is(err, ErrPermission):
+		return "permission"
+	case errors.Is(err, ErrCredentials):
+		return "credentials"
+	case errors.Is(err, ErrTemporary):
+		return "temporary"
+	case errors.Is(err, ErrRejected):
+		return "rejected"
+	case errors.Is(err, ErrArchiveCycle):
+		return "cursor_cycle"
+	case errors.Is(err, ErrInvalid):
+		return "invalid_page"
+	default:
+		return "provider_error"
+	}
+}
+
+func (s *Service) failBackfill(ctx context.Context, target Target, errorCode string) {
+	// Persist the resume checkpoint after daemon shutdown cancels the worker;
+	// this bounded cleanup must finish after service-context cancellation.
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, _ = s.options.Archive.FailGoogleReviewsBackfill(persistCtx, target.Name, target.Location, errorCode)
+}
+
+func (s *Service) SearchArchive(ctx context.Context, request ArchiveSearchRequest) (ArchiveSearchResponse, error) {
+	if s.options.Archive == nil {
+		return ArchiveSearchResponse{}, ErrArchive
+	}
+	if !utf8.ValidString(request.Query) || strings.TrimSpace(request.Query) == "" || len(request.Query) > 256 ||
+		request.Target != "" && !validID(request.Target) {
+		return ArchiveSearchResponse{}, ErrSearch
+	}
+	if request.Page == 0 {
+		request.Page = 1
+	}
+	if request.PageSize == 0 {
+		request.PageSize = 20
+	}
+	if request.Page < 1 || request.Page > 100000 || request.PageSize < 1 || request.PageSize > 100 ||
+		request.Page-1 > math.MaxInt/request.PageSize {
+		return ArchiveSearchResponse{}, ErrSearch
+	}
+	response, err := s.options.Archive.SearchGoogleReviews(ctx, request.Query, request.Target, (request.Page-1)*request.PageSize, request.PageSize)
+	if err != nil {
+		if errors.Is(err, ErrSearch) {
+			return ArchiveSearchResponse{}, ErrSearch
+		}
+		return ArchiveSearchResponse{}, ErrArchive
+	}
+	response.Query = request.Query
+	response.Target = request.Target
+	response.Page = request.Page
+	response.PageSize = request.PageSize
+	return response, nil
 }
 func randomID() string {
 	var data [32]byte
