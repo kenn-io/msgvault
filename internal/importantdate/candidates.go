@@ -35,6 +35,7 @@ type CandidateStore interface {
 	ListImportantDateSubjectsContext(ctx context.Context, ownerUID string) ([]store.ImportantDateSubject, error)
 	ImportantDateIdentityStableContext(ctx context.Context, personID int64) (bool, error)
 	ImportantDateHasOtherPendingContext(ctx context.Context, prefix, key, fingerprint string) (bool, error)
+	ImportantDateCorrectionPendingContext(ctx context.Context, key, fingerprint string) (bool, error)
 }
 
 // Candidates scans current declared facts without inference or external writes.
@@ -215,11 +216,21 @@ func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		if err != nil {
 			return nil, err
 		}
-		if !pending {
-			result = append(result, candidate)
-		} else {
+		if pending {
 			skip("prior_occurrence_requires_reconciliation")
+			continue
 		}
+		if skipped != nil {
+			pending, err = st.ImportantDateCorrectionPendingContext(ctx, candidate.OccurrenceKey, candidate.Fingerprint)
+			if err != nil {
+				return nil, err
+			}
+			if pending {
+				skip("corrected_occurrence_requires_reconciliation")
+				continue
+			}
+		}
+		result = append(result, candidate)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].OccurrenceKey < result[j].OccurrenceKey })
 	return result, nil

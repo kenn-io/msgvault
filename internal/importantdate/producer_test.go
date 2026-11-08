@@ -187,6 +187,10 @@ func TestRunSkipsCorrectedRetainedIssues(t *testing.T) {
 		must.NoError(err)
 		must.True(changed)
 	}
+	preview, err := PreviewCandidates(ctx, st, cfg, now)
+	must.NoError(err)
+	checks.Equal(25, preview.Skipped["corrected_occurrence_requires_reconciliation"])
+	must.Len(preview.Candidates, 1)
 	kata := &deliveryKataFake{}
 	count, more, err := RunOnce(ctx, st, kata, cfg, now)
 	must.NoError(err)

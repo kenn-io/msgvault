@@ -265,11 +265,18 @@ func (s *Store) ImportantDateDeliveryBlockedContext(ctx context.Context, key, fi
 	if err != nil || blocked {
 		return blocked, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ? AND state = 'issue_created' AND fingerprint <> ?)`, key, fingerprint).Scan(&blocked)
+	return s.ImportantDateCorrectionPendingContext(ctx, key, fingerprint)
+}
+
+// ImportantDateCorrectionPendingContext reports a retained issue whose date
+// changed before notification; the owner must inspect and resolve it.
+func (s *Store) ImportantDateCorrectionPendingContext(ctx context.Context, key, fingerprint string) (bool, error) {
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ? AND state = 'issue_created' AND fingerprint <> ?)`, key, fingerprint).Scan(&pending)
 	if err != nil {
 		return false, fmt.Errorf("check corrected important-date delivery: %w", err)
 	}
-	return blocked, nil
+	return pending, nil
 }
 
 // ImportantDateDelivery is a retained occurrence and its delivery status.
