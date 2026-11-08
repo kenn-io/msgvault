@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/carddav"
@@ -23,6 +24,7 @@ func (c *CardDAVController) prepareICloudRequest(
 	if req.Provider != "" || !carddav.IsICloudDiscoveryURL(req.BaseURL) {
 		return req, nil, nil
 	}
+	previous := configured
 	password, err := c.passwordForRequest(ctx, req)
 	if err != nil {
 		return req, nil, err
@@ -42,6 +44,11 @@ func (c *CardDAVController) prepareICloudRequest(
 	origin, ok := carddav.ICloudPartitionOrigin(discovery.HomeURL.String())
 	if !ok {
 		return req, nil, errors.Join(errCardDAVUpstream, carddav.ErrUnsafeHref)
+	}
+	// Preserve the saved spelling for the same iCloud account so a case-only
+	// reconnect does not replace its imported identities or book roles.
+	if previous.Provider == "" && previous.BaseURL == origin && previous.Username != "" && strings.EqualFold(previous.Username, req.Username) {
+		req.Username = previous.Username
 	}
 	req.BaseURL, req.Password = origin, password
 	return req, &discovery, nil
