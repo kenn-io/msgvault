@@ -45,6 +45,14 @@ addresses and handles, maintain contacts, or set up optional profile automation.
 Use [accounts and collections](usage/multi-account.md) to organize sources and
 limit an archive view.
 
+## Archive and search Google reviews
+
+[Google Reviews](usage/google-reviews.md) explains live Google Business Profile
+reads, API-available historical backfill, archive search, and explicitly
+confirmed owner responses through your own approved project. The guide also
+covers pagination limits, retention, setup, and the current Facebook capability
+limitation.
+
 ## Maintain and operate the archive
 
 | Your task | Guide |

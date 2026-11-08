@@ -63,6 +63,7 @@
   import ContextBar from '../explore/ContextBar.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
   import SaveViewDialog from '../saved-views/SaveViewDialog.svelte';
+  import GoogleReviewsWorkspace from '../google-reviews/GoogleReviewsWorkspace.svelte';
   import SourcesWorkspace from '../sources/SourcesWorkspace.svelte';
   import DeletionReview from '../deletions/DeletionReview.svelte';
   import FileFilters from '../files/FileFilters.svelte';
@@ -1326,6 +1327,8 @@
           operationsController,
           () => directoryController.reloadFirstPage()
         )}{/if}
+      {:else if exploreState.current.workspace === 'google-reviews'}
+        <GoogleReviewsWorkspace {client} />
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}

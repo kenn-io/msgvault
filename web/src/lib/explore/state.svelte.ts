@@ -423,7 +423,7 @@ function normalize(value: unknown): ExploreURLState {
     value.workspace === 'people' || value.workspace === 'directory' ? 'people' : value.workspace === 'domains' ? 'domains' : undefined;
   const workspace = value.workspace === 'everything' || value.workspace === 'settings' ||
     value.workspace === 'files' || value.workspace === 'relationships' ||
-    value.workspace === 'sources' ||
+    value.workspace === 'google-reviews' || value.workspace === 'sources' ||
     value.workspace === 'deletions'
     ? value.workspace
     : legacyFacet || value.workspace === 'directory' || value.workspace === 'directory_review' ? 'relationships' : value.workspace === 'operations' ? 'settings' : 'everything';

@@ -79,6 +79,13 @@ func ToolSummaries() []ToolSummary {
 	for _, definition := range definitions {
 		summaries = append(summaries, summarizeTool(definition))
 	}
+	for _, definition := range googleReviewTools(true) {
+		summary := summarizeTool(definition)
+		if definition.name != "google_review_capabilities" {
+			summary.Flag = "--allow-google-review-content"
+		}
+		summaries = append(summaries, summary)
+	}
 	for _, definition := range stableCalendarTools() {
 		summary := summarizeTool(definition)
 		summary.GrantPermission = "backend-dependent"

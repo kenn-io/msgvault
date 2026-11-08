@@ -79,3 +79,13 @@ Optional [semantic search and profile automation](../usage/recommended-configura
 have their own provider configuration. Message embeddings are enabled through
 configuration; people, visual, and document features also require their stated
 consent steps.
+
+## Google Reviews
+
+[Google Reviews](../usage/google-reviews.md) lets an owner inspect live reviews,
+backfill pages returned by the Google Business Profile API into the main archive,
+search archived reviews, and explicitly confirm owner responses through their
+own approved project. Google can omit reviews from later pages, so exhausted
+pagination does not prove lifetime completeness. Facebook Page reviews and
+recommendations remain unavailable while the official read and owner-reply
+contract is unverified.

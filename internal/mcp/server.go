@@ -111,6 +111,9 @@ const ToolGetEmbeddingStatus = "get_embeddings_status"
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
+	GoogleReviews GoogleReviewsBackend
+	// AllowGoogleReviewContent is a separate opt-in for clients that do not retain provider content.
+	AllowGoogleReviewContent bool
 	// DiscoverFamilies reads current archive inventory when a catalog is requested.
 	DiscoverFamilies func(context.Context) *ArchiveFamilies
 	Families         *ArchiveFamilies
@@ -410,6 +413,7 @@ func newMCPServerWithPolicy(
 		savedViews:           opts.SavedViews,
 		meetings:             opts.Meetings,
 		calendar:             opts.Calendar,
+		googleReviews:        opts.GoogleReviews,
 		personAgendaBackend:  opts.PersonAgendaBackend,
 		personTierBackend:    opts.PersonTierBackend,
 		kata:                 opts.Kata,

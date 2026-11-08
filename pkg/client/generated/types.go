@@ -6383,6 +6383,270 @@ func (g GmailIDsResponse) Validate() error {
 	return errors
 }
 
+type GoogleReviewsArchiveSearchResponse struct {
+	Page     int64                         `json:"page"`
+	PageSize int64                         `json:"page_size"`
+	Query    string                        `json:"query" validate:"required"`
+	Results  []GoogleReviewsArchivedReview `json:"results" validate:"required"`
+	Target   *string                       `json:"target,omitzero"`
+	Total    int64                         `json:"total"`
+}
+
+func (g GoogleReviewsArchiveSearchResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.Query, "required"); err != nil {
+		errors = errors.Append("Query", err)
+	}
+	if err := typesValidator.Var(g.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
+	for i, item := range g.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GoogleReviewsArchivedReview struct {
+	ArchivedAt time.Time           `json:"archived_at" validate:"required"`
+	Review     GoogleReviewsReview `json:"review"`
+	Target     string              `json:"target" validate:"required"`
+}
+
+func (g GoogleReviewsArchivedReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.ArchivedAt, "required"); err != nil {
+		errors = errors.Append("ArchivedAt", err)
+	}
+	if v, ok := any(g.Review).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Review", err)
+		}
+	}
+	if err := typesValidator.Var(g.Target, "required"); err != nil {
+		errors = errors.Append("Target", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GoogleReviewsBackfillState struct {
+	ArchivedReviewCount int64      `json:"archived_review_count"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+	CoverageNote        string     `json:"coverage_note" validate:"required"`
+	LastErrorCode       *string    `json:"last_error_code,omitzero"`
+	PagesFetched        int64      `json:"pages_fetched"`
+	ReviewsFetched      int64      `json:"reviews_fetched"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	Status              string     `json:"status" validate:"required"`
+	Target              string     `json:"target" validate:"required"`
+	TotalReviewCount    int64      `json:"total_review_count"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+}
+
+func (g GoogleReviewsBackfillState) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GoogleReviewsCapability struct {
+	Available bool    `json:"available"`
+	Provider  string  `json:"provider" validate:"required"`
+	Read      bool    `json:"read"`
+	Reason    *string `json:"reason,omitzero"`
+	Reply     bool    `json:"reply"`
+}
+
+func (g GoogleReviewsCapability) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GoogleReviewsPreview struct {
+	Comment           string              `json:"comment" validate:"required"`
+	ConfirmationToken *string             `json:"confirmation_token,omitzero"`
+	ExpiresAt         *time.Time          `json:"expires_at,omitempty"`
+	ReceiptID         *string             `json:"receipt_id,omitzero"`
+	Review            GoogleReviewsReview `json:"review"`
+}
+
+func (g GoogleReviewsPreview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.Comment, "required"); err != nil {
+		errors = errors.Append("Comment", err)
+	}
+	if v, ok := any(g.Review).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Review", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GoogleReviewsReceipt struct {
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	ID        string    `json:"id" validate:"required"`
+	Status    string    `json:"status" validate:"required"`
+	UpdatedAt time.Time `json:"updated_at" validate:"required"`
+}
+
+func (g GoogleReviewsReceipt) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GoogleReviewsReply struct {
+	Comment          string  `json:"comment" validate:"required"`
+	PolicyViolation  *string `json:"policyViolation,omitzero"`
+	ReviewReplyState *string `json:"reviewReplyState,omitzero"`
+	UpdateTime       *string `json:"updateTime,omitzero"`
+}
+
+func (g GoogleReviewsReply) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GoogleReviewsRequest struct {
+	Action            string  `json:"action" validate:"required"`
+	Comment           *string `json:"comment,omitzero"`
+	ConfirmationToken *string `json:"confirmation_token,omitzero"`
+	Confirmed         *bool   `json:"confirmed,omitempty"`
+	PageSize          *int64  `json:"page_size,omitempty"`
+	PageToken         *string `json:"page_token,omitzero"`
+	ReceiptID         *string `json:"receipt_id,omitzero"`
+	ReviewID          *string `json:"review_id,omitzero"`
+	Target            *string `json:"target,omitzero"`
+}
+
+func (g GoogleReviewsRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type GoogleReviewsResult struct {
+	ArchiveSync           *GoogleReviewsBackfillState `json:"archive_sync,omitempty"`
+	Capabilities          []GoogleReviewsCapability   `json:"capabilities,omitempty"`
+	CredentialChangeToken *string                     `json:"credential_change_token,omitzero"`
+	NextPageToken         *string                     `json:"next_page_token,omitzero"`
+	Preview               *GoogleReviewsPreview       `json:"preview,omitempty"`
+	Receipt               *GoogleReviewsReceipt       `json:"receipt,omitempty"`
+	Review                *GoogleReviewsReview        `json:"review,omitempty"`
+	Reviews               []GoogleReviewsReview       `json:"reviews,omitempty"`
+	Targets               []GoogleReviewsTargetInfo   `json:"targets,omitempty"`
+}
+
+func (g GoogleReviewsResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if g.ArchiveSync != nil {
+		if v, ok := any(g.ArchiveSync).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ArchiveSync", err)
+			}
+		}
+	}
+	for i, item := range g.Capabilities {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Capabilities[%d]", i), err)
+			}
+		}
+	}
+	if g.Preview != nil {
+		if v, ok := any(g.Preview).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Preview", err)
+			}
+		}
+	}
+	if g.Receipt != nil {
+		if v, ok := any(g.Receipt).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Receipt", err)
+			}
+		}
+	}
+	if g.Review != nil {
+		if v, ok := any(g.Review).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Review", err)
+			}
+		}
+	}
+	for i, item := range g.Reviews {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Reviews[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range g.Targets {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Targets[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GoogleReviewsReview struct {
+	Comment     *string               `json:"comment,omitzero"`
+	CreateTime  *string               `json:"createTime,omitzero"`
+	Name        *string               `json:"name,omitzero"`
+	ReviewID    *string               `json:"reviewId,omitzero"`
+	ReviewReply *GoogleReviewsReply   `json:"reviewReply,omitempty"`
+	Reviewer    GoogleReviewsReviewer `json:"reviewer"`
+	StarRating  *string               `json:"starRating,omitzero"`
+	UpdateTime  *string               `json:"updateTime,omitzero"`
+}
+
+func (g GoogleReviewsReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if g.ReviewReply != nil {
+		if v, ok := any(g.ReviewReply).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReviewReply", err)
+			}
+		}
+	}
+	if v, ok := any(g.Reviewer).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reviewer", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GoogleReviewsReviewer struct {
+	DisplayName     *string `json:"displayName,omitzero"`
+	IsAnonymous     *bool   `json:"isAnonymous,omitempty"`
+	ProfilePhotoURL *string `json:"profilePhotoUrl,omitzero"`
+}
+
+type GoogleReviewsTargetInfo struct {
+	Enabled        bool   `json:"enabled"`
+	Name           string `json:"name" validate:"required"`
+	Provider       string `json:"provider" validate:"required"`
+	RepliesEnabled bool   `json:"replies_enabled"`
+}
+
+func (g GoogleReviewsTargetInfo) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type HealthResponse struct {
 	AnalyticsEngine  *string          `json:"analytics_engine,omitzero"`
 	APISchemaVersion *string          `json:"api_schema_version,omitzero"`

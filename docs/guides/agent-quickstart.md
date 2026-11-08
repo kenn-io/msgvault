@@ -229,6 +229,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
+| `get_google_review` | read | `--allow-google-review-content` | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |
@@ -249,7 +250,9 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `google_review_capabilities` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
+| `list_google_reviews` | read | `--allow-google-review-content` | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
 | `list_meeting_action_items` | read | — | owner-only |
@@ -259,6 +262,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_thread` | read | — | message.read |
 | `prepare_kata_evidence` | read | — | owner-only |
 | `preview_carddav_publication` | read | — | owner-only |
+| `preview_google_review_reply` | read | `--allow-google-review-content` | owner-only |
 | `preview_person_tiers` | read | — | owner-only |
 | `query_sql` | read | — | owner-only |
 | `run_saved_view` | read | — | owner-only |

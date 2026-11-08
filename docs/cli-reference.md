@@ -1960,6 +1960,71 @@ failure detail from the attachment row.
 
 ---
 
+## google-reviews
+
+Read live Google Business Profile reviews, archive and search returned pages,
+and submit an exact owner-approved reply through the daemon. Configure an
+own-project target first; see [Google Reviews](usage/google-reviews.md)
+and [target configuration](configuration.md#google_reviews).
+
+```bash
+msgvault google-reviews capabilities
+msgvault google-reviews list shop --page-size 20
+msgvault google-reviews get shop REVIEW_ID
+msgvault google-reviews backfill shop
+msgvault google-reviews archive-status shop
+msgvault google-reviews search "delivery helpful" --target shop
+msgvault google-reviews preview-reply shop REVIEW_ID < reply.txt
+msgvault google-reviews confirm-reply --confirmation-token TOKEN --confirmed
+msgvault google-reviews receipt RECEIPT_ID
+```
+
+| Command or flag | Behavior |
+|---|---|
+| `capabilities` | Report provider availability and configured target names |
+| `list TARGET` | Read a fresh page; `--page-size` defaults to 20, maximum 50; `--page-token` uses the previous result's opaque cursor |
+| `get TARGET REVIEW_ID` | Read one current review |
+| `backfill TARGET` | Start or resume owner-triggered GET-only archive pagination; inspect progress with `archive-status` |
+| `archive-status TARGET` | Report pages, records returned, unique archived reviews, reported total, and the API exhaustion/error state |
+| `search QUERY` | Search archived review text, reviewer names, ratings, and replies; queries are limited to 256 UTF-8 bytes; `--target`, `--page`, and `--page-size` filter and paginate results |
+| `preview-reply TARGET REVIEW_ID` | Read the exact reply from stdin, up to 4096 UTF-8 bytes; return the current review, reply, expiring token, and receipt ID |
+| `confirm-reply --confirmation-token TOKEN --confirmed` | Confirm prior specific owner consent to the exact preview and attempt the reply once |
+| `receipt RECEIPT_ID` | Inspect the original content-free receipt without another write |
+| `--json` | Accepted on all subcommands; operational results always use JSON |
+| `authorize TARGET [--headless]` | Authorize the target's explicit named own-project app on the daemon host; `--headless` uses manual authorization |
+| `disconnect TARGET` | Remove only that app/account's dedicated Google Reviews token |
+
+The daemon must be running with owner authentication for authorization or
+disconnect: it invalidates outstanding previews before changing credentials.
+These setup commands refuse remote and agent modes. Google Reviews grants
+are separate from Gmail and Contacts; the Google management scope permits
+writes even if this target currently has `replies_enabled = false`.
+Backfill also requires an owner API key or browser session; keyless loopback,
+delegated, and remote-client identities cannot start it.
+
+Previews expire after five minutes and receipts after ten minutes. Retain the
+receipt ID from the preview until the outcome is known. `submitted` means
+Google accepted the request; moderation may delay or reject publication.
+After `unknown`, inspect the live review and receipt before creating new
+consent. Confirmation is never automatically retried. The daemon checks the
+current review before writing, but Google provides no conditional write, so
+an external change can still race that final check.
+
+Owner-key holders share consent authority across CLI invocations. Browser
+sessions keep separate previews and receipts. Keyless access cannot issue an
+actionable preview, confirm, or read receipts; delegated and remote-client
+credentials are denied. The CLI prints live provider content: use it only in
+a terminal/client that does not retain it. Review search returns matching
+archive rows as JSON; there is no separate review export command. Backfill
+stores the returned records in the main archive. Google
+documents a 30-calendar-day storage limit, which conflicts with permanent
+retention; this feature does not claim policy compliance. API pagination
+exhaustion does not guarantee lifetime coverage because Google can omit reviews
+from later pages. Facebook reviews remain unavailable until the provider
+contract is verified.
+
+---
+
 ## add-calendar
 
 Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.
@@ -4568,7 +4633,17 @@ msgvault mcp [flags]
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
+| `--allow-google-review-content` | `false` | Expose live Google review reads and non-actionable reply assistance only to explicitly chosen clients that do not retain provider content; no confirmation, submission, or receipt tool is exposed. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
+
+Google Reviews expose only `google_review_capabilities` by default.
+`--allow-google-review-content` independently enables
+`list_google_reviews`, `get_google_review`, and
+`preview_google_review_reply`. The last tool prepares assistance without
+an executable confirmation token or receipt. It cannot submit a reply, even
+with write tools or accepted elicitation. Create a fresh actionable preview
+in the owner CLI/Web workflow for each submission. Retaining MCP clients are
+unsupported; msgvault cannot control another client's transcript storage.
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.
 
@@ -4686,6 +4761,12 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
 auto-started local daemons default to read-only. See the
 [MCP guide](usage/chat.md#native-daemon-endpoints) for client setup and confirmation.
+
+`--mcp-allow-google-review-content` is a separate read-content opt-in. It
+does not require or enable writes. It exposes live review reads and reply
+assistance to explicitly chosen non-retaining clients, with no executable
+token, submission, or receipt tool. See [Google Reviews MCP
+behavior](#mcp).
 
 ---
 

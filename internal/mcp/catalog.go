@@ -195,6 +195,9 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			}
 		}
 	}
+	if opts.GoogleReviews != nil && !opts.DelegatedOnly {
+		definitions = append(definitions, googleReviewTools(opts.AllowGoogleReviewContent)...)
+	}
 	if opts.Calendar != nil {
 		definitions = append(definitions, stableCalendarTools()...)
 	}

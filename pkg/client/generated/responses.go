@@ -1549,6 +1549,44 @@ type GetFileContentErrorResponseJSON503 = ErrorResponse
 
 type GetFileContentErrorResponseJSONDefault = ErrorResponse
 
+type SearchGoogleReviewsArchiveResponse = GoogleReviewsArchiveSearchResponse
+
+type SearchGoogleReviewsArchiveErrorResponse = ErrorResponse
+
+type SearchGoogleReviewsArchiveErrorResponseJSON = ErrorResponse
+
+type SearchGoogleReviewsArchiveErrorResponseJSON403 = ErrorResponse
+
+type SearchGoogleReviewsArchiveErrorResponseJSON503 = ErrorResponse
+
+type SearchGoogleReviewsArchiveErrorResponseJSONDefault = ErrorResponse
+
+type ControlGoogleReviewsResponse = GoogleReviewsResult
+
+type ControlGoogleReviewsErrorResponse = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON403 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON404 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON409 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON413 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON415 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON429 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON500 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON502 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSON503 = ErrorResponse
+
+type ControlGoogleReviewsErrorResponseJSONDefault = ErrorResponse
+
 type GetHealthResponse = HealthResponse
 
 type GetHealthErrorResponse = ErrorResponse
@@ -5538,6 +5576,37 @@ type GetFileContentResp struct {
 	JSON500      *GetFileContentErrorResponseJSON500
 	JSON503      *GetFileContentErrorResponseJSON503
 	JSONDefault  *GetFileContentErrorResponseJSONDefault
+}
+
+type SearchGoogleReviewsArchiveResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchGoogleReviewsArchiveResponse
+	JSON400      *SearchGoogleReviewsArchiveErrorResponse
+	JSON401      *SearchGoogleReviewsArchiveErrorResponseJSON
+	JSON403      *SearchGoogleReviewsArchiveErrorResponseJSON403
+	JSON503      *SearchGoogleReviewsArchiveErrorResponseJSON503
+	JSONDefault  *SearchGoogleReviewsArchiveErrorResponseJSONDefault
+}
+
+type ControlGoogleReviewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ControlGoogleReviewsResponse
+	JSON400      *ControlGoogleReviewsErrorResponse
+	JSON401      *ControlGoogleReviewsErrorResponseJSON
+	JSON403      *ControlGoogleReviewsErrorResponseJSON403
+	JSON404      *ControlGoogleReviewsErrorResponseJSON404
+	JSON409      *ControlGoogleReviewsErrorResponseJSON409
+	JSON413      *ControlGoogleReviewsErrorResponseJSON413
+	JSON415      *ControlGoogleReviewsErrorResponseJSON415
+	JSON429      *ControlGoogleReviewsErrorResponseJSON429
+	JSON500      *ControlGoogleReviewsErrorResponseJSON500
+	JSON502      *ControlGoogleReviewsErrorResponseJSON502
+	JSON503      *ControlGoogleReviewsErrorResponseJSON503
+	JSONDefault  *ControlGoogleReviewsErrorResponseJSONDefault
 }
 
 type GetHealthResp struct {

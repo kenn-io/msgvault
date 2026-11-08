@@ -527,6 +527,14 @@ type ClientInterface interface {
 	GetFileContent(ctx context.Context, options *GetFileContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetFileContentResponse, error)
 	GetFileContentWithResponse(ctx context.Context, options *GetFileContentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetFileContentResp, error)
 
+	// SearchGoogleReviewsArchive Search archived Google reviews
+	SearchGoogleReviewsArchive(ctx context.Context, options *SearchGoogleReviewsArchiveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchGoogleReviewsArchiveResponse, error)
+	SearchGoogleReviewsArchiveWithResponse(ctx context.Context, options *SearchGoogleReviewsArchiveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchGoogleReviewsArchiveResp, error)
+
+	// ControlGoogleReviews Read live Google reviews, check archive backfill status, start a backfill, or confirm an exact owner reply
+	ControlGoogleReviews(ctx context.Context, options *ControlGoogleReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlGoogleReviewsResponse, error)
+	ControlGoogleReviewsWithResponse(ctx context.Context, options *ControlGoogleReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlGoogleReviewsResp, error)
+
 	// GetHealth Get authenticated health details
 	GetHealth(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetHealthResponse, error)
 	GetHealthWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetHealthResp, error)
@@ -8827,6 +8835,133 @@ func (c *Client) GetFileContent(ctx context.Context, options *GetFileContentRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/files/{id}/content")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchGoogleReviewsArchive Search archived Google reviews
+func (c *Client) SearchGoogleReviewsArchive(ctx context.Context, options *SearchGoogleReviewsArchiveRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchGoogleReviewsArchiveResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/google-reviews/archive/search",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SearchGoogleReviewsArchiveResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SearchGoogleReviewsArchiveErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SearchGoogleReviewsArchiveErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SearchGoogleReviewsArchiveResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SearchGoogleReviewsArchiveResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/google-reviews/archive/search")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ControlGoogleReviews Read live Google reviews, check archive backfill status, start a backfill, or confirm an exact owner reply
+func (c *Client) ControlGoogleReviews(ctx context.Context, options *ControlGoogleReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlGoogleReviewsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/google-reviews/control",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ControlGoogleReviewsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ControlGoogleReviewsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ControlGoogleReviewsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ControlGoogleReviewsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ControlGoogleReviewsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/google-reviews/control")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

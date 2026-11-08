@@ -35,13 +35,13 @@ describe('AppSidebar', () => {
     expect(primary().getByRole('button', { name: duplicateCount === 500 ? 'People 500+' : 'People 4' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');
   });
 
-  it('lists four places with the active one current', () => {
+  it('lists five places with the active one current', () => {
     renderSidebar();
     expect(
       primary()
         .getAllByRole('button')
         .map((b) => b.getAttribute('aria-label')),
-    ).toEqual(['Messages', 'People', 'Files', 'Sources']);
+    ).toEqual(['Messages', 'People', 'Files', 'Sources', 'Google Reviews']);
     expect(primary().getByRole('button', { name: 'Messages' }).getAttribute('aria-current')).toBe('page');
     expect(primary().getByRole('button', { name: 'Files' }).hasAttribute('aria-current')).toBe(false);
   });

@@ -575,6 +575,24 @@ func (g GetEmbeddingStatusQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type SearchGoogleReviewsArchiveQuery struct {
+	// Q Full-text query over archived review text, reviewer names, ratings, and replies (maximum 256 UTF-8 bytes)
+	Q string `json:"q" validate:"required,min=1"`
+
+	// Target Restrict results to one archive target
+	Target *string `json:"target,omitempty"`
+
+	// Page One-based result page (default 1)
+	Page *int64 `json:"page,omitempty" validate:"omitempty,gte=1,lte=100000"`
+
+	// PageSize Results per page (default 20, maximum 100)
+	PageSize *int64 `json:"page_size,omitempty" validate:"omitempty,gte=1,lte=100"`
+}
+
+func (s SearchGoogleReviewsArchiveQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type ListIdentityMatchCandidatesQuery struct {
 	// State Candidate state filter (candidate, accepted, rejected, conflict); repeat or comma-separate for multiple values
 	State *string `json:"state,omitempty"`

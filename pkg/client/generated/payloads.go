@@ -110,6 +110,8 @@ type SearchFilesBody = FileSearchHTTPRequest
 
 type SuggestFilesBody = FileSuggestionHTTPRequest
 
+type ControlGoogleReviewsBody = GoogleReviewsRequest
+
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
