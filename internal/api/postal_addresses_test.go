@@ -38,27 +38,20 @@ func TestPostalTextOnlyCreationKeepsCurrentTextSeparateFromSnapshot(t *testing.T
 	assert.Equal(input.OriginalValue, raw.OriginalValue)
 }
 
-func TestPostalTextOnlyReplacementDistinguishesNewTextFromOriginal(t *testing.T) {
+func TestPostalTextOnlyReplacementRetainsCurrentText(t *testing.T) {
 	for _, tc := range []struct {
 		name, current, original string
-		wantText                bool
 	}{
-		{"new text", "New address", "Old address", true},
-		{"preserved source", "Old address", "Old address", true},
+		{"new text", "New address", "Old address"},
+		{"preserved source", "Old address", "Old address"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
 			input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: tc.current, OriginalInput: &postaladdress.Input{AddressKind: "postal", OriginalValue: tc.original}}
 			request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}, Supersede: []int64{1}}}
 			patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal}}}}
-			require.NoError(capturePostalPatchOriginals(request, &patch))
-			if tc.wantText {
-				require.NotNil(patch.Addresses.Add[0].FreeText)
-				assert.Equal(tc.current, *patch.Addresses.Add[0].FreeText)
-			} else {
-				assert.Nil(patch.Addresses.Add[0].FreeText)
-			}
+			require.NoError(t, capturePostalPatchOriginals(request, &patch))
+			require.NotNil(t, patch.Addresses.Add[0].FreeText)
+			assert.Equal(t, tc.current, *patch.Addresses.Add[0].FreeText)
 		})
 	}
 }
