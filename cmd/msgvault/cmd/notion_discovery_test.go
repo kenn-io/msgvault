@@ -96,7 +96,7 @@ func TestNotionSummaryReportsCountOnlyScopeAndCoverage(t *testing.T) {
 	var out bytes.Buffer
 	writeNotionMeetingsSummary(&out, &notionmeetings.ImportSummary{IdentityProvenance: "pat_owner", ScopeCounts: map[string]int{"page_roots": 2, "data_source_roots": 1, "meeting_roots": 3, "accessible_search": 1}, CoverageReasons: map[string]int{"query_cap": 1, "search_best_effort": 1}, WorkRemaining: 4, PartialCoverage: true})
 	assert.Contains(out.String(), "Identity: PAT owner")
-	assert.Contains(out.String(), "page roots: 2")
+	assert.Contains(out.String(), "Configured: 2 pages")
 	assert.Contains(out.String(), "Work remaining: 4")
 	assert.Contains(out.String(), "Query limit: 1")
 }

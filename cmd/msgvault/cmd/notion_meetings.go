@@ -253,7 +253,7 @@ func notionImportOptions(source config.NotionMeetingsSource) notionmeetings.Impo
 }
 func writeNotionScope(out io.Writer, opts notionmeetings.ImportOptions) {
 	search := opts.SearchAccessible == nil || *opts.SearchAccessible
-	_, _ = fmt.Fprintf(out, "  Scope: page roots: %d; data-source roots: %d; meeting IDs: %d; accessible search: %t\n", len(opts.RootPageIDs), len(opts.RootDataSourceIDs), len(opts.MeetingBlockIDs), search)
+	_, _ = fmt.Fprintf(out, "  Configured: %d pages; %d data sources; %d meetings; search: %t\n", len(opts.RootPageIDs), len(opts.RootDataSourceIDs), len(opts.MeetingBlockIDs), search)
 }
 
 var addNotionMeetingsCmd = &cobra.Command{
@@ -427,7 +427,7 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 	_, _ = fmt.Fprintf(out, "  Meetings added:     %d\n", summary.MeetingsAdded)
 	_, _ = fmt.Fprintf(out, "  Meetings updated:   %d\n", summary.MeetingsUpdated)
 	_, _ = fmt.Fprintf(out, "  Identity: %s\n", notionIdentityLabel(summary.IdentityProvenance))
-	_, _ = fmt.Fprintf(out, "  Scope: page roots: %d; data-source roots: %d; meeting IDs: %d; accessible search: %t\n", summary.ScopeCounts["page_roots"], summary.ScopeCounts["data_source_roots"], summary.ScopeCounts["meeting_roots"], summary.ScopeCounts["accessible_search"] > 0)
+	_, _ = fmt.Fprintf(out, "  Configured: %d pages; %d data sources; %d meetings; search: %t\n", summary.ScopeCounts["page_roots"], summary.ScopeCounts["data_source_roots"], summary.ScopeCounts["meeting_roots"], summary.ScopeCounts["accessible_search"] > 0)
 	_, _ = fmt.Fprintf(out, "  Work remaining: %d\n", summary.WorkRemaining)
 	reasons := make([]string, 0, len(summary.CoverageReasons))
 	for reason := range summary.CoverageReasons {

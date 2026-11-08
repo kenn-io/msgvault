@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var ErrUnknownIdentity = errors.New("unknown_identity: set token_type=pat for verified PAT ownership or configure user_id")
+var ErrUnknownIdentity = errors.New("notion user unknown; set token_type=pat for personal tokens or configure user_id")
 
 type Identity struct {
 	UserID      string `json:"user_id"`
