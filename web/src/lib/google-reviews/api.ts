@@ -54,7 +54,7 @@ export async function searchArchive(
 ): Promise<GoogleReviewsArchiveSearchResponse> {
   const { data, error, response } = await searchGoogleReviewsArchive(params, { ...client, signal, cache: 'no-store' });
   if (data && response.ok) return data;
-  if (response.status === 400) throw new Error('Enter a full-text query of up to 256 UTF-8 bytes.');
+  if (response.status === 400) throw new Error('Enter search text of up to 256 UTF-8 bytes without message filters.');
   if (response.status === 403) throw new Error('Google Reviews archive search requires owner access.');
   if (error?.error === 'google_reviews_archive_unavailable') throw new Error('Google Reviews archive is unavailable.');
   throw new Error('Google Reviews archive search failed.');

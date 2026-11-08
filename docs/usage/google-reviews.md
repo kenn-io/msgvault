@@ -122,6 +122,9 @@ fields that `reviews.list` may return.
 
 ## Backfill and search the archive
 
+Archive search accepts text terms and quoted phrases. Message search filters,
+such as `after:`, are not supported; remove them before searching reviews.
+
 Start or resume backfill for an enabled target with an owner API key or owner
 browser session. Keyless loopback, delegated, and remote-client access cannot
 start a backfill:

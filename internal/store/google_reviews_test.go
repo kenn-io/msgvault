@@ -220,3 +220,12 @@ func TestGoogleReviewsArchiveSearchPaginatesAliasesWithSameReviewID(t *testing.T
 	require.Len(second.Results, 1)
 	assert.NotEqual(first.Results[0].Target, second.Results[0].Target)
 }
+
+func TestGoogleReviewsArchiveSearchRejectsMessageFilters(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	for _, query := range []string{"after:2025-01-01 helpful", "after:not-a-date helpful", "from:owner@example.com helpful", "in:4 helpful"} {
+		_, err := st.SearchGoogleReviews(t.Context(), query, "", 0, 10)
+		require.ErrorIs(err, googlereviews.ErrSearch, query)
+	}
+}

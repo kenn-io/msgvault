@@ -2001,3 +2001,79 @@ func TestWaitForDaemonExitWithProgressQuietOnFastExit(t *testing.T) {
 	require.True(t, exited, "wait must observe daemon exit")
 	assert.Empty(t, out.String(), "fast exits must stay quiet")
 }
+
+type idleGoogleReviewsArchive struct{ done chan struct{} }
+
+func (*idleGoogleReviewsArchive) BeginGoogleReviewsBackfill(_ context.Context, target, location string) (googlereviews.BackfillState, error) {
+	return googlereviews.BackfillState{Target: target, Location: location, Status: "running"}, nil
+}
+func (a *idleGoogleReviewsArchive) ApplyGoogleReviewsPage(_ context.Context, target, location, _ string, _ googlereviews.Page) (googlereviews.BackfillState, error) {
+	close(a.done)
+	return googlereviews.BackfillState{Target: target, Location: location, Status: "api_exhausted"}, nil
+}
+func (*idleGoogleReviewsArchive) FailGoogleReviewsBackfill(context.Context, string, string, string) (googlereviews.BackfillState, error) {
+	return googlereviews.BackfillState{}, nil
+}
+func (*idleGoogleReviewsArchive) GoogleReviewsBackfillState(_ context.Context, target, location string) (googlereviews.BackfillState, error) {
+	return googlereviews.BackfillState{Target: target, Location: location, Status: "not_started"}, nil
+}
+func (*idleGoogleReviewsArchive) SearchGoogleReviews(context.Context, string, string, int, int) (googlereviews.ArchiveSearchResponse, error) {
+	return googlereviews.ArchiveSearchResponse{}, nil
+}
+
+type idleGoogleReviewsProvider struct{ release <-chan struct{} }
+
+func (p *idleGoogleReviewsProvider) List(ctx context.Context, _, _ string, _ int) (googlereviews.Page, error) {
+	select {
+	case <-p.release:
+		return googlereviews.Page{}, nil
+	case <-ctx.Done():
+		return googlereviews.Page{}, ctx.Err()
+	}
+}
+func (*idleGoogleReviewsProvider) Get(context.Context, string) (googlereviews.Review, error) {
+	return googlereviews.Review{}, googlereviews.ErrNotFound
+}
+func (*idleGoogleReviewsProvider) UpdateReply(context.Context, string, string) (googlereviews.Reply, error) {
+	return googlereviews.Reply{}, googlereviews.ErrDenied
+}
+
+func TestGoogleReviewsBackfillPreventsIdleShutdown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		idle := make(chan struct{}, 1)
+		tracker := api.NewIdleTracker(20*time.Millisecond, func() { idle <- struct{}{} })
+		archive := &idleGoogleReviewsArchive{done: make(chan struct{})}
+		release := make(chan struct{})
+		target := googlereviews.Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: "accounts/a/locations/l", Enabled: true, OwnProject: true}
+		service := googlereviews.NewService(googlereviews.Options{
+			Archive: archive,
+			Targets: func(context.Context) ([]googlereviews.Target, error) { return []googlereviews.Target{target}, nil },
+			Provider: func(context.Context, googlereviews.Target) (googlereviews.Provider, string, error) {
+				return &idleGoogleReviewsProvider{release: release}, "binding", nil
+			},
+			BeginBackfillWork: tracker.BeginWorkContext,
+		})
+		defer service.Close()
+		_, err := service.Execute(t.Context(), "owner", googlereviews.Request{Action: "backfill", Target: target.Name})
+		require.NoError(err)
+		go tracker.Run(t.Context())
+		synctest.Wait()
+		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-idle:
+			assert.Fail("idle shutdown fired during backfill")
+		default:
+		}
+		close(release)
+		<-archive.done
+		synctest.Wait()
+		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-idle:
+		default:
+			assert.Fail("idle shutdown did not resume after backfill")
+		}
+	})
+}

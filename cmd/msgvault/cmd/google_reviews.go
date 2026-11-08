@@ -248,7 +248,7 @@ func newGoogleReviewOAuthManager(ctx context.Context, cfg *config.Config, target
 	}
 	return manager.WithTokenNamespace(googleReviewNamespace(target.OAuthApp)), nil
 }
-func newDaemonGoogleReviews(cfg *config.Config, gate api.OperationGate, archives ...googlereviews.Archive) *googlereviews.Service {
+func newDaemonGoogleReviews(cfg *config.Config, gate api.OperationGate, idle *api.IdleTracker, archives ...googlereviews.Archive) *googlereviews.Service {
 	fresh := func() (*config.Config, error) {
 		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
 		if err != nil {
@@ -265,7 +265,8 @@ func newDaemonGoogleReviews(cfg *config.Config, gate api.OperationGate, archives
 		archive = archives[0]
 	}
 	return googlereviews.NewService(googlereviews.Options{
-		Archive: archive,
+		Archive:           archive,
+		BeginBackfillWork: idle.BeginWorkContext,
 		BeginArchiveWrite: func(ctx context.Context) (func(), bool) {
 			if gate == nil {
 				return func() {}, true

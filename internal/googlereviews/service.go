@@ -18,6 +18,7 @@ type Options struct {
 	Provider          func(context.Context, Target) (Provider, string, error)
 	Archive           Archive
 	BeginArchiveWrite func(context.Context) (func(), bool)
+	BeginBackfillWork func(context.Context) (func(), bool)
 }
 type pendingReply struct {
 	principal string
@@ -29,9 +30,10 @@ type pendingReply struct {
 	expires   time.Time
 }
 type backfillRun struct {
-	target Target
-	cancel context.CancelFunc
-	done   chan struct{}
+	target      Target
+	cancel      context.CancelFunc
+	releaseIdle func()
+	done        chan struct{}
 }
 
 func credentialKey(target Target) string {
@@ -350,8 +352,17 @@ func (s *Service) startBackfill(ctx context.Context, targetName string) (*Result
 		state = withCoverageNote(state)
 		return &Result{ArchiveSync: &state}, nil
 	}
+	releaseIdle := func() {}
+	if s.options.BeginBackfillWork != nil {
+		var ok bool
+		releaseIdle, ok = s.options.BeginBackfillWork(ctx)
+		if !ok {
+			s.mu.Unlock()
+			return nil, ErrUnavailable
+		}
+	}
 	workerCtx, cancel := context.WithCancel(s.backfillCtx)
-	run := &backfillRun{target: target, cancel: cancel, done: make(chan struct{})}
+	run := &backfillRun{target: target, cancel: cancel, releaseIdle: releaseIdle, done: make(chan struct{})}
 	s.backfillActive[key] = run
 	// Add while holding mu so Close cannot begin Wait before this worker is
 	// accounted for.
@@ -442,11 +453,12 @@ func (s *Service) finishBackfill(key string) {
 	s.mu.Lock()
 	run := s.backfillActive[key]
 	delete(s.backfillActive, key)
+	s.mu.Unlock()
 	if run != nil {
 		run.cancel()
+		run.releaseIdle()
 		close(run.done)
 	}
-	s.mu.Unlock()
 	s.backfills.Done()
 }
 

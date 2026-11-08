@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"time"
 
@@ -312,6 +313,13 @@ func (s *Store) SearchGoogleReviews(ctx context.Context, query, target string, o
 		return googlereviews.ArchiveSearchResponse{}, googlereviews.ErrSearch
 	}
 	parsed := search.Parse(query)
+	// Review search supports text only. Do not silently discard message-only
+	// operators or invalid operator values from an otherwise valid query.
+	textOnly := *parsed
+	textOnly.TextTerms = nil
+	if parsed.Err() != nil || !reflect.DeepEqual(textOnly, search.Query{}) {
+		return googlereviews.ArchiveSearchResponse{}, googlereviews.ErrSearch
+	}
 	ftsArg := s.dialect.BuildFTSArg(parsed.TextTerms)
 	if ftsArg == "" {
 		return googlereviews.ArchiveSearchResponse{}, googlereviews.ErrSearch
