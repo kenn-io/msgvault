@@ -28,7 +28,7 @@ describe('RecurringTaskForm', () => {
     localStorage.setItem('msgvault.recurring-draft.uid.person-seven', '{broken');
     const fetchMock = vi.fn<typeof fetch>();
     render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
-    await screen.findByText(/saved draft or person identity could not be resolved/i);
+    await screen.findByText(/cannot load saved drafts for this person/i);
     expect(screen.queryByRole('button', { name: 'Create recurring task' })).toBeNull();
     expect(localStorage.getItem('msgvault.recurring-draft.uid.person-seven')).toBe('{broken');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -169,7 +169,7 @@ describe('RecurringTaskForm', () => {
     localStorage.setItem('msgvault.recurring-draft.7', JSON.stringify(legacy));
     const fetchMock = vi.fn<typeof fetch>();
     render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 8, personUIDs: ['survivor', 'person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
-    await screen.findByText(/saved draft or person identity could not be resolved/i);
+    await screen.findByText(/cannot load saved drafts for this person/i);
     expect(localStorage.getItem('msgvault.recurring-draft.7')).toBe(JSON.stringify(legacy));
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -201,7 +201,7 @@ describe('RecurringTaskForm', () => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });
     const fetchMock = vi.fn<typeof fetch>();
     render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
-    await screen.findByText(/cannot safely coordinate/i);
+    await screen.findByText(/use a supported browser/i);
     expect(screen.queryByRole('button', { name: 'Create recurring task' })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });

@@ -94,7 +94,7 @@
 
   onMount(() => {
     if (!navigator.locks) {
-      notice = 'This browser cannot safely coordinate recurring task drafts. Open this task in a supported browser.';
+      notice = 'Use a supported browser to open recurring task drafts.';
       return;
     }
     void navigator.locks.request(`${storagePrefix}lock`, { ifAvailable: true }, async (lock) => {
@@ -145,10 +145,10 @@
         }
         storageBlocked = false;
         initialized = true;
-      } catch { notice = 'A saved draft or person identity could not be resolved safely. Check Kata and any older drafts before starting another request.'; }
+      } catch { notice = 'Cannot load saved drafts for this person. Check Kata and older drafts before creating another task.'; }
       await new Promise<void>((resolve) => { releaseLock = resolve; });
     }).catch(() => {
-      if (active) notice = 'This browser cannot safely coordinate recurring task drafts. Try again later.';
+      if (active) notice = 'This browser cannot open the draft. Try again later.';
     });
   });
   $effect(() => {
