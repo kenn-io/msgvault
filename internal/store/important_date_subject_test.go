@@ -27,7 +27,7 @@ func TestImportantDateSubjectExplicitRecord(t *testing.T) {
 	checks.Equal(created.UID, items[0].UID)
 	input.Date.Day = nil
 	_, err = st.CreateImportantDateSubjectContext(t.Context(), input)
-	checks.Error(err)
+	must.Error(err)
 }
 
 func TestImportantDateSubjectUpdateAndWithdrawal(t *testing.T) {

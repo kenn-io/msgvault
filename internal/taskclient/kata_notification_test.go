@@ -27,5 +27,5 @@ func TestKataNotifyIssue(t *testing.T) {
 	key := "notify." + base64.RawURLEncoding.EncodeToString([]byte("owner/assistant"))
 	checks.Contains(updated.Metadata, key)
 	native.Endpoint(server).CloseIssue(t, issue.UID)
-	checks.Error(client.NotifyIssue(t.Context(), katatest.Project, issue.UID, "owner/assistant", "Review preparation item"))
+	must.Error(client.NotifyIssue(t.Context(), katatest.Project, issue.UID, "owner/assistant", "Review preparation item"))
 }

@@ -67,10 +67,10 @@ func TestImportantDateConsentDispatchRequiresGrant(t *testing.T) {
 }
 
 func TestImportantDateConsentRefusesUnknownSubject(t *testing.T) {
-	checks := assert.New(t)
+	must := require.New(t)
 	st := storetest.New(t).Store
 	err := st.SetImportantDateConsentContext(t.Context(), "person/missing-example", "private-example", "owner/agent", true)
-	checks.Error(err)
+	must.Error(err)
 }
 
 // PostgreSQL must keep both the subject and its parent locked throughout the
@@ -101,7 +101,7 @@ func TestImportantDateDispatchLocksEligibilityPeoplePostgreSQL(t *testing.T) {
 		for _, personID := range []int64{child.ID, parent.ID} {
 			var id int64
 			err := st.DB().QueryRowContext(ctx, `SELECT id FROM persons WHERE id = $1 FOR UPDATE NOWAIT`, personID).Scan(&id)
-			checks.ErrorContains(err, "could not obtain lock")
+			must.ErrorContains(err, "could not obtain lock")
 		}
 		return nil
 	})

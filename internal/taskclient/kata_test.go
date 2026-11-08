@@ -122,5 +122,5 @@ func TestProjectUIDRejectsChangedCachedProject(t *testing.T) {
 	checks.Equal("project-uid", uid)
 	projectID.Store(2)
 	_, err = client.ProjectUID(t.Context(), "example")
-	checks.ErrorIs(err, ErrWrongProject)
+	must.ErrorIs(err, ErrWrongProject)
 }
