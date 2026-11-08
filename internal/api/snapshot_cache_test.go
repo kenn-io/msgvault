@@ -256,12 +256,6 @@ func TestSnapshotCacheLogsFailedRefreshBehindStaleValue(t *testing.T) {
 		assert.Contains(logs.String(), "snapshot refresh failed")
 		assert.Contains(logs.String(), "key=stats")
 		assert.Contains(logs.String(), "database is locked")
-		_, _, _, err = cache.get(t.Context(), t.Context(), "stats", 3*time.Minute, func(ctx context.Context) (int, error) {
-			<-ctx.Done()
-			return 0, ctx.Err()
-		})
-		require.NoError(err)
-		assert.Contains(logs.String(), "context deadline exceeded", "the server-owned refresh remains bounded")
 	})
 }
 
@@ -270,9 +264,16 @@ func TestSnapshotCacheComputeDeadlineIsNotWaitTimeout(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		var cache snapshotCache[int]
-		_, _, _, err := cache.get(t.Context(), t.Context(), "k", time.Second, func(context.Context) (int, error) { return 0, context.DeadlineExceeded })
+		lifetimeCtx, cancelLifetime := context.WithCancel(t.Context())
+		defer cancelLifetime()
+		started := time.Now()
+		_, _, _, err := cache.get(t.Context(), lifetimeCtx, "k", 3*time.Minute, func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			return 0, ctx.Err()
+		})
 		require.ErrorIs(err, context.DeadlineExceeded)
 		assert.NotErrorIs(err, errSnapshotWaitTimeout, "a computation timeout must remain an error")
+		assert.Equal(2*time.Minute, time.Since(started), "the server-owned refresh remains bounded")
 	})
 }
 
