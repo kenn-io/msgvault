@@ -452,11 +452,19 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 		{name: "equal source stays", daemonVersion: "v0.23.0-45-gabc", currentVersion: "v0.23.0-45-gabc"},
 		{name: "release keeps source", daemonVersion: "v0.23.0-45-gabc", currentVersion: "v0.23.0"},
 		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},
+		{name: "release keeps same-base dirty daemon", daemonVersion: "v0.23.0-dirty", currentVersion: "v0.23.0"},
 		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
 		{name: "source keeps newer source", daemonVersion: "v0.24.0-2-gdef", currentVersion: "v0.23.0-45-gabc"},
 		{name: "source replaces older release", daemonVersion: "v0.22.0", currentVersion: "v0.23.0-45-gabc", want: true},
 		{name: "dirty CLI keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-dirty"},
 		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
+		{name: "hash keeps versioned daemon", daemonVersion: "v0.24.0", currentVersion: "abc1234"},
+		{name: "dirty hash keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "abc1234-dirty"},
+		{name: "older source keeps newer source", daemonVersion: "v0.23.0-50-gbbb", currentVersion: "v0.23.0-45-gaaa"},
+		{name: "newer source replaces older source", daemonVersion: "v0.23.0-9-gaaa", currentVersion: "v0.23.0-10-gbbb", want: true},
+		{name: "equal counts keep different commits", daemonVersion: "v0.23.0-45-gbbb", currentVersion: "v0.23.0-45-gaaa"},
+		{name: "equal dirty versions stay", daemonVersion: "v0.23.0-45-gaaa-dirty", currentVersion: "v0.23.0-45-gaaa-dirty"},
+		{name: "older dirty source keeps newer dirty source", daemonVersion: "v0.23.0-50-gbbb-dirty", currentVersion: "v0.23.0-45-gaaa-dirty"},
 	}
 
 	for _, tt := range tests {
