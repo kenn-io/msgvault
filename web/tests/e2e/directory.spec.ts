@@ -94,6 +94,8 @@ test('People Details scrolls independently at desktop width', async ({ page }) =
   const pane = page.getByRole('group', { name: 'Person page' });
   await expect(pane.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await pane.getByRole('radio', { name: 'Details', exact: true }).click();
+  await expect(pane.getByRole('button', { name: 'Add job…', exact: true })).toBeVisible();
+  await expect(pane.getByRole('button', { name: 'Add connection…', exact: true })).toBeVisible();
   const metrics = await pane.evaluate((el) => ({
     scroll: el.scrollHeight,
     client: el.clientHeight,

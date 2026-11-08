@@ -1,3 +1,4 @@
+import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 import { stubOperationStatus } from './kit-ui';
 import { setKitTheme, setTemporaryDensity } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
@@ -952,4 +953,17 @@ test('People list keys stay in that grid while Messages is open', async ({ page 
   await expect(list).toBeFocused();
   expect(await messages.getAttribute('aria-activedescendant')).toBe(active);
   await expect(messages.getByRole('row', { selected: true })).toHaveCount(0);
+});
+
+
+test('saved People Details offers jobs and connections from section headers', async ({ page }) => {
+  await installDirectoryReviewArchive(page);
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const work = page.getByRole('region', { name: 'Work', exact: true });
+  const connections = page.getByRole('region', { name: 'Connections', exact: true });
+  await expect(work.getByRole('button', { name: 'Add job…', exact: true })).toBeVisible();
+  await expect(connections.getByRole('button', { name: 'Add connection…', exact: true })).toBeVisible();
+  await connections.getByRole('button', { name: 'Add connection…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Add connection', exact: true })).toBeVisible();
 });

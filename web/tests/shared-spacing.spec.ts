@@ -621,12 +621,12 @@ test.describe('form picker focus', () => {
         await page.route('**/api/v1/organizations**', route => route.fulfill({ json: { organizations: [], total: 0, limit: 50, offset: 0 } }));
         await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
         await page.getByRole('radio', { name: 'Details', exact: true }).click();
-        await page.getByRole('button', { name: 'Add work', exact: true }).click();
+        await page.getByRole('button', { name: 'Add job…', exact: true }).click();
       }
       const trigger = page.getByRole('button', { name: new RegExp(`^${picker}:`) });
       const predecessor = picker === 'Time zone'
         ? page.getByRole('textbox', { name: 'Slack schedule', exact: true })
-        : page.getByRole('button', { name: 'New organization', exact: true });
+        : page.getByRole('textbox', { name: 'Job title', exact: true });
       await predecessor.focus();
       const restingBorder = await trigger.evaluate(element => getComputedStyle(element).borderColor);
       await page.keyboard.press(picker === 'Time zone' ? 'Tab' : 'Shift+Tab');

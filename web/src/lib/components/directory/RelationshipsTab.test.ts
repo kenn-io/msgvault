@@ -1,28 +1,21 @@
-import { controllerWith as entityControllerWith, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith as entityControllerWith, directoryPerson, relationshipType, relationship, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
-import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
+import { openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
 
 function controllerWith(fetchFn: typeof fetch, personID = 7) {
-  return entityControllerWith(async (input, init) => {
+  const result = entityControllerWith(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (request.method === 'GET' && pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
     return fetchFn(input, init);
   }, personID);
+  return result;
 }
 
-function relationship(id = 41, revision = 1, overrides: Record<string, unknown> = {}) {
-  return {
-    id, revision, relationship_type_id: 31, type_slug: 'mentor', source_person_id: 7, target_person_id: 8,
-    forward_label: 'mentors', reverse_label: 'is mentored by', is_symmetric: false, status: 'active', source: 'user',
-    created_by: 'user', updated_by: 'user', vcard_identity: {},
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
 
 function view(id: number, direction: 'incoming' | 'outgoing', label: string, name: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -38,15 +31,300 @@ function view(id: number, direction: 'incoming' | 'outgoing', label: string, nam
   };
 }
 
-function relationshipType(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by',
-    is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
+async function rowAction(label: string): Promise<void> {
+  await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for /  })[0]);
+  await fireEvent.click(await screen.findByRole('menuitem', { name: label }));
 }
 
 describe('RelationshipsTab', () => {
+  it('freezes the person picker while creating a connection', async () => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { finish = resolve; });
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'POST') return pending;
+      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+      return Response.json({ relationships: [] });
+    });
+    controller.relationshipTypes = [relationshipType()];
+    const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Add connection…' }));
+      await openTypeahead('Connection type');
+      await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+      await openTypeahead('Person');
+      await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveProperty('disabled', true));
+      expect(screen.getByRole('button', { name: 'Person: Synthetic Two' })).toHaveProperty('disabled', true);
+    } finally {
+      finish(Response.json(relationship()));
+      rendered.unmount();
+      controller.destroy();
+    }
+  });
+  it('selects the first type option with Enter after filtering', async () => {
+    const { client, controller } = controllerWith(async () => Response.json({}));
+    controller.relationshipTypes = [relationshipType({ slug: 'parent', forward_label: 'parent', reverse_label: 'child' })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    const input = await openTypeahead('Connection type');
+    await fireEvent.input(input, { target: { value: 'child' } });
+    expect(document.getElementById(input.getAttribute('aria-activedescendant')!)?.textContent?.trim()).toBe('Child');
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: 'Connection type: is a child of' })).toBeDefined();
+  });
+
+  it('shows a type failure with retry, then query-specific empty copy', async () => {
+    let reads = 0;
+    const { client, controller } = controllerWith(async () => ++reads === 1
+      ? Response.json({ message: 'Types unavailable' }, { status: 503 })
+      : Response.json({ relationship_types: [relationshipType()] }));
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await controller.refreshRelationshipTypes();
+    await openTypeahead('Connection type');
+    expect(screen.getByRole('alert').textContent).toContain("Couldn't load connection types.");
+    expect(screen.queryByText('No matches')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByRole('treeitem', { name: 'Mentors' });
+    await fireEvent.input(screen.getByRole('combobox', { name: 'Connection type' }), { target: { value: 'missing' } });
+    expect(screen.getByText('No type matches “missing”')).toBeDefined();
+  });
+
+  it('retries a failed person search inside the picker', async () => {
+    let reads = 0;
+    const { client, controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path !== '/api/v1/people/directory') throw new Error(`Unexpected ${path}`);
+      if (++reads === 1) return Response.json({message:'Unavailable'}, {status:503});
+      return Response.json({people:[directoryPerson(9)]});
+    });
+    render(RelationshipsTab, {client, controller, personID:7});
+    await fireEvent.click(screen.getByRole('button', {name:'Add connection…'}));
+    await openTypeahead('Person');
+    await screen.findByText("Couldn't search people.");
+    await fireEvent.click(screen.getByRole('button', {name:'Retry'}));
+    await fireEvent.mouseDown(await screen.findByRole('option', {name:'Synthetic Two'}));
+    expect(screen.getByRole('button', {name:'Person: Synthetic Two'})).toBeDefined();
+    expect(reads).toBe(2);
+  });
+
+  it('distinguishes saved people who share a name without organizations', async () => {
+    const { client, controller } = controllerWith(async () => Response.json({ people: [
+      directoryPerson(8, { display_name: 'Synthetic Peer', last_contact_at: '2024-07-01T12:00:00Z' }), directoryPerson(9, { display_name: 'Synthetic Peer', last_contact_at: '2023-02-03T12:00:00Z' }),
+    ] }));
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    const search = await openTypeahead('Person');
+    // The picker's search hint is its own, while the field keeps its name.
+    expect(search.placeholder).toBe('Person');
+    expect(await screen.findByRole('option', { name: 'Synthetic Peer Last contact Jul 1, 2024' })).toBeDefined();
+    expect(screen.getByRole('option', { name: 'Synthetic Peer Last contact Feb 3, 2023' })).toBeDefined();
+  });
+
+  it('uses a contact title and muted identifier for an unresolved imported UID', async () => {
+    const client = createAPIClient(async () => Response.json({ reviews: [{
+      id: 1, person_id: 7, raw_related_value: 'urn:uuid:11111111-2222-3333-4444-555555555555',
+      raw_related_type: 'friend', value_kind: 'uri', status: 'pending', source: 'carddav_import',
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+    }] }));
+    const controller = new DirectoryEntityController(client, 7);
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    const title = await screen.findByText('Unknown contact');
+    // The reference leads the secondary line, then the type and where it came from.
+    const row = title.closest('.detail-row') as HTMLElement;
+    expect(row.querySelector('.description')?.textContent).toBe('urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from CardDAV contacts · Jul 31');
+  });
+
+  it('shows saved recovery once in the editor and restores it to the page on close', async () => {
+    let saved = false;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+      if (request.method === 'POST') { saved = true; return Response.json(relationship()); }
+      return saved ? Response.json({ message: 'Refresh unavailable' }, { status: 503 }) : Response.json({ relationships: [] });
+    });
+    controller.relationshipTypes = [relationshipType()];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await openTypeahead('Person');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
+    expect(screen.getByRole('alert').textContent?.trim()).toContain("Connection saved. Couldn't refresh connections.");
+    expect(screen.getAllByRole('button', { name: 'Check again' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.getByRole('alert').textContent).toContain("Couldn't load connections.");
+  });
+
+  it('clears old options before debounce so Enter cannot select the wrong person', async () => {
+    const { client, controller } = controllerWith(async input => {
+      const q = new URL(requestOf(input).url).searchParams.get('q');
+      return Response.json({ people: [directoryPerson(q ? 9 : 8)] });
+    });
+    controller.relationshipTypes = [relationshipType()];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    const input = await openTypeahead('Person');
+    await screen.findByRole('option', { name: 'Synthetic Two' });
+    vi.useFakeTimers();
+    try {
+      await fireEvent.input(input, { target: { value: 'Synthetic Two Other' } });
+      await fireEvent.keyDown(input, { key: 'Enter' });
+      expect(screen.queryByRole('option', { name: 'Synthetic Two' })).toBeNull();
+      expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('ignores late results from older requests', async () => {
+    const responses: ((response: Response) => void)[] = [];
+    const { client, controller } = controllerWith(async () => new Promise<Response>(resolve => responses.push(resolve)));
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    const input = await openTypeahead('Person');
+    await waitFor(() => expect(responses).toHaveLength(1));
+    await fireEvent.input(input, { target: { value: 'Other' } });
+    await fireEvent.input(input, { target: { value: '' } });
+    await waitFor(() => expect(responses).toHaveLength(2));
+    responses[1](Response.json({ people: [directoryPerson(9, { display_name: 'Current result' })] }));
+    await screen.findByRole('option', { name: 'Current result' });
+    const stale = Response.json({ people: [directoryPerson(8, { display_name: 'Stale result' })] });
+    responses[0](stale);
+    await waitFor(() => expect(stale.bodyUsed).toBe(true));
+    expect(screen.queryByRole('option', { name: 'Stale result' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'Current result' })).toBeDefined();
+  });
+
+  it.each([
+    ['Mentors', 'mentors', 'mentor', 'mentors', 'is mentored by', 7, 8],
+    ['Child', 'is a child of', 'parent', 'parent', 'child', 8, 7],
+  ])('creates literal endpoints for %s', async (caption, phrase, slug, forward, reverse, source, target) => {
+    const cases = [{ caption: String(caption), phrase: String(phrase), slug: String(slug), forward: String(forward), reverse: String(reverse) }];
+    for (const choice of cases) {
+      let post: Request | undefined;
+      const saved = relationship(41, 1, { relationship_type_id: 1, type_slug: choice.slug, source_person_id: source, target_person_id: target, forward_label: choice.forward, reverse_label: choice.reverse });
+      const direction = source === 7 ? 'outgoing' : 'incoming';
+      const label = direction === 'outgoing' ? choice.forward : choice.reverse;
+      const { client, controller } = controllerWith(async input => {
+        const request = requestOf(input);
+        const path = pathOf(request);
+        if (path === '/api/v1/person-relationships' && request.method === 'POST') { post = request; return Response.json(saved); }
+        if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+        if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: post ? [view(41, direction, label, 'Synthetic Two', { counterpart_person_id: 8, relationship: saved })] : [] });
+        throw new Error(`unexpected ${request.method} ${path}`);
+      });
+      controller.relationshipTypes = [relationshipType({ id: 1, slug: choice.slug, forward_label: choice.forward, reverse_label: choice.reverse, ...(choice.slug === 'parent' ? { ownership: 'system', inverse_type_id: 2 } : {}) })];
+      if (choice.slug === 'parent') controller.relationshipTypes.push(relationshipType({ id: 2, slug: 'child', ownership: 'system', is_canonical: false, inverse_type_id: 1, forward_label: 'is a descendant of', reverse_label: 'parent' }));
+      const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
+      try {
+        await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+        await openTypeahead('Person');
+        await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+        const input = await openTypeahead('Connection type');
+        if (choice.slug === 'parent') await fireEvent.input(input, { target: { value: 'child' } });
+        await fireEvent.mouseDown(screen.getByRole('treeitem', { name: choice.caption }));
+        expect(screen.getByRole('button', { name: `Connection type: ${choice.phrase}` })).toBeDefined();
+        await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+        await waitFor(() => expect(post).toBeDefined());
+        await expect(post!.clone().json()).resolves.toEqual({ source_person_id: source, target_person_id: target, relationship_type_slug: choice.slug });
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        expect(screen.getByText('Synthetic Two').closest('.detail-row')?.textContent).toContain(label.charAt(0).toUpperCase() + label.slice(1));
+        await rowAction('Edit…');
+        expect(screen.getByRole('dialog').textContent).toContain(`This person ${choice.phrase} Synthetic Two`);
+      } finally { rendered.unmount(); controller.destroy(); }
+    }
+  });
+
+  it('shows no-match, empty, and failed searches without losing a selected label', async () => {
+    const requests: Request[] = [];
+    let fail = true;
+    let empty = false;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      requests.push(request);
+      const q = new URL(request.url).searchParams.get('q');
+      if (fail) return Response.json({ message: 'Search unavailable' }, { status: 503 });
+      return Response.json({ people: q || empty ? [] : [
+        directoryPerson(7, { display_name: 'Selected Self' }),
+        directoryPerson(8, { display_name: 'Synthetic Peer', organizations: ['Example Labs'] })
+      ] });
+    });
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    let input = await openTypeahead('Person');
+    await screen.findByText("Couldn't search people.");
+    expect(requests).toHaveLength(1);
+    fail = false;
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    input = await openTypeahead('Person');
+    expect(await screen.findByRole('option', { name: /Synthetic Peer/ })).toBeDefined();
+    expect(screen.queryByText('Selected Self')).toBeNull();
+    expect(requests).toHaveLength(2);
+    const query = new URL(requests[0].url).searchParams;
+    expect(query.has('q')).toBe(false);
+    expect(query.get('sort')).toBe('last_contact_desc');
+    expect(query.get('limit')).toBe('20');
+    await fireEvent.mouseDown(screen.getByRole('option', { name: /Synthetic Peer/ }));
+    expect(screen.getByRole('button', { name: 'Person: Synthetic Peer' })).toBeDefined();
+    input = await openTypeahead('Person');
+    expect(requests).toHaveLength(2);
+    await fireEvent.input(input, { target: { value: 'Nobody' } });
+    expect(await screen.findByText('No one matches “Nobody”')).toBeDefined();
+    await fireEvent.input(input, { target: { value: '' } });
+    expect(await screen.findByRole('option', { name: /Synthetic Peer/ })).toBeDefined();
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Person: Synthetic Peer' })).toBeDefined();
+    input = await openTypeahead('Person');
+    fail = true;
+    await fireEvent.input(input, { target: { value: 'Retry' } });
+    expect(await screen.findByText("Couldn't search people.")).toBeDefined();
+    expect(screen.queryByText('No one matches “Retry”')).toBeNull();
+    expect(screen.queryByText('No other saved people')).toBeNull();
+    fail = false;
+    empty = true;
+    await fireEvent.input(input, { target: { value: 'Nobody' } });
+    await screen.findByText('No one matches “Nobody”');
+    await fireEvent.input(input, { target: { value: '' } });
+    expect(await screen.findByText('No other saved people')).toBeDefined();
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Person: Synthetic Peer' })).toBeDefined();
+  });
+
+  it.each(['incoming', 'outgoing'] as const)('reads the existing %s connection as a sentence', async direction => {
+    const { client, controller } = controllerWith(async () => Response.json({ reviews: [] }));
+    controller.relationshipTypes = [relationshipType()];
+    controller.relationships = [view(41, direction, direction === 'incoming' ? 'is mentored by' : 'mentors', 'Synthetic Peer')];
+    render(RelationshipsTab, { client, controller, personID: 7, personName: 'Synthetic Subject' });
+    await rowAction('Edit…');
+    expect(screen.getByRole('dialog').textContent).toContain(`Synthetic Subject ${direction === 'incoming' ? 'is mentored by' : 'mentors'} Synthetic Peer`);
+  });
+
+  it('separates suggestions from reviewed imports', async () => {
+    const review = { id: 1, person_id: 7, matched_person_id: 8, raw_related_value: 'Synthetic Peer', raw_related_type: 'friend', value_kind: 'text', status: 'pending', source: 'carddav_import', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+    const client = createAPIClient(async () => Response.json({ reviews: [review, { ...review, id: 2, status: 'rejected', matched_person_id: null, raw_related_value: 'Earlier suggestion', reviewed_at: '2026-08-02T12:00:00Z' }, { ...review, id: 3, status: 'accepted', raw_related_value: 'Confirmed suggestion' }] }));
+    const controller = new DirectoryEntityController(client, 7);
+    controller.relationships = [view(41, 'outgoing', 'friend', 'Confirmed person', { counterpart_person_id: 8 })];
+    const onOpenPerson = vi.fn();
+    render(RelationshipsTab, { client, controller, personID: 7, onOpenPerson });
+    expect(await screen.findByRole('heading', { name: 'Suggested (1)' })).toBeDefined();
+    await fireEvent.click(screen.getByText('2 reviewed'));
+    const row = screen.getByText('Synthetic Peer').closest('.detail-row') as HTMLElement;
+    expect(row.textContent).toContain('Friend · from CardDAV contacts');
+    expect(within(row).queryByText('Pending')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Open matched person' }).length).toBeGreaterThan(0);
+    const rejected = screen.getByText('Rejected').closest('.detail-row') as HTMLElement;
+    expect(rejected.querySelector('.description')?.getAttribute('title')).toContain('Reviewed');
+    await fireEvent.click(within(row).getByRole('button', { name: 'Open matched person' }));
+    expect(onOpenPerson).toHaveBeenCalledWith(8);
+    expect(screen.getByText('Rejected').closest('.exception')).toBeTruthy();
+  });
+
   it('renders curated connections', () => {
     const { client, controller } = controllerWith(async input => {
       const path = pathOf(requestOf(input));
@@ -66,8 +344,8 @@ describe('RelationshipsTab', () => {
       expect(within(row).getByText(label)).toBeDefined();
     }
     expect(screen.queryByText(/outgoing|incoming/)).toBeNull();
-    expect(screen.getAllByRole('button', { name: 'Edit relationship' })).toHaveLength(3);
-    expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
+    expect(screen.queryAllByRole('button', { name: /^Edit connection with/ })).toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /^Actions for /  })).toHaveLength(3);
   });
 
   it('refreshes imported connections when the surviving person reloads in place', async () => {
@@ -84,8 +362,8 @@ describe('RelationshipsTab', () => {
     const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
     try {
       await screen.findByText('existing@example.com');
-      expect(screen.getByText('Accepted')).toBeDefined();
-      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X-CUSTOM_friend · Vcard import · Text · Aug 1, 2026 · Aug 2, 2026');
+      expect(screen.getByText('Accepted').closest('.exception')).toBeTruthy();
+      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X CUSTOM friend · from a contact file');
       merged = true;
       await controller.refreshRelationships();
       expect(await screen.findByText('absorbed@example.com')).toBeDefined();
@@ -102,7 +380,7 @@ describe('RelationshipsTab', () => {
 
     render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
     expect(screen.queryByRole('heading', { name: 'Connections' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add connection' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Add connection/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete mentor relationship type' })).toBeNull();
     expect(screen.getByText('Built in')).toBeDefined();
@@ -124,14 +402,14 @@ describe('RelationshipsTab', () => {
     }));
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    expect(screen.queryByRole('button', { name: 'Refresh relationships' })).toBeNull();
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended relationships' }));
-    expect((await screen.findByRole('status')).textContent).toContain('Loading relationships');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    void controller.refreshRelationships();
+    await screen.findByText('Loading connections…');
     resolveFirst(Response.json({ error: 'unavailable', message: 'relationships unavailable' }, { status: 503 }));
 
-    const alert = await screen.findByRole('alert');
+    const alert = (await screen.findByRole('alert')).closest('.inline-notice')!;
     expect(alert.textContent).toContain('relationships unavailable');
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Refresh relationships' }));
+    await fireEvent.click(within(alert as HTMLElement).getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByText('No connections yet')).toBeDefined();
     expect(reads).toBe(2);
@@ -158,7 +436,7 @@ describe('RelationshipsTab', () => {
     expect(controller.errors.relationshipTypes).toBeUndefined();
   });
 
-  it('searches only the bounded durable Directory, rejects self, and creates an incoming edge with optional fields', async () => {
+  it('searches only the bounded durable Directory, rejects self, and saves optional fields', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const requests: Request[] = [];
@@ -180,29 +458,26 @@ describe('RelationshipsTab', () => {
       controller.relationshipTypes = [relationshipType()];
       render(RelationshipsTab, { client, controller, personID: 7 });
 
-      await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-      const personSearch = await openTypeahead('Relationship counterpart');
+      await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+      const personSearch = await openTypeahead('Person');
       await fireEvent.input(personSearch, { target: { value: 'Synthetic' } });
       await vi.advanceTimersByTimeAsync(250);
       expect(await screen.findByRole('option', { name: /Synthetic Counterpart/ })).toBeDefined();
       expect(screen.queryByText('Selected Self')).toBeNull();
       await fireEvent.mouseDown(screen.getByRole('option', { name: /Synthetic Counterpart/ }));
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship direction:/ }), 'Counterpart → selected person');
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship start date' }), { target: { value: '2025' } });
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship end date' }), { target: { value: '2026-08' } });
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: 'Synthetic note' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
+      await openTypeahead('Connection type');
+      await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Is mentored by' }));
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '2025' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Synthetic note' } });
+      await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
 
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship' })).toBeNull());
-      const search = requests.find((request) => pathOf(request) === '/api/v1/people/directory')!;
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
+      const search = requests.find((request) => new URL(request.url).searchParams.get('q') === 'Synthetic')!;
       expect(new URL(search.url).searchParams.get('q')).toBe('Synthetic');
       expect(new URL(search.url).searchParams.get('limit')).toBe('20');
       const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships')!;
-      await expect(post.clone().json()).resolves.toEqual({
-        source_person_id: 8,
-        target_person_id: 7,
-        relationship_type_slug: 'mentor',
+      await expect(post.clone().json()).resolves.toMatchObject({
         start_date: '2025',
         end_date: '2026-08',
         notes: 'Synthetic note'
@@ -228,28 +503,29 @@ describe('RelationshipsTab', () => {
       controller.relationshipTypes = [relationshipType()];
       render(RelationshipsTab, { client, controller, personID: 7 });
 
-      await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-      const personSearch = await openTypeahead('Relationship counterpart');
+      await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+      const personSearch = await openTypeahead('Person');
       await fireEvent.input(personSearch, { target: { value: 'Synthetic' } });
       await vi.advanceTimersByTimeAsync(250);
       await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
-      const create = screen.getByRole('button', { name: 'Create relationship' });
+      await openTypeahead('Connection type');
+      await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+      const create = screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!;
       expect(create).toHaveProperty('disabled', false);
 
-      const start = screen.getByRole('textbox', { name: 'Relationship start date' });
+      const start = screen.getByRole('textbox', { name: 'Start date' });
       await fireEvent.input(start, { target: { value: '2019-02-30' } });
-      const message = screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.');
+      const message = screen.getByText('Use 2024, 2024-03, or 2024-03-15.');
       expect(start.getAttribute('aria-describedby')).toBe(message.id);
       expect(create).toHaveProperty('disabled', true);
 
       await fireEvent.input(start, { target: { value: '2019' } });
-      expect(screen.queryByText(/Use a year/)).toBeNull();
+      expect(screen.queryByText('Use 2024, 2024-03, or 2024-03-15.', {})).toBeNull();
       expect(create).toHaveProperty('disabled', false);
 
-      const end = screen.getByRole('textbox', { name: 'Relationship end date' });
+      const end = screen.getByRole('textbox', { name: 'End date' });
       await fireEvent.input(end, { target: { value: '--04-12' } });
-      expect(screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.').id).toBe(end.getAttribute('aria-describedby'));
+      expect(screen.getByText('Use 2024, 2024-03, or 2024-03-15.', {}).id).toBe(end.getAttribute('aria-describedby'));
       expect(create).toHaveProperty('disabled', true);
     } finally {
       vi.useRealTimers();
@@ -262,7 +538,7 @@ describe('RelationshipsTab', () => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/relationship-types') {
         reads += 1;
-        return Response.json({ relationship_types: [relationshipType()] });
+        return reads === 1 ? Response.json({ message: 'Types unavailable' }, { status: 503 }) : Response.json({ relationship_types: [relationshipType()] });
       }
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [] });
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
@@ -270,49 +546,16 @@ describe('RelationshipsTab', () => {
     controller.errors.relationshipTypes = 'relationship types unavailable';
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
     await waitFor(() => expect(reads).toBe(1));
+    const input = await openTypeahead('Connection type');
+    await screen.findByText("Couldn't load connection types.");
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
     await waitFor(() => expect(controller.relationshipTypes).toHaveLength(1));
+    expect(reads).toBe(2);
     expect(controller.errors.relationshipTypes).toBeFalsy();
-  });
-
-  it('creates an outgoing edge at the collection endpoint with the selected person as source', async () => {
-    const requests: Request[] = [];
-    const created = relationship(45, 1, { source_person_id: 7, target_person_id: 9 });
-    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return Response.json({ people: [
-        { id: 9, revision: 1, display_name: 'Synthetic Colleague', categories: [], contact_state: 'active', organizations: [] }
-      ] });
-      if (path === '/api/v1/person-relationships' && request.method === 'POST') {
-        return new Response(JSON.stringify(created), { status: 201, headers: { ETag: '"relationship-45-r1"' } });
-      }
-      if (path === '/api/v1/people/7/relationships') {
-        return Response.json({ relationships: [view(45, 'outgoing', 'mentors', 'Synthetic Colleague', { relationship: created })] });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.relationshipTypes = [relationshipType()];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await fireEvent.input(await openTypeahead('Relationship counterpart'), { target: { value: 'Colleague' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Colleague/ }));
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship direction:/ }), 'Selected person → counterpart');
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
-    await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship' })).toBeNull());
-    const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships' && request.method === 'POST')!;
-    await expect(post.clone().json()).resolves.toEqual({
-      source_person_id: 7,
-      target_person_id: 9,
-      relationship_type_slug: 'mentor'
-    });
-    const createdRow = screen.getByText('Synthetic Colleague').closest('.detail-row') as HTMLElement;
-    expect(createdRow.textContent).toContain('Mentors');
   });
 
   it('retains an edge draft on conflict and uses the fresh individual ETag without auto-retry', async () => {
@@ -325,7 +568,7 @@ describe('RelationshipsTab', () => {
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
         reads += 1;
-        return new Response(JSON.stringify(relationship(41, reads, { notes: reads === 1 ? 'Server old' : 'Server concurrent' })), { headers: { ETag: `"relationship-41-r${reads}"` } });
+        return new Response(JSON.stringify(relationship(41, reads, { notes: 'Server concurrent' })), { headers: { ETag: `"person-relationship-41-r${reads}"` } });
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'PATCH') {
         writes += 1;
@@ -337,23 +580,66 @@ describe('RelationshipsTab', () => {
     controller.relationshipTypes = [relationshipType()];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
-    const notes = await screen.findByRole('textbox', { name: 'Relationship notes' });
+    await rowAction('Edit…');
+    const notes = await screen.findByRole('textbox', { name: 'Notes' });
     await fireEvent.input(notes, { target: { value: 'Retained local draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('changed elsewhere');
-    expect((screen.getByRole('textbox', { name: 'Relationship notes' }) as HTMLInputElement).value).toBe('Retained local draft');
-    expect(screen.getByText(/Server concurrent/)).toBeDefined();
+    expect((await screen.findByRole('alert')).textContent).toContain('This connection changed since you opened it.');
+    expect(screen.getByRole('alert').querySelector('details')?.open).toBe(false);
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLInputElement).value).toBe('Retained local draft');
+    const changes = screen.getByRole('table', { name: 'What changed' });
+    expect(within(changes).getAllByRole('row').slice(1).map(row => [...row.querySelectorAll('[role=rowheader], [role=cell]')].map(cell => cell.textContent))).toEqual([['Notes', 'Server concurrent', 'Retained local draft']]);
     expect(writes).toBe(1);
     expect(reads).toBe(2);
     const patch = requests.find((request) => request.method === 'PATCH')!;
-    expect(patch.headers.get('If-Match')).toBe('"relationship-41-r1"');
+    expect(patch.headers.get('If-Match')).toBe('"person-relationship-41-r1"');
+  });
+
+  it('writes a past connection’s dates as a range, like Work', async () => {
+    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async () => { throw new Error('unexpected request'); }));
+    controller.relationships = [view(42, 'outgoing', 'friend', 'Sela Moss', { relationship: { ...relationship(42, 1), status: 'ended', start_date: { year: 2020 }, end_date: { year: 2023 }, notes: 'Former workshop partner.' } })];
+    controller.relationshipTypes = [relationshipType()];
+    render(RelationshipsTab, { client, controller, personID: 7, personName: 'Mira Vale' });
+    const fold = screen.getByText('1 past connection').closest('details')!;
+    expect(fold.open).toBe(false);
+    await fireEvent.click(screen.getByText('1 past connection'));
+    expect(fold.open).toBe(true);
+    expect(screen.getByText('Sela Moss').closest('.detail-row')?.textContent).toContain('Friend · 2020 – 2023 · Former workshop partner.');
+  });
+
+  it('opens Edit with the connection as context: since when, who added it, and prose notes', async () => {
+    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/person-relationships/41') return new Response(JSON.stringify(relationship(41, 1)), { headers: { ETag: '"relationship-41-r1"' } });
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    }));
+    controller.relationships = [view(41, 'outgoing', 'friend', 'Tavi Reed', { relationship: { ...relationship(41, 1), start_date: { year: 2022 }, notes: 'Met at the seed exchange.' } })];
+    controller.relationshipTypes = [relationshipType()];
+    render(RelationshipsTab, { client, controller, personID: 7, personName: 'Mira Vale' });
+    expect(screen.getByText('Tavi Reed').closest('.detail-row')?.textContent).toContain('Friend · 2022 – present · Met at the seed exchange.');
+    await rowAction('Edit…');
+    const dialog = await screen.findByRole('dialog', { name: 'Edit connection' });
+    // A connection the person added says only since when; one from somewhere else says where.
+    expect(within(dialog).getByText('Since 2022')).toBeDefined();
+    expect(within(dialog).queryByText(/added by you/)).toBeNull();
+    expect(within(dialog).queryByText('You')).toBeNull();
+    expect(within(dialog).getByRole('textbox', { name: 'Notes' }).tagName).toBe('TEXTAREA');
+    // The format hint shows while End date is empty or being typed, then the date in words in its place.
+    const hint = () => within(dialog).queryByText('2024, 2024-03, or 2024-03-15');
+    const end = within(dialog).getByRole('textbox', { name: 'End date' });
+    expect(hint()).not.toBeNull();
+    await fireEvent.input(end, { target: { value: '2025-06' } });
+    expect(hint()).toBeNull();
+    expect(within(dialog).getByText('Jun 2025')).toBeDefined();
+    await fireEvent.focusIn(end);
+    expect(hint()).not.toBeNull();
   });
 
   it('patches only a changed end date so a fresh server note is not overwritten', async () => {
     const requests: Request[] = [];
-    const opening = relationship(41, 1, { notes: 'Opening note' });
+    let reads = 0;
+    const opening = relationship(41, 1, { notes: 'Opening note', start_date: { year: 2024, month: 3 } });
     const fresh = relationship(41, 2, { notes: 'Concurrent note' });
     const updated = relationship(41, 3, { notes: 'Concurrent note', end_date: { year: 2026, month: 8 } });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
@@ -361,9 +647,12 @@ describe('RelationshipsTab', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
-        return new Response(JSON.stringify(fresh), { headers: { ETag: '"relationship-41-r2"' } });
+        return ++reads === 1
+          ? Response.json(opening, { headers: { ETag: '"relationship-41-r1"' } })
+          : Response.json(fresh, { headers: { ETag: '"relationship-41-r2"' } });
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'PATCH') {
+        if (request.headers.get('If-Match') === '"relationship-41-r1"') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-41-r3"' } });
       }
       if (path === '/api/v1/people/7/relationships') {
@@ -374,18 +663,25 @@ describe('RelationshipsTab', () => {
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship end date' }), { target: { value: '2026-08' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await rowAction('Edit…');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-02' } });
+    expect(screen.getByText('End date must be on or after start date.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
-    const patch = requests.find((request) => request.method === 'PATCH')!;
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
+    const patches = requests.filter(request => request.method === 'PATCH');
+    expect(patches.map(request => request.headers.get('If-Match'))).toEqual(['"relationship-41-r1"', '"relationship-41-r2"']);
+    const patch = patches[1];
     expect(patch.headers.get('If-Match')).toBe('"relationship-41-r2"');
     await expect(patch.clone().json()).resolves.toEqual({ end_date: '2026-08' });
   });
 
   it('clears changed notes without resending an opening end date', async () => {
     const requests: Request[] = [];
+    let reads = 0;
     const opening = relationship(41, 1, { notes: 'Opening note', end_date: { year: 2026, month: 6 } });
     const fresh = relationship(41, 2, { notes: 'Opening note', end_date: { year: 2026, month: 7 } });
     const updated = relationship(41, 3, { end_date: { year: 2026, month: 7 } });
@@ -394,9 +690,12 @@ describe('RelationshipsTab', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
-        return new Response(JSON.stringify(fresh), { headers: { ETag: '"relationship-41-r2"' } });
+        return ++reads === 1
+          ? Response.json(opening, { headers: { ETag: '"relationship-41-r1"' } })
+          : Response.json(fresh, { headers: { ETag: '"relationship-41-r2"' } });
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'PATCH') {
+        if (request.headers.get('If-Match') === '"relationship-41-r1"') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-41-r3"' } });
       }
       if (path === '/api/v1/people/7/relationships') {
@@ -407,12 +706,15 @@ describe('RelationshipsTab', () => {
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: '   ' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await rowAction('Edit…');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: '   ' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
-    const patch = requests.find((request) => request.method === 'PATCH')!;
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
+    const patches = requests.filter(request => request.method === 'PATCH');
+    expect(patches.map(request => request.headers.get('If-Match'))).toEqual(['"relationship-41-r1"', '"relationship-41-r2"']);
+    const patch = patches[1];
     await expect(patch.clone().json()).resolves.toEqual({ notes: null });
   });
 
@@ -427,10 +729,10 @@ describe('RelationshipsTab', () => {
     })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await rowAction('Edit…');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
@@ -441,7 +743,7 @@ describe('RelationshipsTab', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
-        return new Response(JSON.stringify(relationship(41, 3)), { headers: { ETag: '"relationship-41-r3"' } });
+        return new Response(JSON.stringify(relationship(41, 1)), { headers: { ETag: '"relationship-41-r3"' } });
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') return new Response(null, { status: 204 });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
@@ -450,14 +752,50 @@ describe('RelationshipsTab', () => {
     controller.relationships = [view(41, 'incoming', 'is mentored by', 'Synthetic Guide')];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete relationship' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete relationship' }));
+    await rowAction('Delete…');
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete relationship' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Delete connection with/  })).toBeNull());
     const deletion = requests.find((request) => request.method === 'DELETE')!;
     expect(pathOf(deletion)).toBe('/api/v1/person-relationships/41');
     expect(deletion.headers.get('If-Match')).toBe('"relationship-41-r3"');
     expect(controller.relationships).toEqual([]);
+  });
+
+  it('keeps a delete conflict open, shows only changed fields, and reloads the connection', async () => {
+    let reads = 0, deletes = 0, refreshes = 0;
+    const current = relationship(41, 2, { notes: 'Saved note' });
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input), path = pathOf(request);
+      if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
+        reads++;
+        return Response.json(reads === 1 ? relationship() : current, { headers: { ETag: `"person-relationship-41-r${reads}"` } });
+      }
+      if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') {
+        deletes++;
+        return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      }
+      if (path === '/api/v1/people/7/relationships') {
+        refreshes++;
+        return Response.json({ relationships: [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: current })] });
+      }
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer')];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await rowAction('Delete…');
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('This connection changed since you opened it.');
+    const changes = within(alert).getByRole('table', { name: 'What changed' });
+    expect(within(changes).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Notes']);
+    expect(changes.textContent).toContain('Saved note');
+    expect(deletes).toBe(1);
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(refreshes).toBe(1);
+    expect(controller.relationships[0].relationship.notes).toBe('Saved note');
+    expect(screen.getByRole('dialog', { name: 'Delete connection with Synthetic Peer?' })).toBeDefined();
   });
 
   it('blocks an uncertain edge create until the exact collection refresh and retains the dialog draft', async () => {
@@ -478,18 +816,21 @@ describe('RelationshipsTab', () => {
     controller.relationshipTypes = [relationshipType()];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await fireEvent.input(await openTypeahead('Relationship counterpart'), { target: { value: 'Counterpart' } });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await fireEvent.input(await openTypeahead('Person'), { target: { value: 'Counterpart' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: 'Retained unknown draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Retained unknown draft' } });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
 
-    expect((await screen.findByRole('alert')).textContent).toContain('outcome is unknown');
-    expect((screen.getByRole('textbox', { name: 'Relationship notes' }) as HTMLInputElement).value).toBe('Retained unknown draft');
-    expect(screen.getByRole('button', { name: 'Create relationship' })).toHaveProperty('disabled', true);
-    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add relationship' })).getByRole('button', { name: 'Refresh relationships' }));
+    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the connection was saved.");
+    expect(screen.getByRole('alert').textContent).not.toContain('outcome unknown');
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLInputElement).value).toBe('Retained unknown draft');
+    expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add connection' })).getByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLInputElement).value).toBe('Retained unknown draft');
     expect(posts).toBe(1);
   });
 
@@ -793,7 +1134,7 @@ describe('RelationshipsTab', () => {
 
     expect(await screen.findByText('Symmetry cannot be changed after creation.')).toBeDefined();
     expect(screen.getByText('Symmetric')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Delete relationship type' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
   it('deletes a deletable user type with its fresh ETag', async () => {
@@ -813,11 +1154,123 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete relationship type' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete relationship type' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     const deletion = requests.find((request) => request.method === 'DELETE')!;
     expect(deletion.headers.get('If-Match')).toBe('"relationship-type-31-r1"');
     expect(controller.relationshipTypes).toEqual([]);
   });
+});
+
+it.each([2024, 2028])('validates connection retries against the saved start year %s', async year => {
+  const opening = relationship(41, 1, { start_date: { year: 2026 }, notes: 'Original note' });
+  const saved = relationship(41, 2, { start_date: { year }, notes: 'Concurrent note' });
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    return Response.json(saved, { headers: { ETag: '"person-relationship-41-r2"' } });
+  });
+  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await rowAction('Edit…');
+  const end = await screen.findByRole('textbox', { name: 'End date' });
+  await fireEvent.input(end, { target: { value: '2027' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  await fireEvent.input(end, { target: { value: year === 2028 ? '2027' : '2025' } });
+  expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', year === 2028);
+});
+
+it('shows only the connection values Keep yours will actually overwrite', async () => {
+  const bodies: unknown[] = [];
+  const opening = relationship(41, 1, { notes: 'Original note' });
+  const saved = relationship(41, 2, { notes: 'Concurrent note' });
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      bodies.push(await request.json());
+      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    }
+    return Response.json(bodies.length ? saved : opening, { headers: { ETag: bodies.length ? '"person-relationship-41-r2"' : '"person-relationship-41-r1"' } });
+  });
+  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await rowAction('Edit…');
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2027' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  expect(screen.queryByRole('rowheader', { name: 'Notes' })).toBeNull();
+  expect(screen.getByText('Other details also changed')).toBeDefined();
+  expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Concurrent note');
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies).toEqual([{ end_date: '2027' }, { end_date: '2027' }]);
+});
+
+it.each(['failed', 'committed'])('shows the latest outcome after a %s connection retry', async outcome => {
+  let writes = 0;
+  const opening = relationship(41, 1, { notes: 'Original note' });
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      if (++writes === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      return outcome === 'failed'
+        ? Response.json({ message: 'Disk full' }, { status: 500 })
+        : Response.json(relationship(41, 3, { notes: 'Draft note' }), { headers: { ETag: '"relationship-41-r3"' } });
+    }
+    if (pathOf(request).includes('/people/7/relationships')) return Response.json({ message: 'Refresh failed' }, { status: 500 });
+    return Response.json(opening, { headers: { ETag: '"relationship-41-r2"' } });
+  });
+  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await rowAction('Edit…');
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft note' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await screen.findByText(outcome === 'failed' ? "Couldn't save this connection." : "Connection saved. Couldn't refresh connections.");
+  expect(screen.queryByRole('button', { name: 'Keep yours' })).toBeNull();
+  if (outcome === 'failed') expect(screen.getByText('Disk full')).toBeDefined();
+});
+
+it.each(['cleared notes', 'derived status'])('compares %s after an end-date conflict', async change => {
+  const opening = relationship(41, 1, change === 'cleared notes' ? { notes: 'Opening notes' } : {});
+  const saved = relationship(41, 2, { end_date: { year: 2025 }, status: 'ended' });
+  const { client, controller } = controllerWith(async input => requestOf(input).method === 'PATCH'
+    ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
+    : Response.json(saved, { headers: { ETag: '"person-relationship-41-r2"' } }));
+  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await rowAction('Edit…');
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2026' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  if (change === 'cleared notes') {
+    expect(screen.getByText('Other details also changed')).toBeDefined();
+    expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('None');
+  } else expect(screen.queryByText('Other details also changed')).toBeNull();
+});
+
+it.each([false, true])('reloads a pending connection deletion, disappeared=%s', async gone => {
+  const tags: (string | null)[] = [];
+  const saved = view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: relationship(41, 2) });
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: gone ? [] : [saved] });
+    if (request.method === 'GET') return Response.json(tags.length ? saved.relationship : relationship(41, 1), { headers: { ETag: tags.length ? '"person-relationship-41-r2"' : '"person-relationship-41-r1"' } });
+    tags.push(request.headers.get('If-Match'));
+    return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
+  });
+  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer')];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await rowAction('Delete…');
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
+  await waitFor(() => expect(screen.queryByText('This connection changed since you opened it.')).toBeNull());
+  if (gone) expect(screen.queryByRole('dialog')).toBeNull();
+  else {
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(tags).toHaveLength(2));
+    expect(tags[1]).toBe('"person-relationship-41-r2"');
+  }
 });

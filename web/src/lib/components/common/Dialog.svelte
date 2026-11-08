@@ -32,6 +32,7 @@
     title: string;
     onclose: () => void;
     children: Snippet;
+    footerStart?: Snippet;
     width?: 'small' | 'medium' | 'large';
     /** A step's way back, left of the title; its name says where it returns to. */
     onback?: () => void;
@@ -56,6 +57,7 @@
     title,
     onclose,
     children,
+    footerStart = undefined,
     width = 'medium',
     onback = undefined,
     backLabel = 'Back',
@@ -77,6 +79,7 @@
 
 {#snippet footer()}
   {#if primaryLabel}
+    {#if footerStart}<div class="footer-start">{@render footerStart()}</div>{/if}
     {#if cancellable}<Button label={cancelLabel} disabled={cancelDisabled || busy} onclick={dismiss} />{/if}
     <Button
       surface="solid"
@@ -113,6 +116,7 @@
 </div>
 
 <style>
+  .footer-start { margin-right: auto; }
   /* The dialog stays 16 from the screen's edges and opens 32 from the top (16 on a phone). */
   .dialog-shell {
     --dialog-inset: var(--space-6);

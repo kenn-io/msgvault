@@ -852,3 +852,22 @@ it.each(['http', 'network'] as const)('turns on local search once and keeps unre
   expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
   expect(screen.getByText('1 unsaved change')).toBeDefined();
 });
+
+it('opens a person holding a job from the People organization catalog', async () => {
+  const { organization, organizationProfile } = await import('../../directory/entity-fixtures.test-support');
+  const onOpenPerson = vi.fn();
+  const { client, operationsController } = fixture(settingsDoc(), async request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()] });
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: [{ person_id: 8, title: 'Engineer' }] });
+    if (path === '/api/v1/people/8') return Response.json({ display_name: 'Example Holder' });
+    if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
+    if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [] });
+  });
+  render(SettingsWorkspace, { client, operationsController, category: 'people_catalog', onOpenPerson });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Edit Synthetic Org' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Open Example Holder' }));
+  expect(onOpenPerson).toHaveBeenCalledWith(8);
+});

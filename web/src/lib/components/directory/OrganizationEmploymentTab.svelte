@@ -1,32 +1,47 @@
 <script lang="ts">
-  import { appShortcuts, Button, Modal, IconButton } from '@kenn-io/kit-ui';
+  import { appShortcuts } from '@kenn-io/kit-ui';
 
-  import Pencil from '@lucide/svelte/icons/pencil';
-  import X from '@lucide/svelte/icons/x';
+  import DetailSection from '../people/DetailSection.svelte';
+  import EmptyLine from '../common/EmptyLine.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import Dialog from '../common/Dialog.svelte';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
-  import type { Employment, Organization } from '../../directory/models';
-  import EmploymentCurrentData from './EmploymentCurrentData.svelte';
+  import type { Employment, Organization, Prepared } from '../../directory/models';
+  import ConflictNotice from '../common/ConflictNotice.svelte';
+  import { conflict, employmentFacts } from '../../directory/conflict';
+  import { WriteAttempt } from '../../directory/write-attempt.svelte';
+  import { latestDateKey } from '../../directory/dates';
   import DetailRow from '../people/DetailRow.svelte';
+  import { dateSpan } from '../../directory/labels';
   import EmploymentEditor from './EmploymentEditor.svelte';
+  import EmploymentEndDialog from './EmploymentEndDialog.svelte';
   import OrganizationEditor from './OrganizationEditor.svelte';
 
   interface Props {
     controller: DirectoryEntityController;
     personID: number;
     organizationRequest?: { id: number; key: number };
+    onOpenPerson?: (personID: number) => void;
   }
 
-  let { controller, personID, organizationRequest = undefined }: Props = $props();
+  let { controller, personID, organizationRequest = undefined, onOpenPerson = undefined }: Props = $props();
   let organizationEditor = $state<(Pick<Organization, 'id'> & Partial<Organization>) | null | undefined>(undefined);
   let employmentEditor = $state<Employment | null | undefined>(undefined);
-  let employmentAction = $state<'edit' | 'end'>('edit');
+  let endingEmployment = $state<Employment>();
+  const currentJobs = $derived(controller.employments.filter(job => job.is_current));
+  // Most recent first: the latest end, then the latest start.
+  const pastJobs = $derived(controller.employments.filter(job => !job.is_current)
+    .sort((a, b) => latestDateKey(b.end_date) - latestDateKey(a.end_date) || latestDateKey(b.start_date) - latestDateKey(a.start_date)));
   let deletingEmployment = $state<Employment>();
-  let deleteConflictCurrent = $state<Employment>();
-  let deleteMessage = $state('');
-  let actionMessage = $state('');
-  let actionConflictCurrent = $state<Employment>();
-  let acting = $state(false);
+  const removal = new WriteAttempt<Prepared<Employment>>();
+  const primary = new WriteAttempt<Prepared<Employment>>();
+  let primaryTarget = $state<Employment>();
+  const acting = $derived(removal.busy || primary.busy);
   let openedOrganizationRequestKey = $state(0);
+  function holderJob(organizationID: number, holderID: number): { label: string; open: () => void } | undefined {
+    const job = holderID === personID ? controller.employments.find(item => item.organization_id === organizationID) : undefined;
+    return job ? { label: 'Delete job…', open: () => { openDelete(job); } } : undefined;
+  }
 
   $effect(() => {
     if (!organizationRequest || organizationRequest.key === openedOrganizationRequestKey) return;
@@ -39,165 +54,115 @@
     return appShortcuts.pushScope('directory-employment-delete');
   });
 
-  function organizationName(id: number): string {
-    return controller.organizationRecords.get(id)?.organization.name ?? controller.organizations.find((item) => item.id === id)?.name
-      ?? (controller.employmentProjection?.organization_id === id ? controller.employmentProjection.organization_name : undefined)
-      ?? `Organization ${id}`;
-  }
-
-  function organizationRecord(id: number): Organization | undefined {
-    return controller.organizations.find((item) => item.id === id);
-  }
 
   function employmentLabel(employment: Employment): string {
-    return employment.title ?? employment.role ?? 'Employment';
-  }
-
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-  // "Mar 2024 – present", or "2019 – 2021".
-  function periodText(employment: Employment): string {
-    const when = (value: { year?: number; month?: number } | undefined) => value?.year ? [value.month ? MONTHS[value.month - 1] : '', value.year].filter(Boolean).join(' ') : '';
-    const start = when(employment.start_date);
-    const end = when(employment.end_date) || (employment.is_current ? 'present' : '');
-    return start && end ? `${start} – ${end}` : start ? `Since ${start}` : end && end !== 'present' ? `Until ${end}` : '';
+    return employment.title ?? employment.role ?? 'Job';
   }
 
   function openRequestedOrganization(id: number): void {
-    actionMessage = '';
-    organizationEditor = { id };
+    primary.reset();
+    organizationEditor = { id, name: controller.organizationName(id) };
   }
 
   async function addEmployment(): Promise<void> {
-    actionMessage = '';
-    actionConflictCurrent = undefined;
+    primary.reset();
     if (controller.organizations.length === 0) await controller.refreshOrganizations();
-    employmentAction = 'edit';
     employmentEditor = null;
   }
 
   async function makePrimary(employment: Employment): Promise<void> {
     if (acting) return;
-    acting = true;
-    actionMessage = '';
-    actionConflictCurrent = undefined;
-    try {
-      const result = await controller.makeEmploymentPrimary(employment.id);
-      if (!result.ok) {
-        if (result.kind === 'conflict') {
-          actionConflictCurrent = result.current;
-          actionMessage = `This employment changed elsewhere. ${result.message}`;
-        } else actionMessage = result.message;
-      }
-    } finally {
-      acting = false;
-    }
+    if (primaryTarget?.id !== employment.id) primary.reset();
+    primaryTarget = employment;
+    await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
   }
 
   async function removeEmployment(): Promise<void> {
     if (!deletingEmployment || acting) return;
-    acting = true;
-    deleteMessage = '';
-    deleteConflictCurrent = undefined;
     const target = deletingEmployment;
-    try {
-      const result = await controller.deleteEmployment(target.id);
-      if (result.ok) closeDelete();
-      else if (result.kind === 'conflict') {
-        deleteConflictCurrent = result.current;
-        deleteMessage = `This employment changed elsewhere. ${result.message}`;
-      } else deleteMessage = result.message;
-    } finally {
-      acting = false;
-    }
+    if (await removal.run(current => controller.deleteEmployment(target.id, current))) closeDelete();
   }
 
   function openDelete(employment: Employment): void {
-    deleteMessage = '';
-    deleteConflictCurrent = undefined;
+    removal.reset();
     deletingEmployment = employment;
   }
 
   function closeDelete(): void {
     if (acting) return;
+    if (removal.conflict) void controller.refreshEmployments();
     deletingEmployment = undefined;
-    deleteConflictCurrent = undefined;
-    deleteMessage = '';
+    removal.reset();
+  }
+
+  async function reloadDelete(): Promise<void> {
+    const id = deletingEmployment?.id;
+    await controller.refreshEmployments();
+    if (controller.errors.employments) return;
+    deletingEmployment = controller.employments.find(item => item.id === id);
+    removal.reset();
   }
 </script>
 
-<section class="organization-employment" aria-label="Organizations and employment">
-  <header><h3>Work</h3><Button size="sm" label="Add work" onclick={() => void addEmployment()} /></header>
-  <section aria-label="Employment history">
-    {#if controller.errors.employments}
-      <div class="refresh-error">
-        <p role="alert">{controller.errors.employments}</p>
-        <Button label="Refresh employment records" onclick={() => void controller.refreshEmployments()} />
-      </div>
-    {/if}
-    {#if controller.employmentsLoading}<p role="status">Loading employment records…</p>{/if}
-    {#if controller.employments.length === 0}
-      {#if !controller.employmentsLoading}<p class="empty">No work yet</p>{/if}
-    {:else}
-      <div class="records">
-        {#each controller.employments as employment (employment.id)}
-          <DetailRow description={[periodText(employment), employment.department, employment.is_primary && controller.employments.filter((item) => item.is_current).length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')}>
-            {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(employment.organization_id)}</button>
-            {#snippet actions()}
-              {#if employment.is_current && !employment.is_primary}<Button size="sm" label="Make primary employment" shortLabel="Make primary" disabled={acting} onclick={() => void makePrimary(employment)} />{/if}
-              {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" onclick={() => { employmentAction = 'end'; employmentEditor = employment; }} />{/if}
-              <IconButton size="sm" ariaLabel="Edit employment" onclick={() => { employmentAction = 'edit'; employmentEditor = employment; }}><Pencil size={14} /></IconButton>
-              <IconButton size="sm" ariaLabel="Delete employment" onclick={() => openDelete(employment)}><X size={14} /></IconButton>
-            {/snippet}
-          </DetailRow>
-        {/each}
-      </div>
-    {/if}
-    {#if actionMessage}
-      <div role="alert">
-        <p>{actionMessage}</p>
-        {#if actionConflictCurrent}
-          <EmploymentCurrentData employment={actionConflictCurrent} organization={organizationRecord(actionConflictCurrent.organization_id)} />
-        {/if}
-      </div>
-    {/if}
-  </section>
+<div class="organization-employment">
+  <DetailSection title="Work" addLabel="Add job…" onadd={() => void addEmployment()}
+    history={pastJobs.length ? pastRows : undefined} historyLabel={`${pastJobs.length} past ${pastJobs.length === 1 ? 'job' : 'jobs'}`}>
+    {#if controller.employmentsLoading}<p role="status">Loading jobs…</p>{/if}
+    {#if !controller.employments.length && !controller.employmentsLoading && !controller.errors.employments}<EmptyLine message="No work yet" />{/if}
+    <div class="records">{#each currentJobs as employment (employment.id)}{@render jobRow(employment)}{/each}</div>
+    {#if controller.errors.employments}<InlineNotice message="Couldn't load jobs." details={controller.errors.employments} actionLabel="Retry" onaction={() => void controller.refreshEmployments()} />{/if}
+  </DetailSection>
+</div>
 
+{#snippet pastRows()}<div class="records">{#each pastJobs as employment (employment.id)}{@render jobRow(employment)}{/each}</div>{/snippet}
+{#snippet jobRow(employment: Employment)}
+  <!-- The organization is a link in the row's text, so the row itself takes no tap: Edit… is in ⋯, and a tap on a phone never lands on the wrong target. -->
+  <DetailRow actionLabel={`${employmentLabel(employment)} at ${controller.organizationName(employment.organization_id)}`} description={[dateSpan(employment.start_date, employment.end_date, employment.is_current), employment.title ? employment.role : '', employment.department, employment.is_current && employment.is_primary && currentJobs.length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')} menu={[
+    { label: 'Edit…', onselect: () => employmentEditor = employment },
+    ...(employment.is_current ? [{ label: 'End…', onselect: () => endingEmployment = employment }] : []),
+    ...(employment.is_current && !employment.is_primary ? [{ label: 'Make primary', disabled: acting, onselect: () => void makePrimary(employment) }] : []),
+    { label: 'Delete…', danger: true, onselect: () => openDelete(employment) }
+  ]}>
+    {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
+  </DetailRow>
+  {#if primary.details && primaryTarget?.id === employment.id}
+    {#if primary.conflict}
+      <ConflictNotice noun="job" saved={primary.conflict.data} {...conflict(employmentFacts(primary.conflict.data, id => controller.organizationName(id)), employmentFacts(primaryTarget, id => controller.organizationName(id)), { 'Primary job': 'Yes' })} message={primary.details} actionLabel="Reload"
+        onaction={() => void controller.refreshEmployments().then(() => { if (!controller.errors.employments) primary.reset(); })} />
+    {:else}<InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />{/if}
+  {/if}
+{/snippet}
 
-</section>
-
+{#if endingEmployment}
+  <EmploymentEndDialog {controller} employment={endingEmployment} onClose={() => endingEmployment = undefined} />
+{/if}
 {#if organizationEditor !== undefined}
-  <OrganizationEditor controller={controller} organization={organizationEditor ?? undefined}
+  {@const organizationID = organizationEditor?.id}
+  <OrganizationEditor controller={controller} organization={organizationEditor ?? undefined} {onOpenPerson}
+    holderJob={organizationID === undefined ? undefined : (holderID) => holderJob(organizationID, holderID)}
     onDone={() => { organizationEditor = undefined; }} onClose={() => { organizationEditor = undefined; }} />
 {/if}
 {#if employmentEditor !== undefined}
-  <EmploymentEditor controller={controller} {personID} employment={employmentEditor ?? undefined} action={employmentAction}
+  <EmploymentEditor controller={controller} {personID} employment={employmentEditor ?? undefined}
     onDone={() => { employmentEditor = undefined; }} onClose={() => { employmentEditor = undefined; }} />
 {/if}
 {#if deletingEmployment}
-  <Modal title="Delete employment" ariaLabel="Delete employment" closeLabel="Close delete employment" onclose={closeDelete}>
-    <p>Delete {employmentLabel(deletingEmployment)} at {organizationName(deletingEmployment.organization_id)}?</p>
-    {#if deleteMessage}
-      <div role="alert">
-        <p>{deleteMessage}</p>
-        {#if deleteConflictCurrent}
-          <EmploymentCurrentData employment={deleteConflictCurrent} organization={organizationRecord(deleteConflictCurrent.organization_id)} />
-        {/if}
-      </div>
-    {/if}
-    {#snippet footer()}<Button label="Cancel" disabled={acting} onclick={closeDelete} /><Button tone="danger" surface="solid" label="Confirm delete employment" disabled={acting} onclick={() => void removeEmployment()} />{/snippet}
-  </Modal>
+  <Dialog title={`Delete ${employmentLabel(deletingEmployment)} at ${controller.organizationName(deletingEmployment.organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
+    <p>This permanently removes the job. {#if deletingEmployment.is_current}<button class="org-link" type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
+    {#snippet notice()}
+      {#if removal.conflict && deletingEmployment}
+        <ConflictNotice noun="job" saved={removal.conflict.data} {...conflict(employmentFacts(removal.conflict.data, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)))} message={removal.details} actionLabel="Reload"
+          onaction={() => void reloadDelete()} />
+      {:else if removal.details}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => void removeEmployment()} />{/if}
+    {/snippet}
+  </Dialog>
 {/if}
 
 <style>
-  .organization-employment { display: grid; gap: var(--space-2); min-width: 0; }
-  section, .refresh-error { display: grid; gap: var(--field-gap); min-width: 0; }
-  header { display: flex; gap: var(--control-gap); align-items: center; justify-content: space-between; min-height: var(--control-h); }
-  h3, p { margin: 0; }
-  h3 { font-size: var(--font-size-md); }
+  .organization-employment { display: grid; min-width: 0; }
   .records { display: grid; }
-  .empty { color: var(--text-muted); font-size: var(--font-size-sm); }
+  p { margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); }
+  [role="status"] { padding-block: var(--row-pad-y); color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
   .org-link:hover { text-decoration: underline; }
-  [role="alert"] { color: var(--text-danger); }
 </style>

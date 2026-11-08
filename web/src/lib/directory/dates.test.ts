@@ -1,3 +1,4 @@
+import { readablePartialDate, spokenDate, dateNote, DATE_HINT } from './dates';
 import { describe, expect, it } from 'vitest';
 import { intervalDateError, isCalendarDate, isTextProfileDate, profileDateError } from './dates';
 
@@ -15,7 +16,7 @@ describe('intervalDateError', () => {
   it.each(['--04-12', '--04', '---12', 'spring 2019', '2019-13', '2019-02-30', '0000', '201904', '2019-4'])(
     'rejects %j', (value) => {
       expect(intervalDateError(value)).toBe(
-        'Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.');
+        'Use 2024, 2024-03, or 2024-03-15.');
     });
 });
 
@@ -30,5 +31,22 @@ describe('profileDateError', () => {
     expect(isTextProfileDate('--04-12')).toBe(false);
     expect(isTextProfileDate('2024-13')).toBe(false);
     expect(isTextProfileDate('  ')).toBe(false);
+  });
+});
+
+describe('date readings', () => {
+  it('reads partial dates, full dates, and compact input', () => {
+    expect(readablePartialDate('2024')).toBe('2024');
+    expect(readablePartialDate({ year: 2024, month: 3 })).toBe('Mar 2024');
+    expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');
+    expect(readablePartialDate('20240305')).toBe('Mar 5, 2024');
+    const today = new Date(2026, 10, 6);
+    expect(spokenDate('2026-11-06', today)).toBe('Today, Nov 6');
+    expect(spokenDate('20261105', today)).toBe('Nov 5');
+    expect(spokenDate('2025-11-06', today)).toBe('Nov 6, 2025');
+    expect(spokenDate('2026-02-30', today)).toBe('');
+    expect(dateNote('2024-03', true, today)).toBe(DATE_HINT);
+    expect(dateNote('2024-03', false, today)).toBe('Mar 2024');
+    expect(dateNote('invalid', false, today)).toBe('');
   });
 });

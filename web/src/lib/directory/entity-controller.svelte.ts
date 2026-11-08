@@ -11,9 +11,11 @@ import {
   getEmployment as generatedGetEmployment,
   getOrganization as generatedGetOrganization,
   getPersonNetwork as generatedGetPersonNetwork,
+  getPersonProfile as generatedGetPersonProfile,
   getPersonRelationship as generatedGetPersonRelationship,
   getRelationshipType as generatedGetRelationshipType,
   listOrganizations as generatedListOrganizations,
+  listOrganizationEmployments as generatedListOrganizationEmployments,
   listPersonEmployments as generatedListPersonEmployments,
   listPersonRelationships as generatedListPersonRelationships,
   listRelationshipTypes as generatedListRelationshipTypes,
@@ -26,6 +28,7 @@ import {
 } from '../api/generated/api/api';
 import { SvelteMap } from 'svelte/reactivity';
 import type { APIClient } from '../api/client';
+import type { APIErrorBody } from '../api/runtime';
 import type {
   CreatePersonRelationshipRequest,
   CreateRelationshipTypeRequest,
@@ -46,16 +49,20 @@ import type {
   PersonNetwork,
   PersonRelationship,
   PersonRelationshipView,
+  Prepared,
   RelationshipType,
 } from './models';
+
 type RequestResult<T> = {
   data?: T;
-  error?: unknown;
+  error?: APIErrorBody;
   response: Response;
 };
 interface DirectoryEntityControllerOptions {
   onDirectoryChange?: () => void | Promise<void>;
 }
+const organizationEmploymentCheckLimit = 200;
+const revisionConflictCodes = new Set(['employment_revision_conflict', 'organization_revision_conflict', 'relationship_revision_conflict']);
 const unknownCreateMessage =
   'The create request may have succeeded, but its response was lost. Refresh this collection before submitting it again.';
 const blockedCreateMessage = 'Refresh this collection before retrying the create request.';
@@ -69,17 +76,12 @@ export class DirectoryEntityController {
   employments = $state<Employment[]>([]);
   employmentProjection = $state<EmploymentProjectionResponse>();
   relationships = $state<PersonRelationshipView[]>([]);
-  relationshipsIncludeEnded = $state(false);
   relationshipTypes = $state<RelationshipType[]>([]);
   network = $state<PersonNetwork | null>(null);
   organizationRecords = new SvelteMap<number, OrganizationProfile>();
   employmentRecords = new SvelteMap<number, Employment>();
   relationshipRecords = new SvelteMap<number, PersonRelationship>();
   relationshipTypeRecords = new SvelteMap<number, RelationshipType>();
-  organizationETags = new SvelteMap<number, string>();
-  employmentETags = new SvelteMap<number, string>();
-  relationshipETags = new SvelteMap<number, string>();
-  relationshipTypeETags = new SvelteMap<number, string>();
   loading = $state<Record<DirectoryEntityResource, boolean>>({
     organizations: false,
     employments: false,
@@ -108,7 +110,6 @@ export class DirectoryEntityController {
   private relationshipTypeGeneration = 0;
   private networkGeneration = 0;
   private networkDepth = 1;
-  private networkIncludeEnded = false;
   private disposed = false;
   constructor(
     client: APIClient,
@@ -192,8 +193,7 @@ export class DirectoryEntityController {
     void Promise.allSettled([...ids].map(id => this.prepareOrganizationMutation(id, signal)));
     return response;
   }
-  async refreshRelationships(includeEnded = this.relationshipsIncludeEnded): Promise<void> {
-    this.relationshipsIncludeEnded = includeEnded;
+  async refreshRelationships(): Promise<void> {
     await this.loadRelationships(true);
   }
   private async loadRelationships(clearCreateBlock: boolean): Promise<boolean> {
@@ -201,7 +201,7 @@ export class DirectoryEntityController {
     try {
       const response = await generatedListPersonRelationships(
         { id: this.personID },
-        { include_ended: this.relationshipsIncludeEnded },
+        { include_ended: true },
         {
           ...this.client,
           signal: abort.signal,
@@ -245,14 +245,13 @@ export class DirectoryEntityController {
       if (generation === this.relationshipTypeGeneration) this.loading.relationshipTypes = false;
     }
   }
-  async loadNetwork(depth = 1, includeEnded = false): Promise<void> {
+  async loadNetwork(depth = 1): Promise<void> {
     this.networkDepth = depth;
-    this.networkIncludeEnded = includeEnded;
     const { abort, generation } = this.beginCollection('network');
     try {
       const response = await generatedGetPersonNetwork(
         { id: this.personID },
-        { depth, include_ended: includeEnded },
+        { depth, include_ended: false },
         {
           ...this.client,
           signal: abort.signal,
@@ -271,15 +270,40 @@ export class DirectoryEntityController {
       if (generation === this.networkGeneration) this.loading.network = false;
     }
   }
-  async prepareOrganizationMutation(id: number, owner?: AbortSignal): Promise<OrganizationProfile> {
+  async prepareOrganizationMutation(id: number, owner?: AbortSignal): Promise<Prepared<OrganizationProfile>> {
     const response = await this.getMutable(
       (signal) => generatedGetOrganization({ id: id }, { ...this.client, signal }),
       owner,
     );
-    if (!owner || !this.organizationRecords.has(id)) { this.organizationRecords.set(id, response.data); this.organizationETags.set(id, response.etag); }
-    return response.data;
+    if (!owner || !this.organizationRecords.has(id)) this.organizationRecords.set(id, response.data);
+    return response;
   }
-  async prepareEmploymentMutation(id: number): Promise<Employment> {
+  organizationName(id: number): string {
+    return this.organizationRecords.get(id)?.organization.name ?? this.organizations.find(item => item.id === id)?.name
+      ?? (this.employmentProjection?.organization_id === id ? this.employmentProjection.organization_name : undefined)
+      ?? 'this organization';
+  }
+
+  async organizationEmploymentHolders(id: number): Promise<{ count: number; atLeast: boolean; peopleCount: number; holders: { personID: number; name: string; job: string }[] }> {
+    const abort = this.beginEntityRequest();
+    try {
+      const response = await generatedListOrganizationEmployments({ id }, { limit: organizationEmploymentCheckLimit }, { ...this.client, signal: abort.signal });
+      if (!this.isActive(abort)) throw new Error('Request was cancelled.');
+      if (!response.data) throw new Error(failureMessage(response.error, response.response.status));
+      const records = response.data.employments;
+      const ids = [...new Set(records.map(record => record.person_id))].slice(0, 3);
+      const holders = await Promise.all(ids.map(async personID => {
+        const person = await generatedGetPersonProfile({ id: personID }, { ...this.client, signal: abort.signal });
+        if (!person.data) throw new Error(failureMessage(person.error, person.response.status));
+        const record = records.find(record => record.person_id === personID);
+        return { personID, name: person.data?.display_name?.trim() || 'Unnamed person', job: record?.title ?? record?.role ?? '' };
+      }));
+      if (!this.isActive(abort)) throw new Error('Request was cancelled.');
+      return { count: records.length, atLeast: records.length === organizationEmploymentCheckLimit, peopleCount: new Set(records.map(record => record.person_id)).size, holders };
+    } finally { this.entityRequests.delete(abort); }
+  }
+
+  async prepareEmploymentMutation(id: number): Promise<Prepared<Employment>> {
     const response = await this.getMutable((signal) =>
       generatedGetEmployment(
         { id: id },
@@ -290,10 +314,9 @@ export class DirectoryEntityController {
       ),
     );
     this.employmentRecords.set(id, response.data);
-    this.employmentETags.set(id, response.etag);
-    return response.data;
+    return response;
   }
-  async prepareRelationshipMutation(id: number): Promise<PersonRelationship> {
+  async prepareRelationshipMutation(id: number): Promise<Prepared<PersonRelationship>> {
     const response = await this.getMutable((signal) =>
       generatedGetPersonRelationship(
         { id: id },
@@ -304,10 +327,9 @@ export class DirectoryEntityController {
       ),
     );
     this.relationshipRecords.set(id, response.data);
-    this.relationshipETags.set(id, response.etag);
-    return response.data;
+    return response;
   }
-  async prepareRelationshipTypeMutation(id: number): Promise<RelationshipType> {
+  async prepareRelationshipTypeMutation(id: number): Promise<Prepared<RelationshipType>> {
     const response = await this.getMutable((signal) =>
       generatedGetRelationshipType(
         { id: id },
@@ -318,8 +340,7 @@ export class DirectoryEntityController {
       ),
     );
     this.relationshipTypeRecords.set(id, response.data);
-    this.relationshipTypeETags.set(id, response.etag);
-    return response.data;
+    return response;
   }
   async createOrganization(body: OrganizationCreateBody): Promise<DirectoryEntityMutationResult<Organization>> {
     const result = await this.create(
@@ -329,9 +350,8 @@ export class DirectoryEntityController {
           ...this.client,
           signal,
         }),
-      (entity, response) => {
+      (entity) => {
         this.organizations = replaceByID(this.organizations, entity);
-        this.captureETag(this.organizationETags, entity.id, response);
       },
     );
     return this.afterDirectoryMutation(result);
@@ -339,61 +359,63 @@ export class DirectoryEntityController {
   async updateOrganization(
     id: number,
     body: OrganizationBody,
-  ): Promise<DirectoryEntityMutationResult<Organization, OrganizationProfile>> {
+    prepared?: Prepared<OrganizationProfile>,
+  ): Promise<DirectoryEntityMutationResult<Organization, Prepared<OrganizationProfile>>> {
     const result = await this.writeExisting(
       () => this.prepareOrganizationMutation(id),
-      (_current, signal) =>
+      (_current, signal, etag) =>
         generatedPatchOrganization({ id: id }, body, {
           ...this.client,
           signal,
-          headers: { 'If-Match': this.organizationETags.get(id)! },
+          headers: { 'If-Match': etag },
         }),
-      (entity, response) => {
+      (entity) => {
         this.organizations = replaceByID(this.organizations, entity);
         const current = this.organizationRecords.get(id);
         if (current) this.organizationRecords.set(id, { ...current, organization: entity });
-        this.captureETag(this.organizationETags, id, response);
       },
+      prepared,
     );
     return this.afterDirectoryMutation(result);
   }
   async putOrganizationProfile(
     id: number,
     buildBody: (current: OrganizationProfile) => OrganizationProfileBody,
-  ): Promise<DirectoryEntityMutationResult<OrganizationProfile, OrganizationProfile>> {
+    prepared?: Prepared<OrganizationProfile>,
+  ): Promise<DirectoryEntityMutationResult<OrganizationProfile, Prepared<OrganizationProfile>>> {
     const result = await this.writeExisting(
       () => this.prepareOrganizationMutation(id),
-      (current, signal) =>
+      (current, signal, etag) =>
         generatedPutOrganizationProfile({ id: id }, buildBody(current), {
           ...this.client,
           signal,
-          headers: { 'If-Match': this.organizationETags.get(id)! },
+          headers: { 'If-Match': etag },
         }),
-      (profile, response) => {
+      (profile) => {
         this.organizationRecords.set(id, profile);
         this.organizations = replaceByID(this.organizations, profile.organization);
-        this.captureETag(this.organizationETags, id, response);
       },
+      prepared,
     );
     return this.afterDirectoryMutation(result);
   }
-  async deleteOrganization(id: number): Promise<DirectoryEntityMutationResult<never, OrganizationProfile>> {
+  async deleteOrganization(id: number, prepared?: Prepared<OrganizationProfile>): Promise<DirectoryEntityMutationResult<never, Prepared<OrganizationProfile>>> {
     const result = await this.deleteExisting(
       () => this.prepareOrganizationMutation(id),
-      (signal) =>
+      (signal, etag) =>
         generatedDeleteOrganization(
           { id: id },
           {
             ...this.client,
             signal,
-            headers: { 'If-Match': this.organizationETags.get(id)! },
+            headers: { 'If-Match': etag },
           },
         ),
       () => {
         this.organizations = this.organizations.filter((item) => item.id !== id);
         this.organizationRecords.delete(id);
-        this.organizationETags.delete(id);
       },
+      prepared,
     );
     return this.afterDirectoryMutation(result);
   }
@@ -405,8 +427,8 @@ export class DirectoryEntityController {
           ...this.client,
           signal,
         }),
-      (entity, response) => {
-        this.applyEmploymentEntity(entity, response);
+      (entity) => {
+        this.applyEmploymentEntity(entity);
       },
     );
     return this.afterDirectoryMutation(result, true);
@@ -414,55 +436,60 @@ export class DirectoryEntityController {
   async updateEmployment(
     id: number,
     buildBody: (current: Employment) => EmploymentBody,
-  ): Promise<DirectoryEntityMutationResult<Employment>> {
-    return this.writeEmployment(id, (current, signal) =>
+    prepared?: Prepared<Employment>,
+  ): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
+    return this.writeEmployment(id, (current, signal, etag) =>
       generatedPatchEmployment({ id: id }, buildBody(current), {
         ...this.client,
         signal,
-        headers: { 'If-Match': this.employmentETags.get(id)! },
+        headers: { 'If-Match': etag },
       }),
+      prepared,
     );
   }
-  async endEmployment(id: number, body: EndEmploymentBody): Promise<DirectoryEntityMutationResult<Employment>> {
-    return this.writeEmployment(id, (_current, signal) =>
+  async endEmployment(id: number, body: EndEmploymentBody, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
+    return this.writeEmployment(id, (_current, signal, etag) =>
       generatedEndEmployment({ id: id }, body, {
         ...this.client,
         signal,
-        headers: { 'If-Match': this.employmentETags.get(id)! },
+        headers: { 'If-Match': etag },
       }),
+      prepared,
     );
   }
-  async makeEmploymentPrimary(id: number): Promise<DirectoryEntityMutationResult<Employment>> {
-    return this.writeEmployment(id, (_current, signal) =>
+  async makeEmploymentPrimary(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
+    return this.writeEmployment(id, (_current, signal, etag) =>
       generatedSetPrimaryEmployment(
         { id: id },
         {
           ...this.client,
           signal,
-          headers: { 'If-Match': this.employmentETags.get(id)! },
+          headers: { 'If-Match': etag },
         },
       ),
+      prepared,
     );
   }
-  async deleteEmployment(id: number): Promise<DirectoryEntityMutationResult<never, Employment>> {
+  async deleteEmployment(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {
     const result = await this.deleteExisting(
       () => this.prepareEmploymentMutation(id),
-      (signal) =>
+      (signal, etag) =>
         generatedDeleteEmployment(
           { id: id },
           {
             ...this.client,
             signal,
-            headers: { 'If-Match': this.employmentETags.get(id)! },
+            headers: { 'If-Match': etag },
           },
         ),
       () => {
         this.employments = this.employments.filter((item) => item.id !== id);
         this.employmentProjection = undefined;
         this.employmentRecords.delete(id);
-        this.employmentETags.delete(id);
       },
+      prepared,
     );
+    await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
     return this.afterDirectoryMutation(result, true);
   }
   async createRelationship(
@@ -475,9 +502,8 @@ export class DirectoryEntityController {
           ...this.client,
           signal,
         }),
-      (entity, response) => {
+      (entity) => {
         this.relationshipRecords.set(entity.id, entity);
-        this.captureETag(this.relationshipETags, entity.id, response);
       },
     );
     if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
@@ -486,43 +512,44 @@ export class DirectoryEntityController {
   async updateRelationship(
     id: number,
     body: PatchPersonRelationshipRequest,
-  ): Promise<DirectoryEntityMutationResult<PersonRelationship>> {
+    prepared?: Prepared<PersonRelationship>,
+  ): Promise<DirectoryEntityMutationResult<PersonRelationship, Prepared<PersonRelationship>>> {
     const result = await this.writeExisting(
       () => this.prepareRelationshipMutation(id),
-      (_current, signal) =>
+      (_current, signal, etag) =>
         generatedPatchPersonRelationship({ id: id }, body, {
           ...this.client,
           signal,
-          headers: { 'If-Match': this.relationshipETags.get(id)! },
+          headers: { 'If-Match': etag },
         }),
-      (entity, response) => {
+      (entity) => {
         this.relationships = this.relationships.map((view) =>
           view.relationship.id === id ? { ...view, relationship: entity } : view,
         );
         this.relationshipRecords.set(id, entity);
-        this.captureETag(this.relationshipETags, id, response);
       },
+      prepared,
     );
     if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
-  async deleteRelationship(id: number): Promise<DirectoryEntityMutationResult<never, PersonRelationship>> {
+  async deleteRelationship(id: number, prepared?: Prepared<PersonRelationship>): Promise<DirectoryEntityMutationResult<never, Prepared<PersonRelationship>>> {
     const result = await this.deleteExisting(
       () => this.prepareRelationshipMutation(id),
-      (signal) =>
+      (signal, etag) =>
         generatedDeletePersonRelationship(
           { id: id },
           {
             ...this.client,
             signal,
-            headers: { 'If-Match': this.relationshipETags.get(id)! },
+            headers: { 'If-Match': etag },
           },
         ),
       () => {
         this.relationships = this.relationships.filter((view) => view.relationship.id !== id);
         this.relationshipRecords.delete(id);
-        this.relationshipETags.delete(id);
       },
+      prepared,
     );
     if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
@@ -537,71 +564,68 @@ export class DirectoryEntityController {
           ...this.client,
           signal,
         }),
-      (entity, response) => {
+      (entity) => {
         this.relationshipTypes = replaceByID(this.relationshipTypes, entity);
         this.relationshipTypeRecords.set(entity.id, entity);
-        this.captureETag(this.relationshipTypeETags, entity.id, response);
       },
     );
   }
   async updateRelationshipType(
     id: number,
     body: PatchRelationshipTypeRequest,
-  ): Promise<DirectoryEntityMutationResult<RelationshipType>> {
-    let prepared: RelationshipType;
+  ): Promise<DirectoryEntityMutationResult<RelationshipType, Prepared<RelationshipType>>> {
+    let prepared: Prepared<RelationshipType>;
     try {
       prepared = await this.prepareRelationshipTypeMutation(id);
     } catch (cause: unknown) {
       return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) };
     }
-    if (prepared.ownership === 'system') {
+    if (prepared.data.ownership === 'system') {
       return { ok: false, kind: 'error', status: 403, message: 'System relationship types are read-only.' };
     }
     const result = await this.writeExisting(
       () => this.prepareRelationshipTypeMutation(id),
-      (_current, signal) =>
+      (_current, signal, etag) =>
         generatedPatchRelationshipType({ id: id }, body, {
           ...this.client,
           signal,
-          headers: { 'If-Match': this.relationshipTypeETags.get(id)! },
+          headers: { 'If-Match': etag },
         }),
-      (entity, response) => {
+      (entity) => {
         this.relationshipTypes = replaceByID(this.relationshipTypes, entity);
         this.relationshipTypeRecords.set(id, entity);
-        this.captureETag(this.relationshipTypeETags, id, response);
       },
       prepared,
     );
     return result;
   }
-  async deleteRelationshipType(id: number): Promise<DirectoryEntityMutationResult<never, RelationshipType>> {
-    let prepared: RelationshipType;
+  async deleteRelationshipType(id: number): Promise<DirectoryEntityMutationResult<never, Prepared<RelationshipType>>> {
+    let prepared: Prepared<RelationshipType>;
     try {
       prepared = await this.prepareRelationshipTypeMutation(id);
     } catch (cause: unknown) {
       return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) };
     }
-    if (prepared.ownership === 'system') {
+    if (prepared.data.ownership === 'system') {
       return { ok: false, kind: 'error', status: 403, message: 'System relationship types are read-only.' };
     }
-    if (!prepared.is_deletable) {
+    if (!prepared.data.is_deletable) {
       return { ok: false, kind: 'error', status: 403, message: 'This relationship type cannot be deleted.' };
     }
     return this.deleteExisting(
       () => this.prepareRelationshipTypeMutation(id),
-      (signal) =>
+      (signal, etag) =>
         generatedDeleteRelationshipType(
           { id: id },
           {
             ...this.client,
             signal,
-            headers: { 'If-Match': this.relationshipTypeETags.get(id)! },
+            headers: { 'If-Match': etag },
           },
         ),
       () => {
         this.relationshipTypes = this.relationshipTypes.filter((item) => item.id !== id);
         this.relationshipTypeRecords.delete(id);
-        this.relationshipTypeETags.delete(id);
       },
       prepared,
     );
@@ -628,19 +652,28 @@ export class DirectoryEntityController {
   }
   private async writeEmployment(
     id: number,
-    write: (current: Employment, signal: AbortSignal) => Promise<RequestResult<Employment>>,
-  ): Promise<DirectoryEntityMutationResult<Employment>> {
+    write: (current: Employment, signal: AbortSignal, etag: string) => Promise<RequestResult<Employment>>,
+    prepared?: Prepared<Employment>,
+  ): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
     const result = await this.writeExisting(
       () => this.prepareEmploymentMutation(id),
       write,
-      (entity, response) => {
-        this.applyEmploymentEntity(entity, response);
+      (entity) => {
+        this.applyEmploymentEntity(entity);
       },
+      prepared,
     );
+    await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
     return this.afterDirectoryMutation(result, true);
   }
+  private async prepareConflictEmployer<T>(result: DirectoryEntityMutationResult<T, Prepared<Employment>>, opened?: Employment): Promise<void> {
+    if (result.ok || result.kind !== 'conflict' || !result.current || !opened || result.current.data.organization_id === opened.organization_id || this.organizationRecords.has(result.current.data.organization_id)) return;
+    try {
+      await this.prepareOrganizationMutation(result.current.data.organization_id);
+    } catch { /* Keep the job conflict actionable when its employer cannot load. */ }
+  }
   async refreshNetwork(): Promise<void> {
-    if (this.networkGeneration > 0) await this.loadNetwork(this.networkDepth, this.networkIncludeEnded);
+    if (this.networkGeneration > 0) await this.loadNetwork(this.networkDepth);
   }
   private async afterDirectoryMutation<T, C>(
     result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false,
@@ -648,7 +681,7 @@ export class DirectoryEntityController {
     if (result.ok) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.options.onDirectoryChange?.(), this.refreshNetwork()]);
     return result;
   }
-  private applyEmploymentEntity(entity: Employment, response: Response): void {
+  private applyEmploymentEntity(entity: Employment): void {
     if (entity.person_id !== this.personID) {
       this.employments = this.employments.filter((item) => item.id !== entity.id);
     } else {
@@ -664,18 +697,16 @@ export class DirectoryEntityController {
         : this.employments;
       for (const id of demotedIDs) {
         this.employmentRecords.delete(id);
-        this.employmentETags.delete(id);
       }
       this.employments = replaceByID(visible, entity);
     }
     this.employmentProjection = undefined;
     this.employmentRecords.set(entity.id, entity);
-    this.captureETag(this.employmentETags, entity.id, response);
   }
   private async create<T>(
     resource: DirectoryEntityCreateResource,
     send: (signal: AbortSignal) => Promise<RequestResult<T>>,
-    apply: (entity: T, response: Response) => void,
+    apply: (entity: T) => void,
   ): Promise<DirectoryEntityMutationResult<T>> {
     if (this.createBlocked[resource]) return { ok: false, kind: 'blocked', message: blockedCreateMessage };
     const abort = this.beginEntityRequest();
@@ -683,7 +714,7 @@ export class DirectoryEntityController {
       const response = await send(abort.signal);
       if (!this.isActive(abort)) return { ok: false, kind: 'error', status: 0, message: 'Request was cancelled.' };
       if (response.data !== undefined) {
-        apply(response.data, response.response);
+        apply(response.data);
         return { ok: true, entity: response.data };
       }
       if (response.response.status >= 500) {
@@ -703,28 +734,28 @@ export class DirectoryEntityController {
     }
   }
   private async writeExisting<T, C>(
-    prepare: () => Promise<C>,
-    send: (current: C, signal: AbortSignal) => Promise<RequestResult<T>>,
-    apply: (entity: T, response: Response) => void,
-    prepared?: C,
-  ): Promise<DirectoryEntityMutationResult<T, C>> {
-    let current: C;
+    prepare: () => Promise<Prepared<C>>,
+    send: (current: C, signal: AbortSignal, etag: string) => Promise<RequestResult<T>>,
+    apply: (entity: T) => void,
+    prepared?: Prepared<C>,
+  ): Promise<DirectoryEntityMutationResult<T, Prepared<C>>> {
+    let snapshot: Prepared<C>;
     try {
-      current = prepared ?? (await prepare());
+      snapshot = prepared ?? await prepare();
     } catch (cause: unknown) {
       return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) };
     }
     const abort = this.beginEntityRequest();
     try {
-      const response = await send(current, abort.signal);
+      const response = await send(snapshot.data, abort.signal, snapshot.etag);
       if (!this.isActive(abort)) return { ok: false, kind: 'error', status: 0, message: 'Request was cancelled.' };
       if (response.data !== undefined) {
-        apply(response.data, response.response);
+        apply(response.data);
         return { ok: true, entity: response.data };
       }
       const status = response.response.status;
-      if (status === 409 || status === 412) {
-        let current: C | undefined;
+      if (status === 412 || (status === 409 && revisionConflictCodes.has(response.error?.error ?? ''))) {
+        let current: Prepared<C> | undefined;
         try {
           current = await prepare();
         } catch {
@@ -746,27 +777,28 @@ export class DirectoryEntityController {
     }
   }
   private async deleteExisting<C>(
-    prepare: () => Promise<C>,
-    send: (signal: AbortSignal) => Promise<RequestResult<void>>,
+    prepare: () => Promise<Prepared<C>>,
+    send: (signal: AbortSignal, etag: string) => Promise<RequestResult<void>>,
     apply: () => void,
-    prepared?: C,
-  ): Promise<DirectoryEntityMutationResult<never, C>> {
+    prepared?: Prepared<C>,
+  ): Promise<DirectoryEntityMutationResult<never, Prepared<C>>> {
+    let snapshot: Prepared<C>;
     try {
-      if (prepared === undefined) await prepare();
+      snapshot = prepared ?? await prepare();
     } catch (cause: unknown) {
       return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) };
     }
     const abort = this.beginEntityRequest();
     try {
-      const response = await send(abort.signal);
+      const response = await send(abort.signal, snapshot.etag);
       if (!this.isActive(abort)) return { ok: false, kind: 'error', status: 0, message: 'Request was cancelled.' };
       if (response.response.status === 204) {
         apply();
         return { ok: true };
       }
       const status = response.response.status;
-      if (status === 409 || status === 412) {
-        let current: C | undefined;
+      if (status === 412 || (status === 409 && revisionConflictCodes.has(response.error?.error ?? ''))) {
+        let current: Prepared<C> | undefined;
         try {
           current = await prepare();
         } catch {
@@ -891,10 +923,6 @@ export class DirectoryEntityController {
       case 'network':
         return this.networkAbort === abort && this.networkGeneration === generation;
     }
-  }
-  private captureETag(map: SvelteMap<number, string>, id: number, response: Response): void {
-    const etag = response.headers.get('ETag');
-    if (etag) map.set(id, etag);
   }
 }
 function replaceByID<

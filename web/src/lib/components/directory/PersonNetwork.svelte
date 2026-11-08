@@ -28,7 +28,7 @@
   const nodeByID = $derived(new Map(nodes.map((node) => [node.id, node])));
 
   $effect(() => {
-    void controller.loadNetwork(Number(depth), controller.relationshipsIncludeEnded);
+    void controller.loadNetwork(Number(depth));
   });
 
   // One column per step away, each ordered by the people it hangs off so lines cross as little as possible.
@@ -122,7 +122,7 @@
   }
 
   function retry(): void {
-    void controller.loadNetwork(Number(depth), controller.relationshipsIncludeEnded);
+    void controller.loadNetwork(Number(depth));
   }
 </script>
 

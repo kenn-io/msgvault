@@ -1,9 +1,14 @@
+import { monthLabels } from '@kenn-io/kit-ui';
+
 // Mirrors PartialDate.Validate (internal/store/partialdate.go): year 1–9999,
 // month 1–12, and a day that exists in that month. A day without a year is
 // checked against leap year 2000, as the store does.
 const YEAR_FORMS = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$|^(\d{4})(\d{2})(\d{2})$/;
 const PROFILE_FORMS = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$|^--(\d{2})(?:-(\d{2}))?$|^---(\d{2})$/;
-const INTERVAL_MESSAGE = 'Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.';
+/** The forms a date field takes, shown in the hint's place while it's empty or being typed. */
+export const DATE_HINT = '2024, 2024-03, or 2024-03-15';
+/** The error under a date field that isn't one of those forms; it replaces the hint. */
+export const DATE_ERROR = 'Use 2024, 2024-03, or 2024-03-15.';
 const RANGE_MESSAGE = 'This date does not exist. Check the month and day.';
 
 type DateParts = [number | undefined, number | undefined, number | undefined];
@@ -26,13 +31,19 @@ export function isCalendarDate(value: string): boolean {
   return match ? validParts(num(match[1]), num(match[2]), num(match[3])) : false;
 }
 
-export function intervalDateError(value: string): string | null {
+export function intervalDateError(value: string, start = ''): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   const match = YEAR_FORMS.exec(trimmed);
-  if (!match) return INTERVAL_MESSAGE;
+  if (!match) return DATE_ERROR;
   const [year, month, day] = match[1] ? [match[1], match[2], match[3]] : [match[4], match[5], match[6]];
-  return validParts(num(year), num(month), num(day)) ? null : INTERVAL_MESSAGE;
+  if (!validParts(num(year), num(month), num(day))) return DATE_ERROR;
+  if (start.trim() && !intervalDateError(start)) {
+    const a = start.trim().replaceAll('-', ''), b = trimmed.replaceAll('-', '');
+    const precision = Math.min(a.length, b.length);
+    if (b.slice(0, precision) < a.slice(0, precision)) return 'End date must be on or after start date.';
+  }
+  return null;
 }
 
 function profileParts(value: string): DateParts | undefined {
@@ -57,4 +68,48 @@ export function isTextProfileDate(value: string): boolean {
 export function formatPartialDate(value: { year?: number; month?: number; day?: number } | undefined): string {
   if (!value) return '';
   return [value.year?.toString().padStart(4, '0'), value.month?.toString().padStart(2, '0'), value.day?.toString().padStart(2, '0')].filter(Boolean).join('-');
+}
+
+const MONTHS = monthLabels('short');
+type PartialDateParts = { year?: number; month?: number; day?: number };
+
+/** A stored partial date, or a typed one ("2024-03"), as a person reads it: "2024", "Mar 2024", "Mar 5, 2024". */
+export function readablePartialDate(value: string | PartialDateParts | null | undefined): string {
+  if (!value) return '';
+  let date: PartialDateParts | undefined = typeof value === 'string' ? undefined : value;
+  if (typeof value === 'string') {
+    const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'));
+    if (!match) return value.trim();
+    date = { year: Number(match[1]), month: match[2] ? Number(match[2]) : undefined, day: match[3] ? Number(match[3]) : undefined };
+  }
+  if (!date?.year) return '';
+  const month = date.month ? MONTHS[date.month - 1] : '';
+  return month ? (date.day ? `${month} ${date.day}, ${date.year}` : `${month} ${date.year}`) : String(date.year);
+}
+
+/** A typed date read back in words under its field: "Today, Nov 6", "Nov 5", "Mar 2024". Empty when it isn't a date yet. */
+export function spokenDate(value: string, today: Date = new Date()): string {
+  const trimmed = value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+  if (!trimmed || intervalDateError(trimmed)) return '';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) return readablePartialDate(trimmed);
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (year !== today.getFullYear()) return readablePartialDate(trimmed);
+  const short = `${MONTHS[month - 1]} ${day}`;
+  return month === today.getMonth() + 1 && day === today.getDate() ? `Today, ${short}` : short;
+}
+
+/**
+ * What sits in the hint's place under a date field: the forms while it's empty
+ * or focused, then the date in words once it holds one ("Mar 2024", "Today,
+ * Nov 6"). Empty for an invalid value, whose error takes the place.
+ */
+export function dateNote(value: string, focused: boolean, today: Date = new Date()): string {
+  if (intervalDateError(value)) return '';
+  return focused || !value.trim() ? DATE_HINT : spokenDate(value, today);
+}
+
+/** Sort partial dates latest first, placing an unknown month or day at the end of its period. */
+export function latestDateKey(value: PartialDateParts | undefined): number {
+  return value?.year ? value.year * 10000 + (value.month ?? 12) * 100 + (value.day ?? 31) : 0;
 }

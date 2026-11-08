@@ -1,22 +1,25 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { Disclosure, Notice, type NoticeTone } from '@kenn-io/kit-ui';
 
   interface Props {
     tone?: NoticeTone;
     /** One sentence that says what happened. */
     message: string;
+    children?: Snippet;
     /** The original error, folded under Details inside the notice. */
     details?: string;
     actionLabel?: string;
     onaction?: () => void;
   }
 
-  let { tone = 'error', message, details = undefined, actionLabel = undefined, onaction = undefined }: Props = $props();
+  let { tone = 'error', message, children = undefined, details = undefined, actionLabel = undefined, onaction = undefined }: Props = $props();
 </script>
 
 <div class="inline-notice">
   <Notice {tone} {actionLabel} {onaction}>
     <p>{message}</p>
+    {@render children?.()}
     {#if details}<Disclosure variant="plain" title="Details"><pre>{details}</pre></Disclosure>{/if}
   </Notice>
 </div>

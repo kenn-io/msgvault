@@ -2,23 +2,32 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
-import { requestOf, pathOf, employment, organization, organizationProfile } from './entity-fixtures.test-support';
+import type { Prepared } from './models';
+import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
-function relationship(id: number, revision = 1) {
-  return {
-    id, revision, relationship_type_id: 31, type_slug: 'knows', source_person_id: 7, target_person_id: 8,
-    forward_label: 'knows', reverse_label: 'is known by', is_symmetric: false, status: 'active', source: 'user',
-    created_by: 'user', updated_by: 'user', vcard_identity: {},
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
-}
+it.each(['update', 'delete'] as const)('returns business-rule refusals as errors for %s', async action => {
+  for (const code of ['employment_duplicate_active', 'employment_primary_conflict']) {
+    const requests: Request[] = [];
+    const client = createAPIClient(async input => {
+      const request = requestOf(input);
+      requests.push(request);
+      return request.method === 'GET'
+        ? Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })
+        : Response.json({ error: code, message: 'Person already has this current employment' }, { status: 409 });
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    try {
+      const result = action === 'update'
+        ? await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }))
+        : await controller.deleteEmployment(11);
+      expect(result).toEqual({ ok: false, kind: 'error', status: 409, message: 'Person already has this current employment' });
+      expect(requests.map(request => request.method)).toEqual(['GET', action === 'update' ? 'PATCH' : 'DELETE']);
+    } finally { controller.destroy(); }
+  }
+});
 
 function relationshipType(id = 31, revision = 1) {
-  return {
-    id, revision, slug: 'knows', forward_label: 'knows', reverse_label: 'is known by', is_symmetric: false,
-    is_canonical: false, is_deletable: true, ownership: 'user', universal_id: `relationship-type-${id}`,
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
+  return makeRelationshipType({ id, revision, slug: 'knows', forward_label: 'knows', reverse_label: 'is known by', is_canonical: false, universal_id: `relationship-type-${id}` });
 }
 
 function network(personID: number, depth: number) {
@@ -125,11 +134,11 @@ describe('DirectoryEntityController', () => {
       return defaultResponse(request);
     });
     const controller = new DirectoryEntityController(client, 7);
-    await controller.loadNetwork(3, true);
+    await controller.loadNetwork(3);
     const result = kind === 'connection' ? await controller.createRelationship({ source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' }) : await controller.createEmployment({ person_id: 7, organization_id: 21, source: 'user' });
     expect(result.ok).toBe(true);
     expect(controller.network?.nodes[0]?.label).toBe('Updated projection');
-    expect(reads.map(url => url.search)).toEqual(['?depth=3&include_ended=true', '?depth=3&include_ended=true']);
+    expect(reads.map(url => url.search)).toEqual(['?depth=3&include_ended=false', '?depth=3&include_ended=false']);
     controller.destroy();
   });
 
@@ -149,7 +158,6 @@ describe('DirectoryEntityController', () => {
     expect(controller.employments.map((item) => item.id)).toEqual([11]);
     expect(controller.relationships.map((item) => item.relationship.id)).toEqual([41]);
     expect(controller.relationshipTypes.map((item) => item.id)).toEqual([31]);
-    expect(controller.employmentETags.size).toBe(0);
     expect(controller.network).toBeNull();
     expect(requests.map(pathOf)).not.toContain('/api/v1/people/7/network');
 
@@ -222,7 +230,6 @@ describe('DirectoryEntityController', () => {
       confidence: 0.72,
       title: 'Draft title'
     });
-    expect(controller.employmentETags.get(11)).toBe('"employment-11-r3"');
     expect(controller.employments[0]?.revision).toBe(3);
     expect(directoryChanged).toHaveBeenCalledOnce();
   });
@@ -251,7 +258,6 @@ describe('DirectoryEntityController', () => {
 
     expect(organizationRead).toBe(1);
     expect(patchRequest?.headers.get('If-Match')).toBe('"organization-21-r2"');
-    expect(controller.organizationETags.get(21)).toBe('"organization-21-r3"');
     expect(controller.organizationRecords.get(21)?.organization.revision).toBe(3);
     expect(directoryChanged).toHaveBeenCalledOnce();
   });
@@ -280,10 +286,9 @@ describe('DirectoryEntityController', () => {
       person_id: 7, organization_id: 21, source: 'user', title: 'Draft title'
     }));
 
-    expect(result).toMatchObject({ ok: false, kind: 'conflict', status: 412, current: employment(11, 3) });
+    expect(result).toMatchObject({ ok: false, kind: 'conflict', status: 412, current: { data: employment(11, 3), etag: '"employment-11-r3"' } });
     expect(requests.filter((request) => request.method === 'PATCH')).toHaveLength(1);
     expect(individualRead).toBe(2);
-    expect(controller.employmentETags.get(11)).toBe('"employment-11-r3"');
   });
 
   it('blocks a duplicate create after a lost response until the matching collection refresh succeeds', async () => {
@@ -440,9 +445,8 @@ describe('DirectoryEntityController', () => {
     const controller = new DirectoryEntityController(client, 7);
     controller.employments = initial;
     controller.employmentProjection = initialProjection;
-    await expect(controller.prepareEmploymentMutation(11)).resolves.toEqual(initial[0]);
+    await expect(controller.prepareEmploymentMutation(11)).resolves.toEqual({ data: initial[0], etag: '"employment-11-r1"' });
     expect(controller.employmentRecords.get(11)).toEqual(initial[0]);
-    expect(controller.employmentETags.get(11)).toBe('"employment-11-r1"');
 
     await expect(controller.makeEmploymentPrimary(12)).resolves.toMatchObject({ ok: true });
 
@@ -452,9 +456,7 @@ describe('DirectoryEntityController', () => {
     ]);
     expect(controller.employments.filter((item) => item.is_primary)).toHaveLength(1);
     expect(controller.employmentRecords.has(11)).toBe(false);
-    expect(controller.employmentETags.has(11)).toBe(false);
     expect(controller.employmentRecords.get(12)).toEqual(employment(12, 2, { is_primary: true }));
-    expect(controller.employmentETags.get(12)).toBe('"employment-12-r2"');
     expect(controller.employmentProjection).toBeUndefined();
     expect(controller.errors.employments).toBe('reconciliation failed');
   });
@@ -528,7 +530,6 @@ describe('DirectoryEntityController', () => {
 
     expect(controller.employments).toEqual([employment(12)]);
     expect(controller.employmentRecords.get(11)).toEqual(moved);
-    expect(controller.employmentETags.get(11)).toBe('"employment-11-r2"');
     expect(controller.employmentProjection).toBeUndefined();
     expect(controller.errors.employments).toBe('reconciliation failed');
   });
@@ -659,7 +660,7 @@ describe('DirectoryEntityController', () => {
     }));
     const controller = new DirectoryEntityController(client, 7);
 
-    await controller.refreshRelationships(true);
+    await controller.refreshRelationships();
     await expect(controller.createRelationship({
       source_person_id: 7,
       target_person_id: 8,
@@ -670,7 +671,6 @@ describe('DirectoryEntityController', () => {
     expect(includeEndedValues).toEqual(['true', 'true', 'true']);
     expect(controller.relationships).toEqual([createdView]);
     expect(controller.relationshipRecords.get(42)).toEqual(created);
-    expect(controller.relationshipETags.get(42)).toBe('"relationship-42-r1"');
   });
 
   it('keeps a successful relationship create explicit when collection reconciliation fails', async () => {
@@ -754,7 +754,7 @@ describe('DirectoryEntityController', () => {
 
     const result = await controller.updateRelationship(41, { end_date: '2026-08', notes: 'Retained draft' });
 
-    expect(result).toMatchObject({ ok: false, kind: 'conflict', status: 412, current: relationship(41, 2) });
+    expect(result).toMatchObject({ ok: false, kind: 'conflict', status: 412, current: { data: relationship(41, 2) } });
     expect(patchWrites).toBe(1);
     expect(reads).toBe(2);
     const patch = requests.find((request) => request.method === 'PATCH')!;
@@ -800,7 +800,6 @@ describe('DirectoryEntityController', () => {
     await expect(putRequest?.clone().json()).resolves.toEqual(body);
     expect(controller.organizationRecords.get(21)?.organization.revision).toBe(3);
     expect(controller.organizationRecords.get(21)?.names?.[0]?.name).toBe('Synthetic Legal Name');
-    expect(controller.organizationETags.get(21)).toBe('"organization-21-r3"');
   });
 
   it('returns an organization profile conflict after refreshing the exact profile without retrying PUT', async () => {
@@ -824,11 +823,10 @@ describe('DirectoryEntityController', () => {
 
     const result = await controller.putOrganizationProfile(21, () => ({ names: [] }));
 
-    expect(result).toMatchObject({ ok: false, kind: 'conflict', status: 412, current: organizationProfile(3) });
+    expect(result).toMatchObject({ ok: false, kind: 'conflict', status: 412, current: { data: organizationProfile(3) } });
     expect(putCount).toBe(1);
     expect(organizationReads).toBe(2);
     expect(controller.organizationRecords.get(21)?.organization.revision).toBe(3);
-    expect(controller.organizationETags.get(21)).toBe('"organization-21-r3"');
   });
 
   it('aborts and generation-guards superseded network depths while retaining the latest successful projection', async () => {
@@ -914,4 +912,50 @@ describe('DirectoryEntityController', () => {
     await expect(create).resolves.toMatchObject({ ok: false, kind: 'error' });
     expect(controller.createBlocked.employments).toBe(false);
   });
+});
+
+it.each([
+  ['Edit job', '"opaque-job-opening"'], ['End job', '"opaque-job-opening"'], ['Make primary', '"opaque-job-opening"'],
+  ['Delete job', '"opaque-job-opening"'], ['Organization', '"opaque-organization-opening"'], ['Organization profile', '"opaque-organization-opening"'],
+  ['Delete organization', '"opaque-organization-opening"'], ['Edit connection', '"opaque-connection-opening"'], ['Delete connection', '"opaque-connection-opening"'],
+])('uses the opened version for %s and the conflict version for its retry', async (action, openingTag) => {
+  const requests: Request[] = [];
+  let readRevision = 1;
+  const client = createAPIClient(async input => {
+    const request = requestOf(input);
+    requests.push(request);
+    if (request.method !== 'GET') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    const path = pathOf(request);
+    if (path.includes('/organizations/21')) return Response.json(organizationProfile(readRevision), { headers: { ETag: `"opaque-organization-${readRevision === 1 ? "opening" : "current"}"` } });
+    if (path.includes('/employments/11')) return Response.json(employment(11, readRevision), { headers: { ETag: `"opaque-job-${readRevision === 1 ? "opening" : "current"}"` } });
+    return Response.json(relationship(41, readRevision), { headers: { ETag: `"opaque-connection-${readRevision === 1 ? "opening" : "current"}"` } });
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  const send = (prepared?: Prepared<never>) => {
+    switch (action) {
+      case 'Edit job': return controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user', title: 'Draft title' }), prepared);
+      case 'End job': return controller.endEmployment(11, { end_date: '2026' }, prepared);
+      case 'Make primary': return controller.makeEmploymentPrimary(11, prepared);
+      case 'Delete job': return controller.deleteEmployment(11, prepared);
+      case 'Organization': return controller.updateOrganization(21, { name: 'Draft name', kind: 'company' }, prepared);
+      case 'Organization profile': return controller.putOrganizationProfile(21, () => ({}), prepared);
+      case 'Delete organization': return controller.deleteOrganization(21, prepared);
+      case 'Edit connection': return controller.updateRelationship(41, { notes: 'Draft note' }, prepared);
+      default: return controller.deleteRelationship(41, prepared);
+    }
+  };
+  try {
+    const opened = action.includes('organization') || action.startsWith('Organization') ? await controller.prepareOrganizationMutation(21)
+      : action.includes('connection') ? await controller.prepareRelationshipMutation(41) : await controller.prepareEmploymentMutation(11);
+    readRevision = 2;
+    requests.length = 0;
+    const conflict = await send(opened as Prepared<never>);
+    expect(conflict).toMatchObject({ ok: false, kind: 'conflict' });
+    expect(requests[0].method).not.toBe('GET');
+    expect(requests[0].headers.get('If-Match')).toBe(openingTag);
+    requests.length = 0;
+    expect(await send((conflict as { current?: Prepared<never> }).current)).toMatchObject({ ok: false, kind: 'conflict' });
+    expect(requests[0].method).not.toBe('GET');
+    expect(requests[0].headers.get('If-Match')).toBe(openingTag.replace('opening', 'current'));
+  } finally { controller.destroy(); }
 });

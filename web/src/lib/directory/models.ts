@@ -80,7 +80,10 @@ export type DirectoryEntityResource =
   'organizations' | 'employments' | 'relationships' | 'relationshipTypes' | 'network';
 export type DirectoryEntityCreateResource = Exclude<DirectoryEntityResource, 'network'>;
 
-export type DirectoryEntityMutationResult<T, C = T> =
+/** A record as read for a write, with the ETag that write sends as If-Match. */
+export type Prepared<T> = { data: T; etag: string };
+
+export type DirectoryEntityMutationResult<T, C = never> =
   | { ok: true; entity?: T }
   | { ok: false; kind: 'conflict'; status: 409 | 412; message: string; current?: C }
   | { ok: false; kind: 'unknown'; message: string }

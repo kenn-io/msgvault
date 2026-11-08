@@ -1,26 +1,34 @@
 <script lang="ts">
-  import { appShortcuts, Button, Checkbox, Modal, Typeahead, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Checkbox, FormField, SelectDropdown } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
-  import { intervalDateError } from '../../directory/dates';
+  import { formatPartialDate as partialDate } from '../../directory/dates';
+  import { organizationKindOptions as kindOptions } from '../../directory/labels';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
-  import type { Employment, EmploymentBody, Organization } from '../../directory/models';
-  import OrganizationEditor from './OrganizationEditor.svelte';
-  import EmploymentCurrentData from './EmploymentCurrentData.svelte';
+  import type { Employment, EmploymentBody, Organization, OrganizationCreateBody, Prepared } from '../../directory/models';
+  import Dialog from '../common/Dialog.svelte';
+  import FieldPicker from '../common/FieldPicker.svelte';
+  import DateRange from '../common/DateRange.svelte';
+  import { Disclosure } from '@kenn-io/kit-ui';
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import ConflictNotice from '../common/ConflictNotice.svelte';
+  import { conflict, employmentFacts } from '../../directory/conflict';
+  import { WriteAttempt } from '../../directory/write-attempt.svelte';
 
   interface Props {
     controller: DirectoryEntityController;
     personID: number;
     employment?: Employment;
-    action?: 'edit' | 'end';
     onDone?: () => void;
     onClose?: () => void;
   }
 
-  let { controller, personID, employment = undefined, action = 'edit', onDone = () => undefined, onClose = () => undefined }: Props = $props();
+  let { controller, personID, employment = undefined, onDone = () => undefined, onClose = () => undefined }: Props = $props();
   const initialEmployment = untrack(() => employment);
-  const initialAction = untrack(() => action);
   let creatingOrganization = $state(false);
+  let organizationName = $state('');
+  let organizationDomain = $state('');
+  let organizationKind = $state('company');
   let organizationID = $state(initialEmployment ? String(initialEmployment.organization_id) : '');
   let title = $state(initialEmployment?.title ?? '');
   let role = $state(initialEmployment?.role ?? '');
@@ -31,20 +39,23 @@
   let endDate = $state(partialDate(initialEmployment?.end_date));
   let isCurrent = $state(initialEmployment?.is_current ?? true);
   let isPrimary = $state(initialEmployment?.is_primary ?? false);
-  const uid = $props.id();
-  const startDateError = $derived(intervalDateError(startDate));
-  const endDateError = $derived(intervalDateError(endDate));
+  let datesInvalid = $state(false);
+  let organizationQuery = $state('');
+  let moreDetails = $state(!!(initialEmployment?.department || initialEmployment?.location || initialEmployment?.description));
   let loading = $state(!!initialEmployment);
-  let submitting = $state(false);
-  let message = $state('');
-  let conflictCurrent = $state<Employment>();
-  let conflictOrganization = $state<Organization>();
+  let loadFailed = $state(false);
+  const attempt = new WriteAttempt<Prepared<Employment>>();
+  // The job as the person opened it, so a conflict can tell their edits from changes made elsewhere.
+  let opened = $state<Prepared<Employment>>();
   let selectedOrganization = $state<Organization>();
+  const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
+  const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
+  const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
   const organizationOptions = $derived.by(() => {
     const organizations = [...controller.organizations];
     if (selectedOrganization && !organizations.some((item) => item.id === selectedOrganization?.id)) organizations.push(selectedOrganization);
-    return organizations.map((organization) => ({ name: String(organization.id), label: organization.name }));
+    return organizations.map(organization => ({ name: String(organization.id), label: organization.name, meta: organization.primary_domain ?? '' }));
   });
 
   onMount(() => {
@@ -54,14 +65,16 @@
   onDestroy(() => releaseScope?.());
 
   async function prepare(): Promise<void> {
-    message = '';
+    attempt.details = '';
+    loadFailed = false;
     if (!initialEmployment) {
       if (controller.organizations.length === 0) await controller.refreshOrganizations();
       return;
     }
     loading = true;
     try {
-      const current = await controller.prepareEmploymentMutation(initialEmployment.id);
+      opened = await controller.prepareEmploymentMutation(initialEmployment.id);
+      const current = opened.data;
       organizationID = String(current.organization_id);
       title = current.title ?? '';
       role = current.role ?? '';
@@ -72,20 +85,22 @@
       endDate = partialDate(current.end_date);
       isCurrent = current.is_current;
       isPrimary = current.is_primary;
+      moreDetails = !!(department || location || description);
       try {
-        selectedOrganization = (await controller.prepareOrganizationMutation(current.organization_id)).organization;
+        selectedOrganization = (await controller.prepareOrganizationMutation(current.organization_id)).data.organization;
       } catch {
         selectedOrganization = controller.organizations.find((item) => item.id === current.organization_id) ?? {
           id: current.organization_id,
           revision: 0,
-          name: `Organization ${current.organization_id}`,
+          name: 'this organization',
           kind: 'other',
           created_at: current.created_at,
           updated_at: current.updated_at
         };
       }
     } catch (cause: unknown) {
-      message = errorMessage(cause);
+      loadFailed = true;
+      attempt.details = errorMessage(cause);
     } finally {
       loading = false;
     }
@@ -103,131 +118,102 @@
       ...(location.trim() ? { location: location.trim() } : { location: null }),
       ...(description.trim() ? { description: description.trim() } : { description: null }),
       ...(startDate.trim() ? { start_date: startDate.trim() } : { start_date: null }),
-      ...(endDate.trim() ? { end_date: endDate.trim() } : { end_date: null }),
+      ...(isCurrent ? {} : { end_date: endDate.trim() || null }),
       is_current: isCurrent,
-      is_primary: isPrimary,
+      ...(showPrimary ? { is_primary: isPrimary } : {}),
       ...(current?.address_id !== undefined ? { address_id: current.address_id } : {}),
       ...(current?.confidence !== undefined ? { confidence: current.confidence } : {})
     };
   }
 
   async function submit(): Promise<void> {
-    if (submitting || !organizationID || controller.createBlocked.employments) return;
-    submitting = true;
-    message = '';
-    conflictCurrent = undefined;
-    conflictOrganization = undefined;
-    try {
-      const result = initialEmployment
-        ? initialAction === 'end'
-          ? await controller.endEmployment(initialEmployment.id, { end_date: endDate.trim() })
-          : await controller.updateEmployment(initialEmployment.id, (freshEmployment) => body(freshEmployment))
-        : await controller.createEmployment({ ...body(), source: 'user' });
-      if (result.ok) {
-        onDone();
-        return;
+    if (saveDisabled || attempt.busy) return;
+    const ok = await attempt.run(async current => {
+      if (creatingOrganization) {
+        const created = await controller.createOrganization({ name: organizationName.trim(), kind: organizationKind as OrganizationCreateBody['kind'], primary_domain: organizationDomain.trim() || null });
+        if (!created.ok) return created;
+        selectedOrganization = created.entity;
+        organizationID = String(created.entity!.id);
+        creatingOrganization = false;
       }
-      if (result.kind === 'conflict') {
-        conflictCurrent = result.current;
-        if (result.current) conflictOrganization = await loadConflictOrganization(result.current.organization_id);
-        message = `This employment changed elsewhere. ${result.message}`;
-      } else if (result.kind === 'unknown' || result.kind === 'blocked') {
-        message = `The create outcome is unknown. ${result.message}`;
-      } else {
-        message = result.message;
-      }
-    } finally {
-      submitting = false;
-    }
-  }
-
-  async function loadConflictOrganization(id: number): Promise<Organization | undefined> {
-    if (selectedOrganization?.id === id) return selectedOrganization;
-    try {
-      return (await controller.prepareOrganizationMutation(id)).organization;
-    } catch {
-      return controller.organizations.find((organization) => organization.id === id);
-    }
+      return initialEmployment
+        ? controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened)
+        : controller.createEmployment({ ...body(), source: 'user' });
+    });
+    if (ok) onDone();
   }
 
   async function refreshAfterUnknown(): Promise<void> {
     await controller.refreshEmployments();
-    if (!controller.createBlocked.employments) message = '';
+    if (!controller.createBlocked.employments) attempt.details = '';
   }
 
   function requestClose(): void {
-    if (!submitting) onClose();
-  }
-
-  function partialDate(value: { year?: number; month?: number; day?: number } | undefined): string {
-    if (!value) return '';
-    const year = value.year?.toString().padStart(4, '0');
-    const month = value.month?.toString().padStart(2, '0');
-    const day = value.day?.toString().padStart(2, '0');
-    return [year, month, day].filter(Boolean).join('-');
+    if (!attempt.busy) { if (attempt.conflict) void controller.refreshEmployments(); attempt.reset(); onClose(); }
   }
 
   function errorMessage(value: unknown): string {
-    return value instanceof Error && value.message ? value.message : 'Unable to load the employment.';
+    return value instanceof Error && value.message ? value.message : 'No response from the server.';
   }
 </script>
 
-<Modal
-  title={initialAction === 'end' ? 'End employment' : initialEmployment ? 'Edit employment' : 'Add employment'}
-  ariaLabel={initialAction === 'end' ? 'End employment' : initialEmployment ? 'Edit employment' : 'Add employment'}
-  closeLabel="Close employment editor"
-  maxWidth="min(560px, calc(100vw - 32px))"
-  onclose={requestClose}
->
-  <form class="editor" aria-busy={loading || submitting} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
-    {#if loading}
-      <p role="status">Loading current employment…</p>
-    {:else if initialAction === 'end'}
-      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" required block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
-      {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
-    {:else}
-      <div class="field"><span class="label">Organization</span><div class="org"><Typeahead title="Organization" placeholder="Organization" fallbackLabel="Choose an organization" value={organizationID} options={organizationOptions} remote loading={controller.organizationsLoading} error={controller.errors.organizations} onquery={(query) => void controller.refreshOrganizations(query)} onselect={(value) => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value) ?? selectedOrganization; }} disabled={submitting || !!initialEmployment} />
-        {#if !initialEmployment}<Button size="sm" label="New organization" disabled={submitting} onclick={() => creatingOrganization = true} />{/if}</div></div>
-      <div class="pair"><label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
-      <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label></div>
-      <div class="pair"><label>Department<TextInput ariaLabel="Employment department" bind:value={department} block disabled={submitting} /></label>
-      <label>Location<TextInput ariaLabel="Employment location" bind:value={location} block disabled={submitting} /></label></div>
-      <div class="pair">
-        <div class="field"><label>Start date<TextInput ariaLabel="Employment start date" bind:value={startDate} placeholder="2024, 2024-03, or 2024-03-15" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined} /></label>{#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}</div>
-        <div class="field"><label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="2024, 2024-03, or 2024-03-15" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>{#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}</div>
+<Dialog title={initialEmployment ? 'Edit job' : 'Add job'} onclose={requestClose} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialEmployment ? 'Save' : 'Add job'} onprimary={() => void submit()} primaryDisabled={saveDisabled} busy={attempt.busy}
+  cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
+  {#if !loadFailed}<form class="editor" aria-busy={loading || attempt.busy} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
+    {#if loading}<p role="status">Loading job…</p>{:else}
+      {#if initialEmployment}<p class="context">At {selectedOrganization?.name ?? 'this organization'}</p>
+      {:else}
+      <div class="field"><span>Organization</span>
+          <FieldPicker remote title="Organization" placeholder="Organization" fallbackLabel={creatingOrganization ? 'New organization' : 'Search or create'} value={creatingOrganization ? '' : organizationID} options={organizationOptions}
+            loading={controller.organizationsLoading} errorDetails={controller.errors.organizations} error={controller.errors.organizations ? "Couldn't load organizations." : ''}
+            onretry={() => void controller.refreshOrganizations(organizationQuery)}
+            onquery={query => { organizationQuery = query; void controller.refreshOrganizations(query); }}
+            onselect={value => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value); }}
+            createLabel={'Create organization “{query}”'} existingLabel="Choose an existing organization instead"
+            oncreate={query => { organizationName = query; creatingOrganization = true; }} creating={creatingOrganization}
+            onexisting={() => creatingOrganization = false} disabled={attempt.busy}>
+            {#snippet creation()}
+              <FormField field={{ id: 'work-org-name', label: 'Name', value: organizationName, disabled: attempt.busy }} oninput={value => organizationName = value} />
+              <div class="form-pair">
+                <label>Kind<SelectDropdown title="Organization kind" value={organizationKind} options={kindOptions} onchange={value => organizationKind = value} disabled={attempt.busy} /></label>
+                <FormField field={{ id: 'work-org-domain', label: 'Domain', value: organizationDomain, disabled: attempt.busy }} oninput={value => organizationDomain = value} />
+              </div>
+            {/snippet}
+          </FieldPicker>
       </div>
-      <label>Description<textarea aria-label="Employment description" bind:value={description} disabled={submitting}></textarea></label>
-      <div class="checks"><Checkbox checked={isCurrent} label="Current employment" onchange={(checked) => { isCurrent = checked; }} disabled={submitting} /><Checkbox checked={isPrimary} label="Primary employment" onchange={(checked) => { isPrimary = checked; }} disabled={submitting} /></div>
+      {/if}
+      <div class="form-pair"><FormField field={{ id: 'work-title', label: 'Job title', value: title, disabled: attempt.busy }} oninput={value => title = value} /><FormField field={{ id: 'work-role', label: 'Role on the team', value: role, disabled: attempt.busy }} oninput={value => role = value} /></div>
+      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} bind:invalid={datesInvalid} disabled={attempt.busy} />
+      {#if showPrimary}<Checkbox label="Primary job" checked={isPrimary} onchange={value => isPrimary = value} disabled={attempt.busy} />{/if}
+      <Disclosure variant="plain" class="fold" title="More details" bind:open={moreDetails}>
+        <div class="more">
+          <div class="form-pair"><FormField field={{ id: 'work-department', label: 'Department', value: department, disabled: attempt.busy }} oninput={value => department = value} /><FormField field={{ id: 'work-location', label: 'Location', value: location, disabled: attempt.busy }} oninput={value => location = value} /></div>
+          <label>Description<textarea aria-label="Description" bind:value={description} disabled={attempt.busy}></textarea></label>
+        </div>
+      </Disclosure>
     {/if}
-    {#if message}
-      <div role="alert">
-        <p>{message}</p>
-        {#if conflictCurrent}
-          <EmploymentCurrentData employment={conflictCurrent} organization={conflictOrganization} />
-        {/if}
-      </div>
+  <button type="submit" hidden>Save</button>
+</form>{/if}
+  {#snippet notice()}
+    {#if attempt.conflict}
+      {@const facts = employmentFacts({ title, role, start_date: startDate, end_date: endDate, is_current: isCurrent, department, location, description })}
+      {@const yours = Object.fromEntries(['Job title', 'Role on the team', 'Start date', 'End date', 'Department', 'Location', 'Description'].map(label => [label, facts[label]]))}
+      <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, id => controller.organizationName(id)), employmentFacts(opened?.data ?? initialEmployment!, id => controller.organizationName(id)), yours)} message={attempt.details} />
+    {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
+      <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void controller.refreshOrganizations().then(() => { if (!controller.createBlocked.organizations) attempt.details = ''; }); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}
-    {#if controller.createBlocked.employments}<Button label="Refresh employment records" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
-    <div class="actions">
-      <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-      <Button type="submit" tone="info" surface="solid"
-        label={initialAction === 'end' ? 'Confirm end employment' : initialEmployment ? 'Save employment' : 'Create employment'}
-        disabled={loading || submitting || !organizationID || (initialAction === 'end' && !endDate.trim()) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments} />
-    </div>
-  </form>
-</Modal>
-{#if creatingOrganization}<OrganizationEditor {controller} onDone={(organization) => { selectedOrganization = organization; organizationID = String(organization?.id ?? ''); creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
-
+  {/snippet}
+</Dialog>
 
 <style>
-  .editor { display: grid; gap: var(--field-gap); min-width: 0; }
-  label, .field { display: grid; gap: var(--label-gap); align-content: start; color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--field-gap); }
-  .org { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--control-gap); align-items: center; }
-  textarea { min-height: 5rem; resize: vertical; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); font: inherit; }
-  .field-error { color: var(--text-danger); font-size: var(--font-size-xs); margin: 0; }
-  p { margin: 0; } [role="alert"] { color: var(--text-danger); }
-  .checks, .actions { display: flex; gap: var(--space-5); flex-wrap: wrap; }
-  .actions { gap: var(--control-gap); justify-content: flex-end; padding-top: var(--space-2); }
-  @media (max-width: 640px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+  /* L4: fields 16 apart, each label (Meta, 600) 4 above its field; pairs are .form-pair. */
+  .editor { display: grid; gap: var(--space-pane); min-width: 0; }
+  label, .field { display: grid; gap: var(--space-tight); align-content: start; min-width: 0; color: var(--text-secondary); font-size: var(--type-meta-size); font-weight: var(--font-weight-semibold); line-height: var(--type-meta-line); }
+  label > :global(*), .field > :global(:not(span)) { font-weight: normal; }
+  /* "At Lumen Grove": a Meta line 16 above Job title. */
+  .context { color: var(--text-secondary); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  /* More details' fields keep the 16 rhythm; the 28 fold row above them is their only gap. */
+  .more { display: grid; gap: var(--space-pane); }
+  textarea { resize: vertical; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); font: inherit; font-weight: normal; }
+  p { margin: 0; }
 </style>

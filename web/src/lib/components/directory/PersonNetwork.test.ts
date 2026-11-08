@@ -174,7 +174,7 @@ describe('PersonNetwork', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('reloads for depth and ended settings and retains the graph through loading, error, and retry', async () => {
+  it('reloads for depth with current edges and retains the graph through loading, error, and retry', async () => {
     const depthTwo = deferredResponse();
     const requests: Request[] = [];
     let depthTwoAttempts = 0;
@@ -186,10 +186,11 @@ describe('PersonNetwork', () => {
       const depth = Number(url.searchParams.get('depth'));
       const includeEnded = url.searchParams.get('include_ended') === 'true';
       if (depth === 1) return Response.json(connected(1));
-      if (depth === 2 && !includeEnded) return depthTwo.promise;
-      if (depth === 2 && includeEnded) {
+      expect(includeEnded).toBe(false);
+      if (depth === 2) {
         depthTwoAttempts += 1;
-        return depthTwoAttempts === 1
+        if (depthTwoAttempts === 1) return depthTwo.promise;
+        return depthTwoAttempts === 2
           ? Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 })
           : Response.json(connected(2));
       }
@@ -206,7 +207,8 @@ describe('PersonNetwork', () => {
     depthTwo.resolve(Response.json(connected(2)));
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
 
-    await controller.refreshRelationships(true);
+    await controller.refreshRelationships();
+    await controller.loadNetwork(2);
     expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
     expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));
