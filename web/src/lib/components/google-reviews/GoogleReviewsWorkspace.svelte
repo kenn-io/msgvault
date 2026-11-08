@@ -284,7 +284,7 @@
     <p>Review by {preview.review.reviewer.isAnonymous ? 'Anonymous reviewer' : preview.review.reviewer.displayName || 'Reviewer'}</p>
     <p class="exact">{preview.review.comment || 'Rating only; no review text.'}</p>
     {#if preview.review.reviewReply}<h3>Current owner response</h3><p class="exact">{preview.review.reviewReply.comment}</p>{/if}
-    <p>Receipt reserved before submission: <code>{preview.receipt_id}</code></p>
+    <p>Receipt: <code>{preview.receipt_id}</code></p>
     <h3>Your response</h3>
     <pre class="exact" data-testid="exact-response">{preview.comment}</pre>
     <p>Confirm that you consent to submit this exact response to Google. Submission does not guarantee public visibility.</p>

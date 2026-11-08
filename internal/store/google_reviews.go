@@ -40,6 +40,23 @@ ON CONFLICT (target_name, location_name, review_id) DO UPDATE SET
 
 const googleReviewTimestampFormat = "2006-01-02T15:04:05.000000000Z"
 
+// RecoverGoogleReviewsBackfills marks checkpoints left by a previous daemon
+// interrupted without changing their page cursor or archived reviews.
+func (s *Store) RecoverGoogleReviewsBackfills(ctx context.Context) (int64, error) {
+	now := time.Now().UTC().Format(googleReviewTimestampFormat)
+	result, err := s.db.ExecContext(ctx, s.Rebind(`UPDATE google_reviews_sync_state
+		SET status = 'partial', last_error_code = 'daemon_restarted', completed_at = NULL, updated_at = ?
+		WHERE status = 'running'`), now)
+	if err != nil {
+		return 0, fmt.Errorf("recover Google Reviews backfills: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count recovered Google Reviews backfills: %w", err)
+	}
+	return count, nil
+}
+
 func (s *Store) BeginGoogleReviewsBackfill(ctx context.Context, target, location string) (googlereviews.BackfillState, error) {
 	if !validGoogleReviewTarget(target, location) {
 		return googlereviews.BackfillState{}, googlereviews.ErrInvalid

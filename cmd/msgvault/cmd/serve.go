@@ -1290,6 +1290,13 @@ func recoverCardDAVSyncRunsAtStartup(ctx context.Context, st *store.Store, logge
 
 func recoverNativeOperationRunsAtStartup(ctx context.Context, st *store.Store, logger *slog.Logger) error {
 	recoveredAt := time.Now().UTC()
+	reviewRuns, err := st.RecoverGoogleReviewsBackfills(ctx)
+	if err != nil {
+		return fmt.Errorf("recover Google Reviews backfills at daemon startup: %w", err)
+	}
+	if reviewRuns > 0 {
+		logger.Info("recovered interrupted Google Reviews imports", "count", reviewRuns)
+	}
 	sourceRuns, err := st.RecoverSyncRunsContext(ctx, recoveredAt)
 	if err != nil {
 		return fmt.Errorf("recover source sync runs at daemon startup: %w", err)

@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/googlereviews"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -81,6 +82,75 @@ func TestNativeOperationRecoveryRunsBeforeDaemonServices(t *testing.T) {
 			st.Rebind("SELECT COUNT(*) FROM "+table+" WHERE "+stateColumn+" = ?"), running).Scan(&count))
 		assert.Zero(count, table)
 	}
+}
+
+type shutdownGoogleReviewsProvider struct{ entered chan struct{} }
+
+func (p *shutdownGoogleReviewsProvider) List(ctx context.Context, _, _ string, _ int) (googlereviews.Page, error) {
+	select {
+	case p.entered <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return googlereviews.Page{}, ctx.Err()
+}
+func (*shutdownGoogleReviewsProvider) Get(context.Context, string) (googlereviews.Review, error) {
+	return googlereviews.Review{}, googlereviews.ErrNotFound
+}
+func (*shutdownGoogleReviewsProvider) UpdateReply(context.Context, string, string) (googlereviews.Reply, error) {
+	return googlereviews.Reply{}, googlereviews.ErrDenied
+}
+
+func TestGoogleReviewsRecoveryAfterDrainedShutdown(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	const location = "accounts/a/locations/l"
+	target := googlereviews.Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: location, Enabled: true, OwnProject: true}
+	_, err := st.BeginGoogleReviewsBackfill(ctx, target.Name, location)
+	require.NoError(err)
+	_, err = st.ApplyGoogleReviewsPage(ctx, target.Name, location, "", googlereviews.Page{NextPageToken: "next"})
+	require.NoError(err)
+	gate := api.NewSerialOperationGate()
+	provider := &shutdownGoogleReviewsProvider{entered: make(chan struct{}, 1)}
+	options := googlereviews.Options{
+		Archive: st,
+		Targets: func(context.Context) ([]googlereviews.Target, error) { return []googlereviews.Target{target}, nil },
+		Provider: func(context.Context, googlereviews.Target) (googlereviews.Provider, string, error) {
+			return provider, "binding", nil
+		},
+		BeginArchiveWrite: gate.BeginWorkContext,
+	}
+	service := googlereviews.NewService(options)
+	defer service.Close()
+	_, err = service.Execute(ctx, "owner", googlereviews.Request{Action: "backfill", Target: target.Name})
+	require.NoError(err)
+	select {
+	case <-provider.entered:
+	case <-time.After(30 * time.Second):
+		require.FailNow("provider did not start")
+	}
+	gate.StartDrain()
+	service.Close()
+	state, err := st.GoogleReviewsBackfillState(ctx, target.Name, location)
+	require.NoError(err)
+	assert.Equal("running", state.Status)
+	require.NoError(recoverNativeOperationRunsAtStartup(ctx, st, slog.New(slog.DiscardHandler)))
+	require.NoError(recoverNativeOperationRunsAtStartup(ctx, st, slog.New(slog.DiscardHandler)))
+	options.BeginArchiveWrite = nil
+	restarted := googlereviews.NewService(options)
+	defer restarted.Close()
+	status, err := restarted.Execute(ctx, "owner", googlereviews.Request{Action: "archive_status", Target: target.Name})
+	require.NoError(err)
+	require.NotNil(status.ArchiveSync)
+	assert.Equal("partial", status.ArchiveSync.Status)
+	assert.Equal("daemon_restarted", status.ArchiveSync.LastErrorCode)
+	assert.Equal("next", status.ArchiveSync.NextPageToken)
+	assert.Equal(int64(1), status.ArchiveSync.PagesFetched)
+	resumed, err := st.BeginGoogleReviewsBackfill(ctx, target.Name, location)
+	require.NoError(err)
+	assert.Equal("next", resumed.NextPageToken)
 }
 
 func TestDaemonAndServeStatusHaveIdenticalBehavior(t *testing.T) {
