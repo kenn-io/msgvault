@@ -613,7 +613,9 @@ func preserveArchivedSections(meeting *HydratedMeeting, archived archivedMeeting
 		if section.name != "transcript" && section.id == "" && sectionReferencePresent(meeting.Discovery.Raw, section.name) {
 			continue
 		}
-		hasPrior := strings.TrimSpace(section.priorText) != "" || (archived.HasEvidence && old.SchemaVersion == 2 && len(section.prior.Root) != 0 && len(section.prior.Blocks) != 0)
+		hasPrior := strings.TrimSpace(section.priorText) != "" || (archived.HasEvidence &&
+			((old.SchemaVersion == 2 && len(section.prior.Root) != 0 && len(section.prior.Blocks) != 0) ||
+				(old.SchemaVersion == 1 && (len(section.prior.Root) != 0 || len(section.prior.Pages) != 0 || len(section.prior.Blocks) != 0))))
 		if !hasPrior || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
 			continue
 		}
