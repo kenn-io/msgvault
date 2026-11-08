@@ -88,48 +88,67 @@ func TestSnapshotCacheSlowComputeServesPreviousValue(t *testing.T) {
 		value, _, stale, err = cache.get(t.Context(), t.Context(), "k", 2*time.Second,
 			func(context.Context) (int, error) { return 3, nil })
 		require.NoError(err)
-		assert.Equal(2, value, "a known slow refresh serves its previous snapshot immediately")
-		assert.True(stale)
-		synctest.Wait()
-		value, _, stale, err = cache.get(t.Context(), t.Context(), "k", 2*time.Second,
-			func(context.Context) (int, error) { return 3, nil })
-		require.NoError(err)
 		assert.Equal(3, value, "a fast later compute is fresh again")
 		assert.False(stale)
 	})
 }
 
-func TestSnapshotCacheSlowRefreshServesPreviousWithoutWaiting(t *testing.T) {
+func TestSnapshotCacheImmediateStalePolicy(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		var cache snapshotCache[int]
-		compute := func(context.Context) (int, error) {
-			time.Sleep(5 * time.Second)
-			return 1, nil
+		cache := snapshotCache[int]{serveStaleImmediately: true}
+		value, asOf, stale, err := cache.getVersion(t.Context(), t.Context(), "k", "v1", 2*time.Second,
+			func(context.Context) (int, error) { return 1, nil })
+		require.NoError(t, err)
+		assert.Equal(t, 1, value)
+		assert.False(t, stale)
+		release := make(chan struct{})
+		releaseRefresh := sync.OnceFunc(func() { close(release) })
+		defer releaseRefresh()
+		var computes atomic.Int32
+		blocked := func(context.Context) (int, error) {
+			computes.Add(1)
+			<-release
+			return 0, errors.New("refresh failed")
 		}
-		_, _, _, err := cache.get(t.Context(), t.Context(), "k", 2*time.Second, compute)
-		require.ErrorIs(t, err, errSnapshotWaitTimeout)
-		time.Sleep(5 * time.Second)
+		for range 2 {
+			started := time.Now()
+			value, previousAsOf, stale, err := cache.getVersion(t.Context(), t.Context(), "k", "v1", 2*time.Second, blocked)
+			require.NoError(t, err)
+			assert.Zero(t, time.Since(started))
+			assert.Equal(t, 1, value)
+			assert.Equal(t, asOf, previousAsOf)
+			assert.True(t, stale)
+			synctest.Wait()
+		}
+		assert.Equal(t, int32(1), computes.Load(), "repeats share the blocked refresh")
+		reqCtx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, _, _, err = cache.getVersion(reqCtx, t.Context(), "k", "v1", 2*time.Second, blocked)
+		require.ErrorIs(t, err, context.Canceled)
+		releaseRefresh()
+		synctest.Wait()
+
+		value, _, stale, err = cache.getVersion(t.Context(), t.Context(), "k", "v1", 2*time.Second,
+			func(context.Context) (int, error) { return 2, nil })
+		require.NoError(t, err)
+		assert.Equal(t, 1, value, "a failed refresh keeps the previous snapshot")
+		assert.True(t, stale)
+		synctest.Wait()
+		value, _, _, err = cache.getVersion(t.Context(), t.Context(), "k", "v1", 2*time.Second,
+			func(context.Context) (int, error) { return 2, nil })
+		require.NoError(t, err)
+		assert.Equal(t, 2, value, "a successful retry replaces the snapshot")
 		synctest.Wait()
 
 		started := time.Now()
-		value, asOf, stale, err := cache.get(t.Context(), t.Context(), "k", 2*time.Second,
-			func(context.Context) (int, error) { return 2, nil })
-		require.NoError(t, err)
-		assert.Zero(t, time.Since(started))
-		assert.Equal(t, 1, value)
-		assert.True(t, stale)
-		assert.False(t, asOf.IsZero())
-		synctest.Wait()
-
-		started = time.Now()
-		value, _, stale, err = cache.get(t.Context(), t.Context(), "k", 2*time.Second,
+		value, _, stale, err = cache.getVersion(t.Context(), t.Context(), "k", "v2", 2*time.Second,
 			func(context.Context) (int, error) {
 				time.Sleep(time.Second)
 				return 3, nil
 			})
 		require.NoError(t, err)
-		assert.Equal(t, time.Second, time.Since(started))
-		assert.Equal(t, 3, value, "a fast refresh restores waiting for fresh counts")
+		assert.Equal(t, time.Second, time.Since(started), "a changed version still waits for its new value")
+		assert.Equal(t, 3, value)
 		assert.False(t, stale)
 	})
 }

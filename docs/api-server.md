@@ -1020,8 +1020,6 @@ the state of the index.
 Stats answer within about 2 seconds while a sync or cache build loads the
 archive:
 
-- When the last count took longer than 2 seconds, the response serves the
-  previous counts at once while a fresh count runs.
 - If fresh counts are not ready by then, the response reuses the previous
   counts and sets `"stale": true`, with `as_of` giving when they were
   computed. The fresh counts replace them when they finish.
@@ -1034,6 +1032,15 @@ no earlier snapshot to serve, so the request fails with `503 query_timeout`.
 Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
 anyway: the response sets `"counts_pending": true`, and every account's
 `message_count` and `source_deleted_count` is a placeholder `0`.
+
+Once an account-count snapshot exists, listings return it at once while a
+refresh runs, even after a long gap between listings. The response carries
+the actual previous counts, `"counts_pending": false`, `"stale": true`, and
+the original `as_of`. This also applies to fast archives after new mail arrives.
+Virtual-account catalogs stay current for their existing two-minute interval.
+An expired catalog returns at once with `"virtual_accounts_unavailable": true`
+while refreshing, unless confirmed account identities have changed. Identity
+changes retain the bounded wait for a new catalog.
 
 **Response (vector search disabled):**
 

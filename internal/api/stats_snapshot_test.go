@@ -118,9 +118,10 @@ func TestHandleStatsVectorTimeoutIsPartial(t *testing.T) {
 type slowCountsStore struct {
 	*store.Store
 
-	calls   atomic.Int32
-	release chan struct{}
-	delay   time.Duration
+	calls        atomic.Int32
+	release      chan struct{}
+	delay        time.Duration
+	catalogDelay time.Duration
 }
 
 func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
@@ -140,36 +141,81 @@ func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map
 	return s.Store.CountMessagesBySourceContext(ctx)
 }
 
-func TestHandleCLIAccountsRepeatDoesNotWaitForSlowCounts(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		srv, slow, _ := newSlowAccountsServer(t, st)
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
-		slow.delay = 3 * time.Second
-		srv.statsSnapshotWait = 2 * time.Second
-		getAccounts := func() cliAccountsResponse {
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
-			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			var resp cliAccountsResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			return resp
+func (s *slowCountsStore) ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	if s.catalogDelay > 0 {
+		select {
+		case <-time.After(s.catalogDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		assert.True(t, getAccounts().CountsPending)
-		time.Sleep(3 * time.Second)
-		synctest.Wait()
+	}
+	return s.Store.ListVirtualAccountsContext(ctx)
+}
 
-		started := time.Now()
-		resp := getAccounts()
-		assert.Zero(t, time.Since(started), "a known slow count returns its previous snapshot immediately")
-		require.Len(t, resp.Accounts, 1)
-		assert.EqualValues(t, 1, resp.Accounts[0].MessageCount)
-		assert.False(t, resp.CountsPending)
-		assert.True(t, resp.Stale)
-		assert.False(t, resp.AsOf.IsZero())
-	})
+func TestHandleCLIAccountsRepeatDoesNotWaitForSlowCounts(t *testing.T) {
+	for _, delay := range []time.Duration{0, 3 * time.Second} {
+		t.Run(delay.String(), func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			synctest.Test(t, func(t *testing.T) {
+				srv, slow, sourceID := newSlowAccountsServer(t, st)
+				defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+				slow.delay = delay
+				srv.statsSnapshotWait = 2 * time.Second
+				getAccounts := func() cliAccountsResponse {
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
+					req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, req)
+					require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+					var resp cliAccountsResponse
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+					return resp
+				}
+				first := getAccounts()
+				assert.Equal(t, delay > srv.statsSnapshotWait, first.CountsPending)
+				time.Sleep(delay)
+				synctest.Wait()
+				slow.delay = 0
+				slow.calls.Store(1)
+
+				started := time.Now()
+				resp := getAccounts()
+				assert.Zero(t, time.Since(started), "an available count returns immediately even when the next refresh becomes slow")
+				require.Len(t, resp.Accounts, 1)
+				assert.EqualValues(t, 1, resp.Accounts[0].MessageCount)
+				assert.False(t, resp.CountsPending)
+				assert.True(t, resp.Stale)
+				assert.False(t, resp.AsOf.IsZero())
+				if !first.CountsPending {
+					assert.Equal(t, first.AsOf, resp.AsOf)
+				}
+				synctest.Wait()
+
+				time.Sleep(3 * time.Minute)
+				started = time.Now()
+				repeat := getAccounts()
+				assert.Zero(t, time.Since(started), "long gaps still return the available snapshot")
+				assert.Equal(t, resp.AsOf, repeat.AsOf)
+				assert.EqualValues(t, 1, repeat.Accounts[0].MessageCount)
+				assert.True(t, repeat.Stale)
+				synctest.Wait()
+				started = time.Now()
+				assert.Equal(t, repeat.AsOf, getAccounts().AsOf)
+				assert.Zero(t, time.Since(started), "repeats share the blocked refresh")
+				assert.EqualValues(t, 3, slow.calls.Load(), "the expired refresh retries once")
+
+				conv, err := st.EnsureConversation(t.Context(), sourceID, "thread-1", "")
+				require.NoError(t, err)
+				_, err = st.UpsertMessage(&store.Message{
+					SourceID: sourceID, ConversationID: conv, SourceMessageID: "msg-2", MessageType: "email",
+				})
+				require.NoError(t, err)
+				close(slow.release)
+				synctest.Wait()
+				assert.EqualValues(t, 2, getAccounts().Accounts[0].MessageCount, "the shared refresh observes appended messages")
+			})
+		})
+	}
 }
 
 // newSlowAccountsServer serves one account with one message behind slowCountsStore.

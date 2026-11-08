@@ -22,7 +22,6 @@ var errSnapshotWaitTimeout = fmt.Errorf("snapshot wait budget exceeded: %w", con
 // computation is slower than that and an earlier result exists, the earlier
 // result is returned as stale while the computation finishes in the
 // background and replaces it. With no earlier result the caller waits.
-// A refresh that exceeded the caller's budget last time is not waited on.
 type snapshotCache[T any] struct {
 	// logger records refreshes that fail while an earlier value is served;
 	// nil uses the default logger.
@@ -34,6 +33,9 @@ type snapshotCache[T any] struct {
 	// version, or an older one, still serves as the stale fallback. Zero
 	// starts a fresh computation every time.
 	freshFor time.Duration
+	// serveStaleImmediately returns an available value at the caller's version
+	// while refreshing it, without spending the wait budget.
+	serveStaleImmediately bool
 
 	mu      sync.Mutex
 	entries map[string]*snapshotEntry[T]
@@ -43,7 +45,6 @@ type snapshotEntry[T any] struct {
 	value   T
 	asOf    time.Time
 	version string
-	took    time.Duration
 	has     bool
 	flight  *snapshotFlight[T]
 }
@@ -102,11 +103,11 @@ func (c *snapshotCache[T]) getVersion(
 		flight = c.startLocked(reqCtx, lifetimeCtx, key, version, entry, compute)
 	}
 	hasPrevious, previous, previousAsOf := entry.has, entry.value, entry.asOf
-	previousTook := entry.took
+	servePrevious := c.serveStaleImmediately && entry.version == version
 	c.mu.Unlock()
 
 	var zero T
-	if hasPrevious && previousTook > wait {
+	if hasPrevious && servePrevious {
 		if err := reqCtx.Err(); err != nil {
 			return zero, time.Time{}, false, err
 		}
@@ -173,13 +174,11 @@ func (c *snapshotCache[T]) run(
 	defer cancel()
 	asOf := time.Now()
 	value, err := compute(ctx)
-	took := time.Since(asOf)
 	c.mu.Lock()
 	// A computation that a newer version superseded must not replace its
 	// result; it still fills an empty entry.
 	if err == nil && (entry.flight == flight || !entry.has) {
 		entry.value, entry.asOf, entry.version, entry.has = value, asOf, flight.version, true
-		entry.took = took
 	} else if entry.has && lifetimeCtx.Err() == nil {
 		// Callers are being served the earlier value as stale; without this
 		// log a persistent failure would stay invisible.
