@@ -621,6 +621,54 @@ func TestCompactSweepSeedsBeforeRepeatedDueRetries(t *testing.T) {
 	assert.Equal("retry", saved.Deferred[0].Task.ID)
 }
 
+type countingRootSource struct {
+	*discoveryFixture
+	reads map[string]int
+}
+
+func (source *countingRootSource) RetrieveBlockChildren(ctx context.Context, id, cursor string) (*BlockPage, error) {
+	source.reads[id]++
+	return source.discoveryFixture.RetrieveBlockChildren(ctx, id, cursor)
+}
+
+func TestCompactSeedsResumeAfterScopeCeiling(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	imp.limits.Scopes = 1
+	imp.limits.Requests = 2
+	for _, id := range []string{"root-a", "root-b", "root-c"} {
+		source.children[id] = map[string]*BlockPage{"": {}}
+	}
+	counting := &countingRootSource{discoveryFixture: source, reads: map[string]int{}}
+	imp.client = counting
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", RootPageIDs: []string{"root-a", "root-b", "root-c"}, SearchAccessible: &noSearch}
+	result, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	saved := lastNotionState(t, st, result.SourceID)
+	assert.False(saved.Active)
+	assert.Positive(saved.SeedNext)
+	assert.Positive(result.CoverageReasons["scope_limit"])
+	opts.Full = true
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	saved = lastNotionState(t, st, result.SourceID)
+	assert.True(saved.FreshRequested)
+	opts.Full = false
+	for range 5 {
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		if counting.reads["root-a"] > 0 && counting.reads["root-b"] > 0 && counting.reads["root-c"] > 0 {
+			break
+		}
+	}
+	for _, id := range opts.RootPageIDs {
+		assert.Positive(counting.reads[id])
+	}
+}
+
 func TestSaturatedDeferredQueueRetainsFailedAdmission(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

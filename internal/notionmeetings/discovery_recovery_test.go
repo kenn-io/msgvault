@@ -35,7 +35,6 @@ func TestCursorRejectsInvalidTraversalState(t *testing.T) {
 				s.Active = true
 				s.SeedNext = -n
 			},
-			"inactive root position": func(s *syncState) { s.SeedNext = n },
 		} {
 			s := newSyncState()
 			mutate(&s)
@@ -43,6 +42,8 @@ func TestCursorRejectsInvalidTraversalState(t *testing.T) {
 		}
 		s := newSyncState()
 		s.Frontier = []scopeTask{{Kind: "database", ID: "db", Offset: n}}
+		require.NoError(ht, s.validate())
+		s.SeedNext = n
 		require.NoError(ht, s.validate())
 	}, hegel.WithTestCases(32), hegel.WithDatabase(""))
 }

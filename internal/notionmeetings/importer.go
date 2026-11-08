@@ -288,7 +288,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	state.Coverage.Reasons = map[string]int{}
 	state.Identity = identity
 	state.Fingerprint = fingerprint
-	if opts.Full && state.Active {
+	if opts.Full && (state.Active || state.SeedNext > 0) {
 		state.FreshRequested = true
 	}
 	seeds := configuredSeeds(opts)
@@ -328,10 +328,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	beginSweep := func() {
 		before := state.copyDiscovery()
-		state.startSweep(opts, started)
-		state.activateDeferred(started, limits)
-		if state.validateTransientWith(limits) == nil {
-			return
+		if before.SeedNext == 0 {
+			state.startSweep(opts, started)
+			state.activateDeferred(started, limits)
+			if state.validateTransientWith(limits) == nil {
+				return
+			}
 		}
 		// Retain the configured roots by position in the fingerprinted options,
 		// instead of putting all of them in a nearly full checkpoint at once.
@@ -341,7 +343,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		noSearch := false
 		compact.SearchAccessible = &noSearch
 		state.startSweep(compact, started)
-		if len(seeds) > 0 {
+		if before.SeedNext > 0 {
+			state.SeedNext = before.SeedNext
+			state.FreshRequested = before.FreshRequested
+		} else if len(seeds) > 0 {
 			state.SeedNext = 1
 		}
 		if state.validateTransientWith(limits) != nil {
@@ -598,6 +603,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 		} else {
 			idle++
+		}
+		if len(state.Frontier) == 0 && len(state.Windows) == 0 && state.SeedNext > 0 && len(state.Seen) >= limits.Scopes {
+			// Continue the unseeded suffix in a new bounded sweep rather than
+			// keeping this exhausted sweep active forever.
+			state.Active = false
+			state.reason("scope_limit", "run")
+			goto complete
 		}
 		if len(state.Frontier) == 0 && len(state.Windows) == 0 && state.SeedNext == 0 {
 			state.Active = false

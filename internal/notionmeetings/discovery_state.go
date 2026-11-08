@@ -411,7 +411,7 @@ func validateWindow(window queryWindow) error {
 }
 func (state *syncState) validateDiscovery() error {
 	s := *state
-	if s.NextLane < 0 || s.NextLane > 3 || s.SeedNext < 0 || (s.SeedNext > 0 && !s.Active) {
+	if s.NextLane < 0 || s.NextLane > 3 || s.SeedNext < 0 {
 		return errors.New("invalid saved sync progress")
 	}
 	ids := map[string]bool{}
@@ -496,7 +496,7 @@ func (state *syncState) currentCoverage(search bool) {
 	if search {
 		current["search_best_effort"] = 1
 	}
-	for _, reason := range []string{"request_budget", "discovery_budget", "unfinished_progress", "cursor_budget", "time_budget", "interrupted", "users_unavailable", "pending_budget"} {
+	for _, reason := range []string{"request_budget", "discovery_budget", "unfinished_progress", "cursor_budget", "scope_limit", "time_budget", "interrupted", "users_unavailable", "pending_budget"} {
 		if n := state.Coverage.Reasons[reason]; n > 0 {
 			current[reason] = max(current[reason], n)
 		}
