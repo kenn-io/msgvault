@@ -18,7 +18,7 @@ import (
 // prepareICloudRequest resolves the bootstrap before duplicate, ownership and
 // generation checks. Public password reuse remains exact-identity-only.
 func (c *CardDAVController) prepareICloudRequest(
-	ctx context.Context, req CardDAVAccountRequest, configured config.CardDAVConfig, gateAccountID int64,
+	ctx context.Context, req CardDAVAccountRequest, configured config.CardDAVConfig, gateAccountID, gateGeneration int64,
 ) (CardDAVAccountRequest, *carddav.Discovery, error) {
 	if req.Provider != "" || !carddav.IsICloudDiscoveryURL(req.BaseURL) {
 		return req, nil, nil
@@ -32,7 +32,7 @@ func (c *CardDAVController) prepareICloudRequest(
 	if err != nil {
 		return req, nil, errors.Join(errCardDAVValidation, err)
 	}
-	discovery, err := c.discoverICloudWithGate(ctx, service, carddav.ICloudDiscoveryURL, gateAccountID)
+	discovery, err := c.discoverICloudWithGate(ctx, service, carddav.ICloudDiscoveryURL, gateAccountID, gateGeneration)
 	if err != nil {
 		return req, nil, errors.Join(errCardDAVUpstream, err)
 	}
@@ -120,7 +120,7 @@ func (o *iCloudOperations) sync(ctx context.Context, options carddav.SyncOptions
 	}
 	probe, err := c.factory(c.store, o.configured, o.credential.Password)
 	if err == nil {
-		_, err = c.discoverICloudWithGate(preflightCtx, probe, o.configured.BaseURL, account.ID)
+		_, err = c.discoverICloudWithGate(preflightCtx, probe, o.configured.BaseURL, account.ID, o.credential.ConnectionGeneration)
 	}
 	if err == nil {
 		if latest := c.Current(); latest != o {
@@ -144,7 +144,7 @@ func (o *iCloudOperations) sync(ctx context.Context, options carddav.SyncOptions
 		BaseURL: carddav.ICloudDiscoveryURL, Username: o.credential.Username, Password: o.credential.Password,
 		Enabled: new(o.configured.Enabled), Schedule: o.configured.Schedule,
 	}
-	req, _, err = c.prepareICloudRequest(preflightCtx, req, o.configured, account.ID)
+	req, _, err = c.prepareICloudRequest(preflightCtx, req, o.configured, account.ID, o.credential.ConnectionGeneration)
 	if err != nil {
 		return carddav.SyncResult{}, safeICloudPreflightError(err)
 	}
@@ -197,7 +197,7 @@ func (c *CardDAVController) checkICloudBinding(ctx context.Context, configured c
 	return nil
 }
 
-func (c *CardDAVController) discoverICloudWithGate(ctx context.Context, service cardDAVCandidate, base string, accountID int64) (carddav.Discovery, error) {
+func (c *CardDAVController) discoverICloudWithGate(ctx context.Context, service cardDAVCandidate, base string, accountID, generation int64) (carddav.Discovery, error) {
 	if accountID > 0 {
 		if err := c.store.CheckCardDAVRetryAfterContext(ctx, accountID); err != nil {
 			return carddav.Discovery{}, err
@@ -205,9 +205,21 @@ func (c *CardDAVController) discoverICloudWithGate(ctx context.Context, service 
 	}
 	discovery, err := service.DiscoverConnection(ctx, base)
 	if status, ok := errors.AsType[*carddav.StatusError](err); ok && status.RetryAfter > 0 && accountID > 0 {
-		err = errors.Join(err, c.store.SetCardDAVRetryAfterContext(ctx, time.Now().Add(status.RetryAfter).UTC(), accountID))
+		err = errors.Join(err, c.recordICloudRetryAfter(ctx, accountID, generation, status.RetryAfter))
 	}
 	return discovery, err
+}
+
+func (c *CardDAVController) recordICloudRetryAfter(ctx context.Context, accountID, generation int64, delay time.Duration) error {
+	// Save replaces credentials and discovery under this lock. A late response
+	// from the old generation must not pause the replacement connection.
+	c.saveLock().Lock()
+	defer c.saveLock().Unlock()
+	account, err := c.store.GetCardDAVAccountByIDContext(ctx, accountID)
+	if err != nil || account == nil || account.ConnectionGeneration != generation {
+		return err
+	}
+	return c.store.SetCardDAVRetryAfterContext(ctx, time.Now().Add(delay).UTC(), accountID)
 }
 
 func iCloudHostFailure(ctx context.Context, err error) bool {

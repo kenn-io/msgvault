@@ -423,7 +423,7 @@ func (c *CardDAVController) Test(ctx context.Context, req CardDAVAccountRequest)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	req, prepared, err := c.prepareICloudRequest(ctx, req, configured, 0)
+	req, prepared, err := c.prepareICloudRequest(ctx, req, configured, 0, 0)
 	if err != nil {
 		return CardDAVAccountResponse{}, err
 	}
@@ -474,7 +474,7 @@ func (c *CardDAVController) save(ctx context.Context, req CardDAVAccountRequest)
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	req, prepared, err := c.prepareICloudRequest(ctx, req, current, 0)
+	req, prepared, err := c.prepareICloudRequest(ctx, req, current, 0, 0)
 	if err != nil {
 		return CardDAVAccountResponse{}, err
 	}
