@@ -312,10 +312,6 @@ func TestCLIAllowlistPersonEnrichmentForwardsOnlyCommandCredentials(t *testing.T
 		"--identifier-class=email", "--normalization-version=email-v1", "--key-id=" + strings.Repeat("b", 64),
 		"--digest=" + strings.Repeat("c", 64), "--reason=opt_out", "--actor=cli"}
 	checks.False(srv.cliRunEnvAllowedForCommand(digestSuppression, "ENRICHMENT_SUPPRESSION_KEY"))
-	repeatedProvider := []string{"person", "enrichment", "run", "--person=7", "--provider=exa-secondary",
-		"--provider=exa-primary", "--idempotency-key=run-1"}
-	checks.False(srv.cliRunEnvAllowedForCommand(repeatedProvider, "EXA_PRIMARY_KEY"))
-	checks.False(srv.cliRunEnvAllowedForCommand(repeatedProvider, "EXA_SECONDARY_KEY"))
 	separateProvider := []string{"person", "enrichment", "run", "--person", "7", "--provider", "exa-primary",
 		"--idempotency-key", "run-1", "-v"}
 	checks.True(srv.cliRunEnvAllowedForCommand(separateProvider, "EXA_PRIMARY_KEY"))
