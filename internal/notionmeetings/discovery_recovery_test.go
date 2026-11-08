@@ -31,6 +31,11 @@ func TestCursorRejectsInvalidTraversalState(t *testing.T) {
 				s.Deferred = []deferredScope{{Task: &scopeTask{Kind: "search"}, Reason: "transient_error"}}
 			},
 			"invalid lane": func(s *syncState) { s.NextLane = 4 + n },
+			"negative root position": func(s *syncState) {
+				s.Active = true
+				s.SeedNext = -n
+			},
+			"inactive root position": func(s *syncState) { s.SeedNext = n },
 		} {
 			s := newSyncState()
 			mutate(&s)
@@ -40,6 +45,22 @@ func TestCursorRejectsInvalidTraversalState(t *testing.T) {
 		s.Frontier = []scopeTask{{Kind: "database", ID: "db", Offset: n}}
 		require.NoError(ht, s.validate())
 	}, hegel.WithTestCases(32), hegel.WithDatabase(""))
+}
+
+func TestVersionFourCursorRemainsReadable(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	state := newSyncState()
+	state.Version = 4
+	state.Active = true
+	state.Frontier = []scopeTask{{Kind: "blocks", ID: "root", Cursor: "next"}}
+	raw, err := json.Marshal(state)
+	must.NoError(err)
+	var restored syncState
+	must.NoError(json.Unmarshal(raw, &restored))
+	must.NoError(restored.validate())
+	must.Len(restored.Frontier, 1)
+	checks.Equal("next", restored.Frontier[0].Cursor)
 }
 
 func TestImporterRejectsInvalidStoredCursorBeforeProviderRequests(t *testing.T) {
