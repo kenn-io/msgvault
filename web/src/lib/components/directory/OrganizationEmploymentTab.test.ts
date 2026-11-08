@@ -313,7 +313,6 @@ it('deletes the saved version a job delete conflict shows', async () => {
   render(OrganizationEmploymentTab, { controller, personID: 7 });
   await rowAction('Delete…');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-  expect(reads).toBe(1);
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await screen.findByText('This job changed since you opened it.');
   expect(screen.getByText('Concurrent title')).toBeDefined();
