@@ -2,6 +2,7 @@ package feeds
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"strings"
 
@@ -27,8 +28,36 @@ func parseFeed(body []byte) (*gofeed.Feed, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse feed: %w", err)
 	}
+	if feed.FeedType == "atom" {
+		markAtomTextSummaries(body, feed)
+	}
 	dropNUL(feed)
 	return feed, nil
+}
+
+// atomSummaryTypes reads each Atom entry's summary type, which gofeed's
+// atom.Entry doesn't keep.
+type atomSummaryTypes struct {
+	Entries []struct {
+		Summary *struct {
+			Type string `xml:"type,attr"`
+		} `xml:"summary"`
+	} `xml:"entry"`
+}
+
+// markAtomTextSummaries marks summaries whose type is text (RFC 4287
+// §3.1.1: the type defaults to text). A document encoding/xml can't read
+// leaves summaries as HTML.
+func markAtomTextSummaries(body []byte, feed *gofeed.Feed) {
+	var doc atomSummaryTypes
+	if err := xml.Unmarshal(body, &doc); err != nil || len(doc.Entries) != len(feed.Items) {
+		return
+	}
+	for i, entry := range doc.Entries {
+		if entry.Summary != nil && atomTextType(entry.Summary.Type) {
+			markText(feed.Items[i], customDescriptionIsText)
+		}
+	}
 }
 
 // atomTranslator marks content whose type is text (RFC 4287 §4.1.3: the

@@ -1,6 +1,7 @@
 package feeds
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -511,6 +512,18 @@ func TestPlainTextBodiesKeepTheirAngleBrackets(t *testing.T) {
     <updated>2026-11-07T15:00:00Z</updated>
     <content>Use &lt;gadget&gt; here.</content>
   </entry>
+  <entry>
+    <title>Atom summary</title>
+    <id>urn:example:text:2</id>
+    <updated>2026-11-07T15:00:00Z</updated>
+    <summary>Use &lt;gizmo&gt; here.</summary>
+  </entry>
+  <entry>
+    <title>Atom HTML summary</title>
+    <id>urn:example:text:3</id>
+    <updated>2026-11-07T15:00:00Z</updated>
+    <summary type="html">&lt;b&gt;Bold&lt;/b&gt; news</summary>
+  </entry>
 </feed>`,
 	})
 	_, err := newTestSyncer(st, time.Now()).Follow(t.Context(), []string{server.url("/text.json"), server.url("/text.atom")})
@@ -521,6 +534,9 @@ func TestPlainTextBodiesKeepTheirAngleBrackets(t *testing.T) {
 	assert.False(items["j-text"].BodyHTML.Valid)
 	assert.Equal("Use <gadget> here.", items["urn:example:text:1"].Body, "Atom content without a type is text")
 	assert.False(items["urn:example:text:1"].BodyHTML.Valid)
+	assert.Equal("Use <gizmo> here.", items["urn:example:text:2"].Body, "an Atom summary without a type is text")
+	assert.False(items["urn:example:text:2"].BodyHTML.Valid)
+	assert.Contains(items["urn:example:text:3"].BodyHTML.String, "<b>Bold</b>", "an HTML summary stays HTML")
 }
 
 func TestFeedsCarryingNULStillArchive(t *testing.T) {
@@ -541,6 +557,59 @@ func TestFeedsCarryingNULStillArchive(t *testing.T) {
 	items := archivedItems(t, st)
 	assert.Equal("Bad title", items["badid"].Subject)
 	assert.Equal("NUL feed", items["good"].FeedTitle)
+}
+
+func TestSyncInWhichEveryFeedFailsIsAFailedRun(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	server := newFeedServer(t, map[string]string{"/a.atom": atomFeed, "/b.rss": rssFeed})
+	syncer := newTestSyncer(st, time.Now())
+	summary, err := syncer.Follow(t.Context(), []string{server.url("/a.atom"), server.url("/b.rss")})
+	require.NoError(err)
+	lastGood, err := st.GetLastSuccessfulSyncContext(t.Context(), summary.SourceID)
+	require.NoError(err)
+
+	server.set("/a.atom", "not xml")
+	server.set("/b.rss", "not xml")
+	_, err = syncer.Sync(t.Context(), SyncOptions{Full: true})
+	require.ErrorIs(err, ErrEveryFeedFailed)
+	latest, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, latest.Status)
+	stillGood, err := st.GetLastSuccessfulSyncContext(t.Context(), summary.SourceID)
+	require.NoError(err)
+	assert.Equal(lastGood.ID, stillGood.ID, "the last good sync doesn't advance during an outage")
+}
+
+func TestSyncThatYieldsMidFetchBlamesNoFeed(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	server := newFeedServer(t, map[string]string{"/a.atom": atomFeed})
+	syncer := newTestSyncer(st, time.Now())
+	_, err := syncer.Follow(t.Context(), []string{server.url("/a.atom")})
+	require.NoError(err)
+
+	// The scheduler hands the job's slot to waiting work while it fetches.
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	server.mu.Lock()
+	server.onRequest = func(string) { cancel(jobctx.ErrYieldedToWaiter) }
+	server.mu.Unlock()
+	summary, err := syncer.Sync(ctx, SyncOptions{Full: true})
+	require.ErrorIs(err, context.Canceled)
+	require.NotErrorIs(err, ErrEveryFeedFailed, "an interruption is no outage")
+	assert.Empty(summary.Feeds, "the interrupted feed wasn't checked")
+
+	latest, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCancelled, latest.Status)
+	list, err := NewRegistry(st).List(t.Context())
+	require.NoError(err)
+	assert.Empty(list[0].State.LastError, "the feed keeps no error for an interruption")
 }
 
 func TestSummarySourceErrIsAnOutageOnlyWhenEveryFeedFailed(t *testing.T) {

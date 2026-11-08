@@ -42,7 +42,8 @@ Sources page offers **Sync now** for the Feeds source.
   sync that pauses for other work picks up the feeds it didn't reach.
 - A feed that fails is recorded on the sync run, and the other feeds still
   sync. `msgvault list-feeds` shows each feed's last check and its last error.
-  A scheduled sync counts as failed only when every feed fails.
+  A sync counts as failed, and the Sources page keeps its last good sync,
+  only when every feed fails.
 
 ## Feeds on your own network
 

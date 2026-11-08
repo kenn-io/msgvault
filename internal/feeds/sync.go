@@ -107,7 +107,7 @@ func (s *Syncer) Sync(ctx context.Context, opts SyncOptions) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	return s.run(ctx, registry, func(ctx context.Context, run *syncRun) {
+	return s.run(ctx, registry, true, func(ctx context.Context, run *syncRun) {
 		for _, feed := range selected {
 			if ctx.Err() != nil || jobctx.PreemptionRequested(ctx) {
 				return
@@ -133,7 +133,7 @@ func (s *Syncer) Follow(ctx context.Context, urls []string) (Summary, error) {
 		normalized = append(normalized, feedURL)
 	}
 	registry := NewRegistry(s.store)
-	return s.run(ctx, registry, func(ctx context.Context, run *syncRun) {
+	return s.run(ctx, registry, false, func(ctx context.Context, run *syncRun) {
 		for _, feedURL := range normalized {
 			if ctx.Err() != nil {
 				return
@@ -212,7 +212,14 @@ type syncRun struct {
 	summary    Summary
 }
 
-func (s *Syncer) run(ctx context.Context, registry *Registry, body func(context.Context, *syncRun)) (summary Summary, retErr error) {
+// run records one sync run around body. With outages set, a run in which
+// every feed failed ends as failed, so the source's last good sync doesn't
+// advance during an outage; adding feeds that fail is no outage. An
+// interrupted run ends through InterruptSyncWithCheckpoint, which records a
+// handoff to other scheduled work as cancelled.
+func (s *Syncer) run(
+	ctx context.Context, registry *Registry, outages bool, body func(context.Context, *syncRun),
+) (summary Summary, retErr error) {
 	source, err := registry.Source(ctx)
 	if err != nil {
 		return Summary{}, err
@@ -235,8 +242,12 @@ func (s *Syncer) run(ctx context.Context, registry *Registry, body func(context.
 		summary = run.summary
 		// The run's outcome must be recorded even when the sync was canceled.
 		cleanup := context.WithoutCancel(ctx)
-		if retErr == nil {
-			retErr = ctx.Err()
+		if ctx.Err() != nil {
+			if retErr == nil {
+				retErr = ctx.Err()
+			}
+			retErr = errors.Join(retErr, scoped.InterruptSyncWithCheckpoint(ctx, syncID, retErr, run.checkpoint))
+			return
 		}
 		if retErr != nil {
 			retErr = errors.Join(retErr, scoped.FailSyncWithCheckpointContext(cleanup, syncID, retErr.Error(), run.checkpoint))
@@ -252,6 +263,9 @@ func (s *Syncer) run(ctx context.Context, registry *Registry, body func(context.
 		}
 	}()
 	body(ctx, run)
+	if outages && ctx.Err() == nil {
+		return run.summary, run.summary.SourceErr()
+	}
 	return run.summary, nil
 }
 
@@ -264,7 +278,7 @@ func (r *syncRun) feed(ctx context.Context, feedURL, knownTitle string, fetched 
 	if fetched == nil {
 		got, err := r.syncer.fetcher.Fetch(ctx, feedURL, validators)
 		if err != nil {
-			result.Err = errors.Join(err, r.recordCheck(ctx, feedURL, "", nil, err))
+			result.Err = errors.Join(err, r.recordFailure(ctx, feedURL, "", err))
 			return
 		}
 		fetched = &got
@@ -279,7 +293,7 @@ func (r *syncRun) feed(ctx context.Context, feedURL, knownTitle string, fetched 
 	result.Added, result.Skipped, result.Items = added, skipped, items
 	if err != nil {
 		// Validators stay as they were so the next sync downloads the feed again.
-		result.Err = errors.Join(err, r.recordCheck(ctx, feedURL, result.Title, nil, err))
+		result.Err = errors.Join(err, r.recordFailure(ctx, feedURL, result.Title, err))
 		return
 	}
 	result.Err = r.recordCheck(ctx, feedURL, result.Title, &fetched.Validators, nil)
@@ -289,8 +303,12 @@ func (r *syncRun) feed(ctx context.Context, feedURL, knownTitle string, fetched 
 // error of the run, so the source shows the sync as failing, and is recorded
 // as a sync-run item with its error.
 func (r *syncRun) report(ctx context.Context, result FeedResult) {
+	if result.Err != nil && ctx.Err() != nil {
+		// Interrupted, not checked: neither a result nor a failure.
+		return
+	}
 	r.summary.Feeds = append(r.summary.Feeds, result)
-	if result.Err == nil || ctx.Err() != nil {
+	if result.Err == nil {
 		return
 	}
 	r.checkpoint.ErrorsCount++
@@ -366,6 +384,15 @@ func itemName(message messageimport.ImportedMessage) string {
 	default:
 		return message.ExternalID
 	}
+}
+
+// recordFailure stores a feed's failure, unless the run was interrupted:
+// an interruption says nothing about the feed.
+func (r *syncRun) recordFailure(ctx context.Context, feedURL, title string, failure error) error {
+	if ctx.Err() == nil {
+		return r.recordCheck(ctx, feedURL, title, nil, failure)
+	}
+	return nil
 }
 
 // recordCheck stores when a feed was checked and how it went. New validators
