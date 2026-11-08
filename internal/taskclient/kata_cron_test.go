@@ -29,6 +29,21 @@ func cronTestClient(t *testing.T, handler http.HandlerFunc) *KataClient {
 	return &KataClient{transport: transport, project: "example", projectID: 1}
 }
 
+func TestCheckRecurrenceSupportDoesNotReadCatalog(t *testing.T) {
+	var requests []string
+	client := cronTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "capabilities") {
+			writeTestJSON(t, w, map[string]any{"project_uid": cronTestUID, "event_features": []string{"cron_v1"}})
+			return
+		}
+		_, err := w.Write([]byte(strings.Repeat(" ", int(DefaultMaxResponseSize)+1)))
+		assert.NoError(t, err)
+	})
+	require.NoError(t, client.CheckRecurrenceSupport(t.Context(), "example"))
+	assert.Equal(t, []string{"/api/v1/projects/1/cron/capabilities"}, requests)
+}
+
 func TestCronCatalogMalformedNativeJobCannotImplyEmptyCertainty(t *testing.T) {
 	job := cronTestJob()
 	job["uid"] = "short-ref"

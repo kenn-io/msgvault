@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/taskclient"
 )
@@ -43,7 +44,16 @@ func (b *personAgendaBackend) List(ctx context.Context, personID int64) (persona
 	if err != nil {
 		return personagenda.Result{}, err
 	}
-	return service.List(ctx, personID)
+	result, err := service.List(ctx, personID)
+	if err != nil {
+		return personagenda.Result{}, err
+	}
+	result.RecurringTarget = recurringTarget(b.config)
+	return result, nil
+}
+
+func recurringTarget(cfg config.TaskIntegrationConfig) string {
+	return kataevidence.Digest("msgvault.recurring.target.v1", strings.TrimSpace(cfg.Endpoint), strings.TrimSpace(cfg.DefaultProject))
 }
 
 func (b *personAgendaBackend) Create(ctx context.Context, personID int64, key string, input personagenda.CreateInput) (personagenda.Item, error) {
@@ -84,4 +94,15 @@ func (b *personAgendaBackend) UpdateSchedule(ctx context.Context, personID int64
 		return personagenda.Schedule{}, err
 	}
 	return service.UpdateSchedule(ctx, personID, parentID, jobID, input)
+}
+
+func (b *personAgendaBackend) CreateRecurring(ctx context.Context, personID int64, key string, input personagenda.RecurringCreateInput) (personagenda.RecurringCreateResult, error) {
+	if input.Target == "" || input.Target != recurringTarget(b.config) {
+		return personagenda.RecurringCreateResult{}, personagenda.ErrRecurringProjectChanged
+	}
+	service, err := b.service(ctx)
+	if err != nil {
+		return personagenda.RecurringCreateResult{}, err
+	}
+	return service.CreateRecurring(ctx, personID, key, input)
 }

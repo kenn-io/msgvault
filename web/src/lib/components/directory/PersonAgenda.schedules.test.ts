@@ -19,6 +19,20 @@ function setup(write: (request: Request) => Promise<Response>) {
 }
 
 describe('PersonAgenda schedule management', () => {
+  it('waits for agenda identity before opening recurring creation', async () => {
+    let resolve!: (response: Response) => void;
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.url.endsWith('/integrations/kata/status')) return Response.json({ state: 'ready' });
+      return new Promise<Response>(done => { resolve = done; });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    const button = await screen.findByRole('button', { name: 'Add recurring task' });
+    expect(button).toHaveProperty('disabled', true);
+    resolve(Response.json({ ...agenda, person_uid: 'person-seven', person_uids: ['person-seven'], recurring_target: 'target-one' }));
+    await waitFor(() => expect(button).toHaveProperty('disabled', false));
+  });
+
   it('requires lifecycle review and sends the viewed job event under the person and parent', async () => {
     const { client, writes } = setup(async () => Response.json({ schedule: { ...schedule, state: 'paused', enabled: false, definition_event_uid: 'confirmed-event' } }));
     render(PersonAgenda, { client, personID: 7 });

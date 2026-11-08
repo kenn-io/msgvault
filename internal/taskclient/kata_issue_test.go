@@ -21,10 +21,11 @@ func TestKataStaticTokenWritesAsMsgvault(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
 	require.NoError(err)
-	create := KataCreate{Title: "Send the revised budget", Body: "Synthetic body", Metadata: map[string]any{ActionMetadataKey: "action-a"}}
+	create := KataCreate{Title: "Send the revised budget", Body: "Synthetic body", Owner: "synthetic", Metadata: map[string]any{ActionMetadataKey: "action-a"}}
 	created, reused, err := client.CreateTaskReused(t.Context(), "example", "native-key-a", create)
 	require.NoError(err)
 	assert.False(reused)
+	assert.Equal("synthetic", created.Owner)
 	again, reused, err := client.CreateTaskReused(t.Context(), "example", "native-key-a", create)
 	require.NoError(err)
 	assert.True(reused)

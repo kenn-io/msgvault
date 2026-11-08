@@ -4,6 +4,7 @@
   import Repeat from '@lucide/svelte/icons/repeat';
   import { onDestroy, untrack } from 'svelte';
   import DetailRow from '../people/DetailRow.svelte';
+  import RecurringTaskForm from './RecurringTaskForm.svelte';
   import {
     createPersonAgendaItem,
     getKataIntegrationStatus,
@@ -32,12 +33,16 @@
   let truncated = $state(false);
   let recurrenceState = $state('');
   let recurrenceMessage = $state('');
+  let personUIDs = $state<string[]>([]);
+  let agendaProject = $state('');
+  let recurringTarget = $state('');
   let pendingUnlink = $state<AgendaItem | null>(null);
   let managedItem = $state<AgendaItem | null>(null);
   let managedSchedule = $state<AgendaSchedule | null>(null);
   let scheduleAction = $state('');
   let scheduleEditing = $state(false);
   let scheduleConflict = $state(false);
+  let recurringForm = $state(false);
   let scheduleDraft = $state({ trigger_kind: 'cron', cron: '', interval_seconds: 60, timezone: 'UTC', occurrence_title: '', occurrence_body: '', recipient: '', catchup: 'latest', grace_seconds: 0 });
   let reviewedScheduleDraft = $state('');
   let unlinkTrigger: HTMLElement | null = null;
@@ -84,9 +89,13 @@
         scheduleAction = '';
         scheduleEditing = false;
         scheduleConflict = false;
+        recurringForm = false;
         unlinkTrigger = null;
         recurrenceState = '';
         recurrenceMessage = '';
+        personUIDs = [];
+        agendaProject = '';
+        recurringTarget = '';
       }
       // Same-person revisions keep write ownership and retry protection.
       // Revisit a deferred revision when the pending write releases the form.
@@ -122,6 +131,9 @@
       // service-unavailable error.
       if (integrationState !== 'ready') {
         items = [];
+        personUIDs = [];
+        agendaProject = '';
+        recurringTarget = '';
         truncated = false;
         recurrenceState = '';
         recurrenceMessage = '';
@@ -134,6 +146,9 @@
       if (current !== generation) return;
       if (!data) throw new Error(messageFor(responseError, 'Task service is unavailable'));
       items = data.items ?? [];
+      personUIDs = data.person_uids ?? [];
+      agendaProject = data.project ?? '';
+      recurringTarget = typeof data.recurring_target === 'string' ? data.recurring_target : '';
       truncated = data.truncated;
       recurrenceState = data.recurrence?.state ?? '';
       recurrenceMessage = data.recurrence?.message ?? '';
@@ -143,6 +158,9 @@
       truncated = false;
       recurrenceState = '';
       recurrenceMessage = '';
+      personUIDs = [];
+      agendaProject = '';
+      recurringTarget = '';
       error = cause instanceof Error ? cause.message : 'Task service is unavailable';
     } finally {
       if (current === generation) loading = false;
@@ -354,7 +372,6 @@
   {/if}
   {#if managedItem && managedSchedule}
     <div class="schedule-manager" role="group" aria-label={`Manage schedule for ${managedItem.title}`}>
-      <p>{managedSchedule.summary} · {managedSchedule.timezone} · {scheduleState(managedSchedule.state)}</p>
       <p>{#if !scheduleEditing || scheduleDraft.recipient !== managedSchedule.recipient}Kata sends inbox requests to {managedSchedule.recipient}. {/if}Existing occurrences and inbox requests remain when a schedule is paused or deleted.</p>
       <p>{#if !scheduleEditing || scheduleDraft.catchup !== managedSchedule.catchup || scheduleDraft.grace_seconds !== managedSchedule.grace_seconds}{managedSchedule.catchup === 'skip' ? `Skip occurrences over ${managedSchedule.grace_seconds}s late.` : `Catch up ${managedSchedule.catchup === 'all' ? 'all missed occurrences' : 'only the latest occurrence'}.`} {/if}Resuming or restoring may deliver missed occurrences.</p>
       {#if scheduleEditing}
@@ -421,6 +438,17 @@
     </div>
   {/each}
   {#if mutationReady}
+    {#if recurringForm}
+      {#key personID}
+        <RecurringTaskForm {client} {personID} {personUIDs} project={agendaProject} target={recurringTarget} onClose={() => { recurringForm = false; }} onCreated={() => {
+          recurringForm = false;
+          onAnnounce('Recurring task created.');
+          void load();
+        }} />
+      {/key}
+    {:else}
+      <Button size="sm" label="Add recurring task" disabled={mutating || loading || !!error || !agendaProject || !recurringTarget || !personUIDs.length} onclick={() => { recurringForm = true; }} />
+    {/if}
     <form onsubmit={(event) => { event.preventDefault(); void createItem(); }}>
       <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task" block disabled={mutating} />
       <TextInput bind:value={listName} ariaLabel="List" placeholder="agenda" disabled={mutating} />

@@ -52,6 +52,8 @@ func writeScheduleError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_schedule", "This schedule cannot be updated with these settings")
 	case errors.Is(err, personagenda.ErrScheduleOutcomeUnknown):
 		writeError(w, http.StatusServiceUnavailable, "schedule_outcome_unknown", "The schedule update outcome is unknown. Refresh before retrying.")
+	case errors.Is(err, personagenda.ErrRecurringRetryExpired):
+		writeError(w, http.StatusConflict, "recurring_retry_expired", "This request is too old to retry safely. Check Kata before starting a new request.")
 	case errors.Is(err, taskclient.ErrConflict):
 		writeError(w, http.StatusConflict, "schedule_conflict", "The schedule changed. Refresh before trying again.")
 	default:

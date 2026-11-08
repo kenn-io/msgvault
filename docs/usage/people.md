@@ -333,12 +333,19 @@ series running. Use its Kata link to view completed occurrences.
 Calendar schedules use the job’s named timezone. Intervals measure elapsed time
 from the initial binding and continue independently of completion.
 
-Create schedules in Kata. For a directly linked series, choose **Manage** to
-edit a supported schedule or pause, resume, delete, or restore it. Review the
-recipient and missed-occurrence policy before confirming. Resuming or restoring
-can deliver missed occurrences. If the schedule changed or its update outcome
-is unknown, refresh it before trying again. Advanced definitions that the form
-cannot preserve remain available in Kata.
+Choose **Add recurring task** to create a parent and schedule. Enter the parent
+owner, inbox recipient, cadence, timezone, and missed-occurrence policy, then
+review them before creating it. Msgvault keeps the draft and request identity on
+this device until Kata confirms the result. If a parent was created but its
+schedule is not confirmed, retry the same request; check Kata before starting a
+different one.
+
+For a directly linked series, choose **Manage** to edit a supported schedule or
+pause, resume, delete, or restore it. Review the recipient and missed-occurrence
+policy before confirming. Resuming or restoring can deliver missed occurrences.
+If the schedule changed or its update outcome is unknown, refresh it before
+trying again. Advanced definitions that the form cannot preserve remain
+available in Kata.
 
 The Kata daemon creates each occurrence and requests attention in the configured
 inbox; it does not send a message to the contact. A scheduled time is separate

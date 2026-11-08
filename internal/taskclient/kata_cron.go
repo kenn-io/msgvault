@@ -47,26 +47,46 @@ func ValidKataUID(value string) bool {
 	return err == nil && len(value) == 26 && value == strings.ToUpper(value)
 }
 
-// RecurrenceCatalog checks native support independently of ordinary task access.
-// It never widens the normal 1 MiB response bound or fetches individual jobs.
+// CheckRecurrenceSupport verifies native cron without loading the job catalog.
+func (c *KataClient) CheckRecurrenceSupport(ctx context.Context, project string) error {
+	id, err := c.resolveProject(ctx, project)
+	if err != nil {
+		return err
+	}
+	_, err = c.cronProjectUID(ctx, id)
+	return err
+}
+
+func (c *KataClient) cronProjectUID(ctx context.Context, id int64) (string, error) {
+	transport := *c.transport
+	transport.maxResponseBytes = min(transport.maxResponseBytes, DefaultMaxResponseSize)
+	var capabilities kata.CronCapabilitiesResponseBody
+	path := "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/cron/capabilities"
+	if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &capabilities, http.StatusOK); err != nil {
+		return "", err
+	}
+	if !slices.Contains(capabilities.EventFeatures, "cron_v1") {
+		return "", ErrIncompatible
+	}
+	if !ValidKataUID(capabilities.ProjectUID) {
+		return "", ErrInvalidResponse
+	}
+	return capabilities.ProjectUID, nil
+}
+
+// RecurrenceCatalog checks native support and reads a bounded project catalog.
 func (c *KataClient) RecurrenceCatalog(ctx context.Context, project string) (KataCronCatalog, error) {
 	id, err := c.resolveProject(ctx, project)
+	if err != nil {
+		return KataCronCatalog{}, err
+	}
+	projectUID, err := c.cronProjectUID(ctx, id)
 	if err != nil {
 		return KataCronCatalog{}, err
 	}
 	base := "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/cron/"
 	transport := *c.transport
 	transport.maxResponseBytes = min(transport.maxResponseBytes, DefaultMaxResponseSize)
-	var capabilities kata.CronCapabilitiesResponseBody
-	if err := transport.doJSON(ctx, http.MethodGet, base+"capabilities", nil, nil, &capabilities, http.StatusOK); err != nil {
-		return KataCronCatalog{}, err
-	}
-	if !slices.Contains(capabilities.EventFeatures, "cron_v1") {
-		return KataCronCatalog{}, ErrIncompatible
-	}
-	if !ValidKataUID(capabilities.ProjectUID) {
-		return KataCronCatalog{}, ErrInvalidResponse
-	}
 	var response struct {
 		Jobs []jsontext.Value `json:"jobs"`
 	}
@@ -76,7 +96,7 @@ func (c *KataClient) RecurrenceCatalog(ctx context.Context, project string) (Kat
 	if response.Jobs == nil {
 		return KataCronCatalog{}, ErrInvalidResponse
 	}
-	result := KataCronCatalog{ProjectID: id, ProjectUID: capabilities.ProjectUID, Jobs: []KataCronJob{}, Truncated: len(response.Jobs) > MaxCronJobs}
+	result := KataCronCatalog{ProjectID: id, ProjectUID: projectUID, Jobs: []KataCronJob{}, Truncated: len(response.Jobs) > MaxCronJobs}
 	for _, raw := range response.Jobs[:min(len(response.Jobs), MaxCronJobs)] {
 		var job kata.CronJob
 		if err := json.Unmarshal(raw, &job); err != nil {

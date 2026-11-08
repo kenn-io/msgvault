@@ -171,3 +171,28 @@ func TestEditCronJobPreservesUneditedFields(t *testing.T) {
 	assert.Equal("Updated", updated.OccurrenceTitle)
 	assert.Equal("0 9 * * 1", updated.Cron)
 }
+
+func TestCreateCronJobUsesStableUIDAndExplicitRecipient(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	client := cronTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPut, r.Method)
+		assert.Equal("/api/v1/projects/1/cron/jobs/"+cronTestUID, r.URL.Path)
+		var body struct {
+			Definition map[string]any `json:"definition"`
+		}
+		if !assert.NoError(json.UnmarshalRead(r.Body, &body)) {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		job := cronTestJob()
+		job["definition"] = body.Definition
+		writeTestJSON(t, w, map[string]any{"job": job})
+	})
+	settings := KataCronSettings{TriggerKind: "interval", IntervalSeconds: 60, Timezone: "UTC", OccurrenceTitle: "Review", Recipient: "synthetic", Catchup: "latest"}
+	job, err := client.CreateCronJob(t.Context(), "example", cronTestUID, cronTestUID, settings)
+	require.NoError(err)
+	assert.Equal(cronTestUID, job.UID)
+	assert.Equal(cronTestUID, job.ParentUID)
+	assert.Equal("synthetic", job.Recipient)
+}

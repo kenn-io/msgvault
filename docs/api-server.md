@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.50.0**.
+it is separate from the binary release version. The current schema is **3.51.0**.
+
+Schema 3.51.0 adds owner-scoped recurring task creation through `POST /api/v1/people/{id}/agenda/recurring`. Its `Idempotency-Key` is an RFC3339 timestamp, a slash, and a UUID, such as `2026-11-08T12:00:00Z/550e8400-e29b-41d4-a716-446655440000`. Retain the agenda response's `project` and opaque `recurring_target` with the key as the creation request's `project` and `target`; the server rejects retries if the configured target changes.
 
 Schema 3.50.0 adds owner-scoped native recurring schedule management through `POST /api/v1/people/{id}/agenda/{ref}/schedules/{job_uid}/actions`.
 

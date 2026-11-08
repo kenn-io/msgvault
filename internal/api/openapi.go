@@ -406,7 +406,8 @@ import (
 // 3.49.0 adds native recurring series, verified occurrences and independent
 // recurrence discovery state to person agenda reads.
 // 3.50.0 adds owner-scoped native recurring schedule management.
-const APISchemaVersion = "3.50.0"
+// 3.51.0 adds recoverable recurring person task creation.
+const APISchemaVersion = "3.51.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

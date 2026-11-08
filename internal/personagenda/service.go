@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -73,12 +74,13 @@ type Item struct {
 }
 
 type Result struct {
-	Recurrence RecurrenceStatus `json:"recurrence"`
-	Project    string           `json:"project"`
-	PersonUID  string           `json:"person_uid"`
-	PersonUIDs []string         `json:"person_uids"`
-	Items      []Item           `json:"items"`
-	Truncated  bool             `json:"truncated"`
+	Recurrence      RecurrenceStatus `json:"recurrence"`
+	Project         string           `json:"project"`
+	RecurringTarget string           `json:"recurring_target,omitempty"`
+	PersonUID       string           `json:"person_uid"`
+	PersonUIDs      []string         `json:"person_uids"`
+	Items           []Item           `json:"items"`
+	Truncated       bool             `json:"truncated"`
 }
 
 type CreateInput struct {
@@ -93,6 +95,7 @@ type Service struct {
 	Tasks   TaskClient
 	People  IdentityStore
 	Project string
+	Now     func() time.Time
 }
 
 func (s Service) List(ctx context.Context, personID int64) (Result, error) {

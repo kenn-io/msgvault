@@ -19,6 +19,38 @@ type KataCronSettings struct {
 	IntervalSeconds, GraceSeconds                                                    int64
 }
 
+// CreateCronJob uses a retained caller-selected UID. A repeated create cannot
+// replace an existing definition because it supplies no expected event UID.
+func (c *KataClient) CreateCronJob(ctx context.Context, project, jobUID, parentUID string, settings KataCronSettings) (KataCronJob, error) {
+	if !ValidKataUID(jobUID) || !ValidKataUID(parentUID) {
+		return KataCronJob{}, ErrInvalidRef
+	}
+	trigger := map[string]any{"kind": settings.TriggerKind, "timezone": settings.Timezone}
+	switch settings.TriggerKind {
+	case "cron":
+		trigger["cron"] = settings.Cron
+	case "interval":
+		trigger["interval_seconds"] = settings.IntervalSeconds
+	default:
+		return KataCronJob{}, ErrRequestRejected
+	}
+	body := map[string]any{
+		"actor": writeActor,
+		"name":  "person-recurring-" + jobUID,
+		"definition": map[string]any{
+			"version": 1, "kind": "job", "enabled": true, "trigger": trigger,
+			"action":  map[string]any{"kind": "notify", "recipient": settings.Recipient},
+			"issue":   map[string]any{"kind": "per-run", "parent_uid": parentUID, "title": settings.OccurrenceTitle, "body": settings.OccurrenceBody},
+			"overlap": "allow", "catchup": settings.Catchup, "grace_seconds": settings.GraceSeconds,
+		},
+	}
+	job, err := c.mutateCronJob(ctx, project, KataCronJob{UID: jobUID, ParentUID: parentUID}, http.MethodPut, "", body)
+	if err == nil && (!job.Enabled || job.Deleted || job.Recipient != settings.Recipient) {
+		return KataCronJob{}, ErrInvalidResponse
+	}
+	return job, err
+}
+
 // Editable reports form compatibility, not authority to mutate the job.
 func (job KataCronJob) Editable() bool {
 	var definition map[string]jsontext.Value

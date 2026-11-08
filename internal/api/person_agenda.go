@@ -45,12 +45,13 @@ type PersonAgendaOccurrence personagenda.Occurrence
 type PersonAgendaRecurrenceStatus personagenda.RecurrenceStatus
 
 type PersonAgendaResult struct {
-	PersonUID  string                       `json:"person_uid" doc:"Canonical stable person UID used for new Kata links"`
-	PersonUIDs []string                     `json:"person_uids" doc:"Canonical UID followed by retired aliases that still resolve to this person"`
-	Truncated  bool                         `json:"truncated" doc:"More tasks or recurring series exist, or recurrence discovery is incomplete"`
-	Project    string                       `json:"project"`
-	Items      []PersonAgendaItem           `json:"items"`
-	Recurrence PersonAgendaRecurrenceStatus `json:"recurrence" doc:"Separate native recurrence discovery state; ordinary tasks survive recurrence failures"`
+	RecurringTarget string                       `json:"recurring_target,omitempty" doc:"Opaque recurring creation target for retry safety"`
+	PersonUID       string                       `json:"person_uid" doc:"Canonical stable person UID used for new Kata links"`
+	PersonUIDs      []string                     `json:"person_uids" doc:"Canonical UID followed by retired aliases that still resolve to this person"`
+	Truncated       bool                         `json:"truncated" doc:"More tasks or recurring series exist, or recurrence discovery is incomplete"`
+	Project         string                       `json:"project"`
+	Items           []PersonAgendaItem           `json:"items"`
+	Recurrence      PersonAgendaRecurrenceStatus `json:"recurrence" doc:"Separate native recurrence discovery state; ordinary tasks survive recurrence failures"`
 }
 
 type PersonAgendaCreateRequest struct {
@@ -80,6 +81,14 @@ type PersonAgendaScheduleResponse struct {
 	Schedule PersonAgendaSchedule `json:"schedule"`
 }
 
+type PersonAgendaRecurringCreateRequest personagenda.RecurringCreateInput
+
+type PersonAgendaRecurringCreateResponse struct {
+	Parent   PersonAgendaItem      `json:"parent"`
+	Schedule *PersonAgendaSchedule `json:"schedule,omitempty"`
+	Status   string                `json:"status"`
+}
+
 func (s *Server) registerPersonAgendaRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[TaskIntegrationStatusResponse](api,
 		"getKataIntegrationStatus", http.MethodGet, "/integrations/kata/status",
@@ -98,6 +107,15 @@ func (s *Server) registerPersonAgendaRoutes(api huma.API) {
 	create.Responses = jsonResponsesFor[PersonAgendaMutationResponse](api, http.StatusCreated)
 	addErrorResponses(api, create.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusConflict, http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, create, s.handleCreatePersonAgendaItem)
+
+	recurring := rawAPIV1Operation("createPersonAgendaRecurring", http.MethodPost, "/people/{id}/agenda/recurring", "Create a recurring person task")
+	addPersonIDParameter(&recurring)
+	addIdempotencyKeyParameter(&recurring)
+	recurring.Parameters[len(recurring.Parameters)-1].Description = "RFC3339 timestamp followed by / and a UUID, for example 2026-11-08T12:00:00Z/550e8400-e29b-41d4-a716-446655440000"
+	recurring.RequestBody = jsonRequestBodyFor[PersonAgendaRecurringCreateRequest](api)
+	recurring.Responses = jsonResponsesFor[PersonAgendaRecurringCreateResponse](api, http.StatusCreated, http.StatusAccepted)
+	addErrorResponses(api, recurring.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, recurring, s.handleCreatePersonAgendaRecurring)
 
 	link := rawAPIV1Operation("linkPersonAgendaItem", http.MethodPost, "/people/{id}/agenda/links", "Link an existing Kata item to a person")
 	addPersonIDParameter(&link)
@@ -148,7 +166,7 @@ func (s *Server) handleListPersonAgenda(w http.ResponseWriter, r *http.Request) 
 		items = append(items, personAgendaItem(item))
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, PersonAgendaResult{Project: result.Project, PersonUID: result.PersonUID, PersonUIDs: result.PersonUIDs, Truncated: result.Truncated, Items: items, Recurrence: PersonAgendaRecurrenceStatus(result.Recurrence)})
+	writeJSON(w, http.StatusOK, PersonAgendaResult{Project: result.Project, RecurringTarget: result.RecurringTarget, PersonUID: result.PersonUID, PersonUIDs: result.PersonUIDs, Truncated: result.Truncated, Items: items, Recurrence: PersonAgendaRecurrenceStatus(result.Recurrence)})
 }
 
 func (s *Server) handleCreatePersonAgendaItem(w http.ResponseWriter, r *http.Request) {
