@@ -460,7 +460,10 @@ func TestImporterHardFailureRetainsLastSuccessfulState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(before.Known, after.Known)
 	assert.Equal(before.Pending, after.Pending)
-	assert.Equal(before.TranscriptRetryUntil, after.TranscriptRetryUntil)
+	assert.Equal(len(before.TranscriptRetryUntil), len(after.TranscriptRetryUntil))
+	for id, deadline := range before.TranscriptRetryUntil {
+		assert.Equal(deadline, after.TranscriptRetryUntil[id])
+	}
 }
 
 func TestImporterReportsWriteCommittedBeforeConversationStatsFailure(t *testing.T) {
@@ -1111,7 +1114,21 @@ func TestImporterSurfacesPermanentPendingMeetingLoadFailures(t *testing.T) {
 			after, err := imp.loadState(t.Context(), first.SourceID)
 			require.NoError(err)
 			assert.Equal(before.Known, after.Known)
-			assert.Equal(before.Pending, after.Pending)
+			require.Len(after.Pending, 1)
+			assert.Equal(before.Pending[0].BlockID, after.Pending[0].BlockID)
+			assert.Equal(before.Pending[0].RetryUntil, after.Pending[0].RetryUntil)
+			if errors.Is(tt.err, context.Canceled) {
+				beforeAttempt, err := time.Parse(time.RFC3339, before.Pending[0].NextAttemptAt)
+				require.NoError(err)
+				afterAttempt, err := time.Parse(time.RFC3339, after.Pending[0].NextAttemptAt)
+				require.NoError(err)
+				deadline, err := time.Parse(time.RFC3339, after.Pending[0].RetryUntil)
+				require.NoError(err)
+				assert.True(afterAttempt.After(beforeAttempt))
+				assert.False(afterAttempt.After(deadline))
+			} else {
+				assert.Equal(before.Pending[0].NextAttemptAt, after.Pending[0].NextAttemptAt)
+			}
 			assert.Equal(before.TranscriptRetryUntil, after.TranscriptRetryUntil)
 		})
 	}
