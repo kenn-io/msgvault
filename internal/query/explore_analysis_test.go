@@ -34,6 +34,47 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {
+	t.Parallel()
+	for _, files := range []bool{false, true} {
+		name := "messages"
+		if files {
+			name = "files"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("owner@example.test", "gmail")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			b.AddOwnerParticipant(source, owner)
+			for i := range 40 {
+				person := b.AddParticipant("person"+strconv.Itoa(i)+"@example.test", "example.test", "Person "+strconv.Itoa(i))
+				message := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
+				b.AddFrom(message, owner, "Owner")
+				b.AddTo(message, person, "")
+				b.AddAttachmentWithMIME(int64(1000+i), message, 10, "file.pdf", "application/pdf")
+			}
+			engine := b.BuildEngine()
+			var groups int
+			profile, err := profileQuery(t, engine, func() error {
+				if files {
+					result, err := engine.GroupFiles(t.Context(), FileGroupRequest{Dimension: "participant"})
+					groups = len(result.Rows)
+					return err
+				}
+				result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+					Dimension: "participant", Page: PageSpec{Limit: 500},
+				})
+				groups = len(result.Rows)
+				return err
+			})
+			require.NoError(t, err)
+			require.Equal(t, 41, groups)
+			assert.Less(t, profile.maxCardinality(), 41*groups, "label lookup must avoid pairing every participant with every page group")
+		})
+	}
+}
+
 func TestExploreAttachmentByteEstimates(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
