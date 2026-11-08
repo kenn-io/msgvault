@@ -125,7 +125,7 @@ func TestRunNotionMeetingsProbeChecksBlockWhenQueryHasParent(t *testing.T) {
 	}, nil)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sample hydration")
+	assert.Contains(t, err.Error(), "sample content")
 }
 
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {
