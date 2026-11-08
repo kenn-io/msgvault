@@ -11,12 +11,10 @@
   let endError = $state<string | null>(null);
   // Each field's hint's place holds the forms while it's empty or being typed, then the date in words.
   // Two empty fields share one hint: it sits under the one being typed, or under Start.
-  // With Current, an empty End date says nothing until it's typed in, so Current can take its line.
+  // With Current, an empty End date says nothing until it's typed in, and Current sits under its held line.
   let focused = $state<'start' | 'end'>();
   const startNote = $derived(focused === 'end' && !start.trim() ? '' : dateNote(start, focused === 'start'));
   const endNote = $derived(!endOpen || endError ? '' : !end.trim() && focused !== 'end' && (showCurrent || startNote === DATE_HINT) ? '' : dateNote(end, focused === 'end'));
-  // End's line is free when it shows no reading and no error.
-  const endLineFree = $derived(!endNote && !endError);
   $effect(() => { invalid = !!(startError || endError); });
 </script>
 
@@ -24,13 +22,13 @@
   <DateField label="Start date" bind:value={start} {disabled} bind:error={startError} note={startNote}
     onfocuschange={value => focused = value ? 'start' : undefined} />
   <DateField bind:value={end} {start} disabled={disabled || !endOpen} bind:error={endError}
-    note={endNote} showNote={!(showCurrent && endLineFree)} holdNoteLine={false} onfocuschange={value => focused = value ? 'end' : undefined}>
-    {#if showCurrent}<div class="current" class:below={!endLineFree}><Checkbox label="Current" checked={current} {disabled} onchange={(value) => current = value} /></div>{/if}
+    note={endNote} holdNoteLine={showCurrent} onfocuschange={value => focused = value ? 'end' : undefined}>
+    {#if showCurrent}<div class="current"><Checkbox label="Current" checked={current} {disabled} onchange={(value) => current = value} /></div>{/if}
   </DateField>
 </div>
 
 <style>
   /* Start and End are equal columns (.form-pair). Each field's hint line sits 4 below it. */
-  /* In the hint line, Current is 4 below End date like the hint. Under a reading or an error, it's 8 below it. */
-  .current.below { margin-top: var(--space-tight); }
+  /* Current is 8 below End's hint line, held even when empty so Current stays put, or 8 below its error. */
+  .current { margin-top: var(--space-tight); }
 </style>

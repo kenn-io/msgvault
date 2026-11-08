@@ -182,7 +182,7 @@ for (const width of [1440, 390]) {
     expect(notes.y - end).toBe(width === 390 ? 16 : 36);
 
     // The open search shows the closed picker's words, and a failure keeps Retry on its sentence, sits 4 from the
-    // panel's top and bottom with no divider under it, and folds the server's words under Details.
+    // panel's top and bottom with no divider under it or frame of its own, and folds the server's words under Details.
     await dialog.getByRole('button', { name: 'Connection type: Type', exact: true }).click();
     const typeSearch = dialog.getByRole('combobox', { name: 'Connection type', exact: true });
     await expect(typeSearch).toHaveAttribute('placeholder', 'Type');
@@ -193,10 +193,10 @@ for (const width of [1440, 390]) {
     await expect(notice.getByText('Details', { exact: true })).toBeVisible();
     const errorInset = (failure = notice) => failure.evaluate(element => {
       const panel = element.closest('.kit-typeahead__panel')!, box = panel.getBoundingClientRect(), border = parseFloat(getComputedStyle(panel).borderTopWidth);
-      const card = element.closest('.kit-notice')!.getBoundingClientRect(), header = getComputedStyle(element.closest('.kit-typeahead__header')!);
-      return [card.top - box.top - border, box.bottom - border - card.bottom, header.borderBottomWidth];
+      const notice = element.closest('.kit-notice')!, card = notice.getBoundingClientRect(), header = getComputedStyle(element.closest('.kit-typeahead__header')!);
+      return [card.top - box.top - border, box.bottom - border - card.bottom, header.borderBottomWidth, getComputedStyle(notice).borderTopWidth];
     });
-    await expect.poll(() => errorInset()).toEqual([4, 4, '0px']);
+    await expect.poll(() => errorInset()).toEqual([4, 4, '0px', '0px']);
     typesFail = false;
     await notice.getByRole('button', { name: 'Retry', exact: true }).click();
     await page.getByRole('heading', { name: 'Add connection', exact: true }).click();
@@ -220,6 +220,6 @@ for (const width of [1440, 390]) {
     const searchFailure = dialog.getByRole('alert').filter({ hasText: "Couldn't search people." });
     await expect(searchFailure).toBeVisible();
     await expect(searchFailure.getByText('Details', { exact: true })).toBeVisible();
-    await expect.poll(() => errorInset(searchFailure)).toEqual([4, 4, '0px']);
+    await expect.poll(() => errorInset(searchFailure)).toEqual([4, 4, '0px', '0px']);
   });
 }

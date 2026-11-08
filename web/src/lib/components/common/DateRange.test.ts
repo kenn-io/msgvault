@@ -22,7 +22,7 @@ it('validates partial dates and date order under their fields', async () => {
   expect(screen.queryByText('Use 2024, 2024-03, or 2024-03-15.')).toBeNull();
 });
 
-it('shows date hints and places Current beside the end date', async () => {
+it('shows date hints and places Current under the end date', async () => {
   const hint = () => screen.queryByText('2024, 2024-03, or 2024-03-15');
   const initial = render(DateRange, { start: '', current: true });
   expect(hint()).not.toBeNull();
@@ -62,18 +62,16 @@ it('shows date hints and places Current beside the end date', async () => {
   const view = render(DateRange, { start: '2024-03', current: true });
   const endField = view.container.querySelectorAll('.field')[1]!;
   const parts = () => Array.from(endField.children, (child) => child.className.split(' ')[0]);
-  expect(parts()).toEqual(['kit-form-field', 'current']);
+  // End holds its hint line, empty or not, so Current stays under it.
+  expect(parts()).toEqual(['kit-form-field', 'note', 'current']);
+  expect(endField.querySelector('.note')!.textContent).toBe('');
   expect(endField.querySelector('.current')!.textContent).toContain('Current');
   await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-  expect(parts()).toEqual(['kit-form-field', 'current']);
-  // Focusing Current isn't typing End, so Current stays where it was clicked.
-  await fireEvent.focusIn(screen.getByRole('checkbox', { name: 'Current' }));
-  expect(parts()).toEqual(['kit-form-field', 'current']);
+  expect(parts()).toEqual(['kit-form-field', 'note', 'current']);
   await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2025' } });
   expect(parts()).toEqual(['kit-form-field', 'note', 'current']);
   expect(endField.querySelector('.note')!.textContent).toBe('2025');
-  expect(endField.querySelector('.current')!.classList.contains('below')).toBe(true);
+  // An error takes the hint line's place.
   await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-13' } });
   expect(parts()).toEqual(['kit-form-field', 'current']);
-  expect(endField.querySelector('.current')!.classList.contains('below')).toBe(true);
 });

@@ -25,5 +25,6 @@
   h3 { margin: 0; font-size: var(--type-heading-size); line-height: var(--type-heading-line); }
   .section-body { display: grid; min-width: 0; margin-top: var(--space-group); }
   .subgroup { display: grid; margin-top: var(--space-section); }
-  h4 { margin: 0 0 var(--space-group); color: var(--text-muted); font-size: var(--type-heading-size); font-weight: 500; line-height: var(--type-heading-line); }
+  /* A group heading is in Heading type, weight, and color, like the section's title and History's group headings. */
+  h4 { margin: 0 0 var(--space-group); font-size: var(--type-heading-size); font-weight: 600; line-height: var(--type-heading-line); }
 </style>

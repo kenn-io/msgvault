@@ -55,4 +55,6 @@
    * (Chrome drops a :has() nested in another, so the panel, not the header, asks whether the list shows anything.) */
   .field-picker :global(.kit-typeahead__body:not(:has(> :not(.kit-typeahead__empty:empty)))) { display: none; }
   .field-picker :global(.kit-typeahead__panel:not(:has(.kit-typeahead__body > :not(.kit-typeahead__empty:empty))) > .kit-typeahead__header) { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+  /* The panel is the error's frame, as kit's own picker error is a bare row in it: the notice draws no box of its own. */
+  .field-picker :global(.kit-typeahead__header .kit-notice.kit-notice) { border: 0; background: none; }
 </style>

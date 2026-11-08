@@ -181,12 +181,13 @@ for (const width of [1440, 390]) {
     // Fields are 12 apart: the field above ends 12 above the next field's label.
     const titleLabel = (await add.locator('label[for="work-title"]').boundingBox())!;
     expect(titleLabel.y - (organization.y + organization.height)).toBe(16);
-    // Current takes End date's empty hint line, 4 below it and level with Start's hint.
+    // End date holds its empty hint line, level with Start's hint, and Current sits 8 below it.
     const current = (await add.locator('.date-range .current').boundingBox())!;
-    const hint = (await add.locator('.date-range .note').first().boundingBox())!;
+    const [hint, endHint] = await Promise.all([0, 1].map(async index => (await add.locator('.date-range .note').nth(index).boundingBox())!));
     await expect(add.getByRole('checkbox', { name: 'Primary job' })).toHaveCount(0);
-    expect(current.y - (end.y + end.height)).toBe(4);
-    if (width === 1440) expect(current.y).toBe(hint.y);
+    expect(endHint.y - (end.y + end.height)).toBe(4);
+    expect(current.y - (endHint.y + endHint.height)).toBe(8);
+    if (width === 1440) expect(endHint.y).toBe(hint.y);
     await add.getByRole('checkbox', { name: 'Current', exact: true }).uncheck();
     expect((await add.locator('.date-range .current').boundingBox())!.y).toBe(current.y);
     // A focused invalid date has one outline, the ring in the error's red over the border, and its error 4 below it.
