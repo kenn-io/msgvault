@@ -39,7 +39,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.getByRole('button', { name: 'Example Org', exact: true }).click();
     const editor = page.getByRole('dialog', { name: 'Example Org', exact: true });
-    await expect(editor.getByRole('button', { name: 'Save organization', exact: true })).toBeEnabled();
+    await expect(editor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Example Org');
     const bounds = await editor.boundingBox();
     for (const name of ['Delete organization…', 'Cancel', 'Save organization']) {
       const button = await editor.getByRole('button', { name, exact: true }).boundingBox();
@@ -147,7 +147,7 @@ for (const width of [1440, 390]) {
     await setKitTheme(page, 'dark');
     await page.getByRole('button', { name: 'Example Org', exact: true }).click();
     const editor = page.getByRole('dialog', { name: 'Example Org', exact: true });
-    await expect(editor.getByRole('button', { name: 'Save organization', exact: true })).toBeEnabled();
+    await expect(editor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Example Org');
     // Kind is a 32 field with Body text at 400, like Domain beside it; the add links are 28 targets 12 apart.
     const kind = await editor.locator('.kit-select-dropdown__trigger').evaluate(element => ({ height: element.getBoundingClientRect().height, weight: getComputedStyle(element).fontWeight }));
     expect(kind).toEqual({ height: 32, weight: '400' });

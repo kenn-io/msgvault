@@ -62,7 +62,9 @@
   const fieldsUnsaved = $derived(!!currentProfile && (name.trim() !== currentProfile.organization.name || kind !== currentProfile.organization.kind
     || primaryDomain.trim() !== (currentProfile.organization.primary_domain ?? '') || description.trim() !== (currentProfile.organization.description ?? '')));
   const listsUnsaved = $derived([valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories))].some((delta) => delta.added.length || delta.removed.size));
-  const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations);
+  // Save organization writes only its own fields, so it waits until one of them changes.
+  const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations
+    || (!!currentProfile && !fieldsUnsaved && !attempt.conflict));
   let releaseScope: (() => void) | undefined;
 
   onMount(() => {
@@ -122,8 +124,17 @@
     });
     if (!ok) return;
     if (!fieldsUnsaved) { onDone(); return; }
+    // The saved profile may carry another writer's edits: the lists and every untouched field take it, so the next
+    // save keeps them; a typed field stays.
+    const was = currentProfile.organization, now = saved!.organization;
+    if (name.trim() === was.name) name = now.name;
+    if (kind === was.kind) kind = now.kind;
+    if (primaryDomain.trim() === (was.primary_domain ?? '')) primaryDomain = now.primary_domain ?? '';
+    if (description.trim() === (was.description ?? '')) description = now.description ?? '';
     baselineAliases = (saved!.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
     baselineCategories = (saved!.categories ?? []).map((item) => item.category);
+    aliases = baselineAliases.join(', ');
+    categories = baselineCategories.join(', ');
     keepOpen(saved!, etag);
   }
 

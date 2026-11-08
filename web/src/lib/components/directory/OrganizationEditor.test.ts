@@ -111,6 +111,7 @@ describe('OrganizationEditor', () => {
     expect(screen.queryByRole('textbox', { name: 'Organization name' })).toBeNull();
     await fireEvent.click(retry);
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'Synthetic Works'));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Synthetic Org 2' } });
     expect(screen.getByRole('button', { name: 'Save organization' })).toHaveProperty('disabled', false);
     expect(reads).toBe(2);
   });
@@ -476,14 +477,16 @@ it('preserves a concurrent contact after a core conflict and alias save', async 
 it('keeps the dialog open while the other section still has unsaved edits', async () => {
   const writes: { method: string; tag: string | null; body: { primary_domain?: string; name?: string; names?: { name: string }[] } }[] = [];
   const onDone = vi.fn();
+  let stored = organization();
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
-    if (request.method === 'GET') return Response.json(organizationProfile(writes.length + 1), { headers: { ETag: `"organization-21-r${writes.length + 1}"` } });
+    if (request.method === 'GET') return Response.json({ ...organizationProfile(writes.length + 1), organization: stored }, { headers: { ETag: `"organization-21-r${writes.length + 1}"` } });
     const body = await request.json();
     writes.push({ method: request.method, tag: request.headers.get('If-Match'), body });
     const tag = `"organization-21-r${writes.length + 1}"`;
-    if (request.method === 'PATCH') return Response.json({ ...organization(21, writes.length + 1), ...body }, { headers: { ETag: tag } });
-    return Response.json({ ...organizationProfile(writes.length + 1), names: body.names.map((item: object, index: number) => ({ ...item, organization_id: 21, envelope: envelope(40 + index) })) }, { headers: { ETag: tag } });
+    stored = { ...stored, revision: writes.length + 1, ...(request.method === 'PATCH' ? body : {}) };
+    if (request.method === 'PATCH') return Response.json(stored, { headers: { ETag: tag } });
+    return Response.json({ ...organizationProfile(writes.length + 1), organization: stored, names: body.names.map((item: object, index: number) => ({ ...item, organization_id: 21, envelope: envelope(40 + index) })) }, { headers: { ETag: tag } });
   });
   render(OrganizationEditor, { controller, organization: organization(), onDone });
   const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
@@ -529,4 +532,54 @@ it('shows and retries the latest save after the other one failed', async () => {
   expect(screen.queryByText("Couldn't save the aliases and categories.")).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(methods).toEqual(['PUT', 'PATCH', 'PATCH']));
+});
+
+it("keeps another writer's domain and alias after an alias conflict leaves the dialog open", async () => {
+  const onDone = vi.fn();
+  let revision = 1;
+  const writes: { method: string; body: { primary_domain?: string; name?: string; names?: { name: string; name_kind: string }[] } }[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const tag = `"organization-21-r${revision}"`;
+    // Elsewhere, at r2: a new domain and a new alias.
+    const elsewhere = revision > 1
+      ? { organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: [...organizationProfile().names, { organization_id: 21, name_kind: 'alias', name: 'Other alias', name_normalized: 'other alias', envelope: envelope(33) }] }
+      : {};
+    if (request.method === 'GET') return Response.json({ ...organizationProfile(revision), ...elsewhere }, { headers: { ETag: tag } });
+    if (request.headers.get('If-Match') !== tag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    const body = await request.json();
+    writes.push({ method: request.method, body });
+    revision++;
+    if (request.method === 'PATCH') return Response.json({ ...organization(21, revision), ...body }, { headers: { ETag: `"organization-21-r${revision}"` } });
+    return Response.json({ ...organizationProfile(revision), ...elsewhere, organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: body.names.map((item: object, index: number) => ({ ...item, organization_id: 21, envelope: envelope(40 + index) })) }, { headers: { ETag: `"organization-21-r${revision}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
+  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Draft alias' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
+  revision++;
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(aliases).toHaveProperty('value', 'Synthetic Works, Other alias, Draft alias'));
+  expect(onDone).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: 'Organization domain' })).toHaveProperty('value', 'other.example');
+  expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'New name');
+  // A second alias save keeps the alias the conflict brought in.
+  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Other alias, Draft alias, Second alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await waitFor(() => expect(aliases).toHaveProperty('value', 'Synthetic Works, Other alias, Draft alias, Second alias'));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save organization' })).toHaveProperty('disabled', false));
+  expect(writes[1].body.names?.filter(item => item.name_kind === 'alias').map(item => item.name)).toEqual(['Synthetic Works', 'Other alias', 'Draft alias', 'Second alias']);
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(writes[2]).toMatchObject({ method: 'PATCH', body: { name: 'New name', primary_domain: 'other.example' } });
+});
+
+it('waits to save the organization until one of its fields changes', async () => {
+  const { controller } = controllerWith(async () => Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+  expect(screen.getByRole('button', { name: 'Save organization' })).toHaveProperty('disabled', true);
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization domain' }), { target: { value: 'new.example' } });
+  expect(screen.getByRole('button', { name: 'Save organization' })).toHaveProperty('disabled', false);
 });
