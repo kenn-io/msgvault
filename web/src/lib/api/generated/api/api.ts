@@ -1633,7 +1633,7 @@ export const getEmbeddingStatus = (
   );
 };
 /**
- * Setting `is_primary` to true demotes the existing primary current employment.
+ * For source `user`, setting `is_primary` to true demotes the existing primary current employment. Other sources receive a conflict when a primary current employment already exists.
  * @summary Create an employment record
  */
 export const createEmployment = (
@@ -1681,7 +1681,7 @@ export const getEmployment = (
   );
 };
 /**
- * Setting `is_primary` to true demotes the existing primary current employment.
+ * For source `user`, setting `is_primary` to true demotes the existing primary current employment. Other sources receive a conflict when a primary current employment already exists.
  * @summary Replace an employment record's mutable fields
  */
 export const patchEmployment = (

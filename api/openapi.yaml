@@ -22012,7 +22012,7 @@ paths:
         - API
   /api/v1/employments:
     post:
-      description: Setting `is_primary` to true demotes the existing primary current employment.
+      description: For source `user`, setting `is_primary` to true demotes the existing primary current employment. Other sources receive a conflict when a primary current employment already exists.
       operationId: createEmployment
       requestBody:
         content:
@@ -22047,7 +22047,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Conflict if this duplicates a current employment or concurrent writes prevent primary replacement.
+          description: Conflict if this duplicates a current employment, a non-user source tries to replace the primary, or concurrent writes prevent primary replacement.
         "503":
           content:
             application/json:
@@ -22178,7 +22178,7 @@ paths:
       tags:
         - API
     patch:
-      description: Setting `is_primary` to true demotes the existing primary current employment.
+      description: For source `user`, setting `is_primary` to true demotes the existing primary current employment. Other sources receive a conflict when a primary current employment already exists.
       operationId: patchEmployment
       parameters:
         - description: Employment ID
@@ -22229,7 +22229,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Conflict if this duplicates a current employment, the employment revision is stale, or concurrent writes prevent primary replacement.
+          description: Conflict if this duplicates a current employment, the employment revision is stale, a non-user source tries to replace the primary, or concurrent writes prevent primary replacement.
         "428":
           content:
             application/json:

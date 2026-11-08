@@ -226,9 +226,23 @@
   }
   function recoveredCreateMatches(view: PersonRelationshipView, draft: CreatePersonRelationshipRequest): boolean {
     const saved = view.relationship;
-    return saved.source_person_id === draft.source_person_id && saved.target_person_id === draft.target_person_id &&
-      saved.type_slug === draft.relationship_type_slug && partialDate(saved.start_date) === (draft.start_date ?? '') &&
-      partialDate(saved.end_date) === (draft.end_date ?? '') && (saved.notes?.trim() ?? '') === (draft.notes ?? '');
+    const selectedType = controller.relationshipTypes.find(type => type.slug === draft.relationship_type_slug);
+    let sourceID = draft.source_person_id;
+    let targetID = draft.target_person_id;
+    let typeSlug = draft.relationship_type_slug;
+    if (selectedType && !selectedType.is_canonical && selectedType.inverse_type_id !== undefined) {
+      [sourceID, targetID] = [targetID, sourceID];
+      typeSlug = controller.relationshipTypes.find(type => type.id === selectedType.inverse_type_id)?.slug ?? typeSlug;
+    }
+    const canonicalType = controller.relationshipTypes.find(type => type.slug === typeSlug);
+    if (canonicalType?.is_symmetric && sourceID > targetID) [sourceID, targetID] = [targetID, sourceID];
+    const canonicalDate = (value: string | undefined) => {
+      const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(value?.trim() ?? '');
+      return compact ? `${compact[1]}-${compact[2]}-${compact[3]}` : value?.trim() ?? '';
+    };
+    return saved.source_person_id === sourceID && saved.target_person_id === targetID &&
+      saved.type_slug === typeSlug && partialDate(saved.start_date) === canonicalDate(draft.start_date) &&
+      partialDate(saved.end_date) === canonicalDate(draft.end_date) && (saved.notes?.trim() ?? '') === (draft.notes ?? '');
   }
   function requestClose(): void {
     if (!attempt.busy) { if (attempt.hadConflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }

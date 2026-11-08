@@ -885,17 +885,17 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('shows a recovered ended connection instead of offering the same create again', async () => {
+  it.each([6, 8])('matches a recovered ended connection with canonical records for counterpart %i', async counterpartID => {
     let posts = 0;
     const saved = relationship(41, 1, {
-      status: 'ended', source_person_id: 7, target_person_id: 8,
-      end_date: { year: 2025 }, notes: 'Retained unknown draft'
+      status: 'ended', source_person_id: Math.min(7, counterpartID), target_person_id: Math.max(7, counterpartID), is_symmetric: true,
+      start_date: { year: 2024, month: 3, day: 15 }, end_date: { year: 2025 }, notes: 'Retained unknown draft'
     });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/people/directory') return Response.json({ people: [
-        directoryPerson(8, { display_name: 'Synthetic Counterpart' })
+        directoryPerson(counterpartID, { display_name: 'Synthetic Counterpart' })
       ] });
       if (path === '/api/v1/person-relationships' && request.method === 'POST') {
         posts += 1;
@@ -904,14 +904,15 @@ describe('RelationshipsTab', () => {
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: posts ? [view(41, 'outgoing', 'mentors', 'Synthetic Counterpart', { relationship: saved })] : [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
-    controller.relationshipTypes = [relationshipType()];
+    controller.relationshipTypes = [relationshipType({ is_symmetric: true, forward_label: 'mentor', reverse_label: 'mentor' })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
     await fireEvent.input(await openTypeahead('Person'), { target: { value: 'Counterpart' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
     await openTypeahead('Connection type');
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentor' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '20240315' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2025' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Retained unknown draft' } });
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);

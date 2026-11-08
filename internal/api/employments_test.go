@@ -120,6 +120,64 @@ func TestPersonEmploymentsProjectionIsAbsentWithoutAPrimaryCurrentRow(t *testing
 	assert.Nil(listed.Projection, "no primary current employment means no projection")
 }
 
+func TestEmploymentPrimaryReplacementRequiresUserSource(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st := newOrganizationTestServerWithStore(t)
+	person := mustAPIPerson(t, st, "primary-source@example.test", "primary-source")
+	first := mustAPIOrganization(t, st, "First Org")
+	second := mustAPIOrganization(t, st, "Second Org")
+	third := mustAPIOrganization(t, st, "Third Org")
+	fourth := mustAPIOrganization(t, st, "Fourth Org")
+
+	primaryResponse := organizationRequest(t, srv, http.MethodPost, employmentsPath,
+		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"source":"user"}`, person.ID, first.ID), "")
+	require.Equal(http.StatusCreated, primaryResponse.Code)
+	var primary store.Employment
+	require.NoError(json.Unmarshal(primaryResponse.Body.Bytes(), &primary))
+
+	createExtraction := organizationRequest(t, srv, http.MethodPost, employmentsPath,
+		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"extraction"}`, person.ID, third.ID), "")
+	assert.Equal(http.StatusConflict, createExtraction.Code)
+
+	secondaryResponse := organizationRequest(t, srv, http.MethodPost, employmentsPath,
+		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"source":"user"}`, person.ID, second.ID), "")
+	require.Equal(http.StatusCreated, secondaryResponse.Code)
+	var secondary store.Employment
+	require.NoError(json.Unmarshal(secondaryResponse.Body.Bytes(), &secondary))
+	patchExtraction := organizationRequest(t, srv, http.MethodPatch,
+		fmt.Sprintf("%s/%d", employmentsPath, secondary.ID),
+		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"extraction"}`, person.ID, second.ID),
+		secondaryResponse.Header().Get("ETag"))
+	assert.Equal(http.StatusConflict, patchExtraction.Code)
+	firstAfterRejectedWrites := organizationRequest(t, srv, http.MethodGet,
+		fmt.Sprintf("%s/%d", employmentsPath, primary.ID), nil, "")
+	require.Equal(http.StatusOK, firstAfterRejectedWrites.Code)
+	require.NoError(json.Unmarshal(firstAfterRejectedWrites.Body.Bytes(), &primary))
+	assert.True(primary.IsPrimary, "rejected writes must preserve the user's primary choice")
+
+	patchUser := organizationRequest(t, srv, http.MethodPatch,
+		fmt.Sprintf("%s/%d", employmentsPath, secondary.ID),
+		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"user"}`, person.ID, second.ID),
+		secondaryResponse.Header().Get("ETag"))
+	require.Equal(http.StatusOK, patchUser.Code)
+	var promoted store.Employment
+	require.NoError(json.Unmarshal(patchUser.Body.Bytes(), &promoted))
+	assert.True(promoted.IsPrimary)
+	firstAfter := organizationRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d", employmentsPath, primary.ID), nil, "")
+	require.Equal(http.StatusOK, firstAfter.Code)
+	require.NoError(json.Unmarshal(firstAfter.Body.Bytes(), &primary))
+	assert.False(primary.IsPrimary)
+
+	createUser := organizationRequest(t, srv, http.MethodPost, employmentsPath,
+		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"user"}`, person.ID, fourth.ID), "")
+	require.Equal(http.StatusCreated, createUser.Code)
+	var created store.Employment
+	require.NoError(json.Unmarshal(createUser.Body.Bytes(), &created))
+	assert.True(created.IsPrimary)
+}
+
 func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
