@@ -48,6 +48,10 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, key, "example-fingerprint")
 	must.NoError(err)
 	must.True(claimed)
+	otherKey := "person/" + first.VCardUID + ":birthday:2027"
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, otherKey, "example-fingerprint")
+	must.NoError(err)
+	must.True(claimed)
 	// A UID can contain delimiters; an unrelated subject whose UID begins
 	// with a lineage UID must not appear in the inspection.
 	unrelated := "person/" + first.VCardUID + ":extra:birthday:2027"
@@ -90,8 +94,12 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	checks.Equal(owned.Revision+1, lineage.OwnedSubjects[0].Revision)
 	must.Len(lineage.OwnedSubjects[0].History, 1)
 	checks.Equal(owned.Date, lineage.OwnedSubjects[0].History[0].Date)
-	must.Len(lineage.Deliveries, 1)
-	checks.Equal(key, lineage.Deliveries[0].OccurrenceKey)
+	must.Len(lineage.Deliveries, 2)
+	var keys []string
+	for _, delivery := range lineage.Deliveries {
+		keys = append(keys, delivery.OccurrenceKey)
+	}
+	checks.ElementsMatch([]string{key, otherKey}, keys)
 	again, err := st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
 	must.NoError(err)
 	checks.Equal(lineage.Digest, again.Digest)
