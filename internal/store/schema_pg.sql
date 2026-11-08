@@ -4372,3 +4372,10 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
 CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
  FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();
+
+-- Retained occurrence claims fence repeated or uncertain important-date writes.
+CREATE TABLE IF NOT EXISTS important_date_deliveries (
+ occurrence_key TEXT PRIMARY KEY,
+ state TEXT NOT NULL CHECK (state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'delivered', 'unknown', 'cancelled')),
+ issue_uid TEXT NOT NULL DEFAULT ''
+);

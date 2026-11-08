@@ -4778,3 +4778,10 @@ CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
 AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
+
+-- Retained occurrence claims fence repeated or uncertain important-date writes.
+CREATE TABLE IF NOT EXISTS important_date_deliveries (
+ occurrence_key TEXT PRIMARY KEY,
+ state TEXT NOT NULL CHECK (state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'delivered', 'unknown', 'cancelled')),
+ issue_uid TEXT NOT NULL DEFAULT ''
+);
