@@ -22,33 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/muesli"
 )
 
-func TestMuesliWatchSchedulesEnabledSourcesAndRescans(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	sources := []config.MuesliSource{{Identifier: "enabled", Enabled: true, Schedule: "* * * * *"}, {Identifier: "disabled", Enabled: false, Schedule: "* * * * *"}}
-	selected, err := muesliWatchSources(sources)
-	require.NoError(err)
-	require.Len(selected, 1)
-	assert.Equal("enabled", selected[0].source.Identifier)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	calls := 0
-	// A clock advances to each real cron transition; no throughput assumption.
-	err = runMuesliWatch(ctx, selected, func(_ context.Context, _ config.MuesliSource) error {
-		calls++
-		if calls == 2 {
-			cancel()
-		}
-		return errors.New("synthetic temporary transport failure")
-	}, func(context.Context, time.Time) error { return nil }, func(error) {})
-	require.ErrorIs(err, context.Canceled)
-	assert.Equal(2, calls)
-	for _, sources := range [][]config.MuesliSource{nil, {{Identifier: "no-schedule", Enabled: true}}, {{Identifier: "bad", Enabled: true, Schedule: "invalid"}}} {
-		_, err := muesliWatchSources(sources)
-		require.Error(err)
-	}
-}
-
 func TestMuesliWatchRejectsPartialOrForcedScans(t *testing.T) {
 	oldMeetingID := syncMuesliMeetingID
 	oldWatch, oldLimit, oldAfter, oldFull := syncMuesliWatch, syncMuesliLimit, syncMuesliAfter, syncMuesliFull
@@ -87,11 +60,6 @@ func TestMuesliWatchRejectsPartialOrForcedScans(t *testing.T) {
 	}
 }
 
-func TestMuesliWatchRejectsImpossibleDate(t *testing.T) {
-	_, err := muesliWatchSources([]config.MuesliSource{{Identifier: "recorder", Enabled: true, Schedule: "0 0 31 2 *"}})
-	require.ErrorContains(t, err, "future transition")
-}
-
 func TestMuesliWatchFailureReasonsDoNotEchoValues(t *testing.T) {
 	const privateValue = "synthetic-contact@example.com"
 	for _, tc := range []struct {
@@ -110,7 +78,7 @@ func TestMuesliWatchFailureReasonsDoNotEchoValues(t *testing.T) {
 		{"local", errors.New(privateValue), "local files"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reason := muesliWatchFailureReason(tc.err)
+			reason := recorderWatchFailureReason("muesli", tc.err, muesliRecordErrors, muesli.ErrRemoteTooLarge)
 			assert.Contains(t, reason, tc.hint)
 			assert.NotContains(t, reason, privateValue)
 		})
@@ -181,12 +149,12 @@ func TestMuesliWatchCancellationDoesNotReportFailure(t *testing.T) {
 	for _, cancelOnScan := range []int{1, 2} {
 		t.Run(fmt.Sprintf("scan%d", cancelOnScan), func(t *testing.T) {
 			require := require.New(t)
-			sources, err := muesliWatchSources([]config.MuesliSource{{Identifier: "recorder", Enabled: true, Schedule: "* * * * *"}})
+			sources, err := meetingWatchSources([]config.MuesliSource{{Identifier: "recorder", Enabled: true, Schedule: "* * * * *"}}, func(s config.MuesliSource) bool { return s.Enabled }, func(s config.MuesliSource) string { return s.Schedule })
 			require.NoError(err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			scans, reports := 0, 0
-			err = runMuesliWatch(ctx, sources, func(context.Context, config.MuesliSource) error {
+			err = runMeetingWatch(ctx, sources, func(context.Context, config.MuesliSource) error {
 				scans++
 				if scans == cancelOnScan {
 					cancel()

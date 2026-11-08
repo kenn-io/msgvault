@@ -16,6 +16,7 @@ const (
 	meetingSourcePlaud      = "plaud"
 	meetingSourcePocket     = "pocket"
 	meetingSourceNotion     = "notion_meetings"
+	meetingSourceHex        = "hex"
 	meetingSourceMuesli     = "muesli"
 	meetingSourceTwilio     = "twilio"
 	meetingSourceTwenty     = "twenty"
@@ -85,7 +86,7 @@ func (m Model) meetingAccounts() []query.AccountInfo {
 	accounts := make([]query.AccountInfo, 0, len(m.accounts))
 	for _, account := range m.accounts {
 		switch strings.ToLower(strings.TrimSpace(account.SourceType)) {
-		case meetingSourceOmi, meetingSourceGranola, meetingSourceCircleback, meetingSourcePlaud, meetingSourcePocket, meetingSourceNotion, meetingSourceMuesli, meetingSourceTwilio, meetingSourceTwenty, meetingSourceImported, meetingSourceChatwoot:
+		case meetingSourceHex, meetingSourceOmi, meetingSourceGranola, meetingSourceCircleback, meetingSourcePlaud, meetingSourcePocket, meetingSourceNotion, meetingSourceMuesli, meetingSourceTwilio, meetingSourceTwenty, meetingSourceImported, meetingSourceChatwoot:
 			accounts = append(accounts, account)
 		}
 	}

@@ -52,7 +52,7 @@ attachments alongside the records you browse.
   available through Beeper Desktop; WhatsApp, iMessage, Telegram, Google Voice,
   Messenger, and SMS imports.
 - **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio, Notion
-  AI Meeting Notes, and Muesli in the same searchable record.
+  AI Meeting Notes, Muesli, and Hex (builds from `main`) in the same searchable record.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
 - **Contacts** — import contacts from a CardDAV address book and choose which
   saved profiles to sync back.

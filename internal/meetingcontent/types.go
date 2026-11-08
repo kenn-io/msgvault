@@ -87,6 +87,8 @@ type Action struct {
 }
 
 type Content struct {
+	// MeetingPlatform preserves the source's recorded call app verbatim.
+	MeetingPlatform    string        `json:"meeting_platform,omitempty"`
 	Summary            Section       `json:"summary"`
 	Notes              Section       `json:"notes"`
 	Transcript         Transcript    `json:"transcript"`

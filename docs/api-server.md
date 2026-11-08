@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.48.0**.
+it is separate from the binary release version. The current schema is **3.49.0**.
+
+Schema 3.49.0 adds owner-only Hex meeting imports and optional separate recording track uploads.
 
 Schema 3.48.0 adds owner-only local embedding setup and progress through `GET` and `POST /api/v1/embeddings/local`.
 
@@ -191,6 +193,11 @@ Schema 3.34.0 adds `calls_short` and `calls_long`, the answered-call counts, to 
 Schema 3.28.0 adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
 
 Schema 3.30.0 adds `hidden_text_present` to message details and search rows. It is a best-effort flag: true means the stored HTML likely hides readable text, and false does not guarantee that text is visible.
+
+Schema 3.46.0 adds owner-authenticated Hex meeting imports at
+`POST /api/v1/import/hex` and streamed WAV imports at
+`POST /api/v1/import/hex/recording`. Recording uploads require
+`track=system|microphone`; reader and delegated credentials cannot import.
 
 Schema 3.42.0 adds `imessage.media_max_participants` and `imessage.max_media_mb` to the settings catalog and updates.
 
@@ -2439,6 +2446,47 @@ An `explore` scope carries the complete `predicate`, `cache_revision`,
 exclusive with direct `scope`. The server resolves the full matching population,
 with a 10000-ID transfer ceiling. A stale authority requires reloading; an
 oversized scope must be narrowed. Neither case widens the request.
+
+### Import a recorder-local Hex meeting
+
+**Endpoints:** `POST /api/v1/import/hex` and
+`POST /api/v1/import/hex/recording`
+
+Available in builds from `main` (API schema 3.46.0). Prefer the native
+[Hex commands](cli-reference.md#sync-hex) for local discovery, scheduled rescans
+and upload receipts. Both endpoints require owner credentials; delegated agents
+and read-only remote keys cannot import meetings or audio.
+
+The JSON endpoint accepts `action` (`register`, `upsert`, or `refresh`), `source`
+(`identifier`, optional `display_name`, and `account_email`), an optional Hex
+`meeting`, and optional `full`, `build_cache`, and `no_build_cache` flags.
+Register the source before upserting stopped meetings; its account email must
+match the registered identity. `build_cache` requires `refresh` and cannot be
+combined with `no_build_cache`. Local paths are not part of this contract.
+
+Requests are limited to 16 MiB. Unknown or duplicate members, trailing input and
+invalid UTF-8 are rejected. Errors use `400` for malformed JSON, `422` for invalid
+source or meeting evidence, `413` for oversized requests, and `404` for a missing
+source. Validation errors omit field values. A busy operation gate returns
+`503` / `operation_in_progress`; rate limiting returns `429` with `Retry-After`.
+Native clients retry the same body until cancelled.
+
+Responses contain `status`, `source_id`, optional `message_id`, `changed`, and
+optional `warnings`. Statuses are `registered`, `created`, `updated`, `unchanged`
+and `refreshed`; creation returns `201`, other success returns `200`. An incomplete
+replacement can return `unchanged` with a warning while preserving the archived
+transcript. Successful payloads receive recorder-side receipts, including these
+retained replacements. `full` reoffers them. Invalid or newer stored evidence
+is refused rather than overwritten.
+
+The recording endpoint streams `audio/wav` for one archived message. Required
+query parameters are `identifier`, `account_email`, `message_id`, `track`
+(`system` or `microphone`), `sha256`, and `size`; `no_build_cache` is optional.
+The message must belong to that Hex source. Hash, size, media and the daemon's
+`hex_recording_max_bytes` cap are verified before publishing an attachment.
+Tracks are acknowledged independently; failed or changed audio retries even
+when the transcript payload already has a receipt. See [Hex recording limits
+and incomplete-file behavior](usage/meetings.md#hex).
 
 ### Import a recorder-local Muesli meeting
 

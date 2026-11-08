@@ -6416,6 +6416,185 @@ func (h HealthResponse) Validate() error {
 	return errors
 }
 
+type HexCalendar struct {
+	Attendees []string `json:"attendees,omitempty"`
+	Title     string   `json:"title" validate:"required"`
+}
+
+func (h HexCalendar) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(h))
+}
+
+type HexChapter struct {
+	StartMs int64   `json:"start_ms"`
+	Summary *string `json:"summary,omitzero"`
+	Title   string  `json:"title" validate:"required"`
+}
+
+func (h HexChapter) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(h))
+}
+
+type HexEntry struct {
+	EndMs   int64  `json:"end_ms"`
+	Source  string `json:"source" validate:"required"`
+	StartMs int64  `json:"start_ms"`
+	Text    string `json:"text" validate:"required"`
+}
+
+func (h HexEntry) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(h))
+}
+
+type HexManifest struct {
+	App              *string      `json:"app,omitzero"`
+	Calendar         *HexCalendar `json:"calendar,omitempty"`
+	Chapters         []HexChapter `json:"chapters,omitempty"`
+	CreatedAtMs      int64        `json:"created_at_ms"`
+	DurationMs       *int64       `json:"duration_ms,omitempty"`
+	EndedAtMs        *int64       `json:"ended_at_ms,omitempty"`
+	ID               string       `json:"id" validate:"required"`
+	Notes            *HexNotes    `json:"notes,omitempty"`
+	ProvisionalTitle *string      `json:"provisional_title,omitzero"`
+	SchemaVersion    int64        `json:"schema_version"`
+	Status           string       `json:"status" validate:"required"`
+	Title            string       `json:"title" validate:"required"`
+	TitleSource      *string      `json:"title_source,omitzero"`
+}
+
+func (h HexManifest) Validate() error {
+	var errors runtime.ValidationErrors
+	if h.Calendar != nil {
+		if v, ok := any(h.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
+	}
+	for i, item := range h.Chapters {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Chapters[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(h.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if h.Notes != nil {
+		if v, ok := any(h.Notes).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Notes", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(h.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(h.Title, "required"); err != nil {
+		errors = errors.Append("Title", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type HexMeeting struct {
+	Entries             []HexEntry  `json:"entries,omitempty"`
+	Manifest            HexManifest `json:"manifest"`
+	TitleSourceInferred *bool       `json:"title_source_inferred,omitempty"`
+	TranscriptPartial   *bool       `json:"transcript_partial,omitempty"`
+	TranscriptState     string      `json:"transcript_state" validate:"required"`
+}
+
+func (h HexMeeting) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range h.Entries {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Entries[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(h.Manifest).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Manifest", err)
+		}
+	}
+	if err := typesValidator.Var(h.TranscriptState, "required"); err != nil {
+		errors = errors.Append("TranscriptState", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type HexNotes struct {
+	Summary string `json:"summary" validate:"required"`
+	Title   string `json:"title" validate:"required"`
+}
+
+func (h HexNotes) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(h))
+}
+
+type HexRemoteRequest struct {
+	Action       HexRemoteRequestAction `json:"action" validate:"required"`
+	BuildCache   *bool                  `json:"build_cache,omitempty"`
+	Full         *bool                  `json:"full,omitempty"`
+	Meeting      *HexMeeting            `json:"meeting,omitempty"`
+	NoBuildCache *bool                  `json:"no_build_cache,omitempty"`
+	Source       Source                 `json:"source"`
+}
+
+func (h HexRemoteRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(h.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if h.Meeting != nil {
+		if v, ok := any(h.Meeting).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Meeting", err)
+			}
+		}
+	}
+	if v, ok := any(h.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type HexRemoteResult struct {
+	Changed   bool                  `json:"changed"`
+	MessageID *int64                `json:"message_id,omitempty"`
+	SourceID  int64                 `json:"source_id"`
+	Status    HexRemoteResultStatus `json:"status" validate:"required"`
+	Warnings  *int64                `json:"warnings,omitempty"`
+}
+
+func (h HexRemoteResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(h.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type HybridGenerationSummary struct {
 	Dimension   int64  `json:"dimension"`
 	Fingerprint string `json:"fingerprint" validate:"required"`

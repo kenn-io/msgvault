@@ -161,77 +161,21 @@ Examples:
 			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := muesliSources(cfg).selected(args)
-		if err != nil {
-			return err
-		}
-		var after time.Time
-		if syncMuesliAfter != "" {
-			parsed, err := time.Parse(time.DateOnly, syncMuesliAfter)
-			if err != nil {
-				return usageErr(cmd, fmt.Errorf("invalid --after %q (expected YYYY-MM-DD): %w", syncMuesliAfter, err))
-			}
-			after = parsed.UTC()
-		}
-		for _, source := range sources {
-			if _, err := source.EffectiveAccountEmail(); err != nil {
-				return err
-			}
-		}
-
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		dbPath := cfg.DatabaseDSN()
-
-		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Finishing current meeting...")
-		defer stop()
-
-		var pendingWrites int64
-		for _, source := range sources {
-			accountEmail, _ := source.EffectiveAccountEmail()
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Muesli for %s\n\n", source.Identifier)
-			options := muesliImportOptions(source)
-			options.AttachmentsDir = cfg.AttachmentsDir()
-			options.AccountEmail = accountEmail
-			options.Full, options.Limit, options.StartedAfter = syncMuesliFull, syncMuesliLimit, after
-			options.MeetingID = syncMuesliMeetingID
-			options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
-			summary, importErr := muesli.NewImporter(st).Import(ctx, options)
-			if summary != nil {
-				pendingWrites += summary.MeetingsAdded + summary.MeetingsUpdated
-			}
-			run := meetingSyncRun{
-				provider: "muesli", identifier: source.Identifier,
-				writes: pendingWrites, err: importErr,
-			}
-			refresh := func() error { return rebuildMuesliCacheAfterWrite(dbPath, state) }
-			if err := run.finish(refresh); err != nil {
-				return err
-			}
-			writeMuesliSummary(cmd.OutOrStdout(), summary)
-		}
-		if pendingWrites > 0 {
-			return rebuildMuesliCacheAfterWrite(dbPath, state)
-		}
-		return nil
+		return syncRecorderSources(cmd, args, muesliSources(cfg), "Muesli", "muesli", syncMuesliAfter, func(s config.MuesliSource) string { return s.Identifier },
+			func(ctx context.Context, st *store.Store, source config.MuesliSource, after time.Time) (*muesli.ImportSummary, error) {
+				options := muesliImportOptions(source)
+				options.AttachmentsDir = cfg.AttachmentsDir()
+				options.AccountEmail, _ = source.EffectiveAccountEmail()
+				options.Full, options.Limit, options.StartedAfter = syncMuesliFull, syncMuesliLimit, after
+				options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
+				options.MeetingID = syncMuesliMeetingID
+				return muesli.NewImporter(st).Import(ctx, options)
+			}, func(s *muesli.ImportSummary) int64 { return s.MeetingsAdded + s.MeetingsUpdated }, writeMuesliSummary, rebuildMuesliCacheAfterWrite)
 	},
 }
 
 func writeMuesliSummary(out io.Writer, summary *muesli.ImportSummary) {
-	_, _ = fmt.Fprintln(out, "\nMuesli sync complete!")
-	_, _ = fmt.Fprintf(out, "  Duration:           %s\n", summary.Duration.Round(time.Second))
-	_, _ = fmt.Fprintf(out, "  Meetings processed: %d\n", summary.MeetingsProcessed)
-	_, _ = fmt.Fprintf(out, "  Meetings added:     %d\n", summary.MeetingsAdded)
-	_, _ = fmt.Fprintf(out, "  Meetings updated:   %d\n", summary.MeetingsUpdated)
-	if summary.RecordingsStored > 0 || summary.RecordingsSkipped > 0 {
-		_, _ = fmt.Fprintf(out, "  Recordings stored:  %d (deferred: %d)\n", summary.RecordingsStored, summary.RecordingsSkipped)
-	}
-	if summary.SkippedInProgress > 0 {
-		_, _ = fmt.Fprintf(out, "  Still in progress:  %d (archived by a later sync)\n", summary.SkippedInProgress)
-	}
+	writeRecorderSummary(out, "Muesli", summary.Duration, summary.MeetingsProcessed, summary.MeetingsAdded, summary.MeetingsUpdated, summary.RecordingsStored, summary.RecordingsSkipped, summary.SkippedInProgress)
 	if summary.SkippedDeleted > 0 {
 		_, _ = fmt.Fprintf(out, "  Deleted in Muesli:  %d (kept archived)\n", summary.SkippedDeleted)
 	}
@@ -261,37 +205,12 @@ func muesliImportOptions(source config.MuesliSource) muesli.ImportOptions {
 // runConfiguredMuesliSync is the daemon-scheduler entry point for one
 // [[muesli]] source.
 func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config.MuesliSource, attachmentsDir string) error {
-	notRegistered := fmt.Errorf(
-		"muesli source %q is not registered; run msgvault add-muesli %s first",
-		source.Identifier, source.Identifier)
-	registered, err := requireRegisteredMeetingSource(ctx, st, muesli.SourceType, source.Identifier, notRegistered)
-	if err != nil {
-		return recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, err)
-	}
-	if registered.MergedIntoSourceID != 0 {
-		return nil
-	}
-	accountEmail, err := source.EffectiveAccountEmail()
-	if err != nil {
-		return recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, err)
-	}
-	options := muesliImportOptions(source)
-	options.AttachmentsDir = attachmentsDir
-	options.AccountEmail = accountEmail
-	summary, importErr := muesli.NewImporter(st).Import(ctx, options)
-	var writes int64
-	if summary != nil {
-		writes = summary.MeetingsAdded + summary.MeetingsUpdated
-	}
-	run := meetingSyncRun{
-		provider: "muesli", identifier: source.Identifier, writes: writes, err: importErr,
-	}
-	// Check the cache even when this scan wrote nothing: a hook or manual
-	// import may have been throttled by min_rebuild_interval, and the
-	// background refresher schedules the retry that import did not.
-	_ = recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, importErr)
-	return run.finishScheduled(ctx, "muesli:"+source.Identifier,
-		rebuildMuesliCacheAfterScheduledSync)
+	return syncConfiguredRecorder(ctx, st, source, "muesli", source.Identifier, func() (*muesli.ImportSummary, error) {
+		options := muesliImportOptions(source)
+		options.AttachmentsDir = attachmentsDir
+		options.AccountEmail, _ = source.EffectiveAccountEmail()
+		return muesli.NewImporter(st).Import(ctx, options)
+	}, func(s *muesli.ImportSummary) int64 { return s.MeetingsAdded + s.MeetingsUpdated }, rebuildMuesliCacheAfterScheduledSync)
 }
 
 func init() {
