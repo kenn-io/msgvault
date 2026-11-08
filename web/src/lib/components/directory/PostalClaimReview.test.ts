@@ -108,6 +108,31 @@ it.each(['support_unavailable', 'outside_validity', 'absent', 'failure'])('refre
   expect(screen.queryByLabelText('Street address')).toBeNull();
 });
 
+it('dismisses a failed opening so another address review can be attempted', async () => {
+  const { server, ledger } = setup();
+  await revealPostalClaim();
+  server.fail = true;
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  await screen.findByRole('alert');
+  await fireEvent.click(screen.getByRole('button', { name: 'Dismiss address review error' }));
+  expect(ledger.postalReview).toBeUndefined();
+  server.fail = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  expect(await screen.findByLabelText('Street address')).toBeDefined();
+});
+
+it('labels a cleared replacement target without presenting its original text as current', async () => {
+  const { profileController } = setup();
+  profileController.structuredProfile!.addresses.push({
+    address_kind: 'postal', original_value: 'Old source address', free_text: '',
+    envelope: { id: 26, ordinal: 1, source: 'user', created_at: when, updated_at: when, vcard: {} },
+  });
+  await revealPostalClaim();
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  expect(await screen.findByRole('option', { name: 'Replace: No current address' })).toBeDefined();
+  expect(screen.queryByRole('option', { name: 'Replace: Old source address' })).toBeNull();
+});
+
 it('opens the exact freshly returned assessment and refuses a mismatched profile revision', async () => {
   const { server } = setup();
   await revealPostalClaim();

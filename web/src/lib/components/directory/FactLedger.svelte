@@ -144,6 +144,7 @@
                             <Button label="Cancel opening address review" size="sm" onclick={() => controller.cancelPostalReview()} />
                           {:else if controller.postalReview.error}
                             <p role="alert">{controller.postalReview.error}</p>
+                            <Button label="Dismiss address review error" size="sm" onclick={() => controller.cancelPostalReview()} />
                           {:else if controller.postalReview.candidate}
                             {#key controller.postalReview}
                               <StructuredProfileEditor controller={profileController} section="addresses" postalCandidate={controller.postalReview.candidate} onCancel={closePostalDraft} onDone={() => { controller.cancelPostalReview(); void controller.retrySection('claims'); }} />

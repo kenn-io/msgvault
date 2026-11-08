@@ -466,7 +466,7 @@
         <label>Save address as<select bind:value={addressTarget} disabled={submitting}>
           <option value="">Choose…</option><option value="add">Add a new address</option>
           {#each controller.structuredProfile?.addresses.filter(address => address.address_kind === 'postal') ?? [] as address (address.envelope.id)}
-            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText(address)}</option>
+            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText({ ...address, original_value: '' }) || 'No current address'}</option>
           {/each}
         </select></label>
       {/if}
