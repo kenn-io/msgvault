@@ -70,7 +70,10 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	checks.Contains(lineage.PersonUIDs, split.NewPerson.VCardUID)
 	checks.Contains(lineage.MergeIDs, merged.Merge.ID)
 	checks.Contains(lineage.SplitIDs, split.Split.ID)
-	checks.Contains(lineage.OwnedSubjects, store.ImportantDateLineageSubject{UID: owned.UID, OwnerUID: second.VCardUID})
+	must.Len(lineage.OwnedSubjects, 1)
+	checks.Equal(owned.UID, lineage.OwnedSubjects[0].UID)
+	checks.Equal(second.VCardUID, lineage.OwnedSubjects[0].OwnerUID)
+	checks.Equal(owned.Revision, lineage.OwnedSubjects[0].Revision)
 	must.Len(lineage.Deliveries, 1)
 	checks.Equal(key, lineage.Deliveries[0].OccurrenceKey)
 }

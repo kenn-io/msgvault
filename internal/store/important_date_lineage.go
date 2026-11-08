@@ -16,15 +16,28 @@ type ImportantDateLineage struct {
 	IdentityRevision int64                         `json:"identity_revision"`
 	PersonIDs        []int64                       `json:"person_ids"`
 	PersonUIDs       []string                      `json:"person_uids"`
+	People           []ImportantDateLineagePerson  `json:"people"`
 	MergeIDs         []int64                       `json:"merge_ids"`
 	SplitIDs         []int64                       `json:"split_ids"`
 	OwnedSubjects    []ImportantDateLineageSubject `json:"owned_subjects"`
 	Deliveries       []ImportantDateDelivery       `json:"deliveries"`
 }
 
+type ImportantDateLineagePerson struct {
+	ID       int64        `json:"id"`
+	UID      string       `json:"uid"`
+	Revision int64        `json:"revision"`
+	Dates    []PersonDate `json:"dates"`
+}
+
 type ImportantDateLineageSubject struct {
-	UID      string `json:"uid"`
-	OwnerUID string `json:"owner_uid"`
+	UID         string      `json:"uid"`
+	OwnerUID    string      `json:"owner_uid"`
+	Kind        string      `json:"kind"`
+	DisplayName string      `json:"display_name"`
+	Date        PartialDate `json:"date"`
+	Revision    int64       `json:"revision"`
+	Withdrawn   bool        `json:"withdrawn"`
 }
 
 // ImportantDateLineageContext follows both sides of every connected merge and
@@ -78,12 +91,18 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	splits := map[int64]struct{}{}
 	for _, id := range result.PersonIDs {
 		var uid string
-		err := s.db.QueryRowContext(ctx, `SELECT vcard_uid FROM persons WHERE id = ?`, id).Scan(&uid)
+		var revision int64
+		err := s.db.QueryRowContext(ctx, `SELECT vcard_uid, revision FROM persons WHERE id = ?`, id).Scan(&uid, &revision)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return result, fmt.Errorf("read lineage person: %w", err)
 		}
 		if err == nil {
 			uids[uid] = struct{}{}
+			dates, err := s.ListPersonDatesContext(ctx, id, true)
+			if err != nil {
+				return result, fmt.Errorf("read lineage dates: %w", err)
+			}
+			result.People = append(result.People, ImportantDateLineagePerson{ID: id, UID: uid, Revision: revision, Dates: dates})
 		}
 		rows, err := s.db.QueryContext(ctx, `SELECT retired_uid FROM person_uid_aliases WHERE surviving_person_id = ?`, id)
 		if err != nil {
@@ -161,16 +180,24 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	}
 	sort.Strings(result.PersonUIDs)
 	for _, uid := range result.PersonUIDs {
-		rows, err := s.db.QueryContext(ctx, `SELECT uid, owner_uid FROM important_date_subjects WHERE owner_uid = ? ORDER BY uid`, uid)
+		rows, err := s.db.QueryContext(ctx, `SELECT uid, owner_uid, kind, display_name, birth_year, birth_month, birth_day, revision, withdrawn FROM important_date_subjects WHERE owner_uid = ? ORDER BY uid`, uid)
 		if err != nil {
 			return result, fmt.Errorf("read lineage owned subjects: %w", err)
 		}
 		for rows.Next() {
 			var subject ImportantDateLineageSubject
-			if err := rows.Scan(&subject.UID, &subject.OwnerUID); err != nil {
+			var year sql.NullInt64
+			var month, day, withdrawn int
+			if err := rows.Scan(&subject.UID, &subject.OwnerUID, &subject.Kind, &subject.DisplayName, &year, &month, &day, &subject.Revision, &withdrawn); err != nil {
 				_ = rows.Close()
 				return result, fmt.Errorf("scan lineage owned subject: %w", err)
 			}
+			subject.Date = PartialDate{Month: &month, Day: &day}
+			if year.Valid {
+				value := int(year.Int64)
+				subject.Date.Year = &value
+			}
+			subject.Withdrawn = withdrawn != 0
 			result.OwnedSubjects = append(result.OwnedSubjects, subject)
 		}
 		if err := rows.Err(); err != nil {
