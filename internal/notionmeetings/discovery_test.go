@@ -274,3 +274,24 @@ func TestBoundedTraversalCheckpointRoundTripPreservesAdmissions(t *testing.T) {
 		assert.Equal(ht, want, got)
 	}, hegel.WithTestCases(32), hegel.WithDatabase(""))
 }
+
+func TestSaturatedDeferredSwapRetainsDisplacedWork(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	state := newSyncState()
+	state.Frontier = []scopeTask{{Kind: "blocks", ID: "blocked"}}
+	state.Deferred = []deferredScope{
+		{Task: &scopeTask{Kind: "blocks", ID: "ready"}, Reason: "frontier_budget", NextAttemptAt: now},
+		{Task: &scopeTask{Kind: "blocks", ID: "later"}, Reason: "frontier_budget", NextAttemptAt: now.Add(time.Hour)},
+	}
+	limits := defaultDiscoveryLimits()
+	limits.Frontier, limits.Scopes = 1, 2
+	state.activateOneDeferred(now, limits)
+	require.Len(state.Frontier, 1)
+	assert.Equal("ready", state.Frontier[0].ID)
+	require.Len(state.Deferred, 2)
+	assert.Equal("later", state.Deferred[0].Task.ID)
+	assert.Equal("blocked", state.Deferred[1].Task.ID)
+	require.NoError(state.validateTransientWith(limits))
+}

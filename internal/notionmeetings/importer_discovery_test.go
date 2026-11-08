@@ -489,3 +489,39 @@ func TestFullRootFrontierAllowsDeferredContinuation(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", "meeting-1").Scan(&count))
 	assert.Equal(1, count)
 }
+
+func TestSaturatedDeferredQueueRotatesReplayableFrontier(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch}
+	state := newSyncState()
+	state.Fingerprint = scopeFingerprint("work", Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}, opts)
+	state.Active = true
+	state.NextLane = 1
+	state.Frontier = []scopeTask{{Kind: "blocks", ID: "blocked", Depth: imp.limits.Depth + 1}, {Kind: "meeting", ID: "meeting-1"}}
+	for i := range imp.limits.Scopes {
+		task := scopeTask{Kind: "blocks", ID: fmt.Sprintf("deferred-%05d", i)}
+		state.Deferred = append(state.Deferred, deferredScope{Task: &task, Reason: "depth_limit", NextAttemptAt: imp.now().Add(time.Hour)})
+	}
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	saved, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	require.Len(saved.Frontier, 2)
+	assert.Equal("meeting-1", saved.Frontier[0].ID)
+	assert.Equal("blocked", saved.Frontier[1].ID)
+	assert.Len(saved.Deferred, imp.limits.Scopes)
+	result, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(int64(1), result.MeetingsAdded)
+}

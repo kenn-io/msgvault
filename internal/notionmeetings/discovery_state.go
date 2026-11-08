@@ -182,6 +182,33 @@ func (state *syncState) activateDeferred(now time.Time, limits discoveryLimits) 
 		state.deferTask(*displaced, "frontier_budget", now)
 	}
 }
+
+// Make one slot in a saturated deferred queue without letting retries consume
+// an entire unfinished sweep's budget.
+func (state *syncState) activateOneDeferred(now time.Time, limits discoveryLimits) {
+	for i, gap := range state.Deferred {
+		if gap.NextAttemptAt.After(now) {
+			continue
+		}
+		if gap.Task != nil && len(state.Frontier) < limits.Frontier {
+			state.Frontier = append(state.Frontier, *gap.Task)
+		} else if gap.Task != nil && len(state.Frontier) > 0 {
+			// Swap without losing the displaced continuation when both queues
+			// are full; a successful retry can then free frontier capacity.
+			last := state.Frontier[len(state.Frontier)-1]
+			state.Frontier = append([]scopeTask{*gap.Task}, state.Frontier[:len(state.Frontier)-1]...)
+			state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
+			state.deferTask(last, "frontier_budget", now)
+			return
+		} else if gap.Window != nil && len(state.Windows) < limits.Frontier {
+			state.Windows = append(state.Windows, *gap.Window)
+		} else {
+			continue
+		}
+		state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
+		return
+	}
+}
 func (state *syncState) validateTransient() error {
 	s := *state
 	return s.validateTransientWith(defaultDiscoveryLimits())

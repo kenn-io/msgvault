@@ -289,6 +289,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if opts.Full && state.Active {
 		state.FreshRequested = true
 	}
+	if state.Active && len(state.Deferred) >= limits.Scopes {
+		before := state.copyDiscovery()
+		state.activateOneDeferred(started, limits)
+		if state.validateTransientWith(limits) != nil {
+			state = before
+		}
+	}
 	sweepsStarted := 0
 	if !state.Active {
 		state.startSweep(opts, started)
@@ -418,7 +425,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		changed, stepErr := steps[lane](ctx)
 		if lane < 2 && changed {
 			if boundErr := state.validateTransientWith(limits); boundErr != nil {
-				state = before
+				state = before.copyDiscovery()
 				// Retain the predecessor page as deferred work instead of accepting an
 				// unrepresentable continuation or blocking independent branches forever.
 				if lane == 0 && len(state.Windows) > 0 {
@@ -432,8 +439,30 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					state.deferTask(task, "cursor_budget", started)
 				}
 				if state.validateTransient() != nil {
-					state = before
+					state = before.copyDiscovery()
+					// Keep the predecessor replayable, but let independent work lead
+					// the next run when no deferred slot is available.
+					if lane == 0 && len(state.Windows) > 1 {
+						state.Windows = append(state.Windows[1:], state.Windows[0])
+					}
+					if lane == 1 && len(state.Frontier) > 1 {
+						state.Frontier = append(state.Frontier[1:], state.Frontier[0])
+					}
 					state.reason("cursor_budget", "run")
+					if state.validateTransient() != nil {
+						// Historical diagnostics are bounded and can be compacted to
+						// retain replayable work within the cursor byte limit.
+						state.Coverage.Diagnostics = nil
+						if state.validateTransient() != nil {
+							state = before.copyDiscovery()
+							if lane == 0 && len(state.Windows) > 1 {
+								state.Windows = append(state.Windows[1:], state.Windows[0])
+							}
+							if lane == 1 && len(state.Frontier) > 1 {
+								state.Frontier = append(state.Frontier[1:], state.Frontier[0])
+							}
+						}
+					}
 				}
 				goto complete
 			}
