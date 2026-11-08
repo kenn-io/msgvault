@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type deliveryStoreFake struct {
@@ -241,4 +242,114 @@ func TestDeliveryDoesNotNotifyMissingRetainedIssue(t *testing.T) {
 	checks.Equal(store.ImportantDateCancelled, st.state)
 	checks.Equal(1, kata.creates)
 	checks.Zero(kata.notifications)
+}
+
+func TestDeliveryRecoversCancelledPreflight(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		cancelOnCheck int
+		wantState     store.ImportantDateDeliveryState
+		wantCreates   int
+	}{
+		{name: "issue preflight", cancelOnCheck: 1, wantState: store.ImportantDateRetryIssue},
+		{name: "notification preflight", cancelOnCheck: 2, wantState: store.ImportantDateIssueCreated, wantCreates: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			st := storetest.New(t).Store
+			participant, err := st.EnsureParticipantByIdentifier("email", "owner@example.test", "Example Owner")
+			must.NoError(err)
+			person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
+			must.NoError(err)
+			subject := "person/" + person.VCardUID
+			must.NoError(st.SetImportantDateConsentContext(t.Context(), subject, "scope-example", "owner/agent", true))
+			input := DeliveryInput{OccurrenceKey: subject + ":birthday:2027", Fingerprint: "fingerprint-example", SubjectUID: subject, OwnerUID: subject, Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+			kata := &deliveryKataFake{}
+			service := DeliveryService{Store: st, Kata: kata}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			calls := 0
+			err = service.Deliver(ctx, input, func(ctx context.Context) (bool, error) {
+				calls++
+				if calls == test.cancelOnCheck {
+					cancel()
+					return false, ctx.Err()
+				}
+				return true, nil
+			})
+			must.ErrorIs(err, context.Canceled)
+			state, _, err := st.ImportantDateDeliveryContext(t.Context(), input.OccurrenceKey)
+			must.NoError(err)
+			checks.Equal(test.wantState, state)
+			checks.Equal(test.wantCreates, kata.creates)
+			checks.Zero(kata.notifications)
+			must.NoError(service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil }))
+			state, _, err = st.ImportantDateDeliveryContext(t.Context(), input.OccurrenceKey)
+			must.NoError(err)
+			checks.Equal(store.ImportantDateDelivered, state)
+			checks.Equal(1, kata.creates)
+			checks.Equal(1, kata.notifications)
+		})
+	}
+}
+
+type cancellingWriteKata struct {
+	deliveryKataFake
+	cancel       context.CancelFunc
+	cancelCreate bool
+}
+
+func (f *cancellingWriteKata) CreateTaskReused(ctx context.Context, project, key string, create taskclient.KataCreate) (taskclient.KataTask, bool, error) {
+	if f.cancelCreate {
+		f.creates++
+		f.cancel()
+		return taskclient.KataTask{}, false, ctx.Err()
+	}
+	return f.deliveryKataFake.CreateTaskReused(ctx, project, key, create)
+}
+
+func (f *cancellingWriteKata) NotifyIssue(ctx context.Context, _, _, _, _ string) error {
+	f.notifications++
+	f.cancel()
+	return ctx.Err()
+}
+
+func TestDeliveryFencesCancelledExternalWrites(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		cancelCreate bool
+	}{
+		{name: "issue write", cancelCreate: true},
+		{name: "notification write"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			st := storetest.New(t).Store
+			participant, err := st.EnsureParticipantByIdentifier("email", "owner@example.test", "Example Owner")
+			must.NoError(err)
+			person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
+			must.NoError(err)
+			subject := "person/" + person.VCardUID
+			must.NoError(st.SetImportantDateConsentContext(t.Context(), subject, "scope-example", "owner/agent", true))
+			input := DeliveryInput{OccurrenceKey: subject + ":birthday:2027", Fingerprint: "fingerprint-example", SubjectUID: subject, OwnerUID: subject, Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			kata := &cancellingWriteKata{cancel: cancel, cancelCreate: test.cancelCreate}
+			service := DeliveryService{Store: st, Kata: kata}
+			err = service.Deliver(ctx, input, func(context.Context) (bool, error) { return true, nil })
+			must.ErrorIs(err, context.Canceled)
+			state, _, err := st.ImportantDateDeliveryContext(t.Context(), input.OccurrenceKey)
+			must.NoError(err)
+			checks.Equal(store.ImportantDateUnknown, state)
+			must.NoError(service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil }))
+			checks.Equal(1, kata.creates)
+			if test.cancelCreate {
+				checks.Zero(kata.notifications)
+			} else {
+				checks.Equal(1, kata.notifications)
+			}
+		})
+	}
 }

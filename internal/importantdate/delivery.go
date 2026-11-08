@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
@@ -104,15 +105,15 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 		if attempted {
 			outcome = store.ImportantDateUnknown
 		}
-		_ = s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, outcome, "")
-		if errors.Is(err, errDeliveryIneligible) || !active && err == nil {
+		recoveryErr := s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, outcome, "")
+		if errors.Is(err, errDeliveryIneligible) {
 			return nil
 		}
-		return err
+		return errors.Join(err, recoveryErr)
 	}
 	if issue.UID == "" || issue.Project != input.Project {
-		_ = s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateUnknown, "")
-		return errors.New("important-date issue could not be reconciled")
+		recoveryErr := s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateUnknown, "")
+		return errors.Join(errors.New("important-date issue could not be reconciled"), recoveryErr)
 	}
 	if reused || issue.Status != "open" {
 		return s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateCancelled, issue.UID)
@@ -166,11 +167,14 @@ func (s DeliveryService) notify(ctx context.Context, input DeliveryInput, issueU
 		} else if errors.Is(err, errIssueClosed) {
 			outcome = store.ImportantDateCancelled
 		}
-		_ = s.advance(ctx, input.OccurrenceKey, store.ImportantDateNotifyInFlight, outcome, issueUID)
-		if errors.Is(err, errDeliveryIneligible) || errors.Is(err, errIssueClosed) || !active && err == nil {
+		recoveryErr := s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateNotifyInFlight, outcome, issueUID)
+		if errors.Is(err, errDeliveryIneligible) {
 			return nil
 		}
-		return err
+		if errors.Is(err, errIssueClosed) {
+			return recoveryErr
+		}
+		return errors.Join(err, recoveryErr)
 	}
 	return s.advance(ctx, input.OccurrenceKey, store.ImportantDateNotifyInFlight, store.ImportantDateDelivered, issueUID)
 }
@@ -184,4 +188,11 @@ func (s DeliveryService) advance(ctx context.Context, key string, from, to store
 		return errors.New("important-date delivery state changed concurrently")
 	}
 	return nil
+}
+
+// recoverAdvance must record a safe retry or uncertain outcome after cancellation.
+func (s DeliveryService) recoverAdvance(ctx context.Context, key string, from, to store.ImportantDateDeliveryState, issue string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return s.advance(cleanupCtx, key, from, to, issue)
 }
