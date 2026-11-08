@@ -486,6 +486,8 @@ func TestQueueKeepsOneEntryPerThreadNewestFirst(t *testing.T) {
 }
 
 func TestParseInstance(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	for _, tc := range []struct {
 		raw, instance, base string
 		bad                 bool
@@ -499,12 +501,12 @@ func TestParseInstance(t *testing.T) {
 	} {
 		instance, base, err := ParseInstance(tc.raw)
 		if tc.bad {
-			assert.Error(t, err, tc.raw)
+			assert.Error(err, tc.raw)
 			continue
 		}
-		require.NoError(t, err, tc.raw)
-		assert.Equal(t, Instance(tc.instance), instance, tc.raw)
-		assert.Equal(t, tc.base, base.String(), tc.raw)
+		require.NoError(err, tc.raw)
+		assert.Equal(Instance(tc.instance), instance, tc.raw)
+		assert.Equal(tc.base, base.String(), tc.raw)
 	}
 }
 
@@ -513,4 +515,25 @@ func TestDecodeStateRejectsAnotherVersion(t *testing.T) {
 	require.NoError(t, err)
 	_, err = decodeState(string(data))
 	assert.Error(t, err)
+}
+
+func TestSyncKeepsEvidenceThatDiffersOnlyInFieldOrder(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	first := post("p1", "issue", ann, "Title", "Body.", "2026-11-01T10:00:00Z")
+	first.Raw = []byte(`{"id":"p1","author":{"login":"ann","id":2002}}`)
+	f.threads["i1"] = [][]Post{{first}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	reordered := first
+	reordered.Raw = []byte(`{"author":{"id":2002,"login":"ann"},"id":"p1"}`)
+	f.threads["i1"] = [][]Post{{reordered}}
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-08T10:00:00Z")}}
+	again, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{Full: true})
+	require.NoError(err)
+	assert.Zero(t, again.Updated, "the same JSON in another order is the same evidence")
 }

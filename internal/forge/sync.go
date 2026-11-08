@@ -332,7 +332,7 @@ func (r *run) archive(ctx context.Context, thread *queuedThread) error {
 func (r *run) write(ctx context.Context, head ThreadHead, post Post) error {
 	forge := r.syncer.forge
 	result, err := r.writer.WriteFrom(ctx, importMessage(forge, head, post), messageimport.Evidence{
-		Raw: post.Raw, Format: forge.Name() + "_json",
+		Raw: canonicalJSON(post.Raw), Format: forge.Name() + "_json",
 	})
 	if errors.Is(err, messageimport.ErrValidation) {
 		r.recordItemID(ctx, post.ID, store.SyncRunItemStatusSkipped, "forge_post_invalid", err)

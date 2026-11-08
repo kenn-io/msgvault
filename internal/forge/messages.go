@@ -1,7 +1,9 @@
 package forge
 
 import (
+	"encoding/json/jsontext"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -62,6 +64,17 @@ func sender(instance Instance, author Account) messageimport.MessageImportSender
 	default:
 		return messageimport.MessageImportSender{Name: name}
 	}
+}
+
+// canonicalJSON is a post's raw JSON in canonical form (RFC 8785), so
+// unchanged evidence is byte-identical across syncs whatever order a
+// response lists its fields in. Raw that isn't JSON is kept as it is.
+func canonicalJSON(raw []byte) []byte {
+	value := jsontext.Value(slices.Clone(raw))
+	if value.Canonicalize() != nil {
+		return raw
+	}
+	return value
 }
 
 // clean drops NUL characters, which forge text may hold and the archive
