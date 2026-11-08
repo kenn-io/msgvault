@@ -62,6 +62,7 @@ Add and sync sources:
   add-circleback         Authorize a Circleback account (browser OAuth)
   add-discord            Register Discord guilds for bot-based archival
   add-github             Add a GitHub account as an archive source
+  add-gitlab             Add a GitLab account as an archive source
   add-granola            Register a Granola account and validate its API key
   add-imap               Add an IMAP account
   add-inline             Authorize an Inline account
@@ -96,6 +97,7 @@ Add and sync sources:
   sync-discord           Sync registered Discord guild history
   sync-full              Perform a full sync of Gmail accounts
   sync-github            Archive changed GitHub threads
+  sync-gitlab            Archive changed GitLab threads
   sync-granola           Sync Granola meeting notes and transcripts
   sync-inline            Archive Inline chats
   sync-matrix            Sync joined rooms from Matrix

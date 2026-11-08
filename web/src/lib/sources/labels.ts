@@ -6,7 +6,7 @@ import { sentenceCase } from '../explore/labels';
 // the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
-  discord: 'Discord', github: 'GitHub', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
+  discord: 'Discord', github: 'GitHub', gitlab: 'GitLab', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
@@ -65,6 +65,7 @@ export const SOURCE_SETTING_PREFIX: Readonly<Record<string, string>> = {
   slack: 'slack',
   inline: 'inline',
   github: 'github',
+  gitlab: 'gitlab',
   discord: 'discord',
   teams: 'teams',
 };

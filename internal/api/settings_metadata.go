@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/forge/github"
+	"go.kenn.io/msgvault/internal/forge/gitlab"
 )
 
 // settingMetadata is the user-facing copy for one setting. The label names
@@ -74,6 +75,7 @@ var settingsGroups = []SettingGroup{
 			{ID: sourceTypeSlack, Label: "Slack"},
 			{ID: sourceTypeInline, Label: "Inline"},
 			{ID: github.Name, Label: "GitHub", Description: "Add accounts with msgvault add-github."},
+			{ID: gitlab.Name, Label: "GitLab", Description: "Add accounts with msgvault add-gitlab."},
 			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
 		},
 	},
@@ -209,6 +211,10 @@ var settingsMetadata = map[string]settingMetadata{
 	"github.schedule":               {"GitHub schedule", "A five-field cron expression. Empty syncs only when asked.", github.Name},
 	"github.include_owners":         {"Included GitHub owners", "Organizations and users whose repositories are archived. Empty means every owner that is not excluded.", github.Name},
 	"github.exclude_owners":         {"Excluded GitHub owners", "Organizations and users whose repositories are never fetched.", github.Name},
+	"gitlab.enabled":                {"Scheduled GitLab sync", "Covers every account added with add-gitlab.", gitlab.Name},
+	"gitlab.schedule":               {"GitLab schedule", "A five-field cron expression. Empty syncs only when asked.", gitlab.Name},
+	"gitlab.include_owners":         {"Included GitLab owners", "Top-level groups and users whose projects are archived. Empty means every owner that is not excluded.", gitlab.Name},
+	"gitlab.exclude_owners":         {"Excluded GitLab owners", "Top-level groups and users whose projects are never fetched.", gitlab.Name},
 	"slack.enabled":                 {"Scheduled Slack sync", "Sync Slack channels on the schedule below.", sourceTypeSlack},
 	"slack.schedule":                {"Slack schedule", "When Slack sync runs.", sourceTypeSlack},
 	"slack.channels":                {"Included Slack channels", "Channel names to sync. One-to-one and group DMs follow their own settings.", sourceTypeSlack},
@@ -303,6 +309,7 @@ var settingsValidation = map[string]SettingValidation{
 	"slack.schedule":  cronValidation(false),
 	"inline.schedule": cronValidation(false),
 	"github.schedule": cronValidation(false),
+	"gitlab.schedule": cronValidation(false),
 	// A float has no "greater than zero" bound a number control can carry,
 	// so the on range starts at 0.1 requests per second. A smaller positive
 	// rate is raised to 0.1 on save rather than rejected; zero stays off.
