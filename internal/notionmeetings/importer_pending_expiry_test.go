@@ -159,7 +159,7 @@ func TestDuePendingSelectionIsIndependentOfKnownRefresh(t *testing.T) {
 		{BlockID: "pending-z", NextAttemptAt: now.Add(-time.Hour).Format(time.RFC3339), RetryUntil: now.Add(time.Hour).Format(time.RFC3339)},
 		{BlockID: "later", NextAttemptAt: now.Add(time.Hour).Format(time.RFC3339), RetryUntil: now.Add(2 * time.Hour).Format(time.RFC3339)},
 	}
-	assert.NotContains(t, state.refreshIDs(32), "pending-z")
+	assert.NotContains(t, state.refreshIDs(32, nil), "pending-z")
 	assert.Equal(t, []string{"pending-z"}, state.duePendingIDs(now, 32))
 }
 
@@ -303,4 +303,42 @@ func TestNewRetryOverflowSurvivesReloadAndGetsActiveSlot(t *testing.T) {
 	require.Len(recovered.Pending, 200)
 	assert.Equal("meeting-1", recovered.Pending[199].BlockID)
 	assert.Equal(overflowDeadline, recovered.TranscriptRetryUntil["meeting-1"])
+}
+
+func TestInterruptedRetryAlternatesWithKnownRefreshAcrossRuns(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	ready := hydrationMeeting()
+	ready.ID = "ready-z"
+	installMeetingHeader(t, source.fakeHydrationSource, ready)
+	imp.client = &interruptFirstRetrySource{discoveryFixture: source}
+	now := imp.now()
+	state := newSyncState()
+	state.Known["retry-a"] = knownMeeting{}
+	state.Known[ready.ID] = knownMeeting{}
+	deadline := now.Add(24 * time.Hour).Format(time.RFC3339)
+	state.Pending = []pendingTranscript{{BlockID: "retry-a", NextAttemptAt: now.Format(time.RFC3339), RetryUntil: deadline}}
+	state.initialize()
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	imp.now = func() time.Time { return now.Add(7 * time.Hour) }
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", ready.ID).Scan(&count))
+	assert.Equal(1, count)
+	recovered, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	assert.Equal(deadline, recovered.TranscriptRetryUntil["retry-a"])
 }

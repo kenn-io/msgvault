@@ -118,6 +118,7 @@ type syncState struct {
 	FreshRequested       bool                    `json:"fresh_requested"`
 	NextLane             int                     `json:"next_lane,omitempty"`
 	RefreshCursor        string                  `json:"refresh_cursor,omitempty"`
+	RefreshKnownNext     bool                    `json:"refresh_known_next,omitempty"`
 	Version              int                     `json:"version"`
 	LastQueryAt          string                  `json:"last_query_at"`
 	Known                map[string]knownMeeting `json:"known"`
@@ -308,8 +309,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		progress = func(string) {}
 	}
 	run := &discoveryRun{state: &state, client: api, source: imp.client, limits: limits, now: started}
-	refresh := state.refreshIDs(limits.KnownRefresh)
 	due := state.duePendingIDs(started, limits.KnownRefresh)
+	dueSet := make(map[string]bool, len(due))
+	for _, id := range due {
+		dueSet[id] = true
+	}
+	refresh := state.refreshIDs(limits.KnownRefresh, dueSet)
 	processed := map[string]bool{}
 	admitted := 0
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
@@ -347,7 +352,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	refreshStep := func(ctx context.Context) (bool, error) {
 		for len(due) > 0 || len(refresh) > 0 {
-			isDue := len(due) > 0
+			isDue := len(due) > 0 && (len(refresh) == 0 || !state.RefreshKnownNext)
+			if len(due) > 0 && len(refresh) > 0 {
+				state.RefreshKnownNext = isDue
+			}
 			var id string
 			if isDue {
 				id, due = due[0], due[1:]
@@ -528,7 +536,7 @@ func (imp *Importer) loadState(ctx context.Context, sourceID int64) (syncState, 
 	return state, nil
 }
 
-func (state *syncState) refreshIDs(limit int) []string {
+func (state *syncState) refreshIDs(limit int, excluded map[string]bool) []string {
 	s := *state
 	ids := make([]string, 0, len(s.Known))
 	for id := range s.Known {
@@ -540,7 +548,13 @@ func (state *syncState) refreshIDs(limit int) []string {
 		start++
 	}
 	rotated := append(append([]string{}, ids[start:]...), ids[:start]...)
-	return rotated[:min(len(rotated), limit)]
+	selected := make([]string, 0, min(len(rotated), limit))
+	for _, id := range rotated {
+		if !excluded[id] && len(selected) < limit {
+			selected = append(selected, id)
+		}
+	}
+	return selected
 }
 
 // Due retries have their own bounded selection, independent of archive size.

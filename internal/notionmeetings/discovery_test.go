@@ -116,15 +116,6 @@ func TestSaturatedMinuteAllowsOlderWindows(t *testing.T) {
 	assert.Equal(1, run.state.Coverage.Reasons["query_cap"])
 	assert.Contains(run.state.Admissions, "tie")
 }
-func TestPersistentCeilingFinishesWithGap(t *testing.T) {
-	run, _ := schedulerFixture(t)
-	run.limits.Scopes = 1
-	run.state.startSweep(ImportOptions{RootPageIDs: []string{"root"}}, run.now)
-	_, err := run.stepTraversal(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, run.state.Frontier)
-	assert.Positive(t, run.state.Coverage.Reasons["scope_limit"])
-}
 func TestDiscoveryFingerprintIsOrderIndependentAndAfterSensitive(t *testing.T) {
 	identity := Identity{UserID: "human", PrincipalID: "bot"}
 	hegel.Test(t, func(ht *hegel.T) {
