@@ -35,11 +35,13 @@ func newCLISearchCommand(root *cobra.Command) *cobra.Command {
 }
 
 func cliSearchOptions() clisearch.Options {
+	const messageKeyword = "message"
+
 	return clisearch.Options{
 		Synonyms: map[string][]string{
-			"email":         {"mail", "message"},
-			"mail":          {"email", "message"},
-			"message":       {"email", "mail"},
+			"email":         {"mail", messageKeyword},
+			"mail":          {"email", messageKeyword},
+			messageKeyword:  {"email", "mail"},
 			"contact":       {"person", helpGroupPeople},
 			helpGroupPeople: {"person", "contact"},
 			"person":        {"contact", helpGroupPeople},
