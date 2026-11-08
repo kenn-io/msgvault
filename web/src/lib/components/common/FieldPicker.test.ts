@@ -34,3 +34,12 @@ it('keeps Retry inside the failed lookup and sends queries to its loader', async
   await fireEvent.input(screen.getByRole('combobox'), { target: { value: 'garden' } });
   expect(onquery).toHaveBeenLastCalledWith('garden');
 });
+
+it('offers creation when the query matches an organization ID', async () => {
+  const oncreate = vi.fn();
+  render(FieldPicker, { placeholder: 'Organization', options: [{ name: '21', label: '21 Labs' }], value: '', onselect: vi.fn(), oncreate, createLabel: 'Create organization “{query}”' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Organization' }));
+  await fireEvent.input(screen.getByRole('combobox'), { target: { value: '21' } });
+  await fireEvent.mouseDown(screen.getByRole('option', { name: 'Create organization “21”' }));
+  expect(oncreate).toHaveBeenCalledWith('21');
+});

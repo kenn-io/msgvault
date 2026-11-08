@@ -629,3 +629,18 @@ it.each(['failure', 'conflict'])('keeps the concurrent domain after a partial sa
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   expect(patches.every((body, index) => index === 0 || body.primary_domain === 'concurrent.example')).toBe(true);
 });
+
+it('shows the retirement date in a conflict', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    const profile = organizationProfile(++reads);
+    return Response.json(reads === 1 ? profile : { ...profile, organization: { ...profile.organization, retired_at: '2025-01-06T00:00:00Z' } }, { headers: { ETag: `"organization-21-r${reads}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
+});

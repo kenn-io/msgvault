@@ -219,3 +219,24 @@ it('allows closing while the job loads', async () => {
     expect(closed).toBe(true);
   } finally { view.unmount(); finish(Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })); controller.destroy(); }
 });
+
+it('keeps an edited end date when another editor reopens the job', async () => {
+  let reads = 0;
+  const bodies: Record<string, unknown>[] = [];
+  const past = employment(11, 1, { is_current: false, end_date: { year: 2020 } });
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      bodies.push(await request.json());
+      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(past);
+    }
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    return Response.json(++reads === 1 ? past : { ...past, is_current: true, end_date: null }, { headers: { ETag: `"employment-11-r${reads}"` } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: past });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies[1]).toMatchObject({ end_date: '2021', is_current: false });
+});
