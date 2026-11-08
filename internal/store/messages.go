@@ -109,15 +109,7 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
-	// FTSFromStoredRows indexes the message from its stored rows, in place
-	// of FTS, so the indexed sender follows the rule a search-index rebuild
-	// applies. A message too large to index is left unsearchable.
-	FTSFromStoredRows bool
-	SyncRunItem       *SyncRunItem
-	// RecomputeConversationStats refreshes the stats of the message's
-	// conversation, and of the conversation it left, in the write's own
-	// transaction, so no interruption leaves either one stale.
-	RecomputeConversationStats bool
+	SyncRunItem               *SyncRunItem
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -2163,24 +2155,9 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
-	var priorConversationID sql.NullInt64
-	var readPriorConversation messagePersistBeforeParticipants
-	if data.RecomputeConversationStats {
-		readPriorConversation = func(ctx context.Context, tx *loggedTx) error {
-			err := tx.QueryRowContext(ctx, `
-				SELECT conversation_id FROM messages
-				WHERE source_id = ? AND source_message_id = ?`,
-				data.Message.SourceID, data.Message.SourceMessageID,
-			).Scan(&priorConversationID)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("read prior message conversation: %w", err)
-			}
-			return nil
-		}
-	}
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
-		readPriorConversation, nil, func([]int64) *MessagePersistData { return data }, nil,
+		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
 		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
@@ -2189,35 +2166,11 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 				}
 			}
 			if data.Edited {
-				if err := setMessageEditedStateWith(q, id, true); err != nil {
-					return err
-				}
-			}
-			if data.RecomputeConversationStats {
-				return s.recomputePersistedConversationStatsWith(q, id, priorConversationID)
+				return setMessageEditedStateWith(q, id, true)
 			}
 			return nil
 		},
 	)
-}
-
-// recomputePersistedConversationStatsWith refreshes the conversation that
-// now holds messageID and, when the write moved it, the one it left.
-func (s *Store) recomputePersistedConversationStatsWith(
-	q querier, messageID int64, prior sql.NullInt64,
-) error {
-	var current int64
-	if err := q.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`,
-		messageID).Scan(&current); err != nil {
-		return fmt.Errorf("read message conversation: %w", err)
-	}
-	if err := s.recomputeConversationStatsWith(q, "id = ?", current); err != nil {
-		return err
-	}
-	if prior.Valid && prior.Int64 != current {
-		return s.recomputeConversationStatsWith(q, "id = ?", prior.Int64)
-	}
-	return nil
 }
 
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
@@ -2595,20 +2548,7 @@ func (s *Store) persistMessageWith(
 	if err := s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID, delivery); err != nil {
 		return 0, err
 	}
-	switch {
-	case !s.fts5Available:
-	case data.FTSFromStoredRows:
-		// The rebuild's fields, written through the byte-bounded upsert that
-		// marks an overflowing message unsearchable instead of failing it.
-		row, err := s.loadDerivedEmailText(q, messageID)
-		if err != nil {
-			return 0, fmt.Errorf("read stored search fields: %w", err)
-		}
-		row.fts.Body = row.body
-		if _, err := s.upsertFTSOrUnsearchable(q, row.fts); err != nil {
-			return 0, fmt.Errorf("index message from stored rows: %w", err)
-		}
-	case data.FTS != nil:
+	if data.FTS != nil && s.fts5Available {
 		fts := *data.FTS
 		fts.MessageID = messageID
 		if err := s.dialect.FTSUpsert(q, fts); err != nil {

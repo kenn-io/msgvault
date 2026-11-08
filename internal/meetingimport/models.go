@@ -9,12 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/mail"
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/apiimport"
 	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
@@ -23,7 +22,7 @@ const (
 	ConversationType = "meeting"
 	MessageType      = "meeting_transcript"
 	RawFormat        = "meeting_json"
-	MaxRequestBytes  = int64(16 << 20)
+	MaxRequestBytes  = apiimport.MaxRequestBytes
 
 	maxSourceIdentifierChars  = 128
 	maxSourceDisplayNameChars = 256
@@ -33,9 +32,9 @@ const (
 )
 
 var (
-	ErrMalformedRequest = errors.New("malformed meeting import request")
-	ErrRequestTooLarge  = errors.New("meeting import request too large")
-	ErrValidation       = errors.New("meeting import validation failed")
+	ErrMalformedRequest = apiimport.ErrMalformedRequest
+	ErrRequestTooLarge  = apiimport.ErrRequestTooLarge
+	ErrValidation       = apiimport.ErrValidation
 )
 
 type MeetingImportRequest struct {
@@ -153,16 +152,16 @@ func (r Request) Normalize() (NormalizedRequest, error) {
 
 func normalizeSource(source Source) (Source, error) {
 	source.Identifier = strings.TrimSpace(source.Identifier)
-	if err := validateBoundedRequired("source.identifier", source.Identifier, maxSourceIdentifierChars); err != nil {
+	if err := apiimport.ValidateBoundedRequired("source.identifier", source.Identifier, maxSourceIdentifierChars); err != nil {
 		return Source{}, err
 	}
 
 	source.DisplayName = strings.TrimSpace(source.DisplayName)
-	if err := validateBoundedOptional("source.display_name", source.DisplayName, maxSourceDisplayNameChars); err != nil {
+	if err := apiimport.ValidateBoundedOptional("source.display_name", source.DisplayName, maxSourceDisplayNameChars); err != nil {
 		return Source{}, err
 	}
 
-	accountEmail, err := normalizeEmail("source.account_email", source.AccountEmail)
+	accountEmail, err := apiimport.NormalizeEmail("source.account_email", source.AccountEmail)
 	if err != nil {
 		return Source{}, err
 	}
@@ -172,26 +171,26 @@ func normalizeSource(source Source) (Source, error) {
 
 func normalizeMeeting(meeting Meeting) (NormalizedMeeting, error) {
 	meeting.ExternalID = strings.TrimSpace(meeting.ExternalID)
-	if err := validateBoundedRequired("meeting.external_id", meeting.ExternalID, maxExternalIDChars); err != nil {
+	if err := apiimport.ValidateBoundedRequired("meeting.external_id", meeting.ExternalID, maxExternalIDChars); err != nil {
 		return NormalizedMeeting{}, err
 	}
 	meeting.Title = strings.TrimSpace(meeting.Title)
-	if err := validateBoundedOptional("meeting.title", meeting.Title, maxTitleChars); err != nil {
+	if err := apiimport.ValidateBoundedOptional("meeting.title", meeting.Title, maxTitleChars); err != nil {
 		return NormalizedMeeting{}, err
 	}
 
-	startedAt, err := parseTimestamp("meeting.started_at", meeting.StartedAt)
+	startedAt, err := apiimport.ParseTimestamp("meeting.started_at", meeting.StartedAt)
 	if err != nil {
 		return NormalizedMeeting{}, err
 	}
 	var endedAt *time.Time
 	if strings.TrimSpace(meeting.EndedAt) != "" {
-		parsed, parseErr := parseTimestamp("meeting.ended_at", meeting.EndedAt)
+		parsed, parseErr := apiimport.ParseTimestamp("meeting.ended_at", meeting.EndedAt)
 		if parseErr != nil {
 			return NormalizedMeeting{}, parseErr
 		}
 		if parsed.Before(startedAt) {
-			return NormalizedMeeting{}, validationError("meeting.ended_at must not be before meeting.started_at")
+			return NormalizedMeeting{}, apiimport.ValidationError("meeting.ended_at must not be before meeting.started_at")
 		}
 		endedAt = &parsed
 	}
@@ -204,10 +203,10 @@ func normalizeMeeting(meeting Meeting) (NormalizedMeeting, error) {
 		return NormalizedMeeting{}, err
 	}
 	if transcript != "" && len(segments) > 0 {
-		return NormalizedMeeting{}, validationError("meeting.transcript and meeting.transcript_segments are mutually exclusive")
+		return NormalizedMeeting{}, apiimport.ValidationError("meeting.transcript and meeting.transcript_segments are mutually exclusive")
 	}
 	if summaryMarkdown == "" && summaryText == "" && transcript == "" && len(segments) == 0 {
-		return NormalizedMeeting{}, validationError("meeting requires a summary or transcript")
+		return NormalizedMeeting{}, apiimport.ValidationError("meeting requires a summary or transcript")
 	}
 
 	var organizer *MeetingPerson
@@ -249,13 +248,13 @@ func normalizeActions(items *[]MeetingActionItem) (*[]MeetingActionItem, error) 
 		return nil, nil //nolint:nilnil // Omitted source actions stay distinct from an explicitly empty list.
 	}
 	if len(*items) > 1000 {
-		return nil, validationError("meeting.action_items must have at most 1000 items")
+		return nil, apiimport.ValidationError("meeting.action_items must have at most 1000 items")
 	}
 	out := make([]MeetingActionItem, len(*items))
 	for i, item := range *items {
 		field := fmt.Sprintf("meeting.action_items[%d]", i)
 		item.Title = strings.TrimSpace(item.Title)
-		if err := validateBoundedRequired(field+".title", item.Title, maxTitleChars); err != nil {
+		if err := apiimport.ValidateBoundedRequired(field+".title", item.Title, maxTitleChars); err != nil {
 			return nil, err
 		}
 		for _, value := range []struct {
@@ -268,12 +267,12 @@ func normalizeActions(items *[]MeetingActionItem) (*[]MeetingActionItem, error) 
 			{"due_date", item.DueDate, 256},
 			{"status", item.Status, 128},
 		} {
-			if err := validateBoundedOptional(field+"."+value.name, value.text, value.limit); err != nil {
+			if err := apiimport.ValidateBoundedOptional(field+"."+value.name, value.text, value.limit); err != nil {
 				return nil, err
 			}
 		}
 		if item.AssigneeEmail != "" {
-			email, err := normalizeEmail(field+".assignee_email", item.AssigneeEmail)
+			email, err := apiimport.NormalizeEmail(field+".assignee_email", item.AssigneeEmail)
 			if err != nil {
 				return nil, err
 			}
@@ -294,19 +293,19 @@ func normalizeSegments(segments []TranscriptSegment) ([]TranscriptSegment, error
 	for idx, segment := range segments {
 		segment.Speaker = strings.TrimSpace(segment.Speaker)
 		if segment.Speaker == "" {
-			return nil, validationError("meeting.transcript_segments[%d].speaker is required", idx)
+			return nil, apiimport.ValidationError("meeting.transcript_segments[%d].speaker is required", idx)
 		}
 		segment.Text = strings.TrimSpace(segment.Text)
 		if segment.Text == "" {
-			return nil, validationError("meeting.transcript_segments[%d].text is required", idx)
+			return nil, apiimport.ValidationError("meeting.transcript_segments[%d].text is required", idx)
 		}
 		if segment.OffsetSeconds != nil {
 			offset := *segment.OffsetSeconds
 			if math.IsNaN(offset) || math.IsInf(offset, 0) || offset < 0 {
-				return nil, validationError("meeting.transcript_segments[%d].offset_seconds must be finite and non-negative", idx)
+				return nil, apiimport.ValidationError("meeting.transcript_segments[%d].offset_seconds must be finite and non-negative", idx)
 			}
 			if havePreviousOffset && offset < previousOffset {
-				return nil, validationError("meeting.transcript_segments offsets must be non-decreasing")
+				return nil, apiimport.ValidationError("meeting.transcript_segments offsets must be non-decreasing")
 			}
 			previousOffset = offset
 			havePreviousOffset = true
@@ -319,65 +318,30 @@ func normalizeSegments(segments []TranscriptSegment) ([]TranscriptSegment, error
 func normalizePerson(field string, person MeetingPerson) (MeetingPerson, error) {
 	out := MeetingPerson{Name: strings.TrimSpace(person.Name)}
 	if strings.TrimSpace(person.Email) != "" {
-		email, err := normalizeEmail(field+".email", person.Email)
+		email, err := apiimport.NormalizeEmail(field+".email", person.Email)
 		if err != nil {
 			return MeetingPerson{}, err
 		}
 		out.Email = email
 	}
 	if strings.TrimSpace(person.Phone) != "" {
-		phone, err := normalizePhone(field+".phone", person.Phone)
+		phone, err := apiimport.NormalizePhone(field+".phone", person.Phone)
 		if err != nil {
 			return MeetingPerson{}, err
 		}
 		out.Phone = phone
 	}
 	if out.Email == "" && out.Phone == "" {
-		return MeetingPerson{}, validationError("%s requires an email or phone", field)
+		return MeetingPerson{}, apiimport.ValidationError("%s requires an email or phone", field)
 	}
 	out.ID = strings.TrimSpace(person.ID)
-	if err := validateBoundedOptional(field+".id", out.ID, maxPersonIDChars); err != nil {
+	if err := apiimport.ValidateBoundedOptional(field+".id", out.ID, maxPersonIDChars); err != nil {
 		return MeetingPerson{}, err
 	}
 	if strings.IndexFunc(out.ID, unicode.IsControl) >= 0 {
-		return MeetingPerson{}, validationError("%s.id must not contain control characters", field)
+		return MeetingPerson{}, apiimport.ValidationError("%s.id must not contain control characters", field)
 	}
 	return out, nil
-}
-
-// normalizePhone accepts international numbers only (a leading + or 00) and
-// returns E.164. National numbers are rejected rather than guessed: a wrong
-// country code could attach a meeting to someone else. Errors name the field,
-// never the number.
-func normalizePhone(field, value string) (string, error) {
-	// "+44 (0)20 …" marks a trunk zero that is dialed only nationally.
-	value = strings.ReplaceAll(strings.TrimSpace(value), "(0)", "")
-	var digits strings.Builder
-	for i, r := range value {
-		switch {
-		case r >= '0' && r <= '9':
-			digits.WriteRune(r)
-		case r == '+' && i == 0:
-		case r == ' ' || r == '-' || r == '.' || r == '(' || r == ')':
-		default:
-			return "", validationError("%s must contain only digits and phone formatting", field)
-		}
-	}
-	number := digits.String()
-	switch {
-	case strings.HasPrefix(value, "+"):
-	case strings.HasPrefix(number, "00"):
-		number = number[2:]
-	default:
-		return "", validationError("%s must be an international number starting with + or 00", field)
-	}
-	if strings.HasPrefix(number, "0") {
-		return "", validationError("%s must start with a country code", field)
-	}
-	if len(number) < 7 || len(number) > 15 {
-		return "", validationError("%s must have 7 to 15 digits", field)
-	}
-	return "+" + number, nil
 }
 
 func normalizeAttendees(attendees []MeetingPerson) ([]MeetingPerson, error) {
@@ -401,52 +365,4 @@ func normalizeAttendees(attendees []MeetingPerson) ([]MeetingPerson, error) {
 		out = append(out, person)
 	}
 	return out, nil
-}
-
-func normalizeEmail(field, value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", validationError("%s is required", field)
-	}
-	if !utf8.ValidString(value) {
-		return "", validationError("%s must be valid UTF-8", field)
-	}
-	parsed, err := mail.ParseAddress(value)
-	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, value) {
-		return "", validationError("%s must be one email address without a display name", field)
-	}
-	return strings.ToLower(parsed.Address), nil
-}
-
-func parseTimestamp(field, value string) (time.Time, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}, validationError("%s is required", field)
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return time.Time{}, validationError("%s must be an RFC3339 timestamp with an explicit offset", field)
-	}
-	return parsed.UTC(), nil
-}
-
-func validateBoundedRequired(field, value string, maxChars int) error {
-	if value == "" {
-		return validationError("%s is required", field)
-	}
-	return validateBoundedOptional(field, value, maxChars)
-}
-
-func validateBoundedOptional(field, value string, maxChars int) error {
-	if !utf8.ValidString(value) {
-		return validationError("%s must be valid UTF-8", field)
-	}
-	if utf8.RuneCountInString(value) > maxChars {
-		return validationError("%s must be at most %d characters", field, maxChars)
-	}
-	return nil
-}
-
-func validationError(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrValidation, fmt.Sprintf(format, args...))
 }

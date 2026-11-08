@@ -2597,16 +2597,11 @@ curl http://localhost:8080/api/v1/import/message \
 | `body_markdown`, `body_html`, `body_text` | At most one; the message needs a title or a body |
 | `message.metadata` | Any JSON object, stored with the message |
 
-The first sender field present decides the sender: an `email` or an
-international `phone` (normalized to E.164) is that address's participant,
-shared with every source; otherwise `id`, then `url`, then `name` identifies an
-imported sender. An `id` or `name` is scoped to `source.identifier`; a `url` is
-shared by every import source. Messages are stored with the caller's
-`message_type` and the conversation type `channel`, and are searchable as soon
-as the request returns. See the
-[usage guide](usage/message-import.md) for how bodies are stored.
-Unknown fields are rejected except within `message.metadata`. Validation errors
-name the failing field without echoing its value.
+Imported conversations have the conversation type `channel`. The
+[usage guide](usage/message-import.md) explains how a sender becomes a
+participant and how bodies are stored. Unknown fields are rejected except
+within `message.metadata`. Validation errors name the failing field without
+echoing its value.
 
 ---
 

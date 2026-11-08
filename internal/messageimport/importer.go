@@ -4,72 +4,51 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/apiimport"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type Status string
-
-var ErrUnavailable = errors.New("message importer is unavailable")
-
-const (
-	StatusCreated Status = "created"
-	StatusUpdated Status = "updated"
+type (
+	Status = apiimport.Status
+	Result = apiimport.Result
+	Hooks  = apiimport.Hooks
 )
 
-type Result struct {
-	Status          Status
-	SourceID        int64
-	MessageID       int64
-	SourceMessageID string
-}
+const (
+	StatusCreated = apiimport.StatusCreated
+	StatusUpdated = apiimport.StatusUpdated
+)
 
-type Hooks struct {
-	AfterSourceSetup func() error
-	RefreshCache     func(context.Context, string) error
-}
+var ErrUnavailable = apiimport.ErrUnavailable
 
 type Importer struct {
-	store  *store.Store
-	hooks  Hooks
-	logger *slog.Logger
+	base *apiimport.Importer
 }
 
 func NewImporter(s *store.Store, hooks Hooks) *Importer {
-	return &Importer{store: s, hooks: hooks, logger: slog.Default()}
+	return &Importer{base: apiimport.NewImporter(s, "message import", hooks)}
 }
 
 // WithLogger sets the logger used for best-effort post-import work.
 func (i *Importer) WithLogger(logger *slog.Logger) *Importer {
-	if logger != nil {
-		i.logger = logger
-	}
+	i.base.WithLogger(logger)
 	return i
-}
-
-// writeResult reports what persisting one snapshot did. Changed means the
-// message write committed, even when a later step returned an error.
-type writeResult struct {
-	MessageID int64
-	Created   bool
-	Changed   bool
 }
 
 // Import stores one message. source.identifier and message.external_id
 // identify it: a retry or a replacement updates the same archived message.
-func (i *Importer) Import(ctx context.Context, req Request) (result Result, retErr error) {
-	if i == nil || i.store == nil {
+func (i *Importer) Import(ctx context.Context, req Request) (Result, error) {
+	if i == nil || !i.base.Available() {
 		return Result{}, ErrUnavailable
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-
 	normalized, err := req.Normalize()
 	if err != nil {
 		return Result{}, err
@@ -78,113 +57,55 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 	if err != nil {
 		return Result{}, err
 	}
-
-	source, err := i.store.GetOrCreateSourceContext(ctx, SourceType, snapshot.SourceIdentifier)
-	if err != nil {
-		return Result{}, fmt.Errorf("resolve message import source: %w", err)
-	}
-	result.SourceID = source.ID
-	result.SourceMessageID = snapshot.SourceMessageID
-
-	displayName := snapshot.SourceDisplayName
-	if displayName == "" && (!source.DisplayName.Valid || strings.TrimSpace(source.DisplayName.String) == "") {
-		displayName = snapshot.SourceIdentifier
-	}
-	if displayName != "" && (!source.DisplayName.Valid || source.DisplayName.String != displayName) {
-		if err := i.store.UpdateSourceDisplayNameContext(ctx, source.ID, displayName); err != nil {
-			if !errors.Is(err, store.ErrSourceSettingsInvalid) {
-				return result, fmt.Errorf("update message import source display name: %w", err)
-			}
-			i.logger.WarnContext(ctx,
-				"message import source display name conflicts with another source selector; keeping current name",
-				"source_id", source.ID,
-			)
-		}
-	}
 	// A newly confirmed address also re-attributes this source's earlier
 	// messages, including the one being retried, so an unchanged retry needs
 	// no rewrite to pick it up.
-	if err := i.store.AddAccountIdentityAndRefreshMessageAttributionContext(
-		ctx, source.ID, snapshot.AccountEmail, "account-email", "",
-	); err != nil {
-		return result, fmt.Errorf("confirm message import source identity: %w", err)
-	}
-	if i.hooks.AfterSourceSetup != nil {
-		if err := i.hooks.AfterSourceSetup(); err != nil {
-			return result, fmt.Errorf("run post-source setup: %w", err)
-		}
-	}
-
-	syncID, err := i.store.StartSyncContext(ctx, source.ID, SourceType)
-	if err != nil {
-		return result, fmt.Errorf("start message import sync: %w", err)
-	}
-	st := i.store.ScopedToSync(source.ID, syncID)
-	checkpoint := &store.Checkpoint{}
-	defer func() {
-		if retErr == nil {
-			return
-		}
-		// The failed run must be recorded even when the request was canceled.
-		if failErr := st.FailSyncWithCheckpointContext(
-			context.WithoutCancel(ctx), syncID, retErr.Error(), checkpoint,
-		); failErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("record failed message import sync: %w", failErr))
-		}
-	}()
-
-	write, writeErr := persist(ctx, st, source.ID, snapshot)
-	if write.MessageID != 0 {
-		result.MessageID = write.MessageID
-		result.Status = StatusUpdated
-		checkpoint.MessagesProcessed = 1
-		if write.Created {
-			result.Status = StatusCreated
-			checkpoint.MessagesAdded = 1
-		} else if write.Changed {
-			checkpoint.MessagesUpdated = 1
-		}
-	}
-	label := SourceType + ":" + snapshot.SourceIdentifier
-	if writeErr != nil {
-		if write.Changed {
-			// The message is stored; keep the cache in step even though the run failed.
-			i.refreshCache(context.WithoutCancel(ctx), label, source.ID, snapshot.SourceMessageID)
-		}
-		return result, writeErr
-	}
-
-	if err := st.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
-		return result, fmt.Errorf("checkpoint message import sync: %w", err)
-	}
-	if err := st.CompleteSyncContext(ctx, syncID, ""); err != nil {
-		return result, fmt.Errorf("complete message import sync: %w", err)
-	}
-	// Even an unchanged message can follow an account identity that
-	// re-attributed earlier messages; the refresh's own staleness check
-	// decides whether a build is due.
-	i.refreshCache(ctx, label, source.ID, snapshot.SourceMessageID)
-	return result, nil
+	return i.base.Import(ctx, apiimport.Item{
+		Source: apiimport.Source{
+			Type:         SourceType,
+			Identifier:   snapshot.SourceIdentifier,
+			DisplayName:  snapshot.SourceDisplayName,
+			AccountEmail: snapshot.AccountEmail,
+		},
+		SourceMessageID: snapshot.SourceMessageID,
+		Write: func(ctx context.Context, st *store.Store, sourceID int64) (apiimport.Write, error) {
+			return persist(ctx, st, sourceID, snapshot)
+		},
+	})
 }
 
 // persist writes the snapshot unless the archive already holds the same
-// evidence. The write refreshes conversation stats in its own transaction,
-// so an unchanged retry has nothing to repair.
-func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (writeResult, error) {
+// evidence, then refreshes the stats of the message's conversation and, when
+// a replacement moved it, of the conversation it left. An unchanged retry
+// still refreshes them, which repairs a write interrupted before its stats.
+func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (apiimport.Write, error) {
 	existing, err := st.MessageMetadataBatch(ctx, sourceID, []string{snapshot.SourceMessageID})
 	if err != nil {
-		return writeResult{}, fmt.Errorf("lookup existing message: %w", err)
+		return apiimport.Write{}, fmt.Errorf("lookup existing message: %w", err)
 	}
 	prior, existed := existing[snapshot.SourceMessageID]
 	if existed && storedMatches(ctx, st, prior, snapshot) {
-		return writeResult{MessageID: prior.ID}, nil
+		write := apiimport.Write{MessageID: prior.ID}
+		return write, recomputeStats(ctx, st, prior.ID, 0)
+	}
+	var priorConversationID int64
+	if existed {
+		ref, err := st.MessageConversation(ctx, prior.ID)
+		if err != nil {
+			return apiimport.Write{}, fmt.Errorf("lookup existing message conversation: %w", err)
+		}
+		priorConversationID = ref.ConversationID
 	}
 
 	senderID, err := resolveSender(ctx, st, snapshot)
 	if err != nil {
-		return writeResult{}, err
+		return apiimport.Write{}, err
 	}
 	sender := snapshot.Sender
+	senderAddress := sender.Email
+	if senderAddress == "" {
+		senderAddress = sender.Phone
+	}
 	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: true}
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message: &store.Message{
@@ -219,16 +140,39 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 			EmailAddresses: []string{sender.Email},
 		}},
 		PreserveLabels: true,
-		// The index takes the stored sender's phone or email by the rule a
-		// rebuild applies, which may differ from the address the request sent.
-		FTSFromStoredRows: true,
-		// A message moved to another conversation changes both conversations.
-		RecomputeConversationStats: true,
+		FTS: &store.FTSDoc{
+			Subject:  snapshot.Title,
+			Body:     snapshot.BodyText,
+			FromAddr: senderAddress,
+		},
 	})
 	if err != nil {
-		return writeResult{}, fmt.Errorf("persist message: %w", err)
+		return apiimport.Write{}, fmt.Errorf("persist message: %w", err)
 	}
-	return writeResult{MessageID: messageID, Created: !existed, Changed: true}, nil
+	write := apiimport.Write{MessageID: messageID, Created: !existed, Changed: true}
+	return write, recomputeStats(ctx, st, messageID, priorConversationID)
+}
+
+// recomputeStats refreshes the conversation that holds messageID and, when
+// it differs, the prior conversation.
+func recomputeStats(ctx context.Context, st *store.Store, messageID, priorConversationID int64) error {
+	if err := st.RecomputeConversationStatsForMessageContext(ctx, messageID); err != nil {
+		return fmt.Errorf("recompute message conversation stats: %w", err)
+	}
+	if priorConversationID == 0 {
+		return nil
+	}
+	current, err := st.MessageConversation(ctx, messageID)
+	if err != nil {
+		return fmt.Errorf("lookup message conversation: %w", err)
+	}
+	if current.ConversationID == priorConversationID {
+		return nil
+	}
+	if err := st.RecomputeConversationStatsForConversationContext(ctx, priorConversationID); err != nil {
+		return fmt.Errorf("recompute prior conversation stats: %w", err)
+	}
+	return nil
 }
 
 // storedMatches treats an unreadable stored copy as changed so the write
@@ -267,22 +211,4 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 		return 0, fmt.Errorf("resolve message sender: %w", err)
 	}
 	return id, nil
-}
-
-func (i *Importer) refreshCache(ctx context.Context, label string, sourceID int64, sourceMessageID string) {
-	if i.hooks.RefreshCache == nil {
-		return
-	}
-	// The import has completed before this best-effort hook runs.
-	if err := i.hooks.RefreshCache(ctx, label); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		i.logger.Error("message import analytics cache refresh failed",
-			"source", label,
-			"source_id", sourceID,
-			"source_message_id", sourceMessageID,
-			"error", err,
-		)
-	}
 }
