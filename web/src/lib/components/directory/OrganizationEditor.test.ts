@@ -102,6 +102,10 @@ describe('OrganizationEditor', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     const address = screen.getByRole('region', { name: 'Address Suite 5, 12 Example Road' });
     expect(within(address).getByText('City').nextElementSibling?.textContent).toBe('Exampleton');
+    // The value shows once, its facts under its row; Email's heading already names its kind, an address's kind adds to it.
+    expect(screen.getAllByText('concurrent@example.test')).toHaveLength(1);
+    expect(within(address).getByText('Kind').nextElementSibling?.textContent).toBe('Work');
+    expect(within(screen.getByRole('region', { name: 'Email concurrent@example.test' })).queryByText('Kind')).toBeNull();
     await fireEvent.click(screen.getByText('Raw values'));
     expect(screen.getAllByText('vCard property').map(term => term.nextElementSibling?.textContent)).toContain('ADR');
   });
@@ -414,7 +418,11 @@ it.each(['names', 'categories'])('keeps saved %s metadata inspectable after a co
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
-  if (section === 'names') expect(within(alert).getByText('Legal names', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Synthetic Legal Ltd');
+  // A saved value shows once, in its group, marked when the group differs from what was opened; no summary row repeats it.
+  expect(within(alert).queryByText(section === 'names' ? 'Legal names' : 'Categories', { selector: 'dt' })).toBeNull();
+  expect(within(alert).getAllByText(section === 'names' ? 'Synthetic Legal Ltd' : 'Research')).toHaveLength(1);
+  expect(within(alert).getByText(section === 'names' ? 'Name · Changed' : 'Category · Changed')).toBeDefined();
+  expect(within(alert).getByText('Other details also changed')).toBeDefined();
   const value = within(alert).getByRole('region', { name: section === 'names' ? 'Name Synthetic Legal Ltd' : 'Category Research' });
   expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
   expect(within(value).getByText('Confidence').nextElementSibling?.textContent).toBe('87%');

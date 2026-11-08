@@ -237,13 +237,14 @@
   type ProfileRow = { value: string; envelope: Name['envelope']; record: object };
   const CONTACT_LABELS: Record<string, string> = { email: 'Email', phone: 'Phone', url: 'Website' };
 
-  // The structured profile the form doesn't edit, grouped as a person names it: Email, Phone, Address.
+  // The structured profile the form doesn't edit, grouped as a person names it: Email, Phone, Address. A contact's
+  // kind is its group's title, so its facts leave it out.
   function profileGroups(profile: OrganizationProfile, sections: ('names' | 'categories' | 'contact_points' | 'addresses' | 'identifiers' | 'media')[]): { title: string; rows: ProfileRow[] }[] {
     const groups = new Map<string, ProfileRow[]>();
     const add = (title: string, row: ProfileRow) => groups.set(title, [...(groups.get(title) ?? []), row]);
     if (sections.includes('names')) for (const item of profile.names ?? []) add('Name', { value: item.name, envelope: item.envelope, record: item });
     if (sections.includes('categories')) for (const item of profile.categories ?? []) add('Category', { value: item.category, envelope: item.envelope, record: item });
-    if (sections.includes('contact_points')) for (const item of profile.contact_points ?? []) add(CONTACT_LABELS[item.address_kind] ?? sentenceCase(item.address_kind), { value: item.original_value, envelope: item.envelope, record: item });
+    if (sections.includes('contact_points')) for (const item of profile.contact_points ?? []) add(CONTACT_LABELS[item.address_kind] ?? sentenceCase(item.address_kind), { value: item.original_value, envelope: item.envelope, record: { ...item, address_kind: undefined } });
     if (sections.includes('addresses')) for (const item of profile.addresses ?? []) add('Address', { value: item.original_value, envelope: item.envelope, record: item });
     if (sections.includes('identifiers')) for (const item of profile.identifiers ?? []) add('Identifier', { value: item.identifier_value, envelope: item.envelope, record: item });
     if (sections.includes('media')) for (const item of profile.media ?? []) add('Media', { value: present([item.original_value, item.media_type, item.uri]), envelope: item.envelope, record: item });
@@ -264,6 +265,8 @@
 
   // Structured sections that changed since the person opened the organization.
   const STRUCTURED = ['names', 'categories', 'contact_points', 'addresses', 'identifiers', 'media'] as const;
+  // The conflict facts whose saved values those groups list.
+  const LISTED_FACTS = ['Aliases', 'Categories', 'Legal names', 'Contact details', 'Addresses', 'Identifiers', 'Media'];
 
   type Name = NonNullable<OrganizationProfile['names']>[number];
   type NameBody = NonNullable<OrganizationProfileBody['names']>[number];
@@ -351,28 +354,26 @@
   }
 </script>
 
-{#snippet profileGroupsBlock(groups: { title: string; rows: ProfileRow[] }[], heading: string | undefined)}
+{#snippet profileGroupsBlock(groups: { title: string; rows: ProfileRow[] }[], heading: string | undefined, changed: Set<string> = new Set())}
   {@const shared = sharedProvenance(groups)}
   {@const rows = groups.flatMap((group) => group.rows.map((row) => ({ title: group.title, row, details: valueDetails(row.record, row.envelope) })))}
   {@const raw = rows.filter((item) => item.details.raw.length)}
+  {@const open = contactDetailsOpen || !heading}
   <div class="profile">
     <!-- One heading over the rows: "Contact details · From CardDAV contacts · Nov 6", and one Details for all of them. -->
     {#if heading || shared}<div class="profile-heading">
       <p>{#if heading}<span class="heading">{heading}</span>{/if}{#if heading && shared}{' · '}{/if}{#if shared}<span class="provenance" title={shared.title}>{shared.text}</span>{/if}</p>
       {#if rows.some((item) => item.details.facts.length || item.details.raw.length)}<Button label="Details" class="text-action" size="sm" ariaExpanded={contactDetailsOpen} onclick={() => contactDetailsOpen = !contactDetailsOpen} />{/if}
     </div>{/if}
-    {#if contactDetailsOpen || !heading}
-      <div class="profile-details">
-        {#each rows as item}{#if item.details.facts.length}
-          <section aria-label={`${item.title} ${item.row.value}`}><h5>{item.title} · {item.row.value}</h5><dl class="facts">{#each item.details.facts as fact}<div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>{/each}</dl></section>
-        {/if}{/each}
-        {#if raw.length}<Disclosure variant="plain" class="fold" title="Raw values">{#each raw as item}<h5>{item.title} · {item.row.value}</h5><dl class="facts">{#each item.details.raw as fact}<div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>{/each}</dl>{/each}</Disclosure>{/if}
-      </div>
-    {/if}
     {#each groups as group (group.title)}
-      <!-- Email, Phone, and Address as label | value rows; a second value of one kind keeps the label column empty. -->
-      <section class="profile-group" aria-label={group.title}>{#each group.rows as item, index}{@const line = valueProvenance(item.envelope)}<DetailRow label={index === 0 ? group.title : ''} description={line.text === shared?.text ? undefined : line}>{item.value}</DetailRow>{/each}</section>
+      <!-- Email, Phone, and Address as label | value rows; a second value of one kind keeps the label column empty.
+           With Details open, each value's facts sit under its own row, so a value shows once. -->
+      <section class="profile-group" aria-label={group.title}>{#each group.rows as item, index}{@const line = valueProvenance(item.envelope)}{@const facts = valueDetails(item.record, item.envelope).facts}
+        <DetailRow label={index === 0 ? changed.has(group.title) ? `${group.title} · Changed` : group.title : ''} description={line.text === shared?.text ? undefined : line}>{item.value}</DetailRow>
+        {#if open && facts.length}<section aria-label={`${group.title} ${item.value}`}><dl class="facts">{#each facts as fact}<div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>{/each}</dl></section>{/if}
+      {/each}</section>
     {/each}
+    {#if open && raw.length}<Disclosure variant="plain" class="fold" title="Raw values">{#each raw as item}<h5>{item.title} · {item.row.value}</h5><dl class="facts">{#each item.details.raw as fact}<div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>{/each}</dl>{/each}</Disclosure>{/if}
   </div>
 {/snippet}
 {#snippet deleteStart()}{#if initialOrganization && currentProfile && !confirmDelete}<Button tone="danger" label="Delete organization…" disabled={submitting} onclick={() => void checkDeletion()} />{/if}{/snippet}
@@ -434,10 +435,13 @@
       {@const draft = { Name: name.trim(), Kind: sentenceCase(kind), Domain: primaryDomain.trim(), Description: description.trim(), Aliases: draftValues(baselineAliases, aliasDelta).join(', '), Categories: draftValues(baselineCategories, categoryDelta).join(', ') }}
       <!-- Yours lists only the fields the person changed, the ones Keep yours writes. -->
       {@const yours = Object.fromEntries(Object.entries(draft).filter(([label, value]) => value !== openedFacts[label]))}
-      <ConflictNotice noun="organization" saved={attempt.conflict.data.organization} {...conflict(savedFacts, openedFacts, yours)} message={attempt.details}>
+      {@const groups = profileGroups(attempt.conflict.data, [...STRUCTURED])}
+      {@const openedGroups = new Map(profileGroups(currentProfile!, [...STRUCTURED]).map(group => [group.title, group.rows.map(row => row.value).join('\n')]))}
+      <!-- Details lists the saved structured values once, by group, and marks the groups that differ from what was opened. -->
+      <ConflictNotice noun="organization" saved={attempt.conflict.data.organization} {...conflict(savedFacts, openedFacts, yours)} message={attempt.details}
+        listed={LISTED_FACTS.filter(label => savedFacts[label])}>
         {#snippet more()}
-          {@const groups = profileGroups(attempt.conflict!.data, [...STRUCTURED])}
-          {#if groups.length}{@render profileGroupsBlock(groups, undefined)}{/if}
+          {#if groups.length}{@render profileGroupsBlock(groups, undefined, new Set(groups.filter(group => openedGroups.get(group.title) !== group.rows.map(row => row.value).join('\n')).map(group => group.title)))}{/if}
         {/snippet}
       </ConflictNotice>
     {:else if attempt.details || controller.createBlocked.organizations}
@@ -467,8 +471,6 @@
   /* The delete step: its sentence, the people holding jobs, and what's left, 16 apart. */
   .delete-step { display: grid; gap: var(--space-pane); min-width: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); }
   .holders { display: grid; }
-  .profile-details { display: grid; gap: var(--space-group); }
-  .profile-details section { display: grid; }
   h5 { margin: 0; color: var(--text-secondary); font-size: var(--type-meta-size); font-weight: var(--font-weight-semibold); line-height: var(--type-meta-line); }
   /* Add alias… and Add category… are text actions on a 28 line, 12 apart. */
   .add-links { display: flex; flex-wrap: wrap; gap: var(--space-box); }

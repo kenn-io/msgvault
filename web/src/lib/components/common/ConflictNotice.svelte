@@ -5,10 +5,12 @@
   import InlineNotice from './InlineNotice.svelte';
   import { conflictSaved } from '../../directory/labels';
 
-  let { noun, rows, other = [], saved, more, message, actionLabel, onaction }: {
+  let { noun, rows, other = [], listed = [], saved, more, message, actionLabel, onaction }: {
     noun: string;
     rows: Change[];
     other?: Change[];
+    /** Other changes whose saved values `more` already lists; they count as other changes but get no row of their own. */
+    listed?: string[];
     saved: { updated_at: string; source?: string };
     more?: Snippet;
     message: string;
@@ -20,7 +22,8 @@
 <InlineNotice message={`This ${noun} changed since you opened it.`} {actionLabel} {onaction}>
   <ChangeList changes={rows} otherChanged={other.length > 0} provenance={conflictSaved(saved.updated_at, saved.source)} />
   <Disclosure variant="plain" class="fold" title="Details">
-    {#if other.length}<dl>{#each other as change (change.label)}<div><dt>{change.label}</dt><dd>{change.saved || 'None'}</dd></div>{/each}</dl>{/if}
+    {@const unlisted = other.filter(change => !listed.includes(change.label))}
+    {#if unlisted.length}<dl>{#each unlisted as change (change.label)}<div><dt>{change.label}</dt><dd>{change.saved || 'None'}</dd></div>{/each}</dl>{/if}
     {@render more?.()}
     {#if message}<pre>{message}</pre>{/if}
   </Disclosure>
