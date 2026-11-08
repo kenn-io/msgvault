@@ -35,6 +35,10 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	must.NoError(err)
 	second, _, err := st.CreatePersonFromParticipantContext(ctx, b)
 	must.NoError(err)
+	_, err = st.AddPersonDateContext(ctx, second.ID, store.PersonDateInput{DateKind: store.PersonDateBirthday, Date: store.PartialDate{Month: new(10), Day: new(23)}, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	must.NoError(err)
+	second, err = st.GetPersonContext(ctx, second.ID)
+	must.NoError(err)
 	owned, err := st.CreateImportantDateSubjectContext(ctx, store.ImportantDateSubjectInput{OwnerUID: second.VCardUID, Kind: "pet", DisplayName: "Example pet", Date: store.PartialDate{Month: new(10), Day: new(23)}})
 	must.NoError(err)
 	key := "person/" + second.VCardUID + ":birthday:2027"
@@ -70,6 +74,11 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	checks.Contains(lineage.PersonUIDs, split.NewPerson.VCardUID)
 	checks.Contains(lineage.MergeIDs, merged.Merge.ID)
 	checks.Contains(lineage.SplitIDs, split.Split.ID)
+	var retainedDates int
+	for _, person := range lineage.People {
+		retainedDates += len(person.Dates)
+	}
+	checks.Positive(retainedDates)
 	must.Len(lineage.OwnedSubjects, 1)
 	checks.Equal(owned.UID, lineage.OwnedSubjects[0].UID)
 	checks.Equal(second.VCardUID, lineage.OwnedSubjects[0].OwnerUID)
