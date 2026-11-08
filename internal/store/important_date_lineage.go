@@ -102,7 +102,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		}
 		if err == nil {
 			uids[uid] = struct{}{}
-			dates, err := s.listPersonDatesTx(ctx, snapshot.tx, id, true)
+			dates, err := s.listPersonDatesTx(ctx, snapshot.tx, id, false)
 			if err != nil {
 				return result, fmt.Errorf("read lineage dates: %w", err)
 			}
