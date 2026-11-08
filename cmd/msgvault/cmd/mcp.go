@@ -28,6 +28,7 @@ var mcpNoSQLiteScanner bool
 var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
+var mcpConfirmSensitiveDrafts bool
 var mcpAllowProfileWrites bool
 var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
@@ -618,6 +619,8 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		}
 		return new(bool)
 	}
+	flags.BoolVar(bind(&mcpConfirmSensitiveDrafts), prefix+"confirm-sensitive-drafts", false,
+		"Require MCP client confirmation before creating or editing drafts with likely sensitive content.")
 	flags.BoolVar(bind(&mcpAllowProfileWrites), prefix+"allow-profile-writes", false,
 		"Expose person promotion, display-name editing, and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
@@ -641,6 +644,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 }
 
 func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.ServeOptions) {
+	opts.ConfirmSensitiveDrafts, _ = cmd.Flags().GetBool(prefix + "confirm-sensitive-drafts")
 	opts.AllowProfileWrites, _ = cmd.Flags().GetBool(prefix + "allow-profile-writes")
 	opts.AllowIdentityDecisions, _ = cmd.Flags().GetBool(prefix + "allow-identity-decisions")
 	opts.AllowIdentityScoring, _ = cmd.Flags().GetBool(prefix + "allow-identity-scoring")
