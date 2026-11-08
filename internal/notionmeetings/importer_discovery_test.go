@@ -531,6 +531,7 @@ func TestSaturatedFailingRetriesPermitFreshQuery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, source, imp := broadFixture(t)
+	imp.limits.Requests = 2
 	queries := 0
 	source.windows = func(context.Context, int, *MeetingFilter) (*QueryResult, error) {
 		queries++
