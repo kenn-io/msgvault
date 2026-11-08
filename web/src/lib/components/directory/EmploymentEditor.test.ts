@@ -109,6 +109,23 @@ it('saves against the opened job version and retries against the conflict versio
   expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r3"']);
 });
 
+it('describes a job moved to an unloaded person without showing their ID', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    const job = employment(11, ++reads, { person_id: reads === 1 ? 7 : 8 });
+    return Response.json(job, { headers: { ETag: `"employment-11-r${reads}"` } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+  await screen.findByRole('textbox', { name: 'Job title' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  await fireEvent.click(screen.getByText('Details'));
+  expect(screen.getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('another person');
+});
+
 it('hides the job form and Save after a failed load until Retry succeeds', async () => {
   let reads = 0;
   const writes: string[] = [];

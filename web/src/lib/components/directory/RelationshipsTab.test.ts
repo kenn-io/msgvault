@@ -1220,6 +1220,31 @@ it.each([2024, 2028])('validates connection retries against the saved start year
   expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', year === 2028);
 });
 
+it('saves notes restored to the opening value after a conflict', async () => {
+  const bodies: unknown[] = [];
+  const opening = relationship(41, 1, { notes: 'Opening note' });
+  const saved = relationship(41, 2, { notes: 'Concurrent note' });
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      bodies.push(await request.json());
+      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    }
+    return Response.json(bodies.length ? saved : opening, { headers: { ETag: bodies.length ? '"person-relationship-41-r2"' : '"person-relationship-41-r1"' } });
+  });
+  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await rowAction('Edit…');
+  const notes = await screen.findByRole('textbox', { name: 'Notes' });
+  await fireEvent.input(notes, { target: { value: 'Draft note' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  await fireEvent.input(notes, { target: { value: 'Opening note' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies[1]).toEqual({ notes: 'Opening note' });
+});
+
 it('shows only the connection values Keep yours will actually overwrite', async () => {
   const bodies: unknown[] = [];
   const opening = relationship(41, 1, { notes: 'Original note' });
