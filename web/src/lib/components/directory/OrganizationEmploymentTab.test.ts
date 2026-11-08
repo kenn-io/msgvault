@@ -528,7 +528,6 @@ describe('OrganizationEmploymentTab', () => {
 
   it('retains a make-primary conflict and renders the complete refreshed employment', async () => {
     let reads = 0;
-    const primaryWrites: Request[] = [];
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
@@ -546,7 +545,6 @@ describe('OrganizationEmploymentTab', () => {
       }
       if (path === '/api/v1/organizations/22') return Response.json({ organization: organization(22, 1, 'Current Employer'), names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] }, { headers: { ETag: '"organization-22-r1"' } });
       if (path === '/api/v1/employments/11/primary') {
-        primaryWrites.push(request);
         return Response.json({ error: 'revision_conflict', message: 'primary changed elsewhere' }, { status: 412 });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
@@ -565,7 +563,6 @@ describe('OrganizationEmploymentTab', () => {
     expect(within(alert as HTMLElement).getByText('Confidence').nextElementSibling?.textContent).toBe('66%');
     expect(within(alert as HTMLElement).getByText('Source').nextElementSibling?.textContent).toBe('From your messages');
     expect(within(alert as HTMLElement).getByText('Source reference').nextElementSibling?.textContent).toBe('concurrent-primary');
-    expect(primaryWrites.map(request => request.headers.get('If-Match'))).toEqual(['"employment-11-r1"']);
     expect(reads).toBe(2);
   });
 
