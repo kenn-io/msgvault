@@ -166,11 +166,11 @@ func runNotionMeetingsProbeWithTimeout(ctx context.Context, out io.Writer, clien
 	} else {
 		block, loadErr := client.RetrieveBlock(ctx, sampleID)
 		if loadErr != nil {
-			return &notionProbeError{stage: "probe Notion sample header", cause: loadErr}
+			return &notionProbeError{stage: "read sample", cause: loadErr}
 		}
 		var meeting notionmeetings.MeetingNote
 		if block == nil || json.Unmarshal(block.Raw, &meeting) != nil || meeting.ID != sampleID || meeting.Type != "meeting_notes" {
-			return &notionProbeError{stage: "probe Notion sample header", cause: notionmeetings.ErrMalformedResponse}
+			return &notionProbeError{stage: "read sample", cause: notionmeetings.ErrMalformedResponse}
 		}
 		matched := meeting.CreatedBy.ID == identity.UserID
 		for _, id := range meeting.MeetingNotes.CalendarEvent.Attendees {
@@ -404,6 +404,10 @@ func notionCoverageLabel(reason string) string {
 		return "Query limit"
 	case "inaccessible_subtree":
 		return "Inaccessible content"
+	case "cursor_cycle":
+		return "Page loop"
+	case "discovery_budget":
+		return "Scan limit"
 	case "cursor_budget":
 		return "Save limit"
 	case "frontier_budget":

@@ -216,7 +216,7 @@ func (state *syncState) validateTransient() error {
 func (state *syncState) validateTransientWith(limits discoveryLimits) error {
 	s := *state
 	if len(s.Admissions) > limits.Pending || len(s.Frontier) > limits.Frontier || len(s.Seen) > limits.Scopes || len(s.Deferred) > limits.Scopes || len(s.Windows) > limits.Frontier || len(s.Pending) > limits.Pending || len(s.Coverage.Diagnostics) > limits.Diagnostics {
-		return errors.New("notion discovery cursor exceeds queue limits")
+		return errors.New("too much queued sync work")
 	}
 	s.Known = nil
 	s.TranscriptRetryUntil = nil
@@ -226,7 +226,7 @@ func (state *syncState) validateTransientWith(limits discoveryLimits) error {
 		return err
 	}
 	if len(encoded) > limits.Bytes {
-		return errors.New("notion discovery cursor exceeds transient byte limit")
+		return errors.New("saved sync progress is too large")
 	}
 	return nil
 }
@@ -249,37 +249,37 @@ func (state *syncState) copyDiscovery() syncState {
 }
 func validateScopeTask(task scopeTask) error {
 	if task.Depth < 0 || task.Offset < 0 {
-		return errors.New("notion cursor has negative scope position")
+		return errors.New("invalid saved scan position")
 	}
 	switch task.Kind {
 	case "search":
 	case "blocks", "data_source", "database", "meeting":
 		if strings.TrimSpace(task.ID) == "" {
-			return errors.New("notion cursor has blank scope ID")
+			return errors.New("missing saved scan target")
 		}
 	default:
-		return errors.New("notion cursor has unsupported scope kind")
+		return errors.New("unrecognized saved scan target")
 	}
 	return nil
 }
 func validateWindow(window queryWindow) error {
 	if (!window.From.IsZero() && !window.From.Equal(window.From.Truncate(time.Minute))) || (!window.To.IsZero() && !window.To.Equal(window.To.Truncate(time.Minute))) {
-		return errors.New("notion cursor query bounds must use minute precision")
+		return errors.New("saved scan times must use whole minutes")
 	}
 	if !window.From.IsZero() && !window.To.IsZero() && !window.To.After(window.From) {
-		return errors.New("notion cursor has invalid query interval")
+		return errors.New("invalid saved date range")
 	}
 	return nil
 }
 func (state *syncState) validateDiscovery() error {
 	s := *state
 	if s.NextLane < 0 || s.NextLane > 3 {
-		return errors.New("notion cursor has invalid scheduler lane")
+		return errors.New("invalid saved sync progress")
 	}
 	ids := map[string]bool{}
 	for _, id := range s.Admissions {
 		if strings.TrimSpace(id) == "" || ids[id] {
-			return errors.New("notion cursor has blank or duplicate admission")
+			return errors.New("missing or repeated saved meeting")
 		}
 		ids[id] = true
 	}
@@ -295,7 +295,7 @@ func (state *syncState) validateDiscovery() error {
 	}
 	for _, gap := range s.Deferred {
 		if (gap.Task == nil) == (gap.Window == nil) || gap.NextAttemptAt.IsZero() || gap.Reason == "" {
-			return errors.New("notion cursor has invalid deferred scope")
+			return errors.New("invalid saved retry")
 		}
 		if gap.Task != nil {
 			if err := validateScopeTask(*gap.Task); err != nil {

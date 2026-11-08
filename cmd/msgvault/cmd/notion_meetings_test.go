@@ -151,7 +151,7 @@ func TestRunNotionMeetingsProbeChecksBlockWhenQueryHasParent(t *testing.T) {
 	}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sample header")
+	assert.Contains(t, err.Error(), "read sample")
 }
 
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {

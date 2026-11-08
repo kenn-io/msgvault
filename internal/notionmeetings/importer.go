@@ -530,7 +530,7 @@ func (imp *Importer) loadState(ctx context.Context, sourceID int64) (syncState, 
 	if err == nil {
 		cursor = previous.CursorBefore.String
 	} else if !errors.Is(err, store.ErrSyncRunNotFound) {
-		return state, fmt.Errorf("load recoverable Notion cursor: %w", err)
+		return state, fmt.Errorf("restore sync progress: %w", err)
 	}
 	if cursor == "" {
 		previous, err = imp.store.GetLastSuccessfulSyncByType(ctx, sourceID, SourceType)
