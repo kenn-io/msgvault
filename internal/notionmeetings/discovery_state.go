@@ -158,6 +158,7 @@ func scopeFingerprint(source string, identity Identity, opts ImportOptions) stri
 func (state *syncState) startSweep(opts ImportOptions, now time.Time) {
 	state.Active = true
 	state.FreshRequested = false
+	state.SeedNext = 0
 	state.Seen = map[string]bool{}
 	state.Windows = []queryWindow{{To: now.UTC().Truncate(time.Minute).Add(time.Minute)}}
 	for _, id := range normalizedIDs(opts.RootPageIDs) {
@@ -179,6 +180,25 @@ func (state *syncState) startSweep(opts ImportOptions, now time.Time) {
 		state.Frontier = append(state.Frontier, scopeTask{Kind: "meeting", ID: id})
 		state.Seen["meeting:"+id] = true
 	}
+}
+
+// configuredSeeds is derived from the fingerprinted options, so a compact
+// checkpoint needs only the next position instead of duplicating every root.
+func configuredSeeds(opts ImportOptions) []scopeTask {
+	var seeds []scopeTask
+	for _, id := range normalizedIDs(opts.RootPageIDs) {
+		seeds = append(seeds, scopeTask{Kind: "blocks", ID: id})
+	}
+	for _, id := range normalizedIDs(opts.RootDataSourceIDs) {
+		seeds = append(seeds, scopeTask{Kind: "data_source", ID: id})
+	}
+	if searchEnabled(opts) {
+		seeds = append(seeds, scopeTask{Kind: "search"})
+	}
+	for _, id := range normalizedIDs(opts.MeetingBlockIDs) {
+		seeds = append(seeds, scopeTask{Kind: "meeting", ID: id})
+	}
+	return seeds
 }
 func (state *syncState) reason(reason, kind string) {
 	if state.Coverage.Reasons == nil {
@@ -340,6 +360,9 @@ func (state *syncState) validateTransientWith(limits discoveryLimits) error {
 func (state *syncState) workRemaining() int {
 	s := *state
 	count := len(s.Admissions) + len(s.Frontier) + len(s.Windows) + len(s.Pending) + len(s.PendingBacklog) + len(s.Deferred)
+	if s.SeedNext > 0 {
+		count++
+	}
 	for _, gap := range s.Deferred {
 		count += len(gap.PeerTasks) + len(gap.PeerWindows)
 	}
@@ -388,7 +411,7 @@ func validateWindow(window queryWindow) error {
 }
 func (state *syncState) validateDiscovery() error {
 	s := *state
-	if s.NextLane < 0 || s.NextLane > 3 {
+	if s.NextLane < 0 || s.NextLane > 3 || s.SeedNext < 0 || (s.SeedNext > 0 && !s.Active) {
 		return errors.New("invalid saved sync progress")
 	}
 	ids := map[string]bool{}

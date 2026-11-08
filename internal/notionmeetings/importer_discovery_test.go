@@ -527,6 +527,64 @@ func TestSaturatedDeferredQueueRotatesReplayableFrontier(t *testing.T) {
 	assert.Equal(int64(1), result.MeetingsAdded)
 }
 
+func TestFreshSweepSeedsRootsWithinRemainingCursorBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	imp.limits.Requests = 1
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch}
+	for i := range 5 {
+		id := fmt.Sprintf("root-%d-%s", i, strings.Repeat("x", 500))
+		opts.RootPageIDs = append(opts.RootPageIDs, id)
+		source.children[id] = map[string]*BlockPage{"": {}}
+	}
+	state := newSyncState()
+	state.Identity = Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}
+	state.Fingerprint = scopeFingerprint("work", state.Identity, opts)
+	state.NextLane = 1
+	task := scopeTask{Kind: "blocks", ID: "deferred", Cursor: strings.Repeat("p", 4096)}
+	state.Deferred = []deferredScope{{Task: &task, Reason: "inaccessible_subtree", NextAttemptAt: imp.now().Add(time.Hour)}}
+	baseline, err := json.Marshal(state)
+	require.NoError(err)
+	imp.limits.Bytes = len(baseline) + 1600
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	saved, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	assert.True(saved.Active)
+	assert.Positive(saved.SeedNext)
+	require.Len(saved.Deferred, 1)
+	require.NotNil(saved.Deferred[0].Task)
+	assert.Equal(task.Cursor, saved.Deferred[0].Task.Cursor)
+
+	imp.limits.Bytes = defaultDiscoveryLimits().Bytes
+	for range 10 {
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		saved, err = imp.loadState(t.Context(), src.ID)
+		require.NoError(err)
+		if saved.SeedNext == 0 {
+			break
+		}
+	}
+	assert.Zero(saved.SeedNext)
+	for _, id := range opts.RootPageIDs {
+		assert.True(saved.Seen["blocks:"+id])
+	}
+	require.Len(saved.Deferred, 1)
+	require.NotNil(saved.Deferred[0].Task)
+	assert.Equal(task.Cursor, saved.Deferred[0].Task.Cursor)
+}
+
 func TestSaturatedDeferredQueueRetainsFailedAdmission(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

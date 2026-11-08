@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	syncStateVersion           = 4
+	syncStateVersion           = 5
 	notionSnapshotVersion      = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
@@ -116,6 +116,7 @@ type syncState struct {
 	Seen                 map[string]bool         `json:"visited,omitempty"`
 	Active               bool                    `json:"active"`
 	FreshRequested       bool                    `json:"fresh_requested"`
+	SeedNext             int                     `json:"seed_next,omitempty"`
 	NextLane             int                     `json:"next_lane,omitempty"`
 	RefreshCursor        string                  `json:"refresh_cursor,omitempty"`
 	RefreshKnownNext     bool                    `json:"refresh_known_next,omitempty"`
@@ -143,7 +144,7 @@ func (state *syncState) marshal() (string, error) {
 
 func (state *syncState) validate() error {
 	s := *state
-	if s.Version != 1 && s.Version != 2 && s.Version != 3 && s.Version != syncStateVersion {
+	if s.Version != 1 && s.Version != 2 && s.Version != 3 && s.Version != 4 && s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
 	allPending := append(append([]pendingTranscript(nil), s.Pending...), s.PendingBacklog...)
@@ -281,6 +282,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		state.Deferred = nil
 		state.Seen = map[string]bool{}
 		state.Active = false
+		state.SeedNext = 0
 		state.Coverage = Coverage{Reasons: map[string]int{}}
 	}
 	state.Coverage.Reasons = map[string]int{}
@@ -289,17 +291,58 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if opts.Full && state.Active {
 		state.FreshRequested = true
 	}
-	if state.Active && len(state.Deferred) >= limits.Scopes {
+	if state.Active && (len(state.Deferred) >= limits.Scopes || state.SeedNext > 0) {
 		before := state.copyDiscovery()
 		state.activateOneDeferred(started, limits)
 		if state.validateTransientWith(limits) != nil {
 			state = before
 		}
 	}
-	sweepsStarted := 0
-	if !state.Active {
+	seeds := configuredSeeds(opts)
+	if state.SeedNext > len(seeds) {
+		return sum, errors.New("invalid saved root position")
+	}
+	beginSweep := func() {
+		before := state.copyDiscovery()
 		state.startSweep(opts, started)
 		state.activateDeferred(started, limits)
+		if state.validateTransientWith(limits) == nil {
+			return
+		}
+		// Retain the configured roots by position in the fingerprinted options,
+		// instead of putting all of them in a nearly full checkpoint at once.
+		state = before.copyDiscovery()
+		compact := opts
+		compact.RootPageIDs, compact.RootDataSourceIDs, compact.MeetingBlockIDs = nil, nil, nil
+		noSearch := false
+		compact.SearchAccessible = &noSearch
+		state.startSweep(compact, started)
+		if len(seeds) > 0 {
+			state.SeedNext = 1
+		}
+		if state.validateTransientWith(limits) != nil {
+			state.Coverage.Diagnostics = nil
+		}
+		if state.validateTransientWith(limits) != nil {
+			// Even the compact continuation cannot fit. Keep the inactive
+			// checkpoint, but let one due retry drain if it can be represented.
+			state = before.copyDiscovery()
+			state.activateOneDeferred(started, limits)
+			state.Active = len(state.Frontier) > 0 || len(state.Windows) > 0
+			if state.validateTransientWith(limits) != nil {
+				state = before
+			}
+			return
+		}
+		compactState := state.copyDiscovery()
+		state.activateOneDeferred(started, limits)
+		if state.validateTransientWith(limits) != nil {
+			state = compactState
+		}
+	}
+	sweepsStarted := 0
+	if !state.Active {
+		beginSweep()
 		sweepsStarted++
 	}
 	state.Coverage.Limited = opts.Limit > 0
@@ -426,7 +469,31 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		return false, nil
 	}
-	steps := []func(context.Context) (bool, error){run.stepQuery, run.stepTraversal, admissionStep, refreshStep}
+	traversalStep := func(ctx context.Context) (bool, error) {
+		if len(state.Frontier) != 0 || state.SeedNext == 0 {
+			return run.stepTraversal(ctx)
+		}
+		index := state.SeedNext - 1
+		if index >= len(seeds) {
+			return false, errors.New("invalid saved root position")
+		}
+		candidate := state.copyDiscovery()
+		task := seeds[index]
+		if !candidate.Seen[task.key()] {
+			candidate.Seen[task.key()] = true
+			candidate.Frontier = append(candidate.Frontier, task)
+		}
+		candidate.SeedNext++
+		if candidate.SeedNext > len(seeds) {
+			candidate.SeedNext = 0
+		}
+		if candidate.validateTransientWith(limits) != nil {
+			return false, nil
+		}
+		state = candidate
+		return true, nil
+	}
+	steps := []func(context.Context) (bool, error){run.stepQuery, traversalStep, admissionStep, refreshStep}
 	idle := 0
 	for idle < len(steps) {
 		if err := ctx.Err(); err != nil {
@@ -520,11 +587,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		} else {
 			idle++
 		}
-		if len(state.Frontier) == 0 && len(state.Windows) == 0 {
+		if len(state.Frontier) == 0 && len(state.Windows) == 0 && state.SeedNext == 0 {
 			state.Active = false
 			if sweepsStarted == 0 && state.FreshRequested && run.requests < limits.Requests {
-				state.startSweep(opts, started)
-				state.activateDeferred(started, limits)
+				beginSweep()
 				sweepsStarted++
 				idle = 0
 			}
@@ -538,7 +604,7 @@ complete:
 	if len(state.Admissions) > 0 {
 		state.reason("unfinished_progress", "pending")
 	}
-	if len(state.Frontier) == 0 && len(state.Windows) == 0 {
+	if len(state.Frontier) == 0 && len(state.Windows) == 0 && state.SeedNext == 0 {
 		state.Active = false
 	}
 	state.currentCoverage(searchEnabled(opts))
