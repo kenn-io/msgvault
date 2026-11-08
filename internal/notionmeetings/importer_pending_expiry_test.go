@@ -2,6 +2,7 @@ package notionmeetings
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -143,4 +144,19 @@ func TestImporterDefersAbandonedTranscriptRetryWithinWindow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDuePendingSelectionIsIndependentOfKnownRefresh(t *testing.T) {
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	state := newSyncState()
+	for i := range 40 {
+		state.Known[fmt.Sprintf("known-%02d", i)] = knownMeeting{}
+	}
+	state.Known["pending-z"] = knownMeeting{}
+	state.Pending = []pendingTranscript{
+		{BlockID: "pending-z", NextAttemptAt: now.Add(-time.Hour).Format(time.RFC3339), RetryUntil: now.Add(time.Hour).Format(time.RFC3339)},
+		{BlockID: "later", NextAttemptAt: now.Add(time.Hour).Format(time.RFC3339), RetryUntil: now.Add(2 * time.Hour).Format(time.RFC3339)},
+	}
+	assert.NotContains(t, state.refreshIDs(32), "pending-z")
+	assert.Equal(t, []string{"pending-z"}, state.duePendingIDs(now, 32))
 }

@@ -95,10 +95,10 @@ func TestNotionSummaryReportsCountOnlyScopeAndCoverage(t *testing.T) {
 
 	var out bytes.Buffer
 	writeNotionMeetingsSummary(&out, &notionmeetings.ImportSummary{IdentityProvenance: "pat_owner", ScopeCounts: map[string]int{"page_roots": 2, "data_source_roots": 1, "meeting_roots": 3, "accessible_search": 1}, CoverageReasons: map[string]int{"query_cap": 1, "search_best_effort": 1}, WorkRemaining: 4, PartialCoverage: true})
-	assert.Contains(out.String(), "Identity: pat_owner")
+	assert.Contains(out.String(), "Identity: PAT owner")
 	assert.Contains(out.String(), "page roots: 2")
 	assert.Contains(out.String(), "Work remaining: 4")
-	assert.Contains(out.String(), "query_cap: 1")
+	assert.Contains(out.String(), "Query limit: 1")
 }
 
 func TestNotionProbeDoesNotHydrateUnrelatedRefreshedMeeting(t *testing.T) {
@@ -125,7 +125,7 @@ func TestNotionProbeDoesNotHydrateUnrelatedRefreshedMeeting(t *testing.T) {
 	require.NoError(t, runNotionMeetingsProbe(t.Context(), &out, notionmeetings.NewClient(server.URL, "synthetic"), nil, notionmeetings.ImportOptions{TokenType: "pat"}))
 	assert.Zero(sectionCalls)
 	assert.Contains(out.String(), "Credentials: self verified")
-	assert.Contains(out.String(), "Identity: pat_owner")
+	assert.Contains(out.String(), "Identity: PAT owner")
 	assert.Contains(out.String(), "not selected for connected human")
 	assert.NotContains(out.String(), "private-section")
 }

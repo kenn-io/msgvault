@@ -117,7 +117,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 
 	_, _ = fmt.Fprintln(out, "Notion AI Meeting Notes access probe:")
 	selfSource, ok := client.(interface {
-		RetrieveSelf(context.Context) (*notionmeetings.User, error)
+		RetrieveSelf(ctx context.Context) (*notionmeetings.User, error)
 	})
 	if !ok {
 		return &notionProbeError{stage: "probe Notion credentials", cause: notionmeetings.ErrUnknownIdentity}
@@ -133,7 +133,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		_, _ = fmt.Fprintln(out, "  Identity: unknown (set token_type=pat or configure user_id)")
 		return &notionProbeError{stage: "probe Notion identity", cause: err}
 	}
-	_, _ = fmt.Fprintf(out, "  Identity: %s\n", identity.Provenance)
+	_, _ = fmt.Fprintf(out, "  Identity: %s\n", notionIdentityLabel(identity.Provenance))
 	writeNotionScope(out, opts)
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
@@ -159,7 +159,6 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	}
 	if sampleID == "" {
 		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no visible meeting)")
-		_, _ = fmt.Fprintln(out, "  Sample hydration: not tested (no visible meeting)")
 	} else {
 		block, loadErr := client.RetrieveBlock(ctx, sampleID)
 		if loadErr != nil {
@@ -191,9 +190,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			if incomplete {
 				_, _ = fmt.Fprintln(out, "  Sample hydration: incomplete (some meeting sections could not be read)")
 			} else if strings.TrimSpace(sampled.Transcript) == "" {
-				_, _ = fmt.Fprintln(out, "  Sample hydration: available (transcript pending)")
-			} else {
-				_, _ = fmt.Fprintln(out, "  Sample hydration: available")
+				_, _ = fmt.Fprintln(out, "  Transcript: pending")
 			}
 		}
 	}
@@ -307,12 +304,9 @@ var syncNotionMeetingsCmd = &cobra.Command{
 	Short: "Sync Notion AI Meeting Notes",
 	Long: `Sync accessible Notion meeting blocks created by or attended by the configured human.
 
-Discovery combines bounded attendee-query date windows, accessible search,
-configured roots, and remembered meeting IDs. Search is best effort; this does
-not enumerate the entire workspace. Runs resume saved progress and refresh old
-meetings. --after filters new admissions by occurrence time; --limit caps new
-admissions. --full requests a new bounded sweep after unfinished work and forces
-selected archive refreshes. --probe reports capabilities without meeting content.`,
+Search is best effort; this does not enumerate the entire workspace. Sync also
+checks configured roots and remembered meeting IDs, resumes saved progress, and
+refreshes old meetings.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -384,12 +378,32 @@ selected archive refreshes. --probe reports capabilities without meeting content
 	},
 }
 
+func notionIdentityLabel(provenance string) string {
+	if provenance == "pat_owner" {
+		return "PAT owner"
+	}
+	return strings.ReplaceAll(provenance, "_", " ")
+}
+
+func notionCoverageLabel(reason string) string {
+	switch reason {
+	case "query_cap":
+		return "Query limit"
+	case "inaccessible_subtree":
+		return "Inaccessible content"
+	default:
+		if reason == "" {
+			return "Unknown"
+		}
+		return strings.ToUpper(reason[:1]) + strings.ReplaceAll(reason[1:], "_", " ")
+	}
+}
 func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSummary) {
 	_, _ = fmt.Fprintln(out, "\nNotion meetings sync complete!")
 	_, _ = fmt.Fprintf(out, "  Meetings processed: %d\n", summary.MeetingsProcessed)
 	_, _ = fmt.Fprintf(out, "  Meetings added:     %d\n", summary.MeetingsAdded)
 	_, _ = fmt.Fprintf(out, "  Meetings updated:   %d\n", summary.MeetingsUpdated)
-	_, _ = fmt.Fprintf(out, "  Identity: %s\n", summary.IdentityProvenance)
+	_, _ = fmt.Fprintf(out, "  Identity: %s\n", notionIdentityLabel(summary.IdentityProvenance))
 	_, _ = fmt.Fprintf(out, "  Scope: page roots: %d; data-source roots: %d; meeting IDs: %d; accessible search: %t\n", summary.ScopeCounts["page_roots"], summary.ScopeCounts["data_source_roots"], summary.ScopeCounts["meeting_roots"], summary.ScopeCounts["accessible_search"] > 0)
 	_, _ = fmt.Fprintf(out, "  Work remaining: %d\n", summary.WorkRemaining)
 	reasons := make([]string, 0, len(summary.CoverageReasons))
@@ -398,7 +412,7 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 	}
 	sort.Strings(reasons)
 	for _, reason := range reasons {
-		_, _ = fmt.Fprintf(out, "  %s: %d\n", reason, summary.CoverageReasons[reason])
+		_, _ = fmt.Fprintf(out, "  %s: %d\n", notionCoverageLabel(reason), summary.CoverageReasons[reason])
 	}
 
 	if summary.MaintenanceRetries > 0 {
@@ -447,11 +461,11 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 
 func init() {
 	syncNotionMeetingsCmd.Flags().IntVar(&syncNotionMeetingsLimit, "limit", 0,
-		"maximum new meeting admissions per bounded run; known refresh is additional (0 = unlimited)")
+		"new meetings per run; existing meetings refresh separately (0 = unlimited)")
 	syncNotionMeetingsCmd.Flags().StringVar(&syncNotionMeetingsAfter, "after", "",
-		"new-admission occurrence lower bound (YYYY-MM-DD); remembered meetings still refresh")
+		"new meetings from YYYY-MM-DD; existing meetings still refresh")
 	syncNotionMeetingsCmd.Flags().BoolVar(&syncNotionMeetingsFull, "full", false,
-		"force bounded refresh and request a fresh sweep after unfinished work")
+		"force a limited refresh; rescan after pending work")
 	syncNotionMeetingsCmd.Flags().BoolVar(&syncNotionMeetingsProbe, "probe", false,
 		"validate capabilities and result shape without printing meeting content")
 	rootCmd.AddCommand(addNotionMeetingsCmd)

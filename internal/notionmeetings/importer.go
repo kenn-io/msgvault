@@ -304,6 +304,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	run := &discoveryRun{state: &state, client: api, source: imp.client, limits: limits, now: started}
 	refresh := state.refreshIDs(limits.KnownRefresh)
+	due := state.duePendingIDs(started, limits.KnownRefresh)
 	processed := map[string]bool{}
 	admitted := 0
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
@@ -340,11 +341,18 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return true, nil
 	}
 	refreshStep := func(ctx context.Context) (bool, error) {
-		for len(refresh) > 0 {
-			id := refresh[0]
-			refresh = refresh[1:]
+		for len(due) > 0 || len(refresh) > 0 {
+			isDue := len(due) > 0
+			var id string
+			if isDue {
+				id, due = due[0], due[1:]
+			} else {
+				id, refresh = refresh[0], refresh[1:]
+			}
 			if processed[id] {
-				state.RefreshCursor = id
+				if !isDue {
+					state.RefreshCursor = id
+				}
 				continue
 			}
 			waiting := false
@@ -360,13 +368,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 			_, err := imp.processMeeting(ctx, scoped, &state, sum, opts, id, progress, hydrator)
 			if err != nil {
-				if errors.Is(err, ErrRequestBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				if !isDue && (errors.Is(err, ErrRequestBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 					// Rotation records the interrupted attempt, not successful freshness.
 					state.RefreshCursor = id
 				}
 				return false, err
 			}
-			state.RefreshCursor = id
+			if !isDue {
+				state.RefreshCursor = id
+			}
 			processed[id] = true
 			sum.MaintenanceRetries++
 			return true, nil
@@ -514,6 +524,28 @@ func (s syncState) refreshIDs(limit int) []string {
 	}
 	rotated := append(append([]string{}, ids[start:]...), ids[:start]...)
 	return rotated[:min(len(rotated), limit)]
+}
+
+// Due retries have their own bounded selection, independent of archive size.
+// Oldest attempts go first; overall request and time budgets still apply.
+func (s syncState) duePendingIDs(now time.Time, limit int) []string {
+	pending := append([]pendingTranscript(nil), s.Pending...)
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].NextAttemptAt == pending[j].NextAttemptAt {
+			return pending[i].BlockID < pending[j].BlockID
+		}
+		return pending[i].NextAttemptAt < pending[j].NextAttemptAt
+	})
+	ids := make([]string, 0, min(len(pending), limit))
+	for _, item := range pending {
+		if len(ids) == limit {
+			break
+		}
+		if pendingDue(item, now) {
+			ids = append(ids, item.BlockID)
+		}
+	}
+	return ids
 }
 
 func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNote, error) {

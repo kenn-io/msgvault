@@ -319,7 +319,7 @@ func TestNotionProbeHTTPBlockOwnedHydration(t *testing.T) {
 	assert.Zero(markdownCalls)
 	assert.Contains(out.String(), "Credentials: self verified")
 	assert.Contains(out.String(), "Meeting query: available")
-	assert.Contains(out.String(), "Sample hydration: available")
+	assert.Contains(out.String(), "Read Content: available")
 	assert.Contains(out.String(), "User Information: unavailable")
 	assert.NotContains(out.String(), "Partial coverage: true")
 	for _, private := range []string{"PRIVATE_TITLE", "PRIVATE_TRANSCRIPT", "private-meeting", "private-rows", "synthetic-token", "stale-transcript"} {

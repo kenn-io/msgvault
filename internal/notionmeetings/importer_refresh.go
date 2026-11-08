@@ -80,6 +80,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 		if exists {
 			known.FetchError = reason
 			state.Known[id] = known
+			state.deferTranscriptAttempt(id, now)
 		} else {
 			state.deferTask(scopeTask{Kind: "meeting", ID: id}, reason, now)
 		}
