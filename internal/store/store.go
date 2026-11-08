@@ -575,12 +575,15 @@ func (s *Store) Close() error {
 			// Persist statistics for short-lived commands without draining a pool
 			// that may still have a checked-out connection during shutdown.
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
-			// Log maintenance errors here so expected deadlines do not also emit SQL warnings.
-			// Include 0x10 to bound ANALYZE even on a fresh connection without an analysis_limit.
-			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x10012")
+			conn, err := s.db.Conn(ctx)
 			if err == nil {
-				err = dropFTSDataStatistics(ctx, s.db.DB)
+				_, err = conn.ExecContext(ctx, "PRAGMA analysis_limit=1000")
+				if err == nil {
+					err = optimizeSQLiteStatistics(ctx, conn)
+				}
+				_ = conn.Close()
 			}
+			// Log maintenance errors here so expected deadlines do not also emit SQL warnings.
 			logSQLiteOptimizeError("store close", err)
 			cancel()
 		}
@@ -691,10 +694,9 @@ func (s *Store) sqlitePlannerStatisticsWithin(ctx context.Context, timeout time.
 			return errors.Join(result, fmt.Errorf("limit SQLite planner statistics analysis: %w", err))
 		}
 	}
-	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+	if err := optimizeSQLiteStatistics(ctx, connections[0]); err != nil {
 		result = errors.Join(result, fmt.Errorf("optimize SQLite planner statistics: %w", err))
 	}
-	result = errors.Join(result, dropFTSDataStatistics(ctx, connections[0]))
 	for _, conn := range connections {
 		if err := reloadSQLiteConnection(ctx, conn); err != nil {
 			return errors.Join(result, fmt.Errorf("reload SQLite planner statistics: %w", err))
@@ -708,6 +710,43 @@ func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
 	return err
 }
 
+// optimizeSQLiteStatistics runs the sampled ANALYZE statements PRAGMA optimize
+// selects across all tables, except on FTS5 _data tables. Those tables carry no
+// statistics (see dropFTSDataStatistics), so optimize always selects them; once
+// analyzed only to be dropped again, every pass rewrote sqlite_stat1 and could
+// leave free pages behind in an archive VACUUM had just compacted.
+func optimizeSQLiteStatistics(ctx context.Context, conn *sql.Conn) error {
+	// Acquire the write lock before reading so concurrent ingest cannot invalidate the snapshot.
+	_, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// Release the transaction even if maintenance was canceled.
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+	}()
+
+	var statements string
+	err = conn.QueryRowContext(ctx, `SELECT COALESCE(GROUP_CONCAT(optimize, ';'), '')
+		FROM pragma_optimize(0x10003) WHERE optimize NOT IN (
+			SELECT printf('ANALYZE "main"."%w_data"', name) FROM sqlite_master
+			WHERE `+sqliteFTS5TablePredicate+`
+		)`).Scan(&statements)
+	if err == nil && statements != "" {
+		_, err = conn.ExecContext(ctx, statements)
+	}
+	if err != nil {
+		return err
+	}
+	if err := dropFTSDataStatistics(ctx, conn); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	return err
+}
+
+const sqliteFTS5TablePredicate = `type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'`
+
 // dropFTSDataStatistics keeps planner statistics off FTS5 _data shadow tables.
 // FTS5 merges segments by deleting rowid ranges from _data, and trigger-
 // maintained indexes merge on nearly every insert. ANALYZE on a new archive
@@ -715,8 +754,8 @@ func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
 // a full scan, so ingest time grows with the square of the index size. FTS5
 // reaches these tables only through rowid and primary-key statements, so
 // statistics never improve their plans.
-// SQLite ignores NULL statistics. Retaining the rows avoids splitting and
-// collapsing sqlite_stat1 during close-time cleanup after VACUUM.
+// SQLite ignores NULL statistics, so rows left over from older archives are
+// nulled rather than deleted.
 func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) error {
 	var analyzed bool
 	err := db.QueryRowContext(ctx,
@@ -730,7 +769,7 @@ func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) erro
 	}
 	_, err = db.ExecContext(ctx, `UPDATE sqlite_stat1 SET stat = NULL WHERE stat IS NOT NULL AND tbl IN (
 		SELECT name || '_data' FROM sqlite_master
-		WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE % USING fts5%'
+		WHERE `+sqliteFTS5TablePredicate+`
 	)`)
 	if err != nil {
 		return fmt.Errorf("drop FTS5 planner statistics: %w", err)

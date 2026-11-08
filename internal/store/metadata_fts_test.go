@@ -128,16 +128,6 @@ func TestFTSDataRangeDeletesKeepRowidPlan(t *testing.T) {
 			assert.Contains(detail, "USING INTEGER PRIMARY KEY", table+" after "+phase)
 		}
 	}
-	statistics := func(st *Store, phase string) {
-		for _, table := range []string{"messages_fts_data", "messages_metadata_fts_data"} {
-			var rows, nonNull int
-			require.NoError(st.DB().QueryRowContext(t.Context(),
-				"SELECT COUNT(*), COUNT(stat) FROM sqlite_stat1 WHERE tbl = ?", table,
-			).Scan(&rows, &nonNull))
-			assert.Equal(1, rows, table+" retains its statistics row after "+phase)
-			assert.Zero(nonNull, table+" has NULL statistics after "+phase)
-		}
-	}
 	st, err := OpenForTest(t.Context(), path)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
@@ -147,10 +137,8 @@ func TestFTSDataRangeDeletesKeepRowidPlan(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	plans(st, "close-time statistics refresh")
-	statistics(st, "close-time statistics refresh")
 	require.NoError(st.optimizeSQLite(t.Context()))
 	plans(st, "scheduled statistics refresh")
-	statistics(st, "scheduled statistics refresh")
 }
 
 // FTS5 reads its configuration the first time a connection uses an index.
