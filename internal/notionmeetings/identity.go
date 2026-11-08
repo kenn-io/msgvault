@@ -3,6 +3,7 @@ package notionmeetings
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -48,10 +49,5 @@ func matchesHuman(m MeetingNote, id string) bool {
 	if m.CreatedBy.ID == id {
 		return true
 	}
-	for _, attendee := range m.MeetingNotes.CalendarEvent.Attendees {
-		if attendee == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.MeetingNotes.CalendarEvent.Attendees, id)
 }

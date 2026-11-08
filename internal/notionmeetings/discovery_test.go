@@ -15,6 +15,7 @@ import (
 
 type discoveryFixture struct {
 	*fakeImportSource
+
 	searches  func(context.Context, string) (*DiscoveryPage, error)
 	rows      func(context.Context, string, string) (*DiscoveryPage, error)
 	windows   func(context.Context, int, *MeetingFilter) (*QueryResult, error)

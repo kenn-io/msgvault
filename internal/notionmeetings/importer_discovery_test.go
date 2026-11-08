@@ -211,6 +211,7 @@ func TestImporterAbsentOptionalSectionsDoNotImplyCoverageGap(t *testing.T) {
 
 type exhaustingAdmissionSource struct {
 	*discoveryFixture
+
 	knownReads int
 }
 
@@ -242,6 +243,7 @@ func TestNewAdmissionsDoNotStarveOldRefresh(t *testing.T) {
 
 type headerCountingSource struct {
 	*discoveryFixture
+
 	reads map[string]int
 }
 
@@ -322,4 +324,37 @@ func TestLimitCountsOnlyNewSelectedAdmissions(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
 	assert.Equal(3, count)
+}
+
+func TestImporterVisitsDueTranscriptOutsideKnownRefreshWindow(t *testing.T) {
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	meeting := hydrationMeeting()
+	meeting.ID = "known-zzz"
+	meeting.MeetingNotes.Children.TranscriptBlockID = ""
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	now := imp.now()
+	state := newSyncState()
+	for i := range 40 {
+		state.Known[fmt.Sprintf("known-%03d", i)] = knownMeeting{}
+	}
+	state.Known[meeting.ID] = knownMeeting{}
+	state.Pending = []pendingTranscript{{BlockID: meeting.ID, NextAttemptAt: now.Add(-time.Hour).Format(time.RFC3339), RetryUntil: now.Add(time.Hour).Format(time.RFC3339)}}
+	state.initialize()
+	cursor, err := state.marshal()
+	require.NoError(t, err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(t, err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(t, err)
+	require.NoError(t, st.CompleteSyncContext(t.Context(), run, cursor))
+	counter := &headerCountingSource{discoveryFixture: source, reads: map[string]int{}}
+	imp.client = counter
+	noSearch := false
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch})
+	require.NoError(t, err)
+	assert.Positive(t, counter.reads[meeting.ID])
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
+	assert.Equal(t, 1, count)
 }

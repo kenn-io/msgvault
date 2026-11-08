@@ -3,16 +3,17 @@ package notionmeetings
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
 
 type discoverySource interface {
-	RetrieveSelf(context.Context) (*User, error)
-	QueryMeetingNotesFiltered(context.Context, int, *MeetingFilter) (*QueryResult, error)
-	Search(context.Context, string) (*DiscoveryPage, error)
-	QueryDataSource(context.Context, string, string) (*DiscoveryPage, error)
-	RetrieveDatabase(context.Context, string) (*Database, error)
+	RetrieveSelf(ctx context.Context) (*User, error)
+	QueryMeetingNotesFiltered(ctx context.Context, limit int, filter *MeetingFilter) (*QueryResult, error)
+	Search(ctx context.Context, cursor string) (*DiscoveryPage, error)
+	QueryDataSource(ctx context.Context, id, cursor string) (*DiscoveryPage, error)
+	RetrieveDatabase(ctx context.Context, id string) (*Database, error)
 }
 type discoveryRun struct {
 	state    *syncState
@@ -30,10 +31,8 @@ func (r *discoveryRun) admit(id string) {
 		r.visible = map[string]bool{}
 	}
 	r.visible[id] = true
-	for _, pending := range r.state.Admissions {
-		if pending == id {
-			return
-		}
+	if slices.Contains(r.state.Admissions, id) {
+		return
 	}
 	r.state.Admissions = append(r.state.Admissions, id)
 }
@@ -130,11 +129,9 @@ func (r *discoveryRun) continuation(task scopeTask, more bool, next string) {
 		r.state.deferTask(task, "cursor_cycle", r.now)
 		return
 	}
-	for _, cursor := range task.Cursors {
-		if cursor == next {
-			r.state.deferTask(task, "cursor_cycle", r.now)
-			return
-		}
+	if slices.Contains(task.Cursors, next) {
+		r.state.deferTask(task, "cursor_cycle", r.now)
+		return
 	}
 	task.Cursors = append(task.Cursors, task.Cursor)
 	task.Cursor = next
@@ -181,7 +178,7 @@ func (r *discoveryRun) stepTraversal(ctx context.Context) (bool, error) {
 		db, err = r.client.RetrieveDatabase(ctx, task.ID)
 	case "blocks":
 		if sized, ok := r.source.(interface {
-			retrieveBlockChildrenSized(context.Context, string, string, int) (*BlockPage, error)
+			retrieveBlockChildrenSized(ctx context.Context, id, cursor string, size int) (*BlockPage, error)
 		}); ok {
 			blocks, err = sized.retrieveBlockChildrenSized(ctx, task.ID, task.Cursor, size)
 		} else {
@@ -240,7 +237,7 @@ func (r *discoveryRun) stepTraversal(ctx context.Context) (bool, error) {
 				continue
 			}
 			switch block.Type {
-			case "meeting_notes":
+			case meetingNotesType:
 				r.admit(block.ID)
 			case "child_database":
 				r.addTask(scopeTask{Kind: "database", ID: block.ID, Depth: task.Depth + 1})
