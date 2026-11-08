@@ -121,10 +121,10 @@ func (s syncState) validate() error {
 		}
 		seen[pending.BlockID] = struct{}{}
 		if _, err := time.Parse(time.RFC3339, pending.NextAttemptAt); err != nil {
-			return errors.New("pending.next_attempt_at must be an RFC3339 timestamp")
+			return errors.New("saved next retry time must use RFC3339")
 		}
 		if _, err := time.Parse(time.RFC3339, pending.RetryUntil); err != nil {
-			return errors.New("pending.retry_until must be an RFC3339 timestamp")
+			return errors.New("saved retry deadline must use RFC3339")
 		}
 	}
 	deadlineIDs := make([]string, 0, len(s.TranscriptRetryUntil))
