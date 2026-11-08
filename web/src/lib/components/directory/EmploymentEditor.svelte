@@ -50,7 +50,7 @@
   const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
   // The dates the next write sends: after a conflict, Keep yours keeps a start the person didn't change from the saved version.
   const kept = $derived(merged((attempt.conflict ?? attempt.prepared)?.data));
-  const datesInvalid = $derived(!!intervalDateError(kept.start_date) || (!kept.is_current && !!intervalDateError(kept.end_date, kept.start_date)));
+  const datesInvalid = $derived(!!intervalDateError(kept.start_date) || (kept.end_date !== null && !!intervalDateError(kept.end_date, kept.start_date)));
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
@@ -101,16 +101,17 @@
     });
   }
 
-  // The fields Edit job changes, as the form holds them, so the draft and a saved job compare field by field.
-  const jobFields = (job: Employment) => ({ title: job.title ?? '', role: job.role ?? '', department: job.department ?? '', location: job.location ?? '', description: job.description ?? '', start_date: partialDate(job.start_date), end_date: partialDate(job.end_date), is_current: job.is_current });
+  // The fields Edit job changes, as the form holds them, so the draft and a saved job compare field by field. End date and
+  // Current are one choice: a current job has no end (null), so Keep yours keeps or drops them together.
+  const jobFields = (job: Employment) => ({ title: job.title ?? '', role: job.role ?? '', department: job.department ?? '', location: job.location ?? '', description: job.description ?? '', start_date: partialDate(job.start_date), end_date: job.is_current ? null : partialDate(job.end_date) });
   type JobFields = ReturnType<typeof jobFields>;
 
   // Yours is only what the person changed since opening; every other field keeps the version being written.
   function merged(current: Employment | undefined): JobFields {
-    const draft: JobFields = { title, role, department, location, description, start_date: startDate, end_date: endDate, is_current: isCurrent };
+    const draft: JobFields = { title, role, department, location, description, start_date: startDate, end_date: isCurrent ? null : endDate };
     if (!current || !opened) return draft;
     const was = jobFields(opened.data), now = jobFields(current);
-    const same = (a: string | boolean, b: string | boolean) => typeof a === 'string' && typeof b === 'string' ? a.trim() === b.trim() : a === b;
+    const same = (a: string | null, b: string | null) => a?.trim() === b?.trim();
     return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, same(draft[key], was[key]) ? now[key] : draft[key]])) as JobFields;
   }
 
@@ -127,8 +128,8 @@
       location: job.location.trim() || null,
       description: job.description.trim() || null,
       start_date: job.start_date.trim() || null,
-      ...(job.is_current ? {} : { end_date: job.end_date.trim() || null }),
-      is_current: job.is_current,
+      ...(job.end_date === null ? {} : { end_date: job.end_date.trim() || null }),
+      is_current: job.end_date === null,
       ...(showPrimary ? { is_primary: isPrimary } : {}),
       ...(current?.address_id !== undefined ? { address_id: current.address_id } : {}),
       ...(current?.confidence !== undefined ? { confidence: current.confidence } : {})
