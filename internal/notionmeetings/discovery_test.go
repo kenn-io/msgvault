@@ -145,6 +145,20 @@ func TestRediscoveredWindowKeepsRetryDeadline(t *testing.T) {
 	assert.Equal(now.Add(2*time.Hour+transcriptRetryCadence), state.Deferred[0].NextAttemptAt)
 }
 
+func TestAttemptedGapDoesNotDelayBundledPeers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	state := newSyncState()
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	task := scopeTask{Kind: "blocks", ID: "root", Cursor: "next"}
+	peer := scopeTask{Kind: "blocks", ID: "other"}
+	state.Deferred = []deferredScope{{Task: &task, PeerTasks: []scopeTask{peer}, Reason: "cursor_budget", NextAttemptAt: now}}
+	state.deferAttemptedTask(task, "inaccessible_subtree", now)
+	require.Len(state.Deferred, 1)
+	assert.Equal(now, state.Deferred[0].NextAttemptAt)
+	assert.Equal([]scopeTask{peer}, state.Deferred[0].PeerTasks)
+}
+
 func TestQueueBackpressureReplaysEveryCandidate(t *testing.T) {
 	run, source := schedulerFixture(t)
 	run.limits.Frontier = 2
