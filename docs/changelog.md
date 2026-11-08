@@ -16,6 +16,11 @@ All notable changes to msgvault, grouped by release.
   Add an account with `msgvault add-github`, then sync with `sync-github` or
   the `[github]` schedule; `exclude_owners` keeps an organization's
   repositories from ever being fetched. See [Code forges](usage/forges.md).
+- Archive the GitLab issues and merge requests you take part in, on gitlab.com
+  or a self-managed instance, with every comment, thread reply, diff note and
+  approval. Add an account with `msgvault add-gitlab`, then sync with
+  `sync-gitlab` or the `[gitlab]` schedule. See
+  [Code forges](usage/forges.md#gitlab).
 - Archive messages from sources msgvault has no connector for, such as the
   items of the feeds you follow, with `POST /api/v1/import/message`. Each
   message keeps the type its sender chose, such as `feed_item`, for search
