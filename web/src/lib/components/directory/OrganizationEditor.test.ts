@@ -323,8 +323,13 @@ it('keeps unnamed holders openable as links in a blocked deletion', async () => 
   const open = await screen.findByRole('button', { name: 'Unnamed person' });
   expect(open.hasAttribute('data-link')).toBe(true);
   expect(screen.getByText("Delete its job first. Ending it isn't enough.")).toBeDefined();
+  // Their job isn't this person's, so the row's action says it opens them to delete it.
+  const action = screen.getByRole('button', { name: 'Open to delete Unnamed person’s job' });
+  expect(action.textContent).toContain('Open to delete…');
   await fireEvent.click(open);
   expect(onOpenPerson).toHaveBeenCalledWith(8);
+  await fireEvent.click(action);
+  expect(onOpenPerson).toHaveBeenCalledTimes(2);
 });
 
 it.each(['legal name', 'retirement'])('retains the saved %s in organization conflicts', async fact => {

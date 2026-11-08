@@ -158,7 +158,7 @@ for (const width of [1440, 390]) {
 }
 
 for (const width of [1440, 390]) {
-  test(`Add connection's pickers keep their words, insets, and fields whole at ${width}px`, async ({ page }) => {
+  test(`Add connection's pickers keep their words and insets at ${width}px`, async ({ page }) => {
     await installDirectoryReviewArchive(page);
     await page.setViewportSize({ width, height: 900 });
     let typesFail = true;
@@ -181,7 +181,8 @@ for (const width of [1440, 390]) {
     const notes = (await dialog.locator('label.notes').boundingBox())!;
     expect(notes.y - end).toBe(width === 390 ? 16 : 36);
 
-    // The open search shows the closed picker's words, and a failure keeps Retry on its sentence with the panel covering the fields it reaches.
+    // The open search shows the closed picker's words, and a failure keeps Retry on its sentence, sits 4 from the
+    // panel's top and bottom with no divider under it, and folds the server's words under Details.
     await dialog.getByRole('button', { name: 'Connection type: Type', exact: true }).click();
     const typeSearch = dialog.getByRole('combobox', { name: 'Connection type', exact: true });
     await expect(typeSearch).toHaveAttribute('placeholder', 'Type');
@@ -189,12 +190,13 @@ for (const width of [1440, 390]) {
     const message = (await notice.getByText("Couldn't load connection types.").boundingBox())!;
     const retry = (await notice.getByRole('button', { name: 'Retry', exact: true }).boundingBox())!;
     expect(retry.y + retry.height / 2).toBeCloseTo(message.y + message.height / 2, 0);
-    const uncovered = () => dialog.evaluate(element => {
-      const panel = element.querySelector('.kit-typeahead__panel')!.getBoundingClientRect();
-      return [...element.querySelectorAll('.dialog-content :is(input, textarea, button)')].map(field => field.getBoundingClientRect())
-        .filter(field => field.width && field.left < panel.right && field.right > panel.left && field.top < panel.bottom && field.bottom > panel.bottom + 0.5).length;
+    await expect(notice.getByText('Details', { exact: true })).toBeVisible();
+    const errorInset = (failure = notice) => failure.evaluate(element => {
+      const panel = element.closest('.kit-typeahead__panel')!, box = panel.getBoundingClientRect(), border = parseFloat(getComputedStyle(panel).borderTopWidth);
+      const card = element.closest('.kit-notice')!.getBoundingClientRect(), header = getComputedStyle(element.closest('.kit-typeahead__header')!);
+      return [card.top - box.top - border, box.bottom - border - card.bottom, header.borderBottomWidth];
     });
-    await expect.poll(uncovered).toBe(0);
+    await expect.poll(() => errorInset()).toEqual([4, 4, '0px']);
     typesFail = false;
     await notice.getByRole('button', { name: 'Retry', exact: true }).click();
     await page.getByRole('heading', { name: 'Add connection', exact: true }).click();
@@ -215,7 +217,9 @@ for (const width of [1440, 390]) {
 
     await dialog.getByRole('button', { name: 'Person', exact: true }).click();
     await dialog.getByRole('combobox', { name: 'Person', exact: true }).fill('Sela');
-    await expect(dialog.getByRole('alert').filter({ hasText: "Couldn't search people." })).toBeVisible();
-    await expect.poll(uncovered).toBe(0);
+    const searchFailure = dialog.getByRole('alert').filter({ hasText: "Couldn't search people." });
+    await expect(searchFailure).toBeVisible();
+    await expect(searchFailure.getByText('Details', { exact: true })).toBeVisible();
+    await expect.poll(() => errorInset(searchFailure)).toEqual([4, 4, '0px']);
   });
 }

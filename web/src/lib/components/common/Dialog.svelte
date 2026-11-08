@@ -175,6 +175,8 @@
     overflow-wrap: anywhere;
   }
   .dialog-notice { margin-top: var(--pane-pad-x); }
+  /* With no fields above it, as when they failed to load, the notice sits 12 below the header like the fields would. */
+  .dialog-notice:first-child { margin-top: 0; }
   /* A notice snippet that shows nothing renders nothing: no empty band under the fields. */
   .dialog-notice:not(:has(*)) { display: none; }
 </style>

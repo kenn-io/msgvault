@@ -6,7 +6,7 @@
   interface Props {
     label?: string;
     /** The row's actions: one shows as its button, more go in a ⋯ menu named for the row. */
-    menu?: { label: string; onselect: () => void; danger?: boolean; disabled?: boolean }[];
+    menu?: { label: string; ariaLabel?: string; onselect: () => void; danger?: boolean; disabled?: boolean }[];
     exception?: string;
     /** A muted second line under the value: dates or a role, or a provenance line with its timestamps as the tooltip. */
     description?: string | ProvenanceLine;
@@ -27,7 +27,7 @@
   {#if label !== undefined}<span class="label">{label}</span>{/if}
   <div class="value">{@render children()}{#if line?.text || exception}<span class="description" title={line?.title}>{line?.text}{#if line?.text && exception}{' · '}{/if}{#if exception}<span class="exception">{exception}</span>{/if}</span>{/if}</div>
   {#if actions || menu.length}<div class="actions">{@render actions?.()}
-    {#if menu.length === 1}<Button label={menu[0].label} tone={menu[0].danger ? 'danger' : 'neutral'} disabled={menu[0].disabled} onclick={menu[0].onselect} />
+    {#if menu.length === 1}<Button label={menu[0].label} ariaLabel={menu[0].ariaLabel} tone={menu[0].danger ? 'danger' : 'neutral'} disabled={menu[0].disabled} onclick={menu[0].onselect} />
     {:else if menu.length}<Menu align="end"><MenuTrigger ariaLabel={`Actions for ${actionLabel}`}>⋯</MenuTrigger><MenuContent ariaLabel={`Actions for ${actionLabel}`}>
       {#each menu as item}<MenuItem onselect={item.onselect} disabled={item.disabled} tone={item.danger ? 'danger' : 'neutral'}>{item.label}</MenuItem>{/each}
     </MenuContent></Menu>{/if}

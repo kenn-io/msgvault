@@ -189,10 +189,39 @@ for (const width of [1440, 390]) {
     if (width === 1440) expect(current.y).toBe(hint.y);
     await add.getByRole('checkbox', { name: 'Current', exact: true }).uncheck();
     expect((await add.locator('.date-range .current').boundingBox())!.y).toBe(current.y);
+    // A focused invalid date has one outline, the ring in the error's red over the border, and its error 4 below it.
+    const startDate = add.getByRole('textbox', { name: 'Start date', exact: true });
+    await startDate.fill('2026-99');
+    const ring = await startDate.evaluate(input => {
+      const box = input.closest('.kit-text-input')!, style = getComputedStyle(box);
+      const error = box.closest('.kit-form-field')!.querySelector('.kit-form-field__error')!.getBoundingClientRect();
+      return { color: style.outlineColor === style.borderTopColor, offset: style.outlineOffset, gap: error.top - box.getBoundingClientRect().bottom };
+    });
+    expect(ring).toEqual({ color: true, offset: '-2px', gap: 4 });
+    // With one organization, the open picker ends 4 below it, as it starts 4 above it.
+    await add.getByRole('button', { name: /^Organization:/ }).click();
+    const inset = await add.getByRole('option', { name: /^Example Org/ }).evaluate(row => {
+      const panel = row.closest('.kit-typeahead__panel')!, box = panel.getBoundingClientRect(), item = row.getBoundingClientRect(), border = parseFloat(getComputedStyle(panel).borderTopWidth);
+      return [item.top - box.top - border, box.bottom - border - item.bottom];
+    });
+    expect(inset).toEqual([4, 4]);
     expect(errors).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath('dialog.png'), fullPage: true });
   });
 }
+
+test('an organization that fails to load shows its error 12 inside the dialog on both sides', async ({ page }) => {
+  await page.route('**/api/v1/organizations/21', route => route.fulfill({ status: 503, json: { message: 'Synthetic organization unavailable' } }));
+  await page.getByRole('button', { name: 'Example Org', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Example Org', exact: true });
+  const notice = editor.getByRole('alert').filter({ hasText: "Couldn't load this organization." });
+  await expect(notice).toBeVisible();
+  const gaps = await notice.evaluate(element => {
+    const box = element.closest('.dialog-notice')!.getBoundingClientRect(), content = element.closest('.dialog-content')!, style = getComputedStyle(content), pane = content.getBoundingClientRect();
+    return [box.top - pane.top - parseFloat(style.paddingTop), pane.bottom - box.bottom - parseFloat(style.paddingBottom)];
+  });
+  expect(gaps).toEqual([0, 0]);
+});
 
 test('Settings opens the person whose job blocks deleting an organization', async ({ page }) => {
   await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({ json: { employments: [employment] } }));

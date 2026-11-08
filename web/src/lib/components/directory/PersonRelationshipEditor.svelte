@@ -231,7 +231,7 @@
                 highlightFirstOption panelAnchor={sentence} onquery={(query) => { typeQuery = query; }}
                 emptyLabel={controller.errors.relationshipTypes ? '' : typeQuery ? `No type matches “${typeQuery}”` : 'No connection types yet'}
                 onretry={() => void controller.refreshRelationshipTypes()}
-                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes ? "Couldn't load connection types." : ''} disabled={attempt.busy}
+                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes ? "Couldn't load connection types." : ''} errorDetails={controller.errors.relationshipTypes} disabled={attempt.busy}
                 onselect={(value) => { choice = value; }} />
             </span>
             </span>
@@ -240,7 +240,7 @@
                 panelAnchor={sentence} disabled={attempt.busy}
                 fallbackLabel="Person" placeholder="Person" title="Person"
                 emptyLabel={searchError ? '' : searchText ? `No one matches “${searchText}”` : 'No other saved people'}
-                loading={searching} loadingLabel="Searching…" onquery={handleQuery} error={searchError ? "Couldn't search people." : ''} onretry={() => void searchPeople(searchText)}
+                loading={searching} loadingLabel="Searching…" onquery={handleQuery} error={searchError ? "Couldn't search people." : ''} errorDetails={searchError} onretry={() => void searchPeople(searchText)}
                 onselect={selectCounterpart}>
                 {#snippet icon(option)}<IdentityAvatar label={option.label} seed={option.name} size={24} />{/snippet}
               </FieldPicker>

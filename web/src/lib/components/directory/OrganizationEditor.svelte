@@ -377,9 +377,11 @@
       {#if checkError}<InlineNotice message="Couldn't check jobs." details={checkError} actionLabel="Check again" onaction={() => void checkDeletion()} />{/if}
       {#if holders && holders.count > 0}
         <p>{holders.count === 1 && !holders.atLeast ? "Delete its job first. Ending it isn't enough." : `Delete its ${holders.count}${holders.atLeast ? ' or more' : ''} jobs first. Ending them isn't enough.`}</p>
-        <!-- Each name opens that person, where the job is; the open person's own job here is one step away. -->
+        <!-- The open person's own job is deleted from here. Anyone else's is deleted on their page, so their row's
+             action opens it and says why. -->
         <div class="holders">{#each holders.holders as holder}{@const job = holderJob?.(holder.personID)}
-          <DetailRow description={holder.job} actionLabel={holder.name} menu={job ? [{ label: job.label, onselect: () => { job.open(); onClose(); } }] : []}>
+          <DetailRow description={holder.job} actionLabel={holder.name}
+            menu={job ? [{ label: job.label, onselect: () => { job.open(); onClose(); } }] : onOpenPerson ? [{ label: 'Open to delete…', ariaLabel: `Open to delete ${holder.name}’s job`, onselect: () => { onClose(); onOpenPerson(holder.personID); } }] : []}>
             {#if onOpenPerson}<button type="button" data-link onclick={() => { onClose(); onOpenPerson(holder.personID); }}>{holder.name}</button>{:else}{holder.name}{/if}
           </DetailRow>{/each}</div>
         {#if holders.peopleCount > holders.holders.length}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - holders.holders.length} more</p>{/if}
@@ -391,9 +393,9 @@
 {:else}
 <Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
-<form onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
+{#if !loadFailed}<form onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
   <div class="editor" aria-busy={loading || submitting}>
-    {#if loading}<p role="status">Loading organization…</p>{:else if !loadFailed}
+    {#if loading}<p role="status">Loading organization…</p>{:else}
         <label>Name<TextInput ariaLabel="Organization name" bind:value={name} required block size="lg" disabled={submitting} /></label>
         <div class="form-pair">
           <label>Kind<SelectDropdown title="Organization kind" value={kind} options={kindOptions} onchange={(value) => { kind = value; }} disabled={submitting} /></label>
@@ -415,7 +417,7 @@
     {/if}
   </div>
 <button type="submit" hidden>Save</button>
-</form>
+</form>{/if}
   {#snippet notice()}
     {#if attempt.conflict}
       {@const savedFacts = organizationFacts(attempt.conflict.data)}
