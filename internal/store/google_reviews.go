@@ -251,17 +251,23 @@ func (s *Store) FailGoogleReviewsBackfill(ctx context.Context, target, location,
 	return state, nil
 }
 
-func (s *Store) GoogleReviewsBackfillState(ctx context.Context, target string) (googlereviews.BackfillState, error) {
+func (s *Store) GoogleReviewsBackfillState(ctx context.Context, target, location string) (googlereviews.BackfillState, error) {
 	if !validGoogleReviewID(target) {
+		return googlereviews.BackfillState{}, googlereviews.ErrInvalid
+	}
+	if location == "" {
+		return googlereviews.BackfillState{Target: target, Status: "not_started"}, nil
+	}
+	if !validGoogleReviewTarget(target, location) {
 		return googlereviews.BackfillState{}, googlereviews.ErrInvalid
 	}
 	query := `SELECT target_name, location_name, status, run_id, next_page_token, pages_fetched, reviews_fetched,
 		total_review_count, archived_review_count, last_error_code, started_at, completed_at, updated_at
-		FROM google_reviews_sync_state WHERE target_name = ? ORDER BY updated_at DESC, location_name DESC LIMIT 1`
+		FROM google_reviews_sync_state WHERE target_name = ? AND location_name = ?`
 	var state googlereviews.BackfillState
 	var startedAt, updatedAt string
 	var completedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, query, target).Scan(
+	err := s.db.QueryRowContext(ctx, query, target, location).Scan(
 		&state.Target, &state.Location, &state.Status, &state.RunID, &state.NextPageToken,
 		&state.PagesFetched, &state.ReviewsFetched, &state.TotalReviewCount, &state.ArchivedReviewCount,
 		&state.LastErrorCode, &startedAt, &completedAt, &updatedAt,
@@ -315,7 +321,7 @@ func (s *Store) SearchGoogleReviews(ctx context.Context, query, target string, o
 				r.create_time, r.update_time, r.has_reply, r.reply_comment, r.reply_update_time,
 				r.reply_state, r.reply_policy_violation, r.archived_at
 			FROM google_reviews r WHERE `+where+`
-			ORDER BY COALESCE(NULLIF(r.update_time, ''), r.create_time) DESC, r.review_id
+			ORDER BY COALESCE(NULLIF(r.update_time, ''), r.create_time) DESC, r.review_id, r.id
 			LIMIT ? OFFSET ?`, pageArgs...)
 		if err != nil {
 			return fmt.Errorf("search Google Reviews archive: %w", err)

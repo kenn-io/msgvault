@@ -77,7 +77,7 @@ own_project = true
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 			})}
 			ctx := context.WithValue(t.Context(), oauth2.HTTPClient, client)
-			service := newDaemonGoogleReviews(cfg)
+			service := newDaemonGoogleReviews(cfg, nil)
 			defer service.Close()
 			preview, err := service.Execute(ctx, "owner", googlereviews.Request{Action: "preview_reply", Target: "shop", ReviewID: "r", Comment: "Thanks"})
 			require.NoError(err)

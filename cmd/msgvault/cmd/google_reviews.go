@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/googlereviews"
 	"go.kenn.io/msgvault/internal/oauth"
@@ -247,7 +248,7 @@ func newGoogleReviewOAuthManager(ctx context.Context, cfg *config.Config, target
 	}
 	return manager.WithTokenNamespace(googleReviewNamespace(target.OAuthApp)), nil
 }
-func newDaemonGoogleReviews(cfg *config.Config, archives ...googlereviews.Archive) *googlereviews.Service {
+func newDaemonGoogleReviews(cfg *config.Config, gate api.OperationGate, archives ...googlereviews.Archive) *googlereviews.Service {
 	fresh := func() (*config.Config, error) {
 		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
 		if err != nil {
@@ -265,6 +266,12 @@ func newDaemonGoogleReviews(cfg *config.Config, archives ...googlereviews.Archiv
 	}
 	return googlereviews.NewService(googlereviews.Options{
 		Archive: archive,
+		BeginArchiveWrite: func(ctx context.Context) (func(), bool) {
+			if gate == nil {
+				return func() {}, true
+			}
+			return gate.BeginWorkContext(ctx)
+		},
 		Targets: func(context.Context) ([]googlereviews.Target, error) {
 			loaded, err := fresh()
 			if err != nil {

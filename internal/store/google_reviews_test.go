@@ -115,7 +115,7 @@ func TestGoogleReviewsArchiveRejectsRepeatedPageTokenAtomically(t *testing.T) {
 	})
 	require.ErrorIs(err, googlereviews.ErrArchiveCycle)
 
-	state, err := st.GoogleReviewsBackfillState(ctx, googleReviewTestTarget)
+	state, err := st.GoogleReviewsBackfillState(ctx, googleReviewTestTarget, googleReviewTestLocation)
 	require.NoError(err)
 	assert.Equal("running", state.Status)
 	assert.Equal(int64(1), state.PagesFetched)
@@ -180,3 +180,43 @@ func TestGoogleReviewsSchemaUpgradeAddsArchiveAndSearch(t *testing.T) {
 }
 
 var _ googlereviews.Archive = (*store.Store)(nil)
+
+func TestGoogleReviewsStatusUsesConfiguredLocation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	const other = "accounts/a/locations/other"
+	_, err := st.BeginGoogleReviewsBackfill(ctx, googleReviewTestTarget, googleReviewTestLocation)
+	require.NoError(err)
+	_, err = st.BeginGoogleReviewsBackfill(ctx, googleReviewTestTarget, other)
+	require.NoError(err)
+	_, err = st.FailGoogleReviewsBackfill(ctx, googleReviewTestTarget, googleReviewTestLocation, "quota")
+	require.NoError(err)
+	state, err := st.GoogleReviewsBackfillState(ctx, googleReviewTestTarget, other)
+	require.NoError(err)
+	assert.Equal(other, state.Location)
+	assert.Equal("running", state.Status)
+	assert.Empty(state.LastErrorCode)
+}
+
+func TestGoogleReviewsArchiveSearchPaginatesAliasesWithSameReviewID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	page := googlereviews.Page{Reviews: []googlereviews.Review{syntheticGoogleReview("same", "synthetic matching text")}}
+	for _, target := range []string{"shop", "alias"} {
+		_, err := st.BeginGoogleReviewsBackfill(ctx, target, googleReviewTestLocation)
+		require.NoError(err)
+		_, err = st.ApplyGoogleReviewsPage(ctx, target, googleReviewTestLocation, "", page)
+		require.NoError(err)
+	}
+	first, err := st.SearchGoogleReviews(ctx, "synthetic", "", 0, 1)
+	require.NoError(err)
+	second, err := st.SearchGoogleReviews(ctx, "synthetic", "", 1, 1)
+	require.NoError(err)
+	require.Len(first.Results, 1)
+	require.Len(second.Results, 1)
+	assert.NotEqual(first.Results[0].Target, second.Results[0].Target)
+}

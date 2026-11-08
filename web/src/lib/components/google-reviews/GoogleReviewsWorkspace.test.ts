@@ -407,7 +407,7 @@ it.each(['expired receipt', 'daemon restart'])('requires live inspection before 
   await fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Submit' }));
   await screen.findByText(/Outcome unknown/);
   await fireEvent.click(screen.getByRole('button', { name: 'Check receipt' }));
-  await screen.findByText('Receipt unavailable. The original confirmation remains consumed. Inspect the live review before creating a fresh preview.');
+  await screen.findByText('Receipt unavailable. Inspect the live review before creating a fresh preview; do not retry the old confirmation.');
   expect(screen.queryByLabelText('Public response')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Inspect live review' }));
   await screen.findByRole('article', { name: 'Review detail' });

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func (a *archiveTestStore) FailGoogleReviewsBackfill(_ context.Context, target, 
 	return a.state, nil
 }
 
-func (a *archiveTestStore) GoogleReviewsBackfillState(_ context.Context, target string) (BackfillState, error) {
+func (a *archiveTestStore) GoogleReviewsBackfillState(_ context.Context, target, _ string) (BackfillState, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	state := a.state
@@ -365,4 +366,79 @@ func TestBackfillChecksProviderAgainForEachPage(t *testing.T) {
 	archive.mu.Lock()
 	assert.Equal("api_exhausted", archive.state.Status)
 	archive.mu.Unlock()
+}
+
+func TestBackfillHoldsArchiveGateOnlyForWrites(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const location = "accounts/a/locations/l"
+	archive := &archiveTestStore{done: make(chan struct{})}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{} // Simulate a backup freeze holding the daemon gate.
+	defer func() {
+		select {
+		case <-gate:
+		default:
+		}
+	}()
+	attempt := make(chan struct{}, 1)
+	var acquisitions atomic.Int32
+	var providerBlocked atomic.Bool
+	provider := &archiveTestProvider{pages: map[string]Page{"": {}}}
+	provider.onList = func() {
+		select {
+		case gate <- struct{}{}:
+			<-gate
+		default:
+			providerBlocked.Store(true)
+		}
+	}
+	target := Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: location, Enabled: true, OwnProject: true}
+	service := NewService(Options{
+		Archive:  archive,
+		Targets:  func(context.Context) ([]Target, error) { return []Target{target}, nil },
+		Provider: func(context.Context, Target) (Provider, string, error) { return provider, "binding", nil },
+		BeginArchiveWrite: func(ctx context.Context) (func(), bool) {
+			select {
+			case attempt <- struct{}{}:
+			default:
+			}
+			select {
+			case gate <- struct{}{}:
+				acquisitions.Add(1)
+				return func() { <-gate }, true
+			case <-ctx.Done():
+				return nil, false
+			}
+		},
+	})
+	t.Cleanup(service.Close)
+	started := make(chan error, 1)
+	go func() {
+		_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
+		started <- err
+	}()
+	select {
+	case <-attempt:
+	case <-time.After(30 * time.Second):
+		require.FailNow("backfill did not request the archive gate")
+	}
+	archive.mu.Lock()
+	assert.Zero(archive.begins)
+	archive.mu.Unlock()
+	<-gate
+	select {
+	case err := <-started:
+		require.NoError(err)
+	case <-time.After(30 * time.Second):
+		require.FailNow("backfill did not start after gate release")
+	}
+	select {
+	case <-archive.done:
+	case <-time.After(30 * time.Second):
+		require.FailNow("backfill did not finish")
+	}
+	service.backfills.Wait()
+	assert.Equal(int32(2), acquisitions.Load())
+	assert.False(providerBlocked.Load())
 }

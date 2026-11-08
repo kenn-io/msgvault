@@ -53,7 +53,7 @@ test('live Google reviews require exact preview and distinct confirmation', asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('web-preview-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await dialog.getByRole('button', { name: 'Confirm and submit' }).click();
+  await dialog.getByRole('button', { name: 'Submit' }).click();
   await expect(page.getByText(/Submitted to Google/)).toBeVisible();
   await page.getByRole('button', { name: 'Check receipt' }).click();
   await expect.poll(() => receiptLookups).toBe(1);

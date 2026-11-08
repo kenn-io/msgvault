@@ -258,7 +258,7 @@ type Archive interface {
 	BeginGoogleReviewsBackfill(ctx context.Context, target, location string) (BackfillState, error)
 	ApplyGoogleReviewsPage(ctx context.Context, target, location, expectedPageToken string, page Page) (BackfillState, error)
 	FailGoogleReviewsBackfill(ctx context.Context, target, location, errorCode string) (BackfillState, error)
-	GoogleReviewsBackfillState(ctx context.Context, target string) (BackfillState, error)
+	GoogleReviewsBackfillState(ctx context.Context, target, location string) (BackfillState, error)
 	SearchGoogleReviews(ctx context.Context, query, target string, offset, limit int) (ArchiveSearchResponse, error)
 }
 

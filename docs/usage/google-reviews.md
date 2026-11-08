@@ -183,7 +183,7 @@ msgvault google-reviews receipt RECEIPT_ID
 ```
 
 In the Web UI, enter the response, choose **Preview response**, inspect the exact
-text and target, then choose **Confirm and submit**. Closing the preview does not
+text and target, then choose **Submit**. Closing the preview does not
 submit it. Each token expires after five minutes and can be consumed once. The
 daemon checks the current account, configuration, review, and existing response
 again before submission. If any binding changes, refresh and create a new preview.

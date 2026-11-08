@@ -114,7 +114,7 @@ func (googleReviewSearchArchive) ApplyGoogleReviewsPage(context.Context, string,
 func (googleReviewSearchArchive) FailGoogleReviewsBackfill(context.Context, string, string, string) (googlereviews.BackfillState, error) {
 	return googlereviews.BackfillState{}, googlereviews.ErrArchive
 }
-func (googleReviewSearchArchive) GoogleReviewsBackfillState(_ context.Context, target string) (googlereviews.BackfillState, error) {
+func (googleReviewSearchArchive) GoogleReviewsBackfillState(_ context.Context, target, _ string) (googlereviews.BackfillState, error) {
 	return googlereviews.BackfillState{Target: target, Status: "not_started"}, nil
 }
 func (googleReviewSearchArchive) SearchGoogleReviews(_ context.Context, query, target string, offset, limit int) (googlereviews.ArchiveSearchResponse, error) {

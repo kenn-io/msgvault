@@ -183,7 +183,7 @@
   {#if busy}<p role="status">Loading…</p>{/if}
   {#if error}<p role="alert">{error}</p>{/if}
   {#if receiptUnavailable && recoveryInspected}<p role="status">Receipt unavailable. The live review was inspected. A new reply needs a fresh preview.</p>
-  {:else if receiptUnavailable}<p role="status">Receipt unavailable. The original confirmation remains consumed. Inspect the live review before creating a fresh preview.</p>
+  {:else if receiptUnavailable}<p role="status">Receipt unavailable. Inspect the live review before creating a fresh preview; do not retry the old confirmation.</p>
   {:else if unknown && recoveryInspected}<p role="status">Outcome unknown. The live review was inspected. A new reply needs a fresh preview. This submission will not be replayed.</p>
   {:else if unknown}<p role="status">Outcome unknown. Check the receipt and inspect the live review before any new preview. This submission will not be replayed.</p>{/if}
   {#if receipt}

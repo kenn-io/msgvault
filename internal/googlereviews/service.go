@@ -14,9 +14,10 @@ import (
 )
 
 type Options struct {
-	Targets  func(context.Context) ([]Target, error)
-	Provider func(context.Context, Target) (Provider, string, error)
-	Archive  Archive
+	Targets           func(context.Context) ([]Target, error)
+	Provider          func(context.Context, Target) (Provider, string, error)
+	Archive           Archive
+	BeginArchiveWrite func(context.Context) (func(), bool)
 }
 type pendingReply struct {
 	principal string
@@ -310,10 +311,11 @@ func (s *Service) archiveStatus(ctx context.Context, targetName string) (*Result
 	if s.options.Archive == nil {
 		return nil, ErrArchive
 	}
-	if _, err := s.configuredTarget(ctx, targetName); err != nil {
+	target, err := s.configuredTarget(ctx, targetName)
+	if err != nil {
 		return nil, err
 	}
-	state, err := s.options.Archive.GoogleReviewsBackfillState(ctx, targetName)
+	state, err := s.options.Archive.GoogleReviewsBackfillState(ctx, targetName, target.Location)
 	if err != nil {
 		return nil, ErrArchive
 	}
@@ -341,7 +343,7 @@ func (s *Service) startBackfill(ctx context.Context, targetName string) (*Result
 	}
 	if s.backfillActive[key] != nil {
 		s.mu.Unlock()
-		state, err := s.options.Archive.GoogleReviewsBackfillState(ctx, target.Name)
+		state, err := s.options.Archive.GoogleReviewsBackfillState(ctx, target.Name, target.Location)
 		if err != nil {
 			return nil, ErrArchive
 		}
@@ -356,7 +358,16 @@ func (s *Service) startBackfill(ctx context.Context, targetName string) (*Result
 	s.backfills.Add(1)
 	s.mu.Unlock()
 
-	state, err := s.options.Archive.BeginGoogleReviewsBackfill(workerCtx, target.Name, target.Location)
+	startCtx, cancelStart := context.WithCancel(ctx)
+	stopCancel := context.AfterFunc(workerCtx, cancelStart)
+	defer func() { stopCancel(); cancelStart() }()
+	release, ok := s.beginArchiveWrite(startCtx)
+	if !ok {
+		s.finishBackfill(key)
+		return nil, ErrArchiveBusy
+	}
+	state, err := s.options.Archive.BeginGoogleReviewsBackfill(startCtx, target.Name, target.Location)
+	release()
 	if err != nil {
 		s.finishBackfill(key)
 		if errors.Is(err, ErrArchiveBusy) {
@@ -410,7 +421,13 @@ func (s *Service) runBackfill(ctx context.Context, key string, target Target, st
 			s.failBackfill(ctx, target, "invalid_page")
 			return
 		}
+		release, ok := s.beginArchiveWrite(ctx)
+		if !ok {
+			s.failBackfill(ctx, target, "cancelled")
+			return
+		}
 		state, err = s.options.Archive.ApplyGoogleReviewsPage(ctx, target.Name, target.Location, state.NextPageToken, page)
+		release()
 		if err != nil {
 			s.failBackfill(ctx, target, archiveErrorCode(err))
 			return
@@ -458,11 +475,23 @@ func archiveErrorCode(err error) string {
 	}
 }
 
+func (s *Service) beginArchiveWrite(ctx context.Context) (func(), bool) {
+	if s.options.BeginArchiveWrite == nil {
+		return func() {}, true
+	}
+	return s.options.BeginArchiveWrite(ctx)
+}
+
 func (s *Service) failBackfill(ctx context.Context, target Target, errorCode string) {
 	// Persist the resume checkpoint after daemon shutdown cancels the worker;
 	// this bounded cleanup must finish after service-context cancellation.
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	release, ok := s.beginArchiveWrite(persistCtx)
+	if !ok {
+		return
+	}
+	defer release()
 	_, _ = s.options.Archive.FailGoogleReviewsBackfill(persistCtx, target.Name, target.Location, errorCode)
 }
 
