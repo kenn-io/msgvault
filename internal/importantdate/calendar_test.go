@@ -11,8 +11,9 @@ import (
 )
 
 func TestNextOccurrence(t *testing.T) {
+	must := require.New(t)
 	newYork, err := time.LoadLocation("America/New_York")
-	require.NoError(t, err)
+	must.NoError(err)
 	tests := []struct {
 		name   string
 		date   store.PartialDate
@@ -31,33 +32,50 @@ func TestNextOccurrence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			checks := assert.New(t)
 			got, ok := NextOccurrence(tt.date, tt.now, newYork, tt.policy)
-			assert.Equal(t, tt.wantOK, ok)
+			checks.Equal(tt.wantOK, ok)
 			if ok {
-				assert.Equal(t, tt.want, got.Format(time.DateOnly))
+				checks.Equal(tt.want, got.Format(time.DateOnly))
 			}
 		})
 	}
 }
 
 func TestDaysUntilUsesCalendarDaysAcrossDST(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
 	loc, err := time.LoadLocation("America/New_York")
-	require.NoError(t, err)
+	must.NoError(err)
 	now := time.Date(2027, 3, 13, 23, 30, 0, 0, loc)
 	occurrence := time.Date(2027, 3, 15, 0, 0, 0, 0, loc)
-	assert.Equal(t, 2, DaysUntil(now, occurrence, loc))
+	checks.Equal(2, DaysUntil(now, occurrence, loc))
 }
 
 // A valid non-leap date always returns the same month and day, no earlier
 // than today, independent of the time of day used to request it.
 func TestNextOccurrencePreservesMonthAndDay(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
+		checks := assert.New(ht)
+		must := require.New(ht)
 		month := hegel.Draw(ht, hegel.Integers(1, 12))
 		day := hegel.Draw(ht, hegel.Integers(1, 28))
 		year := hegel.Draw(ht, hegel.Integers(1900, 2200))
 		now := time.Date(year, time.Month(month), day, 12, 0, 0, 0, time.UTC)
 		got, ok := NextOccurrence(store.PartialDate{Month: &month, Day: &day}, now, time.UTC, LeapFebruary28)
-		require.True(t, ok)
-		assert.Equal(t, now.Format(time.DateOnly), got.Format(time.DateOnly))
+		must.True(ok)
+		checks.Equal(now.Format(time.DateOnly), got.Format(time.DateOnly))
 	}, hegel.WithTestCases(200), hegel.WithDatabase(""))
+}
+
+func TestNextOccurrenceOnSkippedMidnight(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	must.NoError(err)
+	now := time.Date(2018, 11, 3, 12, 0, 0, 0, loc)
+	got, ok := NextOccurrence(store.PartialDate{Month: new(11), Day: new(4)}, now, loc, LeapFebruary28)
+	must.True(ok)
+	checks.Equal("2018-11-04", got.In(loc).Format(time.DateOnly))
+	checks.Equal(1, DaysUntil(now, got, loc))
 }

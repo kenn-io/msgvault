@@ -45,13 +45,15 @@ func TestDeclaredDateSelection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			checks := assert.New(t)
+			must := require.New(t)
 			date, status := SelectDeclaredDate(tt.dates, store.PersonDateBirthday, now)
-			assert.Equal(t, tt.want, status)
+			checks.Equal(tt.want, status)
 			if status == DateEligible {
-				require.NotNil(t, date.Month)
-				require.NotNil(t, date.Day)
-				assert.Equal(t, 4, *date.Month)
-				assert.Equal(t, 12, *date.Day)
+				must.NotNil(date.Month)
+				must.NotNil(date.Day)
+				checks.Equal(4, *date.Month)
+				checks.Equal(12, *date.Day)
 			}
 		})
 	}

@@ -7,19 +7,20 @@ import (
 )
 
 func TestCadenceRequiresExplicitMapping(t *testing.T) {
+	checks := assert.New(t)
 	mapping := map[int]Tier{21: TierA, 60: TierB, 180: TierC, 365: TierD}
 	for days, want := range mapping {
 		got, ok := TierForCadence(days, nil)
-		assert.False(t, ok)
-		assert.Empty(t, got)
+		checks.False(ok)
+		checks.Empty(got)
 		got, ok = TierForCadence(days, mapping)
-		assert.True(t, ok)
-		assert.Equal(t, want, got)
+		checks.True(ok)
+		checks.Equal(want, got)
 	}
 	_, ok := TierForCadence(30, mapping)
-	assert.False(t, ok)
+	checks.False(ok)
 	_, ok = TierForCadence(0, mapping)
-	assert.False(t, ok)
+	checks.False(ok)
 }
 
 func TestSubjectExclusionOverridesParent(t *testing.T) {
@@ -35,8 +36,9 @@ func TestSubjectExclusionOverridesParent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			checks := assert.New(t)
 			got := ResolveEligibility(tt.subject, Eligibility{Enabled: true, Tier: TierC}, parent)
-			assert.Equal(t, tt.want, got)
+			checks.Equal(tt.want, got)
 		})
 	}
 }

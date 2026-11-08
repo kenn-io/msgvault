@@ -79,11 +79,6 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		if !ok {
 			return
 		}
-		lead := map[Tier]int{TierA: cfg.LeadA, TierB: cfg.LeadB, TierC: cfg.LeadC, TierD: cfg.LeadD}[tier]
-		days := DaysUntil(now, occurrence, location)
-		if days < 0 || days > lead {
-			return
-		}
 		key := fmt.Sprintf("%s:%s:%d", subject, kind, occurrence.Year())
 		digest := sha256.Sum256([]byte(fmt.Sprintf("date-v1:%d:%d", *date.Month, *date.Day)))
 		candidate := Candidate{Fingerprint: hex.EncodeToString(digest[:]), OccurrenceKey: key, SubjectUID: subject, OwnerUID: owner, Kind: kind, Occurrence: occurrence, Tier: tier}
@@ -141,6 +136,11 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 	}
 	result := make([]Candidate, 0, len(selected))
 	for _, candidate := range selected {
+		lead := map[Tier]int{TierA: cfg.LeadA, TierB: cfg.LeadB, TierC: cfg.LeadC, TierD: cfg.LeadD}[candidate.Tier]
+		days := DaysUntil(now, candidate.Occurrence, location)
+		if days < 0 || days > lead {
+			continue
+		}
 		prefix := candidate.SubjectUID + ":" + candidate.Kind + ":"
 		pending, err := st.ImportantDateHasOtherPendingContext(ctx, prefix, candidate.OccurrenceKey, candidate.Fingerprint)
 		if err != nil {
@@ -163,7 +163,7 @@ func relationshipStarted(start *store.PartialDate, now time.Time, location *time
 		return false
 	}
 	local := now.In(location)
-	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
-	date := time.Date(*start.Year, time.Month(*start.Month), *start.Day, 0, 0, 0, 0, location)
-	return !date.After(today)
+	today := local.Format(time.DateOnly)
+	date := fmt.Sprintf("%04d-%02d-%02d", *start.Year, *start.Month, *start.Day)
+	return date <= today
 }

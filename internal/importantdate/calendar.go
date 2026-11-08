@@ -2,7 +2,10 @@
 package importantdate
 
 import (
+	"fmt"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calrecur"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -26,8 +29,8 @@ func NextOccurrence(date store.PartialDate, now time.Time, location *time.Locati
 		return time.Time{}, false
 	}
 	local := now.In(location)
-	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
-	year := today.Year()
+	today := local.Format(time.DateOnly)
+	year := local.Year()
 	if date.Year != nil && *date.Year > year {
 		year = *date.Year
 	}
@@ -45,8 +48,15 @@ func NextOccurrence(date store.PartialDate, now time.Time, location *time.Locati
 				month, day = time.March, 1
 			}
 		}
-		candidate := time.Date(year, month, day, 0, 0, 0, 0, location)
-		if !candidate.Before(today) {
+		civil := fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+		if civil < today {
+			continue
+		}
+		candidate, exists, err := calrecur.CivilDateBoundary(civil, location)
+		if err != nil {
+			return time.Time{}, false
+		}
+		if exists {
 			return candidate, true
 		}
 	}
