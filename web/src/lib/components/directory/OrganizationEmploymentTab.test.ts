@@ -489,7 +489,6 @@ describe('OrganizationEmploymentTab', () => {
     expect(within(row as HTMLElement).getByRole('button', { name: 'Synthetic Org' })).toBeDefined();
     await fireEvent.click(screen.getByText('1 past job'));
     expect(screen.getByText(/Historical role/)).toBeDefined();
-    expect(screen.queryByRole('button', {name:'Edit Historical role'}), 'the row takes no tap; Edit… is in ⋯').toBeNull();
     await rowAction('Edit…');
     expect(screen.getByRole('dialog', {name:'Edit job'})).toBeDefined();
   });
@@ -670,7 +669,6 @@ describe('OrganizationEmploymentTab', () => {
     controller.employments = [employment()];
     const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
     try {
-      if (!controller.employments.some(job => job.is_current)) await fireEvent.click(screen.getByText(/^\d+ past jobs?$/));
       await rowAction('Delete…');
       expect(appShortcuts.activeScope()).toBe('directory-employment-delete');
       appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));

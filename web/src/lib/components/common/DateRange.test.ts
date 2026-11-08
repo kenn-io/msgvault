@@ -22,9 +22,9 @@ it('validates partial dates and date order under their fields', async () => {
   expect(screen.queryByText('Use 2024, 2024-03, or 2024-03-15.')).toBeNull();
 });
 
-it('shows the format hint only while a date is empty or being typed', async () => {
+it('shows date hints and places Current beside the end date', async () => {
   const hint = () => screen.queryByText('2024, 2024-03, or 2024-03-15');
-  render(DateRange, { start: '', current: true });
+  const initial = render(DateRange, { start: '', current: true });
   expect(hint()).not.toBeNull();
   const start = screen.getByRole('textbox', { name: 'Start date' });
   await fireEvent.input(start, { target: { value: '2024-03' } });
@@ -40,33 +40,30 @@ it('shows the format hint only while a date is empty or being typed', async () =
   expect(hint()).not.toBeNull();
   await fireEvent.input(end, { target: { value: '2024-13' } });
   expect(hint()).toBeNull();
-});
-
-it('reads a filled date back in words where its hint was', async () => {
-  render(DateRange, { start: '', end: '', showCurrent: false });
+  initial.unmount();
+  const first = render(DateRange, { start: '', end: '', showCurrent: false });
   const hints = () => screen.queryAllByText('2024, 2024-03, or 2024-03-15');
   // Two empty fields share one hint, under the field being typed.
   expect(hints()).toHaveLength(1);
-  const start = screen.getByRole('textbox', { name: 'Start date' });
-  const end = screen.getByRole('textbox', { name: 'End date' });
-  await fireEvent.focusIn(end);
+  const secondStart = screen.getByRole('textbox', { name: 'Start date' });
+  const secondEnd = screen.getByRole('textbox', { name: 'End date' });
+  await fireEvent.focusIn(secondEnd);
   expect(hints()).toHaveLength(1);
-  expect(end.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
-  await fireEvent.focusOut(end);
-  await fireEvent.input(start, { target: { value: '2024-03' } });
+  expect(secondEnd.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
+  await fireEvent.focusOut(secondEnd);
+  await fireEvent.input(secondStart, { target: { value: '2024-03' } });
   expect(screen.getByText('Mar 2024')).toBeDefined();
-  expect(end.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
-  await fireEvent.input(end, { target: { value: '2025' } });
+  expect(secondEnd.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
+  await fireEvent.input(secondEnd, { target: { value: '2025' } });
   expect(screen.getByText('2025')).toBeDefined();
   expect(hints()).toHaveLength(0);
-});
+  first.unmount();
 
-it("puts Current in End's hint line while End has nothing to read back, and under its reading otherwise", async () => {
   const view = render(DateRange, { start: '2024-03', current: true });
-  const end = view.container.querySelectorAll('.field')[1]!;
-  const parts = () => Array.from(end.children, (child) => child.className.split(' ')[0]);
+  const endField = view.container.querySelectorAll('.field')[1]!;
+  const parts = () => Array.from(endField.children, (child) => child.className.split(' ')[0]);
   expect(parts()).toEqual(['kit-form-field', 'current']);
-  expect(end.querySelector('.current')!.textContent).toContain('Current');
+  expect(endField.querySelector('.current')!.textContent).toContain('Current');
   await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
   expect(parts()).toEqual(['kit-form-field', 'current']);
   // Focusing Current isn't typing End, so Current stays where it was clicked.
@@ -74,9 +71,9 @@ it("puts Current in End's hint line while End has nothing to read back, and unde
   expect(parts()).toEqual(['kit-form-field', 'current']);
   await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2025' } });
   expect(parts()).toEqual(['kit-form-field', 'note', 'current']);
-  expect(end.querySelector('.note')!.textContent).toBe('2025');
-  expect(end.querySelector('.current')!.classList.contains('below')).toBe(true);
+  expect(endField.querySelector('.note')!.textContent).toBe('2025');
+  expect(endField.querySelector('.current')!.classList.contains('below')).toBe(true);
   await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-13' } });
   expect(parts()).toEqual(['kit-form-field', 'current']);
-  expect(end.querySelector('.current')!.classList.contains('below')).toBe(true);
+  expect(endField.querySelector('.current')!.classList.contains('below')).toBe(true);
 });

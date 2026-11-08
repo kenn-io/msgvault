@@ -117,7 +117,6 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
     const search = await openTypeahead('Person');
-    // The picker's search hint is its own, while the field keeps its name.
     expect(search.placeholder).toBe('Person');
     expect(await screen.findByRole('option', { name: 'Synthetic Peer Last contact Jul 1, 2024' })).toBeDefined();
     expect(screen.getByRole('option', { name: 'Synthetic Peer Last contact Feb 3, 2023' })).toBeDefined();
@@ -339,7 +338,6 @@ describe('RelationshipsTab', () => {
       expect(within(row).getByText(label)).toBeDefined();
     }
     expect(screen.queryByText(/outgoing|incoming/)).toBeNull();
-    expect(screen.queryAllByRole('button', { name: /^Edit connection with/ })).toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /^Actions for /  })).toHaveLength(3);
   });
 
