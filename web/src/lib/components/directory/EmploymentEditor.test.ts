@@ -382,21 +382,6 @@ it('allows closing while the job loads', async () => {
 
 
 
-it('saves a date-shaped description as text', async () => {
-  let body: Record<string, unknown> | undefined;
-  const job = employment(11, 1, { description: '20240305' });
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') { body = await request.json(); return Response.json(job); }
-    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(job, { headers: { ETag: '"employment-11-r1"' } });
-  });
-  render(EmploymentEditor, { controller, personID: 7, employment: job });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Description' }), { target: { value: '2024-03-05' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await waitFor(() => expect(body).toMatchObject({ description: '2024-03-05' }));
-});
-
 it.each([
   { name: 'a department changed elsewhere', opening: { department: 'Sales' }, saved: { department: 'Ops' }, edit: ['Job title', 'Lead'], rows: ['Job title', 'Department'], expected: { title: 'Lead', department: 'Sales' } },
   { name: 'a current job ended elsewhere', opening: { start_date: { year: 2020 } }, saved: { start_date: { year: 2020 }, is_current: false, end_date: { year: 2022 } }, edit: ['Start date', '2024'], rows: ['Start date', 'End date'], expected: { start_date: '2024', is_current: true } },

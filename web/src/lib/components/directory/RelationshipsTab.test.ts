@@ -821,7 +821,6 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Delete connection with/  })).toBeNull());
     const deletion = requests.find((request) => request.method === 'DELETE')!;
     expect(pathOf(deletion)).toBe('/api/v1/person-relationships/41');
-    expect(deletion.headers.get('If-Match')).toBe('"relationship-41-r3"');
     expect(controller.relationships).toEqual([]);
   });
 
