@@ -109,6 +109,13 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	again, err = st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
 	must.NoError(err)
 	checks.NotEqual(lineage.Digest, again.Digest)
+	previousDigest := again.Digest
+	count, err := st.AcceptImportantDateCorrectionContext(ctx, "person/"+second.VCardUID+":birthday:", "corrected-fingerprint")
+	must.NoError(err)
+	checks.Equal(int64(1), count)
+	again, err = st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	checks.NotEqual(previousDigest, again.Digest)
 }
 
 func TestRetiringAliasChangesIdentityRevision(t *testing.T) {

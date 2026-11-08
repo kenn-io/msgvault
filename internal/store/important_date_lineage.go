@@ -16,17 +16,25 @@ import (
 // ImportantDateLineage is an owner-only inspection of connected identity
 // history. It does not approve any mapping or release a quarantined identity.
 type ImportantDateLineage struct {
-	Digest           string                        `json:"digest,omitempty"`
-	IdentityRevision int64                         `json:"identity_revision"`
-	PersonIDs        []int64                       `json:"person_ids"`
-	MissingPersonIDs []int64                       `json:"missing_person_ids"`
-	PersonUIDs       []string                      `json:"person_uids"`
-	People           []ImportantDateLineagePerson  `json:"people"`
-	Aliases          []ImportantDateLineageAlias   `json:"aliases"`
-	MergeIDs         []int64                       `json:"merge_ids"`
-	SplitIDs         []int64                       `json:"split_ids"`
-	OwnedSubjects    []ImportantDateLineageSubject `json:"owned_subjects"`
-	Deliveries       []ImportantDateDelivery       `json:"deliveries"`
+	Digest           string                         `json:"digest,omitempty"`
+	IdentityRevision int64                          `json:"identity_revision"`
+	PersonIDs        []int64                        `json:"person_ids"`
+	MissingPersonIDs []int64                        `json:"missing_person_ids"`
+	PersonUIDs       []string                       `json:"person_uids"`
+	People           []ImportantDateLineagePerson   `json:"people"`
+	Aliases          []ImportantDateLineageAlias    `json:"aliases"`
+	MergeIDs         []int64                        `json:"merge_ids"`
+	SplitIDs         []int64                        `json:"split_ids"`
+	OwnedSubjects    []ImportantDateLineageSubject  `json:"owned_subjects"`
+	Deliveries       []ImportantDateLineageDelivery `json:"deliveries"`
+}
+
+type ImportantDateLineageDelivery struct {
+	OccurrenceKey       string                     `json:"occurrence_key"`
+	State               ImportantDateDeliveryState `json:"state"`
+	IssueUID            string                     `json:"issue_uid,omitempty"`
+	Fingerprint         string                     `json:"fingerprint"`
+	AcceptedFingerprint string                     `json:"accepted_fingerprint,omitempty"`
 }
 
 type ImportantDateLineageAlias struct {
@@ -35,10 +43,11 @@ type ImportantDateLineageAlias struct {
 }
 
 type ImportantDateLineagePerson struct {
-	ID       int64        `json:"id"`
-	UID      string       `json:"uid"`
-	Revision int64        `json:"revision"`
-	Dates    []PersonDate `json:"dates"`
+	ID                 int64        `json:"id"`
+	UID                string       `json:"uid"`
+	Revision           int64        `json:"revision"`
+	ProjectionRevision int64        `json:"projection_revision"`
+	Dates              []PersonDate `json:"dates"`
 }
 
 type ImportantDateLineageSubject struct {
@@ -114,8 +123,8 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	splits := map[int64]struct{}{}
 	for _, id := range result.PersonIDs {
 		var uid string
-		var revision int64
-		err := s.db.QueryRowContext(ctx, `SELECT vcard_uid, revision FROM persons WHERE id = ?`, id).Scan(&uid, &revision)
+		var revision, projectionRevision int64
+		err := s.db.QueryRowContext(ctx, `SELECT vcard_uid, revision, vcard_projection_revision FROM persons WHERE id = ?`, id).Scan(&uid, &revision, &projectionRevision)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return result, fmt.Errorf("read lineage person: %w", err)
 		}
@@ -128,7 +137,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 			if err != nil {
 				return result, fmt.Errorf("read lineage dates: %w", err)
 			}
-			result.People = append(result.People, ImportantDateLineagePerson{ID: id, UID: uid, Revision: revision, Dates: dates})
+			result.People = append(result.People, ImportantDateLineagePerson{ID: id, UID: uid, Revision: revision, ProjectionRevision: projectionRevision, Dates: dates})
 		}
 		rows, err := s.db.QueryContext(ctx, `SELECT retired_uid FROM person_uid_aliases WHERE surviving_person_id = ?`, id)
 		if err != nil {
@@ -274,13 +283,13 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		prefixes = append(prefixes, "owned/"+subject.UID+":")
 	}
 	for _, prefix := range prefixes {
-		rows, err := s.db.QueryContext(ctx, `SELECT occurrence_key, state, issue_uid FROM important_date_deliveries WHERE substr(occurrence_key, 1, ?) = ? ORDER BY occurrence_key`, utf8.RuneCountInString(prefix), prefix)
+		rows, err := s.db.QueryContext(ctx, `SELECT occurrence_key, state, issue_uid, fingerprint, accepted_fingerprint FROM important_date_deliveries WHERE substr(occurrence_key, 1, ?) = ? ORDER BY occurrence_key`, utf8.RuneCountInString(prefix), prefix)
 		if err != nil {
 			return result, fmt.Errorf("read lineage deliveries: %w", err)
 		}
 		for rows.Next() {
-			var item ImportantDateDelivery
-			if err := rows.Scan(&item.OccurrenceKey, &item.State, &item.IssueUID); err != nil {
+			var item ImportantDateLineageDelivery
+			if err := rows.Scan(&item.OccurrenceKey, &item.State, &item.IssueUID, &item.Fingerprint, &item.AcceptedFingerprint); err != nil {
 				_ = rows.Close()
 				return result, fmt.Errorf("scan lineage delivery: %w", err)
 			}
