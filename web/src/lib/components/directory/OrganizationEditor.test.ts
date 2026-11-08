@@ -558,6 +558,40 @@ it('retries a failed Keep yours after the fields were changed back', async () =>
   await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r2"']));
 });
 
+it('refreshes directory views after a section save fails following a core conflict', async () => {
+  let gets = 0;
+  let puts = 0;
+  let patches = 0;
+  const refresh = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return ++patches === 1
+      ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
+      : Response.json(organization(), { headers: { ETag: '"organization-21-r2"' } });
+    if (request.method === 'PUT') return ++puts === 1
+      ? Response.json({ message: 'Unavailable' }, { status: 503 })
+      : Response.json(organizationProfile(3), { headers: { ETag: '"organization-21-r3"' } });
+    if (request.method === 'GET') return Response.json(organizationProfile(++gets), { headers: { ETag: `"organization-21-r${gets}"` } });
+    throw new Error(`Unexpected ${request.method}`);
+  });
+  controller.refreshDirectoryViews = refresh;
+  const onClose = vi.fn();
+  render(OrganizationEditor, { controller, organization: organization(), onClose });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await screen.findByRole('button', { name: 'Use saved' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(patches).toBe(2));
+  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await waitFor(() => expect(puts).toBe(1));
+  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
+
 it.each(['save', 'delete'] as const)('requires review of a concurrent domain on %s after a core save', async action => {
   let revision = 1;
   let stored = organization();

@@ -112,7 +112,6 @@
 
   async function saveProfile(): Promise<void> {
     if (!initialOrganization || !currentProfile || submitting) return;
-    attempt.reset();
     const aliasDelta = valueDelta(baselineAliases, values(aliases));
     const categoryDelta = valueDelta(baselineCategories, values(categories));
     let saved: OrganizationProfile | undefined;
