@@ -61,11 +61,7 @@ func (s *Store) CreateImportantDateSubjectContext(ctx context.Context, input Imp
 // ListImportantDateSubjectsContext lists explicit active subjects for one owner.
 func (s *Store) ListImportantDateSubjectsContext(ctx context.Context, ownerUID string) ([]ImportantDateSubject, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT uid, owner_uid, kind, display_name, birth_year, birth_month, birth_day, revision FROM important_date_subjects
-		WHERE withdrawn = 0 AND owner_uid IN (
-			SELECT vcard_uid FROM persons WHERE vcard_uid = ?
-			UNION ALL SELECT retired_uid FROM person_uid_aliases
-			WHERE surviving_person_id = (SELECT id FROM persons WHERE vcard_uid = ?)
-		) ORDER BY uid`, ownerUID, ownerUID)
+		WHERE withdrawn = 0 AND owner_uid = ? ORDER BY uid`, ownerUID)
 	if err != nil {
 		return nil, fmt.Errorf("list important-date subjects: %w", err)
 	}
