@@ -3439,6 +3439,7 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 |---|---|
 | `add-carddav <base-url> <username> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
 | `add-carddav --google <email> [--connection <name>] [--oauth-app <name>] [--schedule <cron>] [--disabled]` | Connect Google Contacts using an authorized account token |
+| `add-carddav --icloud <apple-id> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover the iCloud contacts partition using an app-specific password |
 | `add-carddav --microsoft <email> [--headless] [--connection <name>] [--schedule <cron>] [--disabled]` | Sign in to Microsoft and connect Microsoft 365 or Outlook.com contacts through Microsoft Graph |
 | `carddav authorize-google <email> [--oauth-app <name>] [--no-browser]` | Authorize Google Contacts in the browser, preserving existing Google permissions |
 | `carddav authorize-microsoft <email> [--headless]` | Sign in to Microsoft for contacts without saving a connection |

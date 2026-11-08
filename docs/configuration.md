@@ -746,7 +746,7 @@ Removing a config table retains the account's archive data; see
 |-----|---------|-------------|
 | `provider` | `""` | Empty for a password-based server, `google` for Google Contacts, or `microsoft` for Microsoft 365 and Outlook.com contacts |
 | `oauth_app` | `""` | Named Google OAuth app; empty selects `[oauth]` |
-| `base_url` | `""` | CardDAV discovery URL; Google and Microsoft setup supply their canonical URL |
+| `base_url` | `""` | CardDAV discovery URL; Google and Microsoft setup supply their canonical URL, and iCloud setup saves its discovered contacts partition |
 | `username` | `""` | Server username, or Google or Microsoft account email |
 | `schedule` | `""` | Cron schedule; empty disables scheduled sync |
 | `enabled` | `false` | Enable the configured connection |
