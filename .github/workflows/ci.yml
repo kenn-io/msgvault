@@ -663,9 +663,11 @@ jobs:
             "go.kenn.io/msgvault/cmd/msgvault/cmd"
             "go.kenn.io/msgvault/internal/api"
             "go.kenn.io/msgvault/internal/beeper"
+            "go.kenn.io/msgvault/internal/chatwoot"
             "go.kenn.io/msgvault/internal/deletion"
             "go.kenn.io/msgvault/internal/importer"
             "go.kenn.io/msgvault/internal/query"
+            "go.kenn.io/msgvault/internal/slack"
             "go.kenn.io/msgvault/internal/store"
             "go.kenn.io/msgvault/internal/sync"
             "go.kenn.io/msgvault/internal/vector/embed"
@@ -823,7 +825,7 @@ jobs:
           # A 4-core runner is already saturated by one package's shards, so the
           # two slowest packages each split across 3 runners.
           - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 45 }
-          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 45 }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 64, extra_packages: ./internal/query }
           - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 36m, job_timeout: 64 }
           - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 30m, job_timeout: 38 }
           - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 30m, job_timeout: 38 }
@@ -836,6 +838,7 @@ jobs:
           - name: vector-sqlite
             job_timeout: 47
             package: ./internal/vector/sqlitevec
+            extra_packages: ./internal/deletion ./internal/beeper ./scripts/contextual-retrieval-eval ./internal/chatwoot ./internal/slack
             timeout: 9m
     runs-on: windows-2025
     timeout-minutes: ${{ matrix.job_timeout }}
@@ -881,20 +884,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-      - name: Stabilize tracked file times
-        if: matrix.name == 'vector-sqlite' && !cancelled()
-        run: go run ./scripts/stable-mtimes
-
       - name: Test additional packages
-        if: matrix.name == 'vector-sqlite' && !cancelled()
+        if: matrix.extra_packages && !cancelled()
         shell: pwsh
         env: *windows-test-env
         run: |
           go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-additional.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-additional-reruns.txt `
-            --packages "./internal/query ./internal/deletion ./internal/beeper ./scripts/contextual-retrieval-eval" -- -timeout 20m -tags "fts5 sqlite_vec"
+            --packages "${{ matrix.extra_packages }}" -- -timeout 20m -tags "fts5 sqlite_vec"
 
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || matrix.name == 'vector-sqlite'
+        if: failure() || github.run_attempt > 1 || matrix.extra_packages
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
