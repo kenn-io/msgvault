@@ -484,6 +484,7 @@ func TestQueueKeepsOneEntryPerThreadNewestFirst(t *testing.T) {
 	older.Reason = "mention"
 	assert.Equal(1, state.queue([]ThreadRef{older}))
 	state.Queue[0].Continuation = []byte(`3`)
+	state.Queue[0].ReadAt = older.UpdatedAt.Add(time.Hour)
 
 	same := ref("a", "acme", "2026-11-01T00:00:00Z")
 	other := ref("b", "acme", "2026-11-02T00:00:00Z")
@@ -497,6 +498,12 @@ func TestQueueKeepsOneEntryPerThreadNewestFirst(t *testing.T) {
 	assert.Equal("a", state.Queue[0].Ref.Key)
 	assert.Nil(state.Queue[0].Continuation, "a changed thread is fetched from the start")
 	assert.Equal("mention", state.Queue[0].Ref.Reason)
+
+	state.Queue[0].Continuation = []byte(`2`)
+	state.Queue[0].ReadAt = newer.UpdatedAt.Add(500 * time.Millisecond)
+	assert.Zero(state.queue([]ThreadRef{newer}))
+	assert.Nil(state.Queue[0].Continuation,
+		"a thread whose first page was read within a second of its update may have changed since, so it starts over")
 }
 
 func TestParseInstance(t *testing.T) {
@@ -957,4 +964,41 @@ func TestAThreadChangedInTheSecondItWasFetchedIsFetchedAgain(t *testing.T) {
 	settled, err := syncer.Sync(t.Context(), source.ID, Options{})
 	require.NoError(err)
 	assert.Zero(settled.Found, "a copy read well after the update holds it")
+}
+
+func TestAPausedThreadEditedInTheSecondItWasReadStartsOver(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	update := "2026-11-07T10:00:00Z"
+	f.pages = [][]ThreadRef{{ref("i1", "acme", update)}}
+	f.threads["i1"] = [][]Post{
+		{post("p1", "issue", ann, "Title", "Body.", "2026-11-01T10:00:00Z")},
+		{post("c1", "issue_comment", octo, "", "Reply.", "2026-11-02T10:00:00Z")},
+	}
+	at, err := time.Parse(time.RFC3339, update)
+	require.NoError(err)
+	clock := at.Add(500 * time.Millisecond)
+	syncer := NewSyncer(st, f, nil)
+	syncer.now = func() time.Time { return clock }
+	f.failures["i1"] = fetchFailure{page: 1, err: &RateLimitError{Resource: "graphql", Reset: clock.Add(time.Hour)}}
+	paused, err := syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	require.True(paused.Paused)
+
+	// Later in the same second the opening post was edited, after the
+	// paused fetch read it. Discovery reports the same update once more,
+	// then moves past it.
+	f.threads["i1"][0][0] = post("p1", "issue", ann, "Title", "Edited.", "2026-11-01T10:00:00Z")
+	delete(f.failures, "i1")
+	f.pages = append(f.pages, []ThreadRef{ref("i1", "acme", update), ref("i2", "acme", "2026-11-07T11:00:00Z")})
+	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Other", "Body.", "2026-11-07T11:00:00Z")}}
+	clock = at.Add(time.Hour)
+	resumed, err := syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	assert.Equal([]string{"i1@", "i2@", "i1@"}, f.fetches, "the paused thread starts over instead of continuing")
+	assert.Equal(1, resumed.Updated, "the edited opening post")
+	assert.Equal(2, resumed.Added, "the reply, and the other thread's post")
 }

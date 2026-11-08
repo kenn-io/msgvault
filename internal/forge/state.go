@@ -63,8 +63,10 @@ func (s *syncState) encode() (string, error) {
 }
 
 // queue adds found threads. A thread already queued keeps the place its
-// fetch reached unless it changed again, and keeps its notification reason
-// unless a newer one arrives.
+// fetch reached unless it changed again, or was found at the update it was
+// queued for but its fetch read the first page too soon after that update to
+// hold it (see KnownThread.Holds). It keeps its notification reason unless a
+// newer one arrives.
 // The queue is newest first, so recent activity is archived before an old
 // backlog. It returns how many threads were not queued before.
 func (s *syncState) queue(found []ThreadRef) int {
@@ -83,8 +85,10 @@ func (s *syncState) queue(found []ThreadRef) int {
 		}
 		queued := &s.Queue[i]
 		reason := queued.Ref.Reason
-		if ref.UpdatedAt.After(queued.Ref.UpdatedAt) {
-			// The thread changed again; fetch it from the start, since an
+		started := KnownThread{Ref: queued.Ref, ReadAt: queued.ReadAt}
+		if !ref.UpdatedAt.IsZero() && !started.Holds(ref.UpdatedAt) {
+			// The thread changed again, maybe in the same second after its
+			// fetch read the first page; fetch it from the start, since an
 			// earlier post may be what changed.
 			queued.Ref = ref
 			queued.Continuation = nil
