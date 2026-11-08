@@ -1,0 +1,169 @@
+package importantdate
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"sort"
+	"time"
+
+	"go.kenn.io/msgvault/internal/store"
+)
+
+// Candidate is an internal, local-only preparation target. It is not a Kata
+// payload; callers must revalidate it and check recipient-specific consent.
+type Candidate struct {
+	OccurrenceKey string
+	Fingerprint   string
+	SubjectUID    string
+	OwnerUID      string
+	Kind          string
+	Occurrence    time.Time
+	Tier          Tier
+}
+
+type CandidateStore interface {
+	ListPersonsContext(context.Context) ([]store.Person, error)
+	ListPersonDatesContext(context.Context, int64, bool) ([]store.PersonDate, error)
+	ListPersonAttributeValuesContext(context.Context, int64, store.PersonAttributeQuery) ([]store.PersonAttributeValue, error)
+	ListPersonRelationshipsContext(context.Context, int64, store.PersonRelationshipListOptions) ([]store.PersonRelationshipView, error)
+	ListImportantDateSubjectsContext(context.Context, string) ([]store.ImportantDateSubject, error)
+	ImportantDateIdentityStableContext(context.Context, int64) (bool, error)
+	ImportantDateHasOtherPendingContext(context.Context, string, string, string) (bool, error)
+}
+
+// Candidates scans current declared facts without inference or external writes.
+// Subjects involved in a merge or split are quarantined until reconciliation.
+func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time) ([]Candidate, error) {
+	if !cfg.Enabled || !cfg.UseCadencePresets {
+		return nil, nil
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	location, err := time.LoadLocation(cfg.Timezone)
+	if err != nil {
+		return nil, err
+	}
+	people, err := st.ListPersonsContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]store.Person, len(people))
+	stable := make(map[int64]bool, len(people))
+	tiers := make(map[int64]Tier, len(people))
+	mapping := map[int]Tier{21: TierA, 60: TierB, 180: TierC, 365: TierD}
+	for _, person := range people {
+		byID[person.ID] = person
+		stable[person.ID], err = st.ImportantDateIdentityStableContext(ctx, person.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !stable[person.ID] {
+			continue
+		}
+		values, err := st.ListPersonAttributeValuesContext(ctx, person.ID, store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugContactFrequency})
+		if err != nil {
+			return nil, err
+		}
+		if len(values) == 1 && values[0].Source.IsDeclared() && !values[0].ActiveFrom.After(now) && values[0].Value.Integer != nil && *values[0].Value.Integer > 0 && *values[0].Value.Integer <= 365 {
+			if tier, ok := TierForCadence(int(*values[0].Value.Integer), mapping); ok {
+				tiers[person.ID] = tier
+			}
+		}
+	}
+	selected := make(map[string]Candidate)
+	add := func(subject, owner, kind string, date store.PartialDate, tier Tier, direct bool) {
+		occurrence, ok := NextOccurrence(date, now, location, cfg.LeapDay)
+		if !ok {
+			return
+		}
+		lead := map[Tier]int{TierA: cfg.LeadA, TierB: cfg.LeadB, TierC: cfg.LeadC, TierD: cfg.LeadD}[tier]
+		days := DaysUntil(now, occurrence, location)
+		if days < 0 || days > lead {
+			return
+		}
+		key := fmt.Sprintf("%s:%s:%d", subject, kind, occurrence.Year())
+		digest := sha256.Sum256([]byte(fmt.Sprintf("date-v1:%d:%d", *date.Month, *date.Day)))
+		candidate := Candidate{Fingerprint: hex.EncodeToString(digest[:]), OccurrenceKey: key, SubjectUID: subject, OwnerUID: owner, Kind: kind, Occurrence: occurrence, Tier: tier}
+		previous, exists := selected[key]
+		// Direct eligibility wins over inheritance; otherwise choose the most
+		// important tier, then stable UID for deterministic duplicate routing.
+		if !exists || direct && previous.OwnerUID != subject || (!direct && previous.OwnerUID != subject && (tier < previous.Tier || tier == previous.Tier && owner < previous.OwnerUID)) {
+			selected[key] = candidate
+		}
+	}
+	for _, person := range people {
+		tier, ok := tiers[person.ID]
+		if !ok {
+			continue
+		}
+		dates, err := st.ListPersonDatesContext(ctx, person.ID, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, kind := range []store.PersonDateKind{store.PersonDateBirthday, store.PersonDateAnniversary} {
+			date, status := SelectDeclaredDate(dates, kind, now)
+			if status == DateEligible {
+				add("person/"+person.VCardUID, "person/"+person.VCardUID, string(kind), date, tier, true)
+			}
+		}
+		children, err := st.ListPersonRelationshipsContext(ctx, person.ID, store.PersonRelationshipListOptions{})
+		if err != nil {
+			return nil, err
+		}
+		for _, view := range children {
+			rel := view.Relationship
+			if rel.TypeSlug != "parent" || rel.SourcePersonID != person.ID || !rel.Source.IsDeclared() || !relationshipStarted(rel.StartDate, now, location) || !stable[view.CounterpartPersonID] {
+				continue
+			}
+			child, ok := byID[view.CounterpartPersonID]
+			if !ok {
+				continue
+			}
+			childDates, err := st.ListPersonDatesContext(ctx, child.ID, true)
+			if err != nil {
+				return nil, err
+			}
+			date, status := SelectDeclaredDate(childDates, store.PersonDateBirthday, now)
+			if status == DateEligible {
+				add("person/"+child.VCardUID, "person/"+person.VCardUID, "birthday", date, tier, false)
+			}
+		}
+		owned, err := st.ListImportantDateSubjectsContext(ctx, person.VCardUID)
+		if err != nil {
+			return nil, err
+		}
+		for _, subject := range owned {
+			add("owned/"+subject.UID, "person/"+person.VCardUID, "birthday", subject.Date, tier, false)
+		}
+	}
+	result := make([]Candidate, 0, len(selected))
+	for _, candidate := range selected {
+		prefix := candidate.SubjectUID + ":" + candidate.Kind + ":"
+		pending, err := st.ImportantDateHasOtherPendingContext(ctx, prefix, candidate.OccurrenceKey, candidate.Fingerprint)
+		if err != nil {
+			return nil, err
+		}
+		if !pending {
+			result = append(result, candidate)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].OccurrenceKey < result[j].OccurrenceKey })
+	return result, nil
+}
+
+// Partial or invalid relationship start dates cannot prove an active edge.
+func relationshipStarted(start *store.PartialDate, now time.Time, location *time.Location) bool {
+	if start == nil {
+		return true
+	}
+	if start.Year == nil || start.Month == nil || start.Day == nil || start.Validate() != nil {
+		return false
+	}
+	local := now.In(location)
+	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
+	date := time.Date(*start.Year, time.Month(*start.Month), *start.Day, 0, 0, 0, 0, location)
+	return !date.After(today)
+}

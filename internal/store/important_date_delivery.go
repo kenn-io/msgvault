@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // ImportantDateDeliveryState records progress across external Kata writes.
@@ -24,12 +25,12 @@ var ErrImportantDateTransition = errors.New("invalid important-date delivery tra
 
 // ClaimImportantDateDeliveryContext creates a single durable claim. Existing
 // records, including unknown or completed ones, are never reclaimed.
-func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key string) (bool, error) {
-	if strings.TrimSpace(key) == "" || len(key) > 512 {
+func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fingerprint string) (bool, error) {
+	if strings.TrimSpace(key) == "" || len(key) > 512 || strings.TrimSpace(fingerprint) == "" || len(fingerprint) > 128 {
 		return false, ErrImportantDateTransition
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO important_date_deliveries (occurrence_key, state, issue_uid)
-		VALUES (?, 'claimed', '') ON CONFLICT (occurrence_key) DO NOTHING`, key)
+	result, err := s.db.ExecContext(ctx, `INSERT INTO important_date_deliveries (occurrence_key, fingerprint, state, issue_uid)
+		VALUES (?, ?, 'claimed', '') ON CONFLICT (occurrence_key) DO NOTHING`, key, fingerprint)
 	if err != nil {
 		return false, fmt.Errorf("claim important-date delivery: %w", err)
 	}
@@ -70,4 +71,21 @@ func (s *Store) ImportantDateDeliveryContext(ctx context.Context, key string) (I
 		return "", "", fmt.Errorf("read important-date delivery: %w", err)
 	}
 	return state, issueUID, nil
+}
+
+// ImportantDateHasOtherPendingContext detects a pending or uncertain prior
+// occurrence for the same subject and meaning, including across year changes.
+// A changed date fingerprint also quarantines a previously delivered occurrence.
+func (s *Store) ImportantDateHasOtherPendingContext(ctx context.Context, prefix, currentKey, fingerprint string) (bool, error) {
+	if prefix == "" || !strings.HasPrefix(currentKey, prefix) || fingerprint == "" {
+		return false, ErrImportantDateTransition
+	}
+	var pending bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries
+		WHERE substr(occurrence_key, 1, ?) = ? AND occurrence_key <> ?
+		AND (fingerprint <> ? OR state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, utf8.RuneCountInString(prefix), prefix, currentKey, fingerprint).Scan(&pending)
+	if err != nil {
+		return false, fmt.Errorf("check pending important-date occurrences: %w", err)
+	}
+	return pending, nil
 }

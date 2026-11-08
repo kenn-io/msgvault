@@ -13,7 +13,7 @@ import (
 )
 
 type DeliveryStore interface {
-	ClaimImportantDateDeliveryContext(context.Context, string) (bool, error)
+	ClaimImportantDateDeliveryContext(context.Context, string, string) (bool, error)
 	AdvanceImportantDateDeliveryContext(context.Context, string, store.ImportantDateDeliveryState, store.ImportantDateDeliveryState, string) (bool, error)
 	WithImportantDateConsentContext(context.Context, string, string, string, func(context.Context) error) (bool, error)
 }
@@ -28,7 +28,7 @@ type DeliveryService struct {
 	Store DeliveryStore
 	Kata  DeliveryKata
 }
-type DeliveryInput struct{ OccurrenceKey, SubjectUID, Project, Recipient string }
+type DeliveryInput struct{ OccurrenceKey, Fingerprint, SubjectUID, Project, Recipient string }
 
 var errDeliveryIneligible = errors.New("important-date occurrence is no longer eligible")
 
@@ -36,10 +36,10 @@ var errDeliveryIneligible = errors.New("important-date occurrence is no longer e
 // aliases and merge collisions before calling and revalidate the exact event
 // and private destination through the supplied fenced callback on each write.
 func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, revalidate func(context.Context) (bool, error)) error {
-	if s.Store == nil || s.Kata == nil || revalidate == nil || strings.TrimSpace(input.OccurrenceKey) == "" || strings.TrimSpace(input.SubjectUID) == "" || strings.TrimSpace(input.Project) == "" || strings.TrimSpace(input.Recipient) == "" {
+	if s.Store == nil || s.Kata == nil || revalidate == nil || strings.TrimSpace(input.OccurrenceKey) == "" || strings.TrimSpace(input.Fingerprint) == "" || strings.TrimSpace(input.SubjectUID) == "" || strings.TrimSpace(input.Project) == "" || strings.TrimSpace(input.Recipient) == "" {
 		return errors.New("invalid important-date delivery request")
 	}
-	claimed, err := s.Store.ClaimImportantDateDeliveryContext(ctx, input.OccurrenceKey)
+	claimed, err := s.Store.ClaimImportantDateDeliveryContext(ctx, input.OccurrenceKey, input.Fingerprint)
 	if err != nil || !claimed {
 		return err
 	}

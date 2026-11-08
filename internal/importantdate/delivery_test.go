@@ -17,7 +17,7 @@ type deliveryStoreFake struct {
 	consent bool
 }
 
-func (f *deliveryStoreFake) ClaimImportantDateDeliveryContext(context.Context, string) (bool, error) {
+func (f *deliveryStoreFake) ClaimImportantDateDeliveryContext(context.Context, string, string) (bool, error) {
 	if f.claimed {
 		return false, nil
 	}
@@ -64,7 +64,7 @@ func TestDeliveryDoesNotRetryUncertainNotification(t *testing.T) {
 	st := &deliveryStoreFake{consent: true}
 	kata := &deliveryKataFake{notifyError: errors.New("response lost")}
 	service := DeliveryService{Store: st, Kata: kata}
-	input := DeliveryInput{OccurrenceKey: "occurrence-example", SubjectUID: "subject-example", Project: "private-example", Recipient: "owner/agent"}
+	input := DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "subject-example", Project: "private-example", Recipient: "owner/agent"}
 	err := service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil })
 	require.Error(t, err)
 	assert.Equal(t, store.ImportantDateUnknown, st.state)
@@ -78,7 +78,7 @@ func TestDeliveryDoesNotWriteWithoutConsent(t *testing.T) {
 	st := &deliveryStoreFake{}
 	kata := &deliveryKataFake{}
 	service := DeliveryService{Store: st, Kata: kata}
-	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", SubjectUID: "subject-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "subject-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
 	require.NoError(t, err)
 	assert.Zero(t, kata.creates)
 	assert.Zero(t, kata.notifications)
@@ -88,7 +88,7 @@ func TestDeliveryDoesNotRenotifyExistingIssue(t *testing.T) {
 	st := &deliveryStoreFake{consent: true}
 	kata := &deliveryKataFake{existing: true}
 	service := DeliveryService{Store: st, Kata: kata}
-	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", SubjectUID: "subject-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "subject-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
 	require.NoError(t, err)
 	assert.Equal(t, store.ImportantDateCancelled, st.state)
 	assert.Zero(t, kata.notifications)
