@@ -27,8 +27,32 @@ type UserRef struct {
 }
 
 type Parent struct {
-	Type   string `json:"type"`
-	PageID string `json:"page_id"`
+	Type         string `json:"type"`
+	PageID       string `json:"page_id,omitempty"`
+	DataSourceID string `json:"data_source_id,omitempty"`
+	DatabaseID   string `json:"database_id,omitempty"`
+	BlockID      string `json:"block_id,omitempty"`
+	AgentID      string `json:"agent_id,omitempty"`
+	Workspace    bool   `json:"workspace,omitzero"`
+}
+
+// ID returns only the identifier named by the documented parent kind.
+// Unknown kinds remain available in the original provider JSON.
+func (p Parent) ID() string {
+	switch p.Type {
+	case "page_id":
+		return p.PageID
+	case "data_source_id":
+		return p.DataSourceID
+	case "database_id":
+		return p.DatabaseID
+	case "block_id":
+		return p.BlockID
+	case "agent_id":
+		return p.AgentID
+	default:
+		return ""
+	}
 }
 
 type MeetingChildren struct {
@@ -38,6 +62,7 @@ type MeetingChildren struct {
 }
 
 type MeetingCalendarEvent struct {
+	EventID   string   `json:"event_id,omitempty"`
 	StartTime string   `json:"start_time"`
 	EndTime   string   `json:"end_time"`
 	Attendees []string `json:"attendees"`
@@ -49,6 +74,7 @@ type MeetingRecording struct {
 }
 
 type MeetingNotesData struct {
+	IsFullPage    *bool                `json:"is_full_page,omitzero"`
 	Title         []RichText           `json:"title"`
 	Status        string               `json:"status"`
 	Children      MeetingChildren      `json:"children"`
@@ -56,7 +82,10 @@ type MeetingNotesData struct {
 	Recording     MeetingRecording     `json:"recording"`
 }
 
+const meetingNotesType = "meeting_notes"
+
 type MeetingNote struct {
+	URL            string                    `json:"url,omitempty"`
 	Object         string                    `json:"object"`
 	ID             string                    `json:"id"`
 	Type           string                    `json:"type"`
@@ -67,6 +96,7 @@ type MeetingNote struct {
 	LastEditedBy   UserRef                   `json:"last_edited_by"`
 	Parent         Parent                    `json:"parent"`
 	HasChildren    bool                      `json:"has_children"`
+	Archived       bool                      `json:"archived,omitzero"`
 	InTrash        bool                      `json:"in_trash"`
 	Extra          map[string]jsontext.Value `json:"-"`
 	Raw            jsontext.Value            `json:"-"`
@@ -83,9 +113,9 @@ func (m *MeetingNote) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, key := range []string{
-		"object", "id", "type", "meeting_notes", "created_time",
+		"object", "id", "type", meetingNotesType, "created_time",
 		"last_edited_time", "created_by", "last_edited_by", "parent",
-		"has_children", "in_trash",
+		"has_children", "in_trash", "archived", "url",
 	} {
 		delete(extra, key)
 	}
@@ -251,7 +281,17 @@ type UserPerson struct {
 	EmailVerified bool   `json:"email_verified"`
 }
 
+type BotOwner struct {
+	Type string  `json:"type"`
+	User UserRef `json:"user"`
+}
+type BotInfo struct {
+	Owner       BotOwner `json:"owner"`
+	WorkspaceID string   `json:"workspace_id"`
+}
+
 type User struct {
+	Bot    BotInfo        `json:"bot"`
 	Object string         `json:"object"`
 	ID     string         `json:"id"`
 	Name   string         `json:"name"`

@@ -2081,6 +2081,12 @@ The integration must belong to the same workspace.
 identifier = "notion-personal"      # stable source label; defaults to "default" for one entry
 account_email = "you@example.com"   # required primary account identity
 token = "ntn_..."                   # meeting token; keep this file private
+token_type = "pat"                  # only PATs infer a verified human owner
+# user_id = "..."                   # required for other token modes
+# root_page_ids = ["..."]
+# root_data_source_ids = ["..."]
+# meeting_block_ids = ["..."]
+search_accessible = true            # false disables accessible-content search
 users_token = "ntn_..."             # optional workspace users integration token
 schedule = "15 */6 * * *"           # optional 5-field cron, no seconds
 enabled = true
@@ -2092,6 +2098,12 @@ enabled = true
 | `account_email` | (required) | Normalized primary identity for relationships; it is not assumed to be the meeting organizer |
 | `token` | (required) | Meeting token; PAT or integration with Meeting Notes and Read Content access |
 | `users_token` | — | Optional workspace integration token with Read user information including email addresses |
+| `token_type` | — | Set `pat` only for a PAT; verify the primary token's human owner via `users/me` |
+| `user_id` | — | Explicit connected human; required without `token_type = "pat"`; a conflicting PAT owner is rejected |
+| `root_page_ids` | `[]` | Accessible pages whose nested blocks should be scanned |
+| `root_data_source_ids` | `[]` | Accessible data sources whose rows should be scanned |
+| `meeting_block_ids` | `[]` | Known meeting blocks to retrieve directly |
+| `search_accessible` | `true` | Search accessible pages/data sources as best effort; false retains the attendee query, explicit roots and remembered IDs |
 | `schedule` | — | Cron expression used by `msgvault serve` |
 | `enabled` | `false` | Whether the source is daemon-scheduled |
 
@@ -2103,8 +2115,9 @@ for lookup timeouts, failures, and retries.
 Run `msgvault add-notion-meetings <identifier>` to validate access and register
 the source before enabling a schedule. Removing the source prevents the
 scheduler from recreating it. See [Meeting Transcripts](/docs/usage/meetings/) for
-the 50-result discovery limit, attendee visibility, transcript retries, and
-stored data.
+bounded backfill, creator-or-attendee selection, refresh, and coverage gaps.
+Root IDs are trimmed and deduplicated; blank IDs are rejected. No source setting
+changes Notion permissions. Email resolution never establishes the connected human.
 
 ### Twilio Sources
 

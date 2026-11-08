@@ -180,7 +180,7 @@ func TestDecodeNotionEvidence(t *testing.T) {
 	assertions.Equal(CoverageUnavailable, missingTree.ActionCoverage)
 	assertions.Equal("incomplete_tree", missingTree.ActionReason)
 
-	unsupported := Decode("notion_meeting_json", []byte(`{"schema_version":2,"canonical":{"summary":"Ignored"}}`), nil)
+	unsupported := Decode("notion_meeting_json", []byte(`{"schema_version":3,"canonical":{"summary":"Ignored"}}`), nil)
 	assertions.Equal(StateUnavailable, unsupported.Summary.State)
 	assertions.Equal("unsupported_schema", unsupported.Summary.Reason)
 	assertions.Equal(CoverageUnavailable, unsupported.ActionCoverage)
@@ -388,4 +388,30 @@ func TestDecodeMuesliFallsBackToContactsIdentities(t *testing.T) {
 		{Name: "Alex Example", Email: "alex@example.com", Role: "to"},
 		{Name: "Phone Example", Phone: "+16045550101", Role: "to"},
 	}, content.SourceParticipants, "packets merge these with the archived recipients instead of listing them twice")
+}
+
+func TestDecodeNotionV2RejectsMalformedTrees(t *testing.T) {
+	root := `{"object":"block","id":"summary-1","type":"paragraph","has_children":false,"paragraph":{"rich_text":[{"plain_text":"Own text"}]}}`
+	for _, tc := range []struct{ name, tree string }{
+		{"wrong root", `{"root":{"object":"block","id":"other-root","type":"paragraph"},"blocks":[` + root + `],"complete":true,"filtered":false}`},
+		{"duplicate ID", `{"root":` + root + `,"blocks":[` + root + `,` + root + `],"complete":true,"filtered":false}`},
+		{"wrong first block", `{"root":` + root + `,"blocks":[{"object":"block","id":"wrong","type":"paragraph"}],"complete":true,"filtered":false}`},
+		{"nested meeting", `{"root":` + root + `,"blocks":[` + root + `,{"object":"block","id":"other-meeting","type":"meeting_notes"}],"complete":true,"filtered":false}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := Decode("notion_meeting_json", []byte(`{"schema_version":2,"discovery":{"object":"block","id":"meeting-1","type":"meeting_notes","meeting_notes":{"children":{"summary_block_id":"summary-1"}}},"meeting_block":{"object":"block","id":"meeting-1","type":"meeting_notes","meeting_notes":{"children":{"summary_block_id":"summary-1"}}},"canonical":{"summary":"UNATTRIBUTABLE"},"summary":`+tc.tree+`}`), nil)
+			assert.Empty(t, content.Summary.Text)
+			assert.Equal(t, StateUnavailable, content.Summary.State)
+			assert.Equal(t, "invalid_section", content.Summary.Reason)
+		})
+	}
+}
+
+func TestDecodeNotionLegacyEmailCompatibility(t *testing.T) {
+	// V1 snapshots historically accepted explicit resolved email without a flag.
+	// Keep that reading rule while new v2 evidence requires explicit verification.
+	raw := []byte(`{"schema_version":1,"discovery":{"meeting_notes":{"calendar_event":{"attendees":["legacy-user"]}}},"resolved_users":[{"id":"legacy-user","name":"Legacy attendee","email":"legacy@example.com"}]}`)
+	content := Decode("notion_meeting_json", raw, nil)
+	require.Len(t, content.SourceParticipants, 1)
+	assert.Equal(t, "legacy@example.com", content.SourceParticipants[0].Email)
 }

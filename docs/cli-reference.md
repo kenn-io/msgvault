@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-07"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1159,13 +1159,15 @@ msgvault add-notion-meetings [identifier]
 ```
 
 The matching `[[notion_meetings]]` entry requires `account_email` and `token`.
-With one entry, the identifier may be omitted.
+With one entry, the identifier may be omitted. Validation checks query access
+and hydrates one sampled meeting from its own current section blocks. A page
+parent is not required. Optional user lookup failures remain nonfatal.
 
 ---
 
 ## sync-notion-meetings
 
-Sync Notion AI Meeting Notes from the attendee-visible recent window.
+Sync accessible Notion meeting blocks created by or attended by the connected human.
 
 ```bash
 msgvault sync-notion-meetings [identifier]
@@ -1174,19 +1176,18 @@ msgvault sync-notion-meetings --full --after 2026-01-01
 msgvault sync-notion-meetings --probe
 ```
 
-Notion returns at most 50 meeting notes and exposes no discovery cursor.
-Every run hydrates and checksum-verifies the selected visible meetings.
-`--full` also sends matching snapshots through archive upsert so cursor/archive
-divergence can be repaired; `--after` filters the visible set locally. Partial
-coverage is reported when Notion says more records exist. Due transcript
-maintenance runs outside `--limit`.
+Discovery combines bounded attendee-query date windows, accessible-content search,
+configured roots and remembered IDs. Runs resume unfinished work and revisit old
+meetings. Search and API caps can leave gaps; this is not a complete workspace
+inventory. Identity provenance, scope counts, unfinished work and coverage reasons
+are reported without private IDs, content or cursors.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--limit` | `0` | Maximum visible meetings hydrated and verified; due maintenance is additional |
-| `--after` | — | Local visible-set lower bound in `YYYY-MM-DD` form; implies `--full` |
-| `--full` | `false` | Force selected snapshots through archive upsert instead of skipping matching checksums |
-| `--probe` | `false` | Validate capabilities and result shape without printing meeting content |
+| `--limit` | `0` | Maximum new admissions per bounded run; known refresh is additional |
+| `--after` | — | New-admission occurrence lower bound (`YYYY-MM-DD`); remembered meetings still refresh |
+| `--full` | `false` | Force selected refreshes and request a new bounded sweep after unfinished discovery; preserves pending work |
+| `--probe` | `false` | Check primary credentials, connected human, query capability, matching sample hydration and optional user lookup; does not measure sync coverage |
 
 See [Meeting Transcripts](/docs/usage/meetings/#notion-ai-meeting-notes) for setup,
 privacy, retry behavior, and stored evidence.

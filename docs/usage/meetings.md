@@ -639,28 +639,43 @@ remain searchable. Fix the reported problem and rerun the same sync.
 
 ## Notion AI Meeting Notes
 
-Notion sync uses the official read-only Meeting Notes and block APIs. It does
-not modify pages, upload content, or download recording media. Visibility is
-attendee-scoped to the Notion user associated with the integration; it is not
-a workspace-wide export.
+Sync meeting blocks you created or attend, including inline and nested blocks
+under accessible pages and data sources. msgvault uses read-only Notion APIs;
+it does not modify pages or download recordings. Discovery combines the attendee
+query, accessible-content search, configured roots, and remembered meeting IDs.
+Search is best effort, so this does not promise a complete workspace export.
 
 ### Configure and register
 
-Use a personal access token (PAT) or integration with AI Meeting Notes and
-Read Content access for meeting content. PATs cannot list workspace users or
-retrieve other users, and have no User Information capability toggle.
-For attendee emails, create an internal integration in the same workspace
-with **Read user information including email addresses**, then supply its token
-as `users_token`. Keep the meeting PAT so discovery
-continues to use the meeting owner's attendee visibility.
+The primary token needs Read Content access. The Meeting Notes query also needs
+Meeting Notes access. A PAT uses its human owner's existing access; internal
+connections use shared content and OAuth connections use authorized content.
+msgvault never changes those permissions.
+
+Set `token_type = "pat"` only for a personal access token. msgvault verifies its
+human owner using the primary token's `users/me` metadata. For other token modes,
+omit `token_type` and set `user_id` explicitly. A missing identity or a PAT owner
+that conflicts with `user_id` stops the run. The bot ID, account email, editor,
+and the optional users token's owner never establish meeting ownership.
+
+For attendee emails, optionally configure a separate integration in the same
+workspace with **Read user information including email addresses**. A PAT
+cannot list workspace users or retrieve other users. Missing optional user
+access does not prevent meeting ingestion.
 
 ```toml
 [[notion_meetings]]
 identifier = "notion-personal"
-account_email = "you@example.com"
+account_email = "you@example.com"  # relationship identity, not a Notion user ID
 token = "ntn_..."
-users_token = "ntn_..."          # optional workspace users integration
-schedule = "15 */6 * * *"         # optional daemon schedule
+token_type = "pat"
+# user_id = "..."                 # required for other token modes
+users_token = "ntn_..."            # optional workspace users integration
+# root_page_ids = ["..."]
+# root_data_source_ids = ["..."]
+# meeting_block_ids = ["..."]
+search_accessible = true           # false disables accessible-content search
+schedule = "15 */6 * * *"          # optional daemon schedule
 enabled = true
 ```
 
@@ -674,8 +689,14 @@ msgvault sync-notion-meetings notion-personal --probe
 
 Both commands print capability and result-count diagnostics without printing
 meeting titles, notes, transcripts, attendee details, block IDs, page URLs, or
-the tokens. Probe output checks the optional users token on one sampled attendee
-and reports whether that attendee has a verified email.
+the tokens. Probe reports primary-token credentials, connected-human identity,
+configured scope counts, Meeting Notes query access,
+and hydration of one sampled meeting separately. It reads that meeting's current
+summary, notes, and transcript block IDs. A one-meeting sample does not measure
+sync coverage, even when the query says more results exist. Probe checks the
+optional users token on one attendee from the refreshed meeting and reports
+whether that attendee has a verified email. Optional user lookup failures do
+not prevent content access.
 
 ### Notion attendee emails
 
@@ -683,19 +704,20 @@ The users token retrieves known attendee IDs directly, including workspace
 members and guests. Only users with `person.email_verified = true` and a usable
 email become anchored participants. Healthy unverified users stay display-only.
 
-Each optional user lookup has a 60-second timeout, including retries. Healthy
-lookups can continue throughout the sync. Successful responses and missing IDs
-are cached for the run.
+Optional user lookups for each meeting share a 10-second budget, including
+retries. If less time remains in the sync, they use at most half of it, leaving
+time to archive the meeting. Successful responses and missing IDs are cached
+for the run.
 Invalid credentials, missing User Information capability, provider retry
 exhaustion, and transport failures stop further uncached lookups for that sync.
 Previously verified attendees survive failed or skipped lookups. The next sync
 retries with fresh state. People without a Notion account can't be resolved.
 
-After adding a users token, run `msgvault sync-notion-meetings <identifier>`
-to update participants on existing visible meetings. The 50-meeting discovery
-window still applies.
+After adding a users token, run `msgvault sync-notion-meetings <identifier>`.
+Remembered meetings refresh in bounded rotation, including meetings outside the
+current query results.
 
-### Sync and discovery limit
+### Sync, backfill, and coverage
 
 ```bash
 msgvault sync-notion-meetings                         # all configured identities
@@ -705,36 +727,77 @@ msgvault sync-notion-meetings --full
 msgvault sync-notion-meetings --after 2026-01-01
 ```
 
-Notion's Meeting Notes query currently returns at most 50 records and can say
-that more exist without providing a cursor. msgvault makes one maximum-size
-query per run, never loops the same page, and reports partial coverage when
-Notion sets `has_more`. This means native sync is reliable for the visible
-recent window but is not a complete historical workspace export.
+The Meeting Notes query only sees meetings where the token's user is an attendee.
+It returns up to 50 results without a cursor. msgvault partitions saturated
+creation-time windows using the documented UTC date filters, down to one minute,
+and keeps an open historical tail. More than 50 meetings in a minute can still
+leave a **Query limit** gap. A creator filter cannot expand attendee visibility.
 
-Every run fetches the details of visible meetings that pass your filters.
-Unchanged content is skipped. Use `--full` to send those meetings through the
-archive update path again when stored sync state and archived content disagree.
-It still cannot discover history beyond the visible window.
+Accessible search and configured page/data-source roots can discover creator-only
+meetings outside that attendee query. msgvault walks paginated block children,
+child pages, child databases and their data sources, and data-source rows. Before
+reading sections it refetches each meeting block and matches its actual creator
+or attendee IDs against the connected human. Mentions and edits do not match.
 
-- `--after` filters meetings returned by Notion locally and implies `--full`.
-- `--limit` caps the visible meetings fetched and checked.
-- Due transcript retries run in addition to that limit.
+Search is not a complete block index. Set explicit roots or `meeting_block_ids`
+for scopes you want revisited. `search_accessible = false` disables accessible
+search; the attendee query, explicit roots and known-ID refresh still run.
+Roots do not grant access. Data-source result caps and inaccessible subtrees
+remain visible gaps, including when a capped result says `has_more = false`.
 
-Notion may publish notes before a transcript. Missing transcripts retry every
-six hours until seven days after the best known meeting end, or for 48 hours
-from discovery when timing is unknown. A temporary omission never erases a
-transcript already archived. Hard per-meeting failures retain the previous
-successful state; meetings written earlier in that failed run remain safe and
-idempotent.
+Each run is bounded to two minutes, 256 discovery operations, 512 HTTP attempts
+including retries and hydration, depth 32, and 10,000 visited scopes. Queued
+admissions and traversal are also bounded. A saved continuation resumes on the
+next run. Cycles, denied scopes, saturated windows and exhausted ceilings are
+reported separately from unfinished progress. Deferred gaps retry later without
+preventing a fresh sweep of accessible roots.
+
+- `--after` filters **new admissions by occurrence time**: calendar start,
+  recording start, then creation time. Remembered meetings still refresh.
+  Loosening the date starts discovery for the wider selection.
+- `--limit` caps new admissions; pending work is retained. Known-ID refresh runs
+  in addition to that limit and rotates across runs.
+- `--full` forces selected archive refreshes and requests a fresh bounded sweep
+  after unfinished discovery. It preserves pending work and does not mean a
+  complete workspace export.
+
+Ready meetings remain known and are revisited for edits, moves, and access or
+trash status. Missing results, permission loss and trash flags never delete an
+archived meeting. Unchanged snapshots skip writes. Checkpoints preserve candidate
+IDs and their advanced continuations together, and archive writes happen before
+pending admissions are removed. Failed or canceled runs resume safely.
+
+Missing or incomplete transcripts retry every six hours until seven days after
+the best known meeting end, or for 48 hours from discovery when timing is unknown.
+A temporary omission preserves the best archived sections and their original
+freshness. Coverage counts distinguish query/data-source caps, best-effort search,
+inaccessible subtrees, budgets, transient errors and work still waiting. Normal
+output shows identity provenance and scope counts without private IDs or cursors.
 
 ### What gets stored (Notion)
 
 Each meeting-note block becomes one `meeting_transcript` message in a
 `meeting` conversation. Its block ID identifies the meeting on later syncs.
 The body includes title, time, attendees, summary, notes, and transcript
-sections. The raw archive (`notion_meeting_json`) keeps the source meeting
-object, note blocks, Markdown, attendee labels, resolved user details, and
-warnings for later inspection.
+sections. Hydration reads the meeting block and its current section subtrees.
+Meetings can have a page, data source, block, or another parent kind. Hydration
+does not require a parent page or fetch its Markdown. It excludes nested meeting
+blocks so a second meeting cannot supply this meeting's transcript.
+
+New raw archives (`notion_meeting_json`, snapshot version 2) contain the refreshed
+meeting header, admitted section blocks, attendee labels, resolved user details,
+and section coverage. They omit parent-page content and unfiltered child-list
+responses. Metadata preserves creator and editor IDs, actual attendee IDs,
+parent kind and ID, lifecycle and recording times, and source flags when exposed.
+Calendar event IDs remain opaque provider evidence; they do not join unrelated
+calendar events.
+
+Incomplete refreshes preserve previously archived meeting-owned sections with
+their original provenance. Older version 1 snapshots remain readable. When an
+old transcript came only from page Markdown or a stored body, an incomplete
+refresh keeps the entire old snapshot unchanged and reports **Origin unknown**.
+A successful fresh section fetch is needed before that content can become a
+meeting-scoped version 2 snapshot.
 
 Notion's `created_by` user is stored as creator metadata and is never assumed
 to be the organizer. Only attendees with provider-verified email addresses

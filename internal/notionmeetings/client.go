@@ -72,6 +72,10 @@ func NewClient(baseURL, token string) *Client {
 }
 
 func (c *Client) QueryMeetingNotes(ctx context.Context, limit int) (*QueryResult, error) {
+	return c.QueryMeetingNotesFiltered(ctx, limit, nil)
+}
+
+func (c *Client) QueryMeetingNotesFiltered(ctx context.Context, limit int, filter *MeetingFilter) (*QueryResult, error) {
 	if limit <= 0 || limit > maxQueryResults {
 		limit = maxQueryResults
 	}
@@ -80,8 +84,9 @@ func (c *Client) QueryMeetingNotes(ctx context.Context, limit int) (*QueryResult
 			Property  string `json:"property"`
 			Direction string `json:"direction"`
 		} `json:"sort"`
-		Limit int `json:"limit"`
-	}{Limit: limit}
+		Limit  int            `json:"limit"`
+		Filter *MeetingFilter `json:"filter,omitempty"`
+	}{Limit: limit, Filter: filter}
 	payload.Sort = append(payload.Sort, struct {
 		Property  string `json:"property"`
 		Direction string `json:"direction"`
@@ -94,8 +99,11 @@ func (c *Client) QueryMeetingNotes(ctx context.Context, limit int) (*QueryResult
 	if err := validateListEnvelope(raw); err != nil {
 		return nil, err
 	}
+	if len(result.Results) > limit {
+		return nil, ErrMalformedResponse
+	}
 	for index := range result.Results {
-		if err := validateBlockResponse(result.Results[index].Raw, "", "meeting_notes"); err != nil {
+		if err := validateBlockResponse(result.Results[index].Raw, "", meetingNotesType); err != nil {
 			return nil, fmt.Errorf("validate meeting-note query result %d: %w", index, err)
 		}
 	}
@@ -116,7 +124,10 @@ func (c *Client) RetrieveBlock(ctx context.Context, blockID string) (*Block, err
 }
 
 func (c *Client) RetrieveBlockChildren(ctx context.Context, blockID, cursor string) (*BlockPage, error) {
-	query := url.Values{"page_size": {strconv.Itoa(pageSize)}}
+	return c.retrieveBlockChildrenSized(ctx, blockID, cursor, pageSize)
+}
+func (c *Client) retrieveBlockChildrenSized(ctx context.Context, blockID, cursor string, size int) (*BlockPage, error) {
+	query := url.Values{"page_size": {strconv.Itoa(size)}}
 	if cursor != "" {
 		query.Set("start_cursor", cursor)
 	}
@@ -283,6 +294,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, t
 		}
 	}
 	for attempt := range maxRetries {
+		if err := consumeAttempt(ctx); err != nil {
+			return nil, err
+		}
 		var bodyReader io.Reader
 		if encoded != nil {
 			bodyReader = bytes.NewReader(encoded)

@@ -3,6 +3,7 @@ package notionmeetings
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,20 @@ import (
 )
 
 type meetingMetadata struct {
+	ParentKind         string   `json:"parent_kind,omitempty"`
+	ParentID           string   `json:"parent_id,omitempty"`
+	EditorUserID       string   `json:"editor_user_id,omitempty"`
+	AttendeeIDs        []string `json:"attendee_ids,omitempty"`
+	IsFullPage         *bool    `json:"is_full_page,omitempty"`
+	CalendarEventID    string   `json:"calendar_event_id,omitempty"`
+	CreatedTime        string   `json:"created_time,omitempty"`
+	LastEditedTime     string   `json:"last_edited_time,omitempty"`
+	RecordingStartTime string   `json:"recording_start_time,omitempty"`
+	RecordingEndTime   string   `json:"recording_end_time,omitempty"`
+	InTrash            bool     `json:"in_trash"`
+	Archived           bool     `json:"archived"`
+	SourceURL          string   `json:"source_url,omitempty"`
+
 	Platform                   string         `json:"platform"`
 	SourceIdentifier           string         `json:"source_identifier,omitempty"`
 	MeetingNoteBlockID         string         `json:"meeting_note_block_id"`
@@ -33,8 +48,14 @@ type meetingMetadata struct {
 }
 
 type rawBlockTree struct {
-	Root  jsontext.Value   `json:"root,omitzero"`
-	Pages []jsontext.Value `json:"pages,omitempty"`
+	Root                 jsontext.Value   `json:"root,omitzero"`
+	Pages                []jsontext.Value `json:"pages,omitempty"` // Legacy v1 only.
+	Blocks               []jsontext.Value `json:"blocks,omitempty"`
+	Complete             bool             `json:"complete"`
+	Filtered             bool             `json:"filtered"`
+	SourceLastEditedTime string           `json:"source_last_edited_time,omitempty"`
+	Preserved            bool             `json:"preserved,omitzero"`
+	SourceMeetingBlock   jsontext.Value   `json:"source_meeting_block,omitzero"`
 }
 
 type rawEvidence struct {
@@ -44,7 +65,7 @@ type rawEvidence struct {
 	Summary        rawBlockTree      `json:"summary,omitzero"`
 	Notes          rawBlockTree      `json:"notes,omitzero"`
 	Transcript     rawBlockTree      `json:"transcript,omitzero"`
-	PageMarkdown   jsontext.Value    `json:"page_markdown"`
+	PageMarkdown   jsontext.Value    `json:"page_markdown,omitzero"`
 	Canonical      canonicalEvidence `json:"canonical"`
 	AttendeeLabels []string          `json:"attendee_labels,omitempty"`
 	ResolvedUsers  []resolvedUser    `json:"resolved_users,omitempty"`
@@ -57,6 +78,8 @@ type canonicalEvidence struct {
 	Transcript string `json:"transcript,omitempty"`
 }
 
+var errArchiveEvidenceLimit = errors.New("notion meeting exceeded archive evidence limit")
+
 func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEmail string) (meetingarchive.Snapshot, error) {
 	startedAt, endedAt := h.times()
 	if startedAt.IsZero() {
@@ -68,9 +91,19 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	}
 	body := h.body(title, startedAt, endedAt)
 	children := h.Discovery.MeetingNotes.Children
+	pageID := ""
+	if h.Discovery.Parent.Type == "page_id" {
+		pageID = h.Discovery.Parent.ID()
+	}
 	metadata, err := json.Marshal(meetingMetadata{
+		ParentKind: h.Discovery.Parent.Type, ParentID: h.Discovery.Parent.ID(),
+		EditorUserID: h.Discovery.LastEditedBy.ID, AttendeeIDs: h.Discovery.MeetingNotes.CalendarEvent.Attendees,
+		IsFullPage: h.Discovery.MeetingNotes.IsFullPage, CalendarEventID: h.Discovery.MeetingNotes.CalendarEvent.EventID,
+		CreatedTime: h.Discovery.CreatedTime, LastEditedTime: h.Discovery.LastEditedTime,
+		RecordingStartTime: h.Discovery.MeetingNotes.Recording.StartTime, RecordingEndTime: h.Discovery.MeetingNotes.Recording.EndTime,
+		InTrash: h.Discovery.InTrash, Archived: h.Discovery.Archived, SourceURL: h.Discovery.URL,
 		Platform: SourceType, SourceIdentifier: identifier, MeetingNoteBlockID: h.Discovery.ID,
-		PageID: h.Discovery.Parent.PageID, Status: h.Discovery.MeetingNotes.Status,
+		PageID: pageID, Status: h.Discovery.MeetingNotes.Status,
 		Lifecycle:      lifecycleForStatus(h.Discovery.MeetingNotes.Status, h.Transcript),
 		CreatorUserID:  h.Discovery.CreatedBy.ID,
 		StartedAt:      startedAt.UTC().Format(time.RFC3339Nano),
@@ -78,24 +111,29 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 		SummaryBlockID: children.SummaryBlockID, NotesBlockID: children.NotesBlockID,
 		TranscriptBlockID: children.TranscriptBlockID,
 		HasSummary:        h.Summary != "", HasNotes: h.Notes != "", HasTranscript: h.Transcript != "",
-		MarkdownTranscriptFallback: h.MarkdownTranscriptFallback,
-		UnresolvedAttendeeIDs:      h.UnresolvedAttendeeIDs,
-		ResolvedUsers:              h.ResolvedUsers,
-		Warnings:                   h.Warnings,
+		UnresolvedAttendeeIDs: h.UnresolvedAttendeeIDs,
+		ResolvedUsers:         h.ResolvedUsers,
+		Warnings:              h.Warnings,
 	}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion meeting metadata: %w", err)
 	}
 	raw, err := json.Marshal(rawEvidence{
-		SchemaVersion: 1, Discovery: h.Discovery.Raw,
+		SchemaVersion: notionSnapshotVersion, Discovery: h.Discovery.Raw,
 		MeetingBlock: rawForBlock(h.MeetingBlock),
 		Summary:      rawForTree(h.SummaryTree), Notes: rawForTree(h.NotesTree),
-		Transcript: rawForTree(h.TranscriptTree), PageMarkdown: rawForMarkdown(h.PageMarkdown),
+		Transcript:     rawForTree(h.TranscriptTree),
 		Canonical:      canonicalEvidence{Summary: h.Summary, Notes: h.Notes, Transcript: h.Transcript},
 		AttendeeLabels: h.AttendeeLabels, ResolvedUsers: h.ResolvedUsers, Warnings: h.Warnings,
 	}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, fmt.Errorf("marshal Notion raw evidence: %w", err)
+	}
+	// The shared meetingcontent reader accepts at most 64 MiB. Raw roots and
+	// canonical text duplicate admitted blocks, so the source byte budget alone
+	// cannot guarantee a readable archive. Fail before replacing stored content.
+	if len(raw) > 64<<20 {
+		return meetingarchive.Snapshot{}, errArchiveEvidenceLimit
 	}
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
@@ -154,15 +192,12 @@ func rawForBlock(block *Block) jsontext.Value {
 	return block.Raw
 }
 
-func rawForMarkdown(page *MarkdownPage) jsontext.Value {
-	if page == nil {
-		return nil
-	}
-	return page.Raw
-}
-
 func rawForTree(tree blockTree) rawBlockTree {
-	return rawBlockTree{Root: rawForBlock(tree.Root), Pages: tree.Pages}
+	blocks := make([]jsontext.Value, 0, len(tree.Blocks))
+	for i := range tree.Blocks {
+		blocks = append(blocks, rawForBlock(&tree.Blocks[i]))
+	}
+	return rawBlockTree{Root: rawForBlock(tree.Root), Blocks: blocks, Complete: tree.Complete, Filtered: tree.Filtered, SourceLastEditedTime: tree.SourceLastEditedTime, Preserved: tree.Preserved, SourceMeetingBlock: tree.SourceMeetingBlock}
 }
 
 func formatOptionalTime(value time.Time) string {
