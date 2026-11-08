@@ -16,7 +16,7 @@ import (
 )
 
 type sqliteExploreFixture struct {
-	live  *SQLiteEngine
+	live  *LiveExploreEngine
 	cache *DuckDBEngine
 	store *store.Store
 	path  string
@@ -106,7 +106,7 @@ func liveExploreFixture(t *testing.T) sqliteExploreFixture {
 	// Export omits internally deleted rows and unsent rows.
 	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,sent_at,deleted_at) VALUES(90,1,'hidden',200,'email','2026-08-01','2026-08-02'),(91,1,'unsent',200,'email',NULL,NULL)`)
 	require.NoError(err)
-	live := NewSQLiteExploreEngine(st.DB(), path)
+	live := NewLiveExploreEngine(st.DB(), path)
 	t.Cleanup(func() { require.NoError(live.Close()) })
 	return sqliteExploreFixture{live, b.BuildEngine(), st, path}
 }
@@ -250,10 +250,10 @@ func TestSQLiteExploreRefusesCacheOperations(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	live := liveExploreFixture(t).live
-	explicit := NewSQLiteEngine(live.db)
-	_, err := explicit.Explore(t.Context(), ExploreRequest{})
-	var unavailable *CacheUnavailableError
-	assert.ErrorAs(err, &unavailable)
+	for _, engine := range []Engine{NewSQLiteEngine(live.db), NewEngineWithDialect(live.db, PostgreSQLQueryDialect{})} {
+		_, entries := engine.(EntryExplorer)
+		assert.False(entries)
+	}
 	for _, request := range []ExploreRequest{
 		{Context: Context{ParticipantIDs: []int64{1}}},
 		{Context: Context{AdditionalParticipantGroups: [][]int64{{1}}}},

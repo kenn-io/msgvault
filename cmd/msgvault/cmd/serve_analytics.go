@@ -22,9 +22,10 @@ type daemonAnalyticsInitHandle struct {
 	done    chan struct{}
 	fatal   chan error
 
-	mu      sync.Mutex
-	err     error
-	swapped bool
+	mu         sync.Mutex
+	err        error
+	swapped    bool
+	liveEngine *query.LiveExploreEngine
 }
 
 func newDaemonAnalyticsInitHandle() *daemonAnalyticsInitHandle {
@@ -162,7 +163,7 @@ func prepareDaemonAnalyticsEngine(
 	case config.AnalyticsEngineAuto:
 		logger.Info("using live SQL analytics engine while cache initializes",
 			"engine", engineMode)
-		return query.NewSQLiteExploreEngine(s.DB(), c.DatabaseDSN()), api.AnalyticsModeSQLFallback,
+		return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback,
 			startupCacheBuildOutcomeNone, true, nil
 	case config.AnalyticsEngineDuckDB:
 		logger.Info("DuckDB analytics unavailable while required cache initializes",
@@ -219,7 +220,11 @@ func startDaemonAnalyticsInitializer(
 		}
 
 		logger.Info("daemon startup step", "step", "init_analytics_engine")
-		engine, mode, outcome, err := openDaemonAnalyticsEngine(ctx, c, s, intent)
+		engine, mode, outcome, err := openDaemonAnalyticsEngineWithRebuild(ctx, c, s, intent, func() {
+			live := query.NewLiveExploreEngine(s.DB(), c.DatabaseDSN())
+			h.liveEngine = live
+			apiServer.SetAnalyticsEngine(live, api.AnalyticsModeSQLFallback)
+		})
 		if ctx.Err() != nil {
 			if engine != nil {
 				_ = engine.Close()
@@ -296,6 +301,11 @@ func closeDaemonAnalyticsEngines(
 	if initializer != nil && initializer.Swapped() && initialEngine != nil {
 		if err := initialEngine.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close initial analytics engine: %w", err))
+		}
+	}
+	if initializer != nil && initializer.Swapped() && initializer.liveEngine != nil {
+		if err := initializer.liveEngine.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close live analytics engine: %w", err))
 		}
 	}
 	return errors.Join(errs...)

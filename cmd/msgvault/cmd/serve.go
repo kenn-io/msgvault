@@ -1588,6 +1588,16 @@ func openDaemonAnalyticsEngine(
 	s *store.Store,
 	intent startupCacheBuildIntent,
 ) (query.Engine, string, startupCacheBuildOutcome, error) {
+	return openDaemonAnalyticsEngineWithRebuild(ctx, c, s, intent, nil)
+}
+
+func openDaemonAnalyticsEngineWithRebuild(
+	ctx context.Context,
+	c *config.Config,
+	s *store.Store,
+	intent startupCacheBuildIntent,
+	onFullRebuild func(),
+) (query.Engine, string, startupCacheBuildOutcome, error) {
 	if c == nil || s == nil {
 		return nil, "", startupCacheBuildOutcomeNone,
 			errors.New("daemon analytics engine unavailable")
@@ -1644,11 +1654,8 @@ func openDaemonAnalyticsEngine(
 	shouldBuild := intent != startupCacheBuildIntentNone || automaticBuild
 	var automaticBuildErr error
 	if shouldBuild {
-		// Build the cache before serving rather than starting on live-SQL
-		// fallback: incremental rebuilds take seconds, and startup progress
-		// already streams to the CLI that auto-started the daemon. A failed
-		// build is fatal for engine="duckdb" (documented to never fall back)
-		// and falls back to live SQL for engine="auto".
+		// Incremental builds keep the brief cache wait. Full builds let auto
+		// mode serve live entries until the replacement cache opens.
 		fullBuild := staleness.FullRebuild
 		reason := staleness.Reason
 		if intent == startupCacheBuildIntentFull {
@@ -1659,6 +1666,10 @@ func openDaemonAnalyticsEngine(
 			"step", "build_analytics_cache",
 			"reason", reason,
 			"full_rebuild", fullBuild)
+
+		if fullBuild && engineMode == config.AnalyticsEngineAuto && onFullRebuild != nil {
+			onFullRebuild()
+		}
 
 		var buildErr error
 		if intent != startupCacheBuildIntentNone {

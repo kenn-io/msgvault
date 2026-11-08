@@ -29,21 +29,27 @@ type sqliteExploreReader struct {
 
 type liveExploreSnapshotKey struct{}
 type liveExploreSnapshot struct {
-	engine   *SQLiteEngine
+	engine   *LiveExploreEngine
 	revision string
 }
 
-// NewSQLiteExploreEngine enables live entry listings on an owned archive reader.
-// Explicit SQL and PostgreSQL engines keep using NewSQLiteEngine/NewEngineWithDialect.
-func NewSQLiteExploreEngine(db *sql.DB, archivePath string) *SQLiteEngine {
-	e := NewSQLiteEngine(db)
-	e.exploreReader = &sqliteExploreReader{path: archivePath, slot: semaphore.NewWeighted(1)}
-	return e
+// LiveExploreEngine serves entry listings during or after an automatic full rebuild.
+// The archive pool is borrowed; the separate Explore reader is owned.
+type LiveExploreEngine struct {
+	*SQLiteEngine
+	exploreReader *sqliteExploreReader
+}
+
+func NewLiveExploreEngine(db *sql.DB, archivePath string) *LiveExploreEngine {
+	return &LiveExploreEngine{
+		SQLiteEngine:  NewSQLiteEngine(db),
+		exploreReader: &sqliteExploreReader{path: archivePath, slot: semaphore.NewWeighted(1)},
+	}
 }
 
 // BeginExploreSnapshot binds identity, search, and listing reads to one revision.
 // release ends the snapshot and lets the next request use the owned connection.
-func (e *SQLiteEngine) BeginExploreSnapshot(ctx context.Context) (context.Context, func(), string, error) {
+func (e *LiveExploreEngine) BeginExploreSnapshot(ctx context.Context) (context.Context, func(), string, error) {
 	r := e.exploreReader
 	if r == nil {
 		return ctx, nil, "", &CacheUnavailableError{Readiness: CacheAbsent}
@@ -103,7 +109,7 @@ func (e *SQLiteEngine) BeginExploreSnapshot(ctx context.Context) (context.Contex
 }
 
 // Explore lists current archive rows while auto mode has no analytical cache.
-func (e *SQLiteEngine) Explore(ctx context.Context, request ExploreRequest) (*ExploreResponse, error) {
+func (e *LiveExploreEngine) Explore(ctx context.Context, request ExploreRequest) (*ExploreResponse, error) {
 	if len(request.Context.ParticipantIDs) > 0 || len(request.Context.AdditionalParticipantGroups) > 0 ||
 		request.SentOnly || request.PersonInteractionsOnly || request.Search.Mode == SearchSemantic || request.Search.Mode == SearchHybrid {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -240,4 +246,30 @@ func buildSQLiteExplorePageSQL(core, conditions, chat string, values []string) s
  JOIN stats ON stats.entry_key = p.entry_key
  LEFT JOIN page_senders senders ON senders.sender_message_id = p.anchor_id
  ORDER BY p.position`
+}
+
+// Close releases the owned reader after all requests have finished.
+func (e *LiveExploreEngine) Close() error {
+	if e.exploreReader == nil {
+		return nil
+	}
+	r := e.exploreReader
+	if err := r.slot.Acquire(context.Background(), 1); err != nil {
+		return fmt.Errorf("close live Explore reader: %w", err)
+	}
+	defer r.slot.Release(1)
+	r.closed = true
+	var connErr, readerErr error
+	if r.conn != nil {
+		connErr = r.conn.Close()
+		if errors.Is(connErr, sql.ErrConnDone) {
+			connErr = nil
+		}
+		r.conn = nil
+	}
+	if r.store != nil {
+		readerErr = r.store.Close()
+		r.store = nil
+	}
+	return errors.Join(connErr, readerErr)
 }

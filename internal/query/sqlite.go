@@ -29,8 +29,6 @@ type SQLiteEngine struct {
 	ftsResult  bool
 	ftsChecked bool
 
-	exploreReader *sqliteExploreReader
-
 	metadataFTSMu     sync.Mutex
 	metadataFTSProbed bool
 }
@@ -114,31 +112,8 @@ func (e *SQLiteEngine) hasFTSTable(ctx context.Context) bool {
 	return e.ftsResult
 }
 
-// Close releases the optional live Explore reader. The archive pool is borrowed.
-func (e *SQLiteEngine) Close() error {
-	if e.exploreReader == nil {
-		return nil
-	}
-	r := e.exploreReader
-	if err := r.slot.Acquire(context.Background(), 1); err != nil {
-		return fmt.Errorf("close live Explore reader: %w", err)
-	}
-	defer r.slot.Release(1)
-	r.closed = true
-	var connErr, readerErr error
-	if r.conn != nil {
-		connErr = r.conn.Close()
-		if errors.Is(connErr, sql.ErrConnDone) {
-			connErr = nil
-		}
-		r.conn = nil
-	}
-	if r.store != nil {
-		readerErr = r.store.Close()
-		r.store = nil
-	}
-	return errors.Join(connErr, readerErr)
-}
+// Close leaves the borrowed archive pool open.
+func (e *SQLiteEngine) Close() error { return nil }
 
 // queryContext runs QueryContext with dialect-aware placeholder rebinding.
 func (e *SQLiteEngine) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {

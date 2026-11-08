@@ -288,28 +288,26 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	}
 	canonicalizeExploreRequest(&request)
 	engine := s.queryEngineForContext(r.Context())
-	explorer, cached := engine.(query.Explorer)
+	explorer, _ := engine.(query.Explorer)
 	var entries query.EntryExplorer = explorer
-	live := !cached && s.analyticsModeForContext(r.Context()) == AnalyticsModeSQLFallback
+	reader, live := engine.(*query.LiveExploreEngine)
 	if live && (request.SearchMode == exploreSearchModeSemantic || request.SearchMode == exploreSearchModeHybrid) {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	var releaseSnapshot func()
 	if live {
-		if reader, ok := engine.(*query.SQLiteEngine); ok {
-			started := time.Now()
-			ctx, release, _, err := reader.BeginExploreSnapshot(r.Context())
-			addExploreTiming(w, "snapshot", time.Since(started))
-			if err != nil {
-				s.writeExploreError(r.Context(), w, err)
-				return
-			}
-			defer release()
-			releaseSnapshot = release
-			r = r.WithContext(ctx)
-			entries = reader
+		started := time.Now()
+		ctx, release, _, err := reader.BeginExploreSnapshot(r.Context())
+		addExploreTiming(w, "snapshot", time.Since(started))
+		if err != nil {
+			s.writeExploreError(r.Context(), w, err)
+			return
 		}
+		defer release()
+		releaseSnapshot = release
+		r = r.WithContext(ctx)
+		entries = reader
 	}
 	prepared, ok := s.prepareExploreRequest(w, r, request, scope)
 	if !ok {

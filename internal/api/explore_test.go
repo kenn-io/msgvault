@@ -143,6 +143,10 @@ func TestLiveExplorePaginationWarningsAndCacheRefusals(t *testing.T) {
 	changed := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+page.NextCursor+`"}`)
 	assertions.Equal(http.StatusConflict, changed.Code, changed.Body.String())
 	assertions.Contains(changed.Body.String(), "archive_revision_changed")
+	selection := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"`+page.CacheRevision+`"}}`)
+	assertions.Equal(http.StatusConflict, selection.Code, selection.Body.String())
+	assertions.Contains(selection.Body.String(), "archive_revision_changed")
+
 }
 
 func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {
@@ -157,7 +161,7 @@ func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {
 	requirements.NoError(err)
 	_, err = st.RebuildFTS(nil)
 	requirements.NoError(err)
-	engine := query.NewSQLiteExploreEngine(st.DB(), path)
+	engine := query.NewLiveExploreEngine(st.DB(), path)
 	t.Cleanup(func() { requirements.NoError(engine.Close()) })
 	srv := newTestServerWithEngine(t, engine)
 	srv.SetAnalyticsEngine(engine, AnalyticsModeSQLFallback)
@@ -168,7 +172,7 @@ func TestLiveExploreRefusesSemanticBeforeCandidatesOrReader(t *testing.T) {
 	t.Parallel()
 	srv, backend := newReviewSemanticIntersectionServer(t)
 	live, _, _ := liveExploreTestServer(t)
-	engine, ok := live.queryEngineForContext(t.Context()).(*query.SQLiteEngine)
+	engine, ok := live.queryEngineForContext(t.Context()).(*query.LiveExploreEngine)
 	require.True(t, ok)
 	srv.SetAnalyticsEngine(engine, AnalyticsModeSQLFallback)
 	for _, held := range []bool{false, true} {
@@ -287,4 +291,22 @@ func TestExploreServerStateBoundsAndExpiresTransientCapabilities(t *testing.T) {
 	assertions.Len(state.snapshots, 1)
 	assertions.Empty(state.matchCounts)
 	state.mu.Unlock()
+}
+
+func TestLiveExploreRejectsCursorAfterChatMoves(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	srv, st, _ := liveExploreTestServer(t)
+	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type) VALUES(2,1,'chat','group_chat'); INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,sent_at) VALUES(3,1,'chat-old',2,'whatsapp','2026-06-01T00:00:00Z')`)
+	require.NoError(err)
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1}`)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var first ExploreHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &first))
+	require.NotEmpty(first.NextCursor)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,sent_at) VALUES(4,1,'chat-new',2,'whatsapp','2026-07-03T00:00:00Z')`)
+	require.NoError(err)
+	response = postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+first.NextCursor+`"}`)
+	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "archive_revision_changed")
 }
