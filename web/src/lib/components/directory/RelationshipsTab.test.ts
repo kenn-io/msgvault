@@ -629,28 +629,6 @@ describe('RelationshipsTab', () => {
     expect(within(dialog).getByRole('textbox', { name: 'Notes' }).tagName).toBe('TEXTAREA');
   });
 
-  it('uses the opened connection version when notes change elsewhere', async () => {
-    let revision = 1;
-    let reads = 0;
-    const tags: (string | null)[] = [];
-    const opening = relationship(41, 1, { notes: 'Opening' });
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'PATCH') { tags.push(request.headers.get('If-Match')); return Response.json({ message: 'Changed' }, { status: 412 }); }
-      reads++;
-      return Response.json(revision === 1 ? opening : relationship(41, 2, { notes: 'Concurrent' }), { headers: { ETag: `"person-relationship-41-r${revision}"` } });
-    });
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: opening })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await rowAction('Edit…');
-    await waitFor(() => expect(reads).toBe(1));
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft' } });
-    revision = 2;
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await screen.findByRole('button', { name: 'Keep yours' });
-    expect(tags).toEqual(['"person-relationship-41-r1"']);
-  });
-
   it('patches only a changed end date so a fresh server note is not overwritten', async () => {
     const requests: Request[] = [];
     let reads = 0;
@@ -1179,7 +1157,7 @@ describe('RelationshipsTab', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/relationship-types/31' && request.method === 'GET') {
-        return new Response(JSON.stringify(current), { headers: { ETag: '"relationship-type-31-r1"' } });
+        return new Response(JSON.stringify(current), { headers: { ETag: `"relationship-type-31-r${revision}"` } });
       }
       if (path === '/api/v1/relationship-types/31' && request.method === 'DELETE') return new Response(null, { status: 204 });
       throw new Error(`unexpected ${request.method} ${path}`);

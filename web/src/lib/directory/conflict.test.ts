@@ -20,5 +20,5 @@ it('compares writable values and records changes outside the draft', () => {
 
   const moved = employment(11, 2, { person_id: 8 });
   const movedDiff = conflict(employmentFacts(moved, names), employmentFacts(opened, names), { 'Job title': 'Draft title' });
-  expect(movedDiff.other).toHaveLength(1);
+  expect(movedDiff.other).toEqual([{ label: 'Person', saved: 'another person', yours: 'this person' }]);
 });

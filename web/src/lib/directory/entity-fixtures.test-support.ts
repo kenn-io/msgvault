@@ -13,8 +13,6 @@ export function pathOf(request: Request): string {
   return new URL(request.url, document.baseURI).pathname;
 }
 
-
-
 export function organizationProfile(revision = 1, name = 'Synthetic Org') {
   return {
     organization: organization(21, revision, name),

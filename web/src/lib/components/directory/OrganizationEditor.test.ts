@@ -308,7 +308,7 @@ describe('OrganizationEditor', () => {
       const request = requestOf(input);
       if (pathOf(request).endsWith('/employments')) {
         if (++checks === 1) return Response.json({ message: 'Check failed' }, { status: 400 });
-        return Response.json({ employments: checks > 2 ? [{ person_id: 7 }] : [] });
+        return Response.json({ employments: checks > 2 ? [{ person_id: 7, is_current: false }] : [] });
       }
       if (pathOf(request) === '/api/v1/people/7') return Response.json({ display_name: 'Example Person' });
       if (request.method === 'DELETE') return Response.json({ error: 'organization_has_employments', message: 'Employment added elsewhere' }, { status: 409 });
@@ -358,7 +358,7 @@ it('keeps unnamed holders openable as links in a blocked deletion', async () => 
   const onOpenPerson = vi.fn();
   const { controller } = controllerWith(async input => {
     const path = pathOf(requestOf(input));
-    if (path.endsWith('/employments')) return Response.json({ employments: [{ person_id: 8, title: 'Engineer' }] });
+    if (path.endsWith('/employments')) return Response.json({ employments: [{ person_id: 8, is_current: false }] });
     if (path === '/api/v1/people/8') return Response.json({ display_name: null });
     if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     throw new Error(`unexpected ${path}`);
@@ -527,7 +527,7 @@ it('shows a failed holder profile read as a failed check and retries it', async 
   let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
-    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [{ person_id: 7 }] });
+    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [{ person_id: 7, is_current: false }] });
     if (pathOf(request) === '/api/v1/people/7') return ++reads === 1
       ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
       : Response.json({ display_name: 'Synthetic Person' });
