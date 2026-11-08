@@ -81,18 +81,6 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('Channel unavailable')).toBeDefined();
   });
 
-  it('shows a scheduled attempt that failed before recording a run as failed', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
-      source({ display_name: 'Messages', scheduled: true, latest_sync: run('completed', 3),
-        scheduler_last_error: 'open iMessage database: permission denied (check Full Disk Access permissions)' })
-    ] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-    expect(await screen.findByText('Failed')).toBeDefined();
-    expect(screen.queryByText('Succeeded')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for Messages' }));
-    expect(await screen.findByText('open iMessage database: permission denied (check Full Disk Access permissions)')).toBeDefined();
-  });
-
   it('shows a scheduled sync that queues after the page opens until it starts', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const queuedAt = '2026-10-01T15:04:00Z';

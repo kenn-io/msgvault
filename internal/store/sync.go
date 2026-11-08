@@ -20,6 +20,10 @@ const (
 	SyncStatusPaused                       = "paused"
 	GmailHistoryRecoveryRequestFingerprint = "gmail-history-recovery:v1"
 
+	// SyncTypeNotStarted marks a failed run recorded for an attempt that
+	// stopped before its importer started a run, so it wrote nothing.
+	SyncTypeNotStarted = "not_started"
+
 	SyncRunItemStatusError    = "error"
 	SyncRunItemStatusSkipped  = "skipped"
 	SyncRunItemStatusResolved = "resolved"
@@ -1314,6 +1318,17 @@ func (s *Store) lockSyncSourceTx(ctx context.Context, tx *loggedTx, sourceID int
 // FailSync marks a sync as failed with an error message.
 func (s *Store) FailSync(syncID int64, errMsg string) error {
 	return s.FailSyncContext(context.Background(), syncID, errMsg)
+}
+
+// RecordNotStartedSync records a failed run for an attempt that stopped
+// before its importer started one, so source status shows that failure
+// instead of the previous run's result.
+func (s *Store) RecordNotStartedSync(ctx context.Context, sourceID int64, errMsg string) error {
+	syncID, err := s.StartSyncContext(ctx, sourceID, SyncTypeNotStarted)
+	if err != nil {
+		return fmt.Errorf("record not-started sync: %w", err)
+	}
+	return s.FailSyncContext(ctx, syncID, errMsg)
 }
 
 // FailSyncContext marks a sync as failed using ctx for the terminal write.

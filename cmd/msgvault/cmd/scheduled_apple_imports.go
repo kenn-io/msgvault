@@ -34,9 +34,13 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	opts := whatsapp.DefaultOptions()
 	opts.Phone = src.Phone
 	opts.DisplayName = src.DisplayName
+	existing, _ := s.GetSourceByTypeAndIdentifier(ctx, "whatsapp", src.Phone)
+	previousRunID := latestSyncRunID(ctx, s, existing)
 	summary, err := whatsapp.NewImporter(s, scheduledWhatsAppProgress{logger: state.logger, source: src.Name}).Import(ctx, path, opts)
 	if err != nil {
-		return fmt.Errorf("whatsapp apple source %q: %w", src.Name, err)
+		err = fmt.Errorf("whatsapp apple source %q: %w", src.Name, err)
+		recordNotStartedAttempt(ctx, s, existing, previousRunID, err, state.logger)
+		return err
 	}
 	// The import committed; record its owner and finish the migration even
 	// when a stop request arrives now.
@@ -68,9 +72,15 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 			return err
 		}
 	}
+	var existing *store.Source
+	if sources, err := s.ListSourcesContext(ctx, sourceTypeAppleMessages); err == nil {
+		existing = store.SelectImessageSource(sources)
+	}
 	client, err := imessage.NewClient(ctx, path, opts...)
 	if err != nil {
-		return fmt.Errorf("open iMessage database: %w", err)
+		err = fmt.Errorf("open iMessage database: %w", err)
+		recordNotStartedAttempt(ctx, s, existing, latestSyncRunID(ctx, s, existing), err, state.logger)
+		return err
 	}
 	defer func() { _ = client.Close() }()
 	src, err := resolveImessageSource(s)
@@ -106,4 +116,33 @@ type scheduledWhatsAppProgress struct {
 
 func (p scheduledWhatsAppProgress) OnError(err error) {
 	p.logger.Warn("whatsapp apple import warning", "source", p.source, "error", err)
+}
+
+// latestSyncRunID returns the newest run recorded for src, or 0 when src is
+// nil or has none.
+func latestSyncRunID(ctx context.Context, s *store.Store, src *store.Source) int64 {
+	if src == nil {
+		return 0
+	}
+	run, err := s.GetLatestSyncContext(ctx, src.ID, 0)
+	if err != nil || run == nil {
+		return 0
+	}
+	return run.ID
+}
+
+// recordNotStartedAttempt gives an archived source a failed run when its
+// scheduled import failed before recording one, for example because macOS
+// denied access to the database. Without it, Sources keeps showing the
+// previous run's result. A source that was never imported is left alone.
+func recordNotStartedAttempt(
+	ctx context.Context, s *store.Store, src *store.Source, previousRunID int64, cause error, logger *slog.Logger,
+) {
+	// A stop request is not a source failure.
+	if src == nil || ctx.Err() != nil || latestSyncRunID(ctx, s, src) != previousRunID {
+		return
+	}
+	if err := s.RecordNotStartedSync(ctx, src.ID, cause.Error()); err != nil {
+		logger.Warn("could not record failed scheduled import", "source_id", src.ID, "error", err)
+	}
 }

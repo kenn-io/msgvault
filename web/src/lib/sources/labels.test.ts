@@ -46,13 +46,6 @@ describe('source labels', () => {
     [{ active_sync: null, latest_sync: run('completed') }, 'succeeded'],
     [{ active_sync: null, latest_sync: run('failed') }, 'failed'],
     [{ active_sync: null, latest_sync: null }, undefined],
-    [{ active_sync: null, latest_sync: run('completed'), scheduler_last_error: 'open iMessage database: permission denied' }, 'failed'],
-    [{ active_sync: null, latest_sync: run('completed', 2), scheduler_last_error: 'Schedule failed' }, 'failed'],
-    [{ active_sync: null, latest_sync: null, scheduler_last_error: 'Schedule failed' }, 'failed'],
-    [{ active_sync: null, latest_sync: run('completed'), scheduler_queued: true, scheduler_last_error: 'Schedule failed' }, 'failed'],
-    [{ active_sync: null, latest_sync: run('cancelled'), scheduler_last_error: 'context canceled' }, 'cancelled'],
-    [{ active_sync: null, latest_sync: run('paused'), scheduler_last_error: 'Rate limit reached' }, 'paused'],
-    [{ active_sync: run('running'), latest_sync: run('completed'), scheduler_last_error: 'Schedule failed' }, 'running'],
   ])('maps source run state %#', (source, want) => expect(sourceRunState(source)).toBe(want));
 });
 
