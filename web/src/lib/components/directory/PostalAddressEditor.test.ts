@@ -14,13 +14,14 @@ const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 3, display_name: 'Synthetic Person', participant_ids: [], vcard_uid: 'person-7', created_at: when, updated_at: when };
 const raw: Input = { address_kind: 'postal', street_address: ' 12 Example St ', extended_address: ' Unit 7 ', post_office_box: ' Box 9 ', country_code: ' ca ', original_value: ' raw\n address ' };
 
-function setup(options: { unavailable?: boolean; conflict?: boolean; current?: PersonAddress } = {}) {
+function setup(options: { unavailable?: boolean; localRejection?: boolean; review?: boolean; conflict?: boolean; current?: PersonAddress } = {}) {
   const requests: Request[] = [];
   const profile = { ...emptyProfile(person), addresses: options.current ? [options.current] : [] };
   const check = vi.fn(async (input: Input): Promise<Assessment> => ({
-    original: input, proposed: { ...input, street_address: '12 Example Street', country_code: 'CA' },
-    status: options.unavailable ? 'unavailable' : 'validated', provider: 'google',
-    reason_codes: options.unavailable ? ['provider_unavailable'] : [], fingerprint: await postalFingerprint(input),
+    original: input, proposed: options.localRejection ? input : { ...input, street_address: '12 Example Street', country_code: 'CA' },
+    status: options.localRejection || options.review ? 'needs_review' : options.unavailable ? 'unavailable' : 'validated', provider: 'google',
+    checked_at: options.localRejection ? undefined : when,
+    reason_codes: options.localRejection ? ['external_country_unsuitable'] : options.unavailable ? ['provider_unavailable'] : [], fingerprint: await postalFingerprint(input),
   }));
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
@@ -53,8 +54,8 @@ describe('Postal address editor', () => {
     expect(check).not.toHaveBeenCalled();
   });
 
-  it('checks explicitly, shows original/proposed and attribution, then confirms a first-entry correction with raw input', async () => {
-    const { controller, requests } = setup();
+  it.each([false, true])('checks explicitly, shows original/proposed and attribution, then confirms a first-entry correction with raw input (needs review=%s)', async review => {
+    const { controller, requests } = setup({ review });
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw();
     await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
@@ -82,11 +83,25 @@ describe('Postal address editor', () => {
     expect(body.addresses.add[0]).not.toHaveProperty('provider');
   });
 
+  it('shows local rejection without Google attribution when no provider request was made', async () => {
+    const { controller, requests } = setup({ localRejection: true });
+    render(StructuredProfileEditor, { controller, section: 'addresses' });
+    await enterRaw();
+    await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: 'ZZ' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
+    expect(await screen.findByText('Needs review')).toBeDefined();
+    expect(screen.getByText('external country unsuitable')).toBeDefined();
+    expect(screen.queryByText('Google Maps')).toBeNull();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.method).toBe('POST');
+  });
+
   it('keeps the entered address and allows entry when the provider is unavailable', async () => {
     const { controller, requests } = setup({ unavailable: true });
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw(); await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
     expect(await screen.findByText(/Provider unavailable/)).toBeDefined();
+    expect(screen.queryByText('Google Maps')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Keep original' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     expect((await requests[1]!.clone().json()).addresses.add[0]).toMatchObject({ ...raw, original_input: raw });

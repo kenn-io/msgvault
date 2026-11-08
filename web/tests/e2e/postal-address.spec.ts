@@ -42,7 +42,7 @@ for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, 
       checks++;
       const body = route.request().postDataJSON() as { address: Input; allow_external: boolean };
       expect(body.allow_external).toBe(true);
-      await route.fulfill({ json: { original: body.address, proposed: { ...body.address, street_address: '12 Example Street', country_code: 'CA' }, status: 'validated', reason_codes: [], provider: 'google', fingerprint: fingerprint(body.address) }, headers: { 'Cache-Control': 'no-store' } });
+      await route.fulfill({ json: { original: body.address, proposed: { ...body.address, street_address: '12 Example Street', country_code: 'CA' }, status: 'validated', reason_codes: [], provider: 'google', checked_at: when, fingerprint: fingerprint(body.address) }, headers: { 'Cache-Control': 'no-store' } });
     });
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
