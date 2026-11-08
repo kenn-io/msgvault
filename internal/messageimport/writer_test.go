@@ -257,3 +257,28 @@ func TestWriterKeepsParticipantsOfDifferentPeopleApart(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(mail, owner, "the account id moves to the sender with the email")
 }
+
+func TestWriterWriteFromRewritesWhenOnlyMetadataOrFormatChanged(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	writer := startWriter(t, st)
+	post := examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"})
+	post.Metadata = map[string]any{"repository": "acme/widgets"}
+	evidence := Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"}
+	first, err := writer.WriteFrom(t.Context(), post, evidence)
+	require.NoError(err)
+
+	post.Metadata = map[string]any{"repository": "acme/gadgets"}
+	moved, err := writer.WriteFrom(t.Context(), post, evidence)
+	require.NoError(err)
+	assert.Equal(WriteResult{MessageID: first.MessageID, Changed: true}, moved, "a renamed repository changes only the metadata")
+
+	evidence.Format = "other_forge_json"
+	reformatted, err := writer.WriteFrom(t.Context(), post, evidence)
+	require.NoError(err)
+	assert.Equal(WriteResult{MessageID: first.MessageID, Changed: true}, reformatted, "the same bytes in another format are other evidence")
+	_, format, err := st.GetMessageRawWithFormatContext(t.Context(), first.MessageID)
+	require.NoError(err)
+	assert.Equal("other_forge_json", format)
+}

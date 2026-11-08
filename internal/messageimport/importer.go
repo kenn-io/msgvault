@@ -243,11 +243,12 @@ func envelopeEmail(snapshot Snapshot) string {
 	return snapshot.Sender.Email
 }
 
-// storedMatches treats an unreadable stored copy as changed so the write
-// repairs it.
+// storedMatches reports whether the stored copy has the same evidence: raw
+// bytes, raw format and metadata. An unreadable stored copy counts as changed
+// so the write repairs it.
 func storedMatches(ctx context.Context, st *store.Store, prior store.MessageMetadataRecord, snapshot Snapshot) bool {
-	raw, err := st.GetMessageRawContext(ctx, prior.ID)
-	return err == nil && bytes.Equal(raw, snapshot.Raw) &&
+	raw, format, err := st.GetMessageRawWithFormatContext(ctx, prior.ID)
+	return err == nil && format == snapshot.RawFormat && bytes.Equal(raw, snapshot.Raw) &&
 		meetingarchive.JSONEvidenceEqual([]byte(prior.Metadata.String), snapshot.Metadata)
 }
 
