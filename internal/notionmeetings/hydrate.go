@@ -337,7 +337,7 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 					return err
 				}
 				if lookupCtx.Err() != nil {
-					h.usersUnavailable, h.usersIncomplete, h.usersFailure = true, true, err
+					h.usersUnavailable, h.usersRead, h.usersIncomplete, h.usersFailure = true, true, true, err
 					break
 				}
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
