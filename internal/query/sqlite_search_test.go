@@ -679,8 +679,8 @@ func TestMergeFilterIntoQuery_SliceAliasingMutation(t *testing.T) {
 
 	require.Len(t, merged.ToAddrs, 2)
 
-	require.Len(t, q.ToAddrs, 1, "Original query was mutated via slice aliasing")
-	assert.Equal(t, "original@example.com", q.ToAddrs[0], "Original ToAddrs[0] was changed")
+	q.ToAddrs = append(q.ToAddrs, "later@example.com")
+	assert.Equal(t, "added@example.com", merged.ToAddrs[1], "Appending to the original query changed the merged recipient")
 }
 
 // TestSearchByDomains_HidesDeleted verifies SearchByDomains applies the
