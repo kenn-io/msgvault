@@ -228,4 +228,6 @@ func TestGoogleReviewsArchiveSearchRejectsMessageFilters(t *testing.T) {
 		_, err := st.SearchGoogleReviews(t.Context(), query, "", 0, 10)
 		require.ErrorIs(err, googlereviews.ErrSearch, query)
 	}
+	_, err := st.SearchGoogleReviews(t.Context(), `"find in:4"`, "", 0, 10)
+	require.NoError(err)
 }

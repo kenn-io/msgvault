@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.kenn.io/msgvault/internal/googlereviews"
 	"go.kenn.io/msgvault/internal/search"
@@ -312,6 +313,11 @@ func (s *Store) SearchGoogleReviews(ctx context.Context, query, target string, o
 	if strings.TrimSpace(query) == "" || len(query) > 256 || offset < 0 || limit < 1 || limit > 100 || target != "" && !validGoogleReviewID(target) {
 		return googlereviews.ArchiveSearchResponse{}, googlereviews.ErrSearch
 	}
+	// The message search parser treats in: as literal text even though it is
+	// used as a source filter elsewhere; reject it rather than imply filtering.
+	if hasReviewSourceFilter(query) {
+		return googlereviews.ArchiveSearchResponse{}, googlereviews.ErrSearch
+	}
 	parsed := search.Parse(query)
 	// Review search supports text only. Do not silently discard message-only
 	// operators or invalid operator values from an otherwise valid query.
@@ -433,6 +439,36 @@ func (s *Store) countGoogleReviewsContext(ctx context.Context, target, location 
 		return 0, fmt.Errorf("count archived Google reviews: %w", err)
 	}
 	return count, nil
+}
+
+// hasReviewSourceFilter recognizes unquoted in: tokens without treating a
+// quoted phrase containing those characters as an operator.
+func hasReviewSourceFilter(query string) bool {
+	quoted, escaped, tokenStart := false, false, true
+	for i, r := range query {
+		if quoted && escaped {
+			escaped = false
+			continue
+		}
+		if quoted && r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			quoted = !quoted
+			tokenStart = false
+			continue
+		}
+		if !quoted && unicode.IsSpace(r) {
+			tokenStart = true
+			continue
+		}
+		if tokenStart && !quoted && len(query)-i >= 3 && strings.EqualFold(query[i:i+3], "in:") {
+			return true
+		}
+		tokenStart = false
+	}
+	return false
 }
 
 func validGoogleReviewTarget(target, location string) bool {
