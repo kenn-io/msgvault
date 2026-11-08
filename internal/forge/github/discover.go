@@ -39,7 +39,10 @@ type notificationCursor struct {
 	// LastModified is the list's Last-Modified header, sent back as
 	// If-Modified-Since, which GitHub doesn't count against the rate limit.
 	LastModified string `json:"last_modified,omitempty"`
-	// Since is the latest thread update the last complete scan showed.
+	// Since is the latest thread update the last complete scan showed. The
+	// next scan reads back from a second before it: GitHub's times are whole
+	// seconds, and a thread can be updated later in Since's second. A thread
+	// read again unchanged is already archived, so it isn't fetched again.
 	Since time.Time `json:"since,omitzero"`
 }
 
@@ -114,8 +117,8 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 	page func([]forge.ThreadRef, []byte) error,
 ) error {
 	query := url.Values{"all": {"true"}, "per_page": {strconv.Itoa(notificationsPerPage)}}
-	if !state.Notifications.Since.IsZero() {
-		query.Set("since", state.Notifications.Since.UTC().Format(time.RFC3339))
+	if since := state.Notifications.Since; !since.IsZero() {
+		query.Set("since", since.Add(-time.Second).UTC().Format(time.RFC3339))
 	}
 	header := http.Header{}
 	if state.Notifications.LastModified != "" {
@@ -150,7 +153,7 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 				continue
 			}
 			if ref.Kind == forge.KindDiscussion {
-				number, err := f.findDiscussion(ctx, ref.Repo, n.Subject.Title, n.UpdatedAt)
+				numbers, err := f.findDiscussions(ctx, ref.Repo, n.Subject.Title, n.UpdatedAt)
 				switch {
 				case errors.Is(err, errDiscussionNotFound):
 					// No such discussion any more: nothing to archive.
@@ -161,7 +164,12 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 					complete = false
 					continue
 				}
-				ref.Number, ref.Key = number, threadKey(ref.Repo, number)
+				for _, number := range numbers {
+					found := ref
+					found.Number, found.Key = number, threadKey(ref.Repo, number)
+					refs = append(refs, found)
+				}
+				continue
 			}
 			refs = append(refs, ref)
 		}
@@ -426,14 +434,23 @@ const recentDiscussionsQuery = `query RecentDiscussions($owner: String!, $name: 
   }
 }`
 
-// findDiscussion returns the number of the discussion a notification
-// names: the one with its exact title among the repository's discussions,
-// read most recently updated first, back to discussionWindow before the
-// notification. The list, unlike search, has no indexing lag, so a title
-// it doesn't hold names no discussion.
-func (f *Forge) findDiscussion(ctx context.Context, repo, title string, updated time.Time) (int, error) {
+// findDiscussions returns the numbers of the discussions a notification may
+// name: those with its exact title among the repository's discussions, read
+// most recently updated first, back to discussionWindow before the
+// notification. A notification names only a title, so when two discussions
+// share it, both are returned rather than one left out. The list, unlike
+// search, has no indexing lag, so a title it doesn't hold names no
+// discussion.
+func (f *Forge) findDiscussions(ctx context.Context, repo, title string, updated time.Time) ([]int, error) {
 	owner, name, _ := strings.Cut(repo, "/")
 	floor := updated.Add(-discussionWindow)
+	var numbers []int
+	found := func() ([]int, error) {
+		if len(numbers) == 0 {
+			return nil, errDiscussionNotFound
+		}
+		return numbers, nil
+	}
 	var after any
 	for {
 		var data struct {
@@ -458,24 +475,24 @@ func (f *Forge) findDiscussion(ctx context.Context, repo, title string, updated 
 		var errs *graphQLResponseError
 		switch {
 		case errors.As(err, &errs) && errs.missingAt("repository"), errors.Is(err, forge.ErrUnavailable):
-			return 0, errDiscussionNotFound
+			return nil, errDiscussionNotFound
 		case err != nil:
-			return 0, err
+			return nil, err
 		}
 		if data.Repository == nil {
-			return 0, errDiscussionNotFound
+			return nil, errDiscussionNotFound
 		}
 		list := data.Repository.Discussions
 		for _, node := range list.Nodes {
 			if node.Title == title && node.Number > 0 {
-				return node.Number, nil
+				numbers = append(numbers, node.Number)
 			}
 			if node.UpdatedAt.Before(floor) {
-				return 0, errDiscussionNotFound
+				return found()
 			}
 		}
 		if !list.PageInfo.HasNextPage {
-			return 0, errDiscussionNotFound
+			return found()
 		}
 		after = list.PageInfo.EndCursor
 	}

@@ -1,6 +1,7 @@
 package github
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -208,4 +209,51 @@ func TestADiscussionNoLongerListedIsSkipped(t *testing.T) {
 	summary, err := syncGitHub(t, st, f, source, forge.Options{})
 	require.NoError(err)
 	assert.Zero(t, summary.Remaining, "a title the repository's list doesn't hold is no thread to queue")
+}
+
+func TestANotificationLaterInTheLastSecondIsFound(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGitHub(t)
+	seedThreads(f)
+	source := newGitHubSource(t, st)
+	_, err := syncGitHub(t, st, f, source, withoutSecretCorp)
+	require.NoError(err)
+
+	// After the first sync read the list, another thread was updated in the
+	// same second as its newest notification.
+	f.notifications = append(f.notifications,
+		notified("Issue", "acme", "widgets", "Late", "https://api.github.com/repos/acme/widgets/issues/12", "mention", "2026-11-07T09:00:00Z"))
+	f.threads["acme/widgets#12"] = map[string]any{
+		"__typename": "Issue", "id": "I_12", "number": 12, "title": "Late", "url": "https://github.com/acme/widgets/issues/12",
+		"body": "Same second.", "createdAt": "2026-11-07T08:59:00Z", "author": user("ann", 2002), "comments": conn(),
+	}
+	f.lastModified = "Sat, 07 Nov 2026 11:00:00 GMT"
+
+	_, err = syncGitHub(t, st, f, source, withoutSecretCorp)
+	require.NoError(err)
+	assert.Contains(t, archived(t, st, source.ID), "I_12")
+}
+
+func TestDiscussionsSharingANotifiedTitleAreBothArchived(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGitHub(t)
+	ann := user("ann", 2002)
+	f.notifications = []notification{notified("Discussion", "acme", "widgets", "Weekly sync", "", "subscribed", "2026-11-05T08:00:00Z")}
+	for _, number := range []int{4, 5} {
+		id := "D_" + strconv.Itoa(number)
+		f.discussions["acme/widgets#"+strconv.Itoa(number)] = map[string]any{
+			"id": id, "number": number, "title": "Weekly sync", "url": "https://github.com/acme/widgets/discussions/" + strconv.Itoa(number),
+			"updatedAt": "2026-11-05T0" + strconv.Itoa(number) + ":00:00Z", "body": "Notes.", "createdAt": "2026-11-01T06:00:00Z",
+			"category": map[string]any{"name": "General"}, "author": ann, "comments": conn(),
+		}
+	}
+	source := newGitHubSource(t, st)
+
+	_, err := syncGitHub(t, st, f, source, forge.Options{})
+	require.NoError(err)
+	messages := archived(t, st, source.ID)
+	assert.Contains(t, messages, "D_4", "a notification names only a title, so neither discussion is left out")
+	assert.Contains(t, messages, "D_5")
 }

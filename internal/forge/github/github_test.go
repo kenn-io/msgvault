@@ -208,12 +208,17 @@ func TestSyncOnlyRewritesWhatChanged(t *testing.T) {
 
 	_, err := syncGitHub(t, st, f, source, withoutSecretCorp)
 	require.NoError(err)
+	before := len(f.requestLog())
 	again, err := syncGitHub(t, st, f, source, withoutSecretCorp)
 	require.NoError(err)
 	assert.Zero(again.Added)
 	assert.Zero(again.Updated)
-	assert.Contains(f.requestLog(), "GET /notifications?all=true&per_page=50&since=2026-11-07T09%3A00%3A00Z",
-		"the second sync asks only for threads updated since the first")
+	second := f.requestLog()[before:]
+	assert.Contains(second, "GET /notifications?all=true&per_page=50&since=2026-11-07T08%3A59%3A59Z",
+		"the second sync asks for threads updated since the first, from a second before")
+	for _, request := range second {
+		assert.NotContains(request, "Thread ", "a thread the lists show again unchanged is not fetched again")
+	}
 
 	f.threads["acme/gadgets#3"]["title"] = "Gadgets break on Mondays"
 	f.issueSearch[0].UpdatedAt = ts("2026-11-08T08:00:00Z")

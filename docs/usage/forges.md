@@ -52,7 +52,8 @@ post in them:
   history, so threads older than your notifications are archived too.
 
 Notifications about CI runs, security alerts and commits are skipped: they have
-no conversation to archive.
+no conversation to archive. A discussion's notification names only its title, so
+when two discussions updated in the last month share it, both are archived.
 
 ## Keep it current
 
