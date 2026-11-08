@@ -5010,15 +5010,17 @@ sync or run [`repair-derived`](#repair-derived) to index it. A copy marked
 "headers not fully read" had an oversized payload, unreadable headers or too
 many identifiers, and may also have hidden relations; indexing again won't
 change that. A copy marked "original message not stored" or "stored format not
-readable" has no raw message to read; storing the message again clears it. While
-any email in the archive
-is still waiting to be indexed, a note on stderr says related emails may be
-missing, because that email could be one the lookup cannot see yet. The lookup stops at 500 emails
-or 5,000 identifiers and says which on stderr. JSON includes `anchor_message_id`,
-`members`, `truncated`, `truncated_reason` and `pending_linkage`; each member carries
-`linkage_outcome` and `evidence`. The command
-uses the selected daemon and needs API schema 3.49.0. Only the owner can read
-it; delegated grants cannot.
+readable" has no raw message to read; storing the message again clears it. A
+copy marked "no stored Message-ID" was indexed, but replies that name it cannot
+find it. While any email in the archive is still waiting to be indexed, a note
+on stderr says related emails may be missing, because that email could be one
+the lookup cannot see yet. The lookup stops at 500 emails or 5,000 identifiers
+and says which on stderr.
+
+JSON includes `anchor_message_id`, `members`, `truncated`, `truncated_reason`
+and `pending_linkage`; each member carries `linkage_outcome` and `evidence`.
+The command uses the selected daemon and needs API schema 3.49.0. Only the
+owner can read it; delegated grants cannot.
 
 ---
 

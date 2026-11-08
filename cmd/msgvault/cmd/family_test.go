@@ -82,8 +82,17 @@ func TestFamilyShowListsCopiesAndReplies(t *testing.T) {
 	require.NoError(err)
 	text, stderr = run(strconv.FormatInt(id, 10))
 	assert.Contains(text, "(headers not fully read)")
-	assert.Contains(stderr, "couldn't be fully read")
+	assert.Contains(stderr, "1 copies have incomplete header links")
 	assert.NotContains(stderr, "repair-derived")
+
+	// A reply indexed from complete headers but without its own stored
+	// Message-ID is reported as such, not as unreadable headers.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = 'complete', rfc822_message_id = NULL WHERE id = ?`), replyID)
+	require.NoError(err)
+	text, stderr = run(strconv.FormatInt(id, 10))
+	assert.Contains(text, "\treply (no stored Message-ID)\tQuote")
+	assert.NotContains(text, "headers not fully read")
+	assert.Contains(stderr, "1 copies have incomplete header links")
 
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET email_linkage_outcome = NULL WHERE id = ?`), replyID)
 	require.NoError(err)

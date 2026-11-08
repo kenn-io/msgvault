@@ -1867,8 +1867,9 @@ tokens are refused. The response is never cached.
 in ascending `message_id` order.
 `account_path` is `inbound` or `sent`, and `draft` is true while the copy is a
 draft. `linkage_outcome` is `complete`, `pending` before the copy's identifiers
-are derived, or the reason they could not be read; anything else may hide
-relations. The lookup follows Message-ID, In-Reply-To, References and
+are derived, `missing_message_id` when the copy was indexed but has no stored
+Message-ID for replies to match, or the reason its identifiers could not be
+read; anything other than `complete` may hide relations. The lookup follows Message-ID, In-Reply-To, References and
 attached-original identifiers, and, for Gmail and Google Groups, the provider threads of the email and its exact copies. It stops at 500 copies or 5,000 identifiers, setting `truncated`
 and `truncated_reason` (`members` or `identifiers`); the identifier limit can be
 reached with far fewer than 500 copies. When 500 is exceeded, copies with the same

@@ -33,11 +33,14 @@ copies. A copy that hasn't been indexed yet may have relations this output
 cannot show; sync, or run repair-derived, to index it. A copy whose original
 message isn't stored, or is stored in a format that can't be read, says so, and
 storing the message again clears it. A copy whose headers couldn't be read stays
-marked, and indexing again won't change that. While any
-email in the archive is still waiting to be indexed, a note on stderr says so,
-because that email could be a related copy the lookup cannot see yet. Rows are in ascending message ID order, and the
-row marked "this message" is the email you gave. The lookup stops at 500
-emails or 5,000 identifiers and says which on stderr.
+marked, and indexing again won't change that. A copy with no stored Message-ID
+says so; replies that name it cannot find it.
+
+While any email in the archive is still waiting to be indexed, a note on stderr
+says so, because that email could be a related copy the lookup cannot see yet.
+Rows are in ascending message ID order, and the row marked "this message" is
+the email you gave. The lookup stops at 500 emails or 5,000 identifiers and
+says which on stderr.
 
 Examples:
   msgvault family show 123
@@ -77,6 +80,8 @@ func relatedUnreadableLabel(outcome string) string {
 		return "original message not stored"
 	case "unsupported_raw":
 		return "stored format not readable"
+	case "missing_message_id":
+		return "no stored Message-ID"
 	}
 	return "headers not fully read"
 }
@@ -144,7 +149,7 @@ func writeRelatedCopies(cmd *cobra.Command, family *store.EmailFamily) error {
 		}
 	}
 	if unreadable > 0 {
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d copies had headers or raw content that couldn't be fully read, so they may have relations this output cannot show\n", unreadable); err != nil {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d copies have incomplete header links, so they may have relations this output cannot show\n", unreadable); err != nil {
 			return fmt.Errorf("write related copies: %w", err)
 		}
 	}
