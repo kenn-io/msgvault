@@ -1,10 +1,8 @@
 package postaladdress
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
-	"io"
 	"strings"
 	"unicode/utf8"
 )
@@ -37,13 +35,8 @@ func DecodeOriginalInput(value string) (Input, bool) {
 	if !strings.HasPrefix(value, originalPrefix) {
 		return Input{}, false
 	}
-	decoder := json.NewDecoder(bytes.NewBufferString(strings.TrimPrefix(value, originalPrefix)))
-	decoder.DisallowUnknownFields()
 	var snapshot originalSnapshot
-	if err := decoder.Decode(&snapshot); err != nil || snapshot.Schema != 1 || snapshot.Input == nil {
-		return Input{}, false
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(value, originalPrefix)), &snapshot, json.RejectUnknownMembers(true)); err != nil || snapshot.Schema != 1 || snapshot.Input == nil {
 		return Input{}, false
 	}
 	return *snapshot.Input, true

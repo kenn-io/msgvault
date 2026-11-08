@@ -639,6 +639,9 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 		if !isBlank(address.FreeText) {
 			return vcard.JoinStructuredText(components), address.FreeText, nil
 		}
+		if !isBlank(address.Label) {
+			return vcard.JoinStructuredText(components), address.Label, nil
+		}
 		originalComponents, err := postalComponents(store.PersonAddress{PostOfficeBox: new(raw.PostOfficeBox), ExtendedAddress: new(raw.ExtendedAddress), StreetAddress: new(raw.StreetAddress), Locality: new(raw.Locality), Region: new(raw.Region), PostalCode: new(raw.PostalCode), CountryName: new(raw.CountryName), ExtendedComponents: new(raw.ExtendedComponents)})
 		if err != nil {
 			return "", nil, err

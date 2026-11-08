@@ -281,7 +281,7 @@ export class FactLedgerController {
         claim.target.kind === 'postal_address' && encodeFactTargetRef(claim.target) === row.targetCanonical);
       const review = fresh?.postal_review;
       if (!review?.eligible || !review.assessment) {
-        entry.error = 'This address is no longer available for supported adoption. Refresh claims before reviewing again.';
+        entry.error = 'Cannot apply this suggestion. Refresh claims before reviewing again.';
         return;
       }
       if (!Number.isSafeInteger(profileRevision) || profileRevision <= 0 || review.person_revision !== profileRevision || getProfileRevision() !== profileRevision) {

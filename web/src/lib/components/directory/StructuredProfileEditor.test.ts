@@ -53,6 +53,19 @@ function requestHarness(
 }
 
 describe('StructuredProfileEditor', () => {
+  it('saves a structured profile when the separate person read failed', async () => {
+    const requests: Request[] = [];
+    const client = createAPIClient(async input => {
+      requests.push(input instanceof Request ? input : new Request(input));
+      return new Response(JSON.stringify(profile(4)), { headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' } });
+    });
+    const controller = new DirectoryProfileController(client, 7, { structuredProfile: profile(), etags: { structuredProfile: '"person-7-r3"' }, errors: {} });
+    render(StructuredProfileEditor, { controller, section: 'categories' });
+    await fireEvent.input(screen.getByLabelText('Category'), { target: { value: 'Friends' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+  });
+
   it('supersedes a contact point with generated user provenance and no fabricated actor', async () => {
     const { controller, requests } = requestHarness();
     const current = {

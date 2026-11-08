@@ -106,3 +106,22 @@ export function postalAddressText(input: Partial<Input>): string {
     input.region, input.postal_code, input.country_name || input.country_code, input.extended_components]
     .filter(Boolean).join(', ') || input.free_text || input.original_value || '';
 }
+
+export function postalReason(code: string): string | undefined {
+  const reasons: Record<string, string> = {
+    already_adopted: 'Already saved', 'stale-target-revision': 'This suggestion is out of date', stale_target_revision: 'This suggestion is out of date',
+    'evidence-unsupported': 'Evidence unavailable', support_unavailable: 'Evidence unavailable',
+    'outside-validity': 'This suggestion is outside its valid period', outside_validity: 'This suggestion is outside its valid period',
+    invalid_claim: 'This suggestion cannot be used', relation_not_support: 'This evidence does not support the address',
+    country_missing: 'Add a country code', country_unknown: 'Check the country code', address_incomplete: 'Add a street address or PO box',
+    external_country_unsuitable: 'Enter a supported country code', external_input_unsuitable: 'Add a street address or PO box', external_input_too_long: 'The address is too long to check',
+    provider_incomplete: 'The provider reports an incomplete address', provider_coarse_result: 'The provider could not confirm the full address',
+    provider_unconfirmed: 'Some address components could not be confirmed', provider_component_not_confirmed: 'Some address components could not be confirmed',
+    provider_inferred: 'The provider inferred some components', provider_replaced: 'The provider replaced some components', provider_corrected: 'The provider corrected some components',
+    provider_unexpected: 'The provider found an unexpected component', provider_unresolved: 'The provider could not interpret part of the address',
+    provider_confirmation_required: 'The provider recommends reviewing this address', provider_country_changed: 'The provider changed the country', provider_country_unknown: 'The provider could not confirm the country',
+    provider_not_configured: 'The provider is not configured', provider_request_failed: 'The provider request failed', provider_response_invalid: 'The provider response could not be used',
+  };
+  if (code === 'not_verified' || code === 'provider_confirmed') return undefined;
+  return reasons[code] ?? 'Review this suggestion before saving';
+}

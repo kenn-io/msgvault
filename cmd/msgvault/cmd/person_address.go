@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -38,7 +38,7 @@ func newPersonAddressCommand() *cobra.Command {
 				addresses = append(addresses, address)
 			}
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(addresses)
+		return writePostalJSON(cmd.OutOrStdout(), addresses)
 	}}
 	var assessInput string
 	var external bool
@@ -69,7 +69,7 @@ func newPersonAddressCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(response.JSON200)
+		return writePostalJSON(cmd.OutOrStdout(), response.JSON200)
 	}}
 	assess.Flags().StringVar(&assessInput, "input", "", "Path to raw postal input JSON")
 	assess.Flags().BoolVar(&external, "external", false, "Explicitly send postal components to the configured provider")
@@ -120,14 +120,22 @@ func newPersonAddressCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(response.JSON200)
+		return writePostalJSON(cmd.OutOrStdout(), response.JSON200)
 	}}
 	apply.Flags().StringVar(&applyInput, "input", "", "Path to postal address request JSON; original_input preserves the initial draft")
 	apply.Flags().Int64Var(&revision, "revision", 0, "Reviewed person revision (required)")
 	apply.Flags().BoolVar(&add, "add", false, "Add a new address")
-	apply.Flags().Int64Var(&supersede, "supersede", 0, "Explicit address row to supersede")
+	apply.Flags().Int64Var(&supersede, "supersede", 0, "Address ID to replace")
 	command.AddCommand(list, assess, apply)
 	return command
+}
+
+func writePostalJSON(out io.Writer, value any) error {
+	if err := json.MarshalWrite(out, value); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out)
+	return err
 }
 
 func readPostalCLIInput(path string, value any) error {
@@ -139,14 +147,8 @@ func readPostalCLIInput(path string, value any) error {
 		return fmt.Errorf("open address input: %w", err)
 	}
 	defer func() { _ = file.Close() }()
-	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
+	if err := json.UnmarshalRead(io.LimitReader(file, 1<<20), value, json.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("decode address input: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("address input must contain one JSON object")
 	}
 	return nil
 }

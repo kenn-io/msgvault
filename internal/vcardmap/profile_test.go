@@ -1345,3 +1345,15 @@ func TestPostalAddressSnapshotExportsCurrentFreeText(t *testing.T) {
 	assert.Equal(text, *label)
 	assert.NotContains(got, "msgvault:postal-input:")
 }
+
+func TestPostalAddressSnapshotExportsCurrentLabel(t *testing.T) {
+	require := require.New(t)
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", Label: "Old label"})
+	require.NoError(err)
+	label := "Corrected label"
+	value, got, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, Label: &label})
+	require.NoError(err)
+	require.NotNil(got)
+	assert.Equal(t, ";;;;;;", value)
+	assert.Equal(t, label, *got)
+}

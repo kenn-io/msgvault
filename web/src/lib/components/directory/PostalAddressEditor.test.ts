@@ -90,7 +90,7 @@ describe('Postal address editor', () => {
     await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: 'ZZ' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
     expect(await screen.findByText('Needs review')).toBeDefined();
-    expect(screen.getByText('external country unsuitable')).toBeDefined();
+    expect(screen.getByText('Enter a supported country code')).toBeDefined();
     expect(screen.queryByText('Google Maps')).toBeNull();
     expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe('POST');
@@ -247,4 +247,14 @@ it.each(['birth_place', 'death_place'])('keeps %s edits outside postal provenanc
   expect(saved.original_value).toBe(text);
   expect(saved).not.toHaveProperty('free_text');
   expect(saved).not.toHaveProperty('original_input');
+});
+
+it.each(['birth_place', 'death_place'])('saves the entered %s as the place text', async kind => {
+  const current: PersonAddress = { person_id: 7, address_kind: kind, original_value: 'Old place', envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+  const { controller, requests } = setup({ current });
+  render(StructuredProfileEditor, { controller, section: 'addresses', current });
+  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'New place' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+  await waitFor(() => expect(requests).toHaveLength(1));
+  expect((await requests[0]!.clone().json()).addresses.add[0].original_value).toBe('New place');
 });

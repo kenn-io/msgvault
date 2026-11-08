@@ -58,16 +58,16 @@ describe('Postal claim review', () => {
     expect(body.addresses.add[0].envelope).not.toHaveProperty('confidence');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull());
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
-    expect(screen.getByText(/already adopted/i)).toBeDefined();
+    expect(screen.getByText('Already saved')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull();
   });
 
-  it.each(['stale_target_revision', 'support_unavailable', 'invalid_claim', 'already_adopted'])('keeps %s claims inspectable without offering supported adoption', async reason => {
+  it.each([['stale_target_revision', 'This suggestion is out of date'], ['support_unavailable', 'Evidence unavailable'], ['invalid_claim', 'This suggestion cannot be used'], ['already_adopted', 'Already saved']])('keeps %s claims inspectable without offering supported adoption', async (reason, explanation) => {
     const { requests } = setup(reason);
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
     expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull();
-    expect(screen.getByText(new RegExp(reason.replaceAll('_', ' '), 'i'))).toBeDefined();
+    expect(screen.getByText(explanation)).toBeDefined();
     expect(requests.some(request => request.method === 'PATCH' || request.url.endsWith('/addresses/assess'))).toBe(false);
   });
 });

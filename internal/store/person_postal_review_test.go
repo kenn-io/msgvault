@@ -184,7 +184,12 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 	state, err := st.LoadPersonFactState(t.Context(), id, catalog)
 	require.NoError(err)
 	require.Len(state.Unresolved, 100)
-	sort.Slice(all, func(i, j int) bool { return all[i].ClaimKey > all[j].ClaimKey })
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.After(all[j].CreatedAt)
+		}
+		return all[i].ClaimKey > all[j].ClaimKey
+	})
 	selected := map[string]bool{}
 	for _, claim := range state.Unresolved {
 		selected[claim.ClaimKey] = true

@@ -4,7 +4,7 @@
 
   import type { FactLedgerController, FactLedgerSection } from '../../directory/fact-ledger-controller.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
-  import { postalAddressText } from '../../directory/postal-review.svelte';
+  import { postalAddressText, postalReason } from '../../directory/postal-review.svelte';
   import StructuredProfileEditor from './StructuredProfileEditor.svelte';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
 
@@ -130,11 +130,11 @@
                 {#if row.postalReview}
                   {@const review = row.postalReview}
                   <div class="postal-claim-review">
-                    <p>{review.eligible ? 'Address awaiting owner review' : 'Address unavailable for supported adoption'}</p>
-                    {#if review.reason_codes.length}<p>{review.reason_codes.map(code => code.replaceAll('_', ' ')).join(' · ')}</p>{/if}
-                    <p>Supporting evidence: {review.supporting_evidence_ids.join(', ') || 'None'}</p>
+                    {#if !review.eligible}<p>Cannot apply suggestion</p>{/if}
+                    {#if review.reason_codes.length}<p>{review.reason_codes.map(postalReason).filter(Boolean).join(' · ')}</p>{/if}
+                    {#if review.supporting_evidence_ids.length}<Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else}<p>No supporting evidence</p>{/if}
                     {#if review.assessment}
-                      <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original)}</dd></div><div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed)}</dd></div><div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
+                      <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original)}</dd></div>{#if postalAddressText(review.assessment.original) !== postalAddressText(review.assessment.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed)}</dd></div>{/if}<div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
                       {#if review.eligible && row.claimKey && profileController && controller.personID === profileController.person?.id}
                         <Button label="Review address" size="sm" disabled={!profileController.canWriteProfile || controller.postalReview?.loading === true || !!controller.postalReview?.candidate} onclick={() => openPostalDraft(row.rowToken)} />
                         {#if controller.postalReview?.rowToken === row.rowToken}

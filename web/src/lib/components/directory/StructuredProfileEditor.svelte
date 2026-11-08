@@ -2,7 +2,7 @@
   import { Button, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { Input } from '../../api/generated/models';
-  import { PostalReviewSession, postalAddressText, copyPostalInput, type PostalCandidate } from '../../directory/postal-review.svelte';
+  import { PostalReviewSession, postalAddressText, postalReason, copyPostalInput, type PostalCandidate } from '../../directory/postal-review.svelte';
 
   import type {
     PartialDate as GeneratedPartialDate,
@@ -64,11 +64,11 @@
   const initialCurrent = untrack(() => current);
   const initialCandidate = untrack(() => postalCandidate);
   const initialController = untrack(() => controller);
-  const initialPersonID = untrack(() => controller.person?.id ?? 0);
+  const initialPersonID = untrack(() => controller.person?.id ?? controller.structuredProfile?.person.id ?? 0);
   const reviewedETag = initialCandidate ? `"person-${initialPersonID}-r${initialCandidate.personRevision}"` : untrack(() => controller.structuredProfileETag ?? undefined);
   const review = new PostalReviewSession(initialPersonID, (id, input, external, signal) => initialController.assessPostalAddress(id, input, external, signal));
   onDestroy(() => review.destroy());
-  $effect(() => { if (controller !== initialController || controller.person?.id !== initialPersonID) review.destroy(); });
+  $effect(() => { if (controller !== initialController || (controller.person?.id ?? controller.structuredProfile?.person.id ?? 0) !== initialPersonID) review.destroy(); });
   const currentName = initialCurrent as GeneratedPersonName | undefined;
   const currentContact = initialCurrent as GeneratedPersonContactPoint | undefined;
   const currentAddress = initialCurrent as GeneratedPersonAddress | undefined;
@@ -268,6 +268,12 @@
       case 'addresses': {
         const input = addressDraft();
         if (addressKind === 'postal') captureOriginal();
+        else if (streetAddress.trim()) {
+          input.original_value = streetAddress.trim();
+          if (currentAddress?.free_text) input.free_text = streetAddress.trim();
+        } else if (!input.original_value) {
+          input.original_value = [locality, region, postalCode, countryName].map(value => value.trim()).filter(Boolean).join(', ');
+        }
         return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
@@ -341,9 +347,9 @@
   }
   async function save(event: SubmitEvent | undefined = undefined): Promise<void> {
     event?.preventDefault();
-    if (submitting || !controller.canWriteProfile || controller !== initialController || controller.person?.id !== initialPersonID) return;
+    if (submitting || !controller.canWriteProfile || controller !== initialController || (controller.person?.id ?? controller.structuredProfile?.person.id ?? 0) !== initialPersonID) return;
     validationError = null;
-    if (initialCandidate && !addressTarget) { validationError = 'Choose whether to add a new address or supersede a specific address.'; return; }
+    if (initialCandidate && !addressTarget) { validationError = 'Choose how to save this address.'; return; }
     const body = patch();
     if (initialSection === 'addresses') {
       const address = body.addresses?.add?.[0];
@@ -447,9 +453,9 @@
       {/if}
     {:else if section === 'addresses'}
       {#if initialCandidate}
-        <p class="postal-note">Review this source address, then choose where to save it. Edits retain the source as origin.</p>
+        <p class="postal-note">Edits keep the original source.</p>
         <label>Save address as<select bind:value={addressTarget} disabled={submitting}>
-          <option value="">Choose an address target</option><option value="add">Add a new address</option>
+          <option value="">Choose…</option><option value="add">Add a new address</option>
           {#each controller.structuredProfile?.addresses.filter(address => address.address_kind === 'postal') ?? [] as address (address.envelope.id)}
             <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText(address)}</option>
           {/each}
@@ -497,10 +503,10 @@
             {@const result = review.result}
             <dl class="postal-comparison">
               <div><dt>Original address</dt><dd>{postalAddressText(result.original)}</dd></div>
-              <div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed)}</dd></div>
+              {#if postalAddressText(result.original) !== postalAddressText(result.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed)}</dd></div>{/if}
             </dl>
             <p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? 'Provider unavailable — local entry is still available' : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>
-            <p>{result.reason_codes.map(code => code.replaceAll('_', ' ')).join(' · ')}</p>
+            {#if result.reason_codes.map(postalReason).filter(Boolean).length}<p>{[...new Set(result.reason_codes.map(postalReason).filter(Boolean))].join(' · ')}</p>{/if}
             {#if result.provider === 'google' && result.checked_at && (result.status === 'validated' || result.status === 'needs_review')}<p class="google-attribution"><a href="https://maps.google.com" target="_blank" rel="noreferrer" translate="no" style="white-space: nowrap; font-family: Arial, sans-serif; font-style: normal; font-weight: 400; font-size: 14px; color: #1f1f1f; background-color: #ffffff; letter-spacing: normal">Google Maps</a></p>{/if}
             <div class="editor-actions">
               <Button label="Keep original" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(false)} />
@@ -610,7 +616,7 @@
   .postal-review, .postal-note { width: 100%; }
   .postal-comparison { display: grid; gap: var(--space-2); }
   .postal-comparison dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-  textarea { width: 100%; min-height: 5rem; }
+  textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 5rem; }
   .profile-editor {
     display: flex;
     flex-wrap: wrap;
