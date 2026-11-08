@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-08"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -12,7 +12,7 @@ All notable changes to msgvault, grouped by release.
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
 - CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
-- Empty sender searches suggest matching addresses and a query you can retry, including incomplete addresses such as `from:alex@exam`. CLI hints stay on stderr, and MCP metadata results carry structured retry hints. Counts keep your search filters and account scope.
+- `from:` now finds messages by sender name, address, or phone number across CLI, MCP, and web search, replacing address retry hints. Full addresses match exactly, and domains match by suffix. Repeated `from:` values must all match, including in CLI searches that previously matched any value.
 
 - [Open loops](usage/open-loops.md) list conversations waiting on your reply
   and replies you are waiting on, with separate results for each person and
