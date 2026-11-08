@@ -165,6 +165,15 @@ func TestImportantDateNotificationClaimRequiresOriginalDate(t *testing.T) {
 	claimed, err = st.ClaimImportantDateNotificationContext(ctx, key, "original-date", "issue-example")
 	must.NoError(err)
 	checks.True(claimed)
+	changed, err = st.AdvanceImportantDateDeliveryContext(ctx, key, store.ImportantDateNotifyInFlight, store.ImportantDateIssueCreated, "issue-example")
+	must.NoError(err)
+	must.True(changed)
+	exists, err := st.ImportantDateDeliveryExistsContext(ctx, key)
+	must.NoError(err)
+	checks.False(exists)
+	claimed, err = st.ClaimImportantDateNotificationContext(ctx, key, "original-date", "issue-example")
+	must.NoError(err)
+	checks.True(claimed)
 }
 
 func TestImportantDateStatusPagesRetainedOccurrences(t *testing.T) {
