@@ -113,6 +113,46 @@ func TestSnapshotCacheStaleWaitPolicy(t *testing.T) {
 		assert.Equal(t, 1, value)
 		assert.Equal(t, asOf, previousAsOf)
 		assert.True(t, stale)
+
+		var catalog snapshotCache[int]
+		started = time.Now()
+		value, asOf, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
+			func(context.Context) (int, error) { time.Sleep(time.Second); return 1, nil })
+		require.NoError(t, err)
+		assert.Equal(t, time.Second, time.Since(started), "optional cold reads retain their budget")
+		assert.Equal(t, 1, value)
+		assert.False(t, stale)
+
+		started = time.Now()
+		value, previousAsOf, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
+			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
+		require.NoError(t, err)
+		assert.Zero(t, time.Since(started), "matching optional reads reuse the snapshot immediately")
+		assert.Equal(t, 1, value)
+		assert.Equal(t, asOf, previousAsOf)
+		assert.True(t, stale)
+
+		started = time.Now()
+		_, _, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, false,
+			func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, ctx.Err() })
+		require.NoError(t, err)
+		assert.Equal(t, 2*time.Second, time.Since(started), "strict reads keep the original wait")
+		assert.True(t, stale)
+
+		started = time.Now()
+		value, _, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "2", 2*time.Second, true,
+			func(ctx context.Context) (int, error) {
+				select {
+				case <-time.After(100 * time.Millisecond):
+					return 2, nil
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				}
+			})
+		require.NoError(t, err)
+		assert.Equal(t, 100*time.Millisecond, time.Since(started), "changed versions wait for their own refresh")
+		assert.Equal(t, 2, value)
+		assert.False(t, stale)
 	})
 }
 
