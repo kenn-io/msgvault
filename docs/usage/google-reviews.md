@@ -223,7 +223,9 @@ msgvault google-reviews disconnect shop
 ```
 
 Disconnect removes the dedicated app-bound Business Profile token and invalidates
-pending previews. Targets sharing that account/app binding lose access together.
+pending previews. It stops active backfills and prevents new ones for targets
+sharing that account and app until you authorize again. Previously archived
+reviews remain in the archive.
 It does not remove unrelated Gmail or Calendar tokens. To revoke the provider grant
 as well, use your Google account's connected-app controls.
 

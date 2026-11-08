@@ -27,6 +27,16 @@ type pendingReply struct {
 	receiptID string
 	expires   time.Time
 }
+type backfillRun struct {
+	target Target
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func credentialKey(target Target) string {
+	return target.Provider + "\x00" + target.OAuthApp + "\x00" + strings.ToLower(target.Email)
+}
+
 type storedReceipt struct {
 	principal string
 	receipt   Receipt
@@ -37,29 +47,30 @@ type storedReceipt struct {
 // backfill through its narrow Archive interface. One service belongs to one
 // server, never a process-wide singleton.
 type Service struct {
-	options        Options
-	mu             sync.Mutex
-	pending        map[string]pendingReply
-	receipts       map[string]storedReceipt
-	writeGate      chan struct{}
-	now            func() time.Time
-	stop           chan struct{}
-	done           chan struct{}
-	closed         bool
-	generation     uint64
-	active         sync.WaitGroup
-	activeCancel   context.CancelFunc
-	backfillCtx    context.Context
-	backfillCancel context.CancelFunc
-	backfillActive map[string]bool
-	backfills      sync.WaitGroup
+	options            Options
+	mu                 sync.Mutex
+	pending            map[string]pendingReply
+	receipts           map[string]storedReceipt
+	writeGate          chan struct{}
+	now                func() time.Time
+	stop               chan struct{}
+	done               chan struct{}
+	closed             bool
+	generation         uint64
+	active             sync.WaitGroup
+	activeCancel       context.CancelFunc
+	backfillCtx        context.Context
+	backfillCancel     context.CancelFunc
+	backfillActive     map[string]*backfillRun
+	blockedCredentials map[string]string
+	backfills          sync.WaitGroup
 }
 
 func NewService(options Options) *Service {
 	// Backfills outlive their initiating HTTP request and use this service-lifetime
 	// context until Close cancels the worker during daemon shutdown.
 	backfillCtx, backfillCancel := context.WithCancel(context.Background())
-	s := &Service{options: options, pending: make(map[string]pendingReply), receipts: make(map[string]storedReceipt), writeGate: make(chan struct{}, 1), now: time.Now, stop: make(chan struct{}), done: make(chan struct{}), backfillCtx: backfillCtx, backfillCancel: backfillCancel, backfillActive: make(map[string]bool)}
+	s := &Service{options: options, pending: make(map[string]pendingReply), receipts: make(map[string]storedReceipt), writeGate: make(chan struct{}, 1), now: time.Now, stop: make(chan struct{}), done: make(chan struct{}), backfillCtx: backfillCtx, backfillCancel: backfillCancel, backfillActive: make(map[string]*backfillRun), blockedCredentials: make(map[string]string)}
 	go func() {
 		defer close(s.done)
 		timer := time.NewTicker(time.Minute)
@@ -198,11 +209,11 @@ func (s *Service) Execute(ctx context.Context, principal string, request Request
 		}
 		return result, nil
 	}
-	if request.Action == "invalidate_target" {
+	if request.Action == "invalidate_target" || request.Action == "resume_target" {
 		if principal == "" {
 			return nil, ErrDenied
 		}
-		return s.invalidate(ctx, request.Target)
+		return s.invalidate(ctx, request.Target, request.Action == "resume_target", request.ConfirmationToken)
 	}
 	if request.Action == "receipt" {
 		if principal == "" {
@@ -324,7 +335,11 @@ func (s *Service) startBackfill(ctx context.Context, targetName string) (*Result
 		s.mu.Unlock()
 		return nil, ErrUnavailable
 	}
-	if s.backfillActive[key] {
+	if s.blockedCredentials[credentialKey(target)] != "" {
+		s.mu.Unlock()
+		return nil, ErrCredentials
+	}
+	if s.backfillActive[key] != nil {
 		s.mu.Unlock()
 		state, err := s.options.Archive.GoogleReviewsBackfillState(ctx, target.Name)
 		if err != nil {
@@ -333,13 +348,15 @@ func (s *Service) startBackfill(ctx context.Context, targetName string) (*Result
 		state = withCoverageNote(state)
 		return &Result{ArchiveSync: &state}, nil
 	}
-	s.backfillActive[key] = true
+	workerCtx, cancel := context.WithCancel(s.backfillCtx)
+	run := &backfillRun{target: target, cancel: cancel, done: make(chan struct{})}
+	s.backfillActive[key] = run
 	// Add while holding mu so Close cannot begin Wait before this worker is
 	// accounted for.
 	s.backfills.Add(1)
 	s.mu.Unlock()
 
-	state, err := s.options.Archive.BeginGoogleReviewsBackfill(ctx, target.Name, target.Location)
+	state, err := s.options.Archive.BeginGoogleReviewsBackfill(workerCtx, target.Name, target.Location)
 	if err != nil {
 		s.finishBackfill(key)
 		if errors.Is(err, ErrArchiveBusy) {
@@ -348,7 +365,7 @@ func (s *Service) startBackfill(ctx context.Context, targetName string) (*Result
 		return nil, ErrArchive
 	}
 	state = withCoverageNote(state)
-	go s.runBackfill(key, target, state)
+	go s.runBackfill(workerCtx, key, target, state)
 	return &Result{ArchiveSync: &state}, nil
 }
 
@@ -357,9 +374,8 @@ func withCoverageNote(state BackfillState) BackfillState {
 	return state
 }
 
-func (s *Service) runBackfill(key string, target Target, state BackfillState) {
+func (s *Service) runBackfill(ctx context.Context, key string, target Target, state BackfillState) {
 	defer s.finishBackfill(key)
-	ctx := s.backfillCtx
 	provider, _, err := s.provider(ctx, target)
 	if err != nil {
 		s.failBackfill(ctx, target, archiveErrorCode(err))
@@ -374,8 +390,17 @@ func (s *Service) runBackfill(key string, target Target, state BackfillState) {
 			s.failBackfill(ctx, target, archiveErrorCode(err))
 			return
 		}
+		current, err := s.target(ctx, target.Name)
+		if err != nil || !reflect.DeepEqual(current, target) {
+			s.failBackfill(ctx, target, "configuration_changed")
+			return
+		}
 		page, err := provider.List(ctx, target.Location, state.NextPageToken, 50)
 		if err != nil {
+			s.failBackfill(ctx, target, archiveErrorCode(err))
+			return
+		}
+		if err := ctx.Err(); err != nil {
 			s.failBackfill(ctx, target, archiveErrorCode(err))
 			return
 		}
@@ -396,7 +421,12 @@ func (s *Service) runBackfill(key string, target Target, state BackfillState) {
 
 func (s *Service) finishBackfill(key string) {
 	s.mu.Lock()
+	run := s.backfillActive[key]
 	delete(s.backfillActive, key)
+	if run != nil {
+		run.cancel()
+		close(run.done)
+	}
 	s.mu.Unlock()
 	s.backfills.Done()
 }
@@ -578,7 +608,7 @@ func (s *Service) cancelPending(principal, token string) {
 	}
 }
 
-func (s *Service) invalidate(ctx context.Context, name string) (*Result, error) {
+func (s *Service) invalidate(ctx context.Context, name string, resume bool, token string) (*Result, error) {
 	select {
 	case s.writeGate <- struct{}{}:
 		defer func() { <-s.writeGate }()
@@ -605,9 +635,32 @@ func (s *Service) invalidate(ctx context.Context, name string) (*Result, error) 
 		return nil, ErrDenied
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, ErrUnavailable
+	}
+	credential := credentialKey(selected)
+	if resume {
+		if s.blockedCredentials[credential] == "" || s.blockedCredentials[credential] != token {
+			s.mu.Unlock()
+			return nil, ErrConflict
+		}
+		delete(s.blockedCredentials, credential)
+		s.mu.Unlock()
+		return &Result{}, nil
+	}
+	generation := randomID()
+	if generation == "" {
+		s.mu.Unlock()
+		return nil, ErrUnavailable
+	}
+	s.blockedCredentials[credential] = generation
+	var waits []<-chan struct{}
+	for _, run := range s.backfillActive {
+		if credentialKey(run.target) == credential {
+			run.cancel()
+			waits = append(waits, run.done)
+		}
 	}
 	s.generation++
 	for token, pending := range s.pending {
@@ -618,5 +671,13 @@ func (s *Service) invalidate(ctx context.Context, name string) (*Result, error) 
 			s.setStatusLocked(pending.receiptID, "failed")
 		}
 	}
-	return &Result{}, nil
+	s.mu.Unlock()
+	for _, done := range waits {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil, ErrConflict
+		}
+	}
+	return &Result{CredentialChangeToken: generation}, nil
 }

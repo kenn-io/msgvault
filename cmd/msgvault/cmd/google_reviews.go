@@ -36,8 +36,8 @@ func newGoogleReviewsCmd(run googleReviewsRunner) *cobra.Command {
 	}{
 		{"capabilities", "capabilities", "capabilities", "Show supported providers and configured targets", 0},
 		{cmdUseList, cmdUseList, cmdUseList + " TARGET", "Read a fresh page of reviews", 1},
-		{"backfill", "backfill", "backfill TARGET", "Start or resume an API-available historical archive backfill", 1},
-		{"archive-status", "archive_status", "archive-status TARGET", "Show the archive backfill checkpoint and pagination status", 1},
+		{"backfill", "backfill", "backfill TARGET", "Archive available reviews; resume interrupted imports.", 1},
+		{"archive-status", "archive_status", "archive-status TARGET", "Show archive progress and totals.", 1},
 		{"get", "get", "get TARGET REVIEW_ID", "Read one current review", 2},
 		{"preview-reply", "preview_reply", "preview-reply TARGET REVIEW_ID", "Read the exact reply from stdin and issue an expiring preview", 2},
 		{"confirm-reply", "confirm_reply", "confirm-reply --confirmation-token TOKEN --confirmed", "Submit the exact owner-approved preview once", 0},
@@ -148,21 +148,32 @@ func newGoogleReviewsCmd(run googleReviewsRunner) *cobra.Command {
 			if action == "authorize" && !target.OwnProject {
 				return errors.New("set own_project = true only for your own approved project before authorization")
 			}
-			// Clear outstanding consent on the daemon before changing credentials.
+			// Stop imports and clear outstanding consent before changing credentials.
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
-				return errors.New("the owner daemon must be available to invalidate outstanding google-review previews before changing credentials")
+				return errors.New("the owner daemon must be available to stop imports and invalidate previews before changing credentials")
 			}
-			_, invalidateErr := client.ControlGoogleReviews(cmd.Context(), googlereviews.Request{Action: "invalidate_target", Target: target.Name})
+			invalidation, invalidateErr := client.ControlGoogleReviews(cmd.Context(), googlereviews.Request{Action: "invalidate_target", Target: target.Name})
 			_ = client.Close()
-			if invalidateErr != nil {
-				return errors.New("could not invalidate google-review previews; credentials were not changed")
+			if invalidateErr != nil || invalidation == nil || invalidation.CredentialChangeToken == "" {
+				return errors.New("could not stop imports and invalidate google-review previews; credentials were not changed")
 			}
 			if action == "disconnect" {
 				manager := oauth.NewStoredTokenManager(state.cfg.TokensDir(), state.cfg.OAuth.Tokens).
 					WithTokenNamespace(googleReviewNamespace(target.OAuthApp))
 				if err := manager.DeleteToken(cmd.Context(), target.Email); err != nil {
 					return fmt.Errorf("remove stored google-review token: %w", googlereviews.ErrUnavailable)
+				}
+				// The daemon may have restarted since the first invalidation. Settle
+				// any imports admitted by the replacement before reporting success.
+				client, _, err = OpenHTTPStore(cmd.Context())
+				if err != nil {
+					return errors.New("token removed, but the daemon could not confirm imports stopped")
+				}
+				_, invalidateErr = client.ControlGoogleReviews(cmd.Context(), googlereviews.Request{Action: "invalidate_target", Target: target.Name})
+				_ = client.Close()
+				if invalidateErr != nil {
+					return errors.New("token removed, but the daemon could not confirm imports stopped")
 				}
 				_, err := fmt.Fprintln(cmd.OutOrStdout(), "Dedicated google-review token removed; other integrations are unchanged.")
 				if err != nil {
@@ -181,6 +192,15 @@ func newGoogleReviewsCmd(run googleReviewsRunner) *cobra.Command {
 			}
 			if err != nil {
 				return fmt.Errorf("authorize google-review app: %w", googlereviews.ErrUnavailable)
+			}
+			client, _, err = OpenHTTPStore(cmd.Context())
+			if err != nil {
+				return errors.New("authorization was saved, but the daemon could not resume review imports; authorize again")
+			}
+			_, resumeErr := client.ControlGoogleReviews(cmd.Context(), googlereviews.Request{Action: "resume_target", Target: target.Name, ConfirmationToken: invalidation.CredentialChangeToken})
+			_ = client.Close()
+			if resumeErr != nil {
+				return errors.New("authorization was saved, but the daemon could not resume review imports; authorize again")
 			}
 			return writeGoogleReviewAuthorizationResult(cmd.OutOrStdout())
 		}

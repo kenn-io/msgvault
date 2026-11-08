@@ -45,12 +45,14 @@ it('starts backfill, reports API exhaustion limits, and searches archived review
     return { reviews: [] };
   });
   render(GoogleReviewsWorkspace, { client });
-  await fireEvent.change(await screen.findByLabelText('Target'), { target: { value: 'shop' } });
+  await screen.findByRole('option', { name: 'shop' });
+  await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
+  await screen.findByText('No more pages');
   await fireEvent.click(screen.getByRole('button', { name: 'Backfill available history' }));
-  await screen.findByText(/Archive status: running/);
+  await screen.findByText('Importing');
   expect(screen.getByText('API pagination does not guarantee lifetime coverage.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh archive status' }));
-  await screen.findByText(/Archive status: api_exhausted/);
+  await screen.findByText('No more pages');
   await fireEvent.input(screen.getByLabelText('Search archived reviews'), { target: { value: 'helpful service' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Search archive' }));
   expect(await screen.findByText('<b>Helpful service</b>')).toBeDefined();
@@ -76,9 +78,9 @@ it('explains that a cursor-cycle retry restarts from the first page', async () =
     archive_sync: { target: 'shop', status: 'partial', pages_fetched: 1, reviews_fetched: 20, archived_review_count: 20, last_error_code: 'cursor_cycle', coverage_note: 'API pagination does not guarantee lifetime coverage.' },
   } : { reviews: [] });
   render(GoogleReviewsWorkspace, { client });
-  await fireEvent.change(await screen.findByLabelText('Target'), { target: { value: 'shop' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Refresh archive status' }));
-  expect(await screen.findByText(/Starting again restarts from the first page and keeps existing records\./)).toBeDefined();
+  await screen.findByRole('option', { name: 'shop' });
+  await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
+  expect(await screen.findByText(/Google repeated a page\. Restart from the first page; existing reviews are kept\./)).toBeDefined();
 });
 
 it('loads targets, paginates live reviews and escapes detail without fetching profile photos', async () => {
@@ -89,8 +91,8 @@ it('loads targets, paginates live reviews and escapes detail without fetching pr
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
   expect(await screen.findByText('<b>Helpful service</b>')).toBeDefined();
   expect(screen.getByText('Previous response')).toBeDefined();
-  expect(within(screen.getByRole('article', { name: 'Review detail' })).getByText(/PENDING/)).toBeDefined();
-  expect(within(screen.getByRole('article', { name: 'Review detail' })).getByText(/OFF_TOPIC/)).toBeDefined();
+  expect(screen.getByText(/Response status: PENDING/)).toBeDefined();
+  expect(screen.getByText(/Policy status: OFF_TOPIC/)).toBeDefined();
   expect(document.querySelector('img')).toBeNull();
   expect(document.querySelector('b')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
@@ -455,7 +457,7 @@ it('ignores late detail and list responses after changing target and clears cont
 });
 
 it('clears loaded content on a denied detail and allows a fresh read', async () => {
-  const { client } = fixture(body => body.action === 'list' ? { reviews: [review] } : Response.json({ message: 'Google Reviews access denied' }, { status: 403 }));
+  const { client } = fixture(body => body.action === 'list' ? { reviews: [review] } : body.action === 'archive_status' ? {} : Response.json({ message: 'Google Reviews access denied' }, { status: 403 }));
   render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
@@ -504,6 +506,7 @@ it('renders rating-only anonymous reviews and never offers confirmation on a den
   const { client, seen } = fixture(body => {
     if (body.action === 'list') return { reviews: [anonymous] };
     if (body.action === 'get') return { review: anonymous };
+    if (body.action === 'archive_status') return {};
     return Response.json({}, { status: 403 });
   });
   render(GoogleReviewsWorkspace, { client });

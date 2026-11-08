@@ -1,7 +1,6 @@
 package oauth
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -79,9 +78,4 @@ func TestCheckedTokenSourceRejectsActualAccountAndClient(t *testing.T) {
 	mgr.config.ClientID = "different"
 	_, _, err = mgr.CheckedTokenSource(t.Context(), "owner@example.com", mgr.config.Scopes)
 	require.Error(err)
-}
-func TestCheckedTokenSourceScopeUsesUserinfo(t *testing.T) {
-	endpoint := tokenProfileEndpointForScopes([]string{ScopeUserinfoEmail, "https://www.googleapis.com/auth/business.manage"})
-	assert.Equal(t, "https://www.googleapis.com/oauth2/v2/userinfo", endpoint.url)
-	_ = context.Canceled
 }

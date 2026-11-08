@@ -104,7 +104,8 @@ type archiveTestProvider struct {
 	puts        int
 	err         error
 	listEntered chan struct{}
-	listRelease <-chan struct{}
+	listRelease chan struct{}
+	onList      func()
 }
 
 func (p *archiveTestProvider) List(ctx context.Context, _, token string, pageSize int) (Page, error) {
@@ -123,6 +124,9 @@ func (p *archiveTestProvider) List(ctx context.Context, _, token string, pageSiz
 	}
 	if p.err != nil {
 		return Page{}, p.err
+	}
+	if p.onList != nil {
+		p.onList()
 	}
 	page, ok := p.pages[token]
 	if !ok {
@@ -251,3 +255,70 @@ func timePointerForTest(value time.Time) *time.Time { return &value }
 
 var _ Archive = (*archiveTestStore)(nil)
 var _ Provider = (*archiveTestProvider)(nil)
+
+func TestInvalidateSettlesBackfillAndRejectsStaleResume(t *testing.T) {
+	const location = "accounts/a/locations/l"
+	archive := &archiveTestStore{done: make(chan struct{})}
+	provider := &archiveTestProvider{pages: map[string]Page{"": {}}, listEntered: make(chan struct{}, 1), listRelease: make(chan struct{})}
+	shop := Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: location, Enabled: true, OwnProject: true}
+	alias := shop
+	alias.Name = "alias"
+	service := NewService(Options{
+		Archive:  archive,
+		Targets:  func(context.Context) ([]Target, error) { return []Target{shop, alias}, nil },
+		Provider: func(context.Context, Target) (Provider, string, error) { return provider, "binding", nil },
+	})
+	t.Cleanup(service.Close)
+	_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "alias"})
+	require.NoError(t, err)
+	select {
+	case <-provider.listEntered:
+	case <-time.After(30 * time.Second):
+		require.FailNow(t, "provider read did not start")
+	}
+	first, err := service.Execute(t.Context(), "owner", Request{Action: "invalidate_target", Target: "shop"})
+	require.NoError(t, err)
+	require.NotEmpty(t, first.CredentialChangeToken)
+	archive.mu.Lock()
+	assert.Equal(t, "partial", archive.state.Status)
+	assert.Empty(t, archive.reviews)
+	archive.mu.Unlock()
+	_, err = service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "alias"})
+	assert.ErrorIs(t, err, ErrCredentials)
+	second, err := service.Execute(t.Context(), "owner", Request{Action: "invalidate_target", Target: "shop"})
+	require.NoError(t, err)
+	_, err = service.Execute(t.Context(), "owner", Request{Action: "resume_target", Target: "shop", ConfirmationToken: first.CredentialChangeToken})
+	assert.ErrorIs(t, err, ErrConflict)
+	_, err = service.Execute(t.Context(), "owner", Request{Action: "resume_target", Target: "shop", ConfirmationToken: second.CredentialChangeToken})
+	require.NoError(t, err)
+	close(provider.listRelease)
+	_, err = service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "alias"})
+	assert.NoError(t, err)
+}
+
+func TestBackfillStopsWhenTargetDisabledBetweenPages(t *testing.T) {
+	const location = "accounts/a/locations/l"
+	archive := &archiveTestStore{done: make(chan struct{})}
+	var mu sync.Mutex
+	target := Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: location, Enabled: true, OwnProject: true}
+	provider := &archiveTestProvider{pages: map[string]Page{"": {NextPageToken: "next"}}}
+	provider.onList = func() { mu.Lock(); target.Enabled = false; mu.Unlock() }
+	service := NewService(Options{
+		Archive:  archive,
+		Targets:  func(context.Context) ([]Target, error) { mu.Lock(); defer mu.Unlock(); return []Target{target}, nil },
+		Provider: func(context.Context, Target) (Provider, string, error) { return provider, "binding", nil },
+	})
+	t.Cleanup(service.Close)
+	_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
+	require.NoError(t, err)
+	select {
+	case <-archive.done:
+	case <-time.After(30 * time.Second):
+		require.FailNow(t, "configuration change was not recorded")
+	}
+	archive.mu.Lock()
+	assert.Equal(t, "configuration_changed", archive.state.LastErrorCode)
+	assert.Equal(t, int64(1), archive.state.PagesFetched)
+	archive.mu.Unlock()
+	assert.Equal(t, 1, provider.calls)
+}

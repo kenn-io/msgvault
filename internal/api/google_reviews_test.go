@@ -96,7 +96,7 @@ func TestGoogleReviewsOwnerAndKeylessPolicy(t *testing.T) {
 	assert.Equal(401, w.Code)
 	assert.Zero(calls.Load())
 	s, calls = reviewAPIFixture(t, "")
-	for _, body := range []string{`{"action":"preview_reply","target":"shop","review_id":"r","comment":"Thanks"}`, `{"action":"confirm_reply","confirmation_token":"token","confirmed":true}`, `{"action":"receipt","receipt_id":"r"}`, `{"action":"invalidate_target","target":"shop"}`, `{"action":"backfill","target":"shop"}`} {
+	for _, body := range []string{`{"action":"preview_reply","target":"shop","review_id":"r","comment":"Thanks"}`, `{"action":"confirm_reply","confirmation_token":"token","confirmed":true}`, `{"action":"receipt","receipt_id":"r"}`, `{"action":"invalidate_target","target":"shop"}`, `{"action":"resume_target","target":"shop","confirmation_token":"token"}`, `{"action":"backfill","target":"shop"}`} {
 		w = reviewAPIRequest(t, s, body, "")
 		assert.Equal(403, w.Code, w.Body.String())
 	}
@@ -145,18 +145,18 @@ func TestGoogleReviewsArchiveSearchIsOwnerOnlyAndNotCached(t *testing.T) {
 	srv.Router().ServeHTTP(response, request)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	require.Equal("no-store", response.Header().Get("Cache-Control"))
-	assert.Contains(response.Body.String(), "synthetic review text")
+	assert.Contains(t, response.Body.String(), "synthetic review text")
 
 	request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/v1/google-reviews/archive/search?q=synthetic", nil)
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
-	assert.Equal(http.StatusUnauthorized, response.Code)
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
 
 	request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/api/v1/google-reviews/archive/search?q=synthetic&page=1&page=2", nil)
 	request.Header.Set("X-Api-Key", "owner")
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
-	assert.Equal(http.StatusBadRequest, response.Code)
+	assert.Equal(t, http.StatusBadRequest, response.Code)
 }
 
 type googleReviewAPIProvider struct{ puts int }

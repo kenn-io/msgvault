@@ -172,7 +172,11 @@ own_project = false
 			})
 			mux.HandleFunc("/api/v1/google-reviews/control", func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
-				assert.FileExists(tokenPath, "daemon invalidation must precede credential deletion")
+				if invalidations.Load() == 0 {
+					assert.FileExists(tokenPath, "daemon invalidation must precede credential deletion")
+				} else {
+					assert.NoFileExists(tokenPath, "final invalidation must follow credential deletion")
+				}
 				var request googlereviews.Request
 				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
 					http.Error(w, "invalid body", http.StatusBadRequest)
@@ -181,7 +185,7 @@ own_project = false
 				assert.Equal(googlereviews.Request{Action: "invalidate_target", Target: "shop"}, request)
 				invalidations.Add(1)
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{}`)
+				_, _ = io.WriteString(w, `{"credential_change_token":"synthetic-token"}`)
 			})
 			server := httptest.NewServer(mux)
 			defer server.Close()
@@ -197,7 +201,7 @@ own_project = false
 			root.SetErr(io.Discard)
 			root.SetArgs([]string{"--home", home, "--config", path, "--no-log-file", "google-reviews", "disconnect", "shop"})
 			assert.NoError(executeRootContext(t.Context(), root)) //nolint:testifylint // Keep the independent cleanup checks running if the command fails.
-			assert.Equal(int32(1), invalidations.Load())
+			assert.Equal(int32(2), invalidations.Load())
 			assert.NoFileExists(tokenPath)
 			assert.FileExists(otherPath, "unrelated OAuth tokens remain")
 		})
@@ -229,14 +233,6 @@ own_project = false
 	root.SetErr(io.Discard)
 	root.SetArgs([]string{"--home", home, "--config", path, "--no-log-file", "google-reviews", "authorize", "shop", "--headless"})
 	assert.ErrorContains(executeRootContext(t.Context(), root), "set own_project = true")
-}
-
-func TestGoogleReviewAuthorizationSuccessMessage(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var output bytes.Buffer
-	require.NoError(writeGoogleReviewAuthorizationResult(&output))
-	assert.Equal("Google Reviews authorization saved separately.\n", output.String())
 }
 
 func TestGoogleReviewsSetupFailureStagesAreRedacted(t *testing.T) {
@@ -298,7 +294,7 @@ own_project = true
 				assert.Equal(googlereviews.Request{Action: "invalidate_target", Target: "shop"}, request)
 				invalidations.Add(1)
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{}`)
+				_, _ = io.WriteString(w, `{"credential_change_token":"synthetic-token"}`)
 			})
 			server := httptest.NewServer(mux)
 			defer server.Close()

@@ -32,7 +32,7 @@ export async function control(client: APIClient, body: GoogleReviewsRequest, sig
   if (response.status === 409 && error?.error === 'google_reviews_preview_changed') throw new PreviewConflictError();
   if (body.action === 'receipt' && response.status === 404) throw new ReceiptUnavailableError();
   switch (error?.error) {
-    case 'google_reviews_credentials': throw new Error('Authorize the configured Google account again. Check its named app and required scopes.');
+    case 'google_reviews_credentials': throw new Error('Reconnect the configured Google account and app with the required permissions.');
     case 'google_reviews_permission': throw new Error('Google denied access. Check project approval, verified location, and account permissions.');
     case 'google_reviews_quota': throw new Error('Google quota reached. Wait before refreshing live reviews.');
     case 'google_reviews_temporary': throw new Error('Google is temporarily unavailable. Retry a live read later.');

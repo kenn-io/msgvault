@@ -62,7 +62,7 @@ func (s *Server) handleGoogleReviews(w http.ResponseWriter, r *http.Request) {
 	case AuthModeLoopback, AuthModeRequired, AuthModeCaller, AuthModeDelegated, AuthModeRemoteClient:
 		// These modes do not establish an owner principal.
 	}
-	if principal == "" && (request.Action == "preview_reply" || request.Action == "confirm_reply" || request.Action == "receipt" || request.Action == "invalidate_target" || request.Action == "backfill") {
+	if principal == "" && (request.Action == "preview_reply" || request.Action == "confirm_reply" || request.Action == "receipt" || (request.Action == "invalidate_target" || request.Action == "resume_target") || request.Action == "backfill") {
 		message := "Configure owner authentication to preview or confirm replies and read receipts"
 		if request.Action == "backfill" {
 			message = "Owner authentication is required to start a Google Reviews archive backfill"
@@ -151,6 +151,9 @@ func decodeGoogleReviewsRequest(w http.ResponseWriter, r *http.Request, request 
 	switch request.Action {
 	case "invalidate_target", "archive_status", "backfill":
 		allowed["target"] = true
+	case "resume_target":
+		allowed["target"] = true
+		allowed["confirmation_token"] = true
 	case "list":
 		allowed["target"] = true
 		allowed["page_token"] = true

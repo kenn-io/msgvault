@@ -37,8 +37,18 @@
   let archiveController: AbortController | undefined;
   const selected = $derived(targets.find(item => item.name === target));
   const canReply = $derived(selected?.enabled && selected.replies_enabled);
+  const matchingListReview = $derived(review?.reviewId ? reviews.find(item => item.reviewId === review?.reviewId) : undefined);
   const archivePages = $derived(archiveResult ? Math.max(1, Math.ceil(archiveResult.total / archiveResult.page_size)) : 1);
   const archiveQueryBytes = $derived(new TextEncoder().encode(archiveQuery).length);
+
+  function archiveStatus(status: string): string {
+    switch (status) {
+      case 'not_started': return 'Not started';
+      case 'running': return 'Importing';
+      case 'api_exhausted': return 'No more pages';
+      default: return 'Interrupted';
+    }
+  }
 
   function clearContent() {
     reviews = []; review = undefined; nextPage = ''; comment = ''; preview = undefined; loaded = false;
@@ -157,14 +167,14 @@
 </script>
 
 <section class="google-reviews" aria-label="Google Reviews">
-  <PageHeader title="Google Reviews" description="Use your own approved Google project to read, archive, and search reviews." />
+  <PageHeader title="Google Reviews" description="Use your own approved Google project." />
   {#each capabilities.filter(item => !item.available) as capability}
     <p class="notice">{capability.provider === 'facebook' ? 'Facebook' : capability.provider} unavailable: {capability.reason ?? 'Official capability is unverified.'}</p>
   {/each}
   <div class="controls">
     <label for="google-review-target">Target</label>
     <select id="google-review-target" value={target} onchange={event => chooseTarget(event.currentTarget.value)}>
-      <option value="">Choose a configured target</option>
+      <option value="">None</option>
       {#each targets as item}<option value={item.name} disabled={!item.enabled}>{item.name}{!item.enabled ? ' (disabled)' : ''}</option>{/each}
     </select>
     {#if target}<Button label="Refresh reviews" disabled={busy} onclick={() => void list()} />{/if}
@@ -180,7 +190,7 @@
     <div role="status">
       {#if receipt.status === 'submitted'}<p>Submitted to Google. Public visibility may depend on moderation.</p>
       {:else if receipt.status === 'failed'}<p>Submission failed. Inspect the live review before creating a new preview.</p>
-      {:else if receipt.status === 'submitting'}<p>Submission is in progress. Check the receipt again.</p>
+      {:else if receipt.status === 'submitting'}<p>Submission is in progress.</p>
       {:else if receipt.status === 'pending_confirmation'}<p>Receipt is awaiting confirmation.</p>{/if}
       <p>Receipt: <code>{receipt.id}</code></p>
     </div>
@@ -203,12 +213,12 @@
     {#if review}
       <article aria-label="Review detail">
         <h2>{review.reviewer.isAnonymous ? 'Anonymous reviewer' : review.reviewer.displayName || 'Reviewer'}</h2>
-        <p>{review.starRating ?? 'Rating unavailable'}</p>
+        {#if !matchingListReview || matchingListReview.starRating !== review.starRating}<p>{review.starRating ?? 'Rating unavailable'}</p>{/if}
         <p class="exact">{review.comment || 'Rating only; no review text.'}</p>
         {#if review.updateTime}<p class="muted">Updated {review.updateTime}</p>{/if}
         {#if review.reviewReply}<h3>Current owner response</h3><p class="exact">{review.reviewReply.comment}</p>{/if}
-        {#if review.reviewReply?.reviewReplyState}<p>Response status: {review.reviewReply?.reviewReplyState}</p>{/if}
-        {#if review.reviewReply?.policyViolation}<p>Policy status: {review.reviewReply?.policyViolation}</p>{/if}
+        {#if review.reviewReply?.reviewReplyState && matchingListReview?.reviewReply?.reviewReplyState !== review.reviewReply.reviewReplyState}<p>Response status: {review.reviewReply?.reviewReplyState}</p>{/if}
+        {#if review.reviewReply?.policyViolation && matchingListReview?.reviewReply?.policyViolation !== review.reviewReply.policyViolation}<p>Policy status: {review.reviewReply?.policyViolation}</p>{/if}
         {#if canReply && (!receiptID || ((receiptUnavailable || unknown || receipt?.status === 'unknown') && recoveryInspected && target === receiptTarget && review.reviewId === receiptReviewID))}
           <label for="public-response">Public response</label>
           <textarea id="public-response" bind:value={comment} disabled={busy} rows="5"></textarea>
@@ -222,7 +232,7 @@
     <div class="archive-heading">
       <div>
         <h2>Review archive</h2>
-        <p class="muted">Search locally archived reviews. Backfill follows Google's API pages; page exhaustion does not guarantee lifetime coverage.</p>
+        {#if !archiveSync?.coverage_note}<p class="muted">Backfill follows Google's API pages; page exhaustion does not guarantee lifetime coverage.</p>{/if}
       </div>
       {#if target}
         <Button label="Backfill available history" disabled={archiveBusy || !selected?.enabled} onclick={() => void startBackfill()} />
@@ -230,9 +240,9 @@
       {/if}
     </div>
     {#if archiveSync}
-      <p role="status">Archive status: <strong>{archiveSync.status}</strong>. Pages fetched: {archiveSync.pages_fetched}; reviews fetched: {archiveSync.reviews_fetched}; archived: {archiveSync.archived_review_count}{#if archiveSync.total_review_count} of Google's reported {archiveSync.total_review_count}{/if}.</p>
+      <p role="status">Archive status: <strong>{archiveStatus(archiveSync.status)}</strong>. Pages fetched: {archiveSync.pages_fetched}; reviews fetched: {archiveSync.reviews_fetched}; archived: {archiveSync.archived_review_count}{#if archiveSync.total_review_count} of Google's reported {archiveSync.total_review_count}{/if}.</p>
       {#if archiveSync.coverage_note}<p class="muted">{archiveSync.coverage_note}</p>{/if}
-      {#if archiveSync.last_error_code}<p role="status">Last backfill error: {archiveSync.last_error_code}. {archiveSync.last_error_code === 'cursor_cycle' ? 'Starting again restarts from the first page and keeps existing records.' : 'Start backfill again to resume.'}</p>{/if}
+      {#if archiveSync.last_error_code}<p role="status">{archiveSync.last_error_code === 'cursor_cycle' ? 'Google repeated a page. Restart from the first page; existing reviews are kept.' : 'The import was interrupted. Start backfill again to resume.'}</p>{/if}
     {/if}
     <div class="archive-search">
       <label for="google-review-archive-query">Search archived reviews</label>
@@ -243,7 +253,7 @@
     {#if archiveError}<p role="alert">{archiveError}</p>{/if}
     {#if archiveBusy}<p role="status">Searching archive…</p>{/if}
     {#if archiveResult}
-      <p>{archiveResult.total} matching archived review{archiveResult.total === 1 ? '' : 's'}.</p>
+      {#if archiveResult.total > 0}<p>{archiveResult.total} matching archived review{archiveResult.total === 1 ? '' : 's'}.</p>{/if}
       {#if archiveResult.results.length === 0}<p>No archived reviews match this query.</p>{/if}
       <div class="archive-results">
         {#each archiveResult.results as item}
@@ -268,7 +278,7 @@
     <p class="exact">{preview.review.comment || 'Rating only; no review text.'}</p>
     {#if preview.review.reviewReply}<h3>Current owner response</h3><p class="exact">{preview.review.reviewReply.comment}</p>{/if}
     <p>Receipt reserved before submission: <code>{preview.receipt_id}</code></p>
-    <h3>Exact public response</h3>
+    <h3>Your response</h3>
     <pre class="exact" data-testid="exact-response">{preview.comment}</pre>
     <p>Confirm that you consent to submit this exact response to Google. Submission does not guarantee public visibility.</p>
     <p>Preview expires {preview.expires_at}. If the review or current response changes, create a new preview.</p>

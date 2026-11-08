@@ -96,6 +96,12 @@ func (r Request) Validate() error {
 			return ErrInvalid
 		}
 		allowed.Target = r.Target
+	case "resume_target":
+		if !validID(r.Target) || !validID(r.ConfirmationToken) {
+			return ErrInvalid
+		}
+		allowed.Target = r.Target
+		allowed.ConfirmationToken = r.ConfirmationToken
 	case "archive_status", "backfill":
 		if !validID(r.Target) {
 			return ErrInvalid
@@ -235,14 +241,15 @@ type Receipt struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 type Result struct {
-	Capabilities  []Capability   `json:"capabilities,omitempty"`
-	Targets       []TargetInfo   `json:"targets,omitempty"`
-	Reviews       []Review       `json:"reviews,omitempty"`
-	Review        *Review        `json:"review,omitempty"`
-	NextPageToken string         `json:"next_page_token,omitempty"`
-	ArchiveSync   *BackfillState `json:"archive_sync,omitempty"`
-	Preview       *Preview       `json:"preview,omitempty"`
-	Receipt       *Receipt       `json:"receipt,omitempty"`
+	CredentialChangeToken string         `json:"credential_change_token,omitempty"`
+	Capabilities          []Capability   `json:"capabilities,omitempty"`
+	Targets               []TargetInfo   `json:"targets,omitempty"`
+	Reviews               []Review       `json:"reviews,omitempty"`
+	Review                *Review        `json:"review,omitempty"`
+	NextPageToken         string         `json:"next_page_token,omitempty"`
+	ArchiveSync           *BackfillState `json:"archive_sync,omitempty"`
+	Preview               *Preview       `json:"preview,omitempty"`
+	Receipt               *Receipt       `json:"receipt,omitempty"`
 }
 
 // Archive persists review pages and their resume cursor in the main archive.
