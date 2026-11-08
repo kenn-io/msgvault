@@ -23,6 +23,9 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	}
 	first := makePerson("first-reconcile@example.test")
 	second := makePerson("second-reconcile@example.test")
+	owned, err := st.CreateImportantDateSubjectContext(ctx, store.ImportantDateSubjectInput{OwnerUID: second.VCardUID, Kind: "pet", DisplayName: "Example pet", Date: store.PartialDate{Month: new(10), Day: new(23)}})
+	must.NoError(err)
+	must.NoError(st.SetImportantDateConsentContext(ctx, "owned/"+owned.UID, "private-example", "owner/agent", true))
 	for _, person := range []*store.Person{first, second} {
 		subject := "person/" + person.VCardUID
 		must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
@@ -45,6 +48,7 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 			request.Decisions = append(request.Decisions, store.ImportantDateIdentityDecision{OriginalSubject: "person/" + uid, Meaning: meaning, ResolvedSubjects: []string{target}})
 		}
 	}
+	request.Decisions = append(request.Decisions, store.ImportantDateIdentityDecision{OriginalSubject: "owned/" + owned.UID, Meaning: "birthday", ResolvedSubjects: []string{"owned/" + owned.UID}, EffectiveOwner: target})
 	incomplete := request
 	incomplete.IdempotencyKey = "incomplete-reconcile"
 	incomplete.Decisions = request.Decisions[:len(request.Decisions)-1]
@@ -75,10 +79,18 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	active, err := st.HasImportantDateConsentContext(ctx, target, "private-example", "owner/agent")
 	must.NoError(err)
 	checks.False(active)
+	active, err = st.HasImportantDateConsentContext(ctx, "owned/"+owned.UID, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active)
+	subjects, err := st.ListImportantDateSubjectsContext(ctx, merged.Person.VCardUID)
+	must.NoError(err)
+	must.Len(subjects, 1)
+	checks.Equal(owned.UID, subjects[0].UID)
 	stable, err := st.ImportantDateIdentityStableContext(ctx, merged.Person.ID)
 	must.NoError(err)
 	checks.True(stable, "a reviewed unchanged lineage may be eligible after fresh consent")
 	must.NoError(st.SetImportantDateConsentContext(ctx, target, "private-example", "owner/agent", true))
+	must.NoError(st.SetImportantDateConsentContext(ctx, "owned/"+owned.UID, "private-example", "owner/agent", true))
 	active, err = st.HasImportantDateConsentContext(ctx, target, "private-example", "owner/agent")
 	must.NoError(err)
 	checks.True(active)
