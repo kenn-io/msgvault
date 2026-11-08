@@ -1299,7 +1299,7 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Contains(stderr.String(), "daemon restart")
+	assert.Contains(stderr.String(), "to use this version.")
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
