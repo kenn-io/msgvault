@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/update"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -643,9 +644,9 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 		return false
 	}
 	if update.IsDevBuildVersion(currentVersion) || strings.HasSuffix(currentVersion, "-dirty") {
-		// A build without a release version, such as dev or a bare commit hash, can't be ordered.
 		cli, daemon := strings.TrimSuffix(currentVersion, "-dirty"), strings.TrimSuffix(rt.Record.Version, "-dirty")
-		return update.IsNewer(cli, "v0.0.0") && !update.IsNewer(daemon, cli)
+		return semver.IsValid("v"+strings.TrimPrefix(cli, "v")) &&
+			semver.IsValid("v"+strings.TrimPrefix(daemon, "v")) && !update.IsNewer(daemon, cli)
 	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
 }

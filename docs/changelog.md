@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Source upgrades replace local daemons from the same or an older release when both versions are comparable. Commands that retain an eligible daemon print both versions and a restart command for the selected archive.
+
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
