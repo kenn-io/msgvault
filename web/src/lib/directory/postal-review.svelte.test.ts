@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Assessment, Input } from '../api/generated/models';
-import { postalFingerprint, PostalReviewSession } from './postal-review.svelte';
+import { postalAddressText, postalFingerprint, PostalReviewSession } from './postal-review.svelte';
 
 beforeEach(() => vi.stubGlobal('crypto', webcrypto));
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -19,6 +19,12 @@ function deferred<T>() {
 }
 
 describe('PostalReviewSession', () => {
+  it('shows country code changes even when the country name stays the same', () => {
+    const original = { address_kind: 'postal', country_name: 'Canada', country_code: 'CA' };
+    expect(postalAddressText(original)).toContain('CA');
+    expect(postalAddressText({ ...original, country_code: 'US' })).toContain('US');
+    expect(postalAddressText(original)).not.toBe(postalAddressText({ ...original, country_code: 'US' }));
+  });
   it('fingerprints every field, Unicode and whitespace, with the Go length-framed contract', async () => {
     const fingerprint = await postalFingerprint(input);
     expect(fingerprint).toBe('f7897d1e0b2a3120740b2882ec8937539e022e5ce8ccf969cfef6b253a0871a3');

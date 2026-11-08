@@ -36,7 +36,7 @@ function controller(): FactLedgerController {
   const value = new FactLedgerController(createAPIClient(vi.fn<typeof fetch>()));
   value.personID = 42;
   value.targets = [{ optionID: 'target-0', description: 'Private note', kind: 'attribute', valueType: 'string', cardinality: 'single', sensitive: true, canonical: `attribute:note:sha256:${'a'.repeat(64)}` }];
-  value.evidence.rows = [{ rowToken: 'evidence-0', sourceClass: 'message', directness: 'direct', authority: 'first party', identityScore: 92,
+  value.evidence.rows = [{ id: 1, rowToken: 'evidence-0', sourceClass: 'message', directness: 'direct', authority: 'first party', identityScore: 92,
     eventTime: '2026-08-01', recordedTime: '2026-08-02', supported: true, currentSupportLabel: 'Source reimported', createdAt: '2026-08-03',
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
   value.claims.rows = [{ rowToken: 'claim-0', submittedValue: 'allowed sensitive value', normalizedValue: 'allowed normalized value', relation: 'equals', origin: 'observed',

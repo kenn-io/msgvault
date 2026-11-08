@@ -1371,6 +1371,15 @@ func TestPostalAddressPartialComponentsKeepFreeText(t *testing.T) {
 	assert.Equal("12 Example Street", *label)
 }
 
+func TestLegacyExtendedAddressSurvivesPublicReadAndExport(t *testing.T) {
+	require := require.New(t)
+	value := ";;12 Example Street;Example City;;;Canada;Room 3;Floor 2"
+	address := store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: value, CountryCode: new("CA")}.PublicAddress()
+	got, _, err := postalAddressValue(address)
+	require.NoError(err)
+	assert.Equal(t, value, got)
+}
+
 func TestPostalAddressSnapshotDoesNotRestoreStreetWhenOnlyCountryCodeRemains(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

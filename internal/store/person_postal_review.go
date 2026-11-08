@@ -187,9 +187,7 @@ func (a PersonAddress) PublicAddress() PersonAddress {
 				}
 			}
 			if len(parts) > 7 {
-				if extra, err := json.Marshal(parts[7:]); err == nil {
-					a.ExtendedComponents = new(string(extra))
-				}
+				a.ExtendedComponents = new(vcard.JoinStructuredText(parts))
 			}
 		} else {
 			a.FreeText = new(a.OriginalValue)

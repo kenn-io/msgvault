@@ -103,7 +103,7 @@ export class PostalReviewSession {
 /** Display components without exposing a private storage envelope. */
 export function postalAddressText(input: Partial<Input>): string {
   const components = [input.post_office_box, input.extended_address, input.street_address, input.locality,
-    input.region, input.postal_code, input.country_name || input.country_code, input.extended_components]
+    input.region, input.postal_code, input.country_name, input.country_code, input.extended_components]
     .filter(Boolean).join(', ');
   return (input.free_text === components ? components : [input.free_text, components].filter(Boolean).join(', ')) || input.original_value || '';
 }
