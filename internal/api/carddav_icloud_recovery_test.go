@@ -25,6 +25,58 @@ func savedICloudAccountFixture(t *testing.T) *iCloudAccountFixture {
 	return f
 }
 
+func TestICloudRecoveryPreservesImportedIdentityWithAnotherAccount(t *testing.T) {
+	f := savedICloudAccountFixture(t)
+	ctx := t.Context()
+	st := f.controller.store
+	account, err := st.GetCardDAVAccountByNameContext(ctx, config.DefaultCardDAVConnection)
+	require.NoError(t, err)
+	require.NotNil(t, account)
+	books, err := f.controller.scopedStoredBooks(ctx)
+	require.NoError(t, err)
+	require.Len(t, books, 1)
+	book := books[0]
+	uid := "d11a2f73-f058-4b0e-bd31-03b473ff31c9"
+	href := book.CanonicalURL + "synthetic.vcf"
+	resource := store.CardDAVRemoteResource{
+		Href: href, RemoteUID: uid, RemoteETag: `"one"`, SemanticHash: "synthetic-hash",
+		RemoteBody:  []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:Synthetic Contact\r\nEND:VCARD\r\n"),
+		DisplayName: "Synthetic Contact",
+	}
+	_, err = st.ApplyCardDAVSyncPlanContext(ctx, store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{resource},
+	})
+	require.NoError(t, err)
+	before, err := st.GetCardDAVResourceContext(ctx, book.ID, href)
+	require.NoError(t, err)
+	require.NotNil(t, before.PersonID)
+	var personUID string
+	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT vcard_uid FROM persons WHERE id = ?`), *before.PersonID).Scan(&personUID))
+	_, _, err = st.ReplaceCardDAVDiscoveryContext(ctx, store.CardDAVDiscoveryInput{
+		ConnectionName: "other", BaseURL: "https://contacts.example.test", Username: "other@example.test",
+		PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/",
+	})
+	require.NoError(t, err)
+	f.partition, f.partitionErr = "p43", &carddav.StatusError{StatusCode: http.StatusGone}
+	_, err = f.controller.Current().Sync(ctx, carddav.SyncOptions{})
+	require.ErrorIs(t, err, carddav.ErrICloudReconnectRequired)
+	assert.Zero(t, f.syncCalls)
+	after, err := st.GetCardDAVResourceContext(ctx, book.ID, href)
+	require.NoError(t, err)
+	assert.Equal(t, before.PersonID, after.PersonID)
+	assert.Equal(t, before.RemoteUID, after.RemoteUID)
+	var afterUID string
+	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT vcard_uid FROM persons WHERE id = ?`), *before.PersonID).Scan(&afterUID))
+	assert.Equal(t, personUID, afterUID)
+	books, err = f.controller.scopedStoredBooks(ctx)
+	require.NoError(t, err)
+	require.Len(t, books, 1)
+	assert.Equal(t, book.ID, books[0].ID)
+	assert.True(t, books[0].IsSubscribed)
+	assert.True(t, books[0].IsWriteTarget)
+}
+
 func TestICloudPreflightMovesPartitionBeforeOneFullSync(t *testing.T) {
 	assert := assert.New(t)
 	f := savedICloudAccountFixture(t)
