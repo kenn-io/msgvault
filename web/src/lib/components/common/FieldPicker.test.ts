@@ -13,6 +13,7 @@ it('offers creation last and shows the created fields with a way back', async ()
   await fireEvent.click(screen.getByRole('button', { name: 'Organization: Search or create' }));
   // The open search says what the closed picker did, under the field's own name.
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'Organization' })).toHaveProperty('placeholder', 'Search or create'));
+  expect(screen.queryByRole('option', { name: /^Create organization/ })).toBeNull();
   await fireEvent.input(screen.getByRole('combobox'), { target: { value: 'Example School' } });
   const rows = screen.getAllByRole('option');
   expect(rows.at(-1)?.textContent?.trim()).toBe('Create organization “Example School”');

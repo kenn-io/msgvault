@@ -389,7 +389,7 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
   expect(await screen.findByRole('button', { name: 'Keep yours' })).toBeDefined();
 });
 
-it('drops a jobs check that finishes after Back and a new check', async () => {
+it('drops an earlier jobs check when a new check starts', async () => {
   let finishFirst!: (response: Response) => void;
   let checks = 0;
   const { controller } = controllerWith(async input => {
