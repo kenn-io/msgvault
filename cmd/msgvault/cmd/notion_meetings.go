@@ -175,20 +175,19 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			}
 		}
 		if meeting.InTrash || meeting.Archived {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: not tested (archived or trash)")
+			_, _ = fmt.Fprintln(out, "  Sample skipped (archived or trash)")
 		} else if !matched {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: not selected for connected human")
+			_, _ = fmt.Fprintln(out, "  Sample skipped: user did not create or attend")
 		} else {
 			sampled, err = notionmeetings.NewHydrator(notionProbeContent{client}).HydrateBlock(ctx, block)
 			if err != nil {
-				_, _ = fmt.Fprintln(out, "  Sample hydration: unavailable")
 				return &notionProbeError{stage: "probe Notion sample hydration", cause: err}
 			}
 			_, _ = fmt.Fprintln(out, "  Read Content: available")
 			children := sampled.Discovery.MeetingNotes.Children
 			incomplete := (children.SummaryBlockID != "" && (!sampled.SummaryTree.Complete || sampled.SummaryTree.Filtered)) || (children.NotesBlockID != "" && (!sampled.NotesTree.Complete || sampled.NotesTree.Filtered)) || (children.TranscriptBlockID != "" && (!sampled.TranscriptTree.Complete || sampled.TranscriptTree.Filtered))
 			if incomplete {
-				_, _ = fmt.Fprintln(out, "  Sample hydration: incomplete (some meeting sections could not be read)")
+				_, _ = fmt.Fprintln(out, "  Sample incomplete (some meeting sections could not be read)")
 			} else if strings.TrimSpace(sampled.Transcript) == "" {
 				_, _ = fmt.Fprintln(out, "  Transcript: pending")
 			}
@@ -358,7 +357,17 @@ refreshes old meetings.`,
 			options.Full = syncNotionMeetingsFull
 			options.Limit = syncNotionMeetingsLimit
 			options.CreatedAfter = after
-			options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
+			discoveryAnnounced := false
+			options.Progress = func(line string) {
+				if line == "Notion discovery checkpoint saved" {
+					if discoveryAnnounced {
+						return
+					}
+					discoveryAnnounced = true
+					line = "Finding meetings…"
+				}
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line)
+			}
 			summary, importErr := importer.Import(cmd.Context(), options)
 			if summary != nil {
 				pendingWrites += summary.MeetingsAdded + summary.MeetingsUpdated
@@ -391,6 +400,12 @@ func notionCoverageLabel(reason string) string {
 		return "Query limit"
 	case "inaccessible_subtree":
 		return "Inaccessible content"
+	case "cursor_budget":
+		return "Save limit"
+	case "frontier_budget":
+		return "Queue full"
+	case "legacy_unscoped":
+		return "Origin unknown"
 	default:
 		if reason == "" {
 			return "Unknown"

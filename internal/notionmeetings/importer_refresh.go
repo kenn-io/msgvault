@@ -183,11 +183,21 @@ func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting
 	index := -1
 	previous := pendingTranscript{}
 	hasPrevious := false
+	fromBacklog := false
 	for i, pending := range s.Pending {
 		if pending.BlockID == id {
 			index = i
 			previous = pending
 			hasPrevious = true
+			break
+		}
+	}
+	for i, pending := range s.PendingBacklog {
+		if pending.BlockID == id {
+			previous = pending
+			hasPrevious = true
+			fromBacklog = true
+			s.PendingBacklog = append(s.PendingBacklog[:i], s.PendingBacklog[i+1:]...)
 			break
 		}
 	}
@@ -203,6 +213,8 @@ func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting
 				s.Pending[index] = pending
 			} else if len(s.Pending) < defaultDiscoveryLimits().Pending {
 				s.Pending = append(s.Pending, pending)
+			} else if fromBacklog {
+				s.PendingBacklog = append(s.PendingBacklog, pending)
 			} else {
 				s.reason("pending_budget", "transcript")
 			}

@@ -126,7 +126,7 @@ func TestNotionProbeDoesNotHydrateUnrelatedRefreshedMeeting(t *testing.T) {
 	assert.Zero(sectionCalls)
 	assert.Contains(out.String(), "Credentials: self verified")
 	assert.Contains(out.String(), "Identity: PAT owner")
-	assert.Contains(out.String(), "not selected for connected human")
+	assert.Contains(out.String(), "user did not create or attend")
 	assert.NotContains(out.String(), "private-section")
 }
 

@@ -1,6 +1,7 @@
 package notionmeetings
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -205,4 +206,74 @@ func TestImporterMigratesLegacyPendingOverflow(t *testing.T) {
 	require.Len(recovered.PendingBacklog, 5)
 	assert.NotEqual("legacy-204", recovered.PendingBacklog[4].BlockID)
 	assert.Equal(deadline, recovered.TranscriptRetryUntil["legacy-204"])
+}
+
+func TestBacklogRetryMovesToActiveWithoutDuplicate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	state := newSyncState()
+	deadline := now.Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	state.PendingBacklog = []pendingTranscript{{BlockID: "meeting-1", NextAttemptAt: now.Format(time.RFC3339), RetryUntil: deadline}}
+	state.initialize()
+	state.updateTranscriptPending("meeting-1", &HydratedMeeting{Discovery: hydrationMeeting()}, true, now)
+	require.Len(state.Pending, 1)
+	assert.Empty(state.PendingBacklog)
+	cursor, err := state.marshal()
+	require.NoError(err)
+	var recovered syncState
+	require.NoError(json.Unmarshal([]byte(cursor), &recovered))
+	require.NoError(recovered.validate())
+	assert.Equal(deadline, recovered.Pending[0].RetryUntil)
+}
+
+type interruptFirstRetrySource struct {
+	*discoveryFixture
+}
+
+func (s *interruptFirstRetrySource) RetrieveBlock(ctx context.Context, id string) (*Block, error) {
+	if id == "retry-a" {
+		return nil, ErrRequestBudget
+	}
+	return s.discoveryFixture.RetrieveBlock(ctx, id)
+}
+
+func TestInterruptedDueRetryDoesNotBlockNextMeeting(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	meeting := hydrationMeeting()
+	meeting.ID = "retry-b"
+	meeting.MeetingNotes.Children.TranscriptBlockID = ""
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	imp.client = &interruptFirstRetrySource{discoveryFixture: source}
+	now := imp.now()
+	state := newSyncState()
+	deadline := now.Add(24 * time.Hour).Format(time.RFC3339)
+	for _, id := range []string{"retry-a", "retry-b"} {
+		state.Known[id] = knownMeeting{}
+		state.Pending = append(state.Pending, pendingTranscript{BlockID: id, NextAttemptAt: now.Format(time.RFC3339), RetryUntil: deadline})
+	}
+	state.initialize()
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	first, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	assert.Equal(deadline, first.TranscriptRetryUntil["retry-a"])
+	assert.False(pendingDue(first.Pending[0], now))
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
+	assert.Equal(1, count)
 }

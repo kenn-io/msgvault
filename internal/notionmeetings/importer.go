@@ -373,9 +373,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 			_, err := imp.processMeeting(ctx, scoped, &state, sum, opts, id, progress, hydrator)
 			if err != nil {
-				if !isDue && (errors.Is(err, ErrRequestBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-					// Rotation records the interrupted attempt, not successful freshness.
-					state.RefreshCursor = id
+				if errors.Is(err, ErrRequestBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					if isDue {
+						// Retain the deadline while giving other due retries a turn.
+						state.deferTranscriptAttempt(id, started)
+					} else {
+						// Rotation records the attempt, not successful freshness.
+						state.RefreshCursor = id
+					}
 				}
 				return false, err
 			}
