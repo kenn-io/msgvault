@@ -112,8 +112,7 @@ func checkBaseExpansion(body []byte) error {
 			}
 		}
 		if total += cost; total > maxBaseExpansionBytes {
-			return fmt.Errorf("%w: resolving its URLs against its xml:base takes more than %d bytes",
-				ErrFeedTooLarge, maxBaseExpansionBytes)
+			return fmt.Errorf("%w: expanded feed links exceed %d bytes", ErrFeedTooLarge, maxBaseExpansionBytes)
 		}
 	}
 	return nil
