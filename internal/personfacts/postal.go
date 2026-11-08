@@ -47,7 +47,7 @@ func postalAddressDescriptor() TargetDescriptor {
 	for _, name := range []string{"post_office_box", "extended_address", "street_address", "locality", "region", "postal_code", "country_name", "country_code", "extended_components", "free_text", "source_text"} {
 		fields = append(fields, FieldDescriptor{Name: name, ValueType: ValueText, Cardinality: CardinalitySingle, Required: name == "source_text"})
 	}
-	return TargetDescriptor{Kind: TargetPostalAddress, Key: "system:postal_address", UniversalID: "system:postal_address", Slug: "postal_address", Description: "Explicitly evidenced mailing or residential address for owner review only. Include source_text and postal components; never infer an address from a city or employer location. No automatic profile write or external validation.", ValueType: ValuePostalAddress, Cardinality: CardinalityMulti, Fields: fields, Sensitive: true}
+	return TargetDescriptor{Kind: TargetPostalAddress, Key: "system:postal_address", UniversalID: "system:postal_address", Slug: "postal_address", Description: "Mailing or residential address from explicit evidence. Requires your review; never inferred from a city or employer location. No automatic saving or external checks.", ValueType: ValuePostalAddress, Cardinality: CardinalityMulti, Fields: fields, Sensitive: true}
 }
 
 func normalizePostalAddressValue(submitted jsontext.Value) ([]byte, error) {

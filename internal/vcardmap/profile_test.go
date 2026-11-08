@@ -1357,3 +1357,11 @@ func TestPostalAddressSnapshotExportsCurrentLabel(t *testing.T) {
 	assert.Equal(t, ";;;;;;", value)
 	assert.Equal(t, label, *got)
 }
+
+func TestPostalAddressPartialComponentsKeepFreeText(t *testing.T) {
+	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, CountryName: new("Canada"), FreeText: new("12 Example Street")})
+	require.NoError(t, err)
+	require.NotNil(t, label)
+	assert.Equal(t, ";;;;;;Canada", value)
+	assert.Equal(t, "12 Example Street", *label)
+}

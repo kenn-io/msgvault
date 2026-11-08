@@ -131,8 +131,8 @@
                   {@const review = row.postalReview}
                   <div class="postal-claim-review">
                     {#if !review.eligible}<p>Cannot apply suggestion</p>{/if}
-                    {#if review.reason_codes.length}<p>{review.reason_codes.map(postalReason).filter(Boolean).join(' · ')}</p>{/if}
-                    {#if review.supporting_evidence_ids.length}<Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else}<p>No supporting evidence</p>{/if}
+                    {#if review.reason_codes.map(postalReason).filter(Boolean).length}<p>{review.reason_codes.map(postalReason).filter(Boolean).join(' · ')}</p>{/if}
+                    {#if review.supporting_evidence_ids.length}<Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else if !review.reason_codes.map(postalReason).includes('Evidence unavailable')}<p>No supporting evidence</p>{/if}
                     {#if review.assessment}
                       <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original)}</dd></div>{#if postalAddressText(review.assessment.original) !== postalAddressText(review.assessment.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed)}</dd></div>{/if}<div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
                       {#if review.eligible && row.claimKey && profileController && controller.personID === profileController.person?.id}

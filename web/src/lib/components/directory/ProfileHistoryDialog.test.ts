@@ -251,3 +251,15 @@ it('renders component-only postal raw history without a storage marker or blank 
  expect(await screen.findByText('Unit 9, Raw Example Lane, CA')).toBeDefined();
  expect(document.body.textContent).not.toContain('msgvault:postal-input:v1');
 });
+
+it('shows the saved postal value and its original input separately', async () => {
+ const original = { address_kind: 'postal', free_text: 'Old street', country_name: 'Canada' };
+ const client = createAPIClient(async input => {
+  const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
+  if (path.endsWith('/merges')) return Response.json({ merges: [] });
+  return Response.json({ ...emptyProfile(person()), observations: [], addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Old street', free_text: 'New street', country_name: 'Canada', assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], fingerprint: 'local' }, envelope: { ...currentEnvelope, id: 9 } }] });
+ });
+ render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
+ expect(await screen.findByText('New street, Canada')).toBeDefined();
+ expect(screen.getByText('Original: Old street, Canada')).toBeDefined();
+});

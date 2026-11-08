@@ -629,7 +629,15 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 		return "", nil, err
 	}
 	if !allBlank(components) {
-		return vcard.JoinStructuredText(components), address.Label, nil
+		label := address.Label
+		if !isBlank(address.FreeText) {
+			if !isBlank(label) && *label != *address.FreeText {
+				label = new(*label + "\n" + *address.FreeText)
+			} else {
+				label = address.FreeText
+			}
+		}
+		return vcard.JoinStructuredText(components), label, nil
 	}
 	// A known postal snapshot is raw owner input, not an imported ADR wire
 	// value. Decode once and never parse its original text as another envelope

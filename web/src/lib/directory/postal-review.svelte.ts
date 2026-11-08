@@ -102,9 +102,10 @@ export class PostalReviewSession {
 
 /** Display components without exposing a private storage envelope. */
 export function postalAddressText(input: Partial<Input>): string {
-  return [input.post_office_box, input.extended_address, input.street_address, input.locality,
+  const components = [input.post_office_box, input.extended_address, input.street_address, input.locality,
     input.region, input.postal_code, input.country_name || input.country_code, input.extended_components]
-    .filter(Boolean).join(', ') || input.free_text || input.original_value || '';
+    .filter(Boolean).join(', ');
+  return [input.free_text, components].filter(Boolean).join(', ') || input.original_value || '';
 }
 
 export function postalReason(code: string): string | undefined {
@@ -120,8 +121,11 @@ export function postalReason(code: string): string | undefined {
     provider_inferred: 'The provider inferred some components', provider_replaced: 'The provider replaced some components', provider_corrected: 'The provider corrected some components',
     provider_unexpected: 'The provider found an unexpected component', provider_unresolved: 'The provider could not interpret part of the address',
     provider_confirmation_required: 'The provider recommends reviewing this address', provider_country_changed: 'The provider changed the country', provider_country_unknown: 'The provider could not confirm the country',
-    provider_not_configured: 'The provider is not configured', provider_request_failed: 'The provider request failed', provider_response_invalid: 'The provider response could not be used',
+    provider_not_configured: 'The provider is not configured', provider_unavailable: 'The provider is unavailable', provider_request_failed: 'The provider request failed', provider_response_invalid: 'The provider response could not be used',
+    provider_disabled: 'Google checks are disabled', unit_not_confirmed: 'Unit not confirmed', po_box_not_confirmed: 'PO box not confirmed',
+    'malformed-value': 'The address is invalid', 'unsupported-target': 'This address target is unsupported',
+    'unaligned-evidence': 'Evidence does not match this suggestion', 'identity-mismatch': 'Evidence does not match this person', 'sensitive-policy': 'Sensitive facts are disabled',
   };
   if (code === 'not_verified' || code === 'provider_confirmed') return undefined;
-  return reasons[code] ?? 'Review this suggestion before saving';
+  return reasons[code];
 }
