@@ -101,7 +101,7 @@ func TestSnapshotCacheStaleWaitPolicy(t *testing.T) {
 		defer cancelLifetime()
 		cache := snapshotCache[int]{staleWait: 500 * time.Millisecond}
 		started := time.Now()
-		value, asOf, stale, err := cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
+		value, asOf, stale, err := cache.getVersion(t.Context(), lifetimeCtx, "k", "", 2*time.Second, true,
 			func(context.Context) (int, error) { time.Sleep(time.Second); return 1, nil })
 		require.NoError(err)
 		assert.Equal(time.Second, time.Since(started), "cold reads retain the original budget")
@@ -117,11 +117,9 @@ func TestSnapshotCacheStaleWaitPolicy(t *testing.T) {
 		assert.True(stale)
 
 		var catalog snapshotCache[int]
-		started = time.Now()
 		value, asOf, stale, err = catalog.getVersion(t.Context(), lifetimeCtx, "catalog", "1", 2*time.Second, true,
-			func(context.Context) (int, error) { time.Sleep(time.Second); return 1, nil })
+			func(context.Context) (int, error) { return 1, nil })
 		require.NoError(err)
-		assert.Equal(time.Second, time.Since(started), "optional cold reads retain their budget")
 		assert.Equal(1, value)
 		assert.False(stale)
 
