@@ -112,9 +112,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	_, _ = fmt.Fprintln(out, "Notion AI Meeting Notes access probe:")
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
-		if errors.Is(err, notionmeetings.ErrUnauthorized) {
-			_, _ = fmt.Fprintln(out, "  Credentials: invalid or expired")
-		} else {
+		if !errors.Is(err, notionmeetings.ErrUnauthorized) {
 			_, _ = fmt.Fprintln(out, "  Credentials: not verified by meeting query")
 		}
 		_, _ = fmt.Fprintln(out, "  Meeting query: unavailable")
@@ -134,7 +132,6 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	} else {
 		sampled, err = notionmeetings.NewHydrator(notionProbeContent{client}).Hydrate(ctx, result.Results[0])
 		if err != nil {
-			_, _ = fmt.Fprintln(out, "  Sample content: unavailable")
 			return &notionProbeError{stage: "check sample content", cause: err}
 		}
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
@@ -145,7 +142,7 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 		if incomplete {
 			_, _ = fmt.Fprintln(out, "  Sample content: incomplete (some meeting sections could not be read)")
 		} else if strings.TrimSpace(sampled.Transcript) == "" {
-			_, _ = fmt.Fprintln(out, "  Sample content: available (transcript pending)")
+			_, _ = fmt.Fprintln(out, "  Transcript: pending")
 		}
 	}
 	if users == nil {
