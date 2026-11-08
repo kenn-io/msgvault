@@ -885,8 +885,12 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('blocks an uncertain edge create until the exact collection refresh and retains the dialog draft', async () => {
+  it('shows a recovered ended connection instead of offering the same create again', async () => {
     let posts = 0;
+    const saved = relationship(41, 1, {
+      status: 'ended', source_person_id: 7, target_person_id: 8,
+      end_date: { year: 2025 }, notes: 'Retained unknown draft'
+    });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const path = pathOf(request);
@@ -897,7 +901,7 @@ describe('RelationshipsTab', () => {
         posts += 1;
         return Response.json({ error: 'unavailable', message: 'outcome unknown' }, { status: 503 });
       }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: posts ? [view(41, 'outgoing', 'mentors', 'Synthetic Counterpart', { relationship: saved })] : [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.relationshipTypes = [relationshipType()];
@@ -908,6 +912,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
     await openTypeahead('Connection type');
     await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2025' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Retained unknown draft' } });
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
 
@@ -917,7 +922,10 @@ describe('RelationshipsTab', () => {
     expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
     await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add connection' })).getByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
-    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLInputElement).value).toBe('Retained unknown draft');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
+    expect(controller.relationships).toEqual([expect.objectContaining({ relationship: saved })]);
+    await fireEvent.click(screen.getByText('1 past connection'));
+    expect(screen.getByText('Synthetic Counterpart')).toBeDefined();
     expect(posts).toBe(1);
   });
 

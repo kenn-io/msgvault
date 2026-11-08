@@ -1633,6 +1633,7 @@ export const getEmbeddingStatus = (
   );
 };
 /**
+ * Setting `is_primary` to true demotes the existing primary current employment.
  * @summary Create an employment record
  */
 export const createEmployment = (
@@ -1680,6 +1681,7 @@ export const getEmployment = (
   );
 };
 /**
+ * Setting `is_primary` to true demotes the existing primary current employment.
  * @summary Replace an employment record's mutable fields
  */
 export const patchEmployment = (

@@ -80,6 +80,7 @@
   const submittedFields = new Set<string>();
   const loading = $derived(!!initialView && !opened && !attempt.details);
   let committed = $state(false);
+  let uncertainCreate = $state<CreatePersonRelationshipRequest>();
 
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
@@ -176,9 +177,11 @@
       return;
     }
     if (patch) Object.keys(patch).forEach(key => submittedFields.add(key));
+    const create = initialRelationship ? undefined : createBody(counterpartID!);
     const ok = await attempt.run(current => initialRelationship
       ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
-      : controller.createRelationship(createBody(counterpartID!)));
+      : controller.createRelationship(create!));
+    if (!ok && create && controller.createBlocked.relationships) uncertainCreate = create;
     if (ok) {
       if (controller.errors.relationships) {
         committed = true;
@@ -214,8 +217,18 @@
     await controller.refreshRelationships();
     if (!controller.createBlocked.relationships && !controller.errors.relationships) {
       if (committed) onDone();
+      else if (uncertainCreate && controller.relationships.some(view => recoveredCreateMatches(view, uncertainCreate!))) {
+        uncertainCreate = undefined;
+        onDone();
+      }
       else attempt.details = '';
     }
+  }
+  function recoveredCreateMatches(view: PersonRelationshipView, draft: CreatePersonRelationshipRequest): boolean {
+    const saved = view.relationship;
+    return saved.source_person_id === draft.source_person_id && saved.target_person_id === draft.target_person_id &&
+      saved.type_slug === draft.relationship_type_slug && partialDate(saved.start_date) === (draft.start_date ?? '') &&
+      partialDate(saved.end_date) === (draft.end_date ?? '') && (saved.notes?.trim() ?? '') === (draft.notes ?? '');
   }
   function requestClose(): void {
     if (!attempt.busy) { if (attempt.hadConflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }
