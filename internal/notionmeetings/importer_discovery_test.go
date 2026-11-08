@@ -623,6 +623,7 @@ func TestCompactSweepSeedsBeforeRepeatedDueRetries(t *testing.T) {
 
 type countingRootSource struct {
 	*discoveryFixture
+
 	reads map[string]int
 }
 

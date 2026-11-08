@@ -287,11 +287,12 @@ func TestImporterPublishesContentWhenOptionalLookupBudgetExpires(t *testing.T) {
 
 type slowOptionalDirectorySource struct {
 	*fakeHydrationSource
+
 	calls *int
 }
 
 func (s slowOptionalDirectorySource) ListUsers(ctx context.Context, _ string) (*UserPage, error) {
-	*s.calls = *s.calls + 1
+	*s.calls++
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
