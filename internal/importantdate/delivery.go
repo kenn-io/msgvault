@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/personagenda"
@@ -15,19 +14,19 @@ import (
 )
 
 type DeliveryStore interface {
-	ClaimImportantDateDeliveryContext(context.Context, string, string) (bool, error)
-	ClaimImportantDateNotificationContext(context.Context, string, string, string) (bool, error)
-	ImportantDateDeliveryContext(context.Context, string) (store.ImportantDateDeliveryState, string, error)
-	AdvanceImportantDateDeliveryContext(context.Context, string, store.ImportantDateDeliveryState, store.ImportantDateDeliveryState, string) (bool, error)
-	WithImportantDateConsentContext(context.Context, string, string, string, string, func(context.Context) error) (bool, error)
+	ClaimImportantDateDeliveryContext(ctx context.Context, key, fingerprint string) (bool, error)
+	ClaimImportantDateNotificationContext(ctx context.Context, key, fingerprint, issue string) (bool, error)
+	ImportantDateDeliveryContext(ctx context.Context, key string) (store.ImportantDateDeliveryState, string, error)
+	AdvanceImportantDateDeliveryContext(ctx context.Context, key string, from, to store.ImportantDateDeliveryState, issue string) (bool, error)
+	WithImportantDateConsentContext(ctx context.Context, subject, owner, project, recipient string, dispatch func(context.Context) error) (bool, error)
 }
 
 type DeliveryKata interface {
-	ProjectUID(context.Context, string) (string, error)
-	FindActionTask(context.Context, string, string) (taskclient.KataTask, bool, error)
-	GetTask(context.Context, string, string) (taskclient.KataTask, error)
-	CreateTaskReused(context.Context, string, string, taskclient.KataCreate) (taskclient.KataTask, bool, error)
-	NotifyIssue(context.Context, string, string, string, string) error
+	ProjectUID(ctx context.Context, project string) (string, error)
+	FindActionTask(ctx context.Context, project, marker string) (taskclient.KataTask, bool, error)
+	GetTask(ctx context.Context, project, uid string) (taskclient.KataTask, error)
+	CreateTaskReused(ctx context.Context, project, key string, create taskclient.KataCreate) (taskclient.KataTask, bool, error)
+	NotifyIssue(ctx context.Context, project, uid, recipient, message string) error
 }
 
 type DeliveryService struct {
@@ -93,8 +92,8 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 		if !reused {
 			attempted = true
 			personUID := strings.TrimPrefix(input.OwnerUID, "person/")
-			if strings.HasPrefix(input.SubjectUID, "person/") {
-				personUID = strings.TrimPrefix(input.SubjectUID, "person/")
+			if subjectUID, ok := strings.CutPrefix(input.SubjectUID, "person/"); ok {
+				personUID = subjectUID
 			}
 			issue, reused, err = s.Kata.CreateTaskReused(fenced, input.Project, marker, taskclient.KataCreate{Title: "Prepare for an upcoming date", Metadata: map[string]any{taskclient.ActionMetadataKey: marker, personagenda.PersonMetadataKey: personUID, "msgvault.important_date.subject": input.SubjectUID}})
 		}
@@ -179,7 +178,7 @@ func (s DeliveryService) advance(ctx context.Context, key string, from, to store
 		return err
 	}
 	if !changed {
-		return fmt.Errorf("important-date delivery state changed concurrently")
+		return errors.New("important-date delivery state changed concurrently")
 	}
 	return nil
 }

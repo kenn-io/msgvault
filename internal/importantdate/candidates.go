@@ -24,13 +24,13 @@ type Candidate struct {
 }
 
 type CandidateStore interface {
-	ListPersonsContext(context.Context) ([]store.Person, error)
-	ListPersonDatesContext(context.Context, int64, bool) ([]store.PersonDate, error)
-	ListPersonAttributeValuesContext(context.Context, int64, store.PersonAttributeQuery) ([]store.PersonAttributeValue, error)
-	ListPersonRelationshipsContext(context.Context, int64, store.PersonRelationshipListOptions) ([]store.PersonRelationshipView, error)
-	ListImportantDateSubjectsContext(context.Context, string) ([]store.ImportantDateSubject, error)
-	ImportantDateIdentityStableContext(context.Context, int64) (bool, error)
-	ImportantDateHasOtherPendingContext(context.Context, string, string, string) (bool, error)
+	ListPersonsContext(ctx context.Context) ([]store.Person, error)
+	ListPersonDatesContext(ctx context.Context, personID int64, history bool) ([]store.PersonDate, error)
+	ListPersonAttributeValuesContext(ctx context.Context, personID int64, query store.PersonAttributeQuery) ([]store.PersonAttributeValue, error)
+	ListPersonRelationshipsContext(ctx context.Context, personID int64, options store.PersonRelationshipListOptions) ([]store.PersonRelationshipView, error)
+	ListImportantDateSubjectsContext(ctx context.Context, ownerUID string) ([]store.ImportantDateSubject, error)
+	ImportantDateIdentityStableContext(ctx context.Context, personID int64) (bool, error)
+	ImportantDateHasOtherPendingContext(ctx context.Context, prefix, key, fingerprint string) (bool, error)
 }
 
 // Candidates scans current declared facts without inference or external writes.
@@ -68,7 +68,7 @@ func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 	}
 	location, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load important-date time zone: %w", err)
 	}
 	people, err := st.ListPersonsContext(ctx)
 	if err != nil {

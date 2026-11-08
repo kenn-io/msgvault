@@ -69,7 +69,7 @@ func (s *Store) ListImportantDateSubjectsContext(ctx context.Context, ownerUID s
 	if err != nil {
 		return nil, fmt.Errorf("list important-date subjects: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var subjects []ImportantDateSubject
 	for rows.Next() {
 		var subject ImportantDateSubject

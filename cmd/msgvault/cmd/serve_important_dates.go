@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,7 +32,7 @@ func newImportantDateScheduledRun(cfg *config.Config, st *store.Store) func(cont
 			return nil
 		}
 		if !cfg.Integrations.Kata.Enabled {
-			return fmt.Errorf("important-date alerts require the Kata integration")
+			return errors.New("important-date alerts require the Kata integration")
 		}
 		client, err := taskclient.ConnectKata(ctx, taskclient.IntegrationConfig{Enabled: true, Endpoint: cfg.Integrations.Kata.Endpoint, APIKey: cfg.Integrations.Kata.APIKey, DefaultProject: settings.Project})
 		if err != nil {

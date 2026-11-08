@@ -2,6 +2,7 @@ package importantdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -11,8 +12,8 @@ const maxDeliveriesPerRun = 25
 type ProducerStore interface {
 	CandidateStore
 	DeliveryStore
-	HasImportantDateConsentContext(context.Context, string, string, string) (bool, error)
-	ImportantDateDeliveryExistsContext(context.Context, string) (bool, error)
+	HasImportantDateConsentContext(ctx context.Context, subject, project, recipient string) (bool, error)
+	ImportantDateDeliveryExistsContext(ctx context.Context, key string) (bool, error)
 }
 
 // RunOnce performs a bounded local calendar scan. Every actual write has a
@@ -22,7 +23,7 @@ func RunOnce(ctx context.Context, st ProducerStore, kata DeliveryKata, cfg Confi
 		return 0, false, nil
 	}
 	if cfg.ConsentScope == "" || cfg.ProjectUID == "" {
-		return 0, false, fmt.Errorf("important-date destination scope is required")
+		return 0, false, errors.New("important-date destination scope is required")
 	}
 	candidates, err := Candidates(ctx, st, cfg, now)
 	if err != nil {

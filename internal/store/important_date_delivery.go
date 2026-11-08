@@ -174,7 +174,7 @@ func (s *Store) ListImportantDateDeliveriesPageContext(ctx context.Context, limi
 	if err != nil {
 		return nil, fmt.Errorf("list important-date deliveries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []ImportantDateDelivery
 	for rows.Next() {
 		var item ImportantDateDelivery

@@ -111,8 +111,8 @@ func (s *Store) lockImportantDatePeopleTx(ctx context.Context, tx *loggedTx, sub
 		return fmt.Errorf("resolve important-date owner: %w", err)
 	}
 	subjectID := ownerID
-	if strings.HasPrefix(subject, "person/") {
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM persons WHERE vcard_uid = ?`, strings.TrimPrefix(subject, "person/")).Scan(&subjectID); err != nil {
+	if subjectUID, ok := strings.CutPrefix(subject, "person/"); ok {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM persons WHERE vcard_uid = ?`, subjectUID).Scan(&subjectID); err != nil {
 			return fmt.Errorf("resolve important-date person: %w", err)
 		}
 	}

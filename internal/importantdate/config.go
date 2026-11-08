@@ -55,7 +55,7 @@ func (c *Config) ApplyDefaults() {
 	}
 }
 
-func (c Config) Validate() error {
+func (c *Config) Validate() error {
 	if !c.Enabled {
 		return nil
 	}

@@ -101,7 +101,10 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 				return err
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Consent revoked for all destinations")
-			return err
+			if err != nil {
+				return fmt.Errorf("write consent status: %w", err)
+			}
+			return nil
 		}
 		if !state.cfg.Integrations.Kata.Enabled {
 			return errors.New("enable the Kata integration first")
@@ -118,7 +121,10 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return err
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Consent updated")
-		return err
+		if err != nil {
+			return fmt.Errorf("write important-date status: %w", err)
+		}
+		return nil
 	}}
 	consent.Flags().BoolVar(&grant, "grant", false, "Grant recipient-specific consent; omit to revoke")
 	var statusLimit, statusOffset int
@@ -189,7 +195,10 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return errors.New("subject revision changed or subject is unavailable")
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Subject updated")
-		return err
+		if err != nil {
+			return fmt.Errorf("write important-date status: %w", err)
+		}
+		return nil
 	}}
 	update.Flags().StringVar(&updateName, "name", "", "Subject name")
 	update.Flags().StringVar(&updateDate, "date", "", "Birthday as YYYY-MM-DD or --MM-DD")
@@ -216,7 +225,10 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return errors.New("subject revision changed or subject is unavailable")
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Subject withdrawn")
-		return err
+		if err != nil {
+			return fmt.Errorf("write important-date status: %w", err)
+		}
+		return nil
 	}}
 	withdraw.Flags().Int64Var(&withdrawRevision, "revision", 0, "Current revision from list")
 	var resolution, issueUID string
@@ -241,7 +253,10 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return errors.New("occurrence is not unresolved or issue identity differs")
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Delivery resolved")
-		return err
+		if err != nil {
+			return fmt.Errorf("write important-date status: %w", err)
+		}
+		return nil
 	}}
 	resolve.Flags().StringVar(&resolution, "resolution", "", "delivered or cancelled")
 	resolve.Flags().StringVar(&issueUID, "issue", "", "Inspected Kata issue UID (required for delivered)")
@@ -275,7 +290,10 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return err
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Accepted correction for %d retained occurrence(s)\n", count)
-		return err
+		if err != nil {
+			return fmt.Errorf("write correction status: %w", err)
+		}
+		return nil
 	}}
 	acceptCorrection.Flags().StringVar(&correctionDate, "date", "", "Current date as YYYY-MM-DD or --MM-DD")
 	group.AddCommand(add, list, consent, status, preview, update, withdraw, resolve, acceptCorrection)
