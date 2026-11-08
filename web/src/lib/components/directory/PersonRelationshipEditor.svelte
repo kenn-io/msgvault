@@ -170,16 +170,9 @@
     )
       return;
     const patch = initialRelationship ? patchBody() : undefined;
+    // Keep yours after a conflict that already holds these values is Use saved.
     if (patch && Object.keys(patch).length === 0) {
-      if (!attempt.conflict) return;
-      await controller.refreshRelationships();
-      if (controller.errors.relationships) {
-        committed = true;
-        attempt.conflict = undefined;
-        attempt.details = controller.errors.relationships;
-        return;
-      }
-      onDone();
+      if (attempt.conflict) requestClose();
       return;
     }
     if (patch) Object.keys(patch).forEach(key => submittedFields.add(key));

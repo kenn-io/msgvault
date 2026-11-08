@@ -144,12 +144,8 @@
   async function refreshOrganizationAfterUnknown(): Promise<void> {
     await controller.refreshOrganizations(organizationName.trim());
     if (controller.createBlocked.organizations) return;
-    const matches = controller.organizations.filter(item => item.name.trim().toLocaleLowerCase() === organizationName.trim().toLocaleLowerCase() && item.kind === organizationKind && (item.primary_domain ?? null) === (organizationDomain.trim() || null));
-    if (matches.length === 1) {
-      selectedOrganization = matches[0];
-      organizationID = String(matches[0].id);
-      creatingOrganization = false;
-    } else if (matches.length > 1) {
+    // The create may have saved it, so an organization of that name is the person's to choose; none means it didn't.
+    if (controller.organizations.some(item => item.name.trim().toLocaleLowerCase() === organizationName.trim().toLocaleLowerCase())) {
       creatingOrganization = false;
       organizationID = '';
     }

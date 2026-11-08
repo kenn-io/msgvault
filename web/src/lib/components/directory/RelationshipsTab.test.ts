@@ -705,6 +705,8 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Shared new note' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    // It closes at once, as Use saved does, so nothing typed during the refresh is lost.
+    expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(screen.getByText('Synthetic Learner').closest('.detail-row')?.textContent).toContain('Shared new note'));
     expect(controller.network?.nodes?.[0].label).toBe('After');
   });

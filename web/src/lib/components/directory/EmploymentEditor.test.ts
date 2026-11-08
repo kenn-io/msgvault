@@ -194,43 +194,35 @@ it('allows closing while the job loads', async () => {
     expect(within(dialog).getByRole('button', { name: 'Organization: New organization' })).toHaveProperty('disabled', true);
   });
 
-  it.each([
-    { namesake: false, kind: 'company', primary_domain: 'synthetic.example' },
-    { namesake: true, kind: 'company', primary_domain: 'synthetic.example' },
-    { namesake: true, kind: 'school', primary_domain: 'different.example' },
-  ])('blocks an unknown inline employer create until organizations are refreshed ($namesake, $kind)', async ({ namesake, kind, primary_domain }) => {
+  it.each([false, true])('blocks an unknown inline employer create until organizations are refreshed (namesake %s)', async namesake => {
     let employers = 0;
-    let jobBody: unknown;
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/organizations' && request.method === 'POST') { employers++; return Response.json({ message: 'Unavailable' }, { status: 503 }); }
-      if (path === '/api/v1/organizations') return Response.json({ organizations: namesake ? [{ ...organization(21, 1, 'Example company'), kind, primary_domain }] : [], total: namesake ? 1 : 0 });
-      if (path === '/api/v1/employments') { jobBody = await request.json(); return Response.json(employment()); }
+      if (path === '/api/v1/organizations') return Response.json({ organizations: namesake ? [{ ...organization(21, 1, 'Example company'), primary_domain: 'different.example' }] : [], total: namesake ? 1 : 0 });
       if (path === '/api/v1/people/7/employments') return collection([]);
       throw new Error(`Unexpected ${request.method} ${path}`);
     });
     await openInlineEmployer(controller, namesake ? 'New company' : 'Example company');
-    if (namesake) {
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Example company' } });
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Domain' }), { target: { value: 'different.example' } });
-    }
+    if (namesake) await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Example company' } });
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
     await screen.findByRole('alert');
     expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    // An organization of that name may be the one the create saved, so the person chooses; with none, the create stays.
     if (namesake) {
-      await waitFor(() => expect(controller.organizations).toHaveLength(1));
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
-      await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
-      await waitFor(() => expect(employers).toBe(2));
-      expect(jobBody).toBeUndefined();
-    } else await waitFor(() => expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false));
-    expect(employers).toBe(namesake ? 2 : 1);
-    if (!namesake) expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Example company');
+      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull());
+      expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
+    } else {
+      expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Example company');
+      expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false);
+    }
+    expect(employers).toBe(1);
   });
 
-  it('uses an organization found after its creation response is lost', async () => {
+  it('lets the person choose an organization found after its creation response is lost', async () => {
     let posts = 0;
     let jobBody: Record<string, unknown> | undefined;
     const { controller } = controllerWith(async input => {
@@ -243,9 +235,11 @@ it('allows closing while the job loads', async () => {
     });
     await openInlineEmployer(controller, 'Example company');
     await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
-    await screen.findByRole('button', { name: 'Check again' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-    await screen.findByRole('button', { name: 'Organization: Example company' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Example company/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
     await waitFor(() => expect(jobBody).toMatchObject({ organization_id: 22 }));
     expect(posts).toBe(1);

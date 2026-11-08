@@ -330,6 +330,29 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
   expect(await screen.findByRole('button', { name: 'Keep yours' })).toBeDefined();
 });
 
+it('refreshes the directory on close after a save conflict and a visit to Delete', async () => {
+  let reads = 0;
+  const opening = organizationProfile();
+  const newer = { ...opening, organization: { ...opening.organization, revision: 2, name: 'Renamed elsewhere' } };
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
+    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"organization-21-r${Math.min(reads, 2)}"` } });
+  });
+  const refresh = vi.spyOn(controller, 'refreshDirectoryViews').mockResolvedValue();
+  const onClose = vi.fn();
+  render(OrganizationEditor, { controller, organization: organization(), onClose });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete organization…' }));
+  await fireEvent.click(await screen.findByRole('button', { name: /^Back to / }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
+  expect(onClose).toHaveBeenCalled();
+  expect(refresh).toHaveBeenCalled();
+});
+
 it('drops an earlier jobs check when a new check starts', async () => {
   let finishFirst!: (response: Response) => void;
   let checks = 0;

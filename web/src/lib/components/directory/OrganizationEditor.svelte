@@ -150,7 +150,6 @@
 
   async function checkDeletion(): Promise<void> {
     if (!initialOrganization) return;
-    if (!confirmDelete) { attempt.reset(); profileAttempt.reset(); }
     confirmDelete = true;
     check.reset();
     await check.prepare(() => controller.organizationEmploymentHolders(initialOrganization.id));
@@ -407,7 +406,7 @@
 {/snippet}
 {#snippet deleteStart()}{#if initialOrganization && currentProfile && !confirmDelete}<Button tone="danger" label="Delete organization…" disabled={submitting} onclick={() => void checkDeletion()} />{/if}{/snippet}
 {#if confirmDelete}
-  <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); }} backLabel={`Back to ${name}`}
+  <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; check.reset(); }} backLabel={`Back to ${name}`}
     primaryLabel={deleteBlocked ? undefined : 'Delete'} primaryTone="danger" cancellable={false} busy={submitting} onprimary={() => void remove()}>
     <div class="delete-step">
       {#if !holders && !check.details}<p role="status">Checking jobs…</p>{/if}
