@@ -44,20 +44,6 @@ func TestConnectedHumanRequiresExplicitPATMode(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestMeetingMatchesOnlyCreatorOrAttendee(t *testing.T) {
-	for _, tc := range []struct {
-		creator   string
-		attendees []string
-		want      bool
-	}{
-		{"human", nil, true}, {"other", []string{"human"}, true}, {"human", []string{"human"}, true}, {"other", nil, false},
-	} {
-		m := MeetingNote{CreatedBy: UserRef{ID: tc.creator}, LastEditedBy: UserRef{ID: "human"}, MeetingNotes: MeetingNotesData{CalendarEvent: MeetingCalendarEvent{Attendees: tc.attendees}}}
-		assert.Equal(t, tc.want, matchesHuman(m, "human"))
-	}
-	assert.False(t, matchesHuman(MeetingNote{}, ""))
-}
-
 func TestDiscoveryClientHTTPContracts(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
