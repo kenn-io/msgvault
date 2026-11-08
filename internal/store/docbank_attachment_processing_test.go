@@ -170,10 +170,10 @@ func TestDocbankAttachmentProcessingBackfillRetriesRecoverableOutcomes(t *testin
 		"not_found":        1,
 	}, counts.Outcomes)
 	var jobID string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT job_id FROM docbank_attachment_processing WHERE content_hash = ?`), pendingHash).Scan(&jobID))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT job_id FROM docbank_attachment_processing WHERE content_hash = ?`), pendingHash).Scan(&jobID))
 	assert.Equal(pendingJobID, jobID)
 	var next time.Time
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT job_id, next_action_at FROM docbank_attachment_processing WHERE content_hash = ?`), noJobHash).Scan(&jobID, &next))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT job_id, next_action_at FROM docbank_attachment_processing WHERE content_hash = ?`), noJobHash).Scan(&jobID, &next))
 	assert.Empty(jobID)
 	assert.True(next.After(time.Now()))
 }
