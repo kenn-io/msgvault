@@ -169,6 +169,20 @@ func TestSQLiteExploreMatchesCache(t *testing.T) {
 	}
 }
 
+func TestSQLiteExploreRepairsInvalidParticipantLabels(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := liveExploreFixture(t)
+	_, err := fixture.store.DB().ExecContext(t.Context(), "UPDATE participants SET display_name=? WHERE id=2", "Bo\xffb")
+	requirements.NoError(err)
+	before := time.Date(2026, 7, 1, 13, 0, 0, 0, time.UTC)
+	page, err := fixture.live.Explore(t.Context(), ExploreRequest{Context: Context{SourceIDs: []int64{1}, Before: &before}})
+	requirements.NoError(err)
+	requirements.Len(page.Rows, 1)
+	assertions.Equal([]string{"Alice", "Bo\ufffdb"}, page.Rows[0].ParticipantLabels)
+}
+
 func TestSQLiteExploreSnapshotRevision(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

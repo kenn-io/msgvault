@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -1057,7 +1058,7 @@ func scanExploreRows(rows *sql.Rows, response *ExploreResponse) error {
 		if err := json.Unmarshal([]byte(participantIDsJSON), &row.ParticipantIDs); err != nil {
 			return fmt.Errorf("decode analytical participant IDs: %w", err)
 		}
-		if err := json.Unmarshal([]byte(participantLabelsJSON), &row.ParticipantLabels); err != nil {
+		if err := json.Unmarshal([]byte(participantLabelsJSON), &row.ParticipantLabels, jsontext.AllowInvalidUTF8(true)); err != nil {
 			return fmt.Errorf("decode analytical participant labels: %w", err)
 		}
 		row.MatchedSenderIdentities = make([]string, 0)
