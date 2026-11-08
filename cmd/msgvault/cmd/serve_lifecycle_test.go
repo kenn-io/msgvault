@@ -1240,11 +1240,24 @@ func TestRunServeStartIgnoresDisabledDaemonAutoStart(t *testing.T) {
 }
 
 func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
+	testRunServeStartReportsRetainedDaemon(t, false, "v0.23.0", config.DaemonAutoRestartNever)
+}
+
+func TestRunServeStartReportsRetainedDaemonWhileLaunchLocked(t *testing.T) {
+	testRunServeStartReportsRetainedDaemon(t, true, "v0.23.0", config.DaemonAutoRestartNewer)
+}
+
+func TestRunServeStartKeepsSameBaseSourceDaemon(t *testing.T) {
+	testRunServeStartReportsRetainedDaemon(t, false, "v0.23.0-46-gdef", config.DaemonAutoRestartNewer)
+}
+
+func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemonVersion, policy string) {
+	t.Helper()
 	assert := assert.New(t)
 	require :=
 		require.New(t)
 
-	withTestVersion(t, "v1.1.0")
+	withTestVersion(t, "v0.23.0-45-gabc")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
 	portText := strconv.Itoa(server.Port)
@@ -1253,7 +1266,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 		Network: daemon.NetworkTCP,
 		Address: net.JoinHostPort(server.Host, portText),
 		Service: daemonService,
-		Version: "v1.0.0",
+		Version: daemonVersion,
 		Metadata: map[string]string{
 			runtimeHost:             server.Host,
 			runtimePort:             portText,
@@ -1266,22 +1279,27 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 		err, "write runtime")
 
 	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
-		require.FailNow("never policy must not stop a compatible daemon")
+		require.FailNow("retained daemon must not stop")
 		return errors.New("unreachable")
 	})
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		require.FailNow("never policy must not start over a compatible daemon")
+		require.FailNow("retained daemon must not start")
 		return nil, errors.New("unreachable")
 	})
 	cfg := lifecycleTestConfig(dataDir)
-	cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
+	cfg.Server.DaemonAutoRestart = policy
+	if contended {
+		lock, ok := acquireBackgroundLaunchLock(dataDir)
+		require.True(ok)
+		t.Cleanup(func() { _ = lock.Unlock() })
+	}
 	cmd, stdout, stderr := lifecycleTestCommand(t)
 	require.NoError(runServeStart(cmd, cfg))
 	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Empty(stderr.String())
+	assert.Contains(stderr.String(), "to use this version.")
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {

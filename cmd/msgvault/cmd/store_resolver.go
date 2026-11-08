@@ -286,6 +286,7 @@ func openHTTPStoreWithStartupCacheIntent(
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
 	}
+	reportRetainedDaemonVersion(ctx, os.Stderr, rt)
 	return st, HTTPStoreInfo{
 		Kind:                     HTTPStoreLocalDaemon,
 		URL:                      url,
