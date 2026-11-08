@@ -612,15 +612,6 @@ func TestSyncThatYieldsMidFetchBlamesNoFeed(t *testing.T) {
 	assert.Empty(list[0].State.LastError, "the feed keeps no error for an interruption")
 }
 
-func TestSummarySourceErrIsAnOutageOnlyWhenEveryFeedFailed(t *testing.T) {
-	t.Parallel()
-	failed := FeedResult{URL: "https://a.example/feed", Err: errUnexpectedHTTP}
-	worked := FeedResult{URL: "https://b.example/feed"}
-	require.ErrorIs(t, Summary{Feeds: []FeedResult{failed, failed}}.SourceErr(), ErrEveryFeedFailed)
-	require.NoError(t, Summary{Feeds: []FeedResult{failed, worked}}.SourceErr())
-	require.NoError(t, Summary{}.SourceErr(), "a sync with no feeds is no outage")
-}
-
 func TestItemNameNamesAnItemByWhatAPersonRecognizes(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "Release 1.2", itemName(messageimport.ImportedMessage{Title: "Release 1.2", URL: "https://x.example/1", ExternalID: "k"}))

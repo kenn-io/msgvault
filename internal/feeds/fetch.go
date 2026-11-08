@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -103,7 +104,7 @@ func (f *Fetcher) Fetch(ctx context.Context, feedURL string, validators Validato
 	}
 	resp, err := f.client(privateHost(req.URL.Hostname())).Do(req)
 	if err != nil {
-		return Fetched{}, fmt.Errorf("fetch feed: %w", err)
+		return Fetched{}, fmt.Errorf("fetch feed: %w", withoutFeedURL(err, feedURL))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -211,6 +212,17 @@ func privateHost(host string) bool {
 		return netguard.ProhibitedIP(literal)
 	}
 	return netguard.ProhibitedHostname(host)
+}
+
+// withoutFeedURL drops the feed's own address from a transport error: every
+// report of a failed fetch names the feed beside it. An address a redirect
+// led to differs from the feed's, so it stays.
+func withoutFeedURL(err error, feedURL string) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.URL == feedURL {
+		return urlErr.Err
+	}
+	return err
 }
 
 // responseValidators keeps a validator the response repeats or replaces, and

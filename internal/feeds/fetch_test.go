@@ -2,6 +2,7 @@ package feeds
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -83,6 +84,28 @@ func TestFetchClosesItsConnection(t *testing.T) {
 	_, err := NewFetcher("msgvault-test").Fetch(t.Context(), server.URL+"/feed.atom", Validators{})
 	require.NoError(t, err)
 	assert.False(t, <-keptAlive, "a one-fetch client leaves no idle connection behind")
+}
+
+func TestFetchErrorLeavesOutOnlyTheFeedsOwnAddress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	const gone = "http://gone.example/feed.atom"
+	errNoHost := errors.New("no such host")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, gone, http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	fetcher := NewFetcher("msgvault-test")
+	fetcher.LookupNetIP = func(context.Context, string) ([]netip.Addr, error) { return nil, errNoHost }
+
+	_, err := fetcher.Fetch(t.Context(), gone, Validators{})
+	require.ErrorIs(err, errNoHost, "the reason stays")
+	assert.NotContains(err.Error(), gone, "every report of a fetch already names its feed")
+
+	_, err = fetcher.Fetch(t.Context(), server.URL+"/moved.atom", Validators{})
+	require.ErrorIs(err, errNoHost)
+	assert.Contains(err.Error(), gone, "the address a redirect led to stays")
 }
 
 func TestFollowRejectsAnUnsolicitedNotModified(t *testing.T) {
