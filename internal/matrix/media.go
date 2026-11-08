@@ -545,6 +545,13 @@ func (imp *Importer) downloadMedia(ctx context.Context, messageID int64, content
 	if ref.MimeType == "" {
 		ref.MimeType = http.DetectContentType(data)
 	}
+	// A forced retry can succeed before an earlier failure's wait expires.
+	metadata.Attempts, metadata.RetryAfter = 0, time.Time{}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	ref.Metadata = string(encoded)
 	write := func() error {
 		attachment := &msgmime.Attachment{Filename: ref.Filename, ContentType: ref.MimeType, Content: data}
 		storagePath, err := export.StoreAttachmentFileIncludingEmpty(opts.AttachmentsDir, attachment)

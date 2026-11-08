@@ -1036,6 +1036,16 @@ func TestImportMediaHTTPFailuresRetryByState(t *testing.T) {
 			req.NoError(err)
 			check.Equal(attachmentpolicy.StateStored, refs["matrix:mxc://example.org/file"].State)
 			check.Empty(refs["matrix:mxc://example.org/file"].SkipReason)
+
+			// A purge and policy re-enable must not inherit the old failure's wait.
+			var attachmentID int64
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), messageID).Scan(&attachmentID))
+			req.NoError(f.store.ExcludeAttachmentOccurrences(t.Context(), []store.AttachmentExclusion{{AttachmentID: attachmentID, Reason: attachmentpolicy.SkipPolicyScope}}))
+			opts.Full = false
+			sum, err = NewImporter(f.store, runtime).Import(t.Context(), opts)
+			req.NoError(err)
+			check.Equal(3, requests)
+			check.Equal(int64(1), sum.AttachmentsDownloaded)
 		})
 	}
 }
