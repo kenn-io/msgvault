@@ -176,4 +176,7 @@ func TestImportantDateSplitGuardSuppressesHistoricOccurrence(t *testing.T) {
 	pending, err = st.ImportantDateHasOtherPendingContext(ctx, newSubject+":birthday:", newSubject+":birthday:2028", "changed-fingerprint")
 	must.NoError(err)
 	checks.False(pending)
+	pending, err = st.ImportantDateHasOtherPendingContext(ctx, firstSubject+":birthday:", firstSubject+":birthday:2029", "changed-fingerprint")
+	must.NoError(err)
+	checks.True(pending, "approving one subject must not approve the other")
 }
