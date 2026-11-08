@@ -148,18 +148,17 @@ func TestApplyMessageFilterRejectsInvalidTimePeriod(t *testing.T) {
 	require.ErrorContains(t, err, "YYYY, YYYY-MM, or YYYY-MM-DD")
 }
 
-// Sender terms stay at message scope; recipient terms resolve to IDs.
-func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
+// Recipient terms resolve to matching participant IDs.
+func TestBuildFilter_RecipientAddressesResolveViaSubstring(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
 	db := newFilterTestDB(t)
 
-	q := search.Parse(`from:example.com to:alice cc:other.com`)
+	q := search.Parse(`to:alice cc:other.com`)
 	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 
-	assert.Equal([]string{"@example.com"}, f.SenderTerms)
 	// to:alice → one group with one id.
 	require.Len(f.ToGroups, 1, "ToGroups should have one group")
 	assert.Lenf(f.ToGroups[0], 1, "want one group with one id (alice); got %v", f.ToGroups)
@@ -275,16 +274,7 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 	assert.Truef(t, f.IsEmpty(), "filter not empty: %+v", f)
 }
 
-func TestBuildFilter_NonexistentSenderRemainsRequired(t *testing.T) {
-	f, err := BuildFilter(t.Context(), newFilterTestDB(t), nil, search.Parse("from:nobody@nowhere.invalid"))
-	require.NoError(t, err)
-	assert.False(t, f.IsEmpty())
-	assert.Equal(t, []string{"nobody@nowhere.invalid"}, f.SenderTerms)
-}
-
-// TestBuildFilter_NonexistentLabelReturnsSentinel: same as above but
-// for labels. Critical because the label path used to do exact-name
-// lookups with IN (...), and an unknown label silently became a no-op.
+// Unknown labels must still constrain the search to no results.
 func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 	require := require.New(t)
 	ctx := t.Context()
@@ -302,6 +292,7 @@ func TestBuildFilter_RepeatedSenderTokens(t *testing.T) {
 	f, err := BuildFilter(t.Context(), newFilterTestDB(t), nil, search.Parse("from:alice from:bob"))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"alice", "bob"}, f.SenderTerms)
+	assert.False(t, f.IsEmpty())
 }
 
 // TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups asserts that

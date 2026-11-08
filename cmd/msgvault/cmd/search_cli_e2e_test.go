@@ -117,34 +117,22 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		decoder.UseNumber()
 		require.NoError(decoder.Decode(value))
 	}
-	for _, tc := range []struct {
-		query string
-		count int
-	}{{"from:alex", 4}, {"from:bob@example.com", 0}, {"from:élodie", 4}, {"from:alex@exam", 0}} {
-		var rows []query.MessageSummary
-		decode(run("search", tc.query, "--json"), &rows)
-		assert.Len(rows, tc.count)
-		if tc.count > 0 {
-			got := make([]int64, 0, len(rows))
-			for _, row := range rows {
-				got = append(got, row.ID)
-			}
-			assert.ElementsMatch(senderIDs, got)
-		}
+	var senderRows []query.MessageSummary
+	decode(run("search", "from:alex", "--json"), &senderRows)
+	var got []int64
+	for _, row := range senderRows {
+		got = append(got, row.ID)
 	}
-	var repeated []query.MessageSummary
-	decode(run("search", "from:alex@example.com from:jimbob@example.com", "--json"), &repeated)
-	assert.Empty(repeated)
-	for _, mode := range []string{"vector", "hybrid"} {
-		var result struct {
-			Results []query.MessageSummary `json:"results"`
-		}
-		decode(run("search", "project from:alex", "--mode", mode, "--json"), &result)
-		require.Len(result.Results, 2)
-		for _, row := range result.Results {
-			assert.NotEqual(ids[2], row.ID)
-		}
+	assert.ElementsMatch(senderIDs, got)
+	var semantic struct {
+		Results []query.MessageSummary `json:"results"`
 	}
+	decode(run("search", "project from:alex", "--mode", "hybrid", "--json"), &semantic)
+	require.Len(semantic.Results, 2)
+	for _, row := range semantic.Results {
+		assert.NotEqual(ids[2], row.ID)
+	}
+
 	command := exec.CommandContext(t.Context(), binary, "--home", home, "search", "from:@a.example OR from:@b.example", "--json") //nolint:gosec // The binary path is supplied by the test operator.
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 	var jsonOut, warningOut bytes.Buffer

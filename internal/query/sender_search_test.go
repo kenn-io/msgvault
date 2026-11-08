@@ -33,7 +33,9 @@ func TestSenderSearch(t *testing.T) {
 	require.NoError(t, err)
 	for _, address := range []string{"root@localhost", "root@localhost.example"} {
 		sender := env.AddParticipant(dbtest.ParticipantOpts{Email: &address})
-		env.AddMessage(dbtest.MessageOpts{FromID: sender})
+		id := env.AddMessage(dbtest.MessageOpts{})
+		_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET sender_id = ? WHERE id = ?`, sender, id)
+		require.NoError(t, err)
 	}
 	cases := []struct {
 		input string
@@ -114,8 +116,7 @@ func TestDuckDBSenderSearch(t *testing.T) {
 	b.AddMessage(MessageOpt{SenderID: &chat, Subject: "senderfixture"})
 	for _, address := range []string{"root@localhost", "root@localhost.example"} {
 		sender := b.AddParticipant(address, "localhost", "Root")
-		id := b.AddMessage(MessageOpt{Subject: "senderfixture"})
-		b.AddFrom(id, sender, "")
+		b.AddMessage(MessageOpt{SenderID: &sender, Subject: "senderfixture"})
 	}
 	engine := b.BuildEngine()
 	for _, tc := range []struct {

@@ -309,11 +309,6 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	} else {
 		result = outputSearchResultsTable(resp.Results)
 	}
-	if result == nil {
-		for _, hint := range resp.Hints {
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+hint.Message)
-		}
-	}
 	return result
 }
 

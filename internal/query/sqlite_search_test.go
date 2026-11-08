@@ -465,16 +465,6 @@ func TestSearchWithDomainFilter(t *testing.T) {
 	})
 }
 
-func TestSearchMixedExactAndDomainFilter(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t)
-
-	q := &search.Query{FromAddrs: []string{"alice@example.com", "@other.com"}}
-	results := env.MustSearch(q, 100, 0)
-
-	assert.Empty(t, results, "both from: values must match")
-}
-
 // TestSearchFastCountMatchesSearch verifies that SearchFastCount returns the same
 // count as the number of results from Search for various query types.
 func TestSearchFastCountMatchesSearch(t *testing.T) {

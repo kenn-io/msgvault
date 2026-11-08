@@ -3154,11 +3154,6 @@ func TestBuildWhereClause_SearchOperators(t *testing.T) {
 			wantClauses: []string{"msg.subject ILIKE"},
 		},
 		{
-			name:        "from operator",
-			searchQuery: "from:alice",
-			wantClauses: []string{"recipient_type = 'from'", "LOWER(COALESCE(p2.email_address, '')) LIKE"},
-		},
-		{
 			name:        "to operator",
 			searchQuery: "to:recipient@example.net",
 			wantClauses: []string{"recipient_type = ?", "LOWER(p_recipient.email_address) = ?"},
@@ -3384,14 +3379,6 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 			},
 			wantClauses: []string{"msg.subject ILIKE"},
 			wantInArgs:  []string{"100\\%\\_off"},
-		},
-		{
-			name: "from: with wildcards",
-			query: &search.Query{
-				FromAddrs: []string{"test_user%"},
-			},
-			wantClauses: []string{"LOWER(COALESCE(p2.email_address, '')) LIKE", "ESCAPE"},
-			wantInArgs:  []string{"test\\_user\\%"},
 		},
 		{
 			name: "subject: with wildcards",

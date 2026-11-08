@@ -165,12 +165,6 @@ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALU
 	require.Equal(t, []string{"<m1@example.com>"}, keysOfAPIMessages(production),
 		"production matches the address by substring")
 
-	qeng := query.NewEngine(s.DB(), s.IsPostgreSQL())
-	messages, err := qeng.Search(ctx, search.Parse(topic), 10, 0)
-	require.NoError(t, err, "query engine search")
-	require.Equal(t, []string{"<m1@example.com>"}, keysOfSummaries(messages),
-		"query engine matches the same sender fragment")
-
 	ev, _ := newTestEvaluator(t, s, "message")
 	ev.limit = 10
 

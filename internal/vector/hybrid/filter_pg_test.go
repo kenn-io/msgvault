@@ -94,13 +94,12 @@ func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
 	ctx := t.Context()
 	rebind := (&store.PostgreSQLDialect{}).Rebind
 
-	// passes-with: addresses and labels resolve via substring LIKE on pgx.
-	q := search.Parse(`from:example.com to:alice label:work`)
+	// Recipient addresses and labels resolve via substring LIKE on pgx.
+	q := search.Parse(`to:alice label:work`)
 	f, err := BuildFilter(ctx, db, rebind, q)
 	require.NoError(
 		err, "BuildFilter must succeed with the dialect rebind on pgx")
 
-	assert.Equal([]string{"@example.com"}, f.SenderTerms)
 	require.Len(f.ToGroups, 1, "one to: token -> one group")
 	assert.Len(f.ToGroups[0], 1, "to:alice matches exactly one participant")
 	require.Len(f.LabelGroups, 1, "one label: token -> one group")

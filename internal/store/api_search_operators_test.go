@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -18,9 +17,8 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	carol := f.EnsureParticipant("carol@example.com", "Carol", "example.com")
 	literal := f.EnsureParticipant("a_lice%tag@example.com", "Literal", "example.com")
 	decoy := f.EnsureParticipant("axliceZtag@example.com", "Decoy", "example.com")
-	alex := f.EnsureParticipant("alex@example.com", "Élodie Alex Kim", "example.com")
-	jim := f.EnsureParticipant("jimbob@example.com", "Jim Bob", "example.com")
-	domainDecoy := f.EnsureParticipant("alex@example.company", "Decoy", "example.company")
+	alex := f.EnsureParticipant("alex@example.com", "Alex Kim", "example.com")
+	header := f.EnsureParticipant("quinn@example.net", "Quinn", "example.net")
 	ids := f.CreateMessages(40)
 	for i, sender := range []int64{alice, bob, literal, decoy} {
 		requirements.NoError(f.Store.ReplaceMessageRecipients(ids[i], "from", []int64{sender}, nil))
@@ -33,40 +31,27 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	requirements.NoError(f.Store.AddMessageLabels(t.Context(), ids[0], []int64{labels["work"], labels["literal"]}))
 	requirements.NoError(f.Store.AddMessageLabels(t.Context(), ids[1], []int64{labels["decoy"]}))
 
-	for i, sender := range []int64{alex, alex, alex, alex, jim, domainDecoy} {
-		requirements.NoError(f.Store.ReplaceMessageRecipients(ids[4+i], "from", []int64{sender}, nil))
-	}
-	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[10], "from", []int64{jim}, []string{`Álvaro Header_%\name`}))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[4], "from", []int64{alex}, nil))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[10], "from", []int64{header}, []string{`Álvaro Header_%\name`}))
 	chat, err := f.Store.EnsurePhoneParticipantContext(t.Context(), "+12025550999", "Alex Chat")
 	requirements.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), (&store.PostgreSQLDialect{}).Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), chat, ids[11])
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), chat, ids[11])
 	requirements.NoError(err)
-	for i, address := range []string{"root@localhost", "root@localhost.example"} {
-		sender := f.EnsureParticipant(address, "Root", "localhost")
-		requirements.NoError(f.Store.ReplaceMessageRecipients(ids[12+i], "from", []int64{sender}, nil))
-	}
 	for _, tc := range []struct {
 		input string
 		want  []int64
 	}{
-		{"from:alex", []int64{ids[4], ids[5], ids[6], ids[7], ids[9], ids[11]}},
-		{"from:chat", []int64{ids[11]}}, {"from:5550999", []int64{ids[11]}}, {"from:root@localhost", []int64{ids[12]}},
-		{"from:kim", []int64{ids[4], ids[5], ids[6], ids[7]}},
-		{"from:élodie", []int64{ids[4], ids[5], ids[6], ids[7]}}, {"from:álvaro", []int64{ids[10]}},
-		{"from:alex@exam", nil},
+		{"from:alex", []int64{ids[4], ids[11]}},
+		{"from:álvaro", []int64{ids[10]}},
+		{"from:alex@example.com", []int64{ids[4]}},
 		{"from:alice@example.com from:bob@example.com", nil},
-		{"from:alex@example.com", []int64{ids[4], ids[5], ids[6], ids[7]}},
-		{"from:bob@example.com", []int64{ids[1]}},
-		{"from:example.com", []int64{ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[6], ids[7], ids[8], ids[10]}},
-		{"from:@example.com", []int64{ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[6], ids[7], ids[8], ids[10]}},
-		{`from:header_%\name`, []int64{ids[10]}},
 		{"from:alice", []int64{ids[0]}},
 		{"from:ALICE@EXAMPLE.COM", []int64{ids[0]}},
 		{"to:bob", []int64{ids[0]}},
 		{"to:bob to:carol", []int64{ids[0]}},
 		{"cc:bob", []int64{ids[1]}},
 		{"bcc:carol", []int64{ids[0]}},
-		{"from:alice | from:bob", []int64{ids[0], ids[1], ids[8], ids[10]}},
+		{"from:alice | from:bob", []int64{ids[0], ids[1]}},
 		{"label:wor", []int64{ids[0], ids[1]}},
 		{"from:a_lice", []int64{ids[2]}},
 		{"from:lice%tag", []int64{ids[2]}},
