@@ -19,8 +19,7 @@ func senderMatch(value string) (operator, pattern string, metadata bool) {
 	return "LIKE", "%" + escapeLike(value) + "%", true
 }
 
-func senderCondition(value string, lower func(string) string) (string, []any) {
-	operator, pattern, metadata := senderMatch(value)
+func senderCondition(operator, pattern string, metadata bool, lower func(string) string) (string, []any) {
 	if operator == "=" {
 		// Match the existing case-insensitive email index for exact mailboxes.
 		return "(LOWER(p2.email_address) = ?)", []any{pattern}
@@ -32,10 +31,7 @@ func senderCondition(value string, lower func(string) string) (string, []any) {
 	var parts []string
 	var args []any
 	for _, column := range columns {
-		condition := lower("COALESCE("+column+", '')") + " " + operator + " ?"
-		if operator == "LIKE" {
-			condition += ` ESCAPE '\'`
-		}
+		condition := lower("COALESCE("+column+", '')") + ` LIKE ? ESCAPE '\'`
 		parts = append(parts, condition)
 		args = append(args, pattern)
 	}
@@ -46,13 +42,14 @@ func senderCondition(value string, lower func(string) string) (string, []any) {
 // Both forms bind identical arguments so adaptive search can switch between them.
 // Callers supply trusted table references and the outer message alias.
 func SenderLookup(value string, lower func(string) string, messages, recipients, participants, alias string) (condition, matching string, args []any) {
-	participant, participantArgs := senderCondition(value, lower)
+	operator, pattern, metadata := senderMatch(value)
+	participant, participantArgs := senderCondition(operator, pattern, metadata, lower)
 	args = append(args, participantArgs...)
 	from := `EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id
   WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + participant + `)`
 	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
   AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)`
-	if _, pattern, metadata := senderMatch(value); metadata {
+	if metadata {
 		header := lower("COALESCE(mr2.display_name, '')") + ` LIKE ? ESCAPE '\'`
 		from += ` OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + header + `)`
 		matching += ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND ` + header
