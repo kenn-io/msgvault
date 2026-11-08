@@ -3256,11 +3256,11 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds (defaults to `86400` when `cors_origins` is set) |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS and host headers |
-| `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
+| `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 
-`daemon_idle_timeout` only affects daemons started by `msgvault daemon start` or auto-started by a CLI command. A foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the configured timeout for lifecycle-managed background daemons.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 `daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 

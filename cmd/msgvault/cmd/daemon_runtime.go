@@ -41,6 +41,8 @@ const (
 	runtimeShutdownToken            = "shutdown_token"
 	runtimeStartupPhase             = "startup_phase"
 	runtimeBackground               = "background"
+	runtimePersistent               = "persistent"
+	runtimeIdleTimeout              = "idle_timeout"
 	runtimeBackgroundValue          = "true"
 	minimumDaemonAPISchemaVersion   = "3.0.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
@@ -81,7 +83,7 @@ func daemonRuntimeStore(dataDir string) daemon.RuntimeStore {
 	return daemon.RuntimeStore{Dir: dataDir}
 }
 
-func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string) (daemon.RuntimeRecord, string, error) {
+func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string, idleTimeout time.Duration) (daemon.RuntimeRecord, string, error) {
 	shutdownToken, err := newDaemonShutdownToken()
 	if err != nil {
 		return daemon.RuntimeRecord{}, "", fmt.Errorf("create shutdown token: %w", err)
@@ -92,6 +94,8 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 	}
 	rec := daemon.NewRuntimeRecord(daemonService, version, ep)
 	rec.Metadata = map[string]string{
+		runtimePersistent:       strconv.FormatBool(os.Getenv(serveBackgroundChildEnv) == "1" && os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue),
+		runtimeIdleTimeout:      idleTimeout.String(),
 		runtimeHost:             host,
 		runtimePort:             strconv.Itoa(port),
 		runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),

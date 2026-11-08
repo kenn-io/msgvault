@@ -1066,7 +1066,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
-| `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
+| `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 | `muesli_recording_max_bytes` | `4294967296` (4 GiB) | Server limit for streamed Muesli audio uploads; `0` uses the default. Independent of the recorder's `recording_max_bytes` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
@@ -1082,7 +1082,7 @@ Each `[[server.remote_clients]]` entry gives one remote CLI its own read-only ke
 
 `msgvault serve` reads these files after it settles the server key, whether that key comes from `api_key`, a file, an environment variable, or is created at startup. It fails to start if a file is missing or empty or a key repeats another. CLI commands that start a local daemon also trigger these checks. Restart to add, remove, or rotate a key.
 
-`daemon_idle_timeout` applies only to background daemons started by `msgvault daemon start` or auto-started by a CLI command. Foreground `msgvault serve` keeps running until stopped. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured value for lifecycle-managed background daemons.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 Flags and environment variables can configure the server
 without `config.toml`. `serve --bind` and `serve --port` take priority over
@@ -2696,7 +2696,7 @@ rate_limit_qps = 5
 api_port = 0
 bind_addr = "127.0.0.1"
 api_key = "your-secret-key"
-daemon_idle_timeout = "20m" # background daemon idle timeout; "0s" disables
+daemon_idle_timeout = "20m" # automatic daemon idle timeout; "0s" disables
 daemon_auto_restart = "newer" # newer, never, or always
 daemon_auto_start = true # false when a supervisor runs msgvault serve
 

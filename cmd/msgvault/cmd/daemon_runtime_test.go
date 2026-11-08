@@ -69,7 +69,7 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	assert := assert.New(t)
 	dataDir := t.TempDir()
 
-	written, shutdownToken, err := writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key")
+	written, shutdownToken, err := writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key", 0)
 	require.NoError(err, "writeDaemonRuntime")
 	require.NotEmpty(shutdownToken, "shutdown token")
 	t.Cleanup(func() { removeDaemonRuntime(dataDir) })
@@ -93,7 +93,7 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	assert.NotContains(rec.Metadata, runtimeBackground)
 
 	t.Setenv(serveBackgroundChildEnv, "1")
-	_, _, err = writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key")
+	_, _, err = writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key", 0)
 	require.NoError(err, "write background daemon runtime")
 	rec, err = daemon.RuntimeStore{Dir: dataDir}.Read(path)
 	require.NoError(err, "read background runtime record")
@@ -111,7 +111,7 @@ func TestWriteDaemonRuntimeAcceptsSymlinkedDataDir(t *testing.T) {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 
-	written, _, err := writeDaemonRuntime(linkedDataDir, "127.0.0.1", 8123, "v-test", "")
+	written, _, err := writeDaemonRuntime(linkedDataDir, "127.0.0.1", 8123, "v-test", "", 0)
 	require.NoError(err, "writeDaemonRuntime through symlink")
 	t.Cleanup(func() { removeDaemonRuntime(linkedDataDir) })
 

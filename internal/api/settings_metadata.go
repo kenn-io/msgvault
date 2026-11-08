@@ -109,7 +109,7 @@ var settingsMetadata = map[string]settingMetadata{
 	"server.api_key":             {"API key", "Key that remote clients and browser logins use.", "listener"},
 	"server.allow_insecure":      {"Allow insecure access", "Allow connections from other machines without an API key.", "listener"},
 	"server.trusted_proxies":     {"Trusted proxies", "IP addresses or ranges allowed to forward HTTPS details for a request.", "listener"},
-	"server.daemon_idle_timeout": {"Idle timeout", "How long a background daemon waits with nothing to do before it stops.", "lifecycle"},
+	"server.daemon_idle_timeout": {"Idle timeout", "How long an automatically started daemon waits with nothing to do before it stops.", "lifecycle"},
 	"server.daemon_auto_start":   {"Automatic start", "Allow local commands to start or replace the daemon. Disable when a supervisor manages the service.", "lifecycle"},
 	"server.daemon_auto_restart": {"Automatic restart", "When the CLI restarts a running daemon after its binary changes.", "lifecycle"},
 	"log.enabled":                {"Persistent logs", "Write structured logs to the daemon log directory.", "logging"},

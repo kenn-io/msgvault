@@ -103,13 +103,14 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterInstallFailure(t *testing.
 		},
 		func(*config.Config) (updateDaemonStopResult, error) {
 			events = append(events, "stop")
-			return updateDaemonStopResult{Stopped: true}, nil
+			return updateDaemonStopResult{Stopped: true, Persistent: true}, nil
 		},
 		func(*update.UpdateInfo, func(int64, int64)) error {
 			events = append(events, "perform")
 			return installErr
 		},
-		func(*config.Config, updateDaemonStopResult) error {
+		func(_ *config.Config, result updateDaemonStopResult) error {
+			assert.True(result.Persistent)
 			events = append(events, "restart")
 			return nil
 		},
@@ -183,6 +184,7 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterPartialStopFailure(t *test
 func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 	for _, background := range []string{"", "false", "true"} {
 		t.Run("background="+background, func(t *testing.T) {
+			persistent := background == "true"
 			require := require.New(t)
 			assert := assert.New(t)
 			dataDir := t.TempDir()
@@ -195,6 +197,7 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 				Service: daemonService,
 				Version: Version,
 				Metadata: map[string]string{
+					runtimePersistent:       strconv.FormatBool(persistent),
 					runtimeHost:             server.Host,
 					runtimePort:             portText,
 					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
@@ -218,6 +221,7 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 
 			require.NoError(err, "stop local daemons")
 			assert.True(result.Stopped, "stopped")
+			assert.Equal(persistent, result.Persistent)
 			assert.Equal(background == "true", result.Background, "background")
 			assert.Equal(os.Getpid(), stoppedPID, "stopped pid")
 		})
@@ -225,6 +229,13 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 }
 
 func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
+	for _, persistent := range []bool{false, true} {
+		t.Run(strconv.FormatBool(persistent), func(t *testing.T) { testRestartDaemonAfterUpdateLifetime(t, persistent) })
+	}
+}
+
+func testRestartDaemonAfterUpdateLifetime(t *testing.T, persistent bool) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
@@ -237,6 +248,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		_ *config.Config,
 		opts backgroundServeStartOptions,
 	) (*backgroundServeProcess, error) {
+		assert.Equal(persistent, opts.Persistent)
 		gotExecutable = opts.ExecutablePath
 		return &backgroundServeProcess{
 			PID:     990,
@@ -258,7 +270,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true, Persistent: persistent}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
 
 	require.NoError(err, "restart daemon")
 	assert.Equal(installedExe, gotExecutable, "restart executable")
