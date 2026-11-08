@@ -285,9 +285,13 @@ func TestImporterPublishesContentWhenOptionalLookupBudgetExpires(t *testing.T) {
 	assert.NoError(ctx.Err())
 }
 
-type slowOptionalDirectorySource struct{ *fakeHydrationSource }
+type slowOptionalDirectorySource struct {
+	*fakeHydrationSource
+	calls *int
+}
 
 func (s slowOptionalDirectorySource) ListUsers(ctx context.Context, _ string) (*UserPage, error) {
+	*s.calls = *s.calls + 1
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -296,13 +300,18 @@ func TestHydratorRetainsContentOnDirectoryBudgetExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
-		source := slowOptionalDirectorySource{completeHydrationSource()}
+		calls := 0
+		source := slowOptionalDirectorySource{fakeHydrationSource: completeHydrationSource(), calls: &calls}
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 		defer cancel()
-		result, err := NewHydrator(source).Hydrate(ctx, hydrationMeeting())
-		require.NoError(err)
-		assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
-		assert.True(result.AttendeeResolutionDegraded)
+		hydrator := NewHydrator(source)
+		for range 2 {
+			result, err := hydrator.Hydrate(ctx, hydrationMeeting())
+			require.NoError(err)
+			assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
+			assert.True(result.AttendeeResolutionDegraded)
+		}
+		assert.Equal(1, calls)
 		assert.NoError(ctx.Err())
 	})
 }
