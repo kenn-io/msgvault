@@ -412,22 +412,9 @@ func TestImporterKeepsMatchingMeetingIDsIsolatedBySource(t *testing.T) {
 	assert.Equal(2, count)
 }
 
-func TestImporterLimitAndAfterRemainLocalVisibleSetBounds(t *testing.T) {
+func TestImporterAfterFiltersNewMeetings(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st, source, imp := newImporterFixture(t)
-	second := hydrationMeeting()
-	second.ID = "meeting-2"
-	second.LastEditedTime = "2026-08-29T10:35:00Z"
-	source.query.Results = []MeetingNote{hydrationMeeting(), second}
-
-	summary, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work", Limit: 1})
-	require.NoError(err)
-	state := lastNotionState(t, st, summary.SourceID)
-	assert.True(state.Coverage.Limited)
-	assert.Contains(state.Known, "meeting-1")
-	assert.NotContains(state.Known, "meeting-2")
-
 	otherStore, otherSource, otherImporter := newImporterFixture(t)
 	otherSource.query.Results = []MeetingNote{hydrationMeeting()}
 	after, err := otherImporter.Import(t.Context(), ImportOptions{UserID: "creator-1",

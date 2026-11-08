@@ -124,7 +124,6 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	}
 	self, err := selfSource.RetrieveSelf(ctx)
 	if err != nil {
-		_, _ = fmt.Fprintln(out, "  Credentials: unavailable")
 		return &notionProbeError{stage: "probe Notion credentials", cause: err}
 	}
 	_, _ = fmt.Fprintln(out, "  Credentials: self verified")
@@ -137,10 +136,10 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 	writeNotionScope(out, opts)
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
-		_, _ = fmt.Fprintln(out, "  Meeting query: unavailable")
 		if !errors.Is(err, notionmeetings.ErrMeetingAccess) && !errors.Is(err, notionmeetings.ErrReadContent) {
 			return &notionProbeError{stage: "probe Notion meeting query", cause: err}
 		}
+		_, _ = fmt.Fprintln(out, "  Meeting query: unavailable")
 		result = &notionmeetings.QueryResult{}
 	} else {
 		_, _ = fmt.Fprintln(out, "  Meeting query: available")

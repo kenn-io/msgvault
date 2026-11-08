@@ -144,7 +144,10 @@ func TestRepeatedFullRetainsFrontier(t *testing.T) {
 	require.NoError(err)
 	before := lastNotionState(t, st, first.SourceID)
 	require.NotEmpty(before.Frontier)
-	source.children["root"] = map[string]*BlockPage{"": {Results: []Block{{Object: "block", ID: "meeting-1", Type: "meeting_notes"}}}}
+	source.children["root"] = map[string]*BlockPage{
+		"":     {HasMore: true, NextCursor: "next"},
+		"next": {Results: []Block{{Object: "block", ID: "meeting-1", Type: "meeting_notes"}}},
+	}
 	for range 4 {
 		_, err = imp.Import(t.Context(), opts)
 		require.NoError(err)
