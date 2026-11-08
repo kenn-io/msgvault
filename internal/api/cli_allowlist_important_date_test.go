@@ -9,7 +9,7 @@ import (
 
 func TestImportantDateCommandsStayOwnerOnly(t *testing.T) {
 	checks := assert.New(t)
-	for _, operation := range []string{"add", "list", "consent", "status", "preview", "update", "withdraw", "resolve", "accept-correction"} {
+	for _, operation := range []string{"add", "list", "lineage", "consent", "status", "preview", "update", "withdraw", "resolve", "accept-correction"} {
 		args := []string{"person", "important-date", operation}
 		checks.True(cliRunCommandAllowed(args))
 		checks.False(delegatedCLIRunAdmitted(args, &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete}}))

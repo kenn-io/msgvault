@@ -3650,6 +3650,7 @@ Preview or maintain explicit dates without sending a greeting. These commands us
 msgvault person important-dates <person-id> [--timezone UTC] [--leap-day february_28]
 msgvault person important-date add <person-id> --kind pet --name "Example pet" --date=--10-23
 msgvault person important-date list <person-id>
+msgvault person important-date lineage <person-id>
 msgvault person important-date update <subject-uid> --revision 1 --name "Example pet" --date=--10-24
 msgvault person important-date withdraw <subject-uid> --revision 2
 msgvault person important-date consent <subject-uid> --grant
@@ -3660,7 +3661,7 @@ msgvault person important-date resolve <occurrence-key> --resolution delivered -
 msgvault person important-date accept-correction <subject-uid> birthday --date=--10-24
 ```
 
-`add` accepts `dependent` or `pet` and returns a stable UID. For consent, prefix that UID with `owned/`; for a person use `person/` followed by the person's vCard UID. Grant consent only for data that may be shared with the exact configured private Kata project and recipient. Omitting `--grant` revokes consent for all destinations, even when Kata is unavailable. Correcting or withdrawing a dependent or pet revokes its consent and preserves the previous value. `list` returns the revision required by update and withdrawal.
+`add` accepts `dependent` or `pet` and returns a stable UID. For consent, prefix that UID with `owned/`; for a person use `person/` followed by the person's vCard UID. Grant consent only for data that may be shared with the exact configured private Kata project and recipient. Omitting `--grant` revokes consent for all destinations, even when Kata is unavailable. Correcting or withdrawing a dependent or pet revokes its consent and preserves the previous value. `list` returns the revision required by update and withdrawal. `lineage` inspects connected merge and split identities and retained occurrence links in one snapshot; it does not release quarantined identities.
 
 The single-person preview shows declared date calculations only. The group preview lists currently due candidates and aggregate exclusion reasons; counts describe evaluation decisions and may include the same person more than once. It does not check destination consent or send notifications. `status` lists 100 retained delivery states by default; use `--limit` (up to 500) and `--offset` to inspect further pages. An `unknown` or in-flight result may mean an external write succeeded: inspect the issue and recipient inbox before taking any manual action. `resolve` records an inspected result as `delivered` or `cancelled`; it never resends. After resolving pending attempts and inspecting prior issues, `accept-correction` approves the current date for future occurrences without rewriting their history. The job does not automatically retry it. See [important-date configuration](configuration.md#important-date-alerts) for enablement and limitations.
 

@@ -78,6 +78,29 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		}
 		return writeJSONOutput(cmd, subjects)
 	}}
+	lineage := &cobra.Command{Use: "lineage <person-id>", Short: "Inspect retained important-date identity history", Long: "Inspect connected merge and split identities and retained occurrences. This does not reconcile or release a quarantined identity.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		id, err := positivePersonCLIArg(cmd, args[0], personValue)
+		if err != nil {
+			return err
+		}
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration unavailable")
+		}
+		st, cleanup, err := openReadOnlyStoreForInvocation(cmd.Context(), state)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		result, err := st.ImportantDateLineageContext(cmd.Context(), id)
+		if err != nil {
+			return err
+		}
+		return writeJSONOutput(cmd, result)
+	}}
 	var grant bool
 	consent := &cobra.Command{Use: "consent <subject-uid>", Short: "Set consent for the configured private destination", Long: "Grant only when the subject's information may be shared with the exact configured private project and recipient. Without --grant, consent is revoked.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
@@ -296,6 +319,6 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		return nil
 	}}
 	acceptCorrection.Flags().StringVar(&correctionDate, "date", "", "Current date as YYYY-MM-DD or --MM-DD")
-	group.AddCommand(add, list, consent, status, preview, update, withdraw, resolve, acceptCorrection)
+	group.AddCommand(add, list, lineage, consent, status, preview, update, withdraw, resolve, acceptCorrection)
 	return group
 }
