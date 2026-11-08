@@ -94,7 +94,7 @@
   let extendedAddress = $state(seedAddress?.extended_address ?? '');
   let countryCode = $state(seedAddress?.country_code ?? '');
   let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : seedAddress?.original_value ?? ''));
-  let currentText = $state(seedAddress?.free_text ?? '');
+  let currentText = $state(seedAddress?.free_text ?? (initialCandidate && !postalAddressText({ ...initialCandidate.input, original_value: '', free_text: '', country_code: '' }) ? initialCandidate.input.original_value ?? '' : ''));
   let currentTextTouched = $state(false);
   let streetAddress = $state(seedAddress?.street_address ?? '');
   let locality = $state(seedAddress?.locality ?? '');
@@ -278,7 +278,7 @@
         } else if (!input.original_value) {
           input.original_value = [locality, region, postalCode, countryName].map(value => value.trim()).filter(Boolean).join(', ');
         }
-        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...(currentTextTouched && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
+        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...((currentTextTouched || initialCandidate) && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
         const value = dateValue.trim();

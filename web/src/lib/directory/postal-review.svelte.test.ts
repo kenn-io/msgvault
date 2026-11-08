@@ -19,6 +19,9 @@ function deferred<T>() {
 }
 
 describe('PostalReviewSession', () => {
+  it('shows a current label when no current components or free text exist', () => {
+    expect(postalAddressText({ address_kind: 'postal', label: 'Mailing label', original_value: '' })).toBe('Mailing label');
+  });
   it('shows country code changes even when the country name stays the same', () => {
     const original = { address_kind: 'postal', country_name: 'Canada', country_code: 'CA' };
     expect(postalAddressText(original)).toContain('CA');
