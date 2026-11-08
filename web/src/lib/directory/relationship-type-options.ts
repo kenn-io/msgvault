@@ -48,6 +48,7 @@ export function relationshipTypeOptions(types: RelationshipType[]): TypeaheadOpt
   return Object.keys(groups).map(group => ({
     name: group, label: group,
     children: choices.filter(choice => choice.group === group).sort((a, b) => rank(group, a) - rank(group, b)
+      || (rank(group, a) === groups[group].length ? a.label.localeCompare(b.label) : 0)
       || a.slug.localeCompare(b.slug) || a.direction.localeCompare(b.direction) * -1),
   })).filter(group => group.children.length > 0);
 }

@@ -208,7 +208,7 @@ describe('RelationshipsTab', () => {
     let post: Request | undefined;
     const saved = relationship(41, 1, { relationship_type_id: 1, type_slug: slug, source_person_id: source, target_person_id: target, forward_label: forward, reverse_label: reverse });
     const direction = source === 7 ? 'outgoing' : 'incoming';
-    const label = direction === 'outgoing' ? forward : reverse;
+    const label = direction === 'outgoing' ? reverse : forward;
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input);
       const path = pathOf(request);

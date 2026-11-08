@@ -256,8 +256,9 @@
     const counts = new Map<string, { line: ProvenanceLine; count: number }>();
     for (const row of groups.flatMap((group) => group.rows)) {
       const line = valueProvenance(row.envelope);
-      const seen = counts.get(line.text);
-      counts.set(line.text, { line: seen?.line ?? line, count: (seen?.count ?? 0) + 1 });
+      const key = JSON.stringify([line.text, line.title]);
+      const seen = counts.get(key);
+      counts.set(key, { line: seen?.line ?? line, count: (seen?.count ?? 0) + 1 });
     }
     const top = [...counts.values()].sort((a, b) => b.count - a.count)[0];
     return top && top.count > 1 ? top.line : undefined;
@@ -369,7 +370,7 @@
       <!-- Email, Phone, and Address as label | value rows; a second value of one kind keeps the label column empty.
            With Details open, each value's facts sit under its own row, so a value shows once. -->
       <section class="profile-group" aria-label={group.title}>{#each group.rows as item, index}{@const line = valueProvenance(item.envelope)}{@const facts = valueDetails(item.record, item.envelope).facts}
-        <DetailRow label={index === 0 ? changed.has(group.title) ? `${group.title} · Changed` : group.title : ''} description={line.text === shared?.text ? undefined : line}>{item.value}</DetailRow>
+        <DetailRow label={index === 0 ? changed.has(group.title) ? `${group.title} · Changed` : group.title : ''} description={line.text === shared?.text && line.title === shared?.title ? undefined : line}>{item.value}</DetailRow>
         {#if open && facts.length}<section aria-label={`${group.title} ${item.value}`}><dl class="facts">{#each facts as fact}<div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>{/each}</dl></section>{/if}
       {/each}</section>
     {/each}

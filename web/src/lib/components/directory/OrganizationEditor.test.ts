@@ -125,6 +125,21 @@ describe('OrganizationEditor', () => {
     expect(row('+1 555 0100').querySelector('.description')?.textContent).toBe(valueProvenance(envelope(47)).text);
   });
 
+  it('keeps each contact timestamp when their short provenance matches', async () => {
+    const profile = richOrganizationProfile(1);
+    profile.addresses = [];
+    profile.contact_points[0].envelope = envelope(40, { updated_at: '2026-08-01T10:00:00Z' }) as typeof profile.contact_points[0]['envelope'];
+    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'second@example.test', envelope: envelope(47, { updated_at: '2026-08-01T15:00:00Z' }) as typeof profile.contact_points[0]['envelope'] });
+    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'third@example.test' });
+    const { controller } = controllerWith(async () => Response.json(profile, { headers: { ETag: '"organization-21-r1"' } }));
+    render(OrganizationEditor, { controller, organization: organization() });
+    await screen.findByText('second@example.test');
+    const first = valueProvenance(profile.contact_points[0].envelope);
+    expect(screen.getByText(first.text, { selector: '.profile-heading .provenance' }).getAttribute('title')).toBe(first.title);
+    const row = screen.getByText('second@example.test').closest('.detail-row') as HTMLElement;
+    expect(row.querySelector('.description')?.getAttribute('title')).toBe(valueProvenance(profile.contact_points[1].envelope).title);
+  });
+
   it('retries loading an organization from its inline error action', async () => {
     let reads = 0;
     const { controller } = controllerWith(async () => ++reads === 1

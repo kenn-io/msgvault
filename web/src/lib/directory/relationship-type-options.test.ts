@@ -8,6 +8,13 @@ const type = (slug: string, forward: string, reverse = forward, overrides = {}):
 });
 
 describe('relationship choices', () => {
+  it('sorts custom choices by their visible labels', () => {
+    const choices = relationshipTypeOptions([
+      type('a', 'sponsor', 'sponsor', { ownership: 'user' }),
+      type('z', 'advisor', 'advisor', { ownership: 'user' }),
+    ])[0].children!;
+    expect(choices.map(choice => choice.label)).toEqual(['Advisor', 'Sponsor']);
+  });
   it('orders groups and types by use, keeps live labels and hyphens, and omits empty groups', () => {
     const groups = relationshipTypeOptions([
       type('met', 'met'), type('acquaintance', 'acquaintance'), type('friend', 'buddy'), type('co-worker', 'co-worker'), type('colleague', 'colleague'),
@@ -15,7 +22,7 @@ describe('relationship choices', () => {
     ]);
     expect(groups.map(group => [group.label, group.children?.map(child => child.label)])).toEqual([
       ['Family', ['Spouse', 'Guardian', 'Dependent']], ['Work', ['Colleague', 'Co-worker']], ['Social', ['Buddy', 'Acquaintance', 'Met']],
-      ['Other', ['Mentors', 'Learns from']],
+      ['Other', ['Learns from', 'Mentors']],
     ]);
     expect(relationshipTypeOptions([type('friend', 'friend')]).map(group => group.label)).toEqual(['Social']);
   });
@@ -40,7 +47,7 @@ describe('relationship choices', () => {
 
 it('uses type and direction for phrasing when a custom label matches a built-in label', () => {
   const choices = relationshipTypeOptions([type('custom', 'parent', 'child', { ownership: 'user' })])[0].children!;
-  expect(choices.map(choice => choice.displayLabel)).toEqual(['parent', 'child']);
+  expect(choices.map(choice => choice.displayLabel)).toEqual(['child', 'parent']);
 });
 
 it.each([
