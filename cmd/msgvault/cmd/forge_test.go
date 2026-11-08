@@ -159,3 +159,37 @@ func TestAddForgeRegistersTheTokensAccount(t *testing.T) {
 	require.Len(identities, 1)
 	assert.Equal(forge.AccountKey("forge.example.com/git", "7"), identities[0].Address, "the account's posts count as yours")
 }
+
+func TestForgeSyncRemembersARenamedAccountsLogin(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	var synced []string
+	fs := &forgeSource{
+		name: rotationForge, label: "Fake forge",
+		config: func(*config.Config) config.ForgeConfig { return config.ForgeConfig{} },
+		open: func(_ *url.URL, token string) (forge.Forge, error) {
+			return &rotationAccountForge{id: token, synced: &synced}, nil
+		},
+	}
+	identifier := forge.SourceIdentifier("forge.example.com", "7")
+	source, err := st.GetOrCreateSourceContext(t.Context(), rotationForge, identifier)
+	require.NoError(err)
+	require.NoError(st.UpdateSourceDisplayNameContext(t.Context(), source.ID, "Fake forge old-name (forge.example.com)"))
+	source, err = st.GetSourceByTypeAndIdentifier(t.Context(), rotationForge, identifier)
+	require.NoError(err)
+	// The account was added as old-name and renamed to user7 since.
+	require.NoError(forge.SaveToken(cfg.TokensDir(), rotationForge, forge.Token{
+		AccessToken: "7", BaseURL: "https://forge.example.com", Instance: "forge.example.com", AccountID: "7", Login: "old-name",
+	}))
+
+	_, err = fs.sync(t.Context(), st, cfg, source, false)
+	require.NoError(err)
+
+	found, err := fs.sources(t.Context(), st, cfg.TokensDir(), "user7")
+	require.NoError(err, "the account is found by its current login")
+	require.Len(found, 1)
+	assert.Equal("Fake forge user7 (forge.example.com)", found[0].DisplayName.String, "the source carries its current login")
+}

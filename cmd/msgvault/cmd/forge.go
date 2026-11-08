@@ -283,10 +283,36 @@ func (fs *forgeSource) sync(ctx context.Context, s *store.Store, cfg *config.Con
 		return forge.Summary{SourceID: source.ID}, err
 	}
 	syncer := forge.NewSyncer(s, adapter, loggerFromContext(ctx))
-	return syncer.Sync(ctx, source.ID, forge.Options{
+	summary, err := syncer.Sync(ctx, source.ID, forge.Options{
 		Owners: forge.NewOwnerFilter(blocks.IncludeOwners, blocks.ExcludeOwners),
 		Full:   full,
 	})
+	if summary.Login != "" && summary.Login != token.Login {
+		if renameErr := fs.rememberLogin(ctx, s, cfg.TokensDir(), source, token, summary.Login); renameErr != nil {
+			loggerFromContext(ctx).Warn("could not record a renamed forge account's login",
+				"forge", fs.name, "source_id", source.ID, "error", renameErr)
+		}
+	}
+	return summary, err
+}
+
+// rememberLogin keeps an account's current login after the account was
+// renamed, so sync-<forge> <login> finds it by the name it has now, and
+// renames its source when the source still carries the old login's name.
+func (fs *forgeSource) rememberLogin(ctx context.Context, s *store.Store, tokensDir string, source *store.Source,
+	token forge.Token, login string,
+) error {
+	previous := token.Login
+	token.Login = login
+	if err := forge.SaveToken(tokensDir, fs.name, token); err != nil {
+		return fmt.Errorf("save %s token: %w", fs.label, err)
+	}
+	if source.DisplayName.Valid && source.DisplayName.String == fs.displayName(token.Instance, previous) {
+		if err := s.UpdateSourceDisplayNameContext(ctx, source.ID, fs.displayName(token.Instance, login)); err != nil {
+			return fmt.Errorf("rename %s source: %w", fs.label, err)
+		}
+	}
+	return nil
 }
 
 // sources returns the accounts to sync: the one whose login or source
