@@ -1,16 +1,21 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -101,21 +106,119 @@ func TestExploreReportsTransientCacheInitialization(t *testing.T) {
 	requirements.NoError(generatedBody.Validate(), "the generated client must accept the server's building response")
 }
 
-func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T) {
+func TestLiveExploreRebuildRecoveryAndPublication(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	opts := testServerOptions(t, nil)
-	opts.AnalyticsMode = AnalyticsModeSQLFallback
-	opts.AnalyticsInitializationActive = true
-	srv := NewServerWithOptions(opts)
+	srv, _, _ := liveExploreTestServer(t)
+	srv.SetAnalyticsInitializationActive(true)
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1}`)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var page ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &page))
+	requirements.Len(page.Rows, 1)
+	assertions.Equal("Newest", page.Rows[0].Title)
+	assertions.Contains(page.Warnings[0], "while the analytical cache rebuilds")
+	requirements.NotEmpty(page.NextCursor)
+	srv.SetAnalyticsInitializationActive(false)
+	next := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+page.NextCursor+`"}`)
+	requirements.Equal(http.StatusOK, next.Code, next.Body.String())
+	var second ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(next.Body.Bytes(), &second))
+	requirements.Len(second.Rows, 1)
+	assertions.Equal("Older", second.Rows[0].Title)
+	assertions.Equal(page.CacheRevision, second.CacheRevision)
+	assertions.Contains(second.Warnings[0], "then restart msgvault")
 
-	response := postExploreJSON(t, srv, "/api/v1/explore", `{}`)
-	requirements.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-	var body ExploreCacheUnavailableResponse
-	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
-	assertions.Equal(query.CacheReadiness("building"), body.Readiness)
-	assertions.Empty(body.RecoveryAction, "an in-progress automatic build must not prescribe a manual rebuild")
+	refused := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"`+page.CacheRevision+`"}}`)
+	assertions.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
+
+	srv.SetAnalyticsEngine(newExploreDuckDBFixture(t), AnalyticsModeDuckDB)
+	changed := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+page.NextCursor+`"}`)
+	assertions.Equal(http.StatusConflict, changed.Code, changed.Body.String())
+	assertions.Contains(changed.Body.String(), "archive_revision_changed")
+}
+
+func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {
+	t.Helper()
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	st := testutil.NewSQLiteTestStoreAt(t, path)
+	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','archive@example.test');
+ INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type) VALUES(1,1,'thread','email_thread');
+ INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,subject,snippet,sent_at) VALUES
+ (1,1,'older',1,'email','Older','needle OR needle','2026-07-01T00:00:00Z'),(2,1,'newest',1,'email','Newest','needle OR needle','2026-07-02T00:00:00Z'); INSERT INTO message_bodies(message_id,body_text) VALUES(1,'needle OR needle'),(2,'needle OR needle');`)
+	requirements.NoError(err)
+	_, err = st.RebuildFTS(nil)
+	requirements.NoError(err)
+	engine := query.NewLiveExploreEngine(st.DB(), path)
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
+	srv := newTestServerWithEngine(t, engine)
+	srv.SetAnalyticsEngine(engine, AnalyticsModeSQLFallback)
+	return srv, st, path
+}
+
+func TestLiveExploreRefusesSemanticBeforeCandidatesOrReader(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, _, _ := liveExploreTestServer(t)
+	engine, ok := srv.queryEngineForContext(t.Context()).(*query.LiveExploreEngine)
+	requirements.True(ok)
+	_, release, _, err := engine.BeginExploreSnapshot(t.Context())
+	requirements.NoError(err)
+	defer release()
+	for _, mode := range []string{"semantic", "hybrid"} {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/explore", bytes.NewBufferString(`{"query":"needle","search_mode":"`+mode+`"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		cancel()
+		assertions.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+		assertions.Contains(response.Body.String(), "analytical_cache_unavailable")
+	}
+}
+
+type liveExploreSearchStore struct {
+	*mockStore
+
+	archive          *store.Store
+	beforeCandidates func()
+}
+
+func (s *liveExploreSearchStore) SearchMessageIDsQueryContext(ctx context.Context, q *search.Query, limit int) ([]int64, int64, error) {
+	if s.beforeCandidates != nil {
+		s.beforeCandidates()
+	}
+	return s.archive.SearchMessageIDsQueryContext(ctx, q, limit)
+}
+
+func TestLiveExploreSearchSharesSnapshot(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, path := liveExploreTestServer(t)
+	writer, err := store.OpenForTest(t.Context(), path)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(writer.Close()) })
+	mock, ok := srv.store.(*mockStore)
+	requirements.True(ok)
+	searchStore := &liveExploreSearchStore{mockStore: mock, archive: st}
+	srv.store = searchStore
+	searchStore.beforeCandidates = func() {
+		_, err := writer.DB().ExecContext(t.Context(), "DELETE FROM messages WHERE id=2")
+		requirements.NoError(err)
+		searchStore.beforeCandidates = nil
+	}
+	first := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"needle OR needle","search_mode":"full_text","limit":1}`)
+	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
+	var page ExploreHTTPResponse
+	requirements.NoError(json.Unmarshal(first.Body.Bytes(), &page))
+	requirements.Len(page.Rows, 1)
+	assertions.Equal("Newest", page.Rows[0].Title)
+	requirements.NotNil(page.TotalCount)
+	assertions.Equal(int64(2), *page.TotalCount)
 }
 
 func TestExploreUnavailableUsesRequestInitializationSnapshot(t *testing.T) {
@@ -174,4 +277,22 @@ func TestExploreServerStateBoundsAndExpiresTransientCapabilities(t *testing.T) {
 	assertions.Len(state.snapshots, 1)
 	assertions.Empty(state.matchCounts)
 	state.mu.Unlock()
+}
+
+func TestLiveExploreRejectsCursorAfterChatMoves(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	srv, st, _ := liveExploreTestServer(t)
+	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type) VALUES(2,1,'chat','group_chat'); INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,sent_at) VALUES(3,1,'chat-old',2,'whatsapp','2026-06-01T00:00:00Z')`)
+	require.NoError(err)
+	response := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1}`)
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var first ExploreHTTPResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &first))
+	require.NotEmpty(first.NextCursor)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,sent_at) VALUES(4,1,'chat-new',2,'whatsapp','2026-07-03T00:00:00Z')`)
+	require.NoError(err)
+	response = postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+first.NextCursor+`"}`)
+	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "archive_revision_changed")
 }

@@ -2688,6 +2688,12 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 
+### Messages during cache rebuilds
+
+In auto mode on SQLite, `POST /api/v1/explore` serves live archive rows while the analytical cache rebuilds and after a failed build. Date, source, account, identity, domain, mailing-list, kind, and full-text filters remain available. Responses include a warning about operations that need the cache, with recovery instructions after a failed build.
+
+Grouping, person filters, semantic and hybrid search, per-row exact-match counts, bulk actions, Files, People, and the reader’s Open person action still require the cache. A live cursor expires when the archive changes or the replacement cache publishes; restart pagination after `409 archive_revision_changed`.
+
 ### Participant and domain timelines
 
 `POST /api/v1/participants/{id}/timeline` and `POST /api/v1/domains/{domain}/timeline` omit drafts and unsent items. Participant timelines include events and meetings only when the archive owner participated. These rules apply to every caller, including CLI and MCP clients.
