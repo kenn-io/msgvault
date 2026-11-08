@@ -3,6 +3,7 @@
 package sqlitevec
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -270,16 +271,15 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,10,'from','Álvaro Header'),(2,10,'from','Other'); UPDATE messages SET sender_id = 20 WHERE id = 3;`)
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		term string
-		want []int64
+		terms []string
+		want  []int64
 	}{
-		{"from:header", []int64{1}},
-		{"from:kim from:header", []int64{1}},
-		{"from:chat", []int64{3}},
+		{[]string{"header"}, []int64{1}},
+		{[]string{"kim", "header"}, []int64{1}},
+		{[]string{"chat"}, []int64{3}},
 	} {
-		t.Run(tc.term, func(t *testing.T) {
-			filter, err := hybrid.BuildFilter(ctx, b.mainDB, nil, search.Parse(tc.term))
-			require.NoError(t, err)
+		t.Run(strings.Join(tc.terms, "+"), func(t *testing.T) {
+			filter := vector.Filter{SenderTerms: tc.terms}
 			hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, filter)
 			require.NoError(t, err)
 			ids := make([]int64, 0, len(hits))

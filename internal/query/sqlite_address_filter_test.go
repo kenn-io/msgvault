@@ -133,6 +133,11 @@ func TestSearchCommonWordPreservesPages(t *testing.T) {
 func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
+	_, err := env.DB.ExecContext(t.Context(), `WITH RECURSIVE seq(x) AS (
+		VALUES(1000) UNION ALL SELECT x+1 FROM seq WHERE x < 100999
+	) INSERT INTO participants(id, email_address)
+	SELECT x, 'sender-' || x || '@example.org' FROM seq`)
+	require.NoError(t, err)
 	for _, q := range []*search.Query{
 		{FromAddrs: []string{"@example.com"}},
 		{FromAddrs: []string{"alice@example.com"}},
@@ -142,20 +147,11 @@ func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 	} {
 		plan := explainSearchPlan(t, env, q)
 		assert.NotRegexp(t, `(?m)^SCAN m(?: |$)`, plan, "%+v\n%s", q, plan)
+		if len(q.FromAddrs) == 1 && q.FromAddrs[0] == "alice@example.com" {
+			assert.Contains(t, plan, "idx_participants_email_lower", plan)
+			assert.NotContains(t, plan, "SCAN p2", plan)
+		}
 	}
-}
-
-func TestSearchExactSenderUsesEmailIndex(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t)
-	_, err := env.DB.ExecContext(t.Context(), `WITH RECURSIVE seq(x) AS (
-		VALUES(1000) UNION ALL SELECT x+1 FROM seq WHERE x < 100999
-	) INSERT INTO participants(id, email_address)
-	SELECT x, 'sender-' || x || '@example.org' FROM seq`)
-	require.NoError(t, err)
-	plan := explainSearchPlan(t, env, search.Parse("from:alice@example.com"))
-	assert.Contains(t, plan, "idx_participants_email_lower", plan)
-	assert.NotContains(t, plan, "SCAN p2", plan)
 }
 
 func TestSearchFromDomainTreatsWildcardsLiterally(t *testing.T) {

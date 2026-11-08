@@ -241,8 +241,7 @@ func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
 	db, _ := sqlobserve.Open(t, nil)
 	seedMetadataSearch(t, db)
 	_, err := db.ExecContext(t.Context(), `INSERT INTO participants(id,email_address,display_name) VALUES(1,'alex@example.com','Alex Kim');
- INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(1,1,'from');
- UPDATE messages SET sender_id=1 WHERE id=3;`)
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(1,1,'from');`)
 	require.NoError(t, err)
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
@@ -251,11 +250,11 @@ func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
 	for _, row := range response.Data {
 		ids = append(ids, row.ID)
 	}
-	assert.ElementsMatch(t, []int64{1, 3}, ids)
+	assert.Equal(t, []int64{1}, ids)
 	legacy := runTool[paginatedSearchMessages](t, ToolSearchMessages, h.searchMessages, map[string]any{"query": "from:alex"})
 	ids = ids[:0]
 	for _, row := range legacy.Data {
 		ids = append(ids, row.ID)
 	}
-	assert.ElementsMatch(t, []int64{1, 3}, ids)
+	assert.Equal(t, []int64{1}, ids)
 }

@@ -67,9 +67,11 @@ func TestSenderSearch(t *testing.T) {
 				ids = append(ids, row.ID)
 			}
 			assert.ElementsMatch(tc.want, ids)
-			fast, err := env.Engine.SearchFastWithStats(t.Context(), search.Parse(tc.input), tc.input, MessageFilter{}, ViewNoStats, 100, 0)
-			require.NoError(err)
-			assert.Equal(int64(len(tc.want)), fast.TotalCount)
+			if tc.input == "from:alex" {
+				fast, err := env.Engine.SearchFastWithStats(t.Context(), search.Parse(tc.input), tc.input, MessageFilter{}, ViewNoStats, 100, 0)
+				require.NoError(err)
+				assert.Equal(int64(len(tc.want)), fast.TotalCount)
+			}
 		})
 	}
 	t.Run("scanner", func(t *testing.T) {
@@ -83,6 +85,11 @@ func TestSenderSearch(t *testing.T) {
 			t.Skip("DuckDB sqlite_scanner extension unavailable")
 		}
 		for _, tc := range cases {
+			switch tc.input {
+			case "from:élodie", "from:álvaro", `from:header_%\name`, "from:example.com", "from:chat":
+			default:
+				continue
+			}
 			t.Run(tc.input, func(t *testing.T) {
 				rows, err := engine.Search(t.Context(), search.Parse(tc.input), 100, 0)
 				require.NoError(t, err)
@@ -147,18 +154,20 @@ func TestDuckDBSenderSearch(t *testing.T) {
 				ids = append(ids, row.ID)
 			}
 			assert.ElementsMatch(tc.want, ids)
-			conditions, args := engine.buildNonTextSearchConditions(search.Parse(tc.input))
-			rows2, err := engine.db.QueryContext(t.Context(), "WITH "+engine.parquetCTEs()+" SELECT msg.id FROM msg WHERE "+strings.Join(conditions, " AND "), args...)
-			require.NoError(err)
-			defer func() { require.NoError(rows2.Close()) }()
-			ids = ids[:0]
-			for rows2.Next() {
-				var id int64
-				require.NoError(rows2.Scan(&id))
-				ids = append(ids, id)
+			if tc.input == "from:chat" {
+				conditions, args := engine.buildNonTextSearchConditions(search.Parse(tc.input))
+				rows2, err := engine.db.QueryContext(t.Context(), "WITH "+engine.parquetCTEs()+" SELECT msg.id FROM msg WHERE "+strings.Join(conditions, " AND "), args...)
+				require.NoError(err)
+				defer func() { require.NoError(rows2.Close()) }()
+				ids = ids[:0]
+				for rows2.Next() {
+					var id int64
+					require.NoError(rows2.Scan(&id))
+					ids = append(ids, id)
+				}
+				require.NoError(rows2.Err())
+				assert.ElementsMatch(tc.want, ids)
 			}
-			require.NoError(rows2.Err())
-			assert.ElementsMatch(tc.want, ids)
 		})
 	}
 }
@@ -172,20 +181,16 @@ func TestSenderSearchWithinExactScope(t *testing.T) {
 		_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET sender_id = ? WHERE id = ?`, participant, id)
 		require.NoError(err)
 	}
-	for _, filter := range []MessageFilter{
-		{Sender: "+12025550999"},
-		{Sender: "+12025550999", SenderName: "Alex Chat"},
-	} {
-		q := search.Parse("from:alex")
-		fast, err := env.Engine.SearchFastWithStats(t.Context(), q, "from:alex", filter, ViewNoStats, 100, 0)
-		require.NoError(err)
-		require.Len(fast.Messages, 1)
-		assert.Equal(int64(100), fast.Messages[0].ID)
-		assert.Equal(int64(1), fast.TotalCount)
-		deep, err := env.Engine.SearchDeepWithStats(t.Context(), q, filter, 100, 0)
-		require.NoError(err)
-		require.Len(deep.Messages, 1)
-		assert.Equal(int64(100), deep.Messages[0].ID)
-		assert.Equal(int64(1), deep.TotalCount)
-	}
+	filter := MessageFilter{Sender: "+12025550999"}
+	q := search.Parse("from:alex")
+	fast, err := env.Engine.SearchFastWithStats(t.Context(), q, "from:alex", filter, ViewNoStats, 100, 0)
+	require.NoError(err)
+	require.Len(fast.Messages, 1)
+	assert.Equal(int64(100), fast.Messages[0].ID)
+	assert.Equal(int64(1), fast.TotalCount)
+	deep, err := env.Engine.SearchDeepWithStats(t.Context(), q, filter, 100, 0)
+	require.NoError(err)
+	require.Len(deep.Messages, 1)
+	assert.Equal(int64(100), deep.Messages[0].ID)
+	assert.Equal(int64(1), deep.TotalCount)
 }

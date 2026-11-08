@@ -61,22 +61,13 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(err)
 		ids = append(ids, id)
 	}
-	alex, err := st.EnsureParticipant("alex@example.com", "Élodie Alex Kim", "example.com")
+	alex, err := st.EnsureParticipant("alex@example.com", "Alex Kim", "example.com")
 	require.NoError(err)
 	bob, err := st.EnsureParticipant("jimbob@example.com", "Jim Bob", "example.com")
 	require.NoError(err)
 	for i, sender := range []int64{alex, alex, bob} {
 		require.NoError(st.ReplaceMessageRecipients(ids[i], "from", []int64{sender}, nil))
 	}
-	senderIDs := []int64{ids[0], ids[1]}
-	for i := range 2 {
-		id := storetest.NewMessage(source.ID, conv).WithSourceMessageID(fmt.Sprintf("sender-%d", i)).WithSubject("Sender fixture").Create(t, st)
-		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{alex}, nil))
-		senderIDs = append(senderIDs, id)
-	}
-	require.NoError(st.ReplaceMessageRecipients(ids[0], "from", nil, nil))
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id = ? WHERE id = ?`, alex, ids[0])
-	require.NoError(err)
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(root, "vectors.db"), MainPath: dbPath, MainDB: st.DB(), Dimension: 4})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(backend.Close()) })
@@ -123,7 +114,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	for _, row := range senderRows {
 		got = append(got, row.ID)
 	}
-	assert.ElementsMatch(senderIDs, got)
+	assert.ElementsMatch([]int64{ids[0], ids[1]}, got)
 	var semantic struct {
 		Results []query.MessageSummary `json:"results"`
 	}

@@ -148,7 +148,7 @@ func TestRankedFTS_MatchesProductionRelevanceRanking(t *testing.T) {
 }
 
 // TestRankedFTS_HonoursProductionAddressFilterSemantics checks that evaluation
-// and both production search paths find the same message by sender fragment.
+// and production store search find the same message by sender fragment.
 func TestRankedFTS_HonoursProductionAddressFilterSemantics(t *testing.T) {
 	s := seedRankingDivergenceArchive(t)
 	ctx := t.Context()
@@ -163,7 +163,7 @@ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALU
 	production, _, err := s.SearchMessagesQueryContext(ctx, search.Parse(topic), 0, 10)
 	require.NoError(t, err, "production store search")
 	require.Equal(t, []string{"<m1@example.com>"}, keysOfAPIMessages(production),
-		"production matches the address by substring")
+		"production finds the message by its sender fragment")
 
 	ev, _ := newTestEvaluator(t, s, "message")
 	ev.limit = 10
