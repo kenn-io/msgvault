@@ -461,6 +461,38 @@ it('Keep yours replaces a concurrent rename and alias additions with the whole d
   expect(patches).toEqual([{ name: 'Synthetic Org', kind: 'company', primary_domain: 'synthetic.example', description: 'A synthetic organization.' }]);
 });
 
+it('retries the alias replacement accepted with Keep yours after the profile write fails', async () => {
+  let reads = 0;
+  const puts: { tag: string | null; names: string[] }[] = [];
+  const onDone = vi.fn();
+  const opening = organizationProfile();
+  const newer = { ...opening, organization: organization(21, 2, 'Concurrent name'), names: [...opening.names, { ...opening.names[0], name: 'Concurrent alias' }] };
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return Response.json(opening.organization, { headers: { ETag: '"organization-21-r3"' } });
+    if (request.method === 'PUT') {
+      const body = await request.json() as { names: { name: string; name_kind: string }[] };
+      puts.push({ tag: request.headers.get('If-Match'), names: body.names.filter(item => item.name_kind === 'alias').map(item => item.name) });
+      if (puts.length === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      if (puts.length === 2) return Response.json({ message: 'Profile unavailable' }, { status: 503 });
+      return Response.json(opening, { headers: { ETag: '"organization-21-r4"' } });
+    }
+    return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"organization-21-r${reads === 1 ? 1 : 2}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await screen.findByText("Couldn't save the aliases and categories.");
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(puts).toEqual([
+    { tag: '"organization-21-r1"', names: ['Draft alias'] },
+    { tag: '"organization-21-r3"', names: ['Draft alias'] },
+    { tag: '"organization-21-r3"', names: ['Draft alias'] },
+  ]);
+});
+
 it('preserves the edit baseline after Back from a conflicted delete', async () => {
   let reads = 0;
   const tags: (string | null)[] = [];

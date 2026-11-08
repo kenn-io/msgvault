@@ -52,7 +52,6 @@
   const initialView = untrack(() => relationship);
   let initialRelationship = $state(initialView?.relationship);
   let opened = $state<Prepared<PersonRelationship>>();
-  let loading = $state(!!initialView);
   let counterpartID = $state<number | null>(initialView?.counterpart_person_id ?? null);
   let people = $state<DirectoryPerson[]>([]);
   let searching = $state(false);
@@ -78,6 +77,7 @@
   let endDateError = $state<string | null>(null);
   let notes = $state(initialView?.relationship.notes ?? '');
   const attempt = new WriteAttempt<Prepared<PersonRelationship>>();
+  const loading = $derived(!!initialView && !opened && !attempt.details);
   let committed = $state(false);
 
   let searchAbort: AbortController | undefined;
@@ -106,17 +106,12 @@
   });
   async function prepare(): Promise<void> {
     if (!initialView) return;
-    loading = true;
-    attempt.details = '';
-    try {
-      opened = await controller.prepareRelationshipMutation(initialView.relationship.id);
-      initialRelationship = opened.data;
-      startDate = partialDate(opened.data.start_date);
-      endDate = partialDate(opened.data.end_date);
-      notes = opened.data.notes ?? '';
-    } catch (cause) {
-      attempt.details = failureMessage(cause, 0);
-    } finally { loading = false; }
+    opened = await attempt.prepare(() => controller.prepareRelationshipMutation(initialView.relationship.id));
+    if (!opened) return;
+    initialRelationship = opened.data;
+    startDate = partialDate(opened.data.start_date);
+    endDate = partialDate(opened.data.end_date);
+    notes = opened.data.notes ?? '';
   }
   async function searchPeople(value: string): Promise<void> {
     const query = value.trim();

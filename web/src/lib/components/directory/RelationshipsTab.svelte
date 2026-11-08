@@ -62,11 +62,12 @@
     relationshipEditor = view;
   }
 
-  // "Friend · from a contact file · Nov 1": a contact's reference, the imported type, then who imported it and when.
-  // The review date sits in the tooltip.
+  // "Text · Friend · from a contact file · Nov 1": whether the value is text or a reference (a contact's reference shows
+  // itself), the imported type, then who imported it and when. The review date sits in the tooltip.
   function importedLine(row: (typeof imports.rows)[number]): ProvenanceLine {
     const line = provenance(row.source, row.updated_at ?? row.reviewed_at ?? '', undefined, { times: [['Reviewed', row.reviewed_at ?? undefined]] });
-    const lead = [row.raw_related_value.startsWith('urn:uuid:') ? row.raw_related_value : '', sentenceCase(row.raw_related_type)].filter(Boolean).join(' · ');
+    const kind = row.raw_related_value.startsWith('urn:uuid:') ? row.raw_related_value : row.value_kind === 'uri' ? 'Reference' : 'Text';
+    const lead = [kind, sentenceCase(row.raw_related_type)].filter(Boolean).join(' · ');
     return { text: lead ? `${lead} · ${line.text.charAt(0).toLowerCase()}${line.text.slice(1)}` : line.text, title: line.title };
   }
 

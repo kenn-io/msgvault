@@ -48,10 +48,10 @@
   let currentProfile = $state<OrganizationProfile>();
   // The version a write sends as If-Match.
   let opened: Prepared<OrganizationProfile> | undefined;
-  let loading = $state(!!initialOrganization);
-  // A failed load leaves nothing to edit, so the form and Save give way to the notice.
-  const loadFailed = $derived(!!initialOrganization && !currentProfile && !loading);
   const attempt = new WriteAttempt<Prepared<OrganizationProfile>>();
+  const loading = $derived(!!initialOrganization && !currentProfile && !attempt.details);
+  // A failed load leaves nothing to edit, so the form and Save give way to the notice.
+  const loadFailed = $derived(!!initialOrganization && !currentProfile && !!attempt.details);
   const removal = new WriteAttempt<Prepared<OrganizationProfile>>();
   const submitting = $derived(attempt.busy || removal.busy);
   let confirmDelete = $state(false);
@@ -70,46 +70,39 @@
 
   async function loadCurrent(): Promise<void> {
     if (!initialOrganization) return;
-    loading = true;
-    attempt.details = '';
-    try {
-      const { data: profile } = (opened = await controller.prepareOrganizationMutation(initialOrganization.id));
-      currentProfile = profile;
-      name = profile.organization.name;
-      kind = profile.organization.kind;
-      primaryDomain = profile.organization.primary_domain ?? '';
-      description = profile.organization.description ?? '';
-      baselineAliases = (profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
-      baselineCategories = (profile.categories ?? []).map((item) => item.category);
-      aliases = baselineAliases.join(', ');
-      categories = baselineCategories.join(', ');
-    } catch (cause: unknown) {
-      attempt.details = cause instanceof Error ? cause.message : 'No response from the server.';
-    } finally {
-      loading = false;
-    }
+    opened = await attempt.prepare(() => controller.prepareOrganizationMutation(initialOrganization.id));
+    if (!opened) return;
+    const profile = (currentProfile = opened.data);
+    name = profile.organization.name;
+    kind = profile.organization.kind;
+    primaryDomain = profile.organization.primary_domain ?? '';
+    description = profile.organization.description ?? '';
+    baselineAliases = (profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
+    baselineCategories = (profile.categories ?? []).map((item) => item.category);
+    aliases = baselineAliases.join(', ');
+    categories = baselineCategories.join(', ');
   }
 
   async function saveOrganization(): Promise<void> {
     if (saveDisabled || submitting) return;
     profileUnsaved = false;
     let saved = currentProfile?.organization;
-    const draft = currentProfile ? draftLists() : undefined;
-    const ok = await attempt.run(async newer => {
+    const ok = await attempt.run(async current => {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
-      let prepared = newer ?? opened;
-      if (!saved || Object.entries(body).some(([key, value]) => value !== ((newer?.data.organization ?? saved)?.[key as keyof Organization] ?? null))) {
-        const result = initialOrganization || saved
-          ? await controller.updateOrganization((initialOrganization ?? saved)!.id, body, prepared)
-          : await controller.createOrganization(body);
+      let prepared = current ?? opened;
+      if (!saved || Object.entries(body).some(([key, value]) => value !== ((prepared?.data.organization ?? saved)?.[key as keyof Organization] ?? null))) {
+        const result = saved ? await controller.updateOrganization(saved.id, body, prepared) : await controller.createOrganization(body);
         if (!result.ok) return result;
         saved = result.entity!;
-        currentProfile = { names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [], ...currentProfile, ...prepared?.data, organization: saved };
-        prepared = opened = result.etag ? { data: currentProfile, etag: result.etag } : prepared;
+        // The form keeps the lists the person opened, so a retry sends the same Yours; the write goes to the version just saved.
+        currentProfile = { ...EMPTY_PROFILE, ...currentProfile, organization: saved };
+        prepared = opened = result.etag ? { data: { ...EMPTY_PROFILE, ...prepared?.data, organization: saved }, etag: result.etag } : prepared;
         attempt.prepared = prepared;
       }
-      if (newer || aliasDelta.added.length || aliasDelta.removed.size || categoryDelta.added.length || categoryDelta.removed.size) {
-        const lists = draft ?? draftLists();
+      // Yours is the opened lists with the person's edits; write them when the version being written holds anything else.
+      const lists = draftLists();
+      const target = prepared?.data ?? currentProfile!;
+      if (listKey(lists.names, lists.categories) !== listKey(target.names ?? [], target.categories ?? [])) {
         const result = await controller.putOrganizationProfile(saved!.id, fresh => ({
           ...profileBody(fresh),
           names: [...(fresh.names ?? []).filter(item => item.name_kind !== 'alias').map(nameBody), ...lists.names.filter(item => item.name_kind === 'alias')],
@@ -121,6 +114,11 @@
       return { ok: true };
     });
     if (ok) onDone(saved);
+  }
+
+  const EMPTY_PROFILE = { names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] };
+  function listKey(names: { name: string; name_kind: string }[], categories: { category: string }[]): string {
+    return JSON.stringify([names.filter(item => item.name_kind === 'alias').map(item => item.name), categories.map(item => item.category)]);
   }
 
   function draftLists() {

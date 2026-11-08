@@ -40,6 +40,8 @@ describe('date readings', () => {
     expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');
     expect(readablePartialDate('20240305')).toBe('Mar 5, 2024');
     const today = new Date(2026, 10, 6);
+    expect(readablePartialDate('2026-03-05', today)).toBe('Mar 5');
+    expect(readablePartialDate('2026-03', today)).toBe('Mar 2026');
     expect(spokenDate('2026-11-06', today)).toBe('Today, Nov 6');
     expect(spokenDate('20261105', today)).toBe('Nov 5');
     expect(spokenDate('2025-11-06', today)).toBe('Nov 6, 2025');

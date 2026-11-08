@@ -138,6 +138,16 @@ describe('RelationshipsTab', () => {
     expect(row.querySelector('.description')?.textContent).toBe('urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from CardDAV contacts · Jul 31');
   });
 
+  it('says an imported value is text', async () => {
+    const client = createAPIClient(async () => Response.json({ reviews: [{
+      id: 1, person_id: 7, raw_related_value: 'Alex', raw_related_type: 'friend', value_kind: 'text', status: 'pending',
+      source: 'carddav_import', created_at: '2026-07-31T12:00:00', updated_at: '2026-07-31T12:00:00',
+    }] }));
+    render(RelationshipsTab, { client, controller: new DirectoryEntityController(client, 7), personID: 7 });
+    const row = (await screen.findByText('Alex')).closest('.detail-row') as HTMLElement;
+    expect(row.querySelector('.description')?.textContent).toMatch(/^Text · Friend · from CardDAV contacts/);
+  });
+
   it('shows saved recovery once in the editor and restores it to the page on close', async () => {
     let saved = false;
     const { client, controller } = controllerWith(async input => {
@@ -944,7 +954,7 @@ describe('RelationshipsTab', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/relationship-types/31' && request.method === 'GET') {
-        return new Response(JSON.stringify({ ...current, revision }), { headers: { ETag: `"relationship-type-31-r${revision}"` } });
+        return new Response(JSON.stringify(current), { headers: { ETag: '"relationship-type-31-r1"' } });
       }
       if (path === '/api/v1/relationship-types/31' && request.method === 'PATCH') {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-type-31-r2"' } });

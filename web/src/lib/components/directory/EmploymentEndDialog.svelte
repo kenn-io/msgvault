@@ -14,14 +14,7 @@
   let endDate = $state(localDateStr(new Date()));
   const attempt = new WriteAttempt<Prepared<Employment>>();
   let opened = $state<Prepared<Employment>>();
-  let loading = $state(true);
-  async function prepare(): Promise<void> {
-    loading = true;
-    attempt.details = '';
-    try { opened = await controller.prepareEmploymentMutation(employment.id); }
-    catch (cause) { attempt.details = cause instanceof Error ? cause.message : 'No response from the server.'; }
-    finally { loading = false; }
-  }
+  const prepare = async () => { opened = await attempt.prepare(() => controller.prepareEmploymentMutation(employment.id)); };
   onMount(() => { void prepare(); });
   const shown = $derived(opened?.data ?? employment);
   const employerName = $derived(controller.organizationName(shown.organization_id));
@@ -35,7 +28,7 @@
     if (await attempt.run(current => controller.endEmployment(employment.id, { end_date: endDate.trim() }, current ?? opened))) close();
   }
 </script>
-<Dialog title="End job" width="small" onclose={close} primaryLabel={attempt.conflict ? 'Keep yours' : 'End'} onprimary={() => void submit()} primaryDisabled={loading || !opened || !endDate.trim() || !!dateError} busy={attempt.busy}
+<Dialog title="End job" width="small" onclose={close} primaryLabel={attempt.conflict ? 'Keep yours' : 'End'} onprimary={() => void submit()} primaryDisabled={!opened || !endDate.trim() || !!dateError} busy={attempt.busy}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <p class="context">{context}</p>
@@ -43,7 +36,7 @@
   </form>
   {#snippet notice()}
     {#if attempt.conflict}<ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, id => controller.organizationName(id)), employmentFacts(shown, id => controller.organizationName(id)), { 'End date': readablePartialDate(endDate) })} message={attempt.details} />
-    {:else if !loading && !opened}<InlineNotice message="Couldn't load this job." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
+    {:else if !opened && attempt.details}<InlineNotice message="Couldn't load this job." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
     {:else if attempt.failed}<InlineNotice message="Couldn't end this job." details={attempt.details} actionLabel="Retry" onaction={() => void submit()} />{/if}
   {/snippet}
 </Dialog>

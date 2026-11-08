@@ -42,11 +42,11 @@
   let datesInvalid = $state(false);
   let organizationQuery = $state('');
   let moreDetails = $state(!!(initialEmployment?.department || initialEmployment?.location || initialEmployment?.description));
-  let loading = $state(!!initialEmployment);
-  let loadFailed = $state(false);
   const attempt = new WriteAttempt<Prepared<Employment>>();
   // The job as the person opened it, so a conflict can tell their edits from changes made elsewhere.
   let opened = $state<Prepared<Employment>>();
+  const loading = $derived(!!initialEmployment && !opened && !attempt.details);
+  const loadFailed = $derived(!!initialEmployment && !opened && !!attempt.details);
   let selectedOrganization = $state<Organization>();
   const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
@@ -65,16 +65,13 @@
   onDestroy(() => releaseScope?.());
 
   async function prepare(): Promise<void> {
-    attempt.details = '';
-    loadFailed = false;
     if (!initialEmployment) {
       if (controller.organizations.length === 0) await controller.refreshOrganizations();
       return;
     }
-    loading = true;
-    try {
-      opened = await controller.prepareEmploymentMutation(initialEmployment.id);
-      const current = opened.data;
+    opened = await attempt.prepare(async () => {
+      const prepared = await controller.prepareEmploymentMutation(initialEmployment.id);
+      const current = prepared.data;
       organizationID = String(current.organization_id);
       title = current.title ?? '';
       role = current.role ?? '';
@@ -98,12 +95,8 @@
           updated_at: current.updated_at
         };
       }
-    } catch (cause: unknown) {
-      loadFailed = true;
-      attempt.details = errorMessage(cause);
-    } finally {
-      loading = false;
-    }
+      return prepared;
+    });
   }
 
   function body(current: Employment | undefined = undefined): EmploymentBody {
@@ -150,10 +143,6 @@
 
   function requestClose(): void {
     if (!attempt.busy) { if (attempt.conflict) void controller.refreshEmployments(); attempt.reset(); onClose(); }
-  }
-
-  function errorMessage(value: unknown): string {
-    return value instanceof Error && value.message ? value.message : 'No response from the server.';
   }
 </script>
 

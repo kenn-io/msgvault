@@ -7,12 +7,14 @@ export class WriteAttempt<C = never> {
   details = $state('');
   prepared = $state<C>();
 
-  async prepare(load: () => Promise<C>): Promise<void> {
+  /** Loads the version a later write sends, and returns it once the attempt is idle; undefined when the load failed. */
+  async prepare(load: () => Promise<C>): Promise<C | undefined> {
     this.busy = true;
     this.details = '';
     try {
       const current = await load();
       this.prepared = current;
+      return current;
     } catch (cause) {
       this.details = cause instanceof Error ? cause.message : 'No response from the server.';
     } finally {

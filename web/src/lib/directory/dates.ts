@@ -1,4 +1,4 @@
-import { monthLabels } from '@kenn-io/kit-ui';
+import { localDateStr, monthLabels } from '@kenn-io/kit-ui';
 
 // Mirrors PartialDate.Validate (internal/store/partialdate.go): year 1–9999,
 // month 1–12, and a day that exists in that month. A day without a year is
@@ -73,8 +73,11 @@ export function formatPartialDate(value: { year?: number; month?: number; day?: 
 const MONTHS = monthLabels('short');
 type PartialDateParts = { year?: number; month?: number; day?: number };
 
-/** A stored partial date, or a typed one ("2024-03"), as a person reads it: "2024", "Mar 2024", "Mar 5, 2024". */
-export function readablePartialDate(value: string | PartialDateParts | null | undefined): string {
+/**
+ * A stored partial date, or a typed one ("2024-03"), as a person reads it: "2024", "Mar 2024", "Mar 5, 2024", and a
+ * day this year without its year, "Nov 5".
+ */
+export function readablePartialDate(value: string | PartialDateParts | null | undefined, today: Date = new Date()): string {
   if (!value) return '';
   let date: PartialDateParts | undefined = typeof value === 'string' ? undefined : value;
   if (typeof value === 'string') {
@@ -84,19 +87,17 @@ export function readablePartialDate(value: string | PartialDateParts | null | un
   }
   if (!date?.year) return '';
   const month = date.month ? MONTHS[date.month - 1] : '';
-  return month ? (date.day ? `${month} ${date.day}, ${date.year}` : `${month} ${date.year}`) : String(date.year);
+  if (!month) return String(date.year);
+  if (!date.day) return `${month} ${date.year}`;
+  return date.year === today.getFullYear() ? `${month} ${date.day}` : `${month} ${date.day}, ${date.year}`;
 }
 
 /** A typed date read back in words under its field: "Today, Nov 6", "Nov 5", "Mar 2024". Empty when it isn't a date yet. */
 export function spokenDate(value: string, today: Date = new Date()): string {
   const trimmed = value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
   if (!trimmed || intervalDateError(trimmed)) return '';
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
-  if (!match) return readablePartialDate(trimmed);
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  if (year !== today.getFullYear()) return readablePartialDate(trimmed);
-  const short = `${MONTHS[month - 1]} ${day}`;
-  return month === today.getMonth() + 1 && day === today.getDate() ? `Today, ${short}` : short;
+  const reading = readablePartialDate(trimmed, today);
+  return trimmed === localDateStr(today) ? `Today, ${reading}` : reading;
 }
 
 /**
