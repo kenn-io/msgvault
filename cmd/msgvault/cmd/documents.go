@@ -938,52 +938,10 @@ func executeDocumentBuild(
 		}
 		pending = append(pending, candidate)
 	}
-	var failures []indexedDocumentBuildFailure
-	outcomes, stop := processDocumentCandidates(ctx, worker, pending, documentBuildJobs(documentsConfig))
-	defer stop()
-	for outcome := range outcomes {
-		processErr, extraction := outcome.err, outcome.extraction
-		if processErr != nil && ctx.Err() != nil {
-			runErr = ctx.Err()
-			continue
-		}
-		// A call canceled because this build stopped is not a document failure.
-		if processErr != nil && runErr != nil {
-			continue
-		}
-		if errors.Is(processErr, store.ErrDocumentExtractionClaimed) ||
-			errors.Is(processErr, store.ErrDocumentExtractionCurrent) {
-			result.Skipped++
-			continue
-		}
-		if processErr != nil {
-			result.Failed++
-			failures = append(failures, indexedDocumentBuildFailure{index: outcome.index, failure: documentBuildFailure{
-				CanonicalBlobHash: extraction.CanonicalBlobHash,
-				ReasonCode:        extraction.FailureReasonCode,
-				Detail:            extraction.FailureDetail,
-			}})
-			pass.checkpoint(ctx, documentExtractionCounters(result))
-			continue
-		}
-		result.Processed++
-		result.Units += extraction.ProviderUnits
-		if extraction.CleanupError != nil {
-			result.CleanupFailures++
-		}
-		pass.checkpoint(ctx, documentExtractionCounters(result))
-		if result.Units > documentsConfig.MaxPagesPerRun && runErr == nil {
-			runErr = errors.New("document provider output exceeded max_pages_per_run")
-			stop()
-		}
-	}
-	// Report failures in candidate order, as a serial build would.
-	slices.SortFunc(failures, func(a, b indexedDocumentBuildFailure) int { return a.index - b.index })
-	for _, failure := range failures {
-		result.Failures = append(result.Failures, failure.failure)
-	}
-	if runErr != nil {
-		return result, runErr
+	if err := runDocumentCandidates(
+		ctx, pass, worker, pending, documentBuildJobs(documentsConfig), documentsConfig.MaxPagesPerRun, &result,
+	); err != nil {
+		return result, err
 	}
 	if rebuild != nil {
 		result.Remaining, err = st.CountIncompleteDocumentExtractionRebuild(
@@ -1013,6 +971,69 @@ func executeDocumentBuild(
 		)
 	}
 	return result, nil
+}
+
+// runDocumentCandidates extracts the pending candidates with up to jobs calls
+// in flight and adds each outcome to result. It returns the error that ended
+// the build early, including a cancellation that left candidates unstarted.
+func runDocumentCandidates(
+	ctx context.Context,
+	pass *commandOperationPass,
+	worker documentCandidateProcessor,
+	pending []store.DocumentExtractionCandidate,
+	jobs, maxUnits int,
+	result *documentBuildResult,
+) (runErr error) {
+	var failures []indexedDocumentBuildFailure
+	outcomes, stop := processDocumentCandidates(ctx, worker, pending, jobs)
+	defer stop()
+	for outcome := range outcomes {
+		processErr, extraction := outcome.err, outcome.extraction
+		if processErr != nil && ctx.Err() != nil {
+			runErr = ctx.Err()
+			continue
+		}
+		// A call canceled because this build stopped is not a document failure.
+		if processErr != nil && runErr != nil {
+			continue
+		}
+		if errors.Is(processErr, store.ErrDocumentExtractionClaimed) ||
+			errors.Is(processErr, store.ErrDocumentExtractionCurrent) {
+			result.Skipped++
+			continue
+		}
+		if processErr != nil {
+			result.Failed++
+			failures = append(failures, indexedDocumentBuildFailure{index: outcome.index, failure: documentBuildFailure{
+				CanonicalBlobHash: extraction.CanonicalBlobHash,
+				ReasonCode:        extraction.FailureReasonCode,
+				Detail:            extraction.FailureDetail,
+			}})
+			pass.checkpoint(ctx, documentExtractionCounters(*result))
+			continue
+		}
+		result.Processed++
+		result.Units += extraction.ProviderUnits
+		if extraction.CleanupError != nil {
+			result.CleanupFailures++
+		}
+		pass.checkpoint(ctx, documentExtractionCounters(*result))
+		if result.Units > maxUnits && runErr == nil {
+			runErr = errors.New("document provider output exceeded max_pages_per_run")
+			stop()
+		}
+	}
+	// Report failures in candidate order, as a serial build would.
+	slices.SortFunc(failures, func(a, b indexedDocumentBuildFailure) int { return a.index - b.index })
+	for _, failure := range failures {
+		result.Failures = append(result.Failures, failure.failure)
+	}
+	// Workers stop without an outcome when cancellation arrives before or
+	// between candidates, so no error so far can still leave work pending.
+	if runErr == nil {
+		runErr = ctx.Err()
+	}
+	return runErr
 }
 
 type indexedDocumentBuildFailure struct {
