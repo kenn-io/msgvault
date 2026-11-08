@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,7 +52,7 @@ func (s *syncState) initialize() {
 	if s.TranscriptRetryUntil == nil {
 		s.TranscriptRetryUntil = map[string]string{}
 	}
-	for _, pending := range s.Pending {
+	for _, pending := range append(append([]pendingTranscript(nil), s.Pending...), s.PendingBacklog...) {
 		if retained := s.TranscriptRetryUntil[pending.BlockID]; retained == "" || retained < pending.RetryUntil {
 			s.TranscriptRetryUntil[pending.BlockID] = pending.RetryUntil
 		}
@@ -62,6 +63,22 @@ func (s *syncState) initialize() {
 	if s.Coverage.Reasons == nil {
 		s.Coverage.Reasons = map[string]int{}
 	}
+}
+
+func (s *syncState) schedulePendingBacklog(now time.Time, limit int) {
+	pending := append(append([]pendingTranscript(nil), s.Pending...), s.PendingBacklog...)
+	pending = slices.DeleteFunc(pending, func(item pendingTranscript) bool { return pendingExpired(item, now) })
+	sort.Slice(pending, func(i, j int) bool {
+		left, _ := time.Parse(time.RFC3339, pending[i].NextAttemptAt)
+		right, _ := time.Parse(time.RFC3339, pending[j].NextAttemptAt)
+		if left.Equal(right) {
+			return pending[i].BlockID < pending[j].BlockID
+		}
+		return left.Before(right)
+	})
+	active := min(len(pending), limit)
+	s.Pending = pending[:active:active]
+	s.PendingBacklog = pending[active:]
 }
 func normalizedIDs(ids []string) []string {
 	set := map[string]bool{}
@@ -165,6 +182,7 @@ func (s syncState) validateTransientWith(limits discoveryLimits) error {
 	}
 	s.Known = nil
 	s.TranscriptRetryUntil = nil
+	s.PendingBacklog = nil
 	encoded, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -175,7 +193,7 @@ func (s syncState) validateTransientWith(limits discoveryLimits) error {
 	return nil
 }
 func (s syncState) workRemaining() int {
-	return len(s.Admissions) + len(s.Frontier) + len(s.Windows) + len(s.Pending) + len(s.Deferred)
+	return len(s.Admissions) + len(s.Frontier) + len(s.Windows) + len(s.Pending) + len(s.PendingBacklog) + len(s.Deferred)
 }
 
 // copyDiscovery isolates a provider page until all its work fits a durable cursor.

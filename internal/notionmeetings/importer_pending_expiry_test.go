@@ -160,3 +160,35 @@ func TestDuePendingSelectionIsIndependentOfKnownRefresh(t *testing.T) {
 	assert.NotContains(t, state.refreshIDs(32), "pending-z")
 	assert.Equal(t, []string{"pending-z"}, state.duePendingIDs(now, 32))
 }
+
+func TestImporterMigratesLegacyPendingOverflow(t *testing.T) {
+	st, source, imp := newImporterFixture(t)
+	source.query.Results = nil
+	now := imp.now()
+	state := newSyncState()
+	state.Version = 1
+	deadline := now.Add(24 * time.Hour).Format(time.RFC3339)
+	for i := range 205 {
+		id := fmt.Sprintf("legacy-%03d", i)
+		state.Known[id] = knownMeeting{}
+		state.Pending = append(state.Pending, pendingTranscript{BlockID: id, NextAttemptAt: now.Add(time.Hour).Format(time.RFC3339), RetryUntil: deadline})
+	}
+	cursor, err := json.Marshal(state)
+	require.NoError(t, err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(t, err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(t, err)
+	require.NoError(t, st.CompleteSyncContext(t.Context(), run, string(cursor)))
+	noSearch := false
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", UserID: "creator-1", SearchAccessible: &noSearch})
+	require.NoError(t, err)
+	recovered, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(t, err)
+	assert.Len(t, recovered.Pending, 200)
+	assert.Len(t, recovered.PendingBacklog, 5)
+	assert.Len(t, recovered.Known, 205)
+	assert.Len(t, recovered.TranscriptRetryUntil, 205)
+	assert.Equal(t, deadline, recovered.TranscriptRetryUntil["legacy-204"])
+	assert.Equal(t, syncStateVersion, recovered.Version)
+}

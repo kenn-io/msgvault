@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	syncStateVersion           = 2
+	syncStateVersion           = 3
 	notionSnapshotVersion      = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
@@ -123,6 +122,7 @@ type syncState struct {
 	LastQueryAt          string                  `json:"last_query_at"`
 	Known                map[string]knownMeeting `json:"known"`
 	Pending              []pendingTranscript     `json:"pending,omitempty"`
+	PendingBacklog       []pendingTranscript     `json:"pending_backlog,omitempty"`
 	TranscriptRetryUntil map[string]string       `json:"transcript_retry_until,omitempty"`
 	Coverage             Coverage                `json:"coverage"`
 }
@@ -140,11 +140,12 @@ func (s syncState) marshal() (string, error) {
 }
 
 func (s syncState) validate() error {
-	if s.Version != 1 && s.Version != syncStateVersion {
+	if s.Version != 1 && s.Version != 2 && s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
-	seen := make(map[string]struct{}, len(s.Pending))
-	for index, pending := range s.Pending {
+	allPending := append(append([]pendingTranscript(nil), s.Pending...), s.PendingBacklog...)
+	seen := make(map[string]struct{}, len(allPending))
+	for index, pending := range allPending {
 		if strings.TrimSpace(pending.BlockID) == "" {
 			return fmt.Errorf("pending[%d] has a blank block_id", index)
 		}
@@ -171,6 +172,10 @@ func (s syncState) validate() error {
 		if _, err := time.Parse(time.RFC3339, s.TranscriptRetryUntil[id]); err != nil {
 			return errors.New("transcript_retry_until must be an RFC3339 timestamp")
 		}
+	}
+	if s.Version == 1 {
+		// Legacy cursors predate the active pending queue limit.
+		s.Pending = nil
 	}
 	return s.validateDiscovery()
 }
@@ -202,10 +207,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
-	// loadState retains retry deadlines before expired pending slots are freed.
-	state.Pending = slices.DeleteFunc(state.Pending, func(pending pendingTranscript) bool {
-		return pendingExpired(pending, started)
-	})
+	// Rotate legacy overflow into bounded active slots after retaining deadlines.
+	state.schedulePendingBacklog(started, limits.Pending)
 	syncID, err := imp.store.StartSyncContext(ctx, source.ID, SourceType)
 	if err != nil {
 		return sum, err
@@ -531,10 +534,12 @@ func (s syncState) refreshIDs(limit int) []string {
 func (s syncState) duePendingIDs(now time.Time, limit int) []string {
 	pending := append([]pendingTranscript(nil), s.Pending...)
 	sort.Slice(pending, func(i, j int) bool {
-		if pending[i].NextAttemptAt == pending[j].NextAttemptAt {
+		left, _ := time.Parse(time.RFC3339, pending[i].NextAttemptAt)
+		right, _ := time.Parse(time.RFC3339, pending[j].NextAttemptAt)
+		if left.Equal(right) {
 			return pending[i].BlockID < pending[j].BlockID
 		}
-		return pending[i].NextAttemptAt < pending[j].NextAttemptAt
+		return left.Before(right)
 	})
 	ids := make([]string, 0, min(len(pending), limit))
 	for _, item := range pending {
