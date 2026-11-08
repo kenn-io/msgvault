@@ -448,7 +448,7 @@ it('shows a media link once in a conflict', async () => {
     const request = requestOf(input);
     if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
     const profile = organizationProfile(++reads);
-    return Response.json({ ...profile, media: [{ ...profile.media[0], uri: 'https://example.org/logo.png' }] }, { headers: { ETag: `"organization-21-r${reads}"` } });
+    return Response.json({ ...profile, media: [{ ...profile.media[0], original_value: 'https://example.org/logo.png', uri: 'https://example.org/logo.png' }] }, { headers: { ETag: `"organization-21-r${reads}"` } });
   });
   render(OrganizationEditor, { controller, organization: organization() });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });

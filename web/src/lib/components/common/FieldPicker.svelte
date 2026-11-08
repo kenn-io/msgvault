@@ -37,7 +37,7 @@
     header={error && !loading ? errorRow : undefined} />
   {#if creating}<div class="creation">
     {@render creation?.()}
-    {#if onexisting && existingLabel}<button class="existing kit-control-states" type="button" onclick={onexisting}>{existingLabel}</button>{/if}
+    {#if onexisting && existingLabel}<button class="existing kit-control-states" type="button" {disabled} onclick={onexisting}>{existingLabel}</button>{/if}
   </div>{/if}
 </div>
 

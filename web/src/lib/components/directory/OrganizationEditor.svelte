@@ -237,7 +237,7 @@
     if (sections.includes('contact_points')) for (const item of profile.contact_points ?? []) add(CONTACT_LABELS[item.address_kind] ?? sentenceCase(item.address_kind), { value: item.original_value, envelope: item.envelope, record: { ...item, address_kind: undefined } });
     if (sections.includes('addresses')) for (const item of profile.addresses ?? []) add('Address', { value: item.original_value, envelope: item.envelope, record: item });
     if (sections.includes('identifiers')) for (const item of profile.identifiers ?? []) add('Identifier', { value: item.identifier_value, envelope: item.envelope, record: item });
-    if (sections.includes('media')) for (const item of profile.media ?? []) add('Media', { value: present([item.original_value, item.media_type, item.uri]), envelope: item.envelope, record: { ...item, uri: undefined } });
+    if (sections.includes('media')) for (const item of profile.media ?? []) add('Media', { value: present([item.original_value, item.media_type, item.uri === item.original_value ? undefined : item.uri]), envelope: item.envelope, record: { ...item, uri: undefined } });
     return [...groups].map(([title, rows]) => ({ title, rows }));
   }
 
