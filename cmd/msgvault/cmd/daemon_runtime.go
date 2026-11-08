@@ -640,19 +640,39 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 	if rt.Record.Version == "" {
 		return !update.IsDevBuildVersion(currentVersion)
 	}
-	if rt.Record.Version == currentVersion {
-		return false
-	}
-	if update.IsDevBuildVersion(currentVersion) || strings.HasSuffix(currentVersion, "-dirty") {
-		cli := "v" + strings.TrimPrefix(strings.TrimSuffix(currentVersion, "-dirty"), "v")
-		daemon := "v" + strings.TrimPrefix(rt.Record.Version, "v")
-		return semver.IsValid(cli) && semver.IsValid(daemon) && !update.IsNewer(daemon, cli)
+	if cli, daemon, source := sourceBuildVersions(rt, currentVersion); source {
+		release := !update.IsDevBuildVersion(rt.Record.Version) && !strings.HasSuffix(rt.Record.Version, "-dirty")
+		return semver.IsValid(cli) && semver.IsValid(daemon) && (update.IsNewer(cli, daemon) || release && !update.IsNewer(daemon, cli))
 	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
 }
 
+// sourceBuildVersions reports whether currentVersion is a source build, a dirty
+// build of a tag included, and returns both versions in semver form without
+// their dirty suffixes.
+func sourceBuildVersions(rt *DaemonRuntime, currentVersion string) (cli, daemon string, source bool) {
+	if rt == nil || !update.IsDevBuildVersion(currentVersion) && !strings.HasSuffix(currentVersion, "-dirty") {
+		return "", "", false
+	}
+	cli = "v" + strings.TrimPrefix(strings.TrimSuffix(currentVersion, "-dirty"), "v")
+	daemon = "v" + strings.TrimPrefix(strings.TrimSuffix(rt.Record.Version, "-dirty"), "v")
+	return cli, daemon, true
+}
+
+// shouldReportRetainedDaemonVersion covers a kept daemon the default policy
+// would replace, and another source build of this CLI's release, which is kept
+// because version strings can't tell which of two source builds is newer.
+func shouldReportRetainedDaemonVersion(rt *DaemonRuntime, currentVersion string) bool {
+	if shouldUpgradeDaemonRuntimeWithPolicy(rt, currentVersion, config.DaemonAutoRestartNewer) {
+		return true
+	}
+	cli, daemon, source := sourceBuildVersions(rt, currentVersion)
+	return source && semver.IsValid(cli) && semver.IsValid(daemon) && rt.Record.Version != currentVersion &&
+		!update.IsNewer(cli, daemon) && !update.IsNewer(daemon, cli)
+}
+
 func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
-	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
+	if shouldReportRetainedDaemonVersion(rt, Version) {
 		options := optionsFromContext(ctx)
 		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
 		executable, err := daemonCLIExecutableResolver()

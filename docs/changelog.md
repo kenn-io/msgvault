@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Source upgrades replace local daemons from the same or an older release when both versions are comparable. Commands that retain an eligible daemon print both versions and a restart command for the selected archive.
+- A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps

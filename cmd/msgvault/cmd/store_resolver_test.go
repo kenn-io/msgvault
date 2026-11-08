@@ -1201,6 +1201,7 @@ type openHTTPStoreDaemonVersionCase struct {
 
 func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
 	for _, tt := range []openHTTPStoreDaemonVersionCase{
+		{name: "same base source stays", cli: "v0.23.0-45-gabc", daemon: "v0.23.0-46-gdef", notice: true},
 		{name: "source replaces release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true},
 		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true},
 		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true},
@@ -1217,9 +1218,12 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 		t)
 
 	withTestVersion(t, tt.cli)
+	savedResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/selected-msgvault", nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
-	if tt.notice && !tt.disabled {
+	if tt.notice && !tt.disabled && tt.daemon == "v0.23.0" {
 		localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
 	}
 	if tt.disabled {
@@ -1311,6 +1315,9 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	assert.Equal(wantURL, info.URL)
 	if tt.notice {
 		assert.Contains(stderr, "daemon restart")
+		assert.Contains(stderr, tt.cli)
+		assert.Contains(stderr, tt.daemon)
+		assert.Contains(stderr, "/tmp/selected-msgvault")
 	} else if tt.replace {
 		assert.Contains(stderr, "Starting local msgvault daemon")
 	} else {

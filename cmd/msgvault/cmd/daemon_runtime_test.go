@@ -422,23 +422,34 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 		name    string
 		options invocationOptions
 		restart string
+		daemon  string
 	}{
-		{name: "default archive", restart: map[string]string{
+		{name: "default archive", daemon: "v0.23.0", restart: map[string]string{
 			"linux":   "'/tmp/source build/msgvault' daemon restart",
 			"darwin":  "'/tmp/source build/msgvault' daemon restart",
 			"windows": "& '/tmp/source build/msgvault' 'daemon' 'restart'",
 		}[runtime.GOOS]},
-		{name: "both selections", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"}, restart: map[string]string{
+		{name: "both selections", daemon: "v0.23.0", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"}, restart: map[string]string{
 			"linux":   "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
 			"darwin":  "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
 			"windows": "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'",
 		}[runtime.GOOS]},
+		{name: "retained same base source", daemon: "v0.23.0-46-gdef", restart: map[string]string{
+			"linux":   "'/tmp/source build/msgvault' daemon restart",
+			"darwin":  "'/tmp/source build/msgvault' daemon restart",
+			"windows": "& '/tmp/source build/msgvault' 'daemon' 'restart'",
+		}[runtime.GOOS]},
+		{name: "equal source stays quiet", daemon: "v0.23.0-45-gabc"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var stderr bytes.Buffer
 			ctx := testInvocationContext(t.Context(), nil, tt.options)
-			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: "v0.23.0"}})
-			assert.Equal(t, "msgvault: daemon v0.23.0 is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version.\n", stderr.String())
+			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemon}})
+			if tt.restart == "" {
+				assert.Empty(t, stderr.String())
+				return
+			}
+			assert.Equal(t, "msgvault: daemon "+tt.daemon+" is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version.\n", stderr.String())
 		})
 	}
 }
@@ -489,8 +500,12 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
 		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
 		{name: "source keeps hash daemon", daemonVersion: "abc1234", currentVersion: "v0.23.0-45-gabc"},
-		{name: "same base later source replaces earlier", daemonVersion: "v0.23.0-44-gdef", currentVersion: "v0.23.0-45-gabc", want: true},
-		{name: "same base earlier source replaces later", daemonVersion: "v0.23.0-46-gdef", currentVersion: "v0.23.0-45-gabc", want: true},
+		{name: "same base later source keeps earlier", daemonVersion: "v0.23.0-44-gdef", currentVersion: "v0.23.0-45-gabc"},
+		{name: "same base earlier source keeps later", daemonVersion: "v0.23.0-46-gdef", currentVersion: "v0.23.0-45-gabc"},
+		{name: "count boundary later keeps earlier", daemonVersion: "v0.23.0-9-gdef", currentVersion: "v0.23.0-10-gabc"},
+		{name: "count boundary earlier keeps later", daemonVersion: "v0.23.0-10-gabc", currentVersion: "v0.23.0-9-gdef"},
+		{name: "equal count differing hashes stay", daemonVersion: "v0.23.0-45-gdef", currentVersion: "v0.23.0-45-gabc"},
+		{name: "source keeps dirty tag daemon", daemonVersion: "v0.23.0-dirty", currentVersion: "v0.23.0-45-gabc"},
 	}
 
 	for _, tt := range tests {
