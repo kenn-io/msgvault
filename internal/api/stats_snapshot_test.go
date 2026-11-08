@@ -158,16 +158,17 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
+		require := require.New(t)
 		srv, slow, _ := newSlowAccountsServer(t, st)
 		t.Cleanup(func() { close(slow.release) })
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+		defer func() { require.NoError(srv.Shutdown(t.Context())) }()
 		getAccounts := func() cliAccountsResponse {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			var response cliAccountsResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 			return response
 		}
 		assert.False(getAccounts().Stale)
@@ -176,6 +177,8 @@ func TestHandleCLIAccountsServesStaleCountsWhenSlow(t *testing.T) {
 		assert.Equal(500*time.Millisecond, time.Since(started), "the server configures the short warm-count budget")
 		assert.True(response.Stale)
 		assert.False(response.AsOf.IsZero())
+		require.Len(response.Accounts, 1)
+		assert.EqualValues(1, response.Accounts[0].MessageCount)
 	})
 }
 
@@ -298,6 +301,7 @@ func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
 
 type catalogReadStore struct {
 	*store.Store
+
 	readCatalog func(context.Context) (map[int64][]store.VirtualAccount, error)
 }
 

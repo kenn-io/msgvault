@@ -123,7 +123,8 @@ func TestListAccountsStaleCountAge(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		asOf := time.Date(1999, time.December, 31, 18, 56, 59, 123000000, time.FixedZone("test", -5*60*60))
-		stats := daemonAccountsToStats([]daemonclient.CLIAccount{{ID: 7, Email: "counts@example.test", Type: "gmail", MessageCount: 1234, SourceDeletedCount: 2, Stale: true, AsOf: &asOf}}, false)
+		account := daemonclient.CLIAccount{ID: 7, Email: "counts@example.test", Type: "gmail", MessageCount: 1234, SourceDeletedCount: 2, Stale: true, AsOf: &asOf}
+		stats := daemonAccountsToStats([]daemonclient.CLIAccount{account}, false)
 		done := captureStdout(t)
 		outputAccountsTable(stats)
 		assert.Contains(done(), "1,234 (+2 deleted from source) (counted 3 minutes ago)")
@@ -132,8 +133,23 @@ func TestListAccountsStaleCountAge(t *testing.T) {
 		var rows []map[string]any
 		require.NoError(json.Unmarshal([]byte(done()), &rows))
 		require.Len(rows, 1)
-		assert.Equal(float64(1234), rows[0]["message_count"])
+		assert.InDelta(1234, rows[0]["message_count"], 0)
 		assert.Equal(true, rows[0]["stale"])
 		assert.Equal("1999-12-31T18:56:59.123-05:00", rows[0]["as_of"])
+
+		account.Stale = false
+		stats = daemonAccountsToStats([]daemonclient.CLIAccount{account}, false)
+		done = captureStdout(t)
+		outputAccountsTable(stats)
+		freshTable := done()
+		assert.Contains(freshTable, "1,234 (+2 deleted from source)")
+		assert.NotContains(freshTable, "counted")
+		done = captureStdout(t)
+		require.NoError(outputAccountsJSON(stats))
+		var freshRows []map[string]any
+		require.NoError(json.Unmarshal([]byte(done()), &freshRows))
+		require.Len(freshRows, 1)
+		assert.NotContains(freshRows[0], "stale")
+		assert.NotContains(freshRows[0], "as_of")
 	})
 }
