@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sort"
@@ -13,6 +16,7 @@ import (
 // ImportantDateLineage is an owner-only inspection of connected identity
 // history. It does not approve any mapping or release a quarantined identity.
 type ImportantDateLineage struct {
+	Digest           string                        `json:"digest,omitempty"`
 	IdentityRevision int64                         `json:"identity_revision"`
 	PersonIDs        []int64                       `json:"person_ids"`
 	MissingPersonIDs []int64                       `json:"missing_person_ids"`
@@ -302,5 +306,11 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	sort.Slice(result.Deliveries, func(i, j int) bool { return result.Deliveries[i].OccurrenceKey < result.Deliveries[j].OccurrenceKey })
 	sort.Slice(result.MergeIDs, func(i, j int) bool { return result.MergeIDs[i] < result.MergeIDs[j] })
 	sort.Slice(result.SplitIDs, func(i, j int) bool { return result.SplitIDs[i] < result.SplitIDs[j] })
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return ImportantDateLineage{}, fmt.Errorf("encode important-date lineage: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	result.Digest = hex.EncodeToString(digest[:])
 	return result, nil
 }
