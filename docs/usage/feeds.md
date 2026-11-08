@@ -66,7 +66,7 @@ msgvault search "release notes" --message-type feed_item
 | Item part | Where it goes |
 |---|---|
 | Title | The message subject |
-| Content, or the summary when there is none | The message body; HTML is kept, with a plain-text form for search and previews |
+| Content, or the summary when there is none | The message body. HTML is kept, with a plain-text form for search and previews; plain text, such as JSON Feed `content_text` or Atom text content, is kept as text |
 | Link | The end of the body |
 | Published time, else updated time | The message date; an item without one is dated when first seen |
 | Categories, enclosures, and image | The message's metadata |

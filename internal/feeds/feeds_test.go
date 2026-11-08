@@ -480,6 +480,57 @@ func feedURLs(summary Summary) []string {
 	return urls
 }
 
+func TestPlainTextBodiesKeepTheirAngleBrackets(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	server := newFeedServer(t, map[string]string{
+		"/text.json": `{"version": "https://jsonfeed.org/version/1.1", "title": "Text JSON",
+			"items": [{"id": "j-text", "title": "JSON text", "content_text": "Use <widget> here."}]}`,
+		"/text.atom": `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Text Atom</title>
+  <id>urn:example:text</id>
+  <updated>2026-11-07T15:00:00Z</updated>
+  <entry>
+    <title>Atom text</title>
+    <id>urn:example:text:1</id>
+    <updated>2026-11-07T15:00:00Z</updated>
+    <content>Use &lt;gadget&gt; here.</content>
+  </entry>
+</feed>`,
+	})
+	_, err := newTestSyncer(st, time.Now()).Follow(t.Context(), []string{server.url("/text.json"), server.url("/text.atom")})
+	require.NoError(err)
+
+	items := archivedItems(t, st)
+	assert.Equal("Use <widget> here.", items["j-text"].Body, "JSON content_text is plain text")
+	assert.False(items["j-text"].BodyHTML.Valid)
+	assert.Equal("Use <gadget> here.", items["urn:example:text:1"].Body, "Atom content without a type is text")
+	assert.False(items["urn:example:text:1"].BodyHTML.Valid)
+}
+
+func TestFeedsCarryingNULStillArchive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	server := newFeedServer(t, map[string]string{"/nul.json": `{"version": "https://jsonfeed.org/version/1.1",
+		"title": "NUL\u0000 feed",
+		"items": [
+			{"id": "bad\u0000id", "title": "Bad\u0000 title", "content_text": "a\u0000b"},
+			{"id": "good", "title": "Good", "content_text": "fine"}
+		]}`})
+	summary, err := newTestSyncer(st, time.Now()).Follow(t.Context(), []string{server.url("/nul.json")})
+	require.NoError(err)
+	require.NoError(summary.Feeds[0].Err)
+	assert.Equal(2, summary.Added())
+	items := archivedItems(t, st)
+	assert.Equal("Bad title", items["badid"].Subject)
+	assert.Equal("NUL feed", items["good"].FeedTitle)
+}
+
 func TestFeedsWithTheSameItemIDsKeepTheirOwnItems(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

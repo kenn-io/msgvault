@@ -60,10 +60,6 @@ func itemMessage(
 	case item.UpdatedParsed != nil:
 		sentAt = *item.UpdatedParsed
 	}
-	body := strings.TrimSpace(item.Content)
-	if body == "" {
-		body = strings.TrimSpace(item.Description)
-	}
 	message := messageimport.ImportedMessage{
 		ExternalID:  itemKey(feedURL, item, link),
 		MessageType: MessageType,
@@ -75,10 +71,25 @@ func itemMessage(
 		Title:    truncate(strings.TrimSpace(item.Title), maxTitleChars),
 		URL:      link,
 		SentAt:   sentAt.UTC().Format(time.RFC3339Nano),
-		BodyHTML: body,
 		Metadata: itemMetadata(item, documentURL),
 	}
+	body, plain := itemBody(item)
+	if plain {
+		message.BodyText = body
+	} else {
+		message.BodyHTML = body
+	}
 	return message
+}
+
+// itemBody is the item's content, else its summary, and whether it is plain
+// text rather than HTML. RSS bodies are HTML; parseFeed marks the Atom and
+// JSON Feed ones that are plain text.
+func itemBody(item *gofeed.Item) (string, bool) {
+	if content := strings.TrimSpace(item.Content); content != "" {
+		return content, item.Custom[customContentIsText] != ""
+	}
+	return strings.TrimSpace(item.Description), item.Custom[customDescriptionIsText] != ""
 }
 
 // itemSender names who wrote an item. An author with a URL is that site's

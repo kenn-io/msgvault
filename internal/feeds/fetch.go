@@ -1,7 +1,6 @@
 package feeds
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -129,7 +128,7 @@ func (f *Fetcher) Fetch(ctx context.Context, feedURL string, validators Validato
 	if int64(len(body)) > maxBytes {
 		return Fetched{}, ErrFeedTooLarge
 	}
-	feed, err := gofeed.NewParser().Parse(bytes.NewReader(body))
+	feed, err := parseFeed(body)
 	if err != nil {
 		return Fetched{}, fmt.Errorf("%w: %w", ErrNotAFeed, err)
 	}
