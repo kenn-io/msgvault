@@ -7857,6 +7857,13 @@ components:
       type: object
     MediaSearchResponse:
       properties:
+        actual_mode:
+          enum:
+            - lexical
+            - semantic
+            - hybrid
+            - unavailable
+          type: string
         attachments:
           $ref: "#/components/schemas/MediaAttachmentSearch"
         attribution_unavailable:
@@ -7865,6 +7872,10 @@ components:
           type: integer
         coverage:
           $ref: "#/components/schemas/SearchCoverage"
+        degradations:
+          items:
+            type: string
+          type: array
         partial:
           description: Coverage or occurrence attribution is incomplete, even with no matching excerpts
           type: boolean
@@ -7873,6 +7884,13 @@ components:
           type: integer
         recordings_error:
           $ref: "#/components/schemas/ErrorResponse"
+        requested_mode:
+          description: Requested recording mode; independent of attachment mode
+          enum:
+            - lexical
+            - semantic
+            - hybrid
+          type: string
         results:
           items:
             $ref: "#/components/schemas/MediaSearchResult"
@@ -7883,6 +7901,8 @@ components:
           format: int64
           type: integer
       required:
+        - requested_mode
+        - actual_mode
         - coverage
         - pending_occurrences
         - unavailable_occurrences
@@ -17066,7 +17086,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.48.0
+  version: 3.49.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24810,6 +24830,11 @@ paths:
         - description: Lexical mode; semantic and hybrid are unavailable
           in: query
           name: mode
+          schema:
+            type: string
+        - description: "Recording transcript mode: lexical (default), semantic, or hybrid; independent of attachment mode"
+          in: query
+          name: recordings_mode
           schema:
             type: string
         - description: Durable person ID
