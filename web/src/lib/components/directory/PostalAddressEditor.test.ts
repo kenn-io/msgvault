@@ -264,10 +264,10 @@ it('binds DOM edits to request invalidation and suppresses duplicate external cl
  expect(check).toHaveBeenCalledOnce();
  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed street' } });
  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: raw.street_address } });
- release({ original: raw, proposed: { ...raw, street_address: 'Stale correction' }, provider: 'google', status: 'validated', reason_codes: [], fingerprint: await postalFingerprint(raw) });
- await waitFor(() => expect(screen.queryByText('Checking address…')).toBeNull());
+ await act(async () => { release({ original: raw, proposed: { ...raw, street_address: 'Stale correction' }, provider: 'google', status: 'validated', checked_at: when, reason_codes: [], fingerprint: await postalFingerprint(raw) }); await pending; });
+ expect(screen.queryByText('Original address')).toBeNull();
  expect(screen.queryByText('Google Maps')).toBeNull();
- expect(screen.queryByText('Stale correction')).toBeNull();
+ expect(screen.queryByText(/Stale correction/)).toBeNull();
  expect(requests).toHaveLength(0);
 });
 

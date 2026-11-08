@@ -36,6 +36,7 @@ describe('PostalReviewSession', () => {
     expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street', street_address: '12 Example Street', locality: 'Example City' })).toBe('12 Example Street, Example City');
     expect(postalAddressText({ address_kind: 'postal', free_text: 'Use side door', street_address: '12 Example Street' })).toBe('Use side door, 12 Example Street');
     expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street\nExample City', street_address: '12 Example Street', locality: 'Example City' })).toBe('12 Example Street, Example City');
+    expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street, Example City', street_address: '12 Example Street', locality: 'Example City', country_code: 'CA' })).toBe('12 Example Street, Example City, CA');
   });
   it('fingerprints every field, Unicode and whitespace, with the Go length-framed contract', async () => {
     const fingerprint = await postalFingerprint(input);
