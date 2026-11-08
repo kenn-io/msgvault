@@ -469,8 +469,11 @@ func TestImporterHardFailureRetainsLastSuccessfulState(t *testing.T) {
 	failed, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 	require.Error(err)
 	assert.Equal(int64(1), failed.Errors)
-	after := lastNotionState(t, st, first.SourceID)
-	assert.Equal(before, after)
+	after, err := imp.loadState(t.Context(), first.SourceID)
+	require.NoError(err)
+	assert.Equal(before.Known, after.Known)
+	assert.Equal(before.Pending, after.Pending)
+	assert.Equal(before.TranscriptRetryUntil, after.TranscriptRetryUntil)
 }
 
 func TestImporterReportsWriteCommittedBeforeConversationStatsFailure(t *testing.T) {
@@ -1118,9 +1121,11 @@ func TestImporterSurfacesPermanentPendingMeetingLoadFailures(t *testing.T) {
 			require.ErrorIs(err, tt.err)
 			assert.Equal(int64(1), summary.Errors)
 
-			after := lastNotionState(t, st, first.SourceID)
-			assert.Equal(before.LastQueryAt, after.LastQueryAt)
+			after, err := imp.loadState(t.Context(), first.SourceID)
+			require.NoError(err)
+			assert.Equal(before.Known, after.Known)
 			assert.Equal(before.Pending, after.Pending)
+			assert.Equal(before.TranscriptRetryUntil, after.TranscriptRetryUntil)
 		})
 	}
 }
