@@ -147,6 +147,9 @@ func (s DeliveryService) notify(ctx context.Context, input DeliveryInput, issueU
 			return errDeliveryIneligible
 		}
 		issue, err := s.Kata.GetTask(fenced, input.Project, issueUID)
+		if errors.Is(err, taskclient.ErrNotFound) {
+			return errIssueClosed
+		}
 		if err != nil {
 			return err
 		}

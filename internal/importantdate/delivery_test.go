@@ -58,6 +58,7 @@ func (f *deliveryStoreFake) WithImportantDateConsentContext(ctx context.Context,
 type deliveryKataFake struct {
 	projectUID             string
 	lookupError            error
+	getError               error
 	existing               bool
 	notifyError            error
 	issueStatus            string
@@ -84,6 +85,9 @@ func (f *deliveryKataFake) CreateTaskReused(_ context.Context, project, _ string
 	return taskclient.KataTask{UID: "issue-example", Project: project, Status: "open"}, false, nil
 }
 func (f *deliveryKataFake) GetTask(_ context.Context, project, uid string) (taskclient.KataTask, error) {
+	if f.getError != nil {
+		return taskclient.KataTask{}, f.getError
+	}
 	status := f.issueStatus
 	if status == "" {
 		status = "open"
@@ -210,6 +214,29 @@ func TestDeliveryDoesNotNotifyClosedIssueAfterPreflightFailure(t *testing.T) {
 	}
 	must.Error(service.Deliver(t.Context(), input, revalidate))
 	kata.issueStatus = "closed"
+	must.NoError(service.Deliver(t.Context(), input, revalidate))
+	checks.Equal(store.ImportantDateCancelled, st.state)
+	checks.Equal(1, kata.creates)
+	checks.Zero(kata.notifications)
+}
+
+func TestDeliveryDoesNotNotifyMissingRetainedIssue(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := &deliveryStoreFake{consent: true}
+	kata := &deliveryKataFake{}
+	service := DeliveryService{Store: st, Kata: kata}
+	input := DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+	calls := 0
+	revalidate := func(context.Context) (bool, error) {
+		calls++
+		if calls == 2 {
+			return false, errors.New("preflight unavailable")
+		}
+		return true, nil
+	}
+	must.Error(service.Deliver(t.Context(), input, revalidate))
+	kata.getError = taskclient.ErrNotFound
 	must.NoError(service.Deliver(t.Context(), input, revalidate))
 	checks.Equal(store.ImportantDateCancelled, st.state)
 	checks.Equal(1, kata.creates)
