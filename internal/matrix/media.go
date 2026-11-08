@@ -53,9 +53,13 @@ func (imp *Importer) recordMissingMedia(ctx context.Context, messageID int64, co
 	if err != nil || len(recorded) > 0 {
 		return err
 	}
-	archived, content, _, err := imp.archivedMediaContent(ctx, messageID)
+	archived, content, selected, err := imp.archivedMediaContent(ctx, messageID)
 	if err != nil || !content.MsgType.IsMedia() {
 		return err
+	}
+	if selected.Content == nil && selected.EventID != "" {
+		// Older archives saved only the selected edit ID; legacy discovery looks up its media.
+		return nil
 	}
 	return imp.persistMedia(ctx, messageID, content, archived.Type, conversation, opts, sum)
 }
@@ -290,7 +294,7 @@ func (imp *Importer) existingMediaAttachments(ctx context.Context, messageID int
 	for _, ref := range existing {
 		var metadata matrixMediaMetadata
 		if json.Unmarshal([]byte(ref.Metadata), &metadata) == nil && strings.HasPrefix(metadata.Input, "sha256:v") && !strings.HasPrefix(metadata.Input, "sha256:v1:") {
-			return nil, fmt.Errorf("unsupported Matrix media fingerprint format %q", metadata.Input)
+			return nil, errors.New("saved Matrix media uses a newer fingerprint format; upgrade msgvault")
 		}
 	}
 	return existing, nil

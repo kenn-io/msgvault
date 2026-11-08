@@ -531,7 +531,7 @@ func TestImportMediaEncryptionReplacementAndReuse(t *testing.T) {
 				req.NoError(err)
 				f.timeline = []*event.Event{matrixTestEvent(t, string(raw))}
 				_, err = NewImporter(f.store, runtime).Import(t.Context(), opts)
-				req.ErrorContains(err, "unsupported Matrix media fingerprint format")
+				req.ErrorContains(err, "saved Matrix media uses a newer fingerprint format")
 				check.Equal(bodyBefore, f.body(t, "$media"))
 				metadataAfter, err := f.store.GetMessageMetadata(ids["$media"])
 				req.NoError(err)
@@ -1780,23 +1780,25 @@ func TestImportLegacyMediaDiscoveryRetriesIncompleteSync(t *testing.T) {
 }
 
 func TestImportFullDiscoversLegacyMediaWithoutSourceHistory(t *testing.T) {
-	for _, scenario := range []string{"joined-without-saved-content", "shrunken-roster", "redacted", "left", "left-edited", "left-text-edited"} {
+	for _, scenario := range []string{"joined-without-saved-content", "joined-edited", "joined-text-edited", "shrunken-roster", "redacted", "left", "left-edited", "left-text-edited"} {
 		t.Run(scenario, func(t *testing.T) {
 			req, check := require.New(t), assert.New(t)
 			f := newRecoveryFixture(t)
 			f.timeline = []*event.Event{matrixTestEvent(t, `{"type":"m.room.message","event_id":"$media","sender":"@member:example.org","origin_server_ts":10,"content":{"msgtype":"m.file","body":"file","url":"mxc://example.org/original"}}`)}
 			want := "original"
-			if scenario == "left-edited" || scenario == "left-text-edited" {
+			edited := strings.HasSuffix(scenario, "-edited")
+			textEdited := strings.HasSuffix(scenario, "text-edited")
+			if edited {
 				f.timeline = append(f.timeline, matrixTestEvent(t, `{"type":"m.room.message","event_id":"$edit","sender":"@member:example.org","origin_server_ts":20,"content":{"msgtype":"m.file","body":"* selected","m.new_content":{"msgtype":"m.file","body":"selected","url":"mxc://example.org/selected"},"m.relates_to":{"rel_type":"m.replace","event_id":"$media"}}}`))
 				want = "selected"
-				if scenario == "left-text-edited" {
+				if textEdited {
 					f.timeline[1] = matrixTestEvent(t, `{"type":"m.room.message","event_id":"$edit","sender":"@member:example.org","origin_server_ts":20,"content":{"m.new_content":{"msgtype":"m.text","body":"selected text"},"m.relates_to":{"rel_type":"m.replace","event_id":"$media"}}}`)
 				}
 			}
 			mux, ok := f.server.Config.Handler.(*http.ServeMux)
 			req.True(ok)
 			var editLookups int
-			if scenario == "left-edited" || scenario == "left-text-edited" {
+			if edited {
 				edit := f.timeline[1]
 				mux.HandleFunc("GET /_matrix/client/v3/rooms/!room:example.org/event/$edit", func(w http.ResponseWriter, _ *http.Request) {
 					editLookups++
@@ -1815,7 +1817,7 @@ func TestImportFullDiscoversLegacyMediaWithoutSourceHistory(t *testing.T) {
 			ids, err := f.store.MessageExistsBatch(f.sourceID, []string{"$media"})
 			req.NoError(err)
 			req.NoError(f.store.ReplaceMessageMatrixAttachments(t.Context(), ids["$media"], nil))
-			if scenario == "left-edited" || scenario == "left-text-edited" {
+			if edited {
 				req.NoError(f.store.SetMessageMetadata(ids["$media"], sql.NullString{String: `{"matrix_edit_event_id":"$edit","matrix_edit_ts":20}`, Valid: true}))
 			}
 			switch scenario {
@@ -1823,6 +1825,8 @@ func TestImportFullDiscoversLegacyMediaWithoutSourceHistory(t *testing.T) {
 				metadata, err := NewImporter(f.store, runtime).mergedMetadata(t.Context(), ids["$media"], map[string]any{"matrix_media_content": nil})
 				req.NoError(err)
 				req.NoError(f.store.SetMessageMetadata(ids["$media"], sql.NullString{String: string(metadata), Valid: true}))
+			case "joined-edited", "joined-text-edited":
+				// A full sync replays the original and its already-applied edit.
 			case "shrunken-roster":
 				_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE conversations SET participant_count = 30, metadata = ? WHERE source_id = ?`), `{"member_count":30}`, f.sourceID)
 				req.NoError(err)
@@ -1836,7 +1840,7 @@ func TestImportFullDiscoversLegacyMediaWithoutSourceHistory(t *testing.T) {
 			opts.Full = true
 			sum, err := NewImporter(f.store, runtime).Import(t.Context(), opts)
 			req.NoError(err)
-			if scenario == "left-text-edited" {
+			if textEdited {
 				check.Zero(sum.AttachmentsPending)
 				metadata, err := f.store.GetMessageMetadata(ids["$media"])
 				req.NoError(err)
@@ -1875,7 +1879,7 @@ func TestImportFullDiscoversLegacyMediaWithoutSourceHistory(t *testing.T) {
 			if scenario == "joined-without-saved-content" {
 				check.Equal("file", refs["matrix:mxc://example.org/"+want].Filename)
 			}
-			if scenario == "left-edited" || scenario == "left-text-edited" {
+			if edited {
 				check.Equal(1, editLookups)
 			}
 			data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs["matrix:mxc://example.org/"+want].StoragePath))
