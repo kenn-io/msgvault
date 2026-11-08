@@ -1990,8 +1990,8 @@ account or the one named by its login. Threads are found through the account's
 notifications and a search for threads that involve it; the first sync
 searches the whole history. Each changed thread is fetched whole, newest first.
 The `[github]` `include_owners` and `exclude_owners` lists choose whose
-repositories are archived, before any content is fetched. A sync leaves a fifth
-of each hourly rate limit for other tools; one that reaches it pauses with its
+repositories are archived, before any content is fetched. A sync pauses once
+GitHub reports that a fifth or less of an hourly rate limit is left, with its
 place saved, and the next sync continues. One failing account does not stop
 the others; the command exits non-zero listing the failures. See
 [Code forges](/docs/usage/forges/).

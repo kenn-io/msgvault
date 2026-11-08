@@ -95,9 +95,10 @@ archived.
 
 ## Rate limits
 
-Your tools share each forge's rate limit. On GitHub a sync leaves a fifth of
-each hourly limit for them. A first sync with a long history can reach that
-reserve; it then pauses with its place saved, and the next sync continues,
+Your tools share each forge's rate limit. On GitHub a sync pauses once GitHub
+reports that a fifth or less of an hourly limit is left, leaving the rest to
+them. A first sync with a long history can get there; it then pauses with its
+place saved, and the next sync continues,
 including partway through a long thread. `sync-github` prints how many threads
 wait and when the limit resets. A paused sync is not a failed one: the Sources
 page shows it as paused.
