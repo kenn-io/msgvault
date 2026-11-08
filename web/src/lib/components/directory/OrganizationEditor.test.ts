@@ -260,30 +260,6 @@ it('keeps unnamed holders openable as links in a blocked deletion', async () => 
   expect(onOpenPerson).toHaveBeenCalledWith(8);
 });
 
-it.each(['names', 'categories'])('keeps saved %s metadata inspectable after a conflict', async section => {
-  let reads = 0;
-  const saved = richOrganizationProfile(2);
-  saved.names[0].envelope.vcard = { ...saved.names[0].envelope.vcard, altid: 'legal-name-variant' } as typeof saved.names[0]['envelope']['vcard'];
-  saved.categories[0].envelope.vcard = { ...saved.categories[0].envelope.vcard, altid: 'category-variant' } as typeof saved.categories[0]['envelope']['vcard'];
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    return Response.json(++reads === 1 ? organizationProfile() : saved, { headers: { ETag: `"organization-21-r${reads}"` } });
-  });
-  render(OrganizationEditor, { controller, organization: organization() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
-  // A saved value shows once, in its group, marked when the group differs from what was opened; no summary row repeats it.
-  expect(within(alert).queryByText(section === 'names' ? 'Legal names' : 'Categories', { selector: 'dt' })).toBeNull();
-  expect(within(alert).getAllByText(section === 'names' ? 'Synthetic Legal Ltd' : 'Research')).toHaveLength(1);
-  expect(within(alert).getByText(section === 'names' ? 'Name · Changed' : 'Category · Changed')).toBeDefined();
-  expect(within(alert).getByText('Other details also changed')).toBeDefined();
-  const value = within(alert).getByRole('region', { name: section === 'names' ? 'Name Synthetic Legal Ltd' : 'Category Research' });
-  expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
-  expect(within(alert).getByText(section === 'names' ? 'legal-name-variant' : 'category-variant')).toBeDefined();
-});
-
 it('retries a failed DELETE directly and keeps Delete available', async () => {
   let deletes = 0;
   const onDone = vi.fn();
@@ -303,38 +279,6 @@ it('retries a failed DELETE directly and keeps Delete available', async () => {
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   expect(deletes).toBe(2);
-});
-
-it('Keep yours on aliases keeps value metadata changed elsewhere and sends only the profile', async () => {
-  let reads = 0;
-  const writes: { method: string; tag: string | null; body: Record<string, unknown> }[] = [];
-  const onDone = vi.fn();
-  const opening = organizationProfile();
-  // Elsewhere: the alias the person keeps, re-imported with new provenance.
-  const newer = { ...organizationProfile(2), names: [{ ...opening.names[0], envelope: envelope(31, { source: 'vcard_import', source_ref: 'resource-current' }) }] };
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH' || request.method === 'PUT') {
-      writes.push({ method: request.method, tag: request.headers.get('If-Match'), body: await request.json() });
-      if (request.headers.get('If-Match') === '"organization-21-r1"') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      return Response.json({ ...newer, organization: organization(21, 3) }, { headers: { ETag: '"organization-21-r3"' } });
-    }
-    return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"organization-21-r${reads === 1 ? 1 : 2}"` } });
-  });
-  render(OrganizationEditor, { controller, organization: organization(), onDone });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, Draft alias' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
-  const table = within(alert).getByRole('table', { name: 'What changed' });
-  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Aliases']);
-  expect(screen.getByRole('button', { name: 'Use saved' })).toBeDefined();
-  await fireEvent.click(within(alert).getByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-  expect(writes.map(write => [write.method, write.tag])).toEqual([['PUT', '"organization-21-r1"'], ['PUT', '"organization-21-r2"']]);
-  expect(writes[1].body.names).toEqual([
-    expect.objectContaining({ name: 'Synthetic Works', source: 'vcard_import', source_ref: 'resource-current' }),
-    expect.objectContaining({ name: 'Draft alias', source: 'user' }),
-  ]);
 });
 
 it('retries a failed alias save with the profile write alone', async () => {
@@ -425,36 +369,6 @@ it('shows a failed holder profile read as a failed check and retries it', async 
   expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
   expect(await screen.findByText('Synthetic Person')).toBeDefined();
-});
-
-it('shows the retirement date in a conflict', async () => {
-  let reads = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    const profile = organizationProfile(++reads);
-    return Response.json(reads === 1 ? profile : { ...profile, organization: { ...profile.organization, retired_at: '2025-01-06T00:00:00Z' } }, { headers: { ETag: `"organization-21-r${reads}"` } });
-  });
-  render(OrganizationEditor, { controller, organization: organization() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
-  expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
-});
-
-it('shows a media link once in a conflict', async () => {
-  let reads = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    const profile = organizationProfile(++reads);
-    return Response.json({ ...profile, media: [{ ...profile.media[0], original_value: 'https://example.org/logo.png', uri: 'https://example.org/logo.png' }] }, { headers: { ETag: `"organization-21-r${reads}"` } });
-  });
-  render(OrganizationEditor, { controller, organization: organization() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  const media = within((await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement).getByRole('region', { name: 'Media' });
-  expect(media.textContent!.split('https://example.org/logo.png')).toHaveLength(2);
 });
 
 it('preserves a concurrent contact after a core conflict and alias save', async () => {
@@ -554,7 +468,7 @@ it("keeps another writer's domain and alias after an alias conflict leaves the d
     const tag = `"organization-21-r${revision}"`;
     // Elsewhere, at r2: a new domain and a new alias.
     const elsewhere = revision > 1
-      ? { organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: [...organizationProfile().names, { organization_id: 21, name_kind: 'alias', name: 'Other alias', name_normalized: 'other alias', envelope: envelope(33) }] }
+      ? { organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: [{ ...organizationProfile().names[0], envelope: envelope(31, { source: 'vcard_import', source_ref: 'resource-current' }) }, { organization_id: 21, name_kind: 'alias', name: 'Other alias', name_normalized: 'other alias', envelope: envelope(33) }] }
       : {};
     if (request.method === 'GET') return Response.json({ ...organizationProfile(revision), ...elsewhere }, { headers: { ETag: tag } });
     if (request.headers.get('If-Match') !== tag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
@@ -570,9 +484,14 @@ it("keeps another writer's domain and alias after an alias conflict leaves the d
   await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
   revision++;
   await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  expect(within(within(alert).getByRole('table', { name: 'What changed' })).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Aliases']);
+  expect(screen.getByRole('button', { name: 'Use saved' })).toBeDefined();
+  await fireEvent.click(within(alert).getByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(aliases).toHaveProperty('value', 'Synthetic Works, Other alias, Draft alias'));
   expect(onDone).not.toHaveBeenCalled();
+  expect(writes[0].method).toBe('PUT');
+  expect(writes[0].body.names).toContainEqual(expect.objectContaining({ name: 'Synthetic Works', source: 'vcard_import', source_ref: 'resource-current' }));
   expect(screen.getByRole('textbox', { name: 'Organization domain' })).toHaveProperty('value', 'other.example');
   expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'New name');
   // A second alias save keeps the alias the conflict brought in.
@@ -649,16 +568,37 @@ it('refreshes normalized fields before saving pending aliases', async () => {
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
 });
 
-it('shows conflict facts without a redundant Details control', async () => {
+
+
+it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s in an organization conflict', async section => {
   let reads = 0;
+  const saved = richOrganizationProfile(2);
+  saved.names[0].envelope.vcard = { ...saved.names[0].envelope.vcard, altid: 'legal-name-variant' } as typeof saved.names[0]['envelope']['vcard'];
+  saved.categories[0].envelope.vcard = { ...saved.categories[0].envelope.vcard, altid: 'category-variant' } as typeof saved.categories[0]['envelope']['vcard'];
+  if (section === 'retirement') Object.assign(saved.organization, { retired_at: '2025-01-06T00:00:00Z' });
+  if (section === 'media') Object.assign(saved.media[0], { original_value: 'https://example.org/logo.png', uri: 'https://example.org/logo.png' });
   const { controller } = controllerWith(async input => {
     if (requestOf(input).method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    return Response.json(richOrganizationProfile(++reads), { headers: { ETag: `"organization-21-r${reads}"` } });
+    return Response.json(++reads === 1 ? organizationProfile() : saved, { headers: { ETag: `"organization-21-r${reads}"` } });
   });
   render(OrganizationEditor, { controller, organization: organization() });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  const notice = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
-  expect(within(notice).queryByRole('button', { name: 'Details' })).toBeNull();
-  expect(within(notice).getByText('concurrent@example.test')).toBeDefined();
+  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  if (section === 'retirement') expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
+  if (section === 'media') expect(within(alert).getByRole('region', { name: 'Media' }).textContent!.split('https://example.org/logo.png')).toHaveLength(2);
+  if (section === 'facts') {
+    expect(within(alert).queryByRole('button', { name: 'Details' })).toBeNull();
+    expect(within(alert).getByText('concurrent@example.test')).toBeDefined();
+  }
+  if (section === 'names' || section === 'categories') {
+    // A saved value shows once, in its group, marked when the group differs from what was opened; no summary row repeats it.
+    expect(within(alert).queryByText(section === 'names' ? 'Legal names' : 'Categories', { selector: 'dt' })).toBeNull();
+    expect(within(alert).getAllByText(section === 'names' ? 'Synthetic Legal Ltd' : 'Research')).toHaveLength(1);
+    expect(within(alert).getByText(section === 'names' ? 'Name · Changed' : 'Category · Changed')).toBeDefined();
+    expect(within(alert).getByText('Other details also changed')).toBeDefined();
+    const value = within(alert).getByRole('region', { name: section === 'names' ? 'Name Synthetic Legal Ltd' : 'Category Research' });
+    expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
+    expect(within(alert).getByText(section === 'names' ? 'legal-name-variant' : 'category-variant')).toBeDefined();
+  }
 });

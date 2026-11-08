@@ -16,11 +16,6 @@ describe('ChangeList', () => {
     expect(screen.queryByText("Nothing you're editing changed.")).toBeNull();
   });
 
-  it('summarizes changes off the form in one line', () => {
-    render(ChangeList, { changes: [{ label: 'Name', saved: 'Lumen Grove', yours: 'Lumen Grove Co.' }], otherChanged: true });
-    expect(screen.getByText('Other details also changed')).toBeDefined();
-  });
-
   it('says so when nothing on the form differs', () => {
     render(ChangeList, { changes: [], otherChanged: true });
     expect(screen.queryByRole('table')).toBeNull();

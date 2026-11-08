@@ -66,12 +66,6 @@ for (const width of [1440, 390]) {
     const search = add.getByRole('combobox',{name:'Organization',exact:true});
     await search.fill('Example School');
     await add.getByRole('option',{name:'Create organization “Example School”',exact:true}).click();
-    if (width === 1440) {
-      // The new organization's Kind | Domain split where Job title | Role below them does.
-      const [kind, domain] = await add.locator('.creation .form-pair > *').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().toJSON() as { x: number; right: number }));
-      const [title, role] = await add.locator('.editor > .form-pair').first().locator('> *').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().toJSON() as { x: number; right: number }));
-      expect([kind.right, domain.x, domain.right]).toEqual([title.right, role.x, role.right]);
-    }
     await add.locator('summary').filter({hasText:'More details'}).click();
     await expect(add.getByRole('textbox',{name:'Department',exact:true})).toBeVisible();
     const geometry = await add.evaluate(element => ({ width:element.clientWidth, scroll:element.scrollWidth }));
@@ -205,6 +199,14 @@ for (const width of [1440, 390]) {
       return [item.top - box.top - border, box.bottom - border - item.bottom];
     });
     expect(inset).toEqual([4, 4]);
+    await add.getByRole('combobox', { name: 'Organization', exact: true }).fill('Example School');
+    await add.getByRole('option', { name: 'Create organization “Example School”', exact: true }).click();
+    if (width === 1440) {
+      // The new organization's Kind | Domain split where Job title | Role below them does.
+      const [kind, domain] = await add.locator('.creation .form-pair > *').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().toJSON() as { x: number; right: number }));
+      const [title, role] = await add.locator('.editor > .form-pair').first().locator('> *').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().toJSON() as { x: number; right: number }));
+      expect([kind.right, domain.x, domain.right]).toEqual([title.right, role.x, role.right]);
+    }
     expect(errors).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath('dialog.png'), fullPage: true });
   });

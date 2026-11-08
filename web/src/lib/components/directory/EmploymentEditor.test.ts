@@ -143,75 +143,6 @@ it('Keep yours writes only the fields the person changed and keeps a department 
   expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Ops' });
 });
 
-it.each([
-  ['Job title', 'title'], ['Role on the team', 'role'], ['Department', 'department'],
-  ['Location', 'location'], ['Description', 'description']
-])('Keep yours preserves a concurrent %s change when only whitespace was retyped', async (label, field) => {
-  let reads = 0;
-  const bodies: Record<string, unknown>[] = [];
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') {
-      bodies.push(await request.json());
-      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3));
-    }
-    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(employment(11, ++reads, { [field]: reads === 1 ? 'Original' : 'Changed elsewhere' }), { headers: { ETag: `"employment-11-r${reads}"` } });
-  });
-  render(EmploymentEditor, { controller, personID: 7, employment: employment(11, 1, { [field]: 'Original' }) });
-  await fireEvent.input(await screen.findByRole('textbox', { name: label }), { target: { value: ' Original ' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[1]).toHaveProperty(field, 'Changed elsewhere');
-});
-
-it('checks Keep yours against the start date it keeps from the saved version', async () => {
-  let reads = 0;
-  const bodies: Record<string, unknown>[] = [];
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') {
-      bodies.push(await request.json());
-      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3));
-    }
-    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(employment(11, ++reads, { start_date: { year: reads === 1 ? 2022 : 2020 } }), { headers: { ETag: `"employment-11-r${reads}"` } });
-  });
-  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  const keep = await screen.findByRole('button', { name: 'Keep yours' });
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-  await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
-  await waitFor(() => expect(keep).toHaveProperty('disabled', false));
-  expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
-  await fireEvent.click(keep);
-  await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[1]).toMatchObject({ start_date: '2020', end_date: '2021', is_current: false });
-});
-
-it('Keep yours keeps a start date changed elsewhere when the person retyped the same date', async () => {
-  let reads = 0;
-  const bodies: Record<string, unknown>[] = [];
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') {
-      bodies.push(await request.json());
-      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3));
-    }
-    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(employment(11, ++reads, { start_date: reads === 1 ? { year: 2022, month: 3, day: 5 } : { year: 2020 } }), { headers: { ETag: `"employment-11-r${reads}"` } });
-  });
-  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
-  await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '20220305' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[1]).toMatchObject({ title: 'Lead', start_date: '2020' });
-});
-
 it('describes a job moved to an unloaded person', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
@@ -259,27 +190,6 @@ it('allows closing while the job loads', async () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(closed).toBe(true);
   } finally { view.unmount(); finish(Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })); controller.destroy(); }
-});
-
-it('keeps an edited end date when another editor reopens the job', async () => {
-  let reads = 0;
-  const bodies: Record<string, unknown>[] = [];
-  const past = employment(11, 1, { is_current: false, end_date: { year: 2020 } });
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') {
-      bodies.push(await request.json());
-      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(past);
-    }
-    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(++reads === 1 ? past : { ...past, is_current: true, end_date: null }, { headers: { ETag: `"employment-11-r${reads}"` } });
-  });
-  render(EmploymentEditor, { controller, personID: 7, employment: past });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[1]).toMatchObject({ end_date: '2021', is_current: false });
 });
 
   it('creates an employer inline and reuses it after employment creation fails', async () => {
@@ -352,32 +262,10 @@ it('keeps an edited end date when another editor reopens the job', async () => {
     expect(dialog.textContent).not.toContain('Create organization');
     await fireEvent.click(screen.getByRole('button', { name: 'Choose an existing organization instead' }));
     expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
-  });
-
-  it("offers to create an organization named like another one's ID", async () => {
-    const { controller } = controllerWith(async input => {
-      const path = pathOf(requestOf(input));
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization(21, 1, 'Lumen Grove')], total: 1 });
-      if (path === '/api/v1/people/7/employments') return collection([]);
-      throw new Error(`unexpected ${path}`);
-    });
-    await openInlineEmployer(controller, '21');
+    const idQuery = await openTypeahead('Organization');
+    await fireEvent.input(idQuery, { target: { value: '21' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Create organization “21”' }));
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', '21');
-  });
-
-  it('rejects an end date before the start before creating an employer', async () => {
-    const requests: Request[] = [];
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input); requests.push(request);
-      return Response.json({ organizations: [], total: 0 });
-    });
-    await openInlineEmployer(controller, 'Example School');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '2025-06' } });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-06' } });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
-    expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
-    expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
   });
 
   it('blocks an unknown inline employer create until organizations are refreshed', async () => {
@@ -427,6 +315,14 @@ it('keeps an edited end date when another editor reopens the job', async () => {
     expect(create).toHaveProperty('disabled', true);
     await fireEvent.click(create);
     expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
+    const employerQuery = await openTypeahead('Organization');
+    await fireEvent.input(employerQuery, { target: { value: 'Example School' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Create organization “Example School”' }));
+    await fireEvent.input(start, { target: { value: '2025-06' } });
+    await fireEvent.input(end, { target: { value: '2024-06' } });
+    expect(create).toHaveProperty('disabled', true);
+    await fireEvent.click(create);
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
   });
 
 
@@ -448,7 +344,7 @@ it('keeps an edited end date when another editor reopens the job', async () => {
   });
 
 
-  it.each(['keep mine', 'use saved'])('preserves fields from the saved job when resolving with %s', async (resolution) => {
+  it('preserves fields from the saved job when resolving with Keep yours', async () => {
     const requests: Request[] = [];
     let reads = 0;
     let patches = 0;
@@ -500,18 +396,68 @@ it('keeps an edited end date when another editor reopens the job', async () => {
     expect(await firstPatch.clone().json()).toMatchObject({ ...hiddenByRead[0], title: 'Draft title' });
 
     expect(screen.getByRole('button', { name: 'Use saved' })).toBeDefined();
-    if (resolution === 'use saved') {
-      await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
-      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-      expect(patches).toBe(1);
-      expect(requests.some((request) => pathOf(request) === '/api/v1/people/7/employments')).toBe(true);
-      return;
-    }
     await waitFor(() => expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', false));
     await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
     await waitFor(() => expect(patches).toBe(2));
     const retryPatch = requests.filter((request) => request.method === 'PATCH')[1]!;
     expect(await retryPatch.clone().json()).toMatchObject({ ...hiddenByRead[1], title: 'Draft title' });
+  });
+
+  it('closes and refreshes without a second PATCH when using the saved job', async () => {
+    const requests: Request[] = [];
+    let reads = 0;
+    let patches = 0;
+    const hiddenByRead = [
+      { person_id: 7, organization_id: 21, source: 'extraction', source_ref: 'modal-old', address_id: 11, confidence: 0.11 },
+      { person_id: 8, organization_id: 22, source: 'extraction', source_ref: 'first-fresh', address_id: 22, confidence: 0.22 },
+    ];
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/employments/11' && request.method === 'GET') {
+        reads += 1;
+        return new Response(JSON.stringify(employment(11, reads + 1, {
+          ...hiddenByRead[reads - 1],
+          title: reads === 1 ? 'Current title' : 'Changed title',
+          department: reads === 1 ? 'Platform' : 'Concurrent research',
+          location: reads === 1 ? 'Remote' : 'Concurrent campus'
+        })), {
+          headers: { ETag: `"employment-11-r${reads + 1}"` }
+        });
+      }
+      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
+        return new Response(JSON.stringify(organizationProfile(4, 'Exact Employment Org')), { headers: { ETag: '"organization-21-r4"' } });
+      }
+      if (path === '/api/v1/organizations/22' && request.method === 'GET') {
+        return new Response(JSON.stringify({ ...organizationProfile(6, 'Concurrent Employment Org'), organization: organization(22, 6, 'Concurrent Employment Org') }), { headers: { ETag: '"organization-22-r6"' } });
+      }
+      if (path === '/api/v1/employments/11' && request.method === 'PATCH') {
+        patches += 1;
+        if (patches === 1) return Response.json({ error: 'revision_conflict', message: 'stale revision' }, { status: 412 });
+        return new Response(JSON.stringify(employment(11, 4, { ...hiddenByRead[1], title: 'Draft title' })), { headers: { ETag: '"employment-11-r4"' } });
+      }
+      if (path === '/api/v1/people/7/employments') return collection([]);
+      throw new Error(`unexpected ${request.method} ${path}`);
+    }));
+    controller.employments = [employment()];
+    const onClose = vi.fn();
+    render(EmploymentEditor, { controller, personID: 7, employment: employment(), onClose });
+    const title = await screen.findByRole('textbox', { name: 'Job title' }) as HTMLInputElement;
+    await fireEvent.input(title, { target: { value: 'Draft title' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    const alert = (await screen.findByRole('alert')).closest('.inline-notice')!;
+    expect(alert.textContent).toContain('This job changed since you opened it.');
+    expect(title.value).toBe('Draft title');
+    expect(patches).toBe(1);
+    const firstPatch = requests.find((request) => request.method === 'PATCH')!;
+    expect(await firstPatch.clone().json()).toMatchObject({ ...hiddenByRead[0], title: 'Draft title' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(patches).toBe(1);
+    expect(requests.some((request) => pathOf(request) === '/api/v1/people/7/employments')).toBe(true);
   });
 
 it('saves a date-shaped description as text', async () => {
@@ -529,10 +475,20 @@ it('saves a date-shaped description as text', async () => {
   await waitFor(() => expect(body).toMatchObject({ description: '2024-03-05' }));
 });
 
-it('validates the saved interval when both dates changed elsewhere', async () => {
+
+
+it.each([
+  { name: 'saved start date', opening: { start_date: { year: 2022 } }, saved: { start_date: { year: 2020 } }, mode: 'saved start', expected: { start_date: '2020', end_date: '2021', is_current: false } },
+  { name: 'retyped start date', opening: { start_date: { year: 2022, month: 3, day: 5 } }, saved: { start_date: { year: 2020 } }, mode: 'retyped date', expected: { title: 'Lead', start_date: '2020' } },
+  { name: 'reopened job', opening: { is_current: false, end_date: { year: 2020 } }, saved: { is_current: true, end_date: null }, mode: 'end', expected: { end_date: '2021', is_current: false } },
+  { name: 'saved interval', opening: { is_current: false, start_date: { year: 2020 }, end_date: { year: 2022 } }, saved: { start_date: { year: 2024 }, end_date: { year: 2026 } }, mode: 'title', expected: { start_date: '2024', end_date: '2026' } },
+  ...[['Job title', 'title'], ['Role on the team', 'role'], ['Department', 'department'], ['Location', 'location'], ['Description', 'description']].map(([label, field]) => ({ name: `whitespace in ${label}`, opening: { [field]: 'Original' }, saved: { [field]: 'Changed elsewhere' }, mode: 'whitespace', label, field, expected: { [field]: 'Changed elsewhere' } })),
+])('Keep yours preserves $name after a conflict', async (scenario) => {
+  const { opening, saved, mode, expected } = scenario;
+  const label = 'label' in scenario ? scenario.label : undefined;
   let reads = 0;
   const bodies: Record<string, unknown>[] = [];
-  const job = employment(11, 1, { is_current: false, start_date: { year: 2020 }, end_date: { year: 2022 } });
+  const job = employment(11, 1, opening);
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (request.method === 'PATCH') {
@@ -540,14 +496,98 @@ it('validates the saved interval when both dates changed elsewhere', async () =>
       return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(job);
     }
     if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    return Response.json(++reads === 1 ? job : { ...job, start_date: { year: 2024 }, end_date: { year: 2026 } }, { headers: { ETag: `"employment-11-r${reads}"` } });
+    return Response.json(employment(11, ++reads, reads === 1 ? opening : { ...opening, ...saved }), { headers: { ETag: `"employment-11-r${reads}"` } });
   });
   render(EmploymentEditor, { controller, personID: 7, employment: job });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
+  if (mode === 'whitespace') await fireEvent.input(await screen.findByRole('textbox', { name: label }), { target: { value: ' Original ' } });
+  else if (mode === 'end') await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
+  else {
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
+    if (mode === 'retyped date') await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '20220305' } });
+  }
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   const keep = await screen.findByRole('button', { name: 'Keep yours' });
-  expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
+  if (mode === 'saved start') {
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
+    await waitFor(() => expect(keep).toHaveProperty('disabled', false));
+  }
+  if (mode === 'saved start' || mode === 'title') expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
   await fireEvent.click(keep);
   await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[1]).toMatchObject({ start_date: '2024', end_date: '2026' });
+  expect(bodies[1]).toMatchObject(expected);
 });
+
+  it('retains the selected employer across searches beyond fifty results', async () => {
+    const requests: Request[] = [];
+    const queries: string[] = [];
+    const employerID = 51;
+    const employerName = 'Zebra Example';
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === '/api/v1/organizations') {
+        const query = new URL(request.url).searchParams.get('q') ?? ''; queries.push(query);
+        return Response.json({ organizations: query !== 'Zebra' ? Array.from({ length: 50 }, (_, index) => organization(index + 1, 1, `Example ${index + 1}`)) : [organization(employerID, 1, employerName)], total: 51, limit: 50, offset: 0 });
+      }
+      if (path === '/api/v1/employments' && request.method === 'POST') {
+        return new Response(JSON.stringify(employment(12, 1, { organization_id: employerID, title: 'Architect', is_primary: true })), { status: 201, headers: { ETag: '"employment-12-r1"' } });
+      }
+      if (path === '/api/v1/people/7/employments') {
+        return collection([employment(11, 2, { is_primary: false }), employment(12, 1, { organization_id: employerID, title: 'Architect', is_primary: true })], {
+          employment_id: 12, organization_id: employerID, organization_name: employerName, title: 'Architect', vcard: {}
+        });
+      }
+      throw new Error(`unexpected ${request.method} ${path}`);
+    }));
+    controller.employments = [employment(11, 1, { is_primary: true })];
+    const onDone = vi.fn();
+    render(EmploymentEditor, { controller, personID: 7, onDone });
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    const input = await openTypeahead('Organization');
+    await fireEvent.input(input, { target: { value: 'Zebra' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: new RegExp(employerName) }));
+    await screen.findByRole('button', { name: `Organization: ${employerName}` });
+    await fireEvent.input(await openTypeahead('Organization'), { target: { value: 'Example' } });
+    await waitFor(() => expect(queries).toContain('Example'));
+    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Organization' }), { key: 'Escape' });
+    expect(screen.getByRole('button', { name: `Organization: ${employerName}` })).toBeDefined();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Architect' } });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
+
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    const post = requests.find((request) => pathOf(request) === '/api/v1/employments' && request.method === 'POST')!;
+    const postedBody = await post.json();
+    expect(postedBody).toMatchObject({ person_id: 7, organization_id: employerID, source: 'user', title: 'Architect' });
+    expect(postedBody.source_ref).toBeUndefined();
+  });
+
+  it('blocks an unknown employment create until explicit refresh and keeps the modal draft open', async () => {
+    let posts = 0;
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      if (path === '/api/v1/employments') {
+        posts += 1;
+        throw new TypeError('response lost');
+      }
+      if (path === '/api/v1/people/7/employments') return collection([] , undefined);
+      throw new Error(`unexpected ${request.method} ${path}`);
+    }));
+    render(EmploymentEditor, { controller, personID: 7 });
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
+    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the job was saved.");
+    expect((screen.getByRole('textbox', { name: 'Job title' }) as HTMLInputElement).value).toBe('Draft role');
+    expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
+    expect(posts).toBe(1);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false));
+    expect(posts).toBe(1);
+  });

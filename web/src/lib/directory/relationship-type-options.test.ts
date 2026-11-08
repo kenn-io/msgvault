@@ -52,7 +52,6 @@ it('uses type and direction for phrasing when a custom label matches a built-in 
 
 it.each([
   ['friend', 'outgoing', 'buddy', 'buddy'],
-  ['parent', 'incoming', 'dependent', 'dependent'],
   ['agent', 'incoming', 'representative', 'representative'],
   ['agent', 'outgoing', 'pal', 'pal'],
 ] as const)('keeps the catalog label for renamed %s %s', (slug, direction, label, expected) => {

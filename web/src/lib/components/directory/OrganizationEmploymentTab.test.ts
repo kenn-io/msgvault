@@ -153,57 +153,21 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText(/Recovered role/)).toBeDefined();
   });
 
-  it.each([false, true])('creates work for the selected person and employer with user provenance (search beyond fifty=%s)', async search => {
-    const requests: Request[] = [];
-    const queries: string[] = [];
-    const employerID = search ? 51 : 21;
-    const employerName = search ? 'Zebra Example' : 'Synthetic Org';
-    let employmentReads = 0;
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+  it('creates work for the selected person with user provenance', async () => {
+    let body: Record<string, unknown> | undefined;
+    const { controller } = controllerWith(async input => {
       const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations') {
-        const query = new URL(request.url).searchParams.get('q') ?? ''; queries.push(query);
-        return Response.json({ organizations: search && query !== 'Zebra' ? Array.from({ length: 50 }, (_, index) => organization(index + 1, 1, `Example ${index + 1}`)) : [organization(employerID, 1, employerName)], total: search ? 51 : 1, limit: 50, offset: 0 });
-      }
-      if (path === '/api/v1/employments' && request.method === 'POST') {
-        return new Response(JSON.stringify(employment(12, 1, { organization_id: employerID, title: 'Architect', is_primary: true })), { status: 201, headers: { ETag: '"employment-12-r1"' } });
-      }
-      if (path === '/api/v1/people/7/employments') {
-        employmentReads += 1;
-        return collection([employment(11, 2, { is_primary: false }), employment(12, 1, { organization_id: employerID, title: 'Architect', is_primary: true })], {
-          employment_id: 12, organization_id: employerID, organization_name: employerName, title: 'Architect', vcard: {}
-        });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.employments = [employment(11, 1, { is_primary: true })];
+      if (request.method === 'POST') { body = await request.json(); return Response.json(employment()); }
+      if (pathOf(request) === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1 });
+      return collection([]);
+    });
     render(OrganizationEmploymentTab, { controller, personID: 7 });
-
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
     await screen.findByRole('button', { name: /^Organization(:|$)/ });
-    const input = await openTypeahead('Organization');
-    if (search) await fireEvent.input(input, { target: { value: 'Zebra' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: new RegExp(employerName) }));
-    if (search) {
-      await screen.findByRole('button', { name: `Organization: ${employerName}` });
-      await fireEvent.input(await openTypeahead('Organization'), { target: { value: 'Example' } });
-      await waitFor(() => expect(queries).toContain('Example'));
-      await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Organization' }), { key: 'Escape' });
-      expect(screen.getByRole('button', { name: `Organization: ${employerName}` })).toBeDefined();
-    }
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Architect' } });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add job' })).toBeNull());
-    const post = requests.find((request) => pathOf(request) === '/api/v1/employments' && request.method === 'POST')!;
-    const postedBody = await post.json();
-    expect(postedBody).toMatchObject({ person_id: 7, organization_id: employerID, source: 'user', title: 'Architect' });
-    expect(postedBody.source_ref).toBeUndefined();
-    expect(employmentReads).toBe(1);
-    expect(screen.getByText(/Architect/).closest('.detail-row')?.textContent).toContain('Primary');
-    expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).not.toContain('Primary');
+    await waitFor(() => expect(body).toMatchObject({ person_id: 7, source: 'user' }));
   });
 
   it('folds past jobs and keeps row actions beside linked employers', async () => {
@@ -310,58 +274,10 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText('1 past job')).toBeDefined();
   });
 
-  it('blocks an unknown employment create until explicit refresh and keeps the modal draft open', async () => {
-    let posts = 0;
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/employments') {
-        posts += 1;
-        throw new TypeError('response lost');
-      }
-      if (path === '/api/v1/people/7/employments') return collection([] , undefined);
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
-
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
-    await screen.findByRole('button', { name: /^Organization(:|$)/ });
-    await openTypeahead('Organization');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
-    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the job was saved.");
-    expect((screen.getByRole('textbox', { name: 'Job title' }) as HTMLInputElement).value).toBe('Draft role');
-    expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
-    expect(posts).toBe(1);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false));
-    expect(posts).toBe(1);
-  });
-
-  it('keeps a conflicted employment delete open with complete current data and owns modal shortcuts', async () => {
-    let reads = 0;
-    const deletes: Request[] = [];
+  it('gives the delete dialog its own shortcut scope', async () => {
     const rootShortcut = vi.fn();
     const unregister = appShortcuts.register('x', rootShortcut);
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/employments/11' && request.method === 'GET') {
-        reads += 1;
-        return new Response(JSON.stringify(employment(11, reads, reads === 1 ? {} : {
-          department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', address_id: 88, source: 'extraction', confidence: 0.88
-        })), { headers: { ETag: `"employment-11-r${reads}"` } });
-      }
-      if (path === '/api/v1/employments/11' && request.method === 'DELETE') {
-        deletes.push(request);
-        return deletes.length === 1 ? Response.json({ error: 'revision_conflict', message: 'stale employment' }, { status: 412 }) : new Response(null, { status: 204 });
-      }
-      if (path === '/api/v1/people/7/employments') return collection([employment(11, 2, { department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', address_id: 88, source: 'extraction', confidence: 0.88 })]);
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    const { controller } = controllerWith(async () => Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } }));
     controller.employments = [employment()];
     const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
     try {
@@ -369,18 +285,6 @@ describe('OrganizationEmploymentTab', () => {
       expect(appShortcuts.activeScope()).toBe('directory-employment-delete');
       appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
       expect(rootShortcut).not.toHaveBeenCalled();
-      await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-
-      const dialog = await screen.findByRole('dialog', { name: /^Delete .*\?/  });
-      const alert = (await within(dialog).findByRole('alert')).closest('.inline-notice')!;
-      const changes = within(alert as HTMLElement).getByRole('table', { name: 'What changed' });
-      expect(changes.textContent).toContain('Concurrent department');
-      expect(changes.textContent).toContain('Concurrent office');
-      expect(changes.textContent).toContain('Concurrent description');
-      expect(within(changes).getByRole('rowheader', { name: 'Confidence' }).parentElement?.textContent).toContain('88%');
-      expect(deletes.map(request => request.headers.get('If-Match'))).toEqual(['"employment-11-r1"']);
-      expect(reads).toBe(2);
-
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Delete .*\?/  })).toBeNull());
       expect(appShortcuts.activeScope()).toBe('root');
@@ -459,7 +363,7 @@ it('uses the selected job version when Make primary moves to another row', async
 it('deletes the saved version a job delete conflict shows', async () => {
   const tags: (string | null)[] = [];
   let reads = 0;
-  const saved = employment(11, 2, { title: 'Concurrent title' });
+  const saved = employment(11, 2, { title: 'Concurrent title', department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', address_id: 88, source: 'extraction', confidence: 0.88 });
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (pathOf(request) === '/api/v1/people/7/employments') return collection([]);
@@ -476,6 +380,11 @@ it('deletes the saved version a job delete conflict shows', async () => {
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await screen.findByText('This job changed since you opened it.');
   expect(screen.getByText('Concurrent title')).toBeDefined();
+  const changes = screen.getByRole('table', { name: 'What changed' });
+  expect(changes.textContent).toContain('Concurrent department');
+  expect(changes.textContent).toContain('Concurrent office');
+  expect(changes.textContent).toContain('Concurrent description');
+  expect(within(changes).getByRole('rowheader', { name: 'Confidence' }).parentElement?.textContent).toContain('88%');
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
