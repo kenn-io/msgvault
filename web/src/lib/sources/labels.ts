@@ -20,14 +20,15 @@ export function sourceTypeLabel(code: string): string {
 
 /**
  * The parts that tell a source apart from its displayed name, in order: a
- * part that repeats the name, or an earlier part, says nothing new.
+ * part that repeats the name, or an earlier part, exactly says nothing new.
+ * Case counts, since an identifier is typed as spelled.
  */
 export function sourceDetails(name: string, ...parts: (string | undefined)[]): string[] {
-  const shown = [name.toLocaleLowerCase()];
+  const shown = [name];
   const details: string[] = [];
   for (const part of parts) {
-    if (!part || shown.includes(part.toLocaleLowerCase())) continue;
-    shown.push(part.toLocaleLowerCase());
+    if (!part || shown.includes(part)) continue;
+    shown.push(part);
     details.push(part);
   }
   return details;

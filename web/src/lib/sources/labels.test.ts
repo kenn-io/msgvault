@@ -65,11 +65,11 @@ it.each([
 });
 
 it.each([
-  ['Feeds', ['Feeds', 'feeds'], []],
+  ['Feeds', ['Feeds', 'feeds'], ['feeds']],
+  ['Feeds', ['Feeds', 'Feeds'], []],
   ['Work', ['Gmail', 'work@example.com'], ['Gmail', 'work@example.com']],
-  ['Work', ['Gmail', 'work'], ['Gmail']],
-  ['Releases', ['Message import', 'releases'], ['Message import']],
-  ['My feeds', ['Feeds', 'feeds'], ['Feeds']],
+  ['Work', ['Gmail', 'Work'], ['Gmail']],
+  ['Releases', ['Message import', 'releases'], ['Message import', 'releases']],
   ['Inbox', ['', undefined], []]
 ] as const)('shows what tells %s apart from %j', (name, parts, expected) => {
   expect(sourceDetails(name, ...parts)).toEqual(expected);
