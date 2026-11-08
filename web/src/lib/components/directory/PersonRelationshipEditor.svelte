@@ -171,14 +171,13 @@
       return;
     const patch = initialRelationship ? patchBody() : undefined;
     if (patch && Object.keys(patch).length === 0) {
-      if (attempt.conflict) {
-        await controller.refreshRelationships();
-        if (controller.errors.relationships) {
-          committed = true;
-          attempt.conflict = undefined;
-          attempt.details = controller.errors.relationships;
-          return;
-        }
+      if (!attempt.conflict) return;
+      await controller.refreshRelationships();
+      if (controller.errors.relationships) {
+        committed = true;
+        attempt.conflict = undefined;
+        attempt.details = controller.errors.relationships;
+        return;
       }
       onDone();
       return;
@@ -226,7 +225,7 @@
     }
   }
   function requestClose(): void {
-    if (!attempt.busy) { if (attempt.conflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }
+    if (!attempt.busy) { if (attempt.hadConflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }
   }
   function failureMessage(value: unknown, status: number): string {
     if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string')
@@ -239,7 +238,7 @@
 <Dialog title={initialRelationship ? 'Edit connection' : 'Add connection'} onclose={requestClose}
   primaryLabel={attempt.conflict ? 'Keep yours' : initialRelationship ? 'Save' : 'Add connection'} onprimary={() => void submit()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}
-  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || committed || !relationshipTypeSlug || datesInvalid || !!endDateError || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || committed || !relationshipTypeSlug || datesInvalid || !!endDateError || (!!initialRelationship && !attempt.conflict && Object.keys(patchBody()).length === 0) || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
   {#if loading}<p role="status">Loading connection…</p>{:else if !initialView || opened}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="editor" aria-busy={attempt.busy}>

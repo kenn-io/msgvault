@@ -168,6 +168,9 @@ export class DirectoryEntityController {
   async acceptSavedEmployment(): Promise<void> {
     await Promise.all([this.refreshEmployments(), this.options.onDirectoryChange?.()]);
   }
+  async refreshDirectoryViews(): Promise<void> {
+    await Promise.all([this.options.onDirectoryChange?.(), this.refreshNetwork()]);
+  }
   private async loadEmployments(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('employments');
     try {
@@ -685,7 +688,7 @@ export class DirectoryEntityController {
   private async afterDirectoryMutation<T, C>(
     result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false,
   ): Promise<DirectoryEntityMutationResult<T, C>> {
-    if (result.ok) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.options.onDirectoryChange?.(), this.refreshNetwork()]);
+    if (result.ok) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.refreshDirectoryViews()]);
     return result;
   }
   private applyEmploymentEntity(entity: Employment): void {

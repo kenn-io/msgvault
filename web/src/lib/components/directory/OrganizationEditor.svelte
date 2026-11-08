@@ -178,7 +178,7 @@
   }
 
   function requestClose(): void {
-    if (!submitting) { if (attempt.conflict || profileAttempt.conflict) void controller.refreshNetwork(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
+    if (!submitting) { if (attempt.hadConflict || profileAttempt.hadConflict || removal.hadConflict) void controller.refreshDirectoryViews(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
   }
 
   function values(value: string): string[] {

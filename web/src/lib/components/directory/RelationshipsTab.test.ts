@@ -729,6 +729,18 @@ describe('RelationshipsTab', () => {
     expect(bodies).toEqual([{ notes: 'New' }]);
   });
 
+  it('disables Save when clearing an end date is the only edit', async () => {
+    const opening = relationship(41, 1, { status: 'ended', end_date: { year: 2023 } });
+    const { client, controller } = controllerWith(async () => Response.json(opening, { headers: { ETag: '"relationship-41-r1"' } }));
+    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByText('1 past connection'));
+    await rowAction('Edit…');
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '' } });
+    expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+  });
+
   it('clears changed notes without resending an opening end date', async () => {
     const requests: Request[] = [];
     let reads = 0;
@@ -768,7 +780,7 @@ describe('RelationshipsTab', () => {
     await expect(patch.clone().json()).resolves.toEqual({ notes: null });
   });
 
-  it('closes an unchanged relationship edit without sending an empty patch', async () => {
+  it('disables Save for an unchanged relationship', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = requestOf(input);
       return Response.json(relationship(41, 1, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 6 } }), { headers: { ETag: '"person-relationship-41-r1"' } });
@@ -781,9 +793,7 @@ describe('RelationshipsTab', () => {
 
     await fireEvent.click(screen.getByText('1 past connection'));
     await rowAction('Edit…');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true));
     expect(fetchFn.mock.calls.map(([input]) => requestOf(input).method)).toEqual(['GET']);
   });
 

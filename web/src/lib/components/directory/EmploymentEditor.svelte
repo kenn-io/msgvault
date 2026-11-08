@@ -157,7 +157,7 @@
   }
 
   function requestClose(): void {
-    if (!attempt.busy) { if (attempt.conflict) void controller.acceptSavedEmployment(); attempt.reset(); onClose(); }
+    if (!attempt.busy) { if (attempt.hadConflict) void controller.acceptSavedEmployment(); attempt.reset(); onClose(); }
   }
 </script>
 

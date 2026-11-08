@@ -97,7 +97,7 @@
 
   function closeDelete(): void {
     if (acting) return;
-    if (removal.conflict) void controller.acceptSavedEmployment();
+    if (removal.hadConflict) void controller.acceptSavedEmployment();
     deletingEmployment = undefined;
     removal.reset();
   }
