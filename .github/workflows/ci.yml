@@ -654,7 +654,7 @@ jobs:
 
       - name: Test
         shell: pwsh
-        env:
+        env: &windows-test-env
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
@@ -662,12 +662,16 @@ jobs:
           $separatePackages = @(
             "go.kenn.io/msgvault/cmd/msgvault/cmd"
             "go.kenn.io/msgvault/internal/api"
+            "go.kenn.io/msgvault/internal/beeper"
+            "go.kenn.io/msgvault/internal/deletion"
             "go.kenn.io/msgvault/internal/importer"
+            "go.kenn.io/msgvault/internal/query"
             "go.kenn.io/msgvault/internal/store"
             "go.kenn.io/msgvault/internal/sync"
             "go.kenn.io/msgvault/internal/vector/embed"
             "go.kenn.io/msgvault/internal/vector/sqlitevec"
             "go.kenn.io/msgvault/scripts"
+            "go.kenn.io/msgvault/scripts/contextual-retrieval-eval"
           )
           $packages = go list -tags "fts5 sqlite_vec" ./... |
             Where-Object { $_ -notin $separatePackages }
@@ -877,8 +881,20 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Stabilize tracked file times
+        if: matrix.name == 'vector-sqlite'
+        run: go run ./scripts/stable-mtimes
+
+      - name: Test additional packages
+        if: matrix.name == 'vector-sqlite'
+        shell: pwsh
+        env: *windows-test-env
+        run: |
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-additional.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-additional-reruns.txt `
+            --packages "./internal/query ./internal/deletion ./internal/beeper ./scripts/contextual-retrieval-eval" -- -timeout 20m -tags "fts5 sqlite_vec"
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1
+        if: failure() || github.run_attempt > 1 || matrix.name == 'vector-sqlite'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
