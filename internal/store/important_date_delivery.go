@@ -109,3 +109,13 @@ func (s *Store) ImportantDateHasOtherPendingContext(ctx context.Context, prefix,
 	}
 	return pending, nil
 }
+
+// ImportantDateDeliveryExistsContext reports whether an occurrence has any
+// retained state, including dismissed, completed, or uncertain deliveries.
+func (s *Store) ImportantDateDeliveryExistsContext(ctx context.Context, key string) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ?)`, key).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check important-date delivery: %w", err)
+	}
+	return exists, nil
+}
