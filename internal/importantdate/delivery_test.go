@@ -353,3 +353,63 @@ func TestDeliveryFencesCancelledExternalWrites(t *testing.T) {
 		})
 	}
 }
+
+type cancelAfterDispatchStore struct {
+	*store.Store
+	cancel     context.CancelFunc
+	cancelAt   int
+	dispatches int
+}
+
+func (s *cancelAfterDispatchStore) WithImportantDateConsentContext(ctx context.Context, subject, owner, project, recipient string, dispatch func(context.Context) error) (bool, error) {
+	active, err := s.Store.WithImportantDateConsentContext(ctx, subject, owner, project, recipient, dispatch)
+	s.dispatches++
+	if err == nil && s.dispatches == s.cancelAt {
+		s.cancel()
+	}
+	return active, err
+}
+
+func TestDeliveryRecordsSuccessfulWriteAfterCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		cancelAt   int
+		wantState  store.ImportantDateDeliveryState
+		wantNotify int
+	}{
+		{name: "issue created", cancelAt: 1, wantState: store.ImportantDateIssueCreated},
+		{name: "notification delivered", cancelAt: 2, wantState: store.ImportantDateDelivered, wantNotify: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			st := storetest.New(t).Store
+			participant, err := st.EnsureParticipantByIdentifier("email", "owner@example.test", "Example Owner")
+			must.NoError(err)
+			person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
+			must.NoError(err)
+			subject := "person/" + person.VCardUID
+			must.NoError(st.SetImportantDateConsentContext(t.Context(), subject, "scope-example", "owner/agent", true))
+			input := DeliveryInput{OccurrenceKey: subject + ":birthday:2027", Fingerprint: "fingerprint-example", SubjectUID: subject, OwnerUID: subject, Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			wrapped := &cancelAfterDispatchStore{Store: st, cancel: cancel, cancelAt: test.cancelAt}
+			kata := &deliveryKataFake{}
+			service := DeliveryService{Store: wrapped, Kata: kata}
+			err = service.Deliver(ctx, input, func(context.Context) (bool, error) { return true, nil })
+			if test.cancelAt == 1 {
+				must.ErrorIs(err, context.Canceled)
+			} else {
+				must.NoError(err)
+			}
+			state, _, err := st.ImportantDateDeliveryContext(t.Context(), input.OccurrenceKey)
+			must.NoError(err)
+			checks.Equal(test.wantState, state)
+			checks.Equal(1, kata.creates)
+			checks.Equal(test.wantNotify, kata.notifications)
+			must.NoError(service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil }))
+			checks.Equal(1, kata.creates)
+			checks.Equal(1, kata.notifications)
+		})
+	}
+}

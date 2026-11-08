@@ -116,9 +116,9 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 		return errors.Join(errors.New("important-date issue could not be reconciled"), recoveryErr)
 	}
 	if reused || issue.Status != "open" {
-		return s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateCancelled, issue.UID)
+		return s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateCancelled, issue.UID)
 	}
-	if err := s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateIssueCreated, issue.UID); err != nil {
+	if err := s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateIssueCreated, issue.UID); err != nil {
 		return err
 	}
 	return s.notify(ctx, input, issue.UID, revalidate)
@@ -176,7 +176,7 @@ func (s DeliveryService) notify(ctx context.Context, input DeliveryInput, issueU
 		}
 		return errors.Join(err, recoveryErr)
 	}
-	return s.advance(ctx, input.OccurrenceKey, store.ImportantDateNotifyInFlight, store.ImportantDateDelivered, issueUID)
+	return s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateNotifyInFlight, store.ImportantDateDelivered, issueUID)
 }
 
 func (s DeliveryService) advance(ctx context.Context, key string, from, to store.ImportantDateDeliveryState, issue string) error {
@@ -190,7 +190,7 @@ func (s DeliveryService) advance(ctx context.Context, key string, from, to store
 	return nil
 }
 
-// recoverAdvance must record a safe retry or uncertain outcome after cancellation.
+// recoverAdvance records a delivery outcome even if the caller is cancelled.
 func (s DeliveryService) recoverAdvance(ctx context.Context, key string, from, to store.ImportantDateDeliveryState, issue string) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
