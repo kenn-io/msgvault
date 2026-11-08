@@ -63,7 +63,7 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 		}
 		return nil
 	}
-	if err := s.advance(ctx, input.OccurrenceKey, store.ImportantDateClaimed, store.ImportantDateIssueInFlight, ""); err != nil {
+	if err := s.recoverAdvance(ctx, input.OccurrenceKey, store.ImportantDateClaimed, store.ImportantDateIssueInFlight, ""); err != nil {
 		return err
 	}
 	digest := sha256.Sum256([]byte("msgvault.important-date.v1\x00" + input.OccurrenceKey))

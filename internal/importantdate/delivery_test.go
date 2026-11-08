@@ -413,3 +413,43 @@ func TestDeliveryRecordsSuccessfulWriteAfterCancellation(t *testing.T) {
 		})
 	}
 }
+
+type cancelAfterClaimStore struct {
+	*store.Store
+	cancel context.CancelFunc
+}
+
+func (s *cancelAfterClaimStore) ClaimImportantDateDeliveryContext(ctx context.Context, key, fingerprint string) (bool, error) {
+	claimed, err := s.Store.ClaimImportantDateDeliveryContext(ctx, key, fingerprint)
+	if err == nil && claimed {
+		s.cancel()
+	}
+	return claimed, err
+}
+
+func TestDeliveryRecoversCancellationImmediatelyAfterClaim(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st := storetest.New(t).Store
+	participant, err := st.EnsureParticipantByIdentifier("email", "owner@example.test", "Example Owner")
+	must.NoError(err)
+	person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
+	must.NoError(err)
+	subject := "person/" + person.VCardUID
+	must.NoError(st.SetImportantDateConsentContext(t.Context(), subject, "scope-example", "owner/agent", true))
+	input := DeliveryInput{OccurrenceKey: subject + ":birthday:2027", Fingerprint: "fingerprint-example", SubjectUID: subject, OwnerUID: subject, Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	kata := &deliveryKataFake{}
+	service := DeliveryService{Store: &cancelAfterClaimStore{Store: st, cancel: cancel}, Kata: kata}
+	err = service.Deliver(ctx, input, func(context.Context) (bool, error) { return true, nil })
+	must.ErrorIs(err, context.Canceled)
+	state, _, err := st.ImportantDateDeliveryContext(t.Context(), input.OccurrenceKey)
+	must.NoError(err)
+	checks.Equal(store.ImportantDateRetryIssue, state)
+	checks.Zero(kata.creates)
+	checks.Zero(kata.notifications)
+	service.Store = st
+	must.NoError(service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil }))
+	checks.Equal(1, kata.notifications)
+}
