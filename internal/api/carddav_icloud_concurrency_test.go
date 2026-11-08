@@ -57,3 +57,33 @@ func TestICloudNewRetryGateDuringBootstrapPreventsReplacement(t *testing.T) {
 	require.NoError(err)
 	assert.NotNil(gate)
 }
+
+func TestICloudLateRetryAfterDoesNotPauseReplacement(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := savedICloudAccountFixture(t)
+	f.partition = "p43"
+	f.partitionErr = &carddav.StatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: time.Hour}
+	entered, release := make(chan struct{}), make(chan struct{})
+	f.discoverHook = func(base string) {
+		if base == "https://p42-contacts.icloud.com" {
+			close(entered)
+			<-release
+		}
+	}
+	done := make(chan error, 1)
+	go func() { _, err := f.controller.Current().Sync(t.Context(), carddav.SyncOptions{}); done <- err }()
+	select {
+	case <-entered:
+	case err := <-done:
+		require.FailNow("sync returned before old discovery", "%v", err)
+	}
+	_, saveErr := f.controller.Save(t.Context(), iCloudAccountRequest())
+	close(release)
+	require.NoError(saveErr)
+	require.Error(<-done)
+	gate, err := f.controller.store.GetCardDAVRetryAfterContext(t.Context(), store.DefaultCardDAVAccountID)
+	require.NoError(err)
+	assert.Nil(gate)
+	assert.Equal("https://p43-contacts.icloud.com", f.controller.cardDAVConfigSnapshot().BaseURL)
+}
