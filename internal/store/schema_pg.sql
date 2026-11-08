@@ -4391,3 +4391,12 @@ CREATE TABLE IF NOT EXISTS important_date_subjects (
  birth_day INTEGER NOT NULL,
  withdrawn INTEGER NOT NULL DEFAULT 0 CHECK (withdrawn IN (0, 1))
 );
+
+-- Consent is bound to a subject and the exact private destination.
+CREATE TABLE IF NOT EXISTS important_date_consents (
+ subject_uid TEXT NOT NULL,
+ project TEXT NOT NULL,
+ recipient TEXT NOT NULL,
+ granted INTEGER NOT NULL CHECK (granted IN (0, 1)),
+ PRIMARY KEY (subject_uid, project, recipient)
+);
