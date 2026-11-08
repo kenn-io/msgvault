@@ -670,16 +670,20 @@ func preserveArchivedSections(meeting *HydratedMeeting, archived archivedMeeting
 	}
 	sections := []struct {
 		name      string
+		id        string
 		tree      *blockTree
 		text      *string
 		prior     rawBlockTree
 		priorText string
 	}{
-		{"summary", &meeting.SummaryTree, &meeting.Summary, old.Summary, oldTexts.Summary},
-		{"notes", &meeting.NotesTree, &meeting.Notes, old.Notes, oldTexts.Notes},
-		{"transcript", &meeting.TranscriptTree, &meeting.Transcript, old.Transcript, oldTexts.Transcript},
+		{"summary", meeting.Discovery.MeetingNotes.Children.SummaryBlockID, &meeting.SummaryTree, &meeting.Summary, old.Summary, oldTexts.Summary},
+		{"notes", meeting.Discovery.MeetingNotes.Children.NotesBlockID, &meeting.NotesTree, &meeting.Notes, old.Notes, oldTexts.Notes},
+		{"transcript", meeting.Discovery.MeetingNotes.Children.TranscriptBlockID, &meeting.TranscriptTree, &meeting.Transcript, old.Transcript, oldTexts.Transcript},
 	}
 	for _, section := range sections {
+		if section.name != "transcript" && section.id == "" && sectionReferencePresent(meeting.Discovery.Raw, section.name) {
+			continue
+		}
 		hasPrior := strings.TrimSpace(section.priorText) != "" || (archived.HasEvidence && old.SchemaVersion == 2 && len(section.prior.Root) != 0 && len(section.prior.Blocks) != 0)
 		if !hasPrior || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
 			continue
@@ -700,6 +704,20 @@ func preserveArchivedSections(meeting *HydratedMeeting, archived archivedMeeting
 		meeting.Warnings = append(meeting.Warnings, "provider returned incomplete "+section.name+"; preserved archived meeting-owned "+section.name)
 	}
 	return false
+}
+
+// An omitted field is not evidence that the provider removed a section.
+func sectionReferencePresent(raw []byte, section string) bool {
+	var block struct {
+		MeetingNotes struct {
+			Children map[string]any `json:"children"`
+		} `json:"meeting_notes"`
+	}
+	if json.Unmarshal(raw, &block) != nil {
+		return false
+	}
+	_, ok := block.MeetingNotes.Children[section+"_block_id"]
+	return ok
 }
 
 func restoreArchivedTree(raw rawBlockTree) (blockTree, bool) {

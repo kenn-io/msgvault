@@ -1756,8 +1756,17 @@ func TestImporterReportsPreservedSectionWhenHeaderOmitsID(t *testing.T) {
 	first, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	meeting := hydrationMeeting()
-	meeting.MeetingNotes.Children.SummaryBlockID = ""
 	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	var header map[string]any
+	require.NoError(json.Unmarshal(source.blocks[meeting.ID].Raw, &header))
+	payload, ok := header["meeting_notes"].(map[string]any)
+	require.True(ok)
+	children, ok := payload["children"].(map[string]any)
+	require.True(ok)
+	delete(children, "summary_block_id")
+	updated, err := json.Marshal(header)
+	require.NoError(err)
+	require.NoError(json.Unmarshal(updated, source.blocks[meeting.ID]))
 	source.query.Results = []MeetingNote{meeting}
 	opts.Full = true
 	result, err := imp.Import(t.Context(), opts)
@@ -1801,4 +1810,32 @@ func TestImporterPreservesNonTextEvidenceOnIncompleteRefresh(t *testing.T) {
 	require.NoError(json.Unmarshal(raw, &evidence))
 	assert.True(evidence.Notes.Preserved)
 	assert.Contains(string(evidence.Notes.Root), "image.png")
+}
+
+func TestImporterClearsExplicitlyRemovedSections(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", UserID: "creator-1", SearchAccessible: &noSearch}
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	meeting := hydrationMeeting()
+	meeting.LastEditedTime = "2026-08-30T10:00:00Z"
+	meeting.MeetingNotes.Children.SummaryBlockID = ""
+	meeting.MeetingNotes.Children.NotesBlockID = ""
+	source.query.Results = []MeetingNote{meeting}
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	opts.Full = true
+	result, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.False(result.PartialCoverage)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	content := meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Empty(content.Summary.Text)
+	assert.Empty(content.Notes.Text)
+	assert.Empty(content.Actions)
 }
