@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -345,6 +346,7 @@ func TestFollowRejectsURLsThatAreNotFeeds(t *testing.T) {
 	assert.Contains(summary.Feeds[1].Err.Error(), "404")
 	require.NoError(summary.Feeds[2].Err)
 	assert.Equal(2, summary.Failed())
+	require.NoError(summary.SourceErr(), "one working feed means the source works")
 	latest, err := st.GetLatestSync(summary.SourceID)
 	require.NoError(err)
 	assert.Equal(int64(2), latest.ErrorsCount, "feeds that fail to follow are errors of the run")
@@ -423,6 +425,13 @@ func TestRelativeLinksResolveAgainstTheFeedDocument(t *testing.T) {
     <updated>2026-11-07T15:00:00Z</updated>
     <content type="html">Hello.</content>
   </entry>
+  <entry>
+    <title>Chart post</title>
+    <link href="posts/2"/>
+    <id>urn:example:post:2</id>
+    <updated>2026-11-07T15:00:00Z</updated>
+    <content type="html">&lt;img src="images/chart.png"&gt; &lt;a href="#notes"&gt;notes&lt;/a&gt;</content>
+  </entry>
 </feed>`))
 		default:
 			http.NotFound(w, r)
@@ -438,6 +447,9 @@ func TestRelativeLinksResolveAgainstTheFeedDocument(t *testing.T) {
 	assert.Equal("Hello.\n\n"+server.URL+"/blog/posts/1", post.Body,
 		"resolved against where the document came from after the redirect")
 	assert.Equal("url:https://example.com/", post.SenderValue, "the feed's site still sends an authorless item")
+	chart := archivedItems(t, st)["urn:example:post:2"].BodyHTML.String
+	assert.Contains(chart, `src="`+server.URL+`/blog/images/chart.png"`, "the HTML's relative image is made absolute")
+	assert.Contains(chart, `href="#notes"`)
 }
 
 func TestSyncFetchesTheLeastRecentlyCheckedFeedsFirst(t *testing.T) {
@@ -529,6 +541,22 @@ func TestFeedsCarryingNULStillArchive(t *testing.T) {
 	items := archivedItems(t, st)
 	assert.Equal("Bad title", items["badid"].Subject)
 	assert.Equal("NUL feed", items["good"].FeedTitle)
+}
+
+func TestSummarySourceErrIsAnOutageOnlyWhenEveryFeedFailed(t *testing.T) {
+	t.Parallel()
+	failed := FeedResult{URL: "https://a.example/feed", Err: errUnexpectedHTTP}
+	worked := FeedResult{URL: "https://b.example/feed"}
+	require.ErrorIs(t, Summary{Feeds: []FeedResult{failed, failed}}.SourceErr(), ErrEveryFeedFailed)
+	require.NoError(t, Summary{Feeds: []FeedResult{failed, worked}}.SourceErr())
+	require.NoError(t, Summary{}.SourceErr(), "a sync with no feeds is no outage")
+}
+
+func TestItemNameNamesAnItemByWhatAPersonRecognizes(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "Release 1.2", itemName(messageimport.ImportedMessage{Title: "Release 1.2", URL: "https://x.example/1", ExternalID: "k"}))
+	assert.Equal(t, "https://x.example/1", itemName(messageimport.ImportedMessage{URL: "https://x.example/1", ExternalID: "k"}))
+	assert.Equal(t, "k", itemName(messageimport.ImportedMessage{ExternalID: "k"}))
 }
 
 func TestFeedsWithTheSameItemIDsKeepTheirOwnItems(t *testing.T) {

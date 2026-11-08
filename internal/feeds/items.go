@@ -77,7 +77,7 @@ func itemMessage(
 	if plain {
 		message.BodyText = body
 	} else {
-		message.BodyHTML = body
+		message.BodyHTML = absoluteURLs(body, documentURL)
 	}
 	return message
 }

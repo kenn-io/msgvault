@@ -42,6 +42,7 @@ Sources page offers **Sync now** for the Feeds source.
   sync that pauses for other work picks up the feeds it didn't reach.
 - A feed that fails is recorded on the sync run, and the other feeds still
   sync. `msgvault list-feeds` shows each feed's last check and its last error.
+  A scheduled sync counts as failed only when every feed fails.
 
 ## Feeds on your own network
 
@@ -67,7 +68,7 @@ msgvault search "release notes" --message-type feed_item
 |---|---|
 | Title | The message subject |
 | Content, or the summary when there is none | The message body. HTML is kept, with a plain-text form for search and previews; plain text, such as JSON Feed `content_text` or Atom text content, is kept as text |
-| Link | The end of the body |
+| Link | The end of the body; relative links and images in the HTML are made absolute |
 | Published time, else updated time | The message date; an item without one is dated when first seen |
 | Categories, enclosures, and image | The message's metadata |
 

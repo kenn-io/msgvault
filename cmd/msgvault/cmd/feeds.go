@@ -282,7 +282,8 @@ sync.`,
 			summary, err := newFeedSyncer(s, state).Sync(ctx, feeds.SyncOptions{URLs: args, Full: full})
 			printFeedSummary(cmd.OutOrStdout(), summary)
 			cacheErr := rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state)
-			return errors.Join(recordSyncAttempt(ctx, feeds.SourceType, feeds.SourceIdentifier, err), feedFailures(summary), cacheErr)
+			_ = recordSyncAttempt(ctx, feeds.SourceType, feeds.SourceIdentifier, errors.Join(err, summary.SourceErr()))
+			return errors.Join(err, feedFailures(summary), cacheErr)
 		},
 	}
 	cmd.Flags().Bool("full", false, "download every feed again, even when unchanged")
@@ -295,8 +296,9 @@ func runConfiguredFeedSync(ctx context.Context, s *store.Store) error {
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	_, err := newFeedSyncer(s, state).Sync(ctx, feeds.SyncOptions{})
-	err = recordSyncAttempt(ctx, feeds.SourceType, feeds.SourceIdentifier, err)
+	summary, err := newFeedSyncer(s, state).Sync(ctx, feeds.SyncOptions{})
+	// One broken feed is recorded on the run; every feed failing is an outage.
+	err = recordSyncAttempt(ctx, feeds.SourceType, feeds.SourceIdentifier, errors.Join(err, summary.SourceErr()))
 	return errors.Join(err, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), feeds.SourceType))
 }
 

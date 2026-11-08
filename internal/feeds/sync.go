@@ -45,6 +45,21 @@ func (s Summary) Added() int {
 	return total
 }
 
+// ErrEveryFeedFailed means no feed in a sync could be fetched or archived:
+// the feed source is failing, not one feed.
+var ErrEveryFeedFailed = errors.New("every feed failed")
+
+// SourceErr is the sync's failure as a source: an error when every feed it
+// tried failed, so a scheduled run records the outage, and nil when at
+// least one feed worked. A single failing feed is recorded on the run and
+// on the feed instead.
+func (s Summary) SourceErr() error {
+	if n := len(s.Feeds); n > 0 && s.Failed() == n {
+		return fmt.Errorf("%w (%d feeds)", ErrEveryFeedFailed, n)
+	}
+	return nil
+}
+
 // Failed counts the feeds that could not be fetched or archived.
 func (s Summary) Failed() int {
 	total := 0
@@ -330,7 +345,7 @@ func (r *syncRun) archive(ctx context.Context, feedURL string, fetched *Fetched)
 			continue
 		}
 		if err != nil {
-			return added, skipped, len(messages), fmt.Errorf("archive item %s: %w", message.ExternalID, err)
+			return added, skipped, len(messages), fmt.Errorf("archive %q: %w", itemName(message), err)
 		}
 		if write.Created {
 			added++
@@ -338,6 +353,19 @@ func (r *syncRun) archive(ctx context.Context, feedURL string, fetched *Fetched)
 		}
 	}
 	return added, skipped, len(messages), nil
+}
+
+// itemName names an item in an error: its title, else its link, else its
+// key in the archive.
+func itemName(message messageimport.ImportedMessage) string {
+	switch {
+	case message.Title != "":
+		return message.Title
+	case message.URL != "":
+		return message.URL
+	default:
+		return message.ExternalID
+	}
 }
 
 // recordCheck stores when a feed was checked and how it went. New validators
