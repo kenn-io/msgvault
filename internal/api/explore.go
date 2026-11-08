@@ -282,6 +282,24 @@ func (s *Server) handleExplore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, scope *ExploreFilter) {
+	engine := s.queryEngineForContext(r.Context())
+	explorer, cached := engine.(query.Explorer)
+	var entries query.EntryExplorer = explorer
+	live := !cached && s.analyticsModeForContext(r.Context()) == AnalyticsModeSQLFallback
+	if live {
+		if reader, ok := engine.(*query.SQLiteEngine); ok {
+			started := time.Now()
+			ctx, release, _, err := reader.BeginExploreSnapshot(r.Context())
+			addExploreTiming(w, "snapshot", time.Since(started))
+			if err != nil {
+				s.writeExploreError(r.Context(), w, err)
+				return
+			}
+			defer release()
+			r = r.WithContext(ctx)
+			entries = reader
+		}
+	}
 	prepared, ok := s.prepareExploreRequest(w, r, scope)
 	if !ok {
 		return
@@ -320,13 +338,12 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	if semanticPage {
 		prepared.query.Page = query.PageSpec{Limit: exploreMaxLimit}
 	}
-	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
-	if !ok {
+	if entries == nil {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	projectionStarted := time.Now()
-	result, err := explorer.Explore(r.Context(), prepared.query)
+	result, err := entries.Explore(r.Context(), prepared.query)
 	addExploreTiming(w, "projection", time.Since(projectionStarted))
 	if err != nil {
 		s.writeExploreError(r.Context(), w, err)
@@ -365,6 +382,13 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	}
 	if prepared.request.SearchMode == exploreSearchModeFullText {
 		response.Warnings = search.LiteralORWarnings(prepared.request.Query)
+	}
+	if live {
+		warning := "Showing live archive data because the analytical cache is unavailable. Grouping, person filters, semantic search, and bulk actions need it: run msgvault build-cache --full-rebuild, then restart msgvault."
+		if s.analyticsCacheInitializingForContext(r.Context()) {
+			warning = "Showing live archive data while the analytical cache rebuilds. Grouping, person filters, semantic search, and bulk actions return when it finishes."
+		}
+		response.Warnings = append(response.Warnings, warning)
 	}
 	response.CandidatePoolSaturated = searchSpec.CandidatePoolSaturated
 	if snapshotID != "" && s.exploreState != nil {

@@ -576,9 +576,13 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only")
+}
+
+func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly string) string {
 	attachmentColumns := `
-		0::BIGINT AS attachment_count,
-		0::BIGINT AS attachment_size`
+		CAST(0 AS BIGINT) AS attachment_count,
+		CAST(0 AS BIGINT) AS attachment_size`
 	attachmentJoin := ""
 	if includeAttachmentSummary {
 		attachmentColumns = `
@@ -596,7 +600,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.id AS message_id,
 		m.source_id,
 		COALESCE(s.source_type, '') AS source_type,
-		COALESCE(s.account_email, '') AS source_identifier,
+		COALESCE(` + sourceIdentifier + `, '') AS source_identifier,
 		m.source_message_id,
 		m.conversation_id,
 		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
@@ -614,7 +618,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.is_from_me,
 		m.size_estimate,
 		m.deleted_at IS NOT NULL AS internally_deleted,
-		m.archive_only,
+		` + archiveOnly + ` AS archive_only,
 		m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
 		COALESCE(m.has_attachments, false) AS has_attachments,` + attachmentColumns + `
 	FROM messages m

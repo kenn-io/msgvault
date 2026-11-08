@@ -162,7 +162,7 @@ func prepareDaemonAnalyticsEngine(
 	case config.AnalyticsEngineAuto:
 		logger.Info("using live SQL analytics engine while cache initializes",
 			"engine", engineMode)
-		return query.NewEngine(s.DB(), false), api.AnalyticsModeSQLFallback,
+		return query.NewSQLiteExploreEngine(s.DB(), c.DatabaseDSN()), api.AnalyticsModeSQLFallback,
 			startupCacheBuildOutcomeNone, true, nil
 	case config.AnalyticsEngineDuckDB:
 		logger.Info("DuckDB analytics unavailable while required cache initializes",
