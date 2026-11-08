@@ -448,9 +448,7 @@ it.each([
         return new Response(JSON.stringify(employment(12, 1, { organization_id: employerID, title: 'Architect' })), { status: 201, headers: { ETag: '"employment-12-r1"' } });
       }
       if (path === '/api/v1/people/7/employments') {
-        return collection([employment(11, 2), employment(12, 1, { organization_id: employerID, title: 'Architect' })], {
-          employment_id: 12, organization_id: employerID, organization_name: employerName, title: 'Architect', vcard: {}
-        });
+        return Response.json({ employments: [employment(11, 2), employment(12, 1, { organization_id: employerID, title: 'Architect' })] });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
