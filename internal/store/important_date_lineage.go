@@ -17,10 +17,16 @@ type ImportantDateLineage struct {
 	PersonIDs        []int64                       `json:"person_ids"`
 	PersonUIDs       []string                      `json:"person_uids"`
 	People           []ImportantDateLineagePerson  `json:"people"`
+	Aliases          []ImportantDateLineageAlias   `json:"aliases"`
 	MergeIDs         []int64                       `json:"merge_ids"`
 	SplitIDs         []int64                       `json:"split_ids"`
 	OwnedSubjects    []ImportantDateLineageSubject `json:"owned_subjects"`
 	Deliveries       []ImportantDateDelivery       `json:"deliveries"`
+}
+
+type ImportantDateLineageAlias struct {
+	UID           string `json:"uid"`
+	OwnerPersonID int64  `json:"owner_person_id"`
 }
 
 type ImportantDateLineagePerson struct {
@@ -119,6 +125,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 				return result, fmt.Errorf("scan lineage alias: %w", err)
 			}
 			uids[alias] = struct{}{}
+			result.Aliases = append(result.Aliases, ImportantDateLineageAlias{UID: alias, OwnerPersonID: id})
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -183,6 +190,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		result.SplitIDs = append(result.SplitIDs, id)
 	}
 	sort.Strings(result.PersonUIDs)
+	sort.Slice(result.Aliases, func(i, j int) bool { return result.Aliases[i].UID < result.Aliases[j].UID })
 	for _, uid := range result.PersonUIDs {
 		rows, err := s.db.QueryContext(ctx, `SELECT uid, owner_uid, kind, display_name, birth_year, birth_month, birth_day, revision, withdrawn FROM important_date_subjects WHERE owner_uid = ? ORDER BY uid`, uid)
 		if err != nil {
