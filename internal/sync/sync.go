@@ -1487,6 +1487,15 @@ func (s *Syncer) full(
 				s.failStoppedSync(state.syncID, err)
 				return nil, err
 			}
+			// An empty Gmail listing saves no page checkpoint, so record
+			// replay failures in the stored run before enumeration.
+			if err := s.saveFullCheckpoint(ctx, state); err != nil {
+				if reconcilePresence {
+					s.failStoppedSync(state.syncID, err)
+					return nil, fmt.Errorf("save local replay checkpoint: %w", err)
+				}
+				s.logger.Warn("failed to save checkpoint", "error", err)
+			}
 		}
 	}
 	firstPage := true
