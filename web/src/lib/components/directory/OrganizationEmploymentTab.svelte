@@ -37,7 +37,8 @@
   const acting = $derived(removal.busy || primary.busy);
   let openedOrganizationRequestKey = $state(0);
   function holderJob(organizationID: number, holderID: number): { label: string; open: () => void } | undefined {
-    const job = holderID === personID ? controller.employments.find(item => item.organization_id === organizationID) : undefined;
+    const jobs = holderID === personID ? controller.employments.filter(item => item.organization_id === organizationID) : [];
+    const job = jobs.length === 1 ? jobs[0] : undefined;
     return job ? { label: 'Delete job…', open: () => { openDelete(job); } } : undefined;
   }
 

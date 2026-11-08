@@ -1267,3 +1267,25 @@ it.each(['cleared notes', 'derived status'])('compares %s after an end-date conf
     expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('None');
   } else expect(screen.queryByText('Other details also changed')).toBeNull();
 });
+
+it('refreshes connection types when a conflicted deletion is cancelled', async () => {
+  const opening = relationshipType();
+  const newer = relationshipType({ forward_label: 'advises' });
+  let reads = 0;
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const path = pathOf(request);
+    if (path === '/api/v1/relationship-types/31' && request.method === 'DELETE') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (path === '/api/v1/relationship-types/31') return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"relationship-type-31-r${reads}"` } });
+    if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [newer] });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  }, 0);
+  controller.relationshipTypes = [opening];
+  render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await screen.findByText('This connection type changed since you opened it.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await screen.findByText(/advises/);
+});

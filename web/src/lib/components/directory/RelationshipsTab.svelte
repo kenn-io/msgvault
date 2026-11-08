@@ -113,6 +113,7 @@
   function closeDelete(): void {
     if (acting) return;
     if (removal.conflict) void controller.refreshRelationships();
+    if (typeRemoval.conflict) void controller.refreshRelationshipTypes();
     deletingRelationship = undefined;
     deletingType = undefined;
     removal.reset();

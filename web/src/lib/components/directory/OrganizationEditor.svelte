@@ -99,7 +99,7 @@
         if (!result.ok) return result;
         saved = result.entity!;
         // The form keeps the lists the person opened, so a retry sends the same Yours; the write goes to the version just saved.
-        currentProfile = { ...EMPTY_PROFILE, ...currentProfile, organization: saved };
+        if (!currentProfile) currentProfile = { ...EMPTY_PROFILE, organization: saved };
         prepared = opened = result.etag ? { data: { ...EMPTY_PROFILE, ...prepared?.data, organization: saved }, etag: result.etag } : prepared;
         attempt.prepared = prepared;
       }

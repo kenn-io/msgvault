@@ -578,3 +578,36 @@ it('shows a failed holder profile read as a failed check and retries it', async 
   await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
   expect(await screen.findByText('Synthetic Person')).toBeDefined();
 });
+
+it.each(['failure', 'conflict'])('keeps the concurrent domain after a partial save and another %s', async outcome => {
+  let reads = 0;
+  let puts = 0;
+  const patches: Record<string, unknown>[] = [];
+  const opening = organizationProfile();
+  const newer = { ...opening, organization: { ...opening.organization, revision: 2, primary_domain: 'concurrent.example' } };
+  const saved = { ...newer, organization: { ...newer.organization, revision: 3, name: 'Draft name' } };
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      const body = await request.json();
+      patches.push(body);
+      if (patches.length === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      return Response.json({ ...saved.organization, ...body }, { headers: { ETag: '"organization-21-r3"' } });
+    }
+    if (request.method === 'PUT') {
+      if (++puts === 1) return Response.json({ message: 'Try again' }, { status: outcome === 'failure' ? 503 : 412 });
+      return Response.json(saved, { headers: { ETag: '"organization-21-r4"' } });
+    }
+    const profile = ++reads === 1 ? opening : reads === 2 ? newer : saved;
+    return Response.json(profile, { headers: { ETag: `"organization-21-r${reads}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await fireEvent.click(await screen.findByRole('button', { name: outcome === 'failure' ? 'Retry' : 'Keep yours' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(patches.every((body, index) => index === 0 || body.primary_domain === 'concurrent.example')).toBe(true);
+});

@@ -182,3 +182,15 @@ it('hides the job form and Save after a failed load until Retry succeeds', async
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('value', 'Saved title'));
   expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false);
 });
+
+it('allows closing while the job loads', async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const { controller } = controllerWith(() => pending);
+  let closed = false;
+  const view = render(EmploymentEditor, { controller, personID: 7, employment: employment(), onClose: () => { closed = true; } });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(closed).toBe(true);
+  } finally { view.unmount(); finish(Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })); controller.destroy(); }
+});

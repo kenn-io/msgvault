@@ -152,6 +152,7 @@ describe('OrganizationEmploymentTab', () => {
       expect(screen.getByRole('dialog', { name: 'End job' })).toBeDefined();
       expect(screen.getByText(/ at .+ · since Mar 2024$/)).toBeDefined();
       await fireEvent.input(field, { target: { value: '2026' } });
+      await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'End' }));
       // Only End date is on this form; the title changed elsewhere is summarized, its value in Details.
       const changes = await screen.findByRole('table', { name: 'What changed' });
@@ -588,6 +589,7 @@ describe('OrganizationEmploymentTab', () => {
     const endDate = await screen.findByRole('textbox', { name: 'End date' });
     await waitFor(() => expect(endDate).toHaveProperty('disabled', false));
     await fireEvent.input(endDate, { target: { value: '2026-08' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
     await fireEvent.click(screen.getByRole('button', { name: 'End' }));
     await waitFor(() => expect(requests.some((request) => pathOf(request) === '/api/v1/employments/11/end')).toBe(true));
     expect((await requests.find((request) => pathOf(request) === '/api/v1/employments/11/end')!.json())).toEqual({ end_date: '2026-08' });
@@ -769,4 +771,23 @@ it('deletes the saved version a job delete conflict shows', async () => {
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
+});
+
+it('opens the person when multiple jobs block an organization deletion', async () => {
+  const jobs = [employment(), employment(12, 1, { is_current: false })];
+  const onOpenPerson = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const path = pathOf(requestOf(input));
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: jobs });
+    if (path === '/api/v1/people/7') return Response.json({ display_name: 'Example Person' });
+    throw new Error(`unexpected ${path}`);
+  });
+  controller.employments = jobs;
+  render(OrganizationEmploymentTab, { controller, personID: 7, onOpenPerson });
+  await fireEvent.click(screen.getAllByRole('button', { name: 'this organization' })[0]);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await screen.findByText("Delete its 2 jobs first. Ending them isn't enough.");
+  await fireEvent.click(screen.getByRole('button', { name: 'Open to delete Example Person’s job' }));
+  expect(onOpenPerson).toHaveBeenCalledWith(7);
 });
