@@ -146,8 +146,6 @@ func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMee
 			_, _ = fmt.Fprintln(out, "  Sample content: incomplete (some meeting sections could not be read)")
 		} else if strings.TrimSpace(sampled.Transcript) == "" {
 			_, _ = fmt.Fprintln(out, "  Sample content: available (transcript pending)")
-		} else {
-			_, _ = fmt.Fprintln(out, "  Sample content: available")
 		}
 	}
 	if users == nil {
