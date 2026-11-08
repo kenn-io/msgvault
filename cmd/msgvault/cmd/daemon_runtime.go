@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/update"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"golang.org/x/crypto/argon2"
@@ -646,9 +647,15 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 	return update.IsNewer(currentVersion, rt.Record.Version)
 }
 
-func reportRetainedDaemonVersion(w io.Writer, rt *DaemonRuntime) {
+func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
 	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
-		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run msgvault daemon restart to use this version.\n", rt.Record.Version, Version)
+		options := optionsFromContext(ctx)
+		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+		for i := 1; i < len(args); i += 2 {
+			args[i] = oauth.ShellQuote(args[i])
+		}
+		restart := strings.Join(append([]string{"msgvault"}, args...), " ")
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s daemon restart to use this version.\n", rt.Record.Version, Version, restart)
 	}
 }
 
