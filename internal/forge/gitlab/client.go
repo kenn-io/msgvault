@@ -152,7 +152,7 @@ func (c *client) get(ctx context.Context, path string, query url.Values, out any
 	if err := c.pace(ctx); err != nil {
 		return nil, err
 	}
-	resp, err := c.rest.GetJSON(ctx, path, query, nil, out) //nolint:bodyclose // GetJSON returns the response closed
+	resp, err := c.rest.GetJSON(ctx, path, query, nil, out)
 	if err != nil {
 		return nil, err
 	}
