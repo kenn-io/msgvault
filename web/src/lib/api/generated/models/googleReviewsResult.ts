@@ -11,6 +11,7 @@ import type { GoogleReviewsTargetInfo } from "./googleReviewsTargetInfo";
 export interface GoogleReviewsResult {
   archive_sync?: GoogleReviewsBackfillState;
   capabilities?: GoogleReviewsCapability[];
+  credential_change_token?: string;
   next_page_token?: string;
   preview?: GoogleReviewsPreview;
   receipt?: GoogleReviewsReceipt;

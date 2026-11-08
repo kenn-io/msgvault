@@ -6531,14 +6531,15 @@ func (g GoogleReviewsRequest) Validate() error {
 }
 
 type GoogleReviewsResult struct {
-	ArchiveSync   *GoogleReviewsBackfillState `json:"archive_sync,omitempty"`
-	Capabilities  []GoogleReviewsCapability   `json:"capabilities,omitempty"`
-	NextPageToken *string                     `json:"next_page_token,omitzero"`
-	Preview       *GoogleReviewsPreview       `json:"preview,omitempty"`
-	Receipt       *GoogleReviewsReceipt       `json:"receipt,omitempty"`
-	Review        *GoogleReviewsReview        `json:"review,omitempty"`
-	Reviews       []GoogleReviewsReview       `json:"reviews,omitempty"`
-	Targets       []GoogleReviewsTargetInfo   `json:"targets,omitempty"`
+	ArchiveSync           *GoogleReviewsBackfillState `json:"archive_sync,omitempty"`
+	Capabilities          []GoogleReviewsCapability   `json:"capabilities,omitempty"`
+	CredentialChangeToken *string                     `json:"credential_change_token,omitzero"`
+	NextPageToken         *string                     `json:"next_page_token,omitzero"`
+	Preview               *GoogleReviewsPreview       `json:"preview,omitempty"`
+	Receipt               *GoogleReviewsReceipt       `json:"receipt,omitempty"`
+	Review                *GoogleReviewsReview        `json:"review,omitempty"`
+	Reviews               []GoogleReviewsReview       `json:"reviews,omitempty"`
+	Targets               []GoogleReviewsTargetInfo   `json:"targets,omitempty"`
 }
 
 func (g GoogleReviewsResult) Validate() error {

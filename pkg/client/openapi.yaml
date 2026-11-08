@@ -6888,6 +6888,8 @@ components:
           items:
             $ref: "#/components/schemas/GoogleReviewsCapability"
           type: array
+        credential_change_token:
+          type: string
         next_page_token:
           type: string
         preview:
