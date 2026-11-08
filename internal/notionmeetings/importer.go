@@ -496,15 +496,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return false, nil
 	}
 	traversalStep := func(ctx context.Context) (bool, error) {
-		if len(state.Frontier) != 0 || state.SeedNext == 0 {
-			return run.stepTraversal(ctx)
+		if state.SeedNext > 0 {
+			candidate, fits := seedCandidate()
+			if fits {
+				state = candidate
+				return true, nil
+			}
 		}
-		candidate, fits := seedCandidate()
-		if !fits {
-			return false, nil
-		}
-		state = candidate
-		return true, nil
+		return run.stepTraversal(ctx)
 	}
 	steps := []func(context.Context) (bool, error){run.stepQuery, traversalStep, admissionStep, refreshStep}
 	idle := 0

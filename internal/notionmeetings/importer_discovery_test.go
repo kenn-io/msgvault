@@ -590,9 +590,10 @@ func TestCompactSweepSeedsBeforeRepeatedDueRetries(t *testing.T) {
 	require := require.New(t)
 	st, source, imp := broadFixture(t)
 	imp.limits.Requests = 1
-	source.children["root"] = map[string]*BlockPage{"": {}}
+	source.children["root"] = map[string]*BlockPage{"": {Results: []Block{{Object: "block", ID: "child", Type: "child_page"}}}}
+	source.children["root-2"] = map[string]*BlockPage{"": {}}
 	noSearch := false
-	opts := ImportOptions{Identifier: "work", TokenType: "pat", RootPageIDs: []string{"root"}, SearchAccessible: &noSearch}
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", RootPageIDs: []string{"root", "root-2"}, SearchAccessible: &noSearch}
 	state := newSyncState()
 	state.Identity = Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}
 	state.Fingerprint = scopeFingerprint("work", state.Identity, opts)
@@ -613,6 +614,7 @@ func TestCompactSweepSeedsBeforeRepeatedDueRetries(t *testing.T) {
 	saved, err := imp.loadState(t.Context(), src.ID)
 	require.NoError(err)
 	assert.True(saved.Seen["blocks:root"])
+	assert.True(saved.Seen["blocks:root-2"])
 	assert.Zero(saved.SeedNext)
 	require.Len(saved.Deferred, 1)
 	require.NotNil(saved.Deferred[0].Task)
