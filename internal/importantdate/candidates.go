@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -25,6 +27,8 @@ type Candidate struct {
 
 type CandidateStore interface {
 	ListPersonsContext(ctx context.Context) ([]store.Person, error)
+	GetPersonContext(ctx context.Context, personID int64) (*store.Person, error)
+	GetPersonByUIDContext(ctx context.Context, uid string) (*store.Person, error)
 	ListPersonDatesContext(ctx context.Context, personID int64, history bool) ([]store.PersonDate, error)
 	ListPersonAttributeValuesContext(ctx context.Context, personID int64, query store.PersonAttributeQuery) ([]store.PersonAttributeValue, error)
 	ListPersonRelationshipsContext(ctx context.Context, personID int64, options store.PersonRelationshipListOptions) ([]store.PersonRelationshipView, error)
@@ -36,7 +40,7 @@ type CandidateStore interface {
 // Candidates scans current declared facts without inference or external writes.
 // Subjects involved in a merge or split are quarantined until reconciliation.
 func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time) ([]Candidate, error) {
-	return candidates(ctx, st, cfg, now, nil)
+	return candidates(ctx, st, cfg, now, nil, "", "")
 }
 
 // Preview reports aggregate reasons for exclusions without exposing date evidence.
@@ -48,12 +52,18 @@ type Preview struct {
 
 func PreviewCandidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time) (Preview, error) {
 	result := Preview{Skipped: make(map[string]int)}
-	rows, err := candidates(ctx, st, cfg, now, result.Skipped)
+	rows, err := candidates(ctx, st, cfg, now, result.Skipped, "", "")
 	result.Candidates = rows
 	return result, err
 }
 
-func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time, skipped map[string]int) ([]Candidate, error) {
+// CandidateForSubject applies the same routing rules to one subject and its
+// possible parents, avoiding a complete archive scan under the delivery fence.
+func CandidateForSubject(ctx context.Context, st CandidateStore, cfg Config, now time.Time, subject, owner string) ([]Candidate, error) {
+	return candidates(ctx, st, cfg, now, nil, subject, owner)
+}
+
+func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time, skipped map[string]int, subject, owner string) ([]Candidate, error) {
 	skip := func(reason string) {
 		if skipped != nil {
 			skipped[reason]++
@@ -70,7 +80,12 @@ func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 	if err != nil {
 		return nil, fmt.Errorf("load important-date time zone: %w", err)
 	}
-	people, err := st.ListPersonsContext(ctx)
+	var people []store.Person
+	if subject == "" {
+		people, err = st.ListPersonsContext(ctx)
+	} else {
+		people, err = relevantPeople(ctx, st, subject, owner)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -120,18 +135,21 @@ func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		}
 	}
 	selected := make(map[string]Candidate)
-	add := func(subject, owner, kind string, date store.PartialDate, tier Tier, direct bool) {
+	add := func(candidateSubject, owner, kind string, date store.PartialDate, tier Tier, direct bool) {
+		if subject != "" && candidateSubject != subject {
+			return
+		}
 		occurrence, ok := NextOccurrence(date, now, location, cfg.LeapDay)
 		if !ok {
 			skip("no_future_occurrence")
 			return
 		}
-		key := fmt.Sprintf("%s:%s:%d", subject, kind, occurrence.Year())
-		candidate := Candidate{Fingerprint: DateFingerprint(date), OccurrenceKey: key, SubjectUID: subject, OwnerUID: owner, Kind: kind, Occurrence: occurrence, Tier: tier}
+		key := fmt.Sprintf("%s:%s:%d", candidateSubject, kind, occurrence.Year())
+		candidate := Candidate{Fingerprint: DateFingerprint(date), OccurrenceKey: key, SubjectUID: candidateSubject, OwnerUID: owner, Kind: kind, Occurrence: occurrence, Tier: tier}
 		previous, exists := selected[key]
 		// Direct eligibility wins over inheritance; otherwise choose the most
 		// important tier, then stable UID for deterministic duplicate routing.
-		if !exists || direct && previous.OwnerUID != subject || (!direct && previous.OwnerUID != subject && (tier < previous.Tier || tier == previous.Tier && owner < previous.OwnerUID)) {
+		if !exists || direct && previous.OwnerUID != candidateSubject || (!direct && previous.OwnerUID != candidateSubject && (tier < previous.Tier || tier == previous.Tier && owner < previous.OwnerUID)) {
 			selected[key] = candidate
 		}
 	}
@@ -204,6 +222,49 @@ func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].OccurrenceKey < result[j].OccurrenceKey })
+	return result, nil
+}
+
+// relevantPeople includes the selected subject and every possible parent, so
+// direct and inherited route precedence remains identical to a full scan.
+func relevantPeople(ctx context.Context, st CandidateStore, subject, owner string) ([]store.Person, error) {
+	ownerUID, ok := strings.CutPrefix(owner, "person/")
+	if !ok || ownerUID == "" {
+		return nil, errors.New("invalid important-date owner")
+	}
+	ownerPerson, err := st.GetPersonByUIDContext(ctx, ownerUID)
+	if err != nil {
+		return nil, err
+	}
+	people := map[int64]store.Person{ownerPerson.ID: *ownerPerson}
+	if subjectUID, ok := strings.CutPrefix(subject, "person/"); ok {
+		person, err := st.GetPersonByUIDContext(ctx, subjectUID)
+		if err != nil {
+			return nil, err
+		}
+		people[person.ID] = *person
+		relations, err := st.ListPersonRelationshipsContext(ctx, person.ID, store.PersonRelationshipListOptions{})
+		if err != nil {
+			return nil, err
+		}
+		for _, view := range relations {
+			rel := view.Relationship
+			if rel.TypeSlug != "parent" || rel.TargetPersonID != person.ID {
+				continue
+			}
+			parent, err := st.GetPersonContext(ctx, rel.SourcePersonID)
+			if err != nil {
+				return nil, err
+			}
+			people[parent.ID] = *parent
+		}
+	} else if !strings.HasPrefix(subject, "owned/") {
+		return nil, errors.New("invalid important-date subject")
+	}
+	result := make([]store.Person, 0, len(people))
+	for _, person := range people {
+		result = append(result, person)
+	}
 	return result, nil
 }
 

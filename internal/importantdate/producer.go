@@ -59,7 +59,7 @@ func RunOnce(ctx context.Context, st ProducerStore, kata DeliveryKata, cfg Confi
 			if projectUID != cfg.ProjectUID {
 				return false, nil
 			}
-			current, err := Candidates(fenced, st, cfg, time.Now())
+			current, err := CandidateForSubject(fenced, st, cfg, time.Now(), candidate.SubjectUID, candidate.OwnerUID)
 			if err != nil {
 				return false, err
 			}
