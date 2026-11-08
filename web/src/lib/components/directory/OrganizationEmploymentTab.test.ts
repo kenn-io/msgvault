@@ -476,7 +476,8 @@ it('deletes the saved version a job delete conflict shows', async () => {
   expect(screen.getByText('Concurrent title')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(tags).toHaveLength(2);
+  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
+  expect(reads).toBe(2);
 });
 
 it('opens the person when multiple jobs block an organization deletion', async () => {
