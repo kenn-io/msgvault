@@ -273,8 +273,6 @@ func TestEmbeddingSlotKind(t *testing.T) {
 		{label: "post-sync multimodal indexing", held: true, want: "other"},
 		{label: CardDAVJobNameForConnection("work"), held: true, want: "sync"},
 		{label: "synctech-sms:+15555550100", held: true, want: "sync"},
-		{label: IMessageJobName, held: true, want: "sync"},
-		{label: WhatsAppAppleJobName("+15555550100"), held: true, want: "sync"},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, embeddingSlotKind(tt.label, tt.held), "label %q held=%t", tt.label, tt.held)

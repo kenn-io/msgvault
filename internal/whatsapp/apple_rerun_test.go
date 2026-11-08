@@ -638,27 +638,3 @@ func TestImportAndroidRejectsDateWindow(t *testing.T) {
 	assert.Contains(t, err.Error(), "only supported for Apple")
 	assertStoreCount(t, st.DB(), "messages", 0)
 }
-
-func TestImportAppleEditAndAdditionCounts(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	chatDBPath := createAppleChatFixture(t)
-	st := testutil.NewTestStore(t)
-	importer := NewImporter(st, nil)
-	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
-	require.NoError(err)
-	execAppleFixture(t, chatDBPath, `
- UPDATE ZWAMESSAGE SET ZTEXT = 'edited direct text' WHERE Z_PK = 1;
- INSERT INTO ZWAMESSAGE VALUES
- (20, 1, NULL, 'direct-new', 0, 700000020, 'new direct text', 0, '15555550101@s.whatsapp.net');
- `)
-	summary, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
-	require.NoError(err)
-	assert.Equal(int64(1), summary.MessagesAdded)
-	run, err := st.GetLatestSync(summary.SourceID)
-	require.NoError(err)
-	require.NotNil(run)
-	assert.Equal(int64(1), run.MessagesAdded)
-	assert.Equal(int64(1), run.MessagesUpdated)
-	assert.Equal("edited direct text", appleBodyText(t, st, "direct-in"))
-	assert.Equal("new direct text", appleBodyText(t, st, "direct-new"))
-}

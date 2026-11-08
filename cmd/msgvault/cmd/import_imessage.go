@@ -133,7 +133,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	client, err := openImessageClientRecorded(cmd.Context(), s, existingImessageSource(s), chatDBPath, clientOpts, time.Now())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("iMessage database not found at %s: %w", chatDBPath, err)
+			return fmt.Errorf("iMessage database not found: %w\n\nMake sure you're running on macOS with Messages enabled", err)
 		}
 		return err
 	}
@@ -333,7 +333,6 @@ func resolveChatDBPath(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return path, nil
 }
 

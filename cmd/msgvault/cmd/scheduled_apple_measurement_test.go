@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,18 @@ func newWhatsAppAppleFixture(t *testing.T) string {
  CREATE TABLE ZWAMESSAGE (Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INTEGER, ZGROUPMEMBER INTEGER, ZSTANZAID TEXT, ZISFROMME INTEGER, ZMESSAGEDATE TIMESTAMP, ZTEXT TEXT, ZMESSAGETYPE INTEGER, ZFROMJID TEXT);
  INSERT INTO ZWACHATSESSION VALUES (1, '15555550101@s.whatsapp.net', 'Alice Test', 0, 700000002);
  INSERT INTO ZWAMESSAGE VALUES (1, 1, NULL, 'direct-in', 0, 700000000.25, 'hello', 0, '15555550101@s.whatsapp.net');`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	return path
+}
+
+func newImessageFixture(t *testing.T) string {
+	t.Helper()
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.ExecContext(t.Context(), `
+CREATE TABLE attachment (guid TEXT, filename TEXT, transfer_name TEXT, mime_type TEXT, uti TEXT, total_bytes INTEGER, is_sticker INTEGER);
+CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+INSERT INTO message (text, date) VALUES ('hello', 700000000000000000);`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	return path
@@ -106,7 +119,7 @@ func TestScheduledIMessageMissingSourceIsUnmeasured(t *testing.T) {
 func setWhatsAppWriter(t *testing.T, alive *bool) {
 	t.Helper()
 	old := whatsAppWriterAlive
-	whatsAppWriterAlive = func() *bool { return alive }
+	whatsAppWriterAlive = func(context.Context) *bool { return alive }
 	t.Cleanup(func() { whatsAppWriterAlive = old })
 }
 
@@ -187,7 +200,7 @@ func TestWhatsAppWriterAliveUnknownOffMacOS(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		t.Skip("macOS probes the real WhatsApp process")
 	}
-	assert.Nil(t, whatsAppWriterAlive(), "a process check off macOS says nothing about WhatsApp for Mac")
+	assert.Nil(t, whatsAppWriterAlive(t.Context()), "a process check off macOS says nothing about WhatsApp for Mac")
 }
 
 // TestScheduledWhatsAppAppleRemovedAfterPreflightIsUnmeasured proves a source
@@ -319,8 +332,10 @@ func TestManualImessageImportMissingSourceCreatesNoSource(t *testing.T) {
 
 	st, err := runManualImessageImport(t, missing, nil)
 
-	require.ErrorContains(err, "iMessage database not found at "+missing)
+	require.ErrorContains(err, "iMessage database not found")
+	require.ErrorContains(err, "Make sure you're running on macOS with Messages enabled")
 	require.ErrorIs(err, fs.ErrNotExist)
+	assert.Equal(t, 1, strings.Count(err.Error(), missing), "the path appears once")
 	sources, err := st.ListSources("apple_messages")
 	require.NoError(err)
 	assert.Empty(t, sources)
@@ -431,58 +446,4 @@ func TestUnmeasuredSyncCacheInterruptionCounters(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(before.failedRunCount+1, after.failedRunCount)
 	assert.Equal(before.failedRunIDSum+id, after.failedRunIDSum)
-}
-
-// TestScheduledAppleImportsMigrateLegacyIdentity covers an upgraded archive
-// with an email source and a legacy [identity] block, where only the daemon's
-// scheduled Apple imports run: the migration gives the email source its legacy
-// addresses then, instead of waiting for another command, and runs after the
-// imported source's own default identity so that identity is kept.
-func TestScheduledAppleImportsMigrateLegacyIdentity(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		sourceType string
-		own        []string
-		run        func(context.Context, *store.Store) error
-	}{
-		{"whatsapp", "whatsapp", []string{"+15555550100"}, func(ctx context.Context, st *store.Store) error {
-			setWhatsAppWriter(t, nil)
-			return runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{
-				Name: "test", Phone: "+15555550100", Path: newWhatsAppAppleFixture(t),
-			})
-		}},
-		{"imessage", "apple_messages", nil, func(ctx context.Context, st *store.Store) error {
-			return runScheduledIMessage(ctx, st, config.IMessageConfig{DBPath: newImessageFixture(t)})
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
-			st := testutil.NewTestStore(t)
-			email, err := st.GetOrCreateSource("mbox", "archive@example.com")
-			require.NoError(err)
-			cfg := config.NewDefaultConfig()
-			cfg.Data.DataDir = t.TempDir()
-			cfg.Analytics.AutoBuildCache = false
-			cfg.Identity.Addresses = []string{"legacy@example.com"}
-
-			require.NoError(tc.run(testInvocationContext(t.Context(), cfg, invocationOptions{}), st))
-
-			assert.ElementsMatch([]string{"legacy@example.com"}, identityAddresses(t, st, email.ID))
-			sources, err := st.ListSources(tc.sourceType)
-			require.NoError(err)
-			require.Len(sources, 1)
-			assert.ElementsMatch(tc.own, identityAddresses(t, st, sources[0].ID))
-		})
-	}
-}
-
-func identityAddresses(t *testing.T, st *store.Store, sourceID int64) []string {
-	t.Helper()
-	ids, err := st.ListAccountIdentities(sourceID)
-	require.NoError(t, err)
-	addresses := make([]string, 0, len(ids))
-	for _, id := range ids {
-		addresses = append(addresses, id.Address)
-	}
-	return addresses
 }

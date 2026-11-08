@@ -1864,9 +1864,6 @@ type IMessageConfig struct {
 	Me                   string `toml:"me"`
 	MediaMaxParticipants int    `toml:"media_max_participants"`
 	MaxMediaMB           int    `toml:"max_media_mb"`
-	// Window limits each scheduled run to messages newer than this duration.
-	// Empty reads the whole store.
-	Window string `toml:"window"`
 }
 
 // MediaEnabled reports whether file download is on (default true).

@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
@@ -28,12 +27,6 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.WhatsAppAppleJobName(src.Phone)))
 	}()
-	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
-	}
-	if !strings.HasPrefix(src.Phone, "+") {
-		return fmt.Errorf("whatsapp_apple source %q: phone must be in E.164 format (starting with +)", src.Name)
-	}
 	path := src.Path
 	if path == "" {
 		home, err := os.UserHomeDir()
@@ -48,13 +41,12 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 		recordUnreadableSource(ctx, s, "whatsapp", src.Phone, syncType, path, readStartedAt, err)
 		return fmt.Errorf("whatsapp_apple source %q: %w", src.Name, err)
 	}
-	writerAlive := whatsAppWriterAlive()
+	writerAlive := whatsAppWriterAlive(ctx)
 
 	opts := whatsapp.DefaultOptions()
 	opts.WriterAlive = writerAlive
 	opts.Phone = src.Phone
 	opts.DisplayName = src.DisplayName
-	opts.AttachmentsDir = state.cfg.AttachmentsDir()
 	summary, err := whatsapp.NewImporter(s, scheduledWhatsAppProgress{logger: state.logger, source: src.Name}).Import(ctx, path, opts)
 	if err != nil {
 		if summary != nil && summary.SyncID != 0 {
@@ -72,12 +64,6 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 		}.ClassifyOutcome(summary.MessagesAdded+summary.MessagesUpdated > 0)
 		if err := s.SetSyncMeasurement(context.WithoutCancel(ctx), summary.SyncID, m); err != nil {
 			state.logger.Warn("could not record sync measurement", "error", err)
-		}
-		// A run that could not see new data must not make the source look fresh.
-		if m.Outcome != store.SyncOutcomeUnmeasured {
-			if err := s.TouchSourceLastSyncAt(context.WithoutCancel(ctx), summary.SourceID); err != nil {
-				return fmt.Errorf("update source freshness: %w", err)
-			}
 		}
 	}
 	// The import committed; record its owner and finish the migration even
@@ -109,13 +95,6 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 		if err != nil {
 			return err
 		}
-	}
-	if cfg.Window != "" {
-		window, err := time.ParseDuration(cfg.Window)
-		if err != nil || window <= 0 {
-			return fmt.Errorf("imessage.window %q must be a positive duration", cfg.Window)
-		}
-		opts = append(opts, imessage.WithAfterDate(time.Now().Add(-window)))
 	}
 	src, err := resolveImessageSource(s)
 	if err != nil {
@@ -182,12 +161,12 @@ func openImessageClientRecorded(
 // machine. While it is closed, ChatStorage stays readable but nothing new
 // reaches it, so a run that changes nothing proves nothing. It returns nil when
 // that cannot be known: off macOS, or when pgrep itself fails. Tests replace it.
-var whatsAppWriterAlive = func() *bool {
+var whatsAppWriterAlive = func(ctx context.Context) *bool {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
 	alive := true
-	if err := exec.Command("pgrep", "-qx", "WhatsApp").Run(); err != nil {
+	if err := exec.CommandContext(ctx, "pgrep", "-qx", "WhatsApp").Run(); err != nil {
 		// pgrep exits 1 when no process matches; anything else is a failed probe.
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {

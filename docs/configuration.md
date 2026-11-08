@@ -1868,14 +1868,13 @@ max_media_mb = 250
 | `enabled` | `false` | Enable daemon imports when a schedule is set |
 | `schedule` | — | Five-field cron schedule; Sources also offers **Sync now** |
 | `db_path` | `~/Library/Messages/chat.db` | Source database; accepts `~` and paths relative to the configuration directory when loaded with `--config` |
-| `window` | whole store | Optional positive Go duration, such as `48h`; scheduled runs read messages newer than this |
 | `me` | — | Your phone or email for sender and recipient attribution |
 | `media_max_participants` | `20` | Skip media from chats with more participants than this, counting you; `0` = no cap |
 | `max_media_mb` | `250` | Per-attachment size cap in MiB |
 
-Grant Full Disk Access to the process running the daemon. By default, every run re-reads
+Grant Full Disk Access to the process running the daemon. Every run re-reads
 all of `chat.db` and writes only what changed, including late arrivals
-and edits. Set `window` to limit scheduled runs to recent messages.
+and edits.
 Choose a schedule interval that allows for the time it takes to read your database.
 
 ### Omi Sources
