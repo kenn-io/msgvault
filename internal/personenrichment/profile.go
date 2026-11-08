@@ -199,6 +199,11 @@ func (c ProviderConfig) Profile(catalog personfacts.Catalog) (ProviderProfile, e
 			}
 		}
 	}
+	if c.Kind == ProviderContext {
+		if err := validateContextTargets(targets); err != nil {
+			return ProviderProfile{}, err
+		}
+	}
 	if c.Kind == ProviderSixtyfour {
 		for _, target := range targets {
 			if _, err := sixtyfourStructValue(target); err != nil {

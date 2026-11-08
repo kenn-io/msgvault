@@ -2242,6 +2242,7 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 type PersonEnrichmentProviderSettingKind string
 
 const (
+	Context   PersonEnrichmentProviderSettingKind = "context"
 	Exa       PersonEnrichmentProviderSettingKind = "exa"
 	Sixtyfour PersonEnrichmentProviderSettingKind = "sixtyfour"
 )
@@ -2249,7 +2250,7 @@ const (
 // Validate checks if the PersonEnrichmentProviderSettingKind value is valid
 func (p PersonEnrichmentProviderSettingKind) Validate() error {
 	switch p {
-	case Exa, Sixtyfour:
+	case Context, Exa, Sixtyfour:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderSettingKind value, got: %v", p))
@@ -2259,6 +2260,7 @@ func (p PersonEnrichmentProviderSettingKind) Validate() error {
 type PersonEnrichmentProviderUpdateKind string
 
 const (
+	PersonEnrichmentProviderUpdateKindContext   PersonEnrichmentProviderUpdateKind = "context"
 	PersonEnrichmentProviderUpdateKindExa       PersonEnrichmentProviderUpdateKind = "exa"
 	PersonEnrichmentProviderUpdateKindSixtyfour PersonEnrichmentProviderUpdateKind = "sixtyfour"
 )
@@ -2266,7 +2268,7 @@ const (
 // Validate checks if the PersonEnrichmentProviderUpdateKind value is valid
 func (p PersonEnrichmentProviderUpdateKind) Validate() error {
 	switch p {
-	case PersonEnrichmentProviderUpdateKindExa, PersonEnrichmentProviderUpdateKindSixtyfour:
+	case PersonEnrichmentProviderUpdateKindContext, PersonEnrichmentProviderUpdateKindExa, PersonEnrichmentProviderUpdateKindSixtyfour:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderUpdateKind value, got: %v", p))

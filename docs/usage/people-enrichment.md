@@ -1,14 +1,16 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-10-24"
 title: External Person Enrichment
 description: Look up public profile information with explicit provider policies, request limits, and opt-outs.
 ---
 
 External enrichment looks up public information about tracked people and adds
-supported results to their profile fact history. It sends selected identifiers,
-such as a name and current company, to Exa or Sixtyfour. It does not send
-archived conversations; [profile sweeps](/docs/usage/people-automation/) handle
-facts extracted from your archive.
+supported results to their profile fact history. It sends selected identifiers
+to Exa, Sixtyfour, or Context.dev according to the provider policy. Context.dev
+receives only the name; the current company stays local for exact employer
+matching. Enrichment does not send archived conversations;
+[profile sweeps](/docs/usage/people-automation/) handle facts extracted from your
+archive.
 
 Enrichment is disabled by default. Each provider needs its own policy, request
 limits, and consent. Existing [fact pins](/docs/usage/people-automation/#understand-and-correct-automatic-facts)
@@ -20,12 +22,16 @@ also apply to enrichment results.
 |---|---|---|
 | Exa `people` | A public profile URL, or both name and current company | One typed person result; supported fields include location and employment |
 | Exa `deep` or `deep-reasoning` | A public profile URL | Structured results for the requested supported fields |
+| Context.dev People Search | Both name and current company | One page of up to 10 candidates; exactly one matching name and employer is required |
 | Sixtyfour | Both name and current company | An asynchronous job, polled until completion or its age limit |
 
 `allowed_identifiers` is the exact list of identifier classes the provider may
 receive: `name`, `email`, `phone`, `current_company`, and
 `public_profile_url`. A field being present locally does not override that list.
 Sixtyfour's allowed list must include both `name` and `current_company`.
+Context.dev requires exactly those two identifier classes in its policy; only
+the name is sent in its search query, and the current company is used for exact
+local employer matching.
 
 Results still need to match the person and pass the fact resolver's evidence
 checks. A provider response is a proposed claim, not an instruction to overwrite
@@ -77,7 +83,28 @@ The default Exa endpoint is `https://api.exa.ai/search`. Sixtyfour uses
 `https://api.sixtyfour.ai/people-intelligence-async` and
 `https://api.sixtyfour.ai/job-status`, requires an explicit `tier`, and uses
 `SIXTYFOUR_API_KEY` by default. Its request and polling endpoints must have the
-same origin. Neither provider accepts HTTP endpoints.
+same origin. All providers require HTTPS endpoints.
+
+For Context.dev, select **Add Context.dev provider** in Settings, or change the
+example above to `kind = "context"`, set `api_key_env = "CONTEXT_DEV_API_KEY"`,
+and remove `mode`. Its default endpoint is
+`https://api.context.dev/v1/people/search`. Leave `mode`, `tier`, `poll_endpoint`,
+and `num_results` unset. The adapter supports text name and location fields,
+multi-valued education fields, and `system:employment` for the current role.
+Use the exact catalog keys for those fields.
+
+This uses [People Search](https://docs.context.dev/api-reference/people/search),
+not the separate email/profile lookup in People Enrich. Context receives a
+name-only `name: <name>` query. msgvault applies exact name and current employer
+matching locally, rejecting a page without a match or with ambiguous matches.
+It fetches only the first page and never follows cursors automatically. For a
+common name, the intended person can be absent from that one returned page.
+A non-empty page still costs 10 Context credits, even when msgvault rejects all
+the candidates; an empty page is free. Credits are not reported as a known USD
+cost. Missing fields remain unknown.
+Results without safe public profile links use provider-assertion evidence.
+Search returns no per-field confidence or freshness; facts retain conservative
+aggregator evidence scores.
 
 For Sixtyfour, the polling interval defaults to 30 seconds, the maximum job age
 to 15 minutes, and the retry count to 5. Provider requests default to a one-minute

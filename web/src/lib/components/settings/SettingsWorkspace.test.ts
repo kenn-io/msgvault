@@ -431,6 +431,38 @@ it.each([
   expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
 });
 
+it('creates a Context.dev provider with disabled defaults and a stable name', async () => {
+  const doc = settingsDoc({ person_enrichment_providers: [] });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc);
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+
+  await fireEvent.click(await screen.findByRole('button', { name: 'Add Context.dev' }));
+  await fireEvent.input(screen.getByLabelText('Context.dev name'), { target: { value: 'context-primary' } });
+  await fireEvent.submit(screen.getByRole('form', { name: 'Add Context.dev' }));
+
+  await waitFor(() => expect(seen.some(request => request.method === 'PUT' && request.path.endsWith('/context-primary'))).toBe(true));
+  const write = seen.find(request => request.method === 'PUT' && request.path.endsWith('/context-primary'));
+  expect(write?.ifMatch).toBe('"s1"');
+  expect(write?.body).toMatchObject({
+    kind: 'context',
+    enabled: false,
+    endpoint: 'https://api.context.dev/v1/people/search',
+    allowed_identifiers: ['name', 'current_company'],
+    target_keys: ['2068efb0-9808-498b-ac3a-8e0a87d4513a'],
+    allow_sensitive_targets: false,
+    retention_posture: '',
+    training_posture: '',
+    refresh_interval: '720h',
+    request_timeout: '1m',
+    max_requests_per_run: 10,
+    max_requests_per_day: 100
+  });
+  expect(write?.body).not.toHaveProperty('mode');
+  expect(write?.body).not.toHaveProperty('num_results');
+  expect(write?.body).not.toHaveProperty('tier');
+  expect(write?.body).not.toHaveProperty('poll_endpoint');
+});
+
 it('locks fields and newly mounted category controls without holding leave while a save waits', async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });

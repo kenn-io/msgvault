@@ -8,4 +8,5 @@ export type PersonEnrichmentProviderUpdateKind =
 export const PersonEnrichmentProviderUpdateKind = {
   exa: "exa",
   sixtyfour: "sixtyfour",
+  context: "context",
 } as const;
