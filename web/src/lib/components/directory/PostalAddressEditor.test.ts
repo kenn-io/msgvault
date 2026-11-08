@@ -182,6 +182,17 @@ describe('Postal address editor', () => {
     expect(saved).not.toHaveProperty('original_value');
     expect(saved).not.toHaveProperty('free_text');
   });
+
+  it('sends an explicit empty current text when clearing a suggested address', async () => {
+    const candidate: Input = { address_kind: 'postal', free_text: 'Old street', original_value: 'Old street' };
+    const { controller, requests } = setup();
+    render(StructuredProfileEditor, { controller, section: 'addresses', postalCandidate: { input: candidate, sourceRef: 'person-fact-claim:synthetic-claim', personRevision: 3 } });
+    await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
+    await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect((await requests[0]!.clone().json()).addresses.add[0].free_text).toBe('');
+  });
 });
 
 

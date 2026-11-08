@@ -248,7 +248,8 @@ it('renders component-only postal raw history without a storage marker or blank 
   return Response.json({ ...emptyProfile(person()), observations: [], addresses: [{ person_id: 7, address_kind: 'postal', original_value: '', assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], fingerprint: 'local' }, envelope: { ...currentEnvelope, id: 9, superseded_at: '2026-08-02T00:00:00Z' } }] });
  });
  render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
- expect(await screen.findByText('Unit 9, Raw Example Lane, CA')).toBeDefined();
+ expect(await screen.findByText('No current address')).toBeDefined();
+ expect(screen.getByText('Original: Unit 9, Raw Example Lane, CA')).toBeDefined();
  expect(document.body.textContent).not.toContain('msgvault:postal-input:v1');
 });
 

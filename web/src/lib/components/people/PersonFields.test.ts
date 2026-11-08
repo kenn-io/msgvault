@@ -11,6 +11,16 @@ const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
 const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
 function profile() { return emptyProfile(person); }
+
+it('does not present postal provenance as a cleared current address', () => {
+  const initial = profile();
+  const original = { address_kind: 'postal', original_value: 'Old street' };
+  initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: 'Old street', assessment: { original, proposed: { address_kind: 'postal' }, status: 'needs_review', reason_codes: [], fingerprint: 'local' }, envelope }];
+  const { controller } = harness(initial);
+  render(PersonFields, { controller });
+  expect(screen.getByText('No current address')).toBeDefined();
+  expect(screen.queryByText('Old street')).toBeNull();
+});
 function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle> } = {}) {
   let stored = initial;
   const writes: Request[] = [];

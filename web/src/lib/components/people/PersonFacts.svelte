@@ -24,7 +24,7 @@
   // Nothing loads until the section opens.
   $effect(() => {
     const id = personID, shown = open; refreshKey;
-    untrack(() => { if (shown && controller.active && controller.personID === id) void controller.retrySection(controller.selectedSection); else controller.applyContext(shown, id); });
+    untrack(() => { if (shown && controller.active && controller.personID === id) { if (!controller.postalReview) void controller.retrySection(controller.selectedSection); } else controller.applyContext(shown, id); });
   });
 
   onDestroy(() => controller.destroy());

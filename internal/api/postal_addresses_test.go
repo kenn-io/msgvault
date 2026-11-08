@@ -63,6 +63,15 @@ func TestPostalTextOnlyReplacementDistinguishesNewTextFromOriginal(t *testing.T)
 	}
 }
 
+func TestPostalExplicitEmptyCurrentTextIsNotRestored(t *testing.T) {
+	input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: "Old address", FreeText: new("")}
+	request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}}}
+	patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal, FreeText: new("")}}}}
+	require.NoError(t, capturePostalPatchOriginals(request, &patch))
+	require.NotNil(t, patch.Addresses.Add[0].FreeText)
+	assert.Empty(t, *patch.Addresses.Add[0].FreeText)
+}
+
 func (v *countingPostalValidator) Check(_ context.Context, input postaladdress.Input) (postaladdress.Assessment, error) {
 	v.calls++
 	assessment := postaladdress.Assess(input)

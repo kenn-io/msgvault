@@ -91,7 +91,7 @@
     }
     for (const point of points) if (point.address_kind !== 'phone' && point.address_kind !== 'email') result.push(pointRow(point));
     for (const address of profile?.addresses ?? []) {
-      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: postalAddressText(address) || postalAddressText(address.assessment?.original ?? {}), record: address });
+      result.push({ id: `addresses:${address.envelope.id}`, kind: 'profile', section: 'addresses', label: 'Address', value: address.address_kind === 'postal' ? postalAddressText({ ...address, original_value: '' }) || 'No current address' : postalAddressText(address), record: address });
     }
     result.push({ id: 'add:address', kind: 'add', label: 'Add address', target: { kind: 'profile', section: 'addresses' } });
     for (const date of profile?.dates ?? []) {

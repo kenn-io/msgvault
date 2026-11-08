@@ -95,6 +95,7 @@
   let countryCode = $state(seedAddress?.country_code ?? '');
   let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : seedAddress?.original_value ?? ''));
   let currentText = $state(seedAddress?.free_text ?? '');
+  let currentTextTouched = $state(false);
   let streetAddress = $state(seedAddress?.street_address ?? '');
   let locality = $state(seedAddress?.locality ?? '');
   let region = $state(seedAddress?.region ?? '');
@@ -277,7 +278,7 @@
         } else if (!input.original_value) {
           input.original_value = [locality, region, postalCode, countryName].map(value => value.trim()).filter(Boolean).join(', ');
         }
-        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
+        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...(currentTextTouched && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
         const value = dateValue.trim();
@@ -484,7 +485,7 @@
         <label>Unit or apartment<TextInput bind:value={extendedAddress} ariaLabel="Unit or apartment" block disabled={submitting} /></label>
         <label>PO box<TextInput bind:value={postOfficeBox} ariaLabel="PO box" block disabled={submitting} /></label>
         <label>Country code<TextInput bind:value={countryCode} ariaLabel="Country code" block disabled={submitting} /></label>
-        <label>Current address text<textarea aria-label="Current address text" bind:value={currentText} disabled={submitting}></textarea></label>
+        <label>Current address text<textarea aria-label="Current address text" bind:value={currentText} oninput={() => { currentTextTouched = true; }} disabled={submitting}></textarea></label>
         <label>Original text<textarea aria-label="Original text" bind:value={originalText} readonly={addressKind === 'postal' && !!originalInput} disabled={submitting}></textarea></label>
       {/if}
       <label>Locality<TextInput bind:value={locality} ariaLabel="Locality" block disabled={submitting} /></label>

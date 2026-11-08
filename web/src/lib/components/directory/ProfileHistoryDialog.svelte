@@ -63,10 +63,10 @@
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
       { title: 'Contact points', rows: rows(history.contact_points ?? [], null, providerContext) },
-      { title: 'Addresses', rows: rows(history.addresses ?? [], row => row.address_kind === 'postal' ? postalAddressText(row) || postalAddressText(row.assessment?.original ?? {}) : row.original_value, row => {
+      { title: 'Addresses', rows: rows(history.addresses ?? [], row => row.address_kind === 'postal' ? postalAddressText({ ...row, original_value: '' }) || 'No current address' : row.original_value, row => {
         if (row.address_kind !== 'postal') return null;
         const original = postalAddressText(row.assessment?.original ?? {});
-        const current = postalAddressText(row) || original;
+        const current = postalAddressText({ ...row, original_value: '' });
         return original && original !== current ? `Original: ${original}` : null;
       }) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },
