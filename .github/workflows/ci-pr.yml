@@ -1,6 +1,6 @@
 name: CI
 
-# Run the PR's workflow revision so CI changes are exercised before merge.
+# Temporarily run the PR's workflow revision; restore the main pin after measurement.
 on:
   pull_request:
   merge_group:

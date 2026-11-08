@@ -143,9 +143,9 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 
 ## CI runners
 
-CI jobs use GitHub-hosted runners. The `CI gate` job in `ci-pr.yml` only checks
-the CI run's result and runs on the Namespace profile
-`namespace-profile-linux-1cpu`, so it does not wait in the GitHub-hosted queue.
+CI jobs use GitHub-hosted runners. The `CI gate`, `changes`, and
+`Sibling pins on main` jobs take seconds and run on the Namespace profile
+`namespace-profile-linux-1cpu`, so they do not wait in the GitHub-hosted queue.
 That profile uses Namespace's
 [Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
 which disables workload access to Namespace features and APIs. GitHub fork
