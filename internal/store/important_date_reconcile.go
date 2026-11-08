@@ -164,7 +164,14 @@ func (s *Store) recordImportantDateReconciliationTx(ctx context.Context, tx *log
 	if len(decisions) != len(expected) {
 		return errors.New("every lineage subject and meaning needs an explicit decision")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO important_date_reconciliations (uid, idempotency_key, request_hash, lineage_digest, identity_revision, root_person_uid, actor) VALUES (?, ?, ?, ?, ?, ?, ?)`, uid, request.IdempotencyKey, requestHash, request.LineageDigest, request.IdentityRevision, rootUID, request.Actor); err != nil {
+	// A new decision supersedes every earlier decision that touches this
+	// lineage, without discarding its bindings, guards, or audit record.
+	for key := range expected {
+		if _, err := tx.ExecContext(ctx, `UPDATE important_date_reconciliations SET active = 0 WHERE uid IN (SELECT reconciliation_uid FROM important_date_identity_bindings WHERE original_subject = ?)`, key.subject); err != nil {
+			return fmt.Errorf("supersede prior important-date decisions: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO important_date_reconciliations (uid, idempotency_key, request_hash, lineage_digest, topology_digest, identity_revision, root_person_uid, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, uid, request.IdempotencyKey, requestHash, request.LineageDigest, lineage.TopologyDigest, request.IdentityRevision, rootUID, request.Actor); err != nil {
 		return fmt.Errorf("record important-date reconciliation: %w", err)
 	}
 	for _, decision := range request.Decisions {

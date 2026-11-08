@@ -4828,6 +4828,8 @@ CREATE TABLE IF NOT EXISTS important_date_reconciliations (
     idempotency_key TEXT NOT NULL UNIQUE,
     request_hash TEXT NOT NULL,
     lineage_digest TEXT NOT NULL,
+    topology_digest TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     identity_revision BIGINT NOT NULL,
     root_person_uid TEXT NOT NULL,
     actor TEXT NOT NULL,

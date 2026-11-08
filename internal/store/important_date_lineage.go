@@ -16,6 +16,7 @@ import (
 // ImportantDateLineage is an owner-only inspection of connected identity
 // history. It does not approve any mapping or release a quarantined identity.
 type ImportantDateLineage struct {
+	TopologyDigest   string                         `json:"topology_digest"`
 	Digest           string                         `json:"digest,omitempty"`
 	IdentityRevision int64                          `json:"identity_revision"`
 	PersonIDs        []int64                        `json:"person_ids"`
@@ -346,6 +347,34 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	sort.Slice(result.SplitIDs, func(i, j int) bool { return result.SplitIDs[i] < result.SplitIDs[j] })
 	sort.Slice(result.MissingSplitIDs, func(i, j int) bool { return result.MissingSplitIDs[i] < result.MissingSplitIDs[j] })
 	sort.Slice(result.SplitResults, func(i, j int) bool { return result.SplitResults[i].Split.ID < result.SplitResults[j].Split.ID })
+	topology := struct {
+		PersonIDs        []int64                        `json:"person_ids"`
+		PersonUIDs       []string                       `json:"person_uids"`
+		MissingPersonIDs []int64                        `json:"missing_person_ids"`
+		Aliases          []ImportantDateLineageAlias    `json:"aliases"`
+		MergeSnapshots   []ImportantDateLineageSnapshot `json:"merge_snapshots"`
+		SplitResults     []PersonSplitResult            `json:"split_results"`
+		MissingSplitIDs  []int64                        `json:"missing_split_result_ids"`
+		Owned            []struct {
+			UID      string `json:"uid"`
+			OwnerUID string `json:"owner_uid"`
+		} `json:"owned"`
+	}{PersonIDs: result.PersonIDs, PersonUIDs: result.PersonUIDs, MissingPersonIDs: result.MissingPersonIDs,
+		Aliases: result.Aliases, MergeSnapshots: result.MergeSnapshots, SplitResults: result.SplitResults, MissingSplitIDs: result.MissingSplitIDs}
+	// Owned identities and original ownership affect routing; current names and
+	// dates are checked separately at publication and do not alter topology.
+	for _, subject := range result.OwnedSubjects {
+		topology.Owned = append(topology.Owned, struct {
+			UID      string `json:"uid"`
+			OwnerUID string `json:"owner_uid"`
+		}{UID: subject.UID, OwnerUID: subject.OwnerUID})
+	}
+	topologyBytes, err := json.Marshal(topology, json.Deterministic(true))
+	if err != nil {
+		return ImportantDateLineage{}, fmt.Errorf("encode important-date topology: %w", err)
+	}
+	topologyHash := sha256.Sum256(topologyBytes)
+	result.TopologyDigest = hex.EncodeToString(topologyHash[:])
 	encoded, err := json.Marshal(result, json.Deterministic(true))
 	if err != nil {
 		return ImportantDateLineage{}, fmt.Errorf("encode important-date lineage: %w", err)
