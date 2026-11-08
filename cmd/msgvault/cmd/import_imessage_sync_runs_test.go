@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -39,11 +38,11 @@ func TestImportImessageRecordsOneSyncRun(t *testing.T) {
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
 
-	_, err = importImessageRecorded(context.Background(), st, client, src.ID, path)
+	_, err = importImessageRecorded(t.Context(), st, client, src.ID, path)
 	require.NoError(err)
 
 	var total, completed int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) FROM sync_runs WHERE source_id = ?`),
 		src.ID).Scan(&total, &completed))
 	assert.Equal(1, total)
@@ -66,14 +65,14 @@ func TestImportImessageRejectsActiveRun(t *testing.T) {
 	client, err := imessage.NewClient(t.Context(), path)
 	require.NoError(err)
 	defer func() { _ = client.Close() }()
-	summary, err := importImessageRecorded(context.Background(), st, client, src.ID, path)
+	summary, err := importImessageRecorded(t.Context(), st, client, src.ID, path)
 	require.ErrorIs(err, store.ErrSyncAlreadyActive)
 	assert.Nil(summary)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), src.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`), src.ID).Scan(&count))
 	assert.Equal(1, count)
 	var status string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT status FROM sync_runs WHERE id = ?`), activeID).Scan(&status))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT status FROM sync_runs WHERE id = ?`), activeID).Scan(&status))
 	assert.Equal("running", status)
 }
 
@@ -86,7 +85,7 @@ func TestImportImessageRecordsProgressCounters(t *testing.T) {
 	path := newImessageFixture(t)
 	chat, err := sql.Open("sqlite3", path)
 	require.NoError(err)
-	_, err = chat.Exec(`INSERT INTO message (text, date) VALUES ('second', 700000001000000000),
+	_, err = chat.ExecContext(t.Context(), `INSERT INTO message (text, date) VALUES ('second', 700000001000000000),
  ('rejected', 700000002000000000)`)
 	require.NoError(err)
 	require.NoError(chat.Close())
@@ -98,12 +97,12 @@ func TestImportImessageRecordsProgressCounters(t *testing.T) {
 	for range 2 {
 		client, err := imessage.NewClient(t.Context(), path)
 		require.NoError(err)
-		_, err = importImessageRecorded(context.Background(), st, client, src.ID, path)
+		_, err = importImessageRecorded(t.Context(), st, client, src.ID, path)
 		require.NoError(client.Close())
 		require.NoError(err)
 	}
 
-	rows, err := st.DB().Query(st.Rebind(`SELECT messages_processed, messages_added, messages_updated, errors_count
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT messages_processed, messages_added, messages_updated, errors_count
  FROM sync_runs WHERE source_id = ? ORDER BY id`), src.ID)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
@@ -124,7 +123,7 @@ type imessageRunCounters struct{ processed, added, updated, errs int64 }
 func latestImessageRunCounters(t *testing.T, st *store.Store, sourceID int64) imessageRunCounters {
 	t.Helper()
 	var c imessageRunCounters
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT messages_processed, messages_added, messages_updated, errors_count
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT messages_processed, messages_added, messages_updated, errors_count
  FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sourceID).Scan(&c.processed, &c.added, &c.updated, &c.errs))
 	return c
 }
@@ -142,7 +141,7 @@ func TestImportImessageWriteFailureCounters(t *testing.T) {
 	chat, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = chat.Close() })
-	_, err = chat.Exec(`INSERT INTO message (text, date) VALUES ('second', 700000001000000000)`)
+	_, err = chat.ExecContext(t.Context(), `INSERT INTO message (text, date) VALUES ('second', 700000001000000000)`)
 	require.NoError(err)
 	src, err := resolveImessageSource(st)
 	require.NoError(err)
@@ -151,13 +150,13 @@ func TestImportImessageWriteFailureCounters(t *testing.T) {
 		t.Helper()
 		client, err := imessage.NewClient(t.Context(), path)
 		require.NoError(err)
-		_, err = importImessageRecorded(context.Background(), st, client, src.ID, path)
+		_, err = importImessageRecorded(t.Context(), st, client, src.ID, path)
 		require.NoError(client.Close())
 		require.NoError(err)
 	}
 	failRawWrites := func() {
 		t.Helper()
-		_, err := st.DB().Exec(`CREATE TRIGGER reject_raw_insert BEFORE INSERT ON message_raw
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_raw_insert BEFORE INSERT ON message_raw
 BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END;
 CREATE TRIGGER reject_raw_update BEFORE UPDATE ON message_raw
 BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END`)
@@ -165,7 +164,7 @@ BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END`)
 	}
 	allowRawWrites := func() {
 		t.Helper()
-		_, err := st.DB().Exec(`DROP TRIGGER reject_raw_insert; DROP TRIGGER reject_raw_update`)
+		_, err := st.DB().ExecContext(t.Context(), `DROP TRIGGER reject_raw_insert; DROP TRIGGER reject_raw_update`)
 		require.NoError(err)
 	}
 
@@ -187,7 +186,7 @@ BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END`)
 		latestImessageRunCounters(t, st, src.ID), "an unchanged rerun adds and updates nothing")
 
 	// The changed message rolls back; the unchanged message needs no write.
-	_, err = chat.Exec(`UPDATE message SET text = 'second, edited' WHERE ROWID = 2`)
+	_, err = chat.ExecContext(t.Context(), `UPDATE message SET text = 'second, edited' WHERE ROWID = 2`)
 	require.NoError(err)
 	failRawWrites()
 	run()
@@ -196,17 +195,17 @@ BEGIN SELECT RAISE(ABORT, 'synthetic rejection'); END`)
 	allowRawWrites()
 
 	// A new message that is rejected before anything is committed.
-	_, err = chat.Exec(`INSERT INTO message (text, date) VALUES ('rejected', 700000002000000000)`)
+	_, err = chat.ExecContext(t.Context(), `INSERT INTO message (text, date) VALUES ('rejected', 700000002000000000)`)
 	require.NoError(err)
 	testutil.RejectMessageInserts(t, st, "3")
 	run()
 	assert.Equal(imessageRunCounters{processed: 3, added: 0, updated: 1, errs: 1},
 		latestImessageRunCounters(t, st, src.ID), "the prior edit commits while a rejected new message is only skipped")
 
-	snapshot, err := st.ListRuns(context.Background(), operations.Query{Kinds: []operations.Kind{operations.KindSourceSync}, Limit: 100})
+	snapshot, err := st.ListRuns(t.Context(), operations.Query{Kinds: []operations.Kind{operations.KindSourceSync}, Limit: 100})
 	require.NoError(err, "operation history must read runs with partial writes")
 	assert.Len(snapshot.Runs, 5)
-	_, err = st.LaneStatus(context.Background(), operations.KindSourceSync)
+	_, err = st.LaneStatus(t.Context(), operations.KindSourceSync)
 	require.NoError(err, "lane status must read runs with partial writes")
 }
 

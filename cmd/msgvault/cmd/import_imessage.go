@@ -326,7 +326,6 @@ func resolveChatDBPath(configPath string) (string, error) {
 		path = configPath
 	}
 	if path != "" {
-
 		return path, nil
 	}
 

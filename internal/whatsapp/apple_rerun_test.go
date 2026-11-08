@@ -644,14 +644,14 @@ func TestImportAppleEditAndAdditionCounts(t *testing.T) {
 	chatDBPath := createAppleChatFixture(t)
 	st := testutil.NewTestStore(t)
 	importer := NewImporter(st, nil)
-	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	_, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	execAppleFixture(t, chatDBPath, `
  UPDATE ZWAMESSAGE SET ZTEXT = 'edited direct text' WHERE Z_PK = 1;
  INSERT INTO ZWAMESSAGE VALUES
  (20, 1, NULL, 'direct-new', 0, 700000020, 'new direct text', 0, '15555550101@s.whatsapp.net');
  `)
-	summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	summary, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
 	require.NoError(err)
 	assert.Equal(int64(1), summary.MessagesAdded)
 	run, err := st.GetLatestSync(summary.SourceID)

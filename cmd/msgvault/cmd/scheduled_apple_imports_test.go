@@ -356,7 +356,7 @@ func scheduledIMessageDateClear(t *testing.T, failAfterClear bool) {
 	c, err := imessage.NewClient(t.Context(), chatPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = c.Close() })
-	_, err = c.Import(context.Background(), st, src.ID)
+	_, err = c.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	_, err = buildCache(t.Context(), dbPath, cfg.AnalyticsDir(), true)
 	require.NoError(err)

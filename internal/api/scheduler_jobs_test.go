@@ -66,8 +66,8 @@ func TestTriggerAppleImportRunsDetachedFromRequest(t *testing.T) {
 	require.NoError(err)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
 
-	reqCtx, cancelReq := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/local?source_type=apple_messages", nil).WithContext(reqCtx)
+	reqCtx, cancelReq := context.WithCancel(t.Context())
+	req := httptest.NewRequestWithContext(reqCtx, http.MethodPost, "/api/v1/sync/local?source_type=apple_messages", nil)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 	require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
@@ -101,7 +101,7 @@ func TestAppleImportSchedulingSelectsOnlyImportedSource(t *testing.T) {
 	defer func() { <-sched.Stop().Done() }()
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
 	for _, source := range []*store.Source{local, legacy} {
-		status, err := srv.sourceStatus(context.Background(), st, source, []*store.Source{local, legacy, selected})
+		status, err := srv.sourceStatus(t.Context(), st, source, []*store.Source{local, legacy, selected})
 		require.NoError(err)
 		assert.False(status.Scheduled)
 		assert.False(status.CanSync)
@@ -110,7 +110,7 @@ func TestAppleImportSchedulingSelectsOnlyImportedSource(t *testing.T) {
 		assert.Equal(http.StatusBadRequest, resp.Code, resp.Body.String())
 	}
 	assert.Zero(runs.Load(), "an unselected source must not start the singleton import")
-	status, err := srv.sourceStatus(context.Background(), st, selected, []*store.Source{local, legacy, selected})
+	status, err := srv.sourceStatus(t.Context(), st, selected, []*store.Source{local, legacy, selected})
 	require.NoError(err)
 	assert.True(status.Scheduled)
 	assert.True(status.CanSync)
@@ -139,7 +139,7 @@ func TestAppleImportSchedulingSkipsMergedSource(t *testing.T) {
 
 	sources, err := st.ListSourcesContext(t.Context(), "apple_messages")
 	require.NoError(err)
-	status, err := srv.sourceStatus(context.Background(), st, survivor, sources)
+	status, err := srv.sourceStatus(t.Context(), st, survivor, sources)
 	require.NoError(err)
 	assert.True(status.Scheduled)
 	assert.True(status.CanSync)
