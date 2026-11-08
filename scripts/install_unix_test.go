@@ -65,6 +65,7 @@ esac
 		{name: "exact PATH", shell: "bash", pathEntry: "exact"},
 		{name: "sibling PATH", shell: "bash", pathEntry: "sibling"},
 		{name: "zsh custom directory", shell: "zsh"},
+		{name: "zsh redirects directory", shell: "zsh"},
 		{name: "fish custom directory", shell: "fish"},
 		{name: "unsupported", shell: "other"},
 	} {
@@ -90,7 +91,10 @@ esac
 			profiles := map[string]string{".bashrc": "# preserved", ".profile": "# preserved"}
 			switch tc.shell {
 			case "zsh":
-				profiles = map[string]string{"zsh/.zshrc": "# preserved", "zsh/.zprofile": "# preserved"}
+				profiles = map[string]string{"zsh/.zshenv": "# preserved"}
+				if tc.name == "zsh redirects directory" {
+					profiles = map[string]string{".zshenv": `ZDOTDIR="$HOME/zsh"`}
+				}
 			case "fish":
 				profiles = map[string]string{"config/fish/config.fish": "# preserved"}
 			}
@@ -109,8 +113,11 @@ esac
 			}
 			env := []string{"HOME=" + home, "SHELL=/bin/" + tc.shell, "PATH=" + path, "TMPDIR=" + home,
 				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
-				"ZDOTDIR=" + filepath.Join(home, "zsh"), "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
-				"CDPATH=" + home, "FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
+				"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
+				"FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
+			if tc.name == "zsh custom directory" {
+				env = append(env, "ZDOTDIR="+filepath.Join(home, "zsh"))
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
 			for run := range 2 {
@@ -123,7 +130,8 @@ esac
 				if tc.optOut != "" || tc.shell == "other" {
 					assert.NotContains(t, string(output), "Open a new terminal")
 					if tc.shell == "other" {
-						assert.Contains(t, string(output), destination)
+						assert.Contains(t, string(output), "Configure PATH manually for your shell.")
+						assert.Contains(t, string(output), destination+"'/msgvault\n")
 					} else {
 						assert.Contains(t, string(output), "Run in your current shell:")
 					}
@@ -176,6 +184,9 @@ esac
 					}
 				}
 				assert.Equal(t, 1, count)
+			}
+			if shell == "" {
+				t.Skipf("%s not installed; startup not checked", tc.shell)
 			}
 		})
 	}

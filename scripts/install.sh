@@ -40,6 +40,7 @@ find_install_dir() {
     if [ -n "${MSGVAULT_INSTALL_DIR:-}" ]; then
         local install_dir="$MSGVAULT_INSTALL_DIR"
         case "$install_dir" in /*) ;; *) install_dir="$PWD/$install_dir" ;; esac
+        case "$install_dir" in *:*) error "Install directory cannot contain ':': $install_dir" ;; esac
         mkdir -p "$install_dir" || error "Could not create install directory: $install_dir"
         printf '%s\n' "$install_dir"
     elif [ -w "/usr/local/bin" ]; then
@@ -68,7 +69,7 @@ configure_path() {
             done
             profiles+=("$HOME/$profile")
             ;;
-        zsh) profiles=("${ZDOTDIR:-$HOME}/.zshrc" "${ZDOTDIR:-$HOME}/.zprofile") ;;
+        zsh) profiles=("${ZDOTDIR:-$HOME}/.zshenv") ;;
         fish)
             quoted="${install_dir//\\/\\\\}"
             quoted="'${quoted//\'/\\\'}'"
