@@ -92,4 +92,13 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	checks.Equal(owned.Date, lineage.OwnedSubjects[0].History[0].Date)
 	must.Len(lineage.Deliveries, 1)
 	checks.Equal(key, lineage.Deliveries[0].OccurrenceKey)
+	again, err := st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	checks.Equal(lineage.Digest, again.Digest)
+	changed, err = st.ResolveImportantDateDeliveryContext(ctx, key, store.ImportantDateCancelled, "")
+	must.NoError(err)
+	must.True(changed)
+	again, err = st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	checks.NotEqual(lineage.Digest, again.Digest)
 }
