@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -1243,14 +1244,21 @@ func daemonRuntimeForHTTPServer(t *testing.T, server *httptest.Server, authFinge
 type openHTTPStoreDaemonVersionCase struct {
 	name, cli, daemon         string
 	disabled, replace, notice bool
+	options                   invocationOptions
+	restart                   string
 }
 
 func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
+	bothRestart := "msgvault --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart"
+	if runtime.GOOS == "windows" {
+		bothRestart = "& 'msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'"
+	}
 	for _, tt := range []openHTTPStoreDaemonVersionCase{
 		{name: "source keeps dev daemon", cli: "v0.23.0-45-gabc", daemon: "dev"},
 		{name: "source replaces release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true},
-		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true},
-		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true},
+		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true, restart: "msgvault daemon restart"},
+		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true, restart: "msgvault daemon restart"},
+		{name: "both selections", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true, options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"}, restart: bothRestart},
 		{name: "release keeps newer release", cli: "v0.23.0", daemon: "v0.24.0"},
 	} {
 		t.Run(tt.name, func(t *testing.T) { testOpenHTTPStoreDaemonVersionPolicy(t, tt) })
@@ -1273,7 +1281,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 		localCfg.Server.DaemonAutoStart = new(false)
 		localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
 	}
-	testCtx := withStoreResolverConfig(t, localCfg)
+	testCtx := testInvocationContext(t.Context(), localCfg, tt.options)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -1357,7 +1365,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	}
 	assert.Equal(wantURL, info.URL)
 	if tt.notice {
-		assert.Equal("msgvault: daemon "+tt.daemon+" is running; this CLI is "+tt.cli+". Run msgvault daemon restart to use this version.\n", stderr)
+		assert.Equal("msgvault: daemon "+tt.daemon+" is running; this CLI is "+tt.cli+". Run "+tt.restart+" to use this version.\n", stderr)
 	} else if tt.replace {
 		assert.Contains(stderr, "Starting local msgvault daemon")
 		assert.NotContains(stderr, "Run msgvault daemon restart")
