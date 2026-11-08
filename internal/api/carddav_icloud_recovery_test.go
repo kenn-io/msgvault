@@ -26,25 +26,38 @@ func savedICloudAccountFixture(t *testing.T) *iCloudAccountFixture {
 }
 
 func TestICloudReconnectPreservesIdentityAcrossUsernameCase(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		name := "icloud setup"
-		if legacy {
-			name = "legacy partition setup"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct{ name, baseURL string }{
+		{"icloud setup", carddav.ICloudDiscoveryURL},
+		{"legacy partition setup", "https://p42-contacts.icloud.com"},
+		{"legacy partition root slash", "https://p42-contacts.icloud.com/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newICloudAccountFixture(t)
 			req := iCloudAccountRequest()
 			req.Username = "Synthetic@Example.net"
-			if legacy {
-				req.BaseURL = "https://p42-contacts.icloud.com"
-			}
+			req.BaseURL = tc.baseURL
 			_, err := f.controller.Save(t.Context(), req)
 			require.NoError(err)
 			books, err := f.controller.scopedStoredBooks(t.Context())
 			require.NoError(err)
 			require.Len(books, 1)
+			account, err := f.controller.store.GetCardDAVAccountByNameContext(t.Context(), config.DefaultCardDAVConnection)
+			require.NoError(err)
+			require.NotNil(account)
+			href := books[0].CanonicalURL + "synthetic.vcf"
+			resource := store.CardDAVRemoteResource{Href: href, RemoteUID: "synthetic-uid", RemoteETag: `"one"`,
+				RemoteBody:   []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic-uid\r\nFN:Synthetic Contact\r\nEND:VCARD\r\n"),
+				SemanticHash: "synthetic-hash", DisplayName: "Synthetic Contact"}
+			_, err = f.controller.store.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+				AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision,
+				Upserts: []store.CardDAVRemoteResource{resource},
+			})
+			require.NoError(err)
+			before, err := f.controller.store.GetCardDAVResourceContext(t.Context(), books[0].ID, href)
+			require.NoError(err)
+			require.NotNil(before.PersonID)
 			personID := seedICloudOwnedPublication(t, f.controller.store, books[0])
 			_, err = f.controller.Save(t.Context(), iCloudAccountRequest())
 			require.NoError(err)
@@ -52,6 +65,9 @@ func TestICloudReconnectPreservesIdentityAcrossUsernameCase(t *testing.T) {
 			require.NoError(err)
 			require.Len(after, 1)
 			assert.Equal(books[0].ID, after[0].ID)
+			retained, err := f.controller.store.GetCardDAVResourceContext(t.Context(), books[0].ID, href)
+			require.NoError(err)
+			assert.Equal(before.PersonID, retained.PersonID)
 			publication, err := f.controller.store.GetCardDAVPublicationContext(t.Context(), personID)
 			require.NoError(err)
 			require.NotNil(publication)
