@@ -124,7 +124,7 @@ it('dismisses a failed opening so another address review can be attempted', asyn
 it('labels a cleared replacement target without presenting its original text as current', async () => {
   const { profileController } = setup();
   profileController.structuredProfile!.addresses.push({
-    address_kind: 'postal', original_value: 'Old source address', free_text: '',
+    person_id: 7, address_kind: 'postal', original_value: 'Old source address', free_text: '',
     envelope: { id: 26, ordinal: 1, source: 'user', created_at: when, updated_at: when, vcard: {} },
   });
   await revealPostalClaim();
