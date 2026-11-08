@@ -64,11 +64,13 @@ type ImportantDateLineageAlias struct {
 }
 
 type ImportantDateLineagePerson struct {
-	ID                 int64        `json:"id"`
-	UID                string       `json:"uid"`
-	Revision           int64        `json:"revision"`
-	ProjectionRevision int64        `json:"projection_revision"`
-	Dates              []PersonDate `json:"dates"`
+	ID                 int64                    `json:"id"`
+	UID                string                   `json:"uid"`
+	Revision           int64                    `json:"revision"`
+	ProjectionRevision int64                    `json:"projection_revision"`
+	Dates              []PersonDate             `json:"dates"`
+	ContactFrequency   []PersonAttributeValue   `json:"contact_frequency"`
+	Relationships      []PersonRelationshipView `json:"relationships"`
 }
 
 type ImportantDateLineageSubject struct {
@@ -158,7 +160,15 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 			if err != nil {
 				return result, fmt.Errorf("read lineage dates: %w", err)
 			}
-			result.People = append(result.People, ImportantDateLineagePerson{ID: id, UID: uid, Revision: revision, ProjectionRevision: projectionRevision, Dates: dates})
+			frequency, err := s.ListPersonAttributeValuesContext(ctx, id, PersonAttributeQuery{DefinitionSlug: AttributeSlugContactFrequency})
+			if err != nil {
+				return result, fmt.Errorf("read lineage contact frequency: %w", err)
+			}
+			relationships, err := s.ListPersonRelationshipsContext(ctx, id, PersonRelationshipListOptions{})
+			if err != nil {
+				return result, fmt.Errorf("read lineage relationships: %w", err)
+			}
+			result.People = append(result.People, ImportantDateLineagePerson{ID: id, UID: uid, Revision: revision, ProjectionRevision: projectionRevision, Dates: dates, ContactFrequency: frequency, Relationships: relationships})
 		}
 		rows, err := s.db.QueryContext(ctx, `SELECT retired_uid FROM person_uid_aliases WHERE surviving_person_id = ?`, id)
 		if err != nil {
@@ -417,20 +427,8 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		MergeSnapshots   []ImportantDateLineageSnapshot `json:"merge_snapshots"`
 		SplitResults     []PersonSplitResult            `json:"split_results"`
 		MissingSplitIDs  []int64                        `json:"missing_split_result_ids"`
-		Owned            []struct {
-			UID      string `json:"uid"`
-			OwnerUID string `json:"owner_uid"`
-		} `json:"owned"`
 	}{PersonIDs: result.PersonIDs, PersonUIDs: result.PersonUIDs, MissingPersonIDs: result.MissingPersonIDs,
 		Aliases: result.Aliases, MergeSnapshots: result.MergeSnapshots, SplitResults: result.SplitResults, MissingSplitIDs: result.MissingSplitIDs}
-	// Owned identities and original ownership affect routing; current names and
-	// dates are checked separately at publication and do not alter topology.
-	for _, subject := range result.OwnedSubjects {
-		topology.Owned = append(topology.Owned, struct {
-			UID      string `json:"uid"`
-			OwnerUID string `json:"owner_uid"`
-		}{UID: subject.UID, OwnerUID: subject.OwnerUID})
-	}
 	topologyBytes, err := json.Marshal(topology, json.Deterministic(true))
 	if err != nil {
 		return ImportantDateLineage{}, fmt.Errorf("encode important-date topology: %w", err)

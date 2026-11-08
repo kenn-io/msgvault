@@ -177,6 +177,11 @@ func (s *Store) supersedePersonDateTx(
 // Date facts can change the information an alert represents. Consent is tied
 // to the prior subject data and must be granted again after a date mutation.
 func (s *Store) revokePersonImportantDateConsentTx(ctx context.Context, tx *loggedTx, personID int64) error {
+	// Relationship writers and dispatch lock the person before touching
+	// consent, so keep the same order for date updates.
+	if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision = revision WHERE id = ?`, personID); err != nil {
+		return fmt.Errorf("lock person for important-date consent: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE important_date_consents SET granted = 0 WHERE subject_uid = 'person/' || (SELECT vcard_uid FROM persons WHERE id = ?)`, personID); err != nil {
 		return fmt.Errorf("revoke changed person-date consent: %w", err)
 	}

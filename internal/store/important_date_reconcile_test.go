@@ -23,6 +23,10 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	}
 	first := makePerson("first-reconcile@example.test")
 	second := makePerson("second-reconcile@example.test")
+	child := makePerson("child-reconcile@example.test")
+	_, err := st.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: first.ID, TargetPersonID: child.ID, TypeSlug: "parent", Source: store.ProvenanceUser, Actor: "test"})
+	must.NoError(err)
+	must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+child.VCardUID, "private-example", "owner/agent", true))
 	owned, err := st.CreateImportantDateSubjectContext(ctx, store.ImportantDateSubjectInput{OwnerUID: second.VCardUID, Kind: "pet", DisplayName: "Example pet", Date: store.PartialDate{Month: new(10), Day: new(23)}})
 	must.NoError(err)
 	must.NoError(st.SetImportantDateConsentContext(ctx, "owned/"+owned.UID, "private-example", "owner/agent", true))
@@ -39,6 +43,10 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	}
 	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: first.ID, AbsorbedID: second.ID, ExpectedSurvivorRevision: first.Revision, ExpectedAbsorbedRevision: second.Revision, IdempotencyKey: "example-reconcile-merge", Actor: "test"})
 	must.NoError(err)
+	childConsent, err := st.HasImportantDateConsentContext(ctx, "person/"+child.VCardUID, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(childConsent, "parent merge must revoke child consent before any fallback route")
+	must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+child.VCardUID, "private-example", "owner/agent", true))
 	lineage, err := st.ImportantDateLineageContext(ctx, merged.Person.ID)
 	must.NoError(err)
 	target := "person/" + merged.Person.VCardUID
@@ -82,6 +90,9 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	active, err = st.HasImportantDateConsentContext(ctx, "owned/"+owned.UID, "private-example", "owner/agent")
 	must.NoError(err)
 	checks.False(active)
+	active, err = st.HasImportantDateConsentContext(ctx, "person/"+child.VCardUID, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active, "reconciled parent routes require fresh child consent")
 	subjects, err := st.ListImportantDateSubjectsContext(ctx, merged.Person.VCardUID)
 	must.NoError(err)
 	must.Len(subjects, 1)

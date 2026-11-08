@@ -105,6 +105,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 	var reconcileDigest, reconcileKey, reconcileDecisions string
 	var reconcileRevision int64
 	var inspectedSnapshots bool
+	var reviewedSplitIDs []int64
 	reconcile := &cobra.Command{Use: "reconcile <person-id>", Short: "Apply reviewed important-date identity decisions", Long: "After reviewing lineage and required merge snapshots, provide explicit decisions for every listed historical person and owned subject. Existing consent is revoked. Ambiguous mappings remain quarantined.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
@@ -129,7 +130,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		uid, err := st.ReconcileImportantDateIdentityContext(cmd.Context(), store.ImportantDateReconcileRequest{PersonID: id, IdentityRevision: reconcileRevision, LineageDigest: reconcileDigest, IdempotencyKey: reconcileKey, Actor: "owner", InspectedSnapshots: inspectedSnapshots, Decisions: decisions})
+		uid, err := st.ReconcileImportantDateIdentityContext(cmd.Context(), store.ImportantDateReconcileRequest{PersonID: id, IdentityRevision: reconcileRevision, LineageDigest: reconcileDigest, IdempotencyKey: reconcileKey, Actor: "owner", InspectedSnapshots: inspectedSnapshots, ReviewedSplitIDs: reviewedSplitIDs, Decisions: decisions})
 		if err != nil {
 			return err
 		}
@@ -140,6 +141,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 	reconcile.Flags().StringVar(&reconcileKey, "key", "", "Unique idempotency key for this decision")
 	reconcile.Flags().StringVar(&reconcileDecisions, "decisions-json", "", "Explicit subject and meaning mappings as a JSON array")
 	reconcile.Flags().BoolVar(&inspectedSnapshots, "inspected-snapshots", false, "Confirm that required merge snapshots were inspected")
+	reconcile.Flags().Int64SliceVar(&reviewedSplitIDs, "reviewed-split", nil, "Explicitly reviewed ambiguous split ID (repeatable)")
 	var grant bool
 	consent := &cobra.Command{Use: "consent <subject-uid>", Short: "Set consent for the configured private destination", Long: "Grant only when the subject's information may be shared with the exact configured private project and recipient. Without --grant, consent is revoked.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {

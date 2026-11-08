@@ -453,6 +453,9 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if err := s.bumpPersonDeletionCounterpartVCardProjectionsTx(ctx, tx, id); err != nil {
 			return err
 		}
+		if err := s.revokeImportantDateChildConsentsTx(ctx, tx, id); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, id); err != nil {
 			return fmt.Errorf("clear deleted person's display-name ownership: %w", err)
 		}

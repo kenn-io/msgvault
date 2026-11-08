@@ -130,3 +130,92 @@ func TestPersonDateMutationsRevokeImportantDateConsent(t *testing.T) {
 	must.NoError(err)
 	checks.False(active)
 }
+
+func TestParentRouteChangesRevokeChildConsent(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	makePerson := func(address string) *store.Person {
+		participant, err := st.EnsureParticipantByIdentifier("email", address, "Example Person")
+		must.NoError(err)
+		person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+		must.NoError(err)
+		return person
+	}
+	parent := makePerson("parent-route@example.test")
+	child := makePerson("child-route@example.test")
+	subject := "person/" + child.VCardUID
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	edge, err := st.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: parent.ID, TargetPersonID: child.ID, TypeSlug: "parent", Source: store.ProvenanceUser, Actor: "test"})
+	must.NoError(err)
+	active, err := st.HasImportantDateConsentContext(ctx, subject, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active)
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	edge, err = st.EndPersonRelationshipContext(ctx, edge.ID, edge.Revision, store.PartialDate{Year: new(2026), Month: new(10), Day: new(1)}, "test")
+	must.NoError(err)
+	active, err = st.HasImportantDateConsentContext(ctx, subject, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active)
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	must.NoError(st.DeletePersonRelationshipContext(ctx, edge.ID, edge.Revision))
+	active, err = st.HasImportantDateConsentContext(ctx, subject, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active)
+}
+
+func TestDeletingParentRevokesConsentBeforeFallback(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	makePerson := func(address string) *store.Person {
+		participant, err := st.EnsureParticipantByIdentifier("email", address, "Example Person")
+		must.NoError(err)
+		person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+		must.NoError(err)
+		return person
+	}
+	first := makePerson("first-parent@example.test")
+	second := makePerson("second-parent@example.test")
+	child := makePerson("fallback-child@example.test")
+	for _, parent := range []*store.Person{first, second} {
+		_, err := st.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: parent.ID, TargetPersonID: child.ID, TypeSlug: "parent", Source: store.ProvenanceUser, Actor: "test"})
+		must.NoError(err)
+	}
+	subject := "person/" + child.VCardUID
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	must.NoError(st.DeletePersonContext(ctx, first.ID, first.Revision))
+	active, err := st.HasImportantDateConsentContext(ctx, subject, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active, "remaining parent must not reuse consent after a route disappears")
+}
+
+func TestSplittingParentRevokesChildConsent(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	makePerson := func(address string) (*store.Person, int64) {
+		participant, err := st.EnsureParticipantByIdentifier("email", address, "Example Person")
+		must.NoError(err)
+		person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+		must.NoError(err)
+		return person, participant
+	}
+	first, _ := makePerson("split-parent@example.test")
+	second, secondParticipant := makePerson("split-other@example.test")
+	child, _ := makePerson("split-child@example.test")
+	_, err := st.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: first.ID, TargetPersonID: child.ID, TypeSlug: "parent", Source: store.ProvenanceUser, Actor: "test"})
+	must.NoError(err)
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: first.ID, AbsorbedID: second.ID, ExpectedSurvivorRevision: first.Revision, ExpectedAbsorbedRevision: second.Revision, IdempotencyKey: "parent-split-merge", Actor: "test"})
+	must.NoError(err)
+	subject := "person/" + child.VCardUID
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	_, err = st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{secondParticipant}, ExpectedSourceRevision: merged.Person.Revision, IdempotencyKey: "parent-split", Actor: "test"})
+	must.NoError(err)
+	active, err := st.HasImportantDateConsentContext(ctx, subject, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active)
+}

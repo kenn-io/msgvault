@@ -112,6 +112,9 @@ func (s *Store) splitPersonMergeOnce(
 		if sourceRevision != request.ExpectedSourceRevision {
 			return ErrPersonSplitRevision
 		}
+		if err := s.revokeImportantDateChildConsentsTx(ctx, tx, request.SourcePersonID); err != nil {
+			return err
+		}
 
 		inferenceBefore, err := s.captureInferenceExportPeopleTx(ctx, tx, request.SourcePersonID)
 		if err != nil {
@@ -348,6 +351,9 @@ func (s *Store) splitPersonMergeOnce(
 				)`, request.SourcePersonID); err != nil {
 				return fmt.Errorf("close fully split merge lineage: %w", err)
 			}
+		}
+		if err := s.revokeImportantDateChildConsentsTx(ctx, tx, request.SourcePersonID, newPersonID); err != nil {
+			return err
 		}
 		identityRevision, err := s.bumpIdentityRevisionContext(ctx, tx)
 		if err != nil {

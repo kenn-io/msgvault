@@ -175,3 +175,41 @@ func (s *Store) RevokeImportantDateConsentContext(ctx context.Context, subject s
 		return nil
 	})
 }
+
+// revokeImportantDateChildConsentsTx fences inherited routing when a parent
+// identity is merged, split, or deleted. The caller holds the identity fence.
+func (s *Store) revokeImportantDateChildConsentsTx(ctx context.Context, tx *loggedTx, parentIDs ...int64) error {
+	placeholders, args := sortedIDPlaceholders(parentIDs)
+	if placeholders == "" {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM persons p WHERE EXISTS (
+		SELECT 1 FROM person_relationships r JOIN relationship_types t ON t.id = r.relationship_type_id
+		WHERE r.target_person_id = p.id AND r.source_person_id IN (`+placeholders+`) AND t.slug = 'parent' AND r.status = 'active'
+	) ORDER BY p.id`, args...)
+	if err != nil {
+		return fmt.Errorf("list children affected by identity change: %w", err)
+	}
+	var children []int64
+	for rows.Next() {
+		var childID int64
+		if err := rows.Scan(&childID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan child affected by identity change: %w", err)
+		}
+		children = append(children, childID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate children affected by identity change: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close children affected by identity change: %w", err)
+	}
+	for _, childID := range children {
+		if err := s.revokePersonImportantDateConsentTx(ctx, tx, childID); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,6 +32,7 @@ type ImportantDateReconcileRequest struct {
 	IdempotencyKey     string                          `json:"idempotency_key"`
 	Actor              string                          `json:"actor"`
 	InspectedSnapshots bool                            `json:"inspected_snapshots"`
+	ReviewedSplitIDs   []int64                         `json:"reviewed_split_ids"`
 	Decisions          []ImportantDateIdentityDecision `json:"decisions"`
 }
 
@@ -76,8 +78,16 @@ func (s *Store) ReconcileImportantDateIdentityContext(ctx context.Context, reque
 		// Relationship and cadence writers lock person rows when updating
 		// projections, but do not all acquire the identity fence. Lock every
 		// live lineage person, then re-read the reviewed view under those locks.
+		var lockIDs []int64
 		for _, person := range lineage.People {
-			if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision = revision WHERE id = ?`, person.ID); err != nil {
+			lockIDs = append(lockIDs, person.ID)
+			for _, relationship := range person.Relationships {
+				lockIDs = append(lockIDs, relationship.CounterpartPersonID)
+			}
+		}
+		slices.Sort(lockIDs)
+		for _, personID := range slices.Compact(lockIDs) {
+			if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision = revision WHERE id = ?`, personID); err != nil {
 				return fmt.Errorf("lock important-date lineage person: %w", err)
 			}
 		}
@@ -94,10 +104,8 @@ func (s *Store) ReconcileImportantDateIdentityContext(ctx context.Context, reque
 		if len(lineage.MissingSplitIDs) > 0 {
 			return errors.New("split outcome is unavailable; identity remains quarantined")
 		}
-		for _, split := range lineage.SplitResults {
-			if len(split.AmbiguousRows) > 0 || len(split.UnrestoredRows) > 0 {
-				return errors.New("split has unresolved evidence; identity remains quarantined")
-			}
+		if err := validateImportantDateSplitEvidence(lineage, request.ReviewedSplitIDs); err != nil {
+			return err
 		}
 		for _, mergeID := range lineage.MergeIDs {
 			if _, err := s.GetPersonMergeSnapshotContext(fenced, mergeID); err != nil {
@@ -113,6 +121,53 @@ func (s *Store) ReconcileImportantDateIdentityContext(ctx context.Context, reque
 		return s.recordImportantDateReconciliationTx(fenced, tx, request, lineage, requestHash, id.String(), &result)
 	})
 	return result, err
+}
+
+// validateImportantDateSplitEvidence allows an owner to explicitly review
+// ambiguous split outcomes only after current date, cadence, parent-route,
+// and owned-subject facts have been withdrawn. Historical values stay intact; later date mutations revoke
+// consent and require a fresh grant before any alert can be sent.
+func validateImportantDateSplitEvidence(lineage ImportantDateLineage, reviewed []int64) error {
+	needed := map[int64]bool{}
+	for _, split := range lineage.SplitResults {
+		if len(split.AmbiguousRows) > 0 || len(split.UnrestoredRows) > 0 {
+			needed[split.Split.ID] = true
+		}
+	}
+	seen := map[int64]bool{}
+	for _, id := range reviewed {
+		if !needed[id] || seen[id] {
+			return errors.New("invalid reviewed split outcome")
+		}
+		seen[id] = true
+	}
+	if len(seen) != len(needed) {
+		return errors.New("review every ambiguous split outcome before reconciliation")
+	}
+	if len(needed) == 0 {
+		return nil
+	}
+	for _, person := range lineage.People {
+		if len(person.ContactFrequency) > 0 {
+			return errors.New("clear current contact frequency before resolving ambiguous split evidence")
+		}
+		for _, relationship := range person.Relationships {
+			if relationship.Relationship.TypeSlug == "parent" && relationship.Relationship.Status == RelationshipStatusActive {
+				return errors.New("withdraw active parent relationships before resolving ambiguous split evidence")
+			}
+		}
+		for _, date := range person.Dates {
+			if (date.DateKind == PersonDateBirthday || date.DateKind == PersonDateAnniversary) && date.Envelope.IsCurrent() {
+				return errors.New("withdraw current dates before resolving ambiguous split evidence")
+			}
+		}
+	}
+	for _, subject := range lineage.OwnedSubjects {
+		if !subject.Withdrawn {
+			return errors.New("withdraw active owned subjects before resolving ambiguous split evidence")
+		}
+	}
+	return nil
 }
 
 type importantDateDecisionKey struct {
@@ -262,6 +317,18 @@ func (s *Store) recordImportantDateReconciliationTx(ctx context.Context, tx *log
 	for key := range expected {
 		if _, err := tx.ExecContext(ctx, `UPDATE important_date_consents SET granted = 0 WHERE subject_uid = ?`, key.subject); err != nil {
 			return fmt.Errorf("revoke reconciled important-date consent: %w", err)
+		}
+	}
+	// A reconciled parent route can change which outside child is eligible.
+	// Require fresh consent for each active child reached from this lineage.
+	for _, person := range lineage.People {
+		for _, view := range person.Relationships {
+			relationship := view.Relationship
+			if relationship.TypeSlug == "parent" && relationship.Status == RelationshipStatusActive && relationship.SourcePersonID == person.ID {
+				if _, err := tx.ExecContext(ctx, `UPDATE important_date_consents SET granted = 0 WHERE subject_uid = ?`, "person/"+view.CounterpartVCardUID); err != nil {
+					return fmt.Errorf("revoke reconciled child consent: %w", err)
+				}
+			}
 		}
 	}
 	*result = uid

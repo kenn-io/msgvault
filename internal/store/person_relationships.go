@@ -213,6 +213,11 @@ func (s *Store) addPersonRelationshipTx(
 	); err != nil {
 		return nil, err
 	}
+	if relationshipType.Slug == "parent" {
+		if err := s.revokePersonImportantDateConsentTx(ctx, tx, targetID); err != nil {
+			return nil, err
+		}
+	}
 	return s.personRelationshipTx(ctx, tx, insertedID)
 }
 
@@ -339,7 +344,13 @@ func (s *Store) patchPersonRelationshipOnce(
 			return err
 		}
 		updated, txErr = s.personRelationshipTx(ctx, tx, updatedID)
-		return txErr
+		if txErr != nil {
+			return txErr
+		}
+		if updated.TypeSlug == "parent" {
+			return s.revokePersonImportantDateConsentTx(ctx, tx, targetID)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -373,8 +384,12 @@ func (s *Store) DeletePersonRelationshipContext(ctx context.Context, id, expecte
 
 func (s *Store) deletePersonRelationshipOnce(ctx context.Context, id, expectedRevision int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		current, err := s.personRelationshipTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		var sourceID, targetID int64
-		err := tx.QueryRowContext(ctx, `
+		err = tx.QueryRowContext(ctx, `
 			DELETE FROM person_relationships WHERE id = ? AND revision = ?
 			RETURNING source_person_id, target_person_id`, id, expectedRevision,
 		).Scan(&sourceID, &targetID)
@@ -386,7 +401,13 @@ func (s *Store) deletePersonRelationshipOnce(ctx context.Context, id, expectedRe
 		}
 		// The deleted row named its endpoints; the bump follows the DELETE
 		// so a stale delete moves nobody's card.
-		return s.bumpPersonVCardProjectionsTx(ctx, tx, sourceID, targetID)
+		if err := s.bumpPersonVCardProjectionsTx(ctx, tx, sourceID, targetID); err != nil {
+			return err
+		}
+		if current.TypeSlug == "parent" {
+			return s.revokePersonImportantDateConsentTx(ctx, tx, targetID)
+		}
+		return nil
 	})
 }
 
