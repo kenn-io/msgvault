@@ -90,8 +90,8 @@
 
   async function prepareDelete(): Promise<void> {
     if (!deletingEmployment) return;
-    await removal.prepare(() => controller.prepareEmploymentMutation(deletingEmployment!.id));
-    if (removal.prepared) deletingEmployment = removal.prepared.data;
+    const current = await removal.prepare(() => controller.prepareEmploymentMutation(deletingEmployment!.id));
+    if (current) deletingEmployment = current.data;
   }
 
   function closeDelete(): void {

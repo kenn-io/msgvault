@@ -6,16 +6,20 @@ export class WriteAttempt<C = never> {
   conflict = $state<C>();
   details = $state('');
   prepared = $state<C>();
+  // Bumped by reset(), so a load started for a dialog that has since closed or changed target is dropped.
+  #generation = 0;
 
-  /** Loads the version a later write sends; undefined when the load failed. */
+  /** Loads the version a later write sends; undefined when the load failed or the attempt was reset meanwhile. */
   async prepare(load: () => Promise<C>): Promise<C | undefined> {
+    const generation = this.#generation;
     this.details = '';
     try {
       const current = await load();
+      if (generation !== this.#generation) return undefined;
       this.prepared = current;
       return current;
     } catch (cause) {
-      this.details = cause instanceof Error ? cause.message : 'No response from the server.';
+      if (generation === this.#generation) this.details = cause instanceof Error ? cause.message : 'No response from the server.';
     }
   }
 
@@ -40,6 +44,7 @@ export class WriteAttempt<C = never> {
   }
 
   reset(): void {
+    this.#generation++;
     this.failed = false;
     this.conflict = undefined;
     this.prepared = undefined;

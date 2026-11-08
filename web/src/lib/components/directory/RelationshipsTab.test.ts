@@ -774,6 +774,34 @@ describe('RelationshipsTab', () => {
     expect(controller.relationships).toEqual([]);
   });
 
+  it('keeps a later delete on its own connection when a cancelled delete\'s read finishes late', async () => {
+    let finishFirst!: (response: Response) => void;
+    const deletions: string[] = [];
+    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/person-relationships/41' && request.method === 'GET') return new Promise<Response>(resolve => { finishFirst = resolve; });
+      if (path === '/api/v1/person-relationships/42' && request.method === 'GET') return Response.json(relationship(42, 1), { headers: { ETag: '"relationship-42-r1"' } });
+      if (request.method === 'DELETE') { deletions.push(path); return new Response(null, { status: 204 }); }
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      throw new Error(`unexpected ${request.method} ${path}`);
+    }));
+    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Guide'), view(42, 'outgoing', 'mentors', 'Synthetic Peer')];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Actions for Synthetic Guide' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Actions for Synthetic Peer' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+    finishFirst(Response.json(relationship(41, 1), { headers: { ETag: '"relationship-41-r1"' } }));
+    await new Promise(resolve => setTimeout(resolve));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deletions).toEqual(['/api/v1/person-relationships/42']));
+  });
+
   it('keeps a delete conflict open, shows only changed fields, and deletes the saved version on Delete', async () => {
     let reads = 0;
     const tags: (string | null)[] = [];

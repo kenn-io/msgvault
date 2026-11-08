@@ -37,3 +37,13 @@ it('allows one write at a time', async () => {
   expect(await pending).toBe(true);
   expect(attempt.busy).toBe(false);
 });
+it('drops a load that finishes after a reset', async () => {
+  const attempt = new WriteAttempt<{ id: number }>();
+  let finish!: (value: { id: number }) => void;
+  const stale = attempt.prepare(() => new Promise(resolve => finish = resolve));
+  attempt.reset();
+  await attempt.prepare(async () => ({ id: 2 }));
+  finish({ id: 1 });
+  expect(await stale).toBeUndefined();
+  expect(attempt.prepared).toEqual({ id: 2 });
+});

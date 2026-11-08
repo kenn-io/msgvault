@@ -83,8 +83,8 @@
 
   async function prepareDelete(): Promise<void> {
     if (!deletingRelationship) return;
-    await removal.prepare(() => controller.prepareRelationshipMutation(deletingRelationship!.relationship.id));
-    if (removal.prepared && deletingRelationship) deletingRelationship = { ...deletingRelationship, relationship: removal.prepared.data };
+    const current = await removal.prepare(() => controller.prepareRelationshipMutation(deletingRelationship!.relationship.id));
+    if (current && deletingRelationship) deletingRelationship = { ...deletingRelationship, relationship: current.data };
   }
 
   function openDelete(view: PersonRelationshipView): void {
@@ -100,8 +100,8 @@
 
   async function prepareTypeDelete(): Promise<void> {
     if (!deletingType) return;
-    await typeRemoval.prepare(() => controller.prepareRelationshipTypeMutation(deletingType!.id));
-    if (typeRemoval.prepared) deletingType = typeRemoval.prepared.data;
+    const current = await typeRemoval.prepare(() => controller.prepareRelationshipTypeMutation(deletingType!.id));
+    if (current) deletingType = current.data;
   }
 
   function openTypeDelete(type: RelationshipType): void {
