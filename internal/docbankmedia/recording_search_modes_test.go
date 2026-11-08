@@ -1,14 +1,18 @@
 package docbankmedia
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"hegel.dev/go/hegel"
 )
 
 func TestRecordingSearchAcceptsNonlexicalReport(t *testing.T) {
@@ -36,6 +40,56 @@ func TestRecordingSearchAcceptsNonlexicalReport(t *testing.T) {
 			assert.Equal(t, mode, report.ActualMode)
 		})
 	}
+}
+
+// Exact source identity is required independently of ranking mode. Every case
+// first accepts the real tuple, then changes one attributed identity component.
+func TestRecordingSearchExactSourceProperty(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		require := require.New(ht)
+		identity := fmt.Sprintf("%x", sha256.Sum256([]byte(hegel.Draw(ht, hegel.Text()))))
+		mode := []string{"lexical", "semantic", "hybrid"}[hegel.Draw(ht, hegel.Integers(0, 2))]
+		field := hegel.Draw(ht, hegel.Integers(0, 2))
+		source := SearchMediaSource{SourceID: identity, SourceVersionID: "version-" + identity, ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}
+		evidence := SearchEvidence{Kind: "rendition_segment", BuildID: "selected", SegmentID: "segment", MediaSources: []SearchMediaSource{source}}
+		if mode != "lexical" {
+			evidence.Kind, evidence.SegmentID = "embedding", ""
+			evidence.InputKind, evidence.InputID, evidence.InputGenerationID = "rendition_chunk", "input", "generation"
+			evidence.EmbeddingSetID, evidence.VectorSpaceID, evidence.SourceManifestChecksum = "set", "space", strings.Repeat("a", 64)
+		}
+		report := SearchReport{RequestedMode: mode, ActualMode: mode, MediaSourceSelection: true,
+			MediaSelections: []SearchMediaSelection{{SearchMediaSource: source, Origin: "generated", Completeness: "complete", BuildID: "selected"}},
+			Coverage:        SearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1},
+			Results:         []SearchHit{{VaultUID: "fixture", NodeID: 1, ContentVersionID: source.ContentVersionID, Rank: 1, Excerpt: "telescope", Evidence: []SearchEvidence{evidence}}}}
+		var mu sync.Mutex
+		remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			_ = json.NewEncoder(w).Encode(report)
+		}))
+		defer remote.Close()
+		client, err := NewClient(remote.URL, nil)
+		require.NoError(err)
+		request := SearchRequest{Query: "telescope", Mode: mode, Profile: "vectors", ContentFirst: true, Limit: 20,
+			Fence: &SearchFence{VaultUID: "fixture", ContentVersionIDs: []string{source.ContentVersionID}}, MediaSources: []SearchMediaSelector{{SearchMediaSource: source}}}
+		got, err := client.Search(t.Context(), request)
+		require.NoError(err)
+		require.Len(got.Results, 1)
+		require.Equal("telescope", got.Results[0].Excerpt)
+		mu.Lock()
+		changed := &report.Results[0].Evidence[0].MediaSources[0]
+		switch field {
+		case 0:
+			changed.SourceID += "-foreign"
+		case 1:
+			changed.SourceVersionID += "-foreign"
+		case 2:
+			changed.ContentVersionID = "123e4567-e89b-42d3-a456-426614174001"
+		}
+		mu.Unlock()
+		_, err = client.Search(t.Context(), request)
+		require.ErrorIs(err, ErrInvalidReceipt)
+	}, hegel.WithTestCases(64), hegel.WithDatabase(""))
 }
 
 func TestRecordingSearchEmbeddingEvidenceBoundary(t *testing.T) {

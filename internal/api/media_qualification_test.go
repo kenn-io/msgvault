@@ -346,6 +346,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 			} else {
 				assert.Empty(t, response.Results)
 			}
+			require.NoError(t, recordingEvalControl(t.Context(), manifest, "refresh", ""))
 		})
 	}
 	scenario("unreachable", func(t *testing.T) {
