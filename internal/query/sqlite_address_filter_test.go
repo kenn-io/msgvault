@@ -132,12 +132,14 @@ func TestSearchCommonWordPreservesPages(t *testing.T) {
 // every message newest-first and probing its recipients.
 func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
 	env := newTestEnv(t)
 	_, err := env.DB.ExecContext(t.Context(), `WITH RECURSIVE seq(x) AS (
 		VALUES(1000) UNION ALL SELECT x+1 FROM seq WHERE x < 100999
 	) INSERT INTO participants(id, email_address)
 	SELECT x, 'sender-' || x || '@example.org' FROM seq`)
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, q := range []*search.Query{
 		{FromAddrs: []string{"@example.com"}},
 		{FromAddrs: []string{"alice@example.com"}},
@@ -146,10 +148,10 @@ func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 		{BccAddrs: []string{"@example.com"}},
 	} {
 		plan := explainSearchPlan(t, env, q)
-		assert.NotRegexp(t, `(?m)^SCAN m(?: |$)`, plan, "%+v\n%s", q, plan)
+		assert.NotRegexp(`(?m)^SCAN m(?: |$)`, plan, "%+v\n%s", q, plan)
 		if len(q.FromAddrs) == 1 && q.FromAddrs[0] == "alice@example.com" {
-			assert.Contains(t, plan, "idx_participants_email_lower", plan)
-			assert.NotContains(t, plan, "SCAN p2", plan)
+			assert.Contains(plan, "idx_participants_email_lower", plan)
+			assert.NotContains(plan, "SCAN p2", plan)
 		}
 	}
 }
