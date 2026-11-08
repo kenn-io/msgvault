@@ -47,6 +47,7 @@
   let currentProfile = $state<OrganizationProfile>();
   // The version a first save sends as If-Match.
   let opened: Prepared<OrganizationProfile> | undefined;
+  let profileOpened: Prepared<OrganizationProfile> | undefined;
   const load = new WriteAttempt<Prepared<OrganizationProfile>>();
   const attempt = new WriteAttempt<Prepared<OrganizationProfile>>();
   const loading = $derived(!!initialOrganization && !currentProfile && !load.details);
@@ -81,6 +82,7 @@
     if (!initialOrganization) return;
     opened = await load.prepare(() => controller.prepareOrganizationMutation(initialOrganization.id));
     if (!opened) return;
+    profileOpened = opened;
     const profile = (currentProfile = opened.data);
     name = profile.organization.name;
     kind = profile.organization.kind;
@@ -125,7 +127,7 @@
     let reviewed = false;
     const ok = await profileAttempt.run(async current => {
       reviewed = !!current;
-      const result = await controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? opened);
+      const result = await controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? profileOpened ?? opened);
       if (result.ok) { saved = result.entity; etag = result.etag; }
       return result;
     });
@@ -135,6 +137,7 @@
     baselineCategories = (saved!.categories ?? []).map((item) => item.category);
     aliases = baselineAliases.join(', ');
     categories = baselineCategories.join(', ');
+    if (etag) profileOpened = { data: saved!, etag };
     keepOpen(reviewed ? { ...saved!, organization: currentProfile.organization } : saved!, etag, reviewed);
   }
 
@@ -149,7 +152,10 @@
   // sends the version the dialog opened and shows what changed.
   function keepOpen(profile: OrganizationProfile, etag: string | undefined, reviewed: boolean): void {
     currentProfile = profile;
-    if (etag && !reviewed) opened = { data: profile, etag };
+    if (etag && !reviewed) {
+      opened = { data: profile, etag };
+      profileOpened = opened;
+    }
   }
 
   async function checkDeletion(): Promise<void> {

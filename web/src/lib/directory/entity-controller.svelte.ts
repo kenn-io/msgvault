@@ -110,6 +110,7 @@ export class DirectoryEntityController {
   private relationshipTypeGeneration = 0;
   private networkGeneration = 0;
   private networkDepth = 1;
+  private networkIncludeEnded = false;
   private disposed = false;
   constructor(
     client: APIClient,
@@ -251,13 +252,14 @@ export class DirectoryEntityController {
       if (generation === this.relationshipTypeGeneration) this.loading.relationshipTypes = false;
     }
   }
-  async loadNetwork(depth = 1): Promise<void> {
+  async loadNetwork(depth = 1, includeEnded = this.networkIncludeEnded): Promise<void> {
     this.networkDepth = depth;
+    this.networkIncludeEnded = includeEnded;
     const { abort, generation } = this.beginCollection('network');
     try {
       const response = await generatedGetPersonNetwork(
         { id: this.personID },
-        { depth, include_ended: false },
+        { depth, include_ended: includeEnded },
         {
           ...this.client,
           signal: abort.signal,

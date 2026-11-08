@@ -426,6 +426,39 @@ it('shows the newer profile before an alias save that follows Keep yours, and ke
   expect(savedContacts).toEqual(['concurrent@example.test']);
 });
 
+it('uses the revision returned by Keep yours for the next alias save', async () => {
+  let revision = 1;
+  const tags: (string | null)[] = [];
+  let changedElsewhere = false;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const tag = `\"organization-21-r${revision}\"`;
+    if (request.method === 'GET') return Response.json(organizationProfile(revision), { headers: { ETag: tag } });
+    tags.push(request.headers.get('If-Match'));
+    if (!changedElsewhere) {
+      changedElsewhere = true;
+      revision++;
+      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    }
+    if (request.headers.get('If-Match') !== tag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    revision++;
+    const body = await request.json();
+    return Response.json({ ...organizationProfile(revision), names: body.names.map((item: object, index: number) => ({ ...item, organization_id: 21, envelope: envelope(40 + index) })) }, { headers: { ETag: `\"organization-21-r${revision}\"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Edited name' } });
+  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, New alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  const conflict = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  await fireEvent.click(within(conflict).getByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(tags).toEqual(['\"organization-21-r1\"', '\"organization-21-r2\"']));
+  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, New alias, Another alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await waitFor(() => expect(tags).toEqual(['\"organization-21-r1\"', '\"organization-21-r2\"', '\"organization-21-r3\"']));
+});
+
 it('keeps the dialog open while the other section still has unsaved edits', async () => {
   const writes: { method: string; tag: string | null; body: { primary_domain?: string; name?: string; names?: { name: string }[] } }[] = [];
   const onDone = vi.fn();

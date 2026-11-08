@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Button, Checkbox, SegmentedControl } from '@kenn-io/kit-ui';
 
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { NetworkEdge, NetworkNode } from '../../directory/models';
@@ -18,6 +18,7 @@
   const AVATAR = 28;
   const GAP = 8;
   let depth = $state('1');
+  let includeEnded = $state(false);
   const depthOptions = [
     { value: '1', label: 'Direct' },
     { value: '2', label: '2 steps' },
@@ -28,7 +29,7 @@
   const nodeByID = $derived(new Map(nodes.map((node) => [node.id, node])));
 
   $effect(() => {
-    void controller.loadNetwork(Number(depth));
+    void controller.loadNetwork(Number(depth), includeEnded);
   });
 
   // One column per step away, each ordered by the people it hangs off so lines cross as little as possible.
@@ -122,7 +123,7 @@
   }
 
   function retry(): void {
-    void controller.loadNetwork(Number(depth));
+    void controller.loadNetwork(Number(depth), includeEnded);
   }
 </script>
 
@@ -131,6 +132,7 @@
     <header>
       <h3>Network</h3>
       <SegmentedControl ariaLabel="Network depth" value={depth} options={depthOptions} onchange={(value) => { depth = value; }} />
+      <Checkbox label="Show ended" bind:checked={includeEnded} />
     </header>
     {#if controller.errors.network}
       <div class="refresh-error" role="alert">

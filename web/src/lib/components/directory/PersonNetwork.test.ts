@@ -76,6 +76,23 @@ function networkFetcher(network: PersonNetworkProjection) {
 }
 
 describe('PersonNetwork', () => {
+  it('loads historical connections when Show ended is selected and keeps it on depth changes', async () => {
+    const requests: URL[] = [];
+    const fetcher = vi.fn<typeof fetch>(async input => {
+      const request = requestOf(input);
+      requests.push(new URL(request.url));
+      return Response.json(connected(Number(new URL(request.url).searchParams.get('depth'))));
+    });
+    const { controller } = controllerWith(fetcher);
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByRole('heading', { name: 'Network' });
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Show ended' }));
+    await waitFor(() => expect(requests.at(-1)?.searchParams.get('include_ended')).toBe('true'));
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+    await waitFor(() => expect(requests.at(-1)?.search).toBe('?depth=2&include_ended=true'));
+  });
+
   it('draws every connection with a chip and opens records', async () => {
     const { controller } = controllerWith(networkFetcher(connected()));
     const onOpenPerson = vi.fn();
@@ -90,7 +107,7 @@ describe('PersonNetwork', () => {
       'Curated Peer · Engineer · Shared Organization',
       'Curated Peer · mentors · Second Hop Person'
     ]);
-    const paths = container.querySelectorAll('path');
+    const paths = container.querySelectorAll('.graph > svg path');
     expect(paths).toHaveLength(3);
     expect(container.querySelectorAll('.edge-label')).toHaveLength(3);
     const cross = paths[0]!.getAttribute('d')!.split(' ');
