@@ -281,7 +281,6 @@ it.each(['names', 'categories'])('keeps saved %s metadata inspectable after a co
   expect(within(alert).getByText('Other details also changed')).toBeDefined();
   const value = within(alert).getByRole('region', { name: section === 'names' ? 'Name Synthetic Legal Ltd' : 'Category Research' });
   expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
-  expect(within(value).getByText('Confidence').nextElementSibling?.textContent).toBe('87%');
   expect(within(alert).getByText(section === 'names' ? 'legal-name-variant' : 'category-variant')).toBeDefined();
 });
 
@@ -629,4 +628,37 @@ it.each(['save', 'delete'] as const)('requires review of a concurrent domain on 
   expect(await screen.findByText('concurrent.example')).toBeDefined();
   expect(writes[1]).toEqual({ method: action === 'save' ? 'PATCH' : 'DELETE', tag: '"organization-21-r2"' });
   expect(onDone).not.toHaveBeenCalled();
+});
+
+it('refreshes normalized fields before saving pending aliases', async () => {
+  const onDone = vi.fn();
+  const profile = organizationProfile();
+  const normalized = { ...profile.organization, primary_domain: 'example.com' };
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return Response.json(normalized, { headers: { ETag: '"organization-21-r2"' } });
+    if (request.method === 'PUT') return Response.json({ ...profile, organization: normalized }, { headers: { ETag: '"organization-21-r3"' } });
+    return Response.json(profile, { headers: { ETag: '"organization-21-r1"' } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'New alias' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization domain' }), { target: { value: 'Example.COM' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Organization domain' })).toHaveProperty('value', 'example.com'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+});
+
+it('shows conflict facts without a redundant Details control', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    if (requestOf(input).method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    return Response.json(richOrganizationProfile(++reads), { headers: { ETag: `"organization-21-r${reads}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  const notice = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  expect(within(notice).queryByRole('button', { name: 'Details' })).toBeNull();
+  expect(within(notice).getByText('concurrent@example.test')).toBeDefined();
 });

@@ -352,14 +352,14 @@ describe('OrganizationEmploymentTab', () => {
       if (path === '/api/v1/employments/11' && request.method === 'GET') {
         reads += 1;
         return new Response(JSON.stringify(employment(11, reads, reads === 1 ? {} : {
-          department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', address_id: 88, confidence: 0.88
+          department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', address_id: 88, source: 'extraction', confidence: 0.88
         })), { headers: { ETag: `"employment-11-r${reads}"` } });
       }
       if (path === '/api/v1/employments/11' && request.method === 'DELETE') {
         deletes.push(request);
         return deletes.length === 1 ? Response.json({ error: 'revision_conflict', message: 'stale employment' }, { status: 412 }) : new Response(null, { status: 204 });
       }
-      if (path === '/api/v1/people/7/employments') return collection([employment(11, 2, { department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', address_id: 88, confidence: 0.88 })]);
+      if (path === '/api/v1/people/7/employments') return collection([employment(11, 2, { department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', address_id: 88, source: 'extraction', confidence: 0.88 })]);
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.employments = [employment()];

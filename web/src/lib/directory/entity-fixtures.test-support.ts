@@ -29,7 +29,7 @@ export function envelope(id: number, overrides: Record<string, unknown> = {}) {
 export function richOrganizationProfile(revision = 3) {
   const importedEnvelope = envelope(40, {
     ordinal: 7, pref: 2, type_label: 'work', type_tokens: ['WORK', 'INTERNET'], source: 'vcard_import',
-    source_ref: 'card-42', source_resource_uid: 'resource-card-42', confidence: 0.87, active_from: '2025-02-03T04:05:06Z',
+    source_ref: 'card-42', source_resource_uid: 'resource-card-42', active_from: '2025-02-03T04:05:06Z',
     vcard: { property: 'EMAIL', group: 'item2', prop_id: 'prop-9', pid: ['1.1', '2.1'], altid: 'alt-4' }
   });
   return {

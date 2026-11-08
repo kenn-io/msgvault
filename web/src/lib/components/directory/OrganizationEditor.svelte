@@ -103,6 +103,10 @@
     });
     if (!ok) return;
     if (!currentProfile || !listsUnsaved) { onDone(saved?.entity); return; }
+    name = saved!.entity!.name;
+    kind = saved!.entity!.kind;
+    primaryDomain = saved!.entity!.primary_domain ?? '';
+    description = saved!.entity!.description ?? '';
     keepOpen({ ...currentProfile, organization: saved!.entity! }, saved!.etag);
   }
 
@@ -375,7 +379,7 @@
     <!-- One heading over the rows: "Contact details · From CardDAV contacts · Nov 6", and one Details for all of them. -->
     {#if heading || shared}<div class="profile-heading">
       <p>{#if heading}<span class="heading">{heading}</span>{/if}{#if heading && shared}{' · '}{/if}{#if shared}<span class="provenance" title={shared.title}>{shared.text}</span>{/if}</p>
-      {#if rows.some((item) => item.details.facts.length || item.details.raw.length)}<Button label="Details" class="text-action" size="sm" ariaExpanded={contactDetailsOpen} onclick={() => contactDetailsOpen = !contactDetailsOpen} />{/if}
+      {#if heading && rows.some((item) => item.details.facts.length || item.details.raw.length)}<Button label="Details" class="text-action" size="sm" ariaExpanded={contactDetailsOpen} onclick={() => contactDetailsOpen = !contactDetailsOpen} />{/if}
     </div>{/if}
     {#each groups as group (group.title)}
       <!-- Email, Phone, and Address as label | value rows; a second value of one kind keeps the label column empty.

@@ -180,7 +180,7 @@ describe('DirectoryEntityController', () => {
     const freshEmployment = employment(11, 2, {
       person_id: 8,
       organization_id: 22,
-      source: 'vcard_import',
+      source: 'extraction',
       source_ref: 'fresh-card',
       address_id: 72,
       confidence: 0.72
@@ -209,7 +209,7 @@ describe('DirectoryEntityController', () => {
       return {
         person_id: current.person_id,
         organization_id: current.organization_id,
-        source: current.source as 'vcard_import',
+        source: current.source as 'extraction',
         source_ref: current.source_ref,
         address_id: current.address_id,
         confidence: current.confidence,
@@ -225,7 +225,7 @@ describe('DirectoryEntityController', () => {
     await expect(write.clone().json()).resolves.toMatchObject({
       person_id: 8,
       organization_id: 22,
-      source: 'vcard_import',
+      source: 'extraction',
       source_ref: 'fresh-card',
       address_id: 72,
       confidence: 0.72,

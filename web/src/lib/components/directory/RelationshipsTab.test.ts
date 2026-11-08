@@ -438,7 +438,7 @@ describe('RelationshipsTab', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const requests: Request[] = [];
-      const created = relationship(44, 1, { source_person_id: 8, target_person_id: 7, start_date: { year: 2025 }, end_date: { year: 2026, month: 8 }, notes: 'Synthetic note' });
+      const created = relationship(44, 1, { status: 'ended', source_person_id: 8, target_person_id: 7, start_date: { year: 2025 }, end_date: { year: 2026, month: 8 }, notes: 'Synthetic note' });
       const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
         const request = requestOf(input);
         requests.push(request);
@@ -625,7 +625,7 @@ describe('RelationshipsTab', () => {
     let reads = 0;
     const opening = relationship(41, 1, { notes: 'Opening note', start_date: { year: 2024, month: 3 } });
     const fresh = relationship(41, 2, { notes: 'Concurrent note' });
-    const updated = relationship(41, 3, { notes: 'Concurrent note', end_date: { year: 2026, month: 8 } });
+    const updated = relationship(41, 3, { status: 'ended', notes: 'Concurrent note', end_date: { year: 2026, month: 8 } });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
@@ -683,9 +683,9 @@ describe('RelationshipsTab', () => {
   it('clears changed notes without resending an opening end date', async () => {
     const requests: Request[] = [];
     let reads = 0;
-    const opening = relationship(41, 1, { notes: 'Opening note', end_date: { year: 2026, month: 6 } });
-    const fresh = relationship(41, 2, { notes: 'Opening note', end_date: { year: 2026, month: 7 } });
-    const updated = relationship(41, 3, { end_date: { year: 2026, month: 7 } });
+    const opening = relationship(41, 1, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 6 } });
+    const fresh = relationship(41, 2, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 7 } });
+    const updated = relationship(41, 3, { status: 'ended', end_date: { year: 2026, month: 7 } });
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
@@ -707,6 +707,7 @@ describe('RelationshipsTab', () => {
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
+    await fireEvent.click(screen.getByText('1 past connection'));
     await rowAction('Edit…');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: '   ' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -721,14 +722,15 @@ describe('RelationshipsTab', () => {
   it('closes an unchanged relationship edit without sending an empty patch', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = requestOf(input);
-      return Response.json(relationship(41, 1, { notes: 'Opening note', end_date: { year: 2026, month: 6 } }), { headers: { ETag: '"person-relationship-41-r1"' } });
+      return Response.json(relationship(41, 1, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 6 } }), { headers: { ETag: '"person-relationship-41-r1"' } });
     });
     const { client, controller } = controllerWith(fetchFn);
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', {
-      relationship: relationship(41, 1, { notes: 'Opening note', end_date: { year: 2026, month: 6 } })
+      relationship: relationship(41, 1, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 6 } })
     })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
+    await fireEvent.click(screen.getByText('1 past connection'));
     await rowAction('Edit…');
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 

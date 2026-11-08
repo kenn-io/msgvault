@@ -113,8 +113,7 @@
     const was = jobFields(opened.data), now = jobFields(current);
     // A date typed as 20240305 is the same date as 2024-03-05, as the conflict notice reads it.
     const dashed = (value: string | null) => value?.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
-    const same = (a: string | null, b: string | null) => dashed(a) === dashed(b);
-    return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, same(draft[key], was[key]) ? now[key] : draft[key]])) as JobFields;
+    return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, (key === 'start_date' || key === 'end_date' ? dashed(draft[key]) === dashed(was[key]) : draft[key] === was[key]) ? now[key] : draft[key]])) as JobFields;
   }
 
   function body(current: Employment | undefined = undefined): EmploymentBody {
@@ -191,7 +190,7 @@
       </div>
       {/if}
       <div class="form-pair"><FormField field={{ id: 'work-title', label: 'Job title', value: title, disabled: attempt.busy }} oninput={value => title = value} /><FormField field={{ id: 'work-role', label: 'Role on the team', value: role, disabled: attempt.busy }} oninput={value => role = value} /></div>
-      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} endAfter={kept.start_date} disabled={attempt.busy} />
+      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} endAfter={kept.start_date} endForValidation={kept.end_date ?? ''} disabled={attempt.busy} />
       {#if showPrimary}<Checkbox label="Primary job" checked={isPrimary} onchange={value => isPrimary = value} disabled={attempt.busy} />{/if}
       <Disclosure variant="plain" class="fold" title="More details" bind:open={moreDetails}>
         <div class="more">

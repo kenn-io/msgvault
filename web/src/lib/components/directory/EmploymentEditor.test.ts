@@ -428,8 +428,8 @@ it('keeps an edited end date when another editor reopens the job', async () => {
     let reads = 0;
     let patches = 0;
     const hiddenByRead = [
-      { person_id: 7, organization_id: 21, source: 'user', source_ref: 'modal-old', address_id: 11, confidence: 0.11 },
-      { person_id: 8, organization_id: 22, source: 'vcard_import', source_ref: 'first-fresh', address_id: 22, confidence: 0.22 },
+      { person_id: 7, organization_id: 21, source: 'extraction', source_ref: 'modal-old', address_id: 11, confidence: 0.11 },
+      { person_id: 8, organization_id: 22, source: 'extraction', source_ref: 'first-fresh', address_id: 22, confidence: 0.22 },
     ];
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -488,3 +488,41 @@ it('keeps an edited end date when another editor reopens the job', async () => {
     const retryPatch = requests.filter((request) => request.method === 'PATCH')[1]!;
     expect(await retryPatch.clone().json()).toMatchObject({ ...hiddenByRead[1], title: 'Draft title' });
   });
+
+it('saves a date-shaped description as text', async () => {
+  let body: Record<string, unknown> | undefined;
+  const job = employment(11, 1, { description: '20240305' });
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') { body = await request.json(); return Response.json(job); }
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    return Response.json(job, { headers: { ETag: '"employment-11-r1"' } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: job });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Description' }), { target: { value: '2024-03-05' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(body).toMatchObject({ description: '2024-03-05' }));
+});
+
+it('validates the saved interval when both dates changed elsewhere', async () => {
+  let reads = 0;
+  const bodies: Record<string, unknown>[] = [];
+  const job = employment(11, 1, { is_current: false, start_date: { year: 2020 }, end_date: { year: 2022 } });
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      bodies.push(await request.json());
+      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(job);
+    }
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    return Response.json(++reads === 1 ? job : { ...job, start_date: { year: 2024 }, end_date: { year: 2026 } }, { headers: { ETag: `"employment-11-r${reads}"` } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: job });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  const keep = await screen.findByRole('button', { name: 'Keep yours' });
+  expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
+  await fireEvent.click(keep);
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies[1]).toMatchObject({ start_date: '2024', end_date: '2026' });
+});
