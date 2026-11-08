@@ -83,6 +83,7 @@ export class DirectoryProfileController {
   private generation = 0;
   private definitionsGeneration = 0;
   private draftGeneration = 0;
+  private profileConflictETag: string | null = null;
   private activeMutationGeneration: number | null = null;
   private mutationSettled = Promise.resolve();
   private settleMutation: (() => void) | undefined;
@@ -179,7 +180,7 @@ export class DirectoryProfileController {
       const structuredProfileReady =
         structuredProfile.data !== undefined &&
         hasETag(profileResponseETag) &&
-        (!profileRequiresFreshETag || profileResponseETag !== profileETagBeforeReload);
+        (!profileRequiresFreshETag || profileResponseETag !== (this.profileConflictETag ?? profileETagBeforeReload));
       const attributesReady = attributes.data !== undefined;
       const definitionsReady = definitionsGeneration === this.definitionsGeneration && definitions.data !== undefined;
       const errors = { ...this.bundle.errors };
@@ -286,6 +287,7 @@ export class DirectoryProfileController {
         return;
       }
       this.captureMutationFailure(response.error, response.response.status, draftGeneration);
+      if (this.draftGeneration === draftGeneration && this.conflict?.code === 'person_revision_conflict') this.profileConflictETag = etag;
     } catch (cause: unknown) {
       this.captureMutationFailure(cause, 0, draftGeneration);
     } finally {
@@ -490,6 +492,7 @@ export class DirectoryProfileController {
     }
     this.draft = draft;
     this.conflict = null;
+    this.profileConflictETag = null;
     return ++this.draftGeneration;
   }
   private beginMutation(draftGeneration: number): void {

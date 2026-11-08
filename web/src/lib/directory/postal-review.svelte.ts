@@ -129,3 +129,7 @@ export function postalReason(code: string): string | undefined {
   if (code === 'not_verified' || code === 'provider_confirmed') return undefined;
   return reasons[code];
 }
+
+export function postalReasons(codes: string[]): string[] {
+  return [...new Set(codes.filter(code => !codes.includes('external_country_unsuitable') || (code !== 'country_missing' && code !== 'country_unknown')).map(postalReason).filter((reason): reason is string => !!reason))];
+}

@@ -1285,15 +1285,13 @@ func mappedOccurrence(
 	return projectOccurrenceByIdentity(t, envelope, mapping.Identity)
 }
 
-func TestPostalAddressSnapshotExportsRawTextAndComponents(t *testing.T) {
+func TestPostalAddressSnapshotDoesNotRestoreClearedValues(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		input     postaladdress.Input
-		wantValue string
-		wantLabel string
+		name  string
+		input postaladdress.Input
 	}{
-		{"raw text", postaladdress.Input{AddressKind: "postal", OriginalValue: "12 Example; Unit 7\nRaw text"}, ";;;;;;", "12 Example; Unit 7\nRaw text"},
-		{"components", postaladdress.Input{AddressKind: "postal", ExtendedAddress: "Unit 7", StreetAddress: "12 Example Street", Locality: "Example City", CountryName: "Canada"}, ";Unit 7;12 Example Street;Example City;;;Canada", ""},
+		{"raw text", postaladdress.Input{AddressKind: "postal", OriginalValue: "12 Example; Unit 7\nRaw text"}},
+		{"components", postaladdress.Input{AddressKind: "postal", ExtendedAddress: "Unit 7", StreetAddress: "12 Example Street", Locality: "Example City", CountryName: "Canada"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			encoded, err := postaladdress.EncodeOriginalInput(tc.input)
@@ -1302,13 +1300,8 @@ func TestPostalAddressSnapshotExportsRawTextAndComponents(t *testing.T) {
 			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded})
 			require.NoError(err)
 			assert := assert.New(t)
-			assert.Equal(tc.wantValue, got)
-			if tc.wantLabel == "" {
-				assert.Nil(label)
-			} else {
-				require.NotNil(label)
-				assert.Equal(tc.wantLabel, *label)
-			}
+			assert.Empty(got)
+			assert.Nil(label)
 			assert.NotContains(got, "msgvault:postal-input:")
 		})
 	}
@@ -1359,9 +1352,22 @@ func TestPostalAddressSnapshotExportsCurrentLabel(t *testing.T) {
 }
 
 func TestPostalAddressPartialComponentsKeepFreeText(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, CountryName: new("Canada"), FreeText: new("12 Example Street")})
-	require.NoError(t, err)
-	require.NotNil(t, label)
-	assert.Equal(t, ";;;;;;Canada", value)
-	assert.Equal(t, "12 Example Street", *label)
+	require.NoError(err)
+	require.NotNil(label)
+	assert.Equal(";;;;;;Canada", value)
+	assert.Equal("12 Example Street", *label)
+}
+
+func TestPostalAddressSnapshotDoesNotRestoreStreetWhenOnlyCountryCodeRemains(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"})
+	require.NoError(err)
+	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")})
+	require.NoError(err)
+	assert.Equal(";;;;;;", value)
+	assert.Nil(label)
 }

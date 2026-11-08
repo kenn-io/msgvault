@@ -2,7 +2,7 @@
   import { Button, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { Input } from '../../api/generated/models';
-  import { PostalReviewSession, postalAddressText, postalReason, copyPostalInput, type PostalCandidate } from '../../directory/postal-review.svelte';
+  import { PostalReviewSession, postalAddressText, postalReasons, copyPostalInput, type PostalCandidate } from '../../directory/postal-review.svelte';
 
   import type {
     PartialDate as GeneratedPartialDate,
@@ -505,8 +505,8 @@
               <div><dt>Original address</dt><dd>{postalAddressText(result.original)}</dd></div>
               {#if postalAddressText(result.original) !== postalAddressText(result.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed)}</dd></div>{/if}
             </dl>
-            <p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? 'Provider unavailable — local entry is still available' : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>
-            {#if result.reason_codes.map(postalReason).filter(Boolean).length}<p>{[...new Set(result.reason_codes.map(postalReason).filter(Boolean))].join(' · ')}</p>{/if}
+            <p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? (postalReasons(result.reason_codes).length ? 'You can still save the address.' : 'Provider unavailable — local entry is still available') : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>
+            {#if postalReasons(result.reason_codes).length}<p>{postalReasons(result.reason_codes).join(' · ')}</p>{/if}
             {#if result.provider === 'google' && result.checked_at && (result.status === 'validated' || result.status === 'needs_review')}<p class="google-attribution"><a href="https://maps.google.com" target="_blank" rel="noreferrer" translate="no" style="white-space: nowrap; font-family: Arial, sans-serif; font-style: normal; font-weight: 400; font-size: 14px; color: #1f1f1f; background-color: #ffffff; letter-spacing: normal">Google Maps</a></p>{/if}
             <div class="editor-actions">
               <Button label="Keep original" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(false)} />
@@ -617,6 +617,7 @@
   .postal-comparison { display: grid; gap: var(--space-2); }
   .postal-comparison dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 5rem; }
+  label :global(input) { box-sizing: border-box; min-width: 0; max-width: 100%; }
   .profile-editor {
     display: flex;
     flex-wrap: wrap;

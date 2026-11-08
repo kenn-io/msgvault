@@ -24,6 +24,20 @@ type countingPostalValidator struct {
 	unavailable bool
 }
 
+func TestPostalTextOnlyCreationKeepsCurrentTextSeparateFromSnapshot(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: "12 Example Street"}
+	request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}}}
+	patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal}}}}
+	require.NoError(capturePostalPatchOriginals(request, &patch))
+	require.NotNil(patch.Addresses.Add[0].FreeText)
+	assert.Equal(input.OriginalValue, *patch.Addresses.Add[0].FreeText)
+	raw, ok := postaladdress.DecodeOriginalInput(patch.Addresses.Add[0].OriginalValue)
+	assert.True(ok)
+	assert.Equal(input.OriginalValue, raw.OriginalValue)
+}
+
 func (v *countingPostalValidator) Check(_ context.Context, input postaladdress.Input) (postaladdress.Assessment, error) {
 	v.calls++
 	assessment := postaladdress.Assess(input)

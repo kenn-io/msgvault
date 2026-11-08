@@ -29,6 +29,25 @@ function requests(fetchFn: ReturnType<typeof vi.fn>): Request[] {
 }
 
 describe('DirectoryProfileController', () => {
+  it('resolves a stale reviewed profile after an intervening refresh', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict' }, { status: 409 });
+      if (pathOf(request) === '/api/v1/people/7') return Response.json(person(7, 4, [], 'Test User'), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request).endsWith('/profile')) return Response.json(profile(7, 4), { headers: { ETag: '"profile-7-r4"' } });
+      if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
+      if (pathOf(request) === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
+      return Response.json({ person_id: 7, interaction_count: 0, cadence_status: 'unknown', computed_at: '2026-08-20T00:00:00Z', stale: false });
+    });
+    const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
+    await controller.reload(false);
+    await controller.patchProfile({ names: { add: [], supersede: [] } }, '"profile-7-r3"');
+    expect(controller.conflict?.code).toBe('person_revision_conflict');
+    await controller.reload();
+    expect(controller.conflict).toBeNull();
+    expect(controller.draft).toBeNull();
+  });
+
   it.each(['pending attribute save', 'pending profile reload', 'pending structured PATCH'])('refreshes linked bindings after a %s and permits the next structured edit', async cause => {
     let releaseSave!: (response: Response) => void;
     let releaseReload!: (response: Response) => void;

@@ -100,7 +100,7 @@ describe('Postal address editor', () => {
     const { controller, requests } = setup({ unavailable: true });
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw(); await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
-    expect(await screen.findByText(/Provider unavailable/)).toBeDefined();
+    expect(await screen.findByText('You can still save the address.')).toBeDefined();
     expect(screen.queryByText('Google Maps')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Keep original' }));
     await waitFor(() => expect(requests).toHaveLength(2));
