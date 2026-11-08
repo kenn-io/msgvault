@@ -457,10 +457,10 @@ func (c *CardDAVController) Save(ctx context.Context, req CardDAVAccountRequest)
 		}
 		return selected.Save(ctx, req)
 	}
-	return c.save(ctx, req, nil)
+	return c.save(ctx, req)
 }
 
-func (c *CardDAVController) save(ctx context.Context, req CardDAVAccountRequest, recovery *iCloudRecovery) (CardDAVAccountResponse, error) {
+func (c *CardDAVController) save(ctx context.Context, req CardDAVAccountRequest) (CardDAVAccountResponse, error) {
 	c.saveLock().Lock()
 	defer c.saveLock().Unlock()
 	defer func() { c.createdConfigTable = false }()
@@ -474,32 +474,9 @@ func (c *CardDAVController) save(ctx context.Context, req CardDAVAccountRequest,
 	if err != nil {
 		return CardDAVAccountResponse{}, errors.Join(errCardDAVStorage, err)
 	}
-	var prepared *carddav.Discovery
-	if recovery != nil {
-		if err := c.checkICloudBinding(ctx, recovery.configured, recovery.credential); err != nil {
-			return CardDAVAccountResponse{}, err
-		}
-		account, err := c.store.GetCardDAVAccountByNameContext(ctx, c.connection())
-		if err != nil {
-			return CardDAVAccountResponse{}, err
-		}
-		if account == nil {
-			return CardDAVAccountResponse{}, carddav.ErrCredentialNotBound
-		}
-		if err := c.store.CheckCardDAVRetryAfterContext(ctx, account.ID); err != nil {
-			return CardDAVAccountResponse{}, err
-		}
-		prepared = &recovery.discovery
-		// Controller role writers share this save lock. Read roles only
-		// after acquiring it, and hold it through discovery publication.
-		if err := c.admitICloudRelocation(ctx, *prepared); err != nil {
-			return CardDAVAccountResponse{}, err
-		}
-	} else {
-		req, prepared, err = c.prepareICloudRequest(ctx, req, current, 0)
-		if err != nil {
-			return CardDAVAccountResponse{}, err
-		}
+	req, prepared, err := c.prepareICloudRequest(ctx, req, current, 0)
+	if err != nil {
+		return CardDAVAccountResponse{}, err
 	}
 	next := config.CardDAVConfig{
 		Provider: req.Provider, OAuthApp: req.OAuthApp, BaseURL: req.BaseURL, Username: req.Username, Enabled: *req.Enabled, Schedule: req.Schedule,

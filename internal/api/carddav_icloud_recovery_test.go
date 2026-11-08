@@ -25,7 +25,20 @@ func savedICloudAccountFixture(t *testing.T) *iCloudAccountFixture {
 	return f
 }
 
-func TestICloudRecoveryPreservesImportedIdentityWithAnotherAccount(t *testing.T) {
+func TestICloudRecoveryPreservesImportedIdentity(t *testing.T) {
+	for _, withOtherAccount := range []bool{false, true} {
+		name := "single account"
+		if withOtherAccount {
+			name = "two accounts"
+		}
+		t.Run(name, func(t *testing.T) {
+			testICloudRecoveryPreservesImportedIdentity(t, withOtherAccount)
+		})
+	}
+}
+
+func testICloudRecoveryPreservesImportedIdentity(t *testing.T, withOtherAccount bool) {
+	t.Helper()
 	f := savedICloudAccountFixture(t)
 	ctx := t.Context()
 	st := f.controller.store
@@ -53,11 +66,13 @@ func TestICloudRecoveryPreservesImportedIdentityWithAnotherAccount(t *testing.T)
 	require.NotNil(t, before.PersonID)
 	var personUID string
 	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT vcard_uid FROM persons WHERE id = ?`), *before.PersonID).Scan(&personUID))
-	_, _, err = st.ReplaceCardDAVDiscoveryContext(ctx, store.CardDAVDiscoveryInput{
-		ConnectionName: "other", BaseURL: "https://contacts.example.test", Username: "other@example.test",
-		PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/",
-	})
-	require.NoError(t, err)
+	if withOtherAccount {
+		_, _, err = st.ReplaceCardDAVDiscoveryContext(ctx, store.CardDAVDiscoveryInput{
+			ConnectionName: "other", BaseURL: "https://contacts.example.test", Username: "other@example.test",
+			PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/",
+		})
+		require.NoError(t, err)
+	}
 	f.partition, f.partitionErr = "p43", &carddav.StatusError{StatusCode: http.StatusGone}
 	_, err = f.controller.Current().Sync(ctx, carddav.SyncOptions{})
 	require.ErrorIs(t, err, carddav.ErrICloudReconnectRequired)
@@ -77,20 +92,42 @@ func TestICloudRecoveryPreservesImportedIdentityWithAnotherAccount(t *testing.T)
 	assert.True(t, books[0].IsWriteTarget)
 }
 
-func TestICloudPreflightMovesPartitionBeforeOneFullSync(t *testing.T) {
+func TestICloudRecoveryPreservesBookRolesWithAnotherAccount(t *testing.T) {
+	f := savedICloudAccountFixture(t)
+	ctx := t.Context()
+	books, err := f.controller.scopedStoredBooks(ctx)
+	require.NoError(t, err)
+	require.Len(t, books, 1)
+	before := books[0]
+	_, _, err = f.controller.store.ReplaceCardDAVDiscoveryContext(ctx, store.CardDAVDiscoveryInput{
+		ConnectionName: "other", BaseURL: "https://contacts.example.test", Username: "other@example.test",
+		PrincipalURL: "https://contacts.example.test/principal/", HomeURL: "https://contacts.example.test/books/",
+	})
+	require.NoError(t, err)
+	f.partition, f.partitionErr = "p43", &carddav.StatusError{StatusCode: http.StatusGone}
+	_, err = f.controller.Current().Sync(ctx, carddav.SyncOptions{})
+	require.ErrorIs(t, err, carddav.ErrICloudReconnectRequired)
+	after, err := f.controller.scopedStoredBooks(ctx)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, before.ID, after[0].ID)
+	assert.True(t, after[0].IsSubscribed)
+	assert.True(t, after[0].IsWriteTarget)
+	assert.True(t, after[0].IsLookupSource)
+}
+
+func TestICloudPreflightRefusesMovedPartition(t *testing.T) {
 	assert := assert.New(t)
 	f := savedICloudAccountFixture(t)
 	f.partition = "p43"
 	f.partitionErr = &carddav.StatusError{StatusCode: http.StatusGone}
 	var runID int64
 	_, err := f.controller.Current().Sync(t.Context(), carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled, OnRunStarted: func(id int64) { runID = id }})
-	require.NoError(t, err)
-	assert.Equal("https://p43-contacts.icloud.com", f.controller.cardDAVConfigSnapshot().BaseURL)
+	require.ErrorIs(t, err, carddav.ErrICloudReconnectRequired)
+	assert.Equal("https://p42-contacts.icloud.com", f.controller.cardDAVConfigSnapshot().BaseURL)
 	assert.Equal([]string{"https://p42-contacts.icloud.com", carddav.ICloudDiscoveryURL}, f.discovered)
-	assert.Equal(1, f.syncCalls)
-	assert.True(f.syncOptions.Full)
-	assert.Equal(store.CardDAVSyncTriggerScheduled, f.syncOptions.Trigger)
-	assert.Equal(int64(123), runID)
+	assert.Zero(f.syncCalls)
+	assert.Zero(runID)
 }
 
 func TestICloudNeverRediscoversAfterUnderlyingSyncFailure(t *testing.T) {
@@ -168,8 +205,8 @@ func TestICloudDialFailureMayRediscover(t *testing.T) {
 	f.partition = "p43"
 	f.partitionErr = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("synthetic connection failure")}
 	_, err := f.controller.Current().Sync(t.Context(), carddav.SyncOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, "https://p43-contacts.icloud.com", f.controller.cardDAVConfigSnapshot().BaseURL)
+	require.ErrorIs(t, err, carddav.ErrICloudReconnectRequired)
+	assert.Equal(t, "https://p42-contacts.icloud.com", f.controller.cardDAVConfigSnapshot().BaseURL)
 }
 
 func TestICloudHealthyPreflightDoesNotPersistDiscovery(t *testing.T) {

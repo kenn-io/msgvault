@@ -17,7 +17,7 @@ func syntheticICloudDNSError() error {
 	return &net.DNSError{Err: "no such host", Name: "p42-contacts.icloud.com", IsNotFound: true}
 }
 
-func TestICloudDNSFailureRediscoversBeforeOneFullSync(t *testing.T) {
+func TestICloudDNSFailureRediscoversBeforeRequiringReconnect(t *testing.T) {
 	for _, kind := range []string{"direct", "wrapped", "joined"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
@@ -30,11 +30,10 @@ func TestICloudDNSFailureRediscoversBeforeOneFullSync(t *testing.T) {
 				f.partitionErr = errors.Join(f.partitionErr, &net.OpError{Op: "dial", Err: errors.New("synthetic failure")})
 			}
 			_, err := f.controller.Current().Sync(t.Context(), carddav.SyncOptions{})
-			require.NoError(t, err)
-			assert.Equal("https://p43-contacts.icloud.com", f.controller.cardDAVConfigSnapshot().BaseURL)
+			require.ErrorIs(t, err, carddav.ErrICloudReconnectRequired)
+			assert.Equal("https://p42-contacts.icloud.com", f.controller.cardDAVConfigSnapshot().BaseURL)
 			assert.Equal([]string{"https://p42-contacts.icloud.com", carddav.ICloudDiscoveryURL}, f.discovered)
-			assert.Equal(1, f.syncCalls)
-			assert.True(f.syncOptions.Full)
+			assert.Zero(f.syncCalls)
 		})
 	}
 }

@@ -85,12 +85,12 @@ connection's credential origin. Only HTTPS Apple contacts partitions on port
 
 Before syncing an iCloud connection, msgvault checks the saved partition. If
 that host is unavailable, it rediscovers through Apple's published URL.
-Automatic reconnection requires a single writable book with its default roles
-at the same collection path, and no owned publications or conflicts that would
-block replacing the connection. Other layouts keep their saved state and need
-an explicit reconnect with `add-carddav --icloud` after reviewing those choices
-and resolving remote work. A failed preflight returns an error without starting
-a sync run, so the latest sync-history row can remain an earlier successful run.
+If Apple has moved the account, msgvault keeps the saved connection and asks
+you to reconnect with `add-carddav --icloud`. Review address-book choices,
+published contacts and conflicts first. Reconnecting replaces the previous
+connection and can retire imported contact identities. A failed preflight
+returns an error without starting a sync run, so the latest sync-history row
+can remain an earlier successful run.
 
 Reconnect connections previously configured with a partition URL using
 `--icloud` to enable partition rediscovery.

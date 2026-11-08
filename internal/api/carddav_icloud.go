@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/url"
 	"slices"
 	"time"
 
@@ -46,12 +45,6 @@ func (c *CardDAVController) prepareICloudRequest(
 	}
 	req.BaseURL, req.Password = origin, password
 	return req, &discovery, nil
-}
-
-type iCloudRecovery struct {
-	configured config.CardDAVConfig
-	credential carddav.Credential
-	discovery  carddav.Discovery
 }
 
 type iCloudOperations struct {
@@ -151,32 +144,39 @@ func (o *iCloudOperations) sync(ctx context.Context, options carddav.SyncOptions
 		BaseURL: carddav.ICloudDiscoveryURL, Username: o.credential.Username, Password: o.credential.Password,
 		Enabled: new(o.configured.Enabled), Schedule: o.configured.Schedule,
 	}
-	req, discovery, err := c.prepareICloudRequest(preflightCtx, req, o.configured, account.ID)
+	req, _, err = c.prepareICloudRequest(preflightCtx, req, o.configured, account.ID)
 	if err != nil {
 		return carddav.SyncResult{}, safeICloudPreflightError(err)
 	}
 	if req.BaseURL == o.configured.BaseURL {
 		return carddav.SyncResult{}, safeICloudPreflightError(originalErr)
 	}
-	_, err = c.save(preflightCtx, req, &iCloudRecovery{
-		configured: o.configured, credential: o.credential, discovery: *discovery,
-	})
+	err = c.refuseICloudRelocation(preflightCtx, o.configured, o.credential)
+	if errors.Is(err, config.ErrConfigConflict) || errors.Is(err, carddav.ErrCredentialNotBound) {
+		err = errors.Join(carddav.ErrICloudReconnectRequired, err)
+	}
+	return carddav.SyncResult{}, safeICloudPreflightError(err)
+}
+
+func (c *CardDAVController) refuseICloudRelocation(ctx context.Context, configured config.CardDAVConfig, credential carddav.Credential) error {
+	c.saveLock().Lock()
+	defer c.saveLock().Unlock()
+	if err := c.checkICloudBinding(ctx, configured, credential); err != nil {
+		return err
+	}
+	account, err := c.store.GetCardDAVAccountByNameContext(ctx, c.connection())
 	if err != nil {
-		if errors.Is(err, store.ErrCardDAVIdentityChangeOwned) || errors.Is(err, store.ErrCardDAVCredentialChangePending) ||
-			errors.Is(err, config.ErrConfigConflict) || errors.Is(err, carddav.ErrCredentialNotBound) {
-			err = errors.Join(carddav.ErrICloudReconnectRequired, err)
-		}
-		return carddav.SyncResult{}, safeICloudPreflightError(err)
+		return err
 	}
-	active = c.Current()
-	if replacement, ok := active.(*iCloudOperations); ok {
-		active = replacement.CardDAVOperations
+	if account == nil {
+		return carddav.ErrCredentialNotBound
 	}
-	if active == nil {
-		return carddav.SyncResult{}, carddav.ErrConnectionUnavailable
+	if err := c.store.CheckCardDAVRetryAfterContext(ctx, account.ID); err != nil {
+		return err
 	}
-	options.Full = true
-	return active.Sync(ctx, options)
+	// Generic identity replacement retires imported contacts and can lose book
+	// roles. Refuse it until relocation can preserve both atomically.
+	return carddav.ErrICloudReconnectRequired
 }
 
 func (c *CardDAVController) checkICloudBinding(ctx context.Context, configured config.CardDAVConfig, expected carddav.Credential) error {
@@ -193,25 +193,6 @@ func (c *CardDAVController) checkICloudBinding(ctx context.Context, configured c
 	}
 	if credential != expected || !credential.ICloud {
 		return carddav.ErrCredentialNotBound
-	}
-	return nil
-}
-
-func (c *CardDAVController) admitICloudRelocation(ctx context.Context, discovery carddav.Discovery) error {
-	books, err := c.scopedStoredBooks(ctx)
-	if err != nil {
-		return err
-	}
-	if len(books) != 1 || len(discovery.Books) != 1 || !books[0].IsWriteTarget || !books[0].IsSubscribed || !books[0].IsLookupSource {
-		return carddav.ErrICloudReconnectRequired
-	}
-	old, err := url.Parse(books[0].CanonicalURL)
-	next := discovery.Books[0]
-	capabilities := next.Capabilities
-	if err != nil || next.URL == nil || old.EscapedPath() != next.URL.EscapedPath() ||
-		old.RawQuery != next.URL.RawQuery || old.ForceQuery != next.URL.ForceQuery ||
-		!capabilities.CreateKnown || !capabilities.Create || !capabilities.UpdateKnown || !capabilities.Update || !capabilities.DeleteKnown || !capabilities.Delete {
-		return carddav.ErrICloudReconnectRequired
 	}
 	return nil
 }
