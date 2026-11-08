@@ -363,6 +363,7 @@ func newMCPServerWithPolicy(
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
+	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp)."
 	if !opts.DelegatedOnly {
 		capabilities.Resources = &sdkmcp.ResourceCapabilities{}
 	} else {
