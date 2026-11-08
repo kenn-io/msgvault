@@ -30,7 +30,14 @@ type Snapshot struct {
 	Snippet              string
 	Metadata             []byte
 	Raw                  []byte
-	Sender               MessageImportSender
+	// RawFormat names Raw's format: RawFormat for the normalized message,
+	// or a connector's own format; see Writer.WriteFrom.
+	RawFormat string
+	// ConversationType is the type of the message's conversation:
+	// ConversationType, or a connector's own; see
+	// Writer.WithConversationType.
+	ConversationType string
+	Sender           MessageImportSender
 	// SenderIdentifierType, when set, is the shared identifier type of a
 	// sender's id; see Writer.WithSenderIdentifierType.
 	SenderIdentifierType string
@@ -104,6 +111,8 @@ func buildMessageSnapshot(platform, sourceIdentifier string, message NormalizedM
 		Snippet:              textutil.PrefixRunes(bodyText, 200),
 		Metadata:             metadata,
 		Raw:                  raw,
+		RawFormat:            RawFormat,
+		ConversationType:     ConversationType,
 		Sender:               message.Sender,
 	}, nil
 }

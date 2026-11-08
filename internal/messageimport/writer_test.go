@@ -2,6 +2,7 @@ package messageimport
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,4 +53,139 @@ func TestWriterSharesSendersOfASharedIdentifierType(t *testing.T) {
 	`), first).Scan(&identifierType, &identifierValue))
 	assert.Equal("example_forge", identifierType)
 	assert.Equal("1001", identifierValue)
+}
+
+// startWriter starts a sync run of a source of type example_forge and
+// returns a writer scoped to it, as a connector's sync builds one.
+func startWriter(t *testing.T, st *store.Store, sourceIdentifier string) *Writer {
+	t.Helper()
+	require := require.New(t)
+	source, err := st.GetOrCreateSourceContext(t.Context(), "example_forge", sourceIdentifier)
+	require.NoError(err)
+	syncID, err := st.StartSyncContext(t.Context(), source.ID, "example_forge")
+	require.NoError(err)
+	return NewWriter(st.ScopedToSync(source.ID, syncID), source)
+}
+
+func examplePost(externalID string, sender MessageImportSender) ImportedMessage {
+	return ImportedMessage{
+		ExternalID:   externalID,
+		MessageType:  "example_forge",
+		Conversation: MessageImportConversation{ExternalID: "thread-1", Title: "Add widgets"},
+		Sender:       sender,
+		SentAt:       "2026-11-07T10:00:00Z",
+		BodyMarkdown: "Looks good.",
+	}
+}
+
+func TestWriterWriteFromKeepsTheConnectorsEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	writer := startWriter(t, st, "account-a").WithConversationType("thread")
+
+	evidence := Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"}
+	result, err := writer.WriteFrom(t.Context(), examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"}), evidence)
+	require.NoError(err)
+	assert.Equal(WriteResult{MessageID: result.MessageID, Created: true, Changed: true}, result)
+
+	raw, err := st.GetMessageRawContext(t.Context(), result.MessageID)
+	require.NoError(err)
+	assert.Equal(evidence.Raw, raw)
+	var rawFormat, conversationType, bodyText string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT mr.raw_format, c.conversation_type, mb.body_text
+		FROM messages m
+		JOIN message_raw mr ON mr.message_id = m.id
+		JOIN conversations c ON c.id = m.conversation_id
+		JOIN message_bodies mb ON mb.message_id = m.id
+		WHERE m.id = ?
+	`), result.MessageID).Scan(&rawFormat, &conversationType, &bodyText))
+	assert.Equal("example_forge_json", rawFormat)
+	assert.Equal("thread", conversationType)
+	assert.Equal("Looks good.", bodyText, "the message is stored from the normalized post")
+}
+
+func TestWriterDefaultsToTheImportConversationType(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	result, err := startWriter(t, st, "account-a").Write(t.Context(), examplePost("comment-1", MessageImportSender{Name: "octo"}))
+	require.NoError(err)
+	var conversationType, rawFormat string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT c.conversation_type, mr.raw_format
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		JOIN message_raw mr ON mr.message_id = m.id
+		WHERE m.id = ?
+	`), result.MessageID).Scan(&conversationType, &rawFormat))
+	assert.Equal(t, ConversationType, conversationType)
+	assert.Equal(t, RawFormat, rawFormat)
+}
+
+func TestWriterWriteFromWritesOnlyChangedEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	writer := startWriter(t, st, "account-a")
+	post := examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"})
+	evidence := Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"}
+
+	first, err := writer.WriteFrom(t.Context(), post, evidence)
+	require.NoError(err)
+	sentinel := time.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET last_modified = ? WHERE id = ?`), sentinel, first.MessageID)
+	require.NoError(err)
+	lastModified := func() string {
+		var value string
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`), first.MessageID).Scan(&value))
+		return value
+	}
+	before := lastModified()
+
+	again, err := writer.WriteFrom(t.Context(), post, Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"})
+	require.NoError(err)
+	assert.Equal(WriteResult{MessageID: first.MessageID}, again)
+	assert.Equal(before, lastModified(), "identical evidence writes nothing")
+
+	post.BodyMarkdown = "Looks great."
+	edited := Evidence{Raw: []byte(`{"id":7,"body":"Looks great."}`), Format: "example_forge_json"}
+	updated, err := writer.WriteFrom(t.Context(), post, edited)
+	require.NoError(err)
+	assert.Equal(WriteResult{MessageID: first.MessageID, Changed: true}, updated)
+	raw, err := st.GetMessageRawContext(t.Context(), first.MessageID)
+	require.NoError(err)
+	assert.Equal(edited.Raw, raw)
+	var bodyText string
+	var messages int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT body_text FROM message_bodies WHERE message_id = ?`), first.MessageID).Scan(&bodyText))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
+	assert.Equal("Looks great.", bodyText)
+	assert.Equal(1, messages, "changed evidence updates the same message")
+}
+
+func TestWriterWriteFromRejectsUnusableEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		evidence Evidence
+	}{
+		{"empty raw", Evidence{Format: "example_forge_json"}},
+		{"no format", Evidence{Raw: []byte(`{}`)}},
+		{"uppercase format", Evidence{Raw: []byte(`{}`), Format: "Example_JSON"}},
+		{"hyphenated format", Evidence{Raw: []byte(`{}`), Format: "example-json"}},
+		{"leading digit", Evidence{Raw: []byte(`{}`), Format: "1json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			_, err := startWriter(t, st, "account-a").WriteFrom(t.Context(),
+				examplePost("comment-1", MessageImportSender{Name: "octo"}), tc.evidence)
+			require.Error(t, err)
+			var messages int
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
+			assert.Zero(t, messages)
+		})
+	}
 }

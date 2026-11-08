@@ -200,7 +200,7 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		},
 		Conversation: &store.ConversationPersistData{
 			SourceConversationID: snapshot.SourceConversationID,
-			ConversationType:     ConversationType,
+			ConversationType:     snapshot.ConversationType,
 			Title:                snapshot.ConversationTitle,
 			Participants: []store.ConversationParticipantRef{
 				{ParticipantID: senderID, Role: "member"},
@@ -211,7 +211,7 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		BodyText:  sql.NullString{String: snapshot.BodyText, Valid: snapshot.BodyText != ""},
 		BodyHTML:  sql.NullString{String: snapshot.BodyHTML, Valid: snapshot.BodyHTML != ""},
 		RawMIME:   snapshot.Raw,
-		RawFormat: RawFormat,
+		RawFormat: snapshot.RawFormat,
 		Recipients: []store.RecipientSet{{
 			Type:           "from",
 			ParticipantIDs: []int64{senderID},
