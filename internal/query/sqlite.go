@@ -112,8 +112,10 @@ func (e *SQLiteEngine) hasFTSTable(ctx context.Context) bool {
 	return e.ftsResult
 }
 
-// Close leaves the borrowed archive pool open.
-func (e *SQLiteEngine) Close() error { return nil }
+// Close is a no-op for SQLiteEngine since it doesn't own the connection.
+func (e *SQLiteEngine) Close() error {
+	return nil
+}
 
 // queryContext runs QueryContext with dialect-aware placeholder rebinding.
 func (e *SQLiteEngine) queryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {

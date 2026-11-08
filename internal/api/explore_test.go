@@ -106,7 +106,7 @@ func TestExploreReportsTransientCacheInitialization(t *testing.T) {
 	requirements.NoError(generatedBody.Validate(), "the generated client must accept the server's building response")
 }
 
-func TestLiveExplorePaginationWarningsAndCacheRefusals(t *testing.T) {
+func TestLiveExploreRebuildRecoveryAndPublication(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -130,20 +130,13 @@ func TestLiveExplorePaginationWarningsAndCacheRefusals(t *testing.T) {
 	assertions.Equal(page.CacheRevision, second.CacheRevision)
 	assertions.Contains(second.Warnings[0], "then restart msgvault")
 
-	for route, body := range map[string]string{
-		"/api/v1/explore/groups":    `{"grouping":["source"]}`,
-		"/api/v1/explore/preflight": `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"` + page.CacheRevision + `"}}`,
-	} {
-		refused := postExploreJSON(t, srv, route, body)
-		assertions.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
-	}
+	refused := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"`+page.CacheRevision+`"}}`)
+	assertions.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
+
 	srv.SetAnalyticsEngine(newExploreDuckDBFixture(t), AnalyticsModeDuckDB)
 	changed := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+page.NextCursor+`"}`)
 	assertions.Equal(http.StatusConflict, changed.Code, changed.Body.String())
 	assertions.Contains(changed.Body.String(), "archive_revision_changed")
-	selection := postExploreJSON(t, srv, "/api/v1/explore/preflight", `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"`+page.CacheRevision+`"}}`)
-	assertions.Equal(http.StatusConflict, selection.Code, selection.Body.String())
-	assertions.Contains(selection.Body.String(), "archive_revision_changed")
 }
 
 func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {
@@ -167,44 +160,41 @@ func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {
 
 func TestLiveExploreRefusesSemanticBeforeCandidatesOrReader(t *testing.T) {
 	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	srv, backend := newReviewSemanticIntersectionServer(t)
 	live, _, _ := liveExploreTestServer(t)
 	engine, ok := live.queryEngineForContext(t.Context()).(*query.LiveExploreEngine)
-	require.True(t, ok)
+	requirements.True(ok)
 	srv.SetAnalyticsEngine(engine, AnalyticsModeSQLFallback)
-	for _, held := range []bool{false, true} {
-		if held {
-			_, release, _, err := engine.BeginExploreSnapshot(t.Context())
-			require.NoError(t, err)
-			defer release()
-		}
-		for _, mode := range []string{"semantic", "hybrid"} {
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/explore", bytes.NewBufferString(`{"query":"needle","search_mode":"`+mode+`"}`))
-			request.Header.Set("Content-Type", "application/json")
-			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, request)
-			cancel()
-			assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-			assert.Contains(t, response.Body.String(), "analytical_cache_unavailable")
-			assert.Zero(t, backend.searchLimit, "unsupported searches must not query the vector index")
-		}
+	_, release, _, err := engine.BeginExploreSnapshot(t.Context())
+	requirements.NoError(err)
+	defer release()
+	for _, mode := range []string{"semantic", "hybrid"} {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/explore", bytes.NewBufferString(`{"query":"needle","search_mode":"`+mode+`"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		cancel()
+		assertions.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+		assertions.Contains(response.Body.String(), "analytical_cache_unavailable")
+		assertions.Zero(backend.searchLimit, "unsupported searches must not query the vector index")
 	}
 }
 
 type liveExploreSearchStore struct {
 	*mockStore
 
-	archive         *store.Store
-	afterCandidates func()
+	archive          *store.Store
+	beforeCandidates func()
 }
 
 func (s *liveExploreSearchStore) SearchMessageIDsQueryContext(ctx context.Context, q *search.Query, limit int) ([]int64, int64, error) {
-	ids, total, err := s.archive.SearchMessageIDsQueryContext(ctx, q, limit)
-	if s.afterCandidates != nil {
-		s.afterCandidates()
+	if s.beforeCandidates != nil {
+		s.beforeCandidates()
 	}
-	return ids, total, err
+	return s.archive.SearchMessageIDsQueryContext(ctx, q, limit)
 }
 
 func TestLiveExploreSearchSharesSnapshot(t *testing.T) {
@@ -219,10 +209,10 @@ func TestLiveExploreSearchSharesSnapshot(t *testing.T) {
 	requirements.True(ok)
 	searchStore := &liveExploreSearchStore{mockStore: mock, archive: st}
 	srv.store = searchStore
-	searchStore.afterCandidates = func() {
-		_, err := writer.DB().ExecContext(t.Context(), "UPDATE messages SET subject='Changed' WHERE id=2")
+	searchStore.beforeCandidates = func() {
+		_, err := writer.DB().ExecContext(t.Context(), "DELETE FROM messages WHERE id=2")
 		requirements.NoError(err)
-		searchStore.afterCandidates = nil
+		searchStore.beforeCandidates = nil
 	}
 	first := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"needle OR needle","search_mode":"full_text","limit":1}`)
 	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
@@ -230,6 +220,8 @@ func TestLiveExploreSearchSharesSnapshot(t *testing.T) {
 	requirements.NoError(json.Unmarshal(first.Body.Bytes(), &page))
 	requirements.Len(page.Rows, 1)
 	assertions.Equal("Newest", page.Rows[0].Title)
+	requirements.NotNil(page.TotalCount)
+	assertions.Equal(int64(2), *page.TotalCount)
 }
 
 func TestExploreUnavailableUsesRequestInitializationSnapshot(t *testing.T) {

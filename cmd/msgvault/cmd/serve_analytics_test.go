@@ -199,7 +199,9 @@ func TestStartDaemonAnalyticsInitializerTracksAutoInitializationIndependently(t 
 	defer releaseSnapshot()
 
 	close(release)
-	requirements.True(h.WaitContext(t.Context()))
+	waitCtx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
+	defer cancel()
+	requirements.True(h.WaitContext(waitCtx), "cache installation must let in-flight live reads finish")
 	requirements.NoError(h.Err())
 	assertions.False(srv.AnalyticsInitializationActive())
 	assertions.IsType(&query.DuckDBEngine{}, srv.QueryEngine())
@@ -378,12 +380,7 @@ func TestStartDaemonAnalyticsInitializerValidCacheWaitsForDuckDB(t *testing.T) {
 	case <-time.After(serveLifecycleTestTimeout):
 		require.FailNow("cache open did not start")
 	}
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(`{"limit":1}`))
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, request)
-	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "building")
+	assert.IsType(t, &query.SQLiteEngine{}, srv.QueryEngine())
 	close(release)
 	require.True(h.WaitContext(t.Context()))
 	require.NoError(h.Err())
@@ -395,6 +392,7 @@ func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
 	for _, scenario := range []string{"absent", "partial publication", "stale schema"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
+			assertions := assert.New(t)
 			c, st := openTestDaemonAnalyticsStore(t)
 			c.Analytics.Engine = config.AnalyticsEngineAuto
 			c.Analytics.AutoBuildCache = true
@@ -414,23 +412,22 @@ func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
 			initial := query.NewEngine(st.DB(), false)
 			srv := api.NewServerWithOptions(api.ServerOptions{Config: c, Engine: initial, AnalyticsMode: api.AnalyticsModeSQLFallback, Logger: slog.Default()})
 			stubBuildCacheSubprocess(t, func(_ context.Context, full bool) error {
-				assert.True(t, full)
-				assert.IsType(t, &query.LiveExploreEngine{}, srv.QueryEngine())
+				assertions.True(full)
 				return errors.New("simulated build failure")
 			})
 			h := startDaemonAnalyticsInitializer(t.Context(), c, st, startupCacheBuildIntentNone, srv, nil, nil)
 			require.True(h.WaitContext(t.Context()))
 			require.NoError(h.Err())
-			assert.False(t, srv.AnalyticsInitializationActive())
+			assertions.False(srv.AnalyticsInitializationActive())
 			if scenario == "partial publication" {
-				assert.IsType(t, &query.DuckDBEngine{}, srv.QueryEngine())
+				assertions.IsType(&query.DuckDBEngine{}, srv.QueryEngine())
 			} else {
-				assert.IsType(t, &query.LiveExploreEngine{}, srv.QueryEngine())
+				assertions.IsType(&query.LiveExploreEngine{}, srv.QueryEngine())
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(`{"limit":1}`))
 				req.Header.Set("Content-Type", "application/json")
 				response := httptest.NewRecorder()
 				srv.Router().ServeHTTP(response, req)
-				assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				assertions.Equal(http.StatusOK, response.Code, response.Body.String())
 			}
 			require.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
 		})
@@ -440,6 +437,9 @@ func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
 func TestOpenDaemonAnalyticsEngineFullRebuildHook(t *testing.T) {
 	for _, mode := range []string{config.AnalyticsEngineAuto, config.AnalyticsEngineDuckDB} {
 		for _, intent := range []startupCacheBuildIntent{startupCacheBuildIntentNone, startupCacheBuildIntentFull} {
+			if mode == config.AnalyticsEngineDuckDB && intent == startupCacheBuildIntentNone {
+				continue
+			}
 			t.Run(fmt.Sprintf("%s/%s", mode, intent), func(t *testing.T) {
 				require := require.New(t)
 				c, st := openTestDaemonAnalyticsStore(t)

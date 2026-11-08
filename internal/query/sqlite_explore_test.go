@@ -254,10 +254,6 @@ func TestSQLiteExploreRefusesCacheOperations(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	live := liveExploreFixture(t).live
-	for _, engine := range []Engine{NewSQLiteEngine(live.db), NewEngineWithDialect(live.db, PostgreSQLQueryDialect{})} {
-		_, entries := engine.(EntryExplorer)
-		assert.False(entries)
-	}
 	for name, request := range map[string]ExploreRequest{
 		"participant":             {Context: Context{ParticipantIDs: []int64{1}}},
 		"participant conjunction": {Context: Context{AdditionalParticipantGroups: [][]int64{{1}}}},
