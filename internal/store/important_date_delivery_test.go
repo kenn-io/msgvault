@@ -111,3 +111,29 @@ func TestImportantDateOperatorResolutionNeverReclaims(t *testing.T) {
 	must.NoError(err)
 	checks.False(claimed)
 }
+
+func TestImportantDatePreflightFailureCanRetryWithoutBlockingFutureYears(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	prefix := "person/example:birthday:"
+	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, prefix+"2027", "fingerprint-example")
+	must.NoError(err)
+	must.True(claimed)
+	changed, err := st.AdvanceImportantDateDeliveryContext(ctx, prefix+"2027", store.ImportantDateClaimed, store.ImportantDateIssueInFlight, "")
+	must.NoError(err)
+	must.True(changed)
+	changed, err = st.AdvanceImportantDateDeliveryContext(ctx, prefix+"2027", store.ImportantDateIssueInFlight, store.ImportantDateRetryIssue, "")
+	must.NoError(err)
+	must.True(changed)
+	pending, err := st.ImportantDateHasOtherPendingContext(ctx, prefix, prefix+"2028", "fingerprint-example")
+	must.NoError(err)
+	checks.False(pending)
+	exists, err := st.ImportantDateDeliveryExistsContext(ctx, prefix+"2027")
+	must.NoError(err)
+	checks.False(exists)
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, prefix+"2027", "fingerprint-example")
+	must.NoError(err)
+	checks.True(claimed)
+}
