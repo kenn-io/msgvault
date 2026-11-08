@@ -730,7 +730,7 @@ The Meeting Notes query only sees meetings where the token's user is an attendee
 It returns up to 50 results without a cursor. msgvault partitions saturated
 creation-time windows using the documented UTC date filters, down to one minute,
 and keeps an open historical tail. More than 50 meetings in a minute can still
-leave a `query_cap` gap. A creator filter cannot expand attendee visibility.
+leave a **Query limit** gap. A creator filter cannot expand attendee visibility.
 
 Accessible search and configured page/data-source roots can discover creator-only
 meetings outside that attendee query. msgvault walks paginated block children,
@@ -794,7 +794,7 @@ calendar events.
 Incomplete refreshes preserve previously archived meeting-owned sections with
 their original provenance. Older version 1 snapshots remain readable. When an
 old transcript came only from page Markdown or a stored body, an incomplete
-refresh keeps the entire old snapshot unchanged and reports `legacy_unscoped`.
+refresh keeps the entire old snapshot unchanged and reports **Origin unknown**.
 A successful fresh section fetch is needed before that content can become a
 meeting-scoped version 2 snapshot.
 
