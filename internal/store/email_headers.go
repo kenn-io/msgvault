@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
@@ -78,6 +79,9 @@ func (s *Store) recordEmailHeadersContext(
 			return nil
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, rfcID, messageID); err != nil {
+			return err
+		}
+		if err := s.linkEmailRepliesToParentTx(ctx, tx, sourceID, messageID); err != nil {
 			return err
 		}
 		return s.bumpDerivedDataRevisionContext(ctx, tx)
@@ -281,35 +285,53 @@ func (s *Store) ResolveEmailReplyParentsContext(ctx context.Context, sourceID, a
 	}
 }
 
-// LinkEmailRepliesSinceContext links replies around the messages a source
-// archived with afterID < id <= throughID. Replies in that range look up their
-// parents. Older unresolved replies are checked only in the conversations of
-// new messages that carry a Message-ID, so a parent archived after its reply
-// is linked without rereading the rest of the source. A late parent filed in a
-// different conversation from its reply stays unlinked until
+// EmailReplyLinkBoundContext returns an instant that every message change
+// still in flight stamps at or after, so a pass that reads up to it and the
+// next pass that starts from it together skip no committed change.
+func (s *Store) EmailReplyLinkBoundContext(ctx context.Context) (time.Time, error) {
+	bounds, err := s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read email reply link bound: %w", err)
+	}
+	return bounds.CommitBound, nil
+}
+
+// LinkChangedEmailRepliesContext links replies around the emails of a source
+// whose content_changed_at is in [since, through]. Every write that is still
+// in flight at a bound from EmailReplyLinkBoundContext stamps at or after it,
+// so a caller that resumes from through misses nothing and repeats only the
+// rows stamped at that instant, which is safe. The stamp moves on insert
+// and whenever metadata, conversation_id or deleted_at change, so the range
+// covers new mail, parents recorded on older rows, and deletions that free an
+// ID for reuse. Changed replies look up their parents. Older unresolved
+// replies are checked only in the conversations of changed messages that
+// carry a Message-ID, so a parent archived after its reply is linked without
+// rereading the rest of the source. A late parent filed in a different
+// conversation from its reply stays unlinked until
 // ResolveEmailReplyParentsContext walks the whole source again.
-func (s *Store) LinkEmailRepliesSinceContext(ctx context.Context, sourceID, afterID, throughID int64) error {
+func (s *Store) LinkChangedEmailRepliesContext(ctx context.Context, sourceID int64, since, through time.Time) error {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	if throughID <= afterID {
+	if through.Before(since) {
 		return nil
 	}
-	if err := s.ResolveEmailReplyParentsContext(ctx, sourceID, afterID, nil); err != nil || afterID == 0 {
-		return err
-	}
 	seen := make(map[int64]struct{})
-	for cursor := afterID; ; {
-		conversations, last, err := s.emailParentConversationPage(ctx, sourceID, cursor, throughID)
+	var cursor *changedEmailCursor
+	for {
+		page, err := s.readChangedEmailPage(ctx, sourceID, since, through, cursor)
 		if err != nil {
 			return err
 		}
-		if last == 0 {
+		if len(page.ids) == 0 {
 			return ctx.Err()
 		}
-		cursor = last
-		fresh := conversations[:0]
-		for _, id := range conversations {
+		cursor = &page.last
+		if err := s.resolveEmailReplies(ctx, sourceID, page.replies); err != nil {
+			return err
+		}
+		fresh := page.conversations[:0]
+		for _, id := range page.conversations {
 			if _, ok := seen[id]; !ok {
 				seen[id] = struct{}{}
 				fresh = append(fresh, id)
@@ -318,7 +340,7 @@ func (s *Store) LinkEmailRepliesSinceContext(ctx context.Context, sourceID, afte
 		if len(fresh) == 0 {
 			continue
 		}
-		children, err := s.unresolvedEmailRepliesIn(ctx, sourceID, afterID, fresh)
+		children, err := s.unresolvedEmailRepliesIn(ctx, s.db, sourceID, fresh)
 		if err != nil {
 			return err
 		}
@@ -330,53 +352,86 @@ func (s *Store) LinkEmailRepliesSinceContext(ctx context.Context, sourceID, afte
 	}
 }
 
-// LatestSourceMessageIDContext returns the highest message ID a source holds,
-// or zero when it holds none.
-func (s *Store) LatestSourceMessageIDContext(ctx context.Context, sourceID int64) (int64, error) {
-	var id sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(id) FROM messages WHERE source_id = ?`, sourceID).Scan(&id); err != nil {
-		return 0, fmt.Errorf("read latest message of source %d: %w", sourceID, err)
-	}
-	return id.Int64, nil
+// changedEmailCursor is the (content_changed_at, id) of the last row a page
+// read; the next page starts after it.
+type changedEmailCursor struct {
+	at time.Time
+	id int64
 }
 
-// emailParentConversationPage returns the conversations of up to one page of
-// messages with afterID < id <= throughID that can be a reply's parent, and
-// the last message ID read; zero means the range is exhausted.
-func (s *Store) emailParentConversationPage(ctx context.Context, sourceID, afterID, throughID int64) ([]int64, int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id FROM messages
-  WHERE source_id = ? AND id > ? AND id <= ? AND message_type = 'email'
-   AND deleted_at IS NULL AND rfc822_message_id IS NOT NULL
-  ORDER BY id LIMIT ?`, sourceID, afterID, throughID, emailReplyBatchSize)
+type changedEmailPage struct {
+	ids []int64
+	// replies are the unresolved replies among the page's rows.
+	replies []int64
+	// conversations hold the page's rows that carry a Message-ID, so they can
+	// be a waiting reply's parent. Deleted rows count: removing one of two
+	// parents with the same ID can leave the other one unique.
+	conversations []int64
+	last          changedEmailCursor
+}
+
+// readChangedEmailPage reads one page of a source's emails whose content
+// changed in [since, through], in (content_changed_at, id) order.
+func (s *Store) readChangedEmailPage(
+	ctx context.Context, sourceID int64, since, through time.Time, after *changedEmailCursor,
+) (changedEmailPage, error) {
+	var page changedEmailPage
+	// The source_id index would otherwise win and read every row of the source.
+	index := ""
+	if !s.IsPostgreSQL() {
+		index = " INDEXED BY idx_messages_content_changed_at"
+	}
+	query := `SELECT id, content_changed_at,
+	   CASE WHEN COALESCE(rfc822_message_id, '') <> '' THEN conversation_id END,
+	   CASE WHEN reply_to_message_id IS NULL AND deleted_at IS NULL
+	         AND CAST(metadata AS TEXT) LIKE '%"email_in_reply_to"%' THEN 1 ELSE 0 END
+	  FROM messages` + index + `
+	  WHERE content_changed_at >= ?`
+	args := []any{s.dialect.TimestampParam(since)}
+	if after != nil {
+		at := s.dialect.TimestampParam(after.at)
+		query += ` AND (content_changed_at > ? OR id > ?)`
+		args = []any{at, at, after.id}
+	}
+	query += ` AND content_changed_at <= ? AND source_id = ? AND message_type = 'email'
+	  ORDER BY content_changed_at, id LIMIT ?`
+	args = append(args, s.dialect.TimestampParam(through), sourceID, emailReplyBatchSize)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("list new email parents: %w", err)
+		return page, fmt.Errorf("list changed emails: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var conversations []int64
-	var last int64
 	for rows.Next() {
+		var id int64
+		var at requiredTimestamp
 		var conversation sql.NullInt64
-		if err := rows.Scan(&last, &conversation); err != nil {
-			return nil, 0, err
+		var unresolved int
+		if err := rows.Scan(&id, &at, &conversation, &unresolved); err != nil {
+			return page, err
+		}
+		page.ids = append(page.ids, id)
+		page.last = changedEmailCursor{at: at.Time, id: id}
+		if unresolved == 1 {
+			page.replies = append(page.replies, id)
 		}
 		if conversation.Valid {
-			conversations = append(conversations, conversation.Int64)
+			page.conversations = append(page.conversations, conversation.Int64)
 		}
 	}
-	return conversations, last, rows.Err()
+	return page, rows.Err()
 }
 
-// unresolvedEmailRepliesIn lists unresolved replies with id <= throughID in
-// the given conversations, using the conversation index.
-func (s *Store) unresolvedEmailRepliesIn(ctx context.Context, sourceID, throughID int64, conversations []int64) ([]int64, error) {
-	args := make([]any, 0, len(conversations)+2)
+// unresolvedEmailRepliesIn lists unresolved replies in the given
+// conversations, using the conversation index.
+func (s *Store) unresolvedEmailRepliesIn(ctx context.Context, q storeQuerier, sourceID int64, conversations []int64) ([]int64, error) {
+	args := make([]any, 0, len(conversations)+1)
 	for _, id := range conversations {
 		args = append(args, id)
 	}
-	args = append(args, sourceID, throughID)
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM messages
+	args = append(args, sourceID)
+	rows, err := q.QueryContext(ctx, `SELECT id FROM messages
   WHERE conversation_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(conversations)), ",")+`)
-   AND source_id = ? AND id <= ? AND message_type = 'email'
+   AND source_id = ? AND message_type = 'email'
    AND reply_to_message_id IS NULL AND deleted_at IS NULL
    AND CAST(metadata AS TEXT) LIKE '%"email_in_reply_to"%'
   ORDER BY id`, args...)
@@ -393,6 +448,43 @@ func (s *Store) unresolvedEmailRepliesIn(ctx context.Context, sourceID, throughI
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// linkEmailRepliesToParentTx links the unresolved replies in an email's
+// conversation after the email gains a Message-ID. A rfc822_message_id write
+// leaves content_changed_at alone, so LinkChangedEmailRepliesContext would not
+// see the new parent.
+func (s *Store) linkEmailRepliesToParentTx(ctx context.Context, tx *loggedTx, sourceID, parentID int64) error {
+	var conversation sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM messages
+   WHERE id = ? AND source_id = ? AND message_type = 'email'`, parentID, sourceID).Scan(&conversation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read email parent conversation: %w", err)
+	}
+	if !conversation.Valid {
+		return nil
+	}
+	children, err := s.unresolvedEmailRepliesIn(ctx, tx, sourceID, []int64{conversation.Int64})
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		parent, err := s.uniqueEmailReplyParent(ctx, tx, sourceID, child, s.dialect.SelectForUpdate())
+		if err != nil {
+			return err
+		}
+		if parent == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET reply_to_message_id = ?
+   WHERE id = ? AND source_id = ? AND reply_to_message_id IS NULL`, parent, child, sourceID); err != nil {
+			return fmt.Errorf("link email reply %d: %w", child, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) unresolvedEmailReplyPage(ctx context.Context, sourceID, afterID int64) ([]int64, error) {

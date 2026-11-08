@@ -3,6 +3,7 @@ package store_test
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,25 @@ func TestPersistMessageRecordsEmailReplyParent(t *testing.T) {
 	}
 }
 
-func TestLinkEmailRepliesSinceLinksParentArchivedAfterReply(t *testing.T) {
+// laterEmailReplyLinkBound returns a link bound after every change made so
+// far, so a range that starts there leaves those changes out.
+func laterEmailReplyLinkBound(t *testing.T, st *store.Store) time.Time {
+	t.Helper()
+	first, err := st.EmailReplyLinkBoundContext(t.Context())
+	require.NoError(t, err)
+	var later time.Time
+	require.Eventually(t, func() bool {
+		bound, err := st.EmailReplyLinkBoundContext(t.Context())
+		if err != nil || !bound.After(first) {
+			return false
+		}
+		later = bound
+		return true
+	}, 5*time.Second, time.Millisecond)
+	return later
+}
+
+func TestLinkChangedEmailRepliesLinksParentArchivedAfterReply(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -90,8 +109,7 @@ func TestLinkEmailRepliesSinceLinksParentArchivedAfterReply(t *testing.T) {
 	} {
 		require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, id, "", parent))
 	}
-	watermark, err := st.LatestSourceMessageIDContext(t.Context(), f.Source.ID)
-	require.NoError(err)
+	since := laterEmailReplyLinkBound(t, st)
 
 	parent := createThreadEmail(t, f, "parent", "thread-a", "parent@example.test")
 	// A parent filed in another conversation is outside the incremental scope.
@@ -100,11 +118,10 @@ func TestLinkEmailRepliesSinceLinksParentArchivedAfterReply(t *testing.T) {
 	createThreadEmail(t, f, "twin-2", "thread-c", "twin@example.test")
 	reply := createThreadEmail(t, f, "new-reply", "thread-a", "new@example.test")
 	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, reply, "", "parent@example.test"))
-	latest, err := st.LatestSourceMessageIDContext(t.Context(), f.Source.ID)
+	through, err := st.EmailReplyLinkBoundContext(t.Context())
 	require.NoError(err)
-	assert.Equal(reply, latest)
 
-	require.NoError(st.LinkEmailRepliesSinceContext(t.Context(), f.Source.ID, watermark, latest))
+	require.NoError(st.LinkChangedEmailRepliesContext(t.Context(), f.Source.ID, since, through))
 	for _, tc := range []struct {
 		name  string
 		child int64
@@ -124,6 +141,48 @@ func TestLinkEmailRepliesSinceLinksParentArchivedAfterReply(t *testing.T) {
 	assert.Equal(sql.NullInt64{Int64: split, Valid: true}, got, "a full pass finds the split parent")
 	_, got = replyLinkState(t, st, ambiguous)
 	assert.False(got.Valid, "a full pass keeps ambiguous parents unlinked")
+}
+
+// TestLinkChangedEmailRepliesLinksParentRecordedOnOlderReply covers a repair
+// that records a parent on an existing message without adding one, so the
+// highest message ID stays where it was.
+func TestLinkChangedEmailRepliesLinksParentRecordedOnOlderReply(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	reply := createThreadEmail(t, f, "reply", "thread", "reply@example.test")
+	parent := createThreadEmail(t, f, "parent", "thread", "parent@example.test")
+	since := laterEmailReplyLinkBound(t, st)
+
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, reply, "", "parent@example.test"))
+	through, err := st.EmailReplyLinkBoundContext(t.Context())
+	require.NoError(err)
+	require.NoError(st.LinkChangedEmailRepliesContext(t.Context(), f.Source.ID, since, through))
+
+	_, got := replyLinkState(t, st, reply)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
+}
+
+// TestRecordEmailHeadersLinksRepliesToRepairedParent covers a parent that
+// gains its Message-ID after its reply was recorded. That write does not move
+// content_changed_at, so the header repair links the waiting reply itself.
+func TestRecordEmailHeadersLinksRepliesToRepairedParent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := f.Store
+	parent := createThreadEmail(t, f, "parent", "thread", "")
+	reply := createThreadEmail(t, f, "reply", "thread", "reply@example.test")
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, reply, "", "parent@example.test"))
+	require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil))
+	_, got := replyLinkState(t, st, reply)
+	require.False(got.Valid, "the parent has no Message-ID yet")
+
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, parent, "<parent@example.test>", ""))
+
+	_, got = replyLinkState(t, st, reply)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
 }
 
 func TestBackfillEmailReplyHeadersReadsArchivedMIME(t *testing.T) {

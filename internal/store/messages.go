@@ -2288,6 +2288,11 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 			data.Message.RFC822MessageID, messageID); err != nil {
 			return fmt.Errorf("replace repair message RFC Message-ID: %w", err)
 		}
+		if data.Message.MessageType == MessageTypeEmail && data.Message.RFC822MessageID.String != "" {
+			if err := s.linkEmailRepliesToParentTx(ctx, tx, expected.SourceID, messageID); err != nil {
+				return err
+			}
+		}
 		return s.persistAttachmentSnapshotWith(q, messageID, data.MIMEAttachmentReplacement)
 	}
 	messageID, err := s.persistMessageWithParticipantsTransaction(

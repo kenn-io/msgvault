@@ -15,13 +15,18 @@ import (
 const emailRepliesVersion = "email-replies-v1"
 
 // One ledger key per source extends the versioned name with its phase.
-// Fixed-width hex IDs keep the keys colon free, so a source merge clears them
-// and the next call backfills the merged messages. The phases sort in the
+// Fixed-width hex values keep the keys colon free, so a source merge clears
+// them and the next call backfills the merged messages. The phases sort in the
 // order they run, so a stray duplicate key resolves to the earlier state.
 //
-//	#h<after>            header backfill resumes after the ID
-//	#r<after>-<through>  full linking resumes after the ID, then marks through
-//	#w<through>          messages through the ID are linked
+//	#h<after>            header backfill resumes after the message ID
+//	#r<after>-<through>  full linking resumes after the message ID
+//	#w<through>          changes stamped before the instant are linked; the
+//	                     next call links from the instant on
+//
+// An instant is a content_changed_at bound in Unix nanoseconds. Message IDs
+// cannot mark incremental progress: a repair records a parent on an older
+// row, and SQLite reuses the highest ID after a delete.
 const (
 	emailRepliesHeaders = "#h"
 	emailRepliesResolve = "#r"
@@ -31,9 +36,10 @@ const (
 // LinkEmailReplies keeps a source's email reply links current. The first call
 // for a source records In-Reply-To from the archived MIME headers of messages
 // that lack it and links the whole source; later calls link only around the
-// messages archived since the previous call. Sync and import call it before
-// and after adding mail. A failure is logged instead of returned: committed
-// pages stay linked, and the next call resumes from the last checkpoint.
+// messages added or changed since the previous call. Sync and import call it
+// before and after adding mail. A failure is logged instead of returned:
+// committed pages stay linked, and the next call resumes from the last
+// checkpoint.
 func LinkEmailReplies(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.Source) {
 	if src == nil {
 		return
@@ -93,14 +99,15 @@ func linkEmailReplies(
 	}
 
 	if phase == emailRepliesLinked {
-		latest, err := s.LatestSourceMessageIDContext(ctx, src.ID)
-		if err != nil || latest <= after {
+		since := emailRepliesInstant(through)
+		bound, err := s.EmailReplyLinkBoundContext(ctx)
+		if err != nil || bound.Before(since) {
 			return false, err
 		}
-		if err := s.LinkEmailRepliesSinceContext(ctx, src.ID, after, latest); err != nil {
+		if err := s.LinkChangedEmailRepliesContext(ctx, src.ID, since, bound); err != nil || bound.Equal(since) {
 			return false, err
 		}
-		return false, advance(fmt.Sprintf("%s%016x", emailRepliesLinked, latest))
+		return false, advance(fmt.Sprintf("%s%016x", emailRepliesLinked, emailRepliesNanos(bound)))
 	}
 
 	if phase != emailRepliesResolve {
@@ -118,10 +125,13 @@ func linkEmailReplies(
 				return false, err
 			}
 		}
-		// Messages archived after this point are linked by the next call.
-		if through, err = s.LatestSourceMessageIDContext(ctx, src.ID); err != nil {
+		// Changes from this bound on are linked by the next call. Every write
+		// below it has committed, so the full pass sees it.
+		bound, err := s.EmailReplyLinkBoundContext(ctx)
+		if err != nil {
 			return false, err
 		}
+		through = emailRepliesNanos(bound)
 		after = 0
 		if err := advance(fmt.Sprintf("%s%016x-%016x", emailRepliesResolve, after, through)); err != nil {
 			return false, err
@@ -147,9 +157,12 @@ func parseEmailRepliesState(suffix string) (phase string, after, through int64, 
 	}
 	phase, rest := suffix[:2], suffix[2:]
 	switch phase {
-	case emailRepliesHeaders, emailRepliesLinked:
+	case emailRepliesHeaders:
 		id, ok := parseEmailRepliesID(rest)
-		return phase, id, id, ok
+		return phase, id, 0, ok
+	case emailRepliesLinked:
+		since, ok := parseEmailRepliesID(rest)
+		return phase, 0, since, ok
 	case emailRepliesResolve:
 		first, last, found := strings.Cut(rest, "-")
 		after, afterOK := parseEmailRepliesID(first)
@@ -159,7 +172,24 @@ func parseEmailRepliesState(suffix string) (phase string, after, through int64, 
 	return "", 0, 0, false
 }
 
-// parseEmailRepliesID accepts only the fixed-width hex IDs the state is
+// emailRepliesNanos encodes a link bound for the ledger. Zero stands for the
+// zero time: SQLite has no bound until it first sees the write lock free.
+func emailRepliesNanos(bound time.Time) int64 {
+	if bound.IsZero() {
+		return 0
+	}
+	return bound.UnixNano()
+}
+
+// emailRepliesInstant decodes a link bound written by emailRepliesNanos.
+func emailRepliesInstant(nanos int64) time.Time {
+	if nanos == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, nanos).UTC()
+}
+
+// parseEmailRepliesID accepts only the fixed-width hex values the state is
 // written with. Zero is valid: a source may hold no messages yet.
 func parseEmailRepliesID(hex string) (int64, bool) {
 	if hex == "0000000000000000" {

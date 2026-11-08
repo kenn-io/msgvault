@@ -70,7 +70,7 @@ func TestHealBackfillsEmailRepliesFromArchivedMIME(t *testing.T) {
 	got, metadata = replyOf(t, st, chat)
 	assert.False(got.Valid, "chat messages keep their own threading")
 	assert.False(metadata.Valid)
-	assert.Equal(fmt.Sprintf("#w%016x", chat), emailRepliesState(t, st, src))
+	assert.Regexp(`^#w[0-9a-f]{16}$`, emailRepliesState(t, st, src))
 }
 
 func TestLinkEmailRepliesResumesHeaderBackfill(t *testing.T) {
@@ -92,7 +92,7 @@ func TestLinkEmailRepliesResumesHeaderBackfill(t *testing.T) {
 	reply, metadata := replyOf(t, st, pending)
 	assert.True(reply.Valid)
 	assert.JSONEq(`{"email_in_reply_to":"parent@example.net"}`, metadata.String)
-	assert.Equal(fmt.Sprintf("#w%016x", pending), emailRepliesState(t, st, src))
+	assert.Regexp(`^#w[0-9a-f]{16}$`, emailRepliesState(t, st, src))
 	assert.Zero(derivedDataRevision(t, st), "reply facts are not part of the analytics cache")
 }
 
@@ -113,6 +113,57 @@ func TestLinkEmailRepliesRestartsAfterMalformedState(t *testing.T) {
 	assert.Empty(emailRepliesState(t, st, src))
 
 	LinkEmailReplies(t.Context(), slog.New(slog.DiscardHandler), st, src)
+	got, _ := replyOf(t, st, reply)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
+}
+
+// TestLinkEmailRepliesLinksParentRecordedOnOlderMessage covers a repair that
+// records a parent on a message archived before the previous call. No message
+// is added, so the source's highest message ID does not move.
+func TestLinkEmailRepliesLinksParentRecordedOnOlderMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "imaps://archive@example.net")
+	require.NoError(err)
+	reply := archiveThreadMessage(t, st, src, "reply", store.MessageTypeEmail, "reply@example.net", "")
+	parent := archiveThreadMessage(t, st, src, "parent", store.MessageTypeEmail, "parent@example.net", "")
+	LinkEmailReplies(t.Context(), slog.New(slog.DiscardHandler), st, src)
+	require.Regexp(`^#w[0-9a-f]{16}$`, emailRepliesState(t, st, src))
+
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), src.ID, reply, "", "parent@example.net"))
+	LinkEmailReplies(t.Context(), slog.New(slog.DiscardHandler), st, src)
+
+	got, _ := replyOf(t, st, reply)
+	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
+}
+
+// TestLinkEmailRepliesLinksReplyThatReusesDeletedID covers SQLite giving a new
+// message the ID of the highest message, which was deleted after the
+// previous call.
+func TestLinkEmailRepliesLinksReplyThatReusesDeletedID(t *testing.T) {
+	testutil.SkipIfPostgres(t, "only SQLite reuses the highest message ID")
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("mbox", "archive@example.net")
+	require.NoError(err)
+	parent := archiveThreadMessage(t, st, src, "parent", store.MessageTypeEmail, "parent@example.net", "")
+	removed := archiveThreadMessage(t, st, src, "removed", store.MessageTypeEmail, "removed@example.net", "")
+	LinkEmailReplies(t.Context(), slog.New(slog.DiscardHandler), st, src)
+
+	require.NoError(st.MarkMessageDeletedContext(t.Context(), src.ID, "removed"))
+	plan, err := st.PlanGCContext(t.Context())
+	require.NoError(err)
+	purged, err := st.ExecuteGCContext(t.Context(), plan)
+	require.NoError(err)
+	require.Equal(int64(1), purged)
+	reply := archiveThreadMessage(t, st, src, "reply", store.MessageTypeEmail, "reply@example.net", "parent@example.net")
+	require.Equal(removed, reply, "SQLite reuses the deleted highest ID")
+	require.NoError(st.RecordEmailHeadersContext(t.Context(), src.ID, reply, "", "parent@example.net"))
+
+	LinkEmailReplies(t.Context(), slog.New(slog.DiscardHandler), st, src)
+
 	got, _ := replyOf(t, st, reply)
 	assert.Equal(sql.NullInt64{Int64: parent, Valid: true}, got)
 }
