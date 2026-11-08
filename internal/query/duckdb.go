@@ -2321,12 +2321,18 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 
 	conditions = append(conditions, searchMessageVisibilityWhere("m", q))
 
-	for _, address := range q.FromAddrs {
-		predicate, senderArgs := search.SenderCondition(address, "p_from.email_address", "p_from.phone_number", "p_from.display_name", "mr_from.display_name")
-		conditions = append(conditions, `EXISTS (SELECT 1 FROM sqlite_db.message_recipients mr_from
+	// From filter
+	if len(q.FromAddrs) > 0 {
+		joins = append(joins, `
+			JOIN sqlite_db.message_recipients mr_from ON mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
 			JOIN sqlite_db.participants p_from ON p_from.id = mr_from.participant_id
-			WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from' AND `+predicate+`)`)
-		args = append(args, senderArgs...)
+		`)
+		placeholders := make([]string, len(q.FromAddrs))
+		for i, addr := range q.FromAddrs {
+			placeholders[i] = "?"
+			args = append(args, addr)
+		}
+		conditions = append(conditions, fmt.Sprintf("LOWER(p_from.email_address) IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// To filter

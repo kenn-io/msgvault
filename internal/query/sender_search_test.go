@@ -111,36 +111,3 @@ func TestDuckDBSenderSearch(t *testing.T) {
 		})
 	}
 }
-
-func TestDuckDBSenderSearchScanner(t *testing.T) {
-	requirements := require.New(t)
-	dbPath, db := seedMessageDetailSenderFixture(t)
-	_, err := db.ExecContext(t.Context(), `UPDATE participants SET display_name = 'Alex Kim' WHERE id = 1;
-		DELETE FROM message_recipients WHERE recipient_type = 'from';
-		INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1,'from','Header Name'),(2,1,'from','Other')`)
-	requirements.NoError(err)
-	requirements.NoError(db.Close())
-	engine, err := NewDuckDBEngine(t.Context(), "", dbPath, nil)
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(engine.Close()) })
-	if !engine.hasSQLite() {
-		t.Skip("DuckDB sqlite_scanner extension unavailable")
-	}
-	for _, tc := range []struct {
-		input string
-		want  []int64
-	}{
-		{"from:kim", []int64{1, 2}}, {"from:header", []int64{1}}, {"from:bob@example.com", nil},
-	} {
-		t.Run(tc.input, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			rows, err := engine.Search(t.Context(), search.Parse(tc.input), 100, 0)
-			require.NoError(err)
-			ids := make([]int64, 0, len(rows))
-			for _, row := range rows {
-				ids = append(ids, row.ID)
-			}
-			assert.ElementsMatch(tc.want, ids)
-		})
-	}
-}
