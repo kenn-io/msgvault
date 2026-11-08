@@ -39,7 +39,7 @@ func TestEmailFamilyHTTPReadsAndErrors(t *testing.T) {
 		{"/api/v1/messages/0/family", http.StatusBadRequest},
 	} {
 		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil))
 		assert.Equal(tc.status, w.Code, tc.path+" "+w.Body.String())
 		assert.Equal("no-store", w.Header().Get("Cache-Control"), tc.path)
 	}
@@ -57,7 +57,7 @@ func TestEmailFamilyHTTPDatabaseFailureIsNotNotFound(t *testing.T) {
 	srv, st := newIdentityLinkTestServer(t)
 	srv.store = failingEmailFamilyStore{st}
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/messages/1/family", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/1/family", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "email_family_unavailable")
 }
@@ -75,7 +75,7 @@ func TestEmailFamilyHTTPRequiresOwner(t *testing.T) {
 		{"delegated message.read grant", apiprotocol.AgentTokenHeader, secret, http.StatusUnauthorized},
 		{"owner without a backend", "Authorization", "Bearer owner-key", http.StatusServiceUnavailable},
 	} {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1/family", nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/1/family", nil)
 		request.RemoteAddr = "192.0.2.2:4242"
 		if tc.header != "" {
 			request.Header.Set(tc.header, tc.value)
