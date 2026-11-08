@@ -113,7 +113,7 @@
     const was = jobFields(opened.data), now = jobFields(current);
     // A date typed as 20240305 is the same date as 2024-03-05, as the conflict notice reads it.
     const dashed = (value: string | null) => value?.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
-    return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, (key === 'start_date' || key === 'end_date' ? dashed(draft[key]) === dashed(was[key]) : draft[key] === was[key]) ? now[key] : draft[key]])) as JobFields;
+    return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, (key === 'start_date' || key === 'end_date' ? dashed(draft[key]) === dashed(was[key]) : draft[key]?.trim() === was[key]?.trim()) ? now[key] : draft[key]])) as JobFields;
   }
 
   function body(current: Employment | undefined = undefined): EmploymentBody {
