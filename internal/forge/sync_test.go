@@ -902,3 +902,52 @@ func TestAThreadTitleHoldingNULIsArchived(t *testing.T) {
 	require.Equal(1, summary.Archived, "the thread is archived, not left failing in the queue")
 	require.Zero(summary.Failed)
 }
+
+func TestAFullSyncFetchesAnArchivedThreadNoListShowsAnyMore(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	// The forge lists the thread nowhere now, as a release whose
+	// notification is gone.
+	f.discover = func(context.Context, KnownThreads, func([]ThreadRef, []byte) error) error { return nil }
+	full, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{Full: true})
+	require.NoError(err)
+	require.Equal(1, full.Archived, "a full sync fetches every archived thread")
+}
+
+func TestAThreadChangedInTheSecondItWasFetchedIsFetchedAgain(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	update := "2026-11-07T10:00:00Z"
+	f.pages = [][]ThreadRef{{ref("i1", "acme", update)}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	at, err := time.Parse(time.RFC3339, update)
+	require.NoError(err)
+	clock := at.Add(500 * time.Millisecond)
+	syncer := NewSyncer(st, f, nil)
+	syncer.now = func() time.Time { return clock }
+	_, err = syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	// Later in the same second the thread changed again; the forge reports
+	// the same whole-second update.
+	f.pages = append(f.pages, []ThreadRef{ref("i1", "acme", update)})
+	clock = at.Add(time.Hour)
+	again, err := syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	assert.Equal(1, again.Archived, "a copy read within a second of the update may miss part of it")
+
+	f.pages = append(f.pages, []ThreadRef{ref("i1", "acme", update)})
+	settled, err := syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	assert.Zero(settled.Found, "a copy read well after the update holds it")
+}

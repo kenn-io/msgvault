@@ -161,6 +161,18 @@ func (s *Syncer) Sync(ctx context.Context, sourceID int64, opts Options) (summar
 		for i := range r.state.Queue {
 			r.state.Queue[i].Continuation = nil
 		}
+		// It fetches every archived thread as well, including one no list
+		// shows any more, such as a release whose notification is gone.
+		var archived []ThreadRef
+		if err := r.known.Each(ctx, func(thread KnownThread) error {
+			if r.owners.Allows(thread.Ref.Owner) {
+				archived = append(archived, thread.Ref)
+			}
+			return nil
+		}); err != nil {
+			return r.summary, err
+		}
+		r.summary.Found += r.state.queue(archived)
 	}
 	// The run's first checkpoint holds the state it resumes from, so the
 	// newest checkpoint is always a whole state.
@@ -217,16 +229,16 @@ func (r *run) loadState(ctx context.Context) (syncState, error) {
 func (r *run) discover(ctx context.Context) error {
 	err := r.syncer.forge.Discover(ctx, r.state.Cursor, r.owners, r.known,
 		func(threads []ThreadRef, next []byte) error {
-			var unchanged map[string]time.Time
+			var archived map[string]archivedAt
 			if !r.state.Full {
 				var err error
-				if unchanged, err = r.known.updates(ctx); err != nil {
+				if archived, err = r.known.all(ctx); err != nil {
 					return err
 				}
 			}
 			allowed := slices.DeleteFunc(slices.Clone(threads), func(ref ThreadRef) bool {
-				archived, ok := unchanged[ref.Key]
-				return !r.owners.Allows(ref.Owner) || ok && !ref.UpdatedAt.IsZero() && !ref.UpdatedAt.After(archived)
+				copied, ok := archived[ref.Key]
+				return !r.owners.Allows(ref.Owner) || ok && copied.holds(ref.UpdatedAt)
 			})
 			r.summary.Found += r.state.queue(allowed)
 			r.state.Cursor = next
