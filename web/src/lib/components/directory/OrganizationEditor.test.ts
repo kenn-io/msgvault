@@ -437,6 +437,8 @@ it('retries a failed DELETE directly and keeps Delete available', async () => {
 it('Keep yours replaces a concurrent rename and alias additions with the whole draft', async () => {
   let reads = 0;
   let puts = 0;
+  const bodies: { names: { name: string }[] }[] = [];
+  const onDone = vi.fn();
   const patches: unknown[] = [];
   const opening = organizationProfile();
   const newer = { ...opening, organization: organization(21, 2, 'Concurrent name'), names: [...opening.names, { ...opening.names[0], name: 'Concurrent alias' }] };
@@ -445,17 +447,17 @@ it('Keep yours replaces a concurrent rename and alias additions with the whole d
     if (request.method === 'PATCH') { patches.push(await request.json()); return Response.json(opening.organization, { headers: { ETag: '"organization-21-r3"' } }); }
     if (request.method === 'PUT') {
       if (++puts === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      const body = await request.json();
-      expect(body.names.map((item: { name: string }) => item.name)).toEqual(['Draft alias']);
+      bodies.push(await request.json());
       return Response.json(opening, { headers: { ETag: '"organization-21-r4"' } });
     }
     return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"organization-21-r${reads === 1 ? 1 : 2}"` } });
   });
-  render(OrganizationEditor, { controller, organization: organization() });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(puts).toBe(2));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(bodies[0].names.map((item: { name: string }) => item.name)).toEqual(['Draft alias']);
   expect(patches).toEqual([{ name: 'Synthetic Org', kind: 'company', primary_domain: 'synthetic.example', description: 'A synthetic organization.' }]);
 });
 

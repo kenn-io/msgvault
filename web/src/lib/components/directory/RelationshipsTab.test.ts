@@ -658,6 +658,26 @@ describe('RelationshipsTab', () => {
     await expect(patch.clone().json()).resolves.toEqual({ end_date: '2026-08' });
   });
 
+  it('omits a cleared end date while saving notes on an ended connection', async () => {
+    const opening = relationship(41, 1, { status: 'ended', end_date: { year: 2023 }, notes: 'Old' });
+    const bodies: unknown[] = [];
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PATCH') { bodies.push(await request.json()); return Response.json(opening); }
+      if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(opening, { headers: { ETag: '"relationship-41-r1"' } });
+      return Response.json({ relationships: [] });
+    });
+    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByText('1 past connection'));
+    await rowAction('Edit…');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'New' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies).toEqual([{ notes: 'New' }]);
+  });
+
   it('clears changed notes without resending an opening end date', async () => {
     const requests: Request[] = [];
     let reads = 0;

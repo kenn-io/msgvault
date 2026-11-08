@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { localDateStr } from '@kenn-io/kit-ui';
   import { formatPartialDate, readablePartialDate } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
@@ -12,25 +13,37 @@
   let { controller, employment, onClose }: { controller: DirectoryEntityController; employment: Employment; onClose: () => void } = $props();
   let endDate = $state(localDateStr(new Date()));
   const attempt = new WriteAttempt<Prepared<Employment>>();
-  const employerName = $derived(controller.organizationName(employment.organization_id));
+  let opened = $state<Prepared<Employment>>();
+  let loading = $state(true);
+  async function prepare(): Promise<void> {
+    loading = true;
+    attempt.details = '';
+    try { opened = await controller.prepareEmploymentMutation(employment.id); }
+    catch (cause) { attempt.details = cause instanceof Error ? cause.message : 'No response from the server.'; }
+    finally { loading = false; }
+  }
+  onMount(() => { void prepare(); });
+  const shown = $derived(opened?.data ?? employment);
+  const employerName = $derived(controller.organizationName(shown.organization_id));
   let dateError = $state<string | null>(null);
   // The title names the action; the line under it names the job: "Garden designer at Lumen Grove · since Mar 2024".
-  const since = $derived(readablePartialDate(employment.start_date));
-  const context = $derived([`${employment.title || employment.role || 'Job'} at ${employerName}`, since ? `since ${since}` : ''].filter(Boolean).join(' · '));
+  const since = $derived(readablePartialDate(shown.start_date));
+  const context = $derived([`${shown.title || shown.role || 'Job'} at ${employerName}`, since ? `since ${since}` : ''].filter(Boolean).join(' · '));
   function close(): void { if (!attempt.busy) { if (attempt.conflict) void controller.refreshEmployments(); attempt.reset(); onClose(); } }
   async function submit(): Promise<void> {
-    if (attempt.busy || !endDate.trim() || dateError) return;
-    if (await attempt.run(current => controller.endEmployment(employment.id, { end_date: endDate.trim() }, current))) close();
+    if (attempt.busy || !opened || !endDate.trim() || dateError) return;
+    if (await attempt.run(current => controller.endEmployment(employment.id, { end_date: endDate.trim() }, current ?? opened))) close();
   }
 </script>
-<Dialog title="End job" width="small" onclose={close} primaryLabel={attempt.conflict ? 'Keep yours' : 'End'} onprimary={() => void submit()} primaryDisabled={!endDate.trim() || !!dateError} busy={attempt.busy}
+<Dialog title="End job" width="small" onclose={close} primaryLabel={attempt.conflict ? 'Keep yours' : 'End'} onprimary={() => void submit()} primaryDisabled={loading || !opened || !endDate.trim() || !!dateError} busy={attempt.busy}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <p class="context">{context}</p>
-    <DateField bind:value={endDate} start={formatPartialDate((attempt.conflict?.data ?? employment).start_date)} bind:error={dateError} disabled={attempt.busy} />
+    <DateField bind:value={endDate} start={formatPartialDate((attempt.conflict?.data ?? attempt.prepared?.data ?? shown).start_date)} bind:error={dateError} disabled={attempt.busy} />
   </form>
   {#snippet notice()}
-    {#if attempt.conflict}<ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, id => controller.organizationName(id)), employmentFacts(employment, id => controller.organizationName(id)), { 'End date': readablePartialDate(endDate) })} message={attempt.details} />
+    {#if attempt.conflict}<ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, id => controller.organizationName(id)), employmentFacts(shown, id => controller.organizationName(id)), { 'End date': readablePartialDate(endDate) })} message={attempt.details} />
+    {:else if !loading && !opened}<InlineNotice message="Couldn't load this job." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
     {:else if attempt.failed}<InlineNotice message="Couldn't end this job." details={attempt.details} actionLabel="Retry" onaction={() => void submit()} />{/if}
   {/snippet}
 </Dialog>

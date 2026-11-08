@@ -50,3 +50,12 @@ it.each([
 ] as const)('keeps the catalog label for renamed %s %s', (slug, direction, label, expected) => {
   expect(relationshipPhrase(slug, direction, label)).toBe(expected);
 });
+
+it('orders custom directions consistently regardless of input order and fills empty reverse labels', () => {
+  const a = type('zeta', 'zeta', 'alpha');
+  const b = type('b', 'beta', 'gamma');
+  const names = (types: RelationshipType[]) => relationshipTypeOptions(types)[0].children!.map(choice => choice.name);
+  expect(names([a, b])).toEqual(names([b, a]));
+  const choices = relationshipTypeOptions([type('custom', 'mentor', '')])[0].children!;
+  expect(choices.map(choice => choice.label)).toEqual(['Mentor', 'Mentor']);
+});

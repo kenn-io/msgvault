@@ -41,13 +41,13 @@ export function relationshipTypeOptions(types: RelationshipType[]): TypeaheadOpt
     if (!type.is_canonical) return [];
     const group = Object.keys(groups).find(name => groups[name].includes(type.slug)) ?? 'Other';
     return (type.is_symmetric ? ['outgoing'] as const : ['outgoing', 'incoming'] as const).map(direction => {
-      const label = direction === 'outgoing' ? type.forward_label : type.reverse_label;
+      const label = direction === 'outgoing' ? type.forward_label : type.reverse_label || type.forward_label;
       return { name: `${type.slug}:${direction}`, slug: type.slug, direction, group, label: label.charAt(0).toUpperCase() + label.slice(1), displayLabel: relationshipPhrase(type.slug, direction, label) };
     });
   });
   return Object.keys(groups).map(group => ({
     name: group, label: group,
     children: choices.filter(choice => choice.group === group).sort((a, b) => rank(group, a) - rank(group, b)
-      || (a.slug === b.slug ? (a.direction === 'outgoing' ? -1 : 1) : a.label.localeCompare(b.label))),
+      || a.slug.localeCompare(b.slug) || a.direction.localeCompare(b.direction) * -1),
   })).filter(group => group.children.length > 0);
 }

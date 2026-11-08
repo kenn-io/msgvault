@@ -5,7 +5,7 @@ export class WriteAttempt<C = never> {
   failed = $state(false);
   conflict = $state<C>();
   details = $state('');
-  prepared: C | undefined;
+  prepared = $state<C>();
 
   async run<T>(send: (current: C | undefined) => Promise<DirectoryEntityMutationResult<T, C>>): Promise<boolean> {
     if (this.busy) return false;

@@ -94,6 +94,7 @@
     if (saveDisabled || submitting) return;
     profileUnsaved = false;
     let saved = currentProfile?.organization;
+    const draft = currentProfile ? draftLists() : undefined;
     const ok = await attempt.run(async newer => {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       let prepared = newer ?? opened;
@@ -108,11 +109,11 @@
         attempt.prepared = prepared;
       }
       if (newer || aliasDelta.added.length || aliasDelta.removed.size || categoryDelta.added.length || categoryDelta.removed.size) {
-        const draft = draftLists();
+        const lists = draft ?? draftLists();
         const result = await controller.putOrganizationProfile(saved!.id, fresh => ({
           ...profileBody(fresh),
-          names: [...(fresh.names ?? []).filter(item => item.name_kind !== 'alias').map(nameBody), ...draft.names.filter(item => item.name_kind === 'alias')],
-          categories: draft.categories,
+          names: [...(fresh.names ?? []).filter(item => item.name_kind !== 'alias').map(nameBody), ...lists.names.filter(item => item.name_kind === 'alias')],
+          categories: lists.categories,
         }), prepared);
         if (!result.ok) profileUnsaved = true;
         return result;

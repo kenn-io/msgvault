@@ -188,7 +188,7 @@
     const openingEndDate = partialDate(initialRelationship?.end_date);
     const nextNotes = notes.trim();
     const openingNotes = initialRelationship?.notes?.trim() ?? '';
-    if (nextEndDate !== openingEndDate) body.end_date = nextEndDate;
+    if (nextEndDate && nextEndDate !== openingEndDate) body.end_date = nextEndDate;
     if (nextNotes !== openingNotes) body.notes = nextNotes || null;
     return body;
   }
@@ -250,7 +250,8 @@
       </section>
       <section>
         {#if initialRelationship}
-          <DateField bind:value={endDate} start={partialDate((attempt.conflict?.data ?? initialRelationship).start_date)} bind:error={endDateError} disabled={attempt.busy} />
+          <DateField bind:value={endDate} start={partialDate((attempt.conflict?.data ?? attempt.prepared?.data ?? initialRelationship).start_date)} bind:error={endDateError} disabled={attempt.busy} />
+          {#if initialRelationship.end_date && !endDate.trim()}<p class="muted">To reopen it, add a new connection.</p>{/if}
         {:else}<DateRange bind:start={startDate} bind:end={endDate} showCurrent={false} bind:invalid={datesInvalid} disabled={attempt.busy} />{/if}
         <label class="notes">Notes<textarea aria-label="Notes" bind:value={notes} disabled={attempt.busy}></textarea></label>
       </section>

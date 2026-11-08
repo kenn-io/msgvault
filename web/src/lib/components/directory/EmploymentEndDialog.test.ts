@@ -21,6 +21,7 @@ it.each([2024, 2028])('validates a retried end date against the saved start year
   render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
   const end = screen.getByRole('textbox', { name: 'End date' });
   await fireEvent.input(end, { target: { value: '2027' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));
   await screen.findByRole('button', { name: 'Keep yours' });
   expect(bodies).toEqual([{ end_date: '2027' }]);
@@ -43,9 +44,58 @@ it('shows the latest error after retrying an end conflict', async () => {
     return Response.json(employment(), { headers: { ETag: '"employment-11-r2"' } });
   });
   render(EmploymentEndDialog, { controller, employment: employment(), onClose: () => undefined });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
   await screen.findByText("Couldn't end this job.");
   expect(screen.getByText('Disk full')).toBeDefined();
   expect(screen.queryByRole('button', { name: 'Keep yours' })).toBeNull();
+});
+
+it('keeps the saved start date for retry after a failed conflict resolution', async () => {
+  const opening = employment(11, 1, { start_date: { year: 2022 } });
+  const saved = employment(11, 2, { start_date: { year: 2020 } });
+  let reads = 0;
+  let writes = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/end')) {
+      writes++;
+      return Response.json({ message: 'Failed' }, { status: writes === 1 ? 412 : 500 });
+    }
+    return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: reads === 1 ? '"employment-11-r1"' : '"employment-11-r2"' } });
+  });
+  render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
+  const end = screen.getByRole('textbox', { name: 'End date' });
+  await fireEvent.input(end, { target: { value: '2024' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
+  await fireEvent.click(screen.getByRole('button', { name: 'End' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  await fireEvent.input(end, { target: { value: '2021' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+  await screen.findByText("Couldn't end this job.");
+  expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false);
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(writes).toBe(3));
+});
+
+it('sends the version opened before a concurrent edit', async () => {
+  let revision = 1;
+  const tags: (string | null)[] = [];
+  const opening = employment();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/end')) {
+      tags.push(request.headers.get('If-Match'));
+      return Response.json({ message: 'Changed' }, { status: 412 });
+    }
+    return Response.json(employment(11, revision), { headers: { ETag: `"employment-11-r${revision}"` } });
+  });
+  render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
+  revision = 2;
+  await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
+  await fireEvent.click(screen.getByRole('button', { name: 'End' }));
+  await screen.findByRole('button', { name: 'Keep yours' });
+  expect(tags).toEqual(['"employment-11-r1"']);
 });
