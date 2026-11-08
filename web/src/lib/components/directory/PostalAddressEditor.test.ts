@@ -180,7 +180,7 @@ describe('Postal address editor', () => {
     await waitFor(() => expect(requests).toHaveLength(1));
     const saved = (await requests[0]!.clone().json()).addresses.add[0];
     expect(saved).not.toHaveProperty('original_value');
-    expect(saved).not.toHaveProperty('free_text');
+    expect(saved.free_text).toBe('');
   });
 
   it('sends an explicit empty current text when clearing a suggested address', async () => {
@@ -217,6 +217,19 @@ describe('Postal address editor', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     expect((await requests[1]!.clone().json()).addresses.add[0].free_text).toBe('');
+  });
+
+  it('keeps a text-only draft current after checking and changing its country', async () => {
+    const { controller, requests } = setup();
+    render(StructuredProfileEditor, { controller, section: 'addresses' });
+    await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: '12 Example Street' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+    await screen.findByText('Original address');
+    expect(screen.getByLabelText('Current address text')).toHaveProperty('value', '12 Example Street');
+    await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: 'CA' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect((await requests[1]!.clone().json()).addresses.add[0].free_text).toBe('12 Example Street');
   });
 });
 

@@ -329,7 +329,10 @@
       locality, region, postal_code: postalCode, country_name: countryName, country_code: countryCode, original_value: originalText, free_text: currentText };
   }
   function captureOriginal(): void {
-    if (!originalInput) originalInput = copyPostalInput(addressDraft());
+    if (!originalInput) {
+      originalInput = copyPostalInput(addressDraft());
+      if (!currentText && originalText && !postalAddressText({ ...addressDraft(), original_value: '', free_text: '', country_code: '' })) currentText = originalText;
+    }
   }
   function edited(): void {
     if (initialSection !== 'addresses') return;
@@ -623,6 +626,7 @@
   .postal-comparison { display: grid; gap: var(--space-2); }
   .postal-comparison dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 5rem; }
+  label :global(.kit-text-input) { box-sizing: border-box; min-width: 0; }
   label :global(input) { box-sizing: border-box; min-width: 0; max-width: 100%; }
   .profile-editor {
     display: flex;

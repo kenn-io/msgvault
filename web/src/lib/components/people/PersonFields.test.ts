@@ -16,8 +16,7 @@ it('does not present postal provenance as a cleared current address', () => {
   const initial = profile();
   const original = { address_kind: 'postal', original_value: 'Old street' };
   initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: 'Old street', assessment: { original, proposed: { address_kind: 'postal' }, status: 'needs_review', reason_codes: [], fingerprint: 'local' }, envelope }];
-  const { controller } = harness(initial);
-  render(PersonFields, { controller });
+  harness(initial);
   expect(screen.getByText('No current address')).toBeDefined();
   expect(screen.queryByText('Old street')).toBeNull();
 });

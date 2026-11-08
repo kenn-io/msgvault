@@ -102,10 +102,18 @@ export class PostalReviewSession {
 
 /** Display components without exposing a private storage envelope. */
 export function postalAddressText(input: Partial<Input>): string {
-  const components = [input.post_office_box, input.extended_address, input.street_address, input.locality,
-    input.region, input.postal_code, input.country_name, input.country_code, input.extended_components]
-    .filter(Boolean).join(', ');
-  return (input.free_text === components ? components : [input.free_text, components].filter(Boolean).join(', ')) || input.label || input.original_value || '';
+  let countryCode = input.country_code;
+  if (input.country_name && countryCode) {
+    try {
+      const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode.toUpperCase());
+      if (name?.toLowerCase() === input.country_name.trim().toLowerCase()) countryCode = undefined;
+    } catch { /* Keep unknown codes visible. */ }
+  }
+  const parts = [input.post_office_box, input.extended_address, input.street_address, input.locality,
+    input.region, input.postal_code, input.country_name, countryCode, input.extended_components].filter((part): part is string => !!part);
+  const components = parts.join(', ');
+  const freeText = input.free_text && parts.some(part => part.trim() === input.free_text!.trim()) ? '' : input.free_text;
+  return (freeText === components ? components : [freeText, components].filter(Boolean).join(', ')) || input.label || input.original_value || '';
 }
 
 export function postalReason(code: string): string | undefined {
