@@ -440,10 +440,10 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Start the daemon, or find the one already running:
+Restart the daemon to keep the Web UI available until stopped:
 
 ```bash
-msgvault daemon start
+msgvault daemon restart
 ```
 
 Open the URL it prints in your browser. The daemon builds a missing or stale
