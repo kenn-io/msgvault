@@ -32,6 +32,8 @@ type KataCronJob struct {
 	TriggerKind, Cron, Timezone, Catchup       string
 	IntervalSeconds, GraceSeconds              int64
 	OccurrenceTitle, OccurrenceBody, Recipient string
+	name                                       string
+	definition                                 jsontext.Value
 }
 
 type KataTaskFamily struct {
@@ -92,6 +94,14 @@ func (c *KataClient) RecurrenceCatalog(ctx context.Context, project string) (Kat
 			}
 			continue
 		}
+		var document struct {
+			Definition jsontext.Value `json:"definition"`
+		}
+		if err := json.Unmarshal(raw, &document); err != nil {
+			return KataCronCatalog{}, ErrInvalidResponse
+		}
+		native.name = job.Name
+		native.definition = append(jsontext.Value(nil), document.Definition...)
 		result.Jobs = append(result.Jobs, native)
 	}
 	return result, nil

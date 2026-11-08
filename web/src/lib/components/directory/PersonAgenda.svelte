@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Disclosure, IconButton, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Disclosure, IconButton, NumberInput, TextInput } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
   import Repeat from '@lucide/svelte/icons/repeat';
   import { onDestroy, untrack } from 'svelte';
@@ -10,8 +10,9 @@
     listPersonAgenda,
     unlinkPersonAgendaItem,
   } from '../../api/generated/api/api';
-  import type { PersonAgendaItem as AgendaItem } from '../../api/generated/models';
+  import type { PersonAgendaItem as AgendaItem, PersonAgendaSchedule as AgendaSchedule } from '../../api/generated/models';
   import type { APIClient } from '../../api/client';
+  import { orvalFetch } from '../../api/runtime';
 
   interface Props {
     client: APIClient;
@@ -32,6 +33,13 @@
   let recurrenceState = $state('');
   let recurrenceMessage = $state('');
   let pendingUnlink = $state<AgendaItem | null>(null);
+  let managedItem = $state<AgendaItem | null>(null);
+  let managedSchedule = $state<AgendaSchedule | null>(null);
+  let scheduleAction = $state('');
+  let scheduleEditing = $state(false);
+  let scheduleConflict = $state(false);
+  let scheduleDraft = $state({ trigger_kind: 'cron', cron: '', interval_seconds: 60, timezone: 'UTC', occurrence_title: '', occurrence_body: '', recipient: '', catchup: 'latest', grace_seconds: 0 });
+  let reviewedScheduleDraft = $state('');
   let unlinkTrigger: HTMLElement | null = null;
   let title = $state('');
   let listName = $state('agenda');
@@ -71,6 +79,11 @@
         mutationToken++;
         mutating = false;
         pendingUnlink = null;
+        managedItem = null;
+        managedSchedule = null;
+        scheduleAction = '';
+        scheduleEditing = false;
+        scheduleConflict = false;
         unlinkTrigger = null;
         recurrenceState = '';
         recurrenceMessage = '';
@@ -234,12 +247,67 @@
     unlinkTrigger = null;
   }
 
+  function manageSchedule(item: AgendaItem, schedule: AgendaSchedule): void {
+    managedItem = item;
+    managedSchedule = schedule;
+    scheduleAction = '';
+    scheduleEditing = false;
+    scheduleConflict = false;
+    scheduleDraft = {
+      trigger_kind: schedule.trigger_kind, cron: schedule.cron ?? '', interval_seconds: schedule.interval_seconds,
+      timezone: schedule.timezone, occurrence_title: schedule.occurrence_title,
+      occurrence_body: schedule.occurrence_body ?? '', recipient: schedule.recipient,
+      catchup: schedule.catchup, grace_seconds: schedule.grace_seconds,
+    };
+  }
+
+  async function submitSchedule(): Promise<void> {
+    if (!managedItem || !managedSchedule || !scheduleAction || mutating || scheduleConflict || (scheduleAction === 'edit' && reviewedScheduleDraft !== JSON.stringify(scheduleDraft))) return;
+    const item = managedItem;
+    const schedule = managedSchedule;
+    const current = generation;
+    const token = ++mutationToken;
+    const action = scheduleAction;
+    let responseReceived = false;
+    mutating = true;
+    error = '';
+    try {
+      const result = await orvalFetch<{ schedule: AgendaSchedule }>({
+        url: `/api/v1/people/${personID}/agenda/${encodeURIComponent(item.uid)}/schedules/${encodeURIComponent(schedule.uid)}/actions`,
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        data: { action, expected_event_uid: schedule.definition_event_uid, ...(action === 'edit' ? { settings: scheduleDraft } : {}) },
+      }, client);
+      if (current !== generation) return;
+      responseReceived = true;
+      if (!result.data) {
+        if (result.response.status === 409 || result.response.status === 503 || result.error?.error === 'unsupported_schedule') scheduleConflict = true;
+        throw new Error(messageFor(result.error, 'Unable to update schedule. Refresh before retrying.'));
+      }
+      const confirmed = result.data.schedule;
+      items = items.map(existing => existing.uid === item.uid
+        ? { ...existing, schedules: existing.schedules?.map(value => value.uid === confirmed.uid ? confirmed : value) }
+        : existing);
+      managedSchedule = confirmed;
+      scheduleAction = '';
+      scheduleEditing = false;
+      onAnnounce('Schedule updated.');
+    } catch (cause) {
+      if (current !== generation) return;
+      if (!responseReceived) scheduleConflict = true;
+      error = cause instanceof Error ? cause.message : 'Unable to update schedule';
+    } finally {
+      if (token === mutationToken) mutating = false;
+    }
+  }
+
   function scheduledTime(item: AgendaItem, parent: AgendaItem | undefined = undefined): string {
     const raw = item.occurrence?.scheduled_at;
     if (!raw || !Number.isFinite(Date.parse(raw))) return 'Scheduled time unavailable';
-    const timezone = parent?.schedules?.find(schedule => schedule.uid === item.occurrence?.job_uid)?.timezone || 'UTC';
+    const match = parent?.schedules?.find(schedule => schedule.uid === item.occurrence?.job_uid);
+    const timezone = match?.timezone || 'UTC';
+    const showTimezone = !match || !match.timezone || !parent?.schedules?.every(schedule => schedule.timezone === timezone);
     try {
-      return `Scheduled for ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(raw))} · ${timezone}`;
+      return `Scheduled for ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(raw))}${showTimezone ? ` · ${timezone}` : ''}`;
     } catch {
       return `Scheduled for ${raw}`;
     }
@@ -284,6 +352,38 @@
       <Button size="sm" label={pendingUnlink.kind === 'series' ? 'Keep series linked' : 'Keep task linked'} onclick={cancelUnlink} />
     </div>
   {/if}
+  {#if managedItem && managedSchedule}
+    <div class="schedule-manager" role="group" aria-label={`Manage schedule for ${managedItem.title}`}>
+      <p>{managedSchedule.summary} · {managedSchedule.timezone} · {scheduleState(managedSchedule.state)}</p>
+      <p>{#if !scheduleEditing || scheduleDraft.recipient !== managedSchedule.recipient}Kata sends inbox requests to {managedSchedule.recipient}. {/if}Existing occurrences and inbox requests remain when a schedule is paused or deleted.</p>
+      <p>{#if !scheduleEditing || scheduleDraft.catchup !== managedSchedule.catchup || scheduleDraft.grace_seconds !== managedSchedule.grace_seconds}{managedSchedule.catchup === 'skip' ? `Skip occurrences over ${managedSchedule.grace_seconds}s late.` : `Catch up ${managedSchedule.catchup === 'all' ? 'all missed occurrences' : 'only the latest occurrence'}.`} {/if}Resuming or restoring may deliver missed occurrences.</p>
+      {#if scheduleEditing}
+        <label>Repeat <select aria-label="Repeat" bind:value={scheduleDraft.trigger_kind}><option value="cron">Calendar schedule</option><option value="interval">Elapsed interval</option></select></label>
+        {#if scheduleDraft.trigger_kind === 'cron'}<TextInput bind:value={scheduleDraft.cron} ariaLabel="Cron expression" />
+        {:else}<label>Interval seconds <NumberInput ariaLabel="Interval seconds" min={60} value={scheduleDraft.interval_seconds} oninput={(value) => { scheduleDraft.interval_seconds = value ?? 0; }} /></label>{/if}
+        <TextInput bind:value={scheduleDraft.timezone} ariaLabel="Timezone" />
+        <TextInput bind:value={scheduleDraft.occurrence_title} ariaLabel="Occurrence title" />
+        <label>Description <textarea bind:value={scheduleDraft.occurrence_body}></textarea></label>
+        <label>Inbox recipient <TextInput bind:value={scheduleDraft.recipient} ariaLabel="Inbox recipient" /></label>
+        <label>Missed occurrences <select aria-label="Missed occurrences" bind:value={scheduleDraft.catchup}><option value="all">Every missed occurrence</option><option value="latest">Only the latest</option><option value="skip">Skip old occurrences</option></select></label>
+        {#if scheduleDraft.catchup === 'skip'}<label>Max age (s) <NumberInput ariaLabel="Max age (s)" min={1} value={scheduleDraft.grace_seconds} oninput={(value) => { scheduleDraft.grace_seconds = value ?? 0; }} /></label>{/if}
+        <p>Daylight-saving changes can skip or repeat local times in calendar schedules.</p>
+        <Button size="sm" label="Review schedule changes" disabled={mutating || scheduleConflict} onclick={() => { reviewedScheduleDraft = JSON.stringify(scheduleDraft); scheduleAction = 'edit'; }} />
+      {:else}
+        {#if !managedSchedule.deleted}
+          <Button size="sm" label={managedSchedule.enabled ? 'Pause schedule' : 'Resume schedule'} disabled={mutating || scheduleConflict || (!managedSchedule.enabled && managedSchedule.parent_closed)} onclick={() => { scheduleAction = managedSchedule?.enabled ? 'pause' : 'resume'; }} />
+          {#if managedSchedule.editable}<Button size="sm" label="Edit schedule" disabled={mutating || scheduleConflict} onclick={() => { scheduleEditing = true; scheduleAction = ''; }} />{/if}
+          <Button size="sm" label="Delete schedule" disabled={mutating || scheduleConflict} onclick={() => { scheduleAction = 'delete'; }} />
+        {:else}<Button size="sm" label="Restore schedule" disabled={mutating || scheduleConflict} onclick={() => { scheduleAction = 'restore'; }} />{/if}
+      {/if}
+      {#if scheduleAction && (scheduleAction !== 'edit' || reviewedScheduleDraft === JSON.stringify(scheduleDraft))}
+        <p>{scheduleAction === 'edit' ? 'Save these schedule changes?' : `Confirm ${scheduleAction} of this schedule?`}</p>
+        <Button size="sm" label={scheduleAction === 'edit' ? 'Save' : label(scheduleAction)} disabled={mutating || scheduleConflict} onclick={() => void submitSchedule()} />
+      {/if}
+      {#if scheduleConflict}<Button size="sm" label="Refresh schedule" disabled={loading || mutating} onclick={() => { managedItem = null; managedSchedule = null; scheduleConflict = false; void load(); }} />{/if}
+      <Button size="sm" label="Close schedule" disabled={mutating} onclick={() => { managedItem = null; managedSchedule = null; }} />
+    </div>
+  {/if}
   {#each roots as item (item.uid)}
     <div class="agenda-family">
     <DetailRow>
@@ -298,7 +398,7 @@
       {@const children = items.filter(child => child.kind === 'occurrence' && child.parent_uid === item.uid)}
       <div class="schedules">
         {#each item.schedules ?? [] as schedule (schedule.uid)}
-          <p>{schedule.summary} · {schedule.timezone || 'UTC'} <small>{scheduleState(schedule.state)}</small></p>
+          <p>{schedule.summary} · {schedule.timezone || 'UTC'} <small>{scheduleState(schedule.state)}</small>{#if item.membership !== 'inherited' && mutationReady}<Button size="sm" label="Manage" ariaLabel={`Manage schedule ${schedule.summary}`} disabled={mutating} onclick={() => manageSchedule(item, schedule)} />{/if}</p>
           {#if schedule.summary === 'Custom schedule' && schedule.cron}<Disclosure variant="plain" title="Schedule expression"><code>{schedule.cron}</code></Disclosure>{/if}
         {/each}
         {#if !item.occurrences_complete}<p class="notice">Occurrence count incomplete</p>

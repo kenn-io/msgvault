@@ -77,3 +77,11 @@ func (b *personAgendaBackend) Unlink(ctx context.Context, personID int64, taskID
 	}
 	return service.Unlink(ctx, personID, taskID)
 }
+
+func (b *personAgendaBackend) UpdateSchedule(ctx context.Context, personID int64, parentID, jobID string, input personagenda.ScheduleUpdateInput) (personagenda.Schedule, error) {
+	service, err := b.service(ctx)
+	if err != nil {
+		return personagenda.Schedule{}, err
+	}
+	return service.UpdateSchedule(ctx, personID, parentID, jobID, input)
+}

@@ -333,15 +333,22 @@ series running. Use its Kata link to view completed occurrences.
 Calendar schedules use the job’s named timezone. Intervals measure elapsed time
 from the initial binding and continue independently of completion.
 
-Create and manage schedules in Kata. The daemon creates each occurrence and
-requests attention in the configured inbox; it does not send a message to the
-contact. A scheduled time is separate from a deadline or actual delivery time.
-The authoritative Kata daemon must be running for delivery.
+Create schedules in Kata. For a directly linked series, choose **Manage** to
+edit a supported schedule or pause, resume, delete, or restore it. Review the
+recipient and missed-occurrence policy before confirming. Resuming or restoring
+can deliver missed occurrences. If the schedule changed or its update outcome
+is unknown, refresh it before trying again. Advanced definitions that the form
+cannot preserve remain available in Kata.
+
+The Kata daemon creates each occurrence and requests attention in the configured
+inbox; it does not send a message to the contact. A scheduled time is separate
+from a deadline or actual delivery time. The authoritative Kata daemon must be
+running for delivery.
 
 Unlinking a series removes its direct person link. It and its inherited
 occurrences may remain visible through another linked series. Scheduling and
 inbox requests continue, and explicitly linked children remain. Individual
-occurrences open in Kata. To stop future delivery, pause the schedule in Kata.
+occurrences open in Kata. To stop future delivery, pause the schedule.
 If recurrence discovery fails or reaches a limit, Tasks explains that the
 recurring view is incomplete and keeps successfully loaded ordinary tasks.
 Unlinking an unclassified row then asks you to review its possible recurring

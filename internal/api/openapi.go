@@ -405,7 +405,8 @@ import (
 // 3.48.0 adds owner-only local message search activation and progress.
 // 3.49.0 adds native recurring series, verified occurrences and independent
 // recurrence discovery state to person agenda reads.
-const APISchemaVersion = "3.49.0"
+// 3.50.0 adds owner-scoped native recurring schedule management.
+const APISchemaVersion = "3.50.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

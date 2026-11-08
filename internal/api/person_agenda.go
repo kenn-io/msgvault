@@ -74,6 +74,12 @@ type PersonAgendaUpdateRequest struct {
 	List *string `json:"list" nullable:"false"`
 }
 
+type PersonAgendaScheduleActionRequest personagenda.ScheduleUpdateInput
+
+type PersonAgendaScheduleResponse struct {
+	Schedule PersonAgendaSchedule `json:"schedule"`
+}
+
 func (s *Server) registerPersonAgendaRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[TaskIntegrationStatusResponse](api,
 		"getKataIntegrationStatus", http.MethodGet, "/integrations/kata/status",
@@ -114,6 +120,17 @@ func (s *Server) registerPersonAgendaRoutes(api huma.API) {
 	unlink.Responses = jsonResponsesFor[PersonAgendaMutationResponse](api)
 	addErrorResponses(api, unlink.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, unlink, s.handleUnlinkPersonAgendaItem)
+
+	schedule := rawAPIV1Operation("updatePersonAgendaSchedule", http.MethodPost, "/people/{id}/agenda/{ref}/schedules/{job_uid}/actions", "Manage a linked native schedule")
+	addPersonIDParameter(&schedule)
+	schedule.Parameters = append(schedule.Parameters,
+		&huma.Param{Name: "ref", In: pathKey, Required: true, Description: "Linked parent issue ref or UID", Schema: &huma.Schema{Type: huma.TypeString}},
+		&huma.Param{Name: "job_uid", In: pathKey, Required: true, Description: "Full native job UID", Schema: &huma.Schema{Type: huma.TypeString}},
+	)
+	schedule.RequestBody = jsonRequestBodyFor[PersonAgendaScheduleActionRequest](api)
+	schedule.Responses = jsonResponsesFor[PersonAgendaScheduleResponse](api)
+	addErrorResponses(api, schedule.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, schedule, s.handlePersonAgendaScheduleAction)
 }
 
 func (s *Server) handleListPersonAgenda(w http.ResponseWriter, r *http.Request) {

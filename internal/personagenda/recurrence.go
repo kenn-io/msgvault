@@ -436,7 +436,7 @@ func scheduleFromJob(job taskclient.KataCronJob, parentClosed bool) Schedule {
 		zone = "UTC"
 	}
 	summary := cadenceSummary(job)
-	return Schedule{UID: job.UID, DefinitionEventUID: job.DefinitionEventUID, State: state, Summary: summary, Timezone: zone, Catchup: job.Catchup, TriggerKind: job.TriggerKind, Cron: job.Cron, OccurrenceTitle: job.OccurrenceTitle, OccurrenceBody: job.OccurrenceBody, Recipient: job.Recipient, GraceSeconds: job.GraceSeconds, IntervalSeconds: job.IntervalSeconds, Enabled: job.Enabled, ParentClosed: parentClosed, Deleted: job.Deleted, Editable: false}
+	return Schedule{UID: job.UID, DefinitionEventUID: job.DefinitionEventUID, State: state, Summary: summary, Timezone: zone, Catchup: job.Catchup, TriggerKind: job.TriggerKind, Cron: job.Cron, OccurrenceTitle: job.OccurrenceTitle, OccurrenceBody: job.OccurrenceBody, Recipient: job.Recipient, GraceSeconds: job.GraceSeconds, IntervalSeconds: job.IntervalSeconds, Enabled: job.Enabled, ParentClosed: parentClosed, Deleted: job.Deleted, Editable: job.Editable()}
 }
 
 func occurrenceFromMetadata(metadata map[string]any) (Occurrence, bool) {
