@@ -2,7 +2,7 @@
   import { appShortcuts, Checkbox, FormField, SelectDropdown } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
 
-  import { formatPartialDate as partialDate } from '../../directory/dates';
+  import { formatPartialDate as partialDate, intervalDateError } from '../../directory/dates';
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, EmploymentBody, Organization, OrganizationCreateBody, Prepared } from '../../directory/models';
@@ -39,7 +39,6 @@
   let endDate = $state(partialDate(initialEmployment?.end_date));
   let isCurrent = $state(initialEmployment?.is_current ?? true);
   let isPrimary = $state(initialEmployment?.is_primary ?? false);
-  let datesInvalid = $state(false);
   let organizationQuery = $state('');
   let moreDetails = $state(!!(initialEmployment?.department || initialEmployment?.location || initialEmployment?.description));
   const attempt = new WriteAttempt<Prepared<Employment>>();
@@ -49,6 +48,9 @@
   const loadFailed = $derived(!!initialEmployment && !opened && !!attempt.details);
   let selectedOrganization = $state<Organization>();
   const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
+  // The dates the next write sends: after a conflict, Keep yours keeps a start the person didn't change from the saved version.
+  const kept = $derived(merged((attempt.conflict ?? attempt.prepared)?.data));
+  const datesInvalid = $derived(!!intervalDateError(kept.start_date) || (!kept.is_current && !!intervalDateError(kept.end_date, kept.start_date)));
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
@@ -186,7 +188,7 @@
       </div>
       {/if}
       <div class="form-pair"><FormField field={{ id: 'work-title', label: 'Job title', value: title, disabled: attempt.busy }} oninput={value => title = value} /><FormField field={{ id: 'work-role', label: 'Role on the team', value: role, disabled: attempt.busy }} oninput={value => role = value} /></div>
-      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} bind:invalid={datesInvalid} disabled={attempt.busy} />
+      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} endAfter={kept.start_date} disabled={attempt.busy} />
       {#if showPrimary}<Checkbox label="Primary job" checked={isPrimary} onchange={value => isPrimary = value} disabled={attempt.busy} />{/if}
       <Disclosure variant="plain" class="fold" title="More details" bind:open={moreDetails}>
         <div class="more">

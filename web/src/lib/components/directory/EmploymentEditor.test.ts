@@ -130,6 +130,31 @@ it('Keep yours writes only the fields the person changed and keeps a department 
   expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Ops' });
 });
 
+it('checks Keep yours against the start date it keeps from the saved version', async () => {
+  let reads = 0;
+  const bodies: Record<string, unknown>[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      bodies.push(await request.json());
+      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3));
+    }
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    return Response.json(employment(11, ++reads, { start_date: { year: reads === 1 ? 2022 : 2020 } }), { headers: { ETag: `"employment-11-r${reads}"` } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  const keep = await screen.findByRole('button', { name: 'Keep yours' });
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2021' } });
+  await waitFor(() => expect(keep).toHaveProperty('disabled', false));
+  expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
+  await fireEvent.click(keep);
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies[1]).toMatchObject({ start_date: '2020', end_date: '2021', is_current: false });
+});
+
 it('lists under Yours only the fields the person changed', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {

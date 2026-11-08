@@ -3,8 +3,10 @@
   import { Checkbox } from '@kenn-io/kit-ui';
   import { DATE_HINT, dateNote } from '../../directory/dates';
   let { start = $bindable(''), end = $bindable(''), current = $bindable(false),
-    showCurrent = true, disabled = false, invalid = $bindable(false) }: {
+    showCurrent = true, disabled = false, invalid = $bindable(false), endAfter }: {
     start?: string; end?: string; current?: boolean; showCurrent?: boolean; disabled?: boolean; invalid?: boolean;
+    /** The start End is checked against, when the write keeps a different one than Start shows. */
+    endAfter?: string;
   } = $props();
   const endOpen = $derived(!(showCurrent && current));
   let startError = $state<string | null>(null);
@@ -21,7 +23,7 @@
 <div class="date-range form-pair">
   <DateField label="Start date" bind:value={start} {disabled} bind:error={startError} note={startNote} holdNoteLine={false}
     onfocuschange={value => focused = value ? 'start' : undefined} />
-  <DateField bind:value={end} {start} disabled={disabled || !endOpen} bind:error={endError}
+  <DateField bind:value={end} start={endAfter ?? start} disabled={disabled || !endOpen} bind:error={endError}
     note={endNote} holdNoteLine={showCurrent} onfocuschange={value => focused = value ? 'end' : undefined}>
     {#if showCurrent}<div class="current"><Checkbox label="Current" checked={current} {disabled} onchange={(value) => current = value} /></div>{/if}
   </DateField>
