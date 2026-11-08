@@ -74,6 +74,18 @@ func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fing
 		}
 		// Persist equivalence at claim time so a later split or narrowed
 		// mapping cannot resurrect this occurrence for a possible subject.
+		// Preserve the original identity association even for a single-target
+		// mapping. A later explicit reassignment must carry this occurrence to
+		// the newly selected subject instead of creating it again.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO important_date_occurrence_guards
+			(reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key)
+			SELECT b.reconciliation_uid, b.original_subject, b.meaning, ?, ?
+			FROM important_date_identity_bindings b
+			JOIN important_date_reconciliations r ON r.uid = b.reconciliation_uid AND r.active = 1
+			WHERE b.resolved_subject = ? AND b.meaning = ? AND b.original_subject <> b.resolved_subject
+			ON CONFLICT DO NOTHING`, year, key, subject, meaning); err != nil {
+			return fmt.Errorf("retain original important-date identity: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO important_date_occurrence_guards
 			(reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key)
 			SELECT b.reconciliation_uid, other.resolved_subject, b.meaning, ?, ?

@@ -188,4 +188,25 @@ func TestImportantDateSplitGuardSuppressesHistoricOccurrence(t *testing.T) {
 	pending, err = st.ImportantDateHasOtherPendingContext(ctx, firstSubject+":birthday:", firstSubject+":birthday:2029", "changed-fingerprint")
 	must.NoError(err)
 	checks.True(pending, "approving one subject must not approve the other")
+	claimed, err = st.ClaimImportantDateDeliveryContext(ctx, newSubject+":birthday:2029", "changed-fingerprint")
+	must.NoError(err)
+	must.True(claimed)
+	changed, err = st.ResolveImportantDateDeliveryContext(ctx, newSubject+":birthday:2029", store.ImportantDateCancelled, "")
+	must.NoError(err)
+	must.True(changed)
+	lineage, err = st.ImportantDateLineageContext(ctx, split.NewPerson.ID)
+	must.NoError(err)
+	request.LineageDigest = lineage.Digest
+	request.IdentityRevision = lineage.IdentityRevision
+	request.IdempotencyKey = "example-split-guard-reassigned"
+	for i := range request.Decisions {
+		if request.Decisions[i].OriginalSubject == "person/"+second.VCardUID && request.Decisions[i].Meaning == "birthday" {
+			request.Decisions[i].ResolvedSubjects = []string{firstSubject}
+		}
+	}
+	_, err = st.ReconcileImportantDateIdentityContext(ctx, request)
+	must.NoError(err)
+	exists, err := st.ImportantDateDeliveryExistsContext(ctx, firstSubject+":birthday:2029")
+	must.NoError(err)
+	checks.True(exists, "reassignment must retain occurrences created under the old single-target mapping")
 }
