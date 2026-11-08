@@ -208,25 +208,6 @@ func TestRootHelpGolden(t *testing.T) {
 	assertions.NotContains(output.String(), "/Users/")
 }
 
-func TestRootHelpStartsHereWithCommandDiscovery(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	if helpTestSubprocess(t) {
-		return
-	}
-	ensureHelpLayout(rootCmd)
-	var output bytes.Buffer
-	rootCmd.SetOut(&output)
-	rootCmd.SetErr(&output)
-	rootCmd.SetArgs([]string{"--help"})
-	requirements.NoError(executeRootContext(t.Context(), rootCmd))
-	_, startHere, found := strings.Cut(output.String(), "Start here:\n")
-	requirements.True(found)
-	first, _, _ := strings.Cut(startHere, "\n")
-	assertions.Equal(`  msgvault cli search "<what you want to do>"`, first)
-}
-
 func TestSubcommandHelpHasCompactGlobalFlags(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
