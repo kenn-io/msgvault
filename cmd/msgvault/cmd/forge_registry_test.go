@@ -13,6 +13,7 @@ func TestForgeRegistryConnectsCommandsConfigAndTokenEnvironment(t *testing.T) {
 	cfg := &config.Config{
 		GitHub: config.ForgeConfig{Enabled: true, Schedule: "0 * * * *", IncludeOwners: []string{"github-owner"}},
 		GitLab: config.ForgeConfig{Schedule: "30 * * * *", ExcludeOwners: []string{"gitlab-owner"}},
+		Gitea:  config.ForgeConfig{Enabled: true, IncludeOwners: []string{"gitea-owner"}},
 	}
 	for _, tc := range []struct {
 		name string
@@ -20,6 +21,7 @@ func TestForgeRegistryConnectsCommandsConfigAndTokenEnvironment(t *testing.T) {
 	}{
 		{name: "github", want: cfg.GitHub},
 		{name: "gitlab", want: cfg.GitLab},
+		{name: "gitea", want: cfg.Gitea},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

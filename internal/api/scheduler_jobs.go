@@ -6,6 +6,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/forge/gitea"
 	"go.kenn.io/msgvault/internal/forge/github"
 	"go.kenn.io/msgvault/internal/forge/gitlab"
 	"go.kenn.io/msgvault/internal/gcal"
@@ -66,6 +67,9 @@ const GitHubJobName = github.Name
 
 // GitLabJobName drives every added GitLab account.
 const GitLabJobName = gitlab.Name
+
+// GiteaJobName drives every added Gitea and Forgejo account.
+const GiteaJobName = gitea.Name
 
 // IMessageJobName drives the selected Apple Messages source.
 const IMessageJobName = "apple-messages"
@@ -182,6 +186,10 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	case gitlab.Name:
 		// Every GitLab account's source is driven by the one "gitlab" job.
 		return GitLabJobName, true
+	case gitea.Name:
+		// Every Gitea or Forgejo account's source is driven by the one
+		// "gitea" job.
+		return GiteaJobName, true
 	case sourceTypeSlack:
 		// One configured Slack workspace maps to one store source and one
 		// singleton daemon job.

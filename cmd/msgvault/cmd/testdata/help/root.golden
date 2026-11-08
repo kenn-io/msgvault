@@ -61,6 +61,7 @@ Add and sync sources:
   add-chatwoot           Register Chatwoot inboxes
   add-circleback         Authorize a Circleback account (browser OAuth)
   add-discord            Register Discord guilds for bot-based archival
+  add-gitea              Add a Gitea account as an archive source
   add-github             Add a GitHub account as an archive source
   add-gitlab             Add a GitLab account as an archive source
   add-granola            Register a Granola account and validate its API key
@@ -96,6 +97,7 @@ Add and sync sources:
   sync-circleback        Sync Circleback meetings, notes, and transcripts
   sync-discord           Sync registered Discord guild history
   sync-full              Perform a full sync of Gmail accounts
+  sync-gitea             Archive changed Gitea threads
   sync-github            Archive changed GitHub threads
   sync-gitlab            Archive changed GitLab threads
   sync-granola           Sync Granola meeting notes and transcripts

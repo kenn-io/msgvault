@@ -622,6 +622,7 @@ type Config struct {
 	Inline             InlineConfig                    `toml:"inline"`
 	GitHub             ForgeConfig                     `toml:"github"`
 	GitLab             ForgeConfig                     `toml:"gitlab"`
+	Gitea              ForgeConfig                     `toml:"gitea"`
 	Omi                []OmiSource                     `toml:"omi"`
 	Granola            []GranolaSource                 `toml:"granola"`
 	Plaud              []PlaudSource                   `toml:"plaud"`

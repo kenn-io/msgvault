@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/forge/gitea"
 	"go.kenn.io/msgvault/internal/forge/github"
 	"go.kenn.io/msgvault/internal/forge/gitlab"
 )
@@ -76,6 +77,7 @@ var settingsGroups = []SettingGroup{
 			{ID: sourceTypeInline, Label: "Inline"},
 			{ID: github.Name, Label: "GitHub", Description: "Add accounts with msgvault add-github."},
 			{ID: gitlab.Name, Label: "GitLab", Description: "Add accounts with msgvault add-gitlab."},
+			{ID: gitea.Name, Label: "Gitea and Forgejo", Description: "Add accounts with msgvault add-gitea."},
 			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
 		},
 	},
@@ -215,6 +217,10 @@ var settingsMetadata = map[string]settingMetadata{
 	"gitlab.schedule":               {"GitLab schedule", "A five-field cron expression. Empty syncs only when asked.", gitlab.Name},
 	"gitlab.include_owners":         {"Included GitLab owners", "Top-level groups and users whose projects are archived. Empty means every owner that is not excluded.", gitlab.Name},
 	"gitlab.exclude_owners":         {"Excluded GitLab owners", "Top-level groups and users whose projects are never fetched.", gitlab.Name},
+	"gitea.enabled":                 {"Scheduled Gitea sync", "Covers every account added with add-gitea.", gitea.Name},
+	"gitea.schedule":                {"Gitea schedule", "A five-field cron expression. Empty syncs only when asked.", gitea.Name},
+	"gitea.include_owners":          {"Included Gitea owners", "Organizations and users whose repositories are archived. Empty means every owner that is not excluded.", gitea.Name},
+	"gitea.exclude_owners":          {"Excluded Gitea owners", "Organizations and users whose repositories are never fetched.", gitea.Name},
 	"slack.enabled":                 {"Scheduled Slack sync", "Sync Slack channels on the schedule below.", sourceTypeSlack},
 	"slack.schedule":                {"Slack schedule", "When Slack sync runs.", sourceTypeSlack},
 	"slack.channels":                {"Included Slack channels", "Channel names to sync. One-to-one and group DMs follow their own settings.", sourceTypeSlack},
@@ -310,6 +316,7 @@ var settingsValidation = map[string]SettingValidation{
 	"inline.schedule": cronValidation(false),
 	"github.schedule": cronValidation(false),
 	"gitlab.schedule": cronValidation(false),
+	"gitea.schedule":  cronValidation(false),
 	// A float has no "greater than zero" bound a number control can carry,
 	// so the on range starts at 0.1 requests per second. A smaller positive
 	// rate is raised to 0.1 on save rather than rejected; zero stays off.

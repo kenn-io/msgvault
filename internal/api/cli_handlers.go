@@ -1770,6 +1770,8 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-gitlab",
 		"sync-github",
 		"sync-gitlab",
+		"add-gitea",
+		"sync-gitea",
 		"add-matrix",
 		"add-calendar",
 		"add-circleback",

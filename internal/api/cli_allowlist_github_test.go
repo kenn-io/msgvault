@@ -15,6 +15,8 @@ func TestGitHubCommandsAllowedThroughDaemonCLIRunner(t *testing.T) {
 		{"sync-github", "octocat", "--full"},
 		{"add-gitlab", "--url", "https://gitlab.example.com"},
 		{"sync-gitlab"},
+		{"add-gitea", "--url", "https://codeberg.org"},
+		{"sync-gitea", "--full"},
 	} {
 		assert.True(t, cliRunCommandAllowed(args), "%v", args)
 	}
