@@ -184,8 +184,9 @@
     if (!submitting) { if (attempt.conflict) void controller.refreshOrganizations(); attempt.reset(); removal.reset(); onClose(); }
   }
 
-  // Splits on commas, but a saved value that holds one ("Example, Inc.") stays whole.
+  // Splits on commas, but a saved value that holds one ("Example, Inc.") stays whole, and a list left as it opened stays as saved.
   function values(value: string, saved: string[]): string[] {
+    if (value === saved.join(', ')) return saved;
     const parts = value.split(','), out: string[] = [];
     for (let i = 0, j = parts.length; i < parts.length; i = j, j = parts.length) {
       while (j > i + 1 && !saved.includes(parts.slice(i, j).join(',').trim())) j--;

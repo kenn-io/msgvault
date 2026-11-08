@@ -207,6 +207,26 @@ describe('OrganizationEditor', () => {
     }
   });
 
+  it('leaves overlapping saved aliases and categories alone when only the name changes', async () => {
+    const alias = (name: string, id: number) => ({ ...organizationProfile().names[0], name, envelope: envelope(id) });
+    const category = (name: string, id: number) => ({ organization_id: 21, category: name, category_normalized: name.toLowerCase(), envelope: envelope(id) });
+    // Joined with commas, "Acme" and "Inc." read the same as "Acme, Inc.".
+    const saved = { ...organizationProfile(), names: [alias('Acme', 51), alias('Inc.', 52), alias('Acme, Inc.', 53)], categories: [category('Labs', 54), category('Research', 55), category('Labs, Research', 56)] };
+    const onDone = vi.fn();
+    const writes: string[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(saved, { headers: { ETag: '"organization-21-r1"' } });
+      writes.push(request.method);
+      return Response.json({ ...saved.organization, name: 'Renamed' }, { headers: { ETag: '"organization-21-r2"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Renamed' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(writes).toEqual(['PATCH']);
+  });
+
   it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
