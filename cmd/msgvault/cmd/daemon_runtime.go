@@ -108,7 +108,7 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 	}
 	if os.Getenv(serveBackgroundChildEnv) == "1" {
 		rec.Metadata[runtimeBackground] = runtimeBackgroundValue
-		rec.Metadata[runtimePersistent] = strconv.FormatBool(isPersistentDaemonChild())
+		rec.Metadata[runtimePersistent] = strconv.FormatBool(os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue)
 	}
 	if _, err := daemonRuntimeStore(dataDir).Write(rec); err != nil {
 		return daemon.RuntimeRecord{}, "", fmt.Errorf("write daemon runtime record: %w", err)

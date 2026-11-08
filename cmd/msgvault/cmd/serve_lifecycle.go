@@ -336,8 +336,7 @@ func prepareBackgroundDaemonStart(
 	}
 	if rt := findDaemonRuntime(ctx, c.Data.DataDir); rt != nil {
 		if !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
-			prep.Reusable = rt
-			return prep, nil
+			return backgroundDaemonStartPreparation{Reusable: rt}, nil
 		}
 		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
@@ -369,8 +368,7 @@ func prepareBackgroundDaemonStart(
 		if foundLegacy {
 			if legacyCompatErr == nil {
 				if !shouldUpgradeDaemonRuntimeWithPolicy(legacy, Version, restartPolicy) {
-					prep.Reusable = legacy
-					return prep, nil
+					return backgroundDaemonStartPreparation{Reusable: legacy}, nil
 				}
 			} else if !shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(
 				legacy, Version, restartPolicy,
