@@ -136,7 +136,7 @@ export class DirectoryEntityController {
   }
   /** The network stays lazy: PersonNetwork requests it when its tab opens. */
   async load(): Promise<void> {
-    await Promise.all([this.loadEmployments(true), this.refreshRelationships(), this.refreshRelationshipTypes()]);
+    await Promise.all([this.loadEmployments(true), this.loadRelationships(true), this.refreshRelationshipTypes()]);
   }
   async refreshOrganizations(query = ''): Promise<void> {
     const { abort, generation } = this.beginCollection('organizations');
@@ -194,7 +194,7 @@ export class DirectoryEntityController {
     return response;
   }
   async refreshRelationships(): Promise<void> {
-    await this.loadRelationships(true);
+    await Promise.all([this.loadRelationships(true), this.refreshNetwork()]);
   }
   private async loadRelationships(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('relationships');
@@ -275,7 +275,11 @@ export class DirectoryEntityController {
       (signal) => generatedGetOrganization({ id: id }, { ...this.client, signal }),
       owner,
     );
-    if (!owner || !this.organizationRecords.has(id)) this.organizationRecords.set(id, response.data);
+    if (!owner || !this.organizationRecords.has(id)) {
+      this.organizationRecords.set(id, response.data);
+      // A loaded list keeps its search: the read replaces the row it already shows.
+      this.organizations = this.organizations.map(item => item.id === id ? response.data.organization : item);
+    }
     return response;
   }
   organizationName(id: number): string {

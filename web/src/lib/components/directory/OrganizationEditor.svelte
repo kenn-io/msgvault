@@ -178,7 +178,7 @@
   }
 
   function requestClose(): void {
-    if (!submitting) { if (attempt.conflict || profileAttempt.conflict) void controller.refreshOrganizations(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
+    if (!submitting) { attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
   }
 
   function values(value: string): string[] {
