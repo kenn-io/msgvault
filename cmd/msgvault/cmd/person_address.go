@@ -135,7 +135,10 @@ func writePostalJSON(out io.Writer, value any) error {
 		return err
 	}
 	_, err := fmt.Fprintln(out)
-	return err
+	if err != nil {
+		return fmt.Errorf("write address JSON: %w", err)
+	}
+	return nil
 }
 
 func readPostalCLIInput(path string, value any) error {
