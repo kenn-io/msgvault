@@ -63,6 +63,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `sender_id` | INTEGER FK | References `participants` |
 | `account_address` | TEXT, nullable | The one confirmed address an email or calendar event belongs to; NULL when evidence conflicts or is missing |
 | `account_path` | TEXT, nullable | `inbound`, `sent` or `calendar`; NULL on email and calendar rows means attribution is still pending |
+| `email_linkage_outcome` | TEXT, nullable | `complete`, or why the identifiers in `email_link_keys` may be incomplete (`missing_raw`, `invalid_headers`, `size_limit` and others); NULL on an email means the keys are still pending |
 | `subject` | TEXT | Message subject |
 | `snippet` | TEXT | Preview excerpt |
 | `size_estimate` | INTEGER | Approximate size in bytes |
@@ -77,6 +78,10 @@ identifier returns the affected rows to pending in its own transaction, then
 derives them in pages after it commits. Every sync or import first derives the
 source's pending rows, which a partial index on pending rows keeps cheap when
 there are none. Attribution never changes `source_id`.
+Email linkage follows the same pattern: a write that stores MIME also fills
+`email_link_keys` and `email_linkage_outcome` in its transaction, and the
+same sync step derives any email still pending, through its own partial index.
+Archives from before the column start with every email pending.
 Rows other than email and calendar events keep both columns NULL. The
 [received-account design](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) records
 the rules; [Searching](../usage/searching.md#find-mail-by-the-address-that-received-it)
@@ -87,6 +92,13 @@ email's stored MIME (`kind` is `original` or `delivered`, `address` is
 lowercased). The address-leading index lets an identity change re-derive only
 the messages that mention it. A derived row's addresses always match its stored
 MIME; messages without MIME have none.
+
+**email_link_keys** -- Identifiers each email names in its headers, read from
+its stored MIME: `reply` (In-Reply-To), `reference` (References) and `attached`
+(the Message-ID of each attached `message/rfc822` original), at most 128 per
+kind, unique per email and kind. The value-leading index finds every email that names an identifier. A
+copy's own Message-ID is `messages.rfc822_message_id`, so related-copy lookups
+match these values against that column and against each other.
 
 **message_bodies** -- Parsed content stored separately from message metadata.
 

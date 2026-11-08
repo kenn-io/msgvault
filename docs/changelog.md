@@ -44,6 +44,8 @@ All notable changes to msgvault, grouped by release.
   also needs `--http-allow-writes` and protocol `2026-07-28` or newer. MCP
   snooze accepts RFC3339 or local dates.
 
+- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+
 ## 0.23.0
 <small>2026-11-04</small>
 
