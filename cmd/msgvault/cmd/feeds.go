@@ -177,14 +177,18 @@ func writeFeedsJSON(out io.Writer, list []feeds.Feed) error {
 	if err != nil {
 		return fmt.Errorf("encode feeds: %w", err)
 	}
-	_, err = fmt.Fprintln(out, string(encoded))
-	return err
+	if _, err := fmt.Fprintln(out, string(encoded)); err != nil {
+		return fmt.Errorf("write feeds: %w", err)
+	}
+	return nil
 }
 
 func writeFeedsTable(out io.Writer, list []feeds.Feed) error {
 	if len(list) == 0 {
-		_, err := fmt.Fprintln(out, "No feeds followed. Add one with msgvault add-feed <url>.")
-		return err
+		if _, err := fmt.Fprintln(out, "No feeds followed. Add one with msgvault add-feed <url>."); err != nil {
+			return fmt.Errorf("write feeds: %w", err)
+		}
+		return nil
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "TITLE\tURL\tLAST CHECK\tSTATUS")
@@ -204,7 +208,10 @@ func writeFeedsTable(out io.Writer, list []feeds.Feed) error {
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", feed.State.Title, feed.URL, checked, status)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("write feeds: %w", err)
+	}
+	return nil
 }
 
 func newRemoveFeedCmd() *cobra.Command {

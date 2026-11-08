@@ -2,6 +2,7 @@ package feeds
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -283,8 +284,17 @@ func TestSyncArchivesRSSAndJSONFeeds(t *testing.T) {
 	dated := items["note-2"]
 	assert.True(dated.SentAt.Equal(time.Date(2026, time.November, 6, 14, 30, 0, 0, time.UTC)))
 	assert.Contains(dated.Body, "Second note about quokkas.")
-	assert.Contains(dated.Metadata, `"categories":["animals"]`)
-	assert.Contains(dated.Metadata, `"url":"https://notes.example.net/note-2.mp3"`)
+	var metadata struct {
+		ProviderMetadata struct {
+			Categories []string            `json:"categories"`
+			Enclosures []map[string]string `json:"enclosures"`
+		} `json:"provider_metadata"`
+	}
+	require.NoError(json.Unmarshal([]byte(dated.Metadata), &metadata))
+	assert.Equal([]string{"animals"}, metadata.ProviderMetadata.Categories)
+	assert.Equal([]map[string]string{{
+		"url": "https://notes.example.net/note-2.mp3", "type": "audio/mpeg", "length": "1234",
+	}}, metadata.ProviderMetadata.Enclosures)
 
 	jsonItem := items["j-1"]
 	assert.Equal("First JSON item", jsonItem.Subject)
