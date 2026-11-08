@@ -519,7 +519,7 @@
             {#if result.provider === 'google' && result.checked_at && (result.status === 'validated' || result.status === 'needs_review')}<p class="google-attribution"><a href="https://maps.google.com" target="_blank" rel="noreferrer" translate="no" style="white-space: nowrap; font-family: Arial, sans-serif; font-style: normal; font-weight: 400; font-size: 14px; color: #1f1f1f; background-color: #ffffff; letter-spacing: normal">Google Maps</a></p>{/if}
             <div class="editor-actions">
               <Button label="Keep original" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(false)} />
-              <Button label="Confirm corrected address" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(true)} />
+              <Button label="Save correction" type="button" disabled={submitting || !controller.canWriteProfile} onclick={() => void chooseAddress(true)} />
             </div>
           {:else if !addressEdited && currentAddress?.assessment}
             <p role="status">Local assessment: {currentAddress.assessment.status.replaceAll('_', ' ')}</p>

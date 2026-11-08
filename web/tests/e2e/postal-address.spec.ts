@@ -67,7 +67,7 @@ for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, 
     const layout = await form.evaluate(element => ({ width: element.getBoundingClientRect().width, scroll: element.scrollWidth, client: element.clientWidth }));
     expect(layout.width).toBeLessThanOrEqual(width);
     expect(layout.scroll).toBeLessThanOrEqual(layout.client + 1);
-    await form.getByRole('button', { name: 'Confirm corrected address' }).click();
+    await form.getByRole('button', { name: 'Save correction' }).click();
     await expect(form).toHaveCount(0);
     expect(writes).toHaveLength(1);
     expect(writes[0]!.addresses!.add![0]).toMatchObject({ street_address: '12 Example Street', extended_address: ' Unit 7 ', post_office_box: ' Box 9 ', original_input: { street_address: ' 12 Example St ', original_value: ' raw source\nsecond line ' }, envelope: { source: 'user' } });

@@ -75,7 +75,7 @@ describe('Postal address editor', () => {
     expect(screen.getByText('Original address')).toBeDefined(); expect(screen.getByText('Suggested address')).toBeDefined();
     expect(requests).toHaveLength(1);
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({ address: raw, allow_external: true });
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm corrected address' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save correction' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     const body = await requests[1]!.clone().json();
     expect(body.addresses.add[0]).toMatchObject({ street_address: '12 Example Street', extended_address: raw.extended_address, post_office_box: raw.post_office_box, original_input: raw, envelope: { source: 'user' } });
@@ -113,7 +113,7 @@ describe('Postal address editor', () => {
     await enterRaw(); await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
     await screen.findByText('Google Maps');
     controller.structuredProfileETag = '"person-7-r9"';
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm corrected address' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save correction' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]!.headers.get('If-Match')).toBe('"person-7-r3"');
     expect(await screen.findByRole('alert')).toBeDefined();
