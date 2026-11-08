@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
-
 	"go.kenn.io/msgvault/internal/store"
 )
 

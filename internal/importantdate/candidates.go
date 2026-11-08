@@ -80,8 +80,7 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 			return
 		}
 		key := fmt.Sprintf("%s:%s:%d", subject, kind, occurrence.Year())
-		digest := sha256.Sum256([]byte(fmt.Sprintf("date-v1:%d:%d", *date.Month, *date.Day)))
-		candidate := Candidate{Fingerprint: hex.EncodeToString(digest[:]), OccurrenceKey: key, SubjectUID: subject, OwnerUID: owner, Kind: kind, Occurrence: occurrence, Tier: tier}
+		candidate := Candidate{Fingerprint: DateFingerprint(date), OccurrenceKey: key, SubjectUID: subject, OwnerUID: owner, Kind: kind, Occurrence: occurrence, Tier: tier}
 		previous, exists := selected[key]
 		// Direct eligibility wins over inheritance; otherwise choose the most
 		// important tier, then stable UID for deterministic duplicate routing.
@@ -166,4 +165,13 @@ func relationshipStarted(start *store.PartialDate, now time.Time, location *time
 	today := local.Format(time.DateOnly)
 	date := fmt.Sprintf("%04d-%02d-%02d", *start.Year, *start.Month, *start.Day)
 	return date <= today
+}
+
+// DateFingerprint identifies the declared month and day without encoding a year.
+func DateFingerprint(date store.PartialDate) string {
+	if date.Month == nil || date.Day == nil || date.Validate() != nil {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("date-v1:%d:%d", *date.Month, *date.Day)))
+	return hex.EncodeToString(digest[:])
 }

@@ -4377,6 +4377,7 @@ CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE
 CREATE TABLE IF NOT EXISTS important_date_deliveries (
  occurrence_key TEXT PRIMARY KEY,
  fingerprint TEXT NOT NULL,
+ accepted_fingerprint TEXT NOT NULL DEFAULT '',
  state TEXT NOT NULL CHECK (state IN ('claimed', 'issue_in_flight', 'retry_issue', 'issue_created', 'notify_in_flight', 'delivered', 'unknown', 'cancelled')),
  issue_uid TEXT NOT NULL DEFAULT ''
 );

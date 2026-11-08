@@ -242,6 +242,39 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 	}}
 	resolve.Flags().StringVar(&resolution, "resolution", "", "delivered or cancelled")
 	resolve.Flags().StringVar(&issueUID, "issue", "", "Inspected Kata issue UID (required for delivered)")
-	group.AddCommand(add, list, consent, status, preview, update, withdraw, resolve)
+	var correctionDate string
+	acceptCorrection := &cobra.Command{Use: "accept-correction <subject-uid> <birthday|anniversary>", Short: "Approve a corrected date after inspecting prior issues", Long: "After inspecting prior issues, explicitly approve the current month and day for future occurrences. This does not send or recreate an issue.", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		if (!strings.HasPrefix(args[0], "person/") && !strings.HasPrefix(args[0], "owned/")) || (args[1] != "birthday" && args[1] != "anniversary") {
+			return errors.New("invalid subject or date kind")
+		}
+		date, err := store.ParsePartialDate(correctionDate)
+		if err != nil {
+			return errors.New("invalid date")
+		}
+		fingerprint := importantdate.DateFingerprint(date)
+		if fingerprint == "" {
+			return errors.New("month and day are required")
+		}
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration unavailable")
+		}
+		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		count, err := st.AcceptImportantDateCorrectionContext(cmd.Context(), args[0]+":"+args[1]+":", fingerprint)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Accepted correction for %d retained occurrence(s)\n", count)
+		return err
+	}}
+	acceptCorrection.Flags().StringVar(&correctionDate, "date", "", "Current date as YYYY-MM-DD or --MM-DD")
+	group.AddCommand(add, list, consent, status, preview, update, withdraw, resolve, acceptCorrection)
 	return group
 }

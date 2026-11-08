@@ -112,7 +112,7 @@ func (s *Store) ImportantDateHasOtherPendingContext(ctx context.Context, prefix,
 	var pending bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries
 		WHERE substr(occurrence_key, 1, ?) = ? AND occurrence_key <> ? AND state <> 'retry_issue'
-		AND (fingerprint <> ? OR state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, utf8.RuneCountInString(prefix), prefix, currentKey, fingerprint).Scan(&pending)
+		AND ((fingerprint <> ? AND accepted_fingerprint <> ?) OR state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, utf8.RuneCountInString(prefix), prefix, currentKey, fingerprint, fingerprint).Scan(&pending)
 	if err != nil {
 		return false, fmt.Errorf("check pending important-date occurrences: %w", err)
 	}
@@ -180,6 +180,35 @@ func (s *Store) ResolveImportantDateDeliveryContext(ctx context.Context, key str
 		}
 		changed = count == 1
 		return nil
+	})
+	return changed, err
+}
+
+// AcceptImportantDateCorrectionContext records an operator's approval of the
+// current date after inspecting older issues. Unresolved writes must be resolved
+// first. Original fingerprints and issue states remain in the archive.
+func (s *Store) AcceptImportantDateCorrectionContext(ctx context.Context, prefix, fingerprint string) (int64, error) {
+	if prefix == "" || strings.TrimSpace(fingerprint) == "" || len(fingerprint) > 128 {
+		return 0, ErrImportantDateTransition
+	}
+	var changed int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		var unresolved bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE substr(occurrence_key, 1, ?) = ? AND state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown'))`, utf8.RuneCountInString(prefix), prefix).Scan(&unresolved); err != nil {
+			return fmt.Errorf("check unresolved date corrections: %w", err)
+		}
+		if unresolved {
+			return errors.New("resolve pending deliveries before accepting a correction")
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE important_date_deliveries SET accepted_fingerprint = ? WHERE substr(occurrence_key, 1, ?) = ? AND state IN ('delivered', 'cancelled')`, fingerprint, utf8.RuneCountInString(prefix), prefix)
+		if err != nil {
+			return fmt.Errorf("accept important-date correction: %w", err)
+		}
+		changed, err = result.RowsAffected()
+		return err
 	})
 	return changed, err
 }

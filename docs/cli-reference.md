@@ -3657,11 +3657,12 @@ msgvault person important-date consent <subject-uid>
 msgvault person important-date preview
 msgvault person important-date status
 msgvault person important-date resolve <occurrence-key> --resolution delivered --issue <issue-uid>
+msgvault person important-date accept-correction <subject-uid> birthday --date=--10-24
 ```
 
 `add` accepts `dependent` or `pet` and returns a stable UID. For consent, prefix that UID with `owned/`; for a person use `person/` followed by the person's vCard UID. Grant consent only for data that may be shared with the exact configured private Kata project and recipient. Omitting `--grant` revokes consent for all destinations, even when Kata is unavailable. Correcting or withdrawing a dependent or pet revokes its consent and preserves the previous value. `list` returns the revision required by update and withdrawal.
 
-The single-person preview shows declared date calculations only. The group preview lists currently due candidates; it does not send notifications. `status` lists up to 100 retained delivery states. An `unknown` or in-flight result may mean an external write succeeded: inspect the issue and recipient inbox before taking any manual action. `resolve` records an inspected result as `delivered` or `cancelled`; it never resends. The job does not automatically retry it. See [important-date configuration](configuration.md#important-date-alerts) for enablement and limitations.
+The single-person preview shows declared date calculations only. The group preview lists currently due candidates; it does not send notifications. `status` lists up to 100 retained delivery states. An `unknown` or in-flight result may mean an external write succeeded: inspect the issue and recipient inbox before taking any manual action. `resolve` records an inspected result as `delivered` or `cancelled`; it never resends. After resolving pending attempts and inspecting prior issues, `accept-correction` approves the current date for future occurrences without rewriting their history. The job does not automatically retry it. See [important-date configuration](configuration.md#important-date-alerts) for enablement and limitations.
 
 ## person agenda
 

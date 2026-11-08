@@ -81,6 +81,12 @@ func TestImportantDatePendingAcrossYears(t *testing.T) {
 	pending, err = st.ImportantDateHasOtherPendingContext(ctx, prefix, prefix+"2028", "corrected-fingerprint")
 	must.NoError(err)
 	checks.True(pending)
+	updated, err := st.AcceptImportantDateCorrectionContext(ctx, prefix, "corrected-fingerprint")
+	must.NoError(err)
+	checks.Equal(int64(1), updated)
+	pending, err = st.ImportantDateHasOtherPendingContext(ctx, prefix, prefix+"2028", "corrected-fingerprint")
+	must.NoError(err)
+	checks.False(pending)
 }
 
 func TestImportantDateOperatorResolutionNeverReclaims(t *testing.T) {
