@@ -6,7 +6,7 @@ description: Complete command reference for all msgvault commands.
 
 Find a command by task below, or use `msgvault COMMAND --help` for the flags
 in your installed binary. This reference follows current `main`; see
-[the 0.21.0 changelog](changelog.md#0210) for features and upgrade notes.
+[the latest release notes](https://github.com/kenn-io/msgvault/releases/latest) for features and upgrade notes.
 
 `msgvault --help` groups commands by task and lists start-here commands for
 common outcomes. Subcommand help lists global flag names; root help explains
