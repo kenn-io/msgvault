@@ -38,6 +38,10 @@ All notable changes to msgvault, grouped by release.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
 - A saved person's Details tab in People shows that person's open loops in a
   read-only card, with a Check more action when coverage is incomplete.
+- Owner-connected MCP assistants can list open loops and make per-call
+  approved done, snooze, and reopen decisions with `--allow-loop-writes`; HTTP
+  also needs `--http-allow-writes` and protocol `2026-07-28` or newer. MCP
+  snooze accepts RFC3339 or local dates.
 
 ## 0.23.0
 <small>2026-11-04</small>
