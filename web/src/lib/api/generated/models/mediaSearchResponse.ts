@@ -3,18 +3,24 @@
  */
 import type { ErrorResponse } from "./errorResponse";
 import type { MediaAttachmentSearch } from "./mediaAttachmentSearch";
+import type { MediaSearchResponseActualMode } from "./mediaSearchResponseActualMode";
+import type { MediaSearchResponseRequestedMode } from "./mediaSearchResponseRequestedMode";
 import type { MediaSearchResult } from "./mediaSearchResult";
 import type { SearchCoverage } from "./searchCoverage";
 
 export interface MediaSearchResponse {
+  actual_mode: MediaSearchResponseActualMode;
   attachments?: MediaAttachmentSearch;
   /** Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits */
   attribution_unavailable: number;
   coverage: SearchCoverage;
+  degradations?: string[];
   /** Coverage or occurrence attribution is incomplete, even with no matching excerpts */
   partial: boolean;
   pending_occurrences: number;
   recordings_error?: ErrorResponse;
+  /** Requested recording mode; independent of attachment mode */
+  requested_mode: MediaSearchResponseRequestedMode;
   results: MediaSearchResult[];
   truncated: boolean;
   unavailable_occurrences: number;

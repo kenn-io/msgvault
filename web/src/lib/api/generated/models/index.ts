@@ -551,6 +551,8 @@ export * from "./mCPRouteDescriptor";
 export * from "./mediaAttachmentResult";
 export * from "./mediaAttachmentSearch";
 export * from "./mediaSearchResponse";
+export * from "./mediaSearchResponseActualMode";
+export * from "./mediaSearchResponseRequestedMode";
 export * from "./mediaSearchResult";
 export * from "./mediaSearchResultOrigin";
 export * from "./mediaSearchStatusResponse";
