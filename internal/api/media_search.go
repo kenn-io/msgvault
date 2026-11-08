@@ -161,7 +161,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	var attachmentErr error
 	var searches sync.WaitGroup
 	searches.Go(func() {
-		response, err = reader.searchMode(r.Context(), searchCtx, q, recordingsMode, limit, scope, resolve)
+		response, err = reader.search(r.Context(), searchCtx, q, recordingsMode, limit, scope, resolve)
 	})
 	if s.docbankAttachments != nil {
 		searches.Go(func() {
@@ -254,11 +254,7 @@ func mediaSearchSource(o store.MessageMediaOccurrence) docbankmedia.SearchMediaS
 	return docbankmedia.SearchMediaSource{SourceID: o.DocbankSourceID, SourceVersionID: o.SourceVersionID, ContentVersionID: o.ContentVersionID}
 }
 
-func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaSearchResponse, error) {
-	return reader.searchMode(ctx, remoteCtx, query, "lexical", limit, scope, resolve)
-}
-
-func (reader *MessageRecordingReader) searchMode(ctx, remoteCtx context.Context, query, mode string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaSearchResponse, error) {
+func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, query, mode string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaSearchResponse, error) {
 	response := MediaSearchResponse{RequestedMode: mode, ActualMode: "unavailable", Results: []MediaSearchResult{}, Coverage: docbankmedia.SearchCoverage{State: "unknown"}}
 	profile := suppliedTranscriptProfile
 	actualMode := mode

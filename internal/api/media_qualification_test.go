@@ -59,26 +59,31 @@ type recordingEvalOccurrence struct {
 }
 
 type recordingEvalMetric struct {
-	Topic                 string                      `json:"topic"`
-	Profile               string                      `json:"profile"`
-	RequestedMode         string                      `json:"requested_mode"`
-	ActualMode            string                      `json:"actual_mode"`
-	Coverage              docbankmedia.SearchCoverage `json:"coverage"`
-	Partial               bool                        `json:"partial"`
-	Cutoff                int                         `json:"cutoff"`
-	MessagePrecision      float64                     `json:"message_precision"`
-	MessageRecall         float64                     `json:"message_recall"`
-	ConversationPrecision float64                     `json:"conversation_precision"`
-	ConversationRecall    float64                     `json:"conversation_recall"`
-	HardNegativesAtCutoff int                         `json:"hard_negatives_at_cutoff"`
-	Messages              []string                    `json:"ranked_messages"`
-	Conversations         []string                    `json:"ranked_conversations"`
+	Topic                  string                      `json:"topic"`
+	Profile                string                      `json:"profile"`
+	RequestedMode          string                      `json:"requested_mode"`
+	ActualMode             string                      `json:"actual_mode"`
+	Coverage               docbankmedia.SearchCoverage `json:"coverage"`
+	Partial                bool                        `json:"partial"`
+	PendingOccurrences     int                         `json:"pending_occurrences"`
+	UnavailableOccurrences int                         `json:"unavailable_occurrences"`
+	AttributionUnavailable int                         `json:"attribution_unavailable"`
+	Degradations           []string                    `json:"degradations,omitempty"`
+	Cutoff                 int                         `json:"cutoff"`
+	MessagePrecision       float64                     `json:"message_precision"`
+	MessageRecall          float64                     `json:"message_recall"`
+	ConversationPrecision  float64                     `json:"conversation_precision"`
+	ConversationRecall     float64                     `json:"conversation_recall"`
+	HardNegativesAtCutoff  int                         `json:"hard_negatives_at_cutoff"`
+	Messages               []string                    `json:"ranked_messages"`
+	Conversations          []string                    `json:"ranked_conversations"`
 }
 
 type recordingEvalScenario struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	HTTPStatus int    `json:"http_status,omitempty"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	HTTPStatus       int    `json:"http_status,omitempty"`
+	ForbiddenResults int    `json:"forbidden_results"`
 }
 
 type recordingEvalOutput struct {
@@ -138,13 +143,15 @@ func TestMediaRetrievalQualification(t *testing.T) {
 		}
 	})
 	observedStatus := 0
+	forbiddenResults := 0
 	scenario := func(name string, run func(*testing.T)) {
 		observedStatus = 0
+		forbiddenResults = 0
 		status := "passed"
 		if !t.Run(name, run) {
 			status = "failed"
 		}
-		output.Scenarios = append(output.Scenarios, recordingEvalScenario{Name: name, Status: status, HTTPStatus: observedStatus})
+		output.Scenarios = append(output.Scenarios, recordingEvalScenario{Name: name, Status: status, HTTPStatus: observedStatus, ForbiddenResults: forbiddenResults})
 	}
 	profiles := []string{manifest.Profile}
 	for _, record := range manifest.Records {
@@ -165,11 +172,16 @@ func TestMediaRetrievalQualification(t *testing.T) {
 				require.Len(t, conversationQrels[topic.ID], 4, "every corpus conversation must be judged")
 				response := requireRecordingEvalSearch(t, server, topic.Query, mode)
 				metric := recordingEvalMetric{Topic: topic.ID, Profile: profile, RequestedMode: response.RequestedMode,
-					ActualMode: response.ActualMode, Coverage: response.Coverage, Partial: response.Partial, Cutoff: 3}
+					ActualMode: response.ActualMode, Coverage: response.Coverage, Partial: response.Partial, Cutoff: 3,
+					PendingOccurrences: response.PendingOccurrences, UnavailableOccurrences: response.UnavailableOccurrences,
+					AttributionUnavailable: response.AttributionUnavailable, Degradations: response.Degradations}
 				assert.Equal(t, mode, response.RequestedMode)
 				assert.Equal(t, mode, response.ActualMode)
 				for _, hit := range response.Results {
 					occurrence, known := byMessage[hit.MessageID]
+					if !known {
+						forbiddenResults++
+					}
 					require.True(t, known, "forbidden result outside the current occurrence map")
 					assert.Equal(t, occurrence.seed.attachmentID, hit.AttachmentID)
 					assert.Equal(t, occurrence.record.Origin, hit.Origin)
@@ -196,6 +208,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 					assert.ElementsMatch(t, []string{"<media-a-v1-1@example.test>", "<media-a-v1-2@example.test>"}, metric.Messages)
 				}
 				if topic.ID == "q2" && mode != "lexical" {
+					assert.Positive(t, metric.MessagePrecision, "a semantic query must retrieve a relevant occurrence within the declared cutoff")
 					if profile == manifest.Profile {
 						assert.Contains(t, metric.Messages, "<media-a-v1-1@example.test>")
 						assert.Contains(t, metric.Messages, "<media-a-v1-2@example.test>")
@@ -229,6 +242,9 @@ func TestMediaRetrievalQualification(t *testing.T) {
 		alternate := seedRecordingEvalOccurrence(t, f, manifest, other, "different-caption", "alternate-caption", "alternate")
 		response := requireRecordingEvalSearch(t, server, "unmatchablefixtureword", mode)
 		for _, hit := range response.Results {
+			if hit.MessageID == alternate.seed.messageID {
+				forbiddenResults++
+			}
 			assert.NotEqual(t, alternate.seed.messageID, hit.MessageID)
 		}
 		assert.GreaterOrEqual(t, response.AttributionUnavailable, 1)
@@ -284,6 +300,9 @@ func TestMediaRetrievalQualification(t *testing.T) {
 			require.Equal(t, http.StatusOK, status, raw)
 			assert.True(t, mutated.Load(), "actual remote result must be in flight before mutation")
 			for _, hit := range response.Results {
+				if hit.MessageID == selected.seed.messageID {
+					forbiddenResults++
+				}
 				assert.NotEqual(t, selected.seed.messageID, hit.MessageID)
 			}
 			assert.True(t, response.Partial)
@@ -337,6 +356,9 @@ func TestMediaRetrievalQualification(t *testing.T) {
 			for _, occurrence := range occurrences {
 				if occurrence.record.ID == mutation.id {
 					for _, hit := range response.Results {
+						if hit.MessageID == occurrence.seed.messageID {
+							forbiddenResults++
+						}
 						assert.NotEqual(t, occurrence.seed.messageID, hit.MessageID, "forbidden stale source result")
 					}
 				}

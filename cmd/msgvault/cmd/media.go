@@ -59,7 +59,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		if err := writer.Flush(); err != nil {
 			return fmt.Errorf("render media search results: %w", err)
 		}
-		_, err = fmt.Fprintf(command.OutOrStdout(), "Recordings requested %s; actual %s; coverage %s; pending %d; unavailable %d; attribution unavailable %d; partial %t; truncated %t\n", textutil.SanitizeTerminal(string(response.RequestedMode)), textutil.SanitizeTerminal(string(response.ActualMode)), textutil.SanitizeTerminal(response.Coverage.State), response.PendingOccurrences, response.UnavailableOccurrences, response.AttributionUnavailable, response.Partial, response.Truncated)
+		_, err = fmt.Fprintf(command.OutOrStdout(), "Recordings requested %s; actual %s\nCoverage %s; pending %d; unavailable %d; attribution unavailable %d; partial %t; truncated %t\n", textutil.SanitizeTerminal(string(response.RequestedMode)), textutil.SanitizeTerminal(string(response.ActualMode)), textutil.SanitizeTerminal(response.Coverage.State), response.PendingOccurrences, response.UnavailableOccurrences, response.AttributionUnavailable, response.Partial, response.Truncated)
 		if err != nil {
 			return fmt.Errorf("render media search coverage: %w", err)
 		}

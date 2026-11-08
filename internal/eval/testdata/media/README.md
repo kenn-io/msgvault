@@ -1,20 +1,25 @@
-This bundle converts the E1 starter corpus to the formats used by msgvault PR #649. See https://github.com/kenn-io/msgvault/pull/649.
+---
+last_edited: 2026-11-08
+---
+# Synthetic recording retrieval corpus
 
-`mailbox.json` uses the synthetic mailbox fixture format introduced by PR 649 at `internal/eval/testdata/threaded/mailbox.json`. The message body carries the synthetic transcript text. The two `media-a-v1` messages represent independent occurrences of the same source version. The source version and provenance mapping is:
+This E1 corpus contains five message occurrences, four conversations and two judged topics. `mailbox.json` stores transcript text and synthetic occurrence/conversation IDs. The two `media-a-v1` messages are independent live occurrences of the same source version. `topics.tsv` has a query ID, query text and category. The qrels use TREC four-field message or conversation judgments: grade `3` is relevant and grade `0` is irrelevant.
 
-| source version | message ids | conversation id | provenance |
-| --- | --- | --- | --- |
-| a-v1 | `<media-a-v1-1@example.test>`, `<media-a-v1-2@example.test>` | `media-a-v1` | provider_transcript |
-| a-v2 | `<media-a-v2@example.test>` | `media-a-v2` | provider_transcript |
-| b-v1 | `<media-b-v1@example.test>` | `media-b-v1` | generated_transcript |
-| c-v1 | `<media-c-v1@example.test>` | `media-c-v1` | provider_transcript |
+| Source version | Message IDs | Conversation | Transcript origin |
+|---|---|---|---|
+| a-v1 | `<media-a-v1-1@example.test>`, `<media-a-v1-2@example.test>` | media-a-v1 | supplied |
+| a-v2 | `<media-a-v2@example.test>` | media-a-v2 | supplied |
+| b-v1 | `<media-b-v1@example.test>` | media-b-v1 | generated |
+| c-v1 | `<media-c-v1@example.test>` | media-c-v1 | supplied |
 
-`topics.tsv` uses the tab-separated topic format accepted by PR 649. The optional third field records the distinction between phrase and semantic questions. q1 uses the starter text `telescope delivery arrives Friday at three` verbatim. `qrels_message.txt` uses the TREC four-field format with message source IDs. `qrels_conversation.txt` uses the same format with conversation source IDs.
+The exact query grades only a-v1. The meaning query grades a-v1, a-v2 and b-v1. c-v1 is a hard negative for both topics. The static a-v2 judgment represents a distinct version; actual in-flight replacement is exercised separately by the qualification suite.
 
-The qrels encode the starter judgments at occurrence or conversation level. Message qrels contain ten rows and conversation qrels contain eight rows. Grade `3` means directly relevant; grade `0` means irrelevant. The exact query grades only a-v1. The meaning query grades a-v1, a-v2, and b-v1. c-v1 is a hard negative for both queries.
+## Run the production path
 
-Msgvault also has `testdata/contextual-eval`, but that corpus uses JSONL scenarios and a separate executable consumer. This bundle uses PR 649's external topics and qrels formats so the media judgments can feed that evaluator after it lands.
+The Recording retrieval qualification workflow runs `scripts/qualify-recording-retrieval.py` against its exact pinned Docbank checkout. Docbank's opt-in `TestMediaQualificationServer` retains synthetic audio and captions through production processing, publishes real embeddings/indexes, proves readiness through real HTTP search and writes a private fixture manifest. Msgvault's `TestMediaRetrievalQualification` uses those actual receipt IDs and digests to seed separate synthetic conversations and occurrence mappings, then invokes its real HTTP search route. Search results are never supplied by a mock.
 
-This data can be read by the evaluator added in PR #649 after that consumer is available. PR 649's test helper is fixed to `testdata/threaded`, so it does not discover this sibling `testdata/media` directory. Its evaluator command searches an existing archive, so an archive containing the matching synthetic source message or conversation IDs is required for an actual run. This bundle does not add evaluator code, scoring, qrels or topic parsing, search adapters, or Docbank integration. The current evaluator has no field for media occurrence IDs, transcript provenance, source-version fences, replacement, hiding, or presentation-time revocation. Those cases remain in the E1 starter `occurrences.json`, `judgments.json`, and `scenarios.json` files until a media consumer contract can express and execute them.
+The runner reads every topic and qrel. It records occurrence and conversation precision/recall at three, deduplicating before cutoff, plus actual modes, profile coverage, hard negatives and lifecycle outcomes. Supplied and generated profiles are reported separately against the full corpus; combining their rankings would conceal incomplete mixed-profile coverage. It checks shared-byte fan-out, different current captions even without matches, empty and unavailable responses, local replacement/hide/revocation/person changes during real HTTP responses, and source replacement/hide/revocation during query encoding. Mutation barriers and control endpoints exist only in the isolated fixture binary. Explicit index refresh happens outside retrieval between scenarios.
 
-All values and identities are synthetic. The bundle contains no provider export, personal recording, external API result, embedding output, or measured retrieval score.
+`deterministic-contract` uses controlled embeddings to prove authority and presentation contracts. `real-model` uses the separately pinned public encoder and records its model revision, formatter and library versions. Those are different evidence classes. See the [development guide](../../../../docs/development.md#recording-retrieval-qualification) for the supported-source matrix and artifact interpretation. A queued job, skipped external-fixture test or earlier-head result is not an executed final-head qualification.
+
+This suite qualifies recording retrieval and presentation, not importer acquisition or ASR quality. Existing stored-media and recording-reference tests retain those narrower routing contracts. All corpus values are synthetic; no personal recording, provider export or live archive is used. The report contains no fixture API key.

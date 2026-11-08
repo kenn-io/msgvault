@@ -1177,7 +1177,7 @@ func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
 			}
 			if kind == "recording" {
 				f.duringSearch = slow
-				response, err := server.messageRecordings.search(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
+				response, err := server.messageRecordings.search(t.Context(), remoteCtx, "quartz", "lexical", 20, nil, resolve)
 				require.NoError(err)
 				require.Len(response.Results, 1)
 				assert.Equal(recording.messageID, response.Results[0].MessageID)

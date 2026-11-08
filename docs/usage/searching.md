@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-11-08"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -347,7 +347,7 @@ msgvault search from:alice@example.com --json
 
 `msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
+Recording search defaults to lexical retrieval through Docbank. With an already embedded transcript profile configured in `integrations.docbank.recording_search_profile`, add `--recordings-mode semantic` to search by meaning or `--recordings-mode hybrid` to combine words and meaning. This recording selector is independent of attachment `--mode`. Search uses the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). It never triggers transcription, embedding, or consent. Requested and actual modes explain downgrades; incomplete selected-build embeddings remain partial coverage. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
 
 ## Search mirrored attachment text
 

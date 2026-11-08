@@ -42,6 +42,35 @@ func TestRecordingSearchAcceptsNonlexicalReport(t *testing.T) {
 	}
 }
 
+func TestRecordingSearchUnavailableReport(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		for _, malformed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/malformed=%t", mode, malformed), func(t *testing.T) {
+				report := SearchReport{RequestedMode: mode, ActualMode: "unavailable", MediaSourceSelection: true,
+					MediaSelections: []SearchMediaSelection{}, Results: []SearchHit{},
+					Coverage: SearchCoverage{State: "incomplete", ScopedDocuments: 1}}
+				if malformed {
+					report.Coverage.CompleteDocuments = 1
+				}
+				remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(report) }))
+				t.Cleanup(remote.Close)
+				client, err := NewClient(remote.URL, nil)
+				require.NoError(t, err)
+				got, err := client.Search(t.Context(), SearchRequest{Query: "telescope", Mode: mode, Profile: "vectors", ContentFirst: true, Limit: 20,
+					Fence:        &SearchFence{VaultUID: "fixture", ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174000"}},
+					MediaSources: []SearchMediaSelector{{SearchMediaSource: SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}}}})
+				if malformed {
+					require.ErrorIs(t, err, ErrInvalidReceipt)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, "unavailable", got.ActualMode)
+					assert.Empty(t, got.Results)
+				}
+			})
+		}
+	}
+}
+
 // Exact source identity is required independently of ranking mode. Every case
 // first accepts the real tuple, then changes one attributed identity component.
 func TestRecordingSearchExactSourceProperty(t *testing.T) {
@@ -93,7 +122,7 @@ func TestRecordingSearchExactSourceProperty(t *testing.T) {
 }
 
 func TestRecordingSearchEmbeddingEvidenceBoundary(t *testing.T) {
-	for _, name := range []string{"semantic", "hybrid", "missing build", "wrong selected build", "missing input", "missing generation", "missing set", "missing space", "missing manifest", "wrong input kind", "unknown kind", "bad time", "wrong requested mode", "silent downgrade", "invalid coverage", "incomplete counts", "foreign source"} {
+	for _, name := range []string{"semantic", "hybrid", "missing build", "wrong selected build", "missing input", "missing generation", "missing set", "missing space", "missing manifest", "invalid manifest", "duplicate evidence", "wrong input kind", "unknown kind", "bad time", "wrong requested mode", "silent downgrade", "invalid coverage", "incomplete counts", "foreign source"} {
 		t.Run(name, func(t *testing.T) {
 			source := map[string]any{"source_id": "source", "source_version_id": "version", "content_version_id": "123e4567-e89b-42d3-a456-426614174000"}
 			evidence := map[string]any{"kind": "embedding", "build_id": "selected", "input_id": "input", "input_kind": "rendition_chunk", "input_generation_id": "generation", "embedding_set_id": "set", "vector_space_id": "space", "source_manifest_checksum": strings.Repeat("a", 64), "media_sources": []any{source}}
@@ -121,6 +150,10 @@ func TestRecordingSearchEmbeddingEvidenceBoundary(t *testing.T) {
 				delete(evidence, "vector_space_id")
 			case "missing manifest":
 				delete(evidence, "source_manifest_checksum")
+			case "invalid manifest":
+				evidence["source_manifest_checksum"] = strings.Repeat("x", 64)
+			case "duplicate evidence":
+				report["results"].([]any)[0].(map[string]any)["evidence"] = []any{evidence, evidence}
 			case "wrong input kind":
 				evidence["input_kind"] = "original_file"
 			case "unknown kind":

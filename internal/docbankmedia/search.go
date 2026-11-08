@@ -163,11 +163,13 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 			return SearchReport{}, ErrInvalidReceipt
 		}
 		builds[key] = true
+		kinds := make(map[string]bool)
 		for _, evidence := range hit.Evidence {
 			if !validRecordingEvidence(evidence, report.ActualMode) || evidence.BuildID != first.BuildID ||
-				len(evidence.MediaSources) != len(first.MediaSources) {
+				len(evidence.MediaSources) != len(first.MediaSources) || kinds[evidence.Kind] {
 				return SearchReport{}, ErrInvalidReceipt
 			}
+			kinds[evidence.Kind] = true
 			withinEvidence := make(map[SearchMediaSource]bool)
 			for _, source := range evidence.MediaSources {
 				selection, known := selections[source]
@@ -197,6 +199,8 @@ func (c *Client) searchReport(ctx context.Context, request SearchRequest) (Searc
 	}
 	modeOK := report.ActualMode == request.Mode || request.Mode == "hybrid" && report.ActualMode == "lexical" &&
 		(slices.Contains(report.Degradations, "semantic_unavailable") || slices.Contains(report.Degradations, "semantic_unconfigured"))
+	modeOK = modeOK || report.ActualMode == "unavailable" && len(report.Results) == 0 &&
+		report.Coverage.State == "incomplete" && report.Coverage.CompleteDocuments == 0
 	coverageOK := report.Coverage.State == "complete" || report.Coverage.State == "incomplete" || report.Coverage.State == "unknown"
 	if !modeOK || report.RequestedMode != request.Mode || report.Results == nil || len(report.Results) > request.Limit ||
 		!coverageOK || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
@@ -217,7 +221,7 @@ func validRecordingEvidence(evidence SearchEvidence, mode string) bool {
 	case "embedding":
 		return mode != "lexical" && evidence.InputKind == "rendition_chunk" && evidence.InputID != "" &&
 			evidence.InputGenerationID != "" && evidence.EmbeddingSetID != "" && evidence.VectorSpaceID != "" &&
-			len(evidence.SourceManifestChecksum) == 64
+			len(evidence.SourceManifestChecksum) == 64 && strings.Trim(evidence.SourceManifestChecksum, "0123456789abcdef") == ""
 	default:
 		return false
 	}

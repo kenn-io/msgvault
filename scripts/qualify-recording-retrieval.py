@@ -61,6 +61,8 @@ def main():
     encoder = None
     with tempfile.TemporaryDirectory(prefix="recording-qualification-") as temporary:
         scratch = Path(temporary)
+        env["HF_HOME"] = str(scratch / "model-cache")
+        env["TORCH_HOME"] = str(scratch / "torch-cache")
         try:
             binary = scratch / "docbank-qualification.test"
             docbank_env = {**env, "CGO_ENABLED": provenance["docbank_cgo_enabled"]}
@@ -80,7 +82,10 @@ def main():
             (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
             for mode in ["lexical", "semantic", "hybrid"]:
                 manifest_path = scratch / f"{mode}.json"
+                fixture_tmp = scratch / f"fixture-{mode}"
+                fixture_tmp.mkdir()
                 child_env = {**env, "CGO_ENABLED": provenance["docbank_cgo_enabled"],
+                             "TMPDIR": str(fixture_tmp),
                              "DOCBANK_MEDIA_QUALIFICATION_MANIFEST": str(manifest_path)}
                 server = subprocess.Popen(
                     [str(binary), "-test.run", "^TestMediaQualificationServer$", "-test.timeout", "15m"],
@@ -93,6 +98,7 @@ def main():
                         raise RuntimeError("fixture quality class differs from requested run")
                     run_env = {
                         **env, "MSGVAULT_MEDIA_EVAL_MANIFEST": str(manifest_path),
+                        "TMPDIR": str(fixture_tmp),
                         "MSGVAULT_MEDIA_EVAL_MODE": mode, "MSGVAULT_MEDIA_EVAL_OUTPUT": str(args.output / f"{mode}.json"),
                     }
                     subprocess.run(
