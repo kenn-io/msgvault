@@ -168,7 +168,8 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 }
 
 // persist writes the snapshot unless the archive already holds the same
-// evidence, and keeps conversation stats current either way.
+// evidence. The write refreshes conversation stats in its own transaction,
+// so an unchanged retry has nothing to repair.
 func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snapshot) (writeResult, error) {
 	existing, err := st.MessageMetadataBatch(ctx, sourceID, []string{snapshot.SourceMessageID})
 	if err != nil {
@@ -176,10 +177,6 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 	}
 	prior, existed := existing[snapshot.SourceMessageID]
 	if existed && storedMatches(ctx, st, prior, snapshot) {
-		// A retry also repairs stats an interrupted earlier write left stale.
-		if err := st.RecomputeConversationStatsForMessageContext(ctx, prior.ID); err != nil {
-			return writeResult{MessageID: prior.ID}, fmt.Errorf("recompute conversation stats: %w", err)
-		}
 		return writeResult{MessageID: prior.ID}, nil
 	}
 
@@ -232,22 +229,13 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 			Body:     snapshot.BodyText,
 			FromAddr: senderAddress,
 		},
+		// A message moved to another conversation changes both conversations.
+		RecomputeConversationStats: true,
 	})
 	if err != nil {
 		return writeResult{}, fmt.Errorf("persist message: %w", err)
 	}
-	result := writeResult{MessageID: messageID, Created: !existed, Changed: true}
-
-	if existed && prior.SourceConversationID.String != snapshot.SourceConversationID {
-		// The message left its old conversation, whose stats change too.
-		err = st.RecomputeConversationStatsContext(ctx, sourceID)
-	} else {
-		err = st.RecomputeConversationStatsForMessageContext(ctx, messageID)
-	}
-	if err != nil {
-		return result, fmt.Errorf("recompute conversation stats: %w", err)
-	}
-	return result, nil
+	return writeResult{MessageID: messageID, Created: !existed, Changed: true}, nil
 }
 
 // storedMatches treats an unreadable stored copy as changed so the write

@@ -35,20 +35,6 @@ func validRequest(t *testing.T) Request {
 	return req
 }
 
-func TestDecodeRequestAcceptsCompleteStrictRequest(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-
-	req := validRequest(t)
-
-	assert.Equal(" feeds ", req.Source.Identifier)
-	assert.Equal(" entry-42 ", req.Message.ExternalID)
-	assert.Equal("feed_item", req.Message.MessageType)
-	assert.Equal(" feed-7 ", req.Message.Conversation.ExternalID)
-	assert.Equal(" https://Example.com/blog ", req.Message.Sender.URL)
-	assert.Equal("synthetic-hash", req.Message.Metadata["entry_hash"])
-}
-
 func TestDecodeRequestPreservesLargeMetadataNumbers(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

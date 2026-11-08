@@ -110,6 +110,10 @@ type MessagePersistData struct {
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
 	SyncRunItem               *SyncRunItem
+	// RecomputeConversationStats refreshes the stats of the message's
+	// conversation, and of the conversation it left, in the write's own
+	// transaction, so no interruption leaves either one stale.
+	RecomputeConversationStats bool
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -2155,9 +2159,24 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
+	var priorConversationID sql.NullInt64
+	var readPriorConversation messagePersistBeforeParticipants
+	if data.RecomputeConversationStats {
+		readPriorConversation = func(ctx context.Context, tx *loggedTx) error {
+			err := tx.QueryRowContext(ctx, `
+				SELECT conversation_id FROM messages
+				WHERE source_id = ? AND source_message_id = ?`,
+				data.Message.SourceID, data.Message.SourceMessageID,
+			).Scan(&priorConversationID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("read prior message conversation: %w", err)
+			}
+			return nil
+		}
+	}
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
-		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
+		readPriorConversation, nil, func([]int64) *MessagePersistData { return data }, nil,
 		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
@@ -2166,11 +2185,35 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 				}
 			}
 			if data.Edited {
-				return setMessageEditedStateWith(q, id, true)
+				if err := setMessageEditedStateWith(q, id, true); err != nil {
+					return err
+				}
+			}
+			if data.RecomputeConversationStats {
+				return s.recomputePersistedConversationStatsWith(q, id, priorConversationID)
 			}
 			return nil
 		},
 	)
+}
+
+// recomputePersistedConversationStatsWith refreshes the conversation that
+// now holds messageID and, when the write moved it, the one it left.
+func (s *Store) recomputePersistedConversationStatsWith(
+	q querier, messageID int64, prior sql.NullInt64,
+) error {
+	var current int64
+	if err := q.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`,
+		messageID).Scan(&current); err != nil {
+		return fmt.Errorf("read message conversation: %w", err)
+	}
+	if err := s.recomputeConversationStatsWith(q, "id = ?", current); err != nil {
+		return err
+	}
+	if prior.Valid && prior.Int64 != current {
+		return s.recomputeConversationStatsWith(q, "id = ?", prior.Int64)
+	}
+	return nil
 }
 
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
