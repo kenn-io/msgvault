@@ -748,7 +748,7 @@ describe('RelationshipsTab', () => {
     expect(fetchFn.mock.calls.map(([input]) => requestOf(input).method)).toEqual(['GET']);
   });
 
-  it('deletes the single underlying edge with its fresh ETag', async () => {
+  it('deletes an incoming connection using its underlying edge', async () => {
     const requests: Request[] = [];
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);

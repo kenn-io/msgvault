@@ -5,7 +5,7 @@ import { requestOf, pathOf, organization, organizationProfile, envelope, richOrg
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
-  it('detects a profile change between the details and profile writes', async () => {
+  it('retains the editor when a profile write conflicts after saving details', async () => {
     let revision = 1;
     const onDone = vi.fn();
     const profile = organizationProfile();
