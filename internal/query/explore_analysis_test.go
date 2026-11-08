@@ -49,6 +49,8 @@ func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {
 			b.AddOwnerParticipant(source, owner)
 			for i := range 40 {
 				person := b.AddParticipant("person"+strconv.Itoa(i)+"@example.test", "example.test", "Person "+strconv.Itoa(i))
+				curated := "Curated person " + strconv.Itoa(i)
+				addPersonOverride(b, person, int64(i+1), &curated)
 				message := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
 				b.AddFrom(message, owner, "Owner")
 				b.AddTo(message, person, "")
@@ -70,7 +72,7 @@ func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {
 			})
 			require.NoError(t, err)
 			require.Equal(t, 41, groups)
-			assert.Less(t, profile.maxCardinality(), 41*groups, "label lookup must avoid pairing every participant with every page group")
+			assert.LessOrEqual(t, profile.maxCardinality(), 4*41, "label lookup must avoid pairing every participant with every page group")
 		})
 	}
 }
