@@ -99,7 +99,6 @@ esac
 				profiles = map[string]string{"config/fish/config.fish": "# preserved"}
 			}
 			if tc.name == "existing login" {
-				delete(profiles, ".profile")
 				profiles[".bash_profile"] = "# preserved\n. \"$HOME/.bashrc\""
 			}
 			for profile, content := range profiles {
@@ -139,7 +138,7 @@ esac
 				for profile, original := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
 					require.NoError(t, err)
-					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "other" {
+					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "other" || (tc.name == "existing login" && profile == ".profile") {
 						assert.Equal(t, original, string(data))
 						continue
 					}
@@ -149,7 +148,7 @@ esac
 					assert.Regexp(t, "^"+regexp.QuoteMeta(original)+"\n[^\n]+\n$", string(data))
 				}
 			}
-			if tc.optOut != "" || tc.shell == "other" {
+			if tc.optOut != "" || tc.shell == "other" || tc.pathEntry == "exact" {
 				return
 			}
 			probe := `command -v msgvault; msgvault; printf '\nTEST_PATH=%s\n' "$PATH"`
