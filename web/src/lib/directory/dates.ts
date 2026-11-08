@@ -1,4 +1,5 @@
 import { localDateStr, monthLabels } from '@kenn-io/kit-ui';
+import { formatShortDate } from '../util/format';
 
 // Mirrors PartialDate.Validate (internal/store/partialdate.go): year 1–9999,
 // month 1–12, and a day that exists in that month. A day without a year is
@@ -89,7 +90,7 @@ export function readablePartialDate(value: string | PartialDateParts | null | un
   const month = date.month ? MONTHS[date.month - 1] : '';
   if (!month) return String(date.year);
   if (!date.day) return `${month} ${date.year}`;
-  return date.year === today.getFullYear() ? `${month} ${date.day}` : `${month} ${date.day}, ${date.year}`;
+  return formatShortDate(`${formatPartialDate(date)}T00:00:00`, today);
 }
 
 /**

@@ -24,11 +24,11 @@ export function formatDateTime(value: string | null | undefined, timeStyle: 'sho
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle }).format(date);
 }
 
-export function formatShortDate(value: string): string {
+export function formatShortDate(value: string, today: Date = new Date()): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return value;
   return new Intl.DateTimeFormat(undefined, {
-    month: 'short', day: 'numeric', year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric'
+    month: 'short', day: 'numeric', year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric'
   }).format(date);
 }
 
