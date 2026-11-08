@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -411,6 +413,45 @@ func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T
 	assert.Equal(daemonService, records[0].Service, "service")
 }
 
+func TestReportRetainedDaemonVersion(t *testing.T) {
+	withTestVersion(t, "v0.23.0-45-gabc")
+	savedResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/source build/msgvault", nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
+	for _, tt := range []struct {
+		name       string
+		options    invocationOptions
+		restart    string
+		powerShell string
+		daemon     string
+	}{
+		{name: "default archive", daemon: "v0.23.0",
+			restart:    "'/tmp/source build/msgvault' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
+		{name: "both selections", daemon: "v0.23.0", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"},
+			restart:    "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'"},
+		{name: "retained same base source", daemon: "v0.23.0-46-gdef",
+			restart:    "'/tmp/source build/msgvault' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
+		{name: "equal source stays quiet", daemon: "v0.23.0-45-gabc"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			ctx := testInvocationContext(t.Context(), nil, tt.options)
+			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemon}})
+			if runtime.GOOS == "windows" {
+				tt.restart = tt.powerShell
+			}
+			if tt.restart == "" {
+				assert.Empty(t, stderr.String())
+				return
+			}
+			assert.Equal(t, "msgvault: daemon "+tt.daemon+" is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version.\n", stderr.String())
+		})
+	}
+}
+
 func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -448,6 +489,13 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 			currentVersion: "dev",
 			want:           false,
 		},
+		{name: "source replaces unprefixed release", daemonVersion: "0.23.0", currentVersion: "v0.23.0-45-gabc", want: true},
+		{name: "unprefixed source replaces release", daemonVersion: "v0.23.0", currentVersion: "0.23.0-45-gabc", want: true},
+		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},
+		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
+		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
+		{name: "same base later source keeps earlier", daemonVersion: "v0.23.0-44-gdef", currentVersion: "v0.23.0-45-gabc"},
+		{name: "source keeps dirty tag daemon", daemonVersion: "v0.23.0-dirty", currentVersion: "v0.23.0-45-gabc"},
 	}
 
 	for _, tt := range tests {

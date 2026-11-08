@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: "2026-11-07"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1136,7 +1136,7 @@ use `docker exec --user <daemon-uid> ...`. If `api_key_env` names a variable
 provided only to the supervised daemon, also provide it to the CLI process;
 the CLI does not inherit the daemon's environment.
 
-`daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client.
+`daemon_auto_restart = "newer"` replaces an older compatible local daemon with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Use `"never"` when another supervisor owns the daemon lifecycle, or `"always"` to restart whenever the recorded daemon version differs. Remote servers are never auto-restarted by a CLI client. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
 `daemon_auto_start = false` is for installs where a supervisor such as launchd, systemd, or Docker runs `msgvault serve`. Local archive commands then use the daemon that is already running, wait for one that is still starting, and otherwise fail with an error instead of starting their own. They also never replace a running daemon, whatever `daemon_auto_restart` says, because the supervisor owns restarts. `msgvault daemon start` and `msgvault daemon restart` still start a daemon when you run them. `msgvault update` restarts only a daemon msgvault started in the background, unless you pass `--no-restart`. Commands routed to `[remote].url` are unaffected.
 
@@ -1960,6 +1960,7 @@ transcription in Plaud before syncing. See the
 identifier = "work"
 account_email = "you@example.com"
 schedule = "30 */6 * * *"
+limit = 50
 enabled = true
 ```
 
@@ -1969,6 +1970,7 @@ enabled = true
 | `account_email` | Required | Explicit account email; normalized to lowercase and checked against live Plaud identity |
 | `endpoint` | `https://mcp.plaud.ai/mcp` | MCP resource endpoint override; changing it requires new authorization |
 | `schedule` | — | Five-field cron expression used by `msgvault serve` |
+| `limit` | `0` (all) | Most recordings a scheduled run checks; works like `sync-plaud --limit` |
 | `enabled` | `false` | Whether a scheduled entry runs in the daemon |
 
 Authorize with `msgvault add-plaud <identifier>` on the daemon host. The callback

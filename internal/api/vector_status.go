@@ -424,6 +424,25 @@ func (s *Server) vectorHealthPublic() *VectorHealth {
 	return health
 }
 
+type publishedVectorConfigKey struct{}
+
+// withPublishedVectorConfig carries the running text vector recipe into store
+// calls, which otherwise see the daemon's startup configuration.
+func (s *Server) withPublishedVectorConfig(ctx context.Context) context.Context {
+	_, backend, cfg := s.vectorComponents()
+	if backend == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, publishedVectorConfigKey{}, cfg)
+}
+
+// PublishedVectorConfig reports the text vector recipe the serving daemon
+// published for this request, if any.
+func PublishedVectorConfig(ctx context.Context) (vector.Config, bool) {
+	cfg, ok := ctx.Value(publishedVectorConfigKey{}).(vector.Config)
+	return cfg, ok
+}
+
 func (s *Server) vectorComponents() (*hybrid.Engine, vector.Backend, vector.Config) {
 	s.vectorMu.RLock()
 	defer s.vectorMu.RUnlock()

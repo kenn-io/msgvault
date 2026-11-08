@@ -42,6 +42,7 @@
     onActiveKey?: (key: string) => void;
     onVisibleRows?: (rowKeys: string[]) => void;
     onRetry?: () => void;
+    onAddSource?: () => void;
   }
 
   let {
@@ -67,7 +68,8 @@
     onLoadThroughEnd = undefined,
     onActiveKey = undefined,
     onVisibleRows = undefined,
-    onRetry = undefined
+    onRetry = undefined,
+    onAddSource = undefined
   }: Props = $props();
 
   const compact = new MediaQuery(MEDIA.compact);
@@ -487,7 +489,13 @@
         </div>
       {:else if rows.length === 0}
         <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length + 1}>
-          <EmptyState title="No items match this view" description="Adjust the search or clear filters to widen the view." />
+          {#if onAddSource}
+            <EmptyState title="No mail yet" description="Add an account or import an export to start your archive.">
+              <Button size="sm" tone="info" surface="solid" label="Add source" onclick={onAddSource} />
+            </EmptyState>
+          {:else}
+            <EmptyState title="No items match this view" description="Adjust the search or clear filters to widen the view." />
+          {/if}
         </div></div>
       {:else if !slice || rowHeight === undefined}
         <div role="row"><div role="gridcell" aria-colspan={visibleColumns.length + 1}><p class="empty" role="status">Preparing table layout…</p></div></div>

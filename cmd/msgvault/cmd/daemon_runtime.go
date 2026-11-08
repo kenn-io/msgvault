@@ -5,14 +5,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -21,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/update"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -635,7 +640,52 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 	if rt.Record.Version == "" {
 		return !update.IsDevBuildVersion(currentVersion)
 	}
+	if cli, daemon, source := sourceBuildVersions(rt, currentVersion); source {
+		release := !update.IsDevBuildVersion(rt.Record.Version) && !strings.HasSuffix(rt.Record.Version, "-dirty")
+		return semver.IsValid(cli) && semver.IsValid(daemon) && (update.IsNewer(cli, daemon) || release && !update.IsNewer(daemon, cli))
+	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
+}
+
+// sourceBuildVersions reports whether currentVersion is a source build, a dirty
+// build of a tag included, and returns both versions in semver form without
+// their dirty suffixes.
+func sourceBuildVersions(rt *DaemonRuntime, currentVersion string) (cli, daemon string, source bool) {
+	if rt == nil || !update.IsDevBuildVersion(currentVersion) && !strings.HasSuffix(currentVersion, "-dirty") {
+		return "", "", false
+	}
+	cli = "v" + strings.TrimPrefix(strings.TrimSuffix(currentVersion, "-dirty"), "v")
+	daemon = "v" + strings.TrimPrefix(strings.TrimSuffix(rt.Record.Version, "-dirty"), "v")
+	return cli, daemon, true
+}
+
+// shouldReportRetainedDaemonVersion covers a kept daemon the default policy
+// would replace, and another source build of this CLI's release, which is kept
+// because version strings can't tell which of two source builds is newer.
+func shouldReportRetainedDaemonVersion(rt *DaemonRuntime, currentVersion string) bool {
+	if shouldUpgradeDaemonRuntimeWithPolicy(rt, currentVersion, config.DaemonAutoRestartNewer) {
+		return true
+	}
+	cli, daemon, source := sourceBuildVersions(rt, currentVersion)
+	return source && semver.IsValid(cli) && semver.IsValid(daemon) && rt.Record.Version != currentVersion &&
+		!update.IsNewer(cli, daemon) && !update.IsNewer(daemon, cli)
+}
+
+func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
+	if shouldReportRetainedDaemonVersion(rt, Version) {
+		options := optionsFromContext(ctx)
+		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+		executable, err := daemonCLIExecutableResolver()
+		if err != nil {
+			executable = os.Args[0]
+		}
+		commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
+		restart := commands.POSIX
+		if runtime.GOOS == "windows" {
+			restart = commands.PowerShell
+		}
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to use this version.\n", rt.Record.Version, Version, restart)
+	}
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {

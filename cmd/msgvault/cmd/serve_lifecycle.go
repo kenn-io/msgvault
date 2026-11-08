@@ -392,6 +392,7 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 		return err
 	}
 	if rt := prep.Reusable; rt != nil {
+		reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 		return nil
 	}
@@ -850,6 +851,7 @@ func acquireBackgroundLaunchLock(dataDir string) (*flock.Flock, bool) {
 
 func reportBackgroundLaunchInProgress(cmd *cobra.Command, dataDir string) {
 	if rt := waitForBackgroundRuntime(cmd.Context(), dataDir, backgroundServeReadyTimeout); rt != nil {
+		reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 		return
 	}

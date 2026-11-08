@@ -6,7 +6,7 @@ description: Complete command reference for all msgvault commands.
 
 Find a command by task below, or use `msgvault COMMAND --help` for the flags
 in your installed binary. This reference follows current `main`; see
-[the 0.21.0 changelog](changelog.md#0210) for features and upgrade notes.
+[the latest release notes](https://github.com/kenn-io/msgvault/releases/latest) for features and upgrade notes.
 
 `msgvault --help` groups commands by task and lists start-here commands for
 common outcomes. Subcommand help lists global flag names; root help explains
@@ -158,7 +158,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 
 This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
 
-The local daemon publishes its binary version and API schema version. By default, a newer compatible CLI restarts an older local daemon before issuing the request; configure `[server].daemon_auto_restart` as `newer`, `never`, or `always` to control that lifecycle behavior. Remote servers are not restarted by clients, so compatibility is negotiated from the API schema version exposed in the OpenAPI document.
+The local daemon publishes its binary version and API schema version. By default, a newer compatible CLI restarts an older local daemon before issuing the request. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Configure `[server].daemon_auto_restart` as `newer`, `never`, or `always` to control that lifecycle behavior. Remote servers are not restarted by clients, so compatibility is negotiated from the API schema version exposed in the OpenAPI document.
 
 ---
 
@@ -4550,7 +4550,7 @@ Start the Model Context Protocol server for AI assistant integration.
 
 Draft tools prepare and manage drafts through the selected daemon, using the same commands and permissions as the CLI. Msgvault never sends. A daemon with API schema 3.0.0 or newer exposes eight draft tools to the owner.
 
-With `--agent-url` and `--agent-token-file`, `msgvault mcp` exposes scoped read tools on daemons with API schema 3.9.0 or newer, the six delegated draft tools, and calendar tools on daemons with API schema 3.1.0 or newer, over stdio. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
+With `--agent-url` and `--agent-token-file`, `msgvault mcp` requires a daemon with API schema 3.9.0 or newer and serves scoped read tools, up to six delegated draft tools, and calendar tools over stdio. Tool selection follows the token's permissions and granted sources. The daemon checks the token's permissions and source scope on every call. Delegated sessions refuse `--http`.
 
 ```bash
 msgvault mcp [flags]
@@ -4636,13 +4636,13 @@ msgvault daemon stop
 msgvault daemon restart
 ```
 
-`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`; incompatible running daemons are reported with a prompt to stop them first.
+`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Incompatible running daemons are reported with a prompt to stop them first.
 
 The lifecycle commands have no command-specific flags. Configuration comes from `config.toml` with the [runtime environment overrides](configuration.md#environment-variables). See [Web UI & API Server](/docs/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/docs/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/docs/configuration/#vectorembedschedule).
 
 Background daemons started by `daemon start` or auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for a lifecycle-managed background daemon.
 
-`[server].daemon_auto_restart` controls local daemon replacement when the CLI and recorded daemon versions differ. The default `newer` restarts only older compatible daemons, `never` leaves lifecycle to the operator or supervisor, and `always` restarts on any version mismatch that is safe for the current API schema.
+`[server].daemon_auto_restart` controls local daemon replacement when the CLI and recorded daemon versions differ. The default `newer` restarts older compatible daemons. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves lifecycle to the operator or supervisor, and `always` restarts on any version mismatch that is safe for the current API schema. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
 For compatibility with existing scripts, `msgvault serve start|status|stop|restart` remains accepted without warnings, but these aliases are hidden from help and shell completion.
 
@@ -4890,8 +4890,9 @@ the archive alias, history-only state, retirement destination, and Beeper
 re-anchor marker. While the daemon's first message-count refresh is still
 running, the table shows `pending` in the messages column, and JSON entries
 carry `"counts_pending": true` in place of `message_count` and
-`source_deleted_count`. Later calls show the finished counts or a cached
-snapshot.
+`source_deleted_count`. Later calls try fresh counts for 500 ms, then show the
+previous count with its age, such as `1,234 (counted 3 minutes ago)`. Stale
+JSON rows include `stale: true` and the original `as_of` timestamp.
 
 ```bash
 msgvault list-accounts [flags]

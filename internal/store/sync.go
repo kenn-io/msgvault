@@ -1783,8 +1783,8 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 	// This runs as a separate Exec rather than inside a transaction
 	// with the source insert. If this Exec fails, the source row is
 	// committed but the All membership is missing — and the next
-	// EnsureDefaultCollection call (which runs in InitSchema on every
-	// process launch) re-adds every source not yet linked. Self-heals
+	// EnsureDefaultCollection call during writer or daemon startup
+	// re-adds every source not yet linked. Self-heals
 	// on next CLI invocation; until then collection-scoped reads of
 	// All would miss this source. Acceptable for a single-user tool;
 	// a future refactor can fold this into a withTx.

@@ -120,6 +120,24 @@ func TestAttachmentChangeJournalCapturesSourceMergeOwnershipChange(t *testing.T)
 	assert.Equal(destinationConversation, actualConversationID)
 }
 
+func TestUnregisterMissingAttachmentChangeConsumerPostgreSQLWithOpenWriter(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL")
+	}
+	messageID := f.CreateMessage("held")
+	writer, err := f.Store.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { require.NoError(writer.Rollback()) }()
+	_, err = writer.ExecContext(t.Context(), `UPDATE messages SET snippet = snippet WHERE id = $1`, messageID)
+	require.NoError(err)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	require.NoError(f.Store.UnregisterAttachmentChangeConsumer(ctx, "document-index/v1"))
+}
+
 func TestAttachmentChangeConsumersPruneOnlySharedConsumedPrefix(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -20,7 +20,7 @@ on:
 jobs:
   changes:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-26.04
+    runs-on: namespace-profile-linux-1cpu
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -165,6 +165,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
+          trim: "true"
           extra-path: .git/golangci-lint-cache
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
@@ -205,7 +206,7 @@ jobs:
 
       - name: Log cache sizes
         if: github.event_name != 'pull_request'
-        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
+        run: du -sh "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -227,6 +228,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
+          trim: "true"
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
@@ -361,6 +363,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: macos
+          trim: "true"
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
@@ -624,6 +627,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: windows
+          trim: "true"
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
@@ -654,7 +658,7 @@ jobs:
 
       - name: Test
         shell: pwsh
-        env:
+        env: &windows-test-env
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
@@ -662,12 +666,30 @@ jobs:
           $separatePackages = @(
             "go.kenn.io/msgvault/cmd/msgvault/cmd"
             "go.kenn.io/msgvault/internal/api"
+            "go.kenn.io/msgvault/internal/backupapp"
+            "go.kenn.io/msgvault/internal/beeper"
+            "go.kenn.io/msgvault/internal/carddav"
+            "go.kenn.io/msgvault/internal/chatwoot"
+            "go.kenn.io/msgvault/internal/circleback"
+            "go.kenn.io/msgvault/internal/deletion"
+            "go.kenn.io/msgvault/internal/discord"
+            "go.kenn.io/msgvault/internal/imazingcsv"
             "go.kenn.io/msgvault/internal/importer"
+            "go.kenn.io/msgvault/internal/matrix"
+            "go.kenn.io/msgvault/internal/mcp"
+            "go.kenn.io/msgvault/internal/muesli"
+            "go.kenn.io/msgvault/internal/omi"
+            "go.kenn.io/msgvault/internal/peoplesweep"
+            "go.kenn.io/msgvault/internal/query"
+            "go.kenn.io/msgvault/internal/rederive"
+            "go.kenn.io/msgvault/internal/slack"
             "go.kenn.io/msgvault/internal/store"
             "go.kenn.io/msgvault/internal/sync"
+            "go.kenn.io/msgvault/internal/teams"
             "go.kenn.io/msgvault/internal/vector/embed"
             "go.kenn.io/msgvault/internal/vector/sqlitevec"
             "go.kenn.io/msgvault/scripts"
+            "go.kenn.io/msgvault/scripts/contextual-retrieval-eval"
           )
           $packages = go list -tags "fts5 sqlite_vec" ./... |
             Where-Object { $_ -notin $separatePackages }
@@ -818,8 +840,8 @@ jobs:
         include:
           # A 4-core runner is already saturated by one package's shards, so the
           # two slowest packages each split across 3 runners.
-          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 45 }
-          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 45 }
+          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 64, extra_packages: ./internal/peoplesweep ./internal/mcp ./internal/matrix ./internal/discord ./internal/omi ./internal/teams ./internal/imazingcsv ./internal/backupapp ./internal/muesli ./internal/rederive ./internal/circleback ./internal/carddav }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 64, extra_packages: ./internal/deletion ./internal/beeper ./scripts/contextual-retrieval-eval ./internal/chatwoot ./internal/slack }
           - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 36m, job_timeout: 64 }
           - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 30m, job_timeout: 38 }
           - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 30m, job_timeout: 38 }
@@ -830,8 +852,9 @@ jobs:
             package2: ./internal/vector/embed
             timeout: 40m
           - name: vector-sqlite
-            job_timeout: 30
+            job_timeout: 47
             package: ./internal/vector/sqlitevec
+            extra_packages: ./internal/query
             timeout: 9m
     runs-on: windows-2025
     timeout-minutes: ${{ matrix.job_timeout }}
@@ -877,8 +900,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Test additional packages
+        if: matrix.extra_packages && !cancelled()
+        shell: pwsh
+        env: *windows-test-env
+        run: |
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-additional.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-additional-reruns.txt `
+            --packages "${{ matrix.extra_packages }}" -- -timeout 20m -tags "fts5 sqlite_vec"
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1
+        if: failure() || github.run_attempt > 1 || matrix.extra_packages
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
@@ -1059,6 +1090,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-postgres
+          trim: "true"
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 

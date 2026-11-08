@@ -371,14 +371,8 @@ VALUES (1, 1, 1, 'm1', 'email', 'original one'),
 `)
 	require.NoError(err, "seed rows")
 
+	dropContentChangedAtColumn(t, seed)
 	for _, stmt := range []string{
-		`DROP TRIGGER IF EXISTS trg_messages_content_changed_ins`,
-		`DROP TRIGGER IF EXISTS trg_messages_content_changed_at`,
-		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_ins`,
-		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_upd`,
-		`DROP INDEX IF EXISTS idx_messages_content_changed_at`,
-		`DROP INDEX IF EXISTS idx_messages_conversation_content_changed`,
-		`ALTER TABLE messages DROP COLUMN content_changed_at`,
 		`DROP TRIGGER IF EXISTS trg_messages_last_modified`,
 		// Verbatim from schema.sql before this change moved it to EnsureTriggers.
 		`CREATE TRIGGER trg_messages_last_modified

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button, Chip } from '@kenn-io/kit-ui';
-  import { onMount, onDestroy } from 'svelte';
+  import { Disclosure, Button, Chip } from '@kenn-io/kit-ui';
+  import { onMount, onDestroy, type Snippet } from 'svelte';
   import { getSettings } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
   import type { SourceStatus, Setting } from '../../api/generated/models';
@@ -12,13 +12,12 @@
   import SidePanel from '../common/SidePanel.svelte';
   import CommandLine from './CommandLine.svelte';
 
-  let { client, source, syncing = false, starting = false, triggerError, onRefresh, onSync, onclose, onOpenSettings }: {
+  let { client, source, syncing = false, starting = false, notice, onSync, onclose, onOpenSettings }: {
     client: APIClient;
     source: SourceStatus;
     syncing?: boolean;
     starting?: boolean;
-    triggerError: string;
-    onRefresh: () => void;
+    notice: Snippet;
     onSync: () => void;
     onclose: () => void;
     onOpenSettings: () => void;
@@ -75,12 +74,7 @@
         {#if source.can_sync}<Button size="sm" tone="info" surface="soft" label={syncRunning(source) ? 'Syncing…' : syncing ? 'Starting…' : 'Sync now'} disabled={starting || syncing} onclick={onSync} />{/if}
       </div>
     </div>
-    {#if triggerError}
-      <section class="block" role="alert">
-        <p class="failure">{triggerError}</p>
-        <Button size="sm" label="Refresh" onclick={onRefresh} />
-      </section>
-    {/if}
+    {@render notice()}
     {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
     {#if source.source_type !== 'meeting_import' && !source.can_sync && !syncing}
       {@const command = syncCommand(source)}
@@ -114,7 +108,8 @@
           {/each}
         </ul>
         {#if latest?.item_errors?.length}
-          <details class="item-errors"><summary class="muted">{latest.item_errors.length.toLocaleString()} {latest.item_errors.length === 1 ? 'item' : 'items'} failed</summary><ul>{#each latest.item_errors as item (`${item.source_message_id}:${item.phase}:${item.created_at}`)}<li>{item.error_message}</li>{/each}</ul></details>
+          {@const itemErrors = latest.item_errors}
+          <Disclosure variant="plain" class="item-errors">{#snippet summary()}{itemErrors.length.toLocaleString()} {itemErrors.length === 1 ? 'item' : 'items'} failed{/snippet}<ul>{#each itemErrors as item (`${item.source_message_id}:${item.phase}:${item.created_at}`)}<li>{item.error_message}</li>{/each}</ul></Disclosure>
         {/if}
       </section>
     {/if}
@@ -122,11 +117,11 @@
 </SidePanel>
 
 <style>
-  .item-errors summary {
+  .panel :global(.item-errors .kit-disclosure__summary) {
     cursor: pointer;
   }
 
-  .item-errors ul {
+  .panel :global(.item-errors ul) {
     display: grid;
     gap: var(--space-1);
     margin: var(--space-2) 0 0;

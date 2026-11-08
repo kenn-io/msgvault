@@ -367,6 +367,13 @@ type Stats struct {
 	StorageBytes int64
 }
 
+// BuildScopeBackend can pin coverage gates to a new scope over shared storage.
+// The original backend retains ownership of the shared storage handle.
+type BuildScopeBackend interface {
+	Backend
+	WithBuildScope(scope BuildScope) Backend
+}
+
 // Backend is the minimum contract a vector store must implement.
 type Backend interface {
 	EmbeddingCheckpoints() EmbeddingCheckpoints

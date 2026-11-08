@@ -160,9 +160,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.47.0**.
+it is separate from the binary release version. The current schema is **3.49.0**.
 
-Schema 3.47.0 adds attachment processing outcomes and worker errors.
+Schema 3.49.0 adds attachment processing outcomes and worker errors.
+
+Schema 3.48.0 adds owner-only local embedding setup and progress through `GET` and `POST /api/v1/embeddings/local`.
+
+Schema 3.47.0 adds optional `hints` to CLI and fast-search responses. Each hint contains `code`, `message`, and `retry_with.query`.
 
 Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` and `candidate_limit_reached` to semantic search. `has_more` is true when another ranked hit exists and the next page fits within the configured ranking cap. `candidate_limit_reached` carries `k_per_signal` when hybrid retrieval measures an eligible message outside the combined retained candidates. `ranking_limit_reached` carries the effective page cap when an extra ranked hit exists, or omitted candidates would need a page beyond the cap. Raise each reported server setting above its value, restart the server, then request a larger page. Pool saturation alone sets neither cap field.
 
@@ -1030,6 +1034,15 @@ no earlier snapshot to serve, so the request fails with `503 query_timeout`.
 Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
 anyway: the response sets `"counts_pending": true`, and every account's
 `message_count` and `source_deleted_count` is a placeholder `0`.
+
+Once a count snapshot exists, fresh counts get 500 ms. If they don't finish,
+the response carries the previous counts with `"stale": true` and their
+original `as_of`, while the refresh continues. The CLI shows such counts with
+their age, such as `1,234 (counted 3 minutes ago)`.
+
+Virtual-account counts retain their two-second cold wait. Once a matching catalog
+exists, callers with the pending-counts header reuse it immediately after
+expiry while it refreshes. Strict callers retain the two-second refresh wait.
 
 **Response (vector search disabled):**
 
@@ -2027,6 +2040,8 @@ Search subject, snippet, sender and recipient metadata with the Gmail-style
 query in `q`. The response includes the page in `messages` and the full match
 count in `total_count`; no separate count request is needed. If the count is
 unavailable, `total_count` is `-1`.
+
+An empty first page on SQLite can include `hints` with code `sender_name_requires_address` and a corrected `retry_with.query` for an incomplete sender name or address. CLI search returns the same shape.
 
 Use `limit` and `offset` to page through results. `limit=0` returns the count
 without fetching a page. Aggregate `stats` are omitted by default. Supply
@@ -3242,7 +3257,7 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 
 `daemon_idle_timeout` only affects daemons started by `msgvault daemon start` or auto-started by a CLI command. A foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the configured timeout for lifecycle-managed background daemons.
 
-`daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary, `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients.
+`daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
 ### `[analytics]`
 
@@ -3282,6 +3297,14 @@ policy and deletion visibility. Changes under
 | `enabled` | `true` | Whether scheduled sync is active |
 
 See the [Configuration](/docs/configuration/) page for the full config file reference.
+
+## Local embedding setup
+
+`GET /api/v1/embeddings/local` reports the selected provider, download size, and setup progress. `host` names the daemon host for remote browsers and is empty for loopback addresses. `running` identifies an active setup; `phase` is `idle`, `downloading`, or `indexing`. `done_bytes` and `total_bytes` describe download progress, and `error` shows a failed setup's explanation for the current daemon session.
+
+`POST /api/v1/embeddings/local` takes no body and turns on local message search, reusing Ollama when it already serves `nomic-embed-text`. Otherwise, setup downloads the local model when needed, saves the message-search configuration, publishes it to the running daemon, and builds the message index. Poll `GET` for completion; setup continues after its HTTP connection closes. Existing configured providers require a configuration change before activation. Document and people consent remain separate from message activation.
+
+Both routes require owner access. `POST` returns `202` for a new or already-running setup, or `503 unavailable` when setup cannot be admitted. `GET` returns `503 unavailable` when inspection fails or local setup is unavailable. Failures after admission appear in the polled `error` field. Use the separate [message embedding status](#message-embedding-status) for index coverage and throughput.
 
 ## Message embedding status
 

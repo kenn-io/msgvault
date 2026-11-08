@@ -24,6 +24,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary.
 
+The Unix installer adds msgvault to your Bash, Zsh, or Fish profile; `MSGVAULT_NO_MODIFY_PATH=1` skips the profile edit.
+
 Windows releases include native AMD64 and ARM64 packages. On Windows ARM64,
 the PowerShell installer selects the native package when the release provides
 one and falls back to the AMD64 package under emulation for older releases.
@@ -438,18 +440,21 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Start the daemon:
+Start the daemon, or find the one already running:
 
 ```bash
-msgvault serve
+msgvault daemon start
 ```
 
-The daemon builds a missing or stale analytical cache during startup. Open the
-`API server` URL it prints. With the default loopback bind,
+Open the URL it prints in your browser. The daemon builds a missing or stale
+analytical cache during startup. With the default loopback bind,
 the browser is trusted locally. A daemon bound to another interface must use an
 API key; the browser presents a login screen and stores only an in-memory
 daemon session. The release binary contains the complete UI, so no frontend
 runtime or separately installed web files are required.
+
+To run in the foreground, stop the daemon with `msgvault daemon stop`, then run
+`msgvault serve`.
 
 For a server or NAS, prefer HTTPS at a reverse proxy and configure only that
 proxy in `server.trusted_proxies`. Plain HTTP is an explicit private-network

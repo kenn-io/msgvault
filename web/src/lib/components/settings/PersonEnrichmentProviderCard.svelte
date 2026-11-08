@@ -1,6 +1,6 @@
 <script lang="ts">
   import { putSettingsPersonEnrichmentProvider as generatedPutSettingsPersonEnrichmentProvider } from '../../api/generated/api/api';
-  import { Button, Chip, NumberInput, Toggle } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Chip, NumberInput, Toggle } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -136,8 +136,7 @@
       onConflict={onCredentialConflict}
     />
   </div>
-  <details class="advanced">
-    <summary>Advanced</summary>
+  <Disclosure variant="plain" class="advanced">{#snippet summary()}Advanced{/snippet}
     <div class="provider-grid">
       <label class="wide">
         Endpoint
@@ -279,7 +278,7 @@
         />
       </div>
     </div>
-  </details>
+  </Disclosure>
   {#if error}<p class="provider-error" role="alert">{error}</p>{/if}
   <footer>
     <Button
@@ -329,7 +328,7 @@
     color: var(--status-error-ink);
     font-size: var(--font-size-sm);
   }
-  .advanced summary {
+  .provider-card :global(.advanced .kit-disclosure__summary) {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
     cursor: pointer;

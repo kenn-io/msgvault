@@ -435,6 +435,7 @@ type Model struct {
 	// Global Stats (not view specific)
 	stats                 *query.TotalStats // Global stats
 	accounts              []query.AccountInfo
+	accountsLoaded        bool
 	collectionScopeLister query.CollectionScopeLister
 	collectionScopes      []query.CollectionScope
 	sourceScope           sourceScope
@@ -1791,6 +1792,7 @@ func (m Model) handleAccountsLoaded(msg accountsLoadedMsg) (tea.Model, tea.Cmd) 
 		}
 		return m, nil
 	}
+	m.accountsLoaded = true
 	if msg.catalogUnavailable {
 		keepKnownVirtualAccounts(msg.accounts, m.accounts)
 	}
