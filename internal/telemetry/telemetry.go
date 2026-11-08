@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/forge"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
@@ -64,7 +65,7 @@ const (
 var actionProperties = map[string]map[string][]string{
 	EventSearchEmpty:   {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventErrorShown:    {propertySurface: {"web", "tui"}, "kind": {"search", "message", "sync", "other"}},
-	EventSyncFailed:    {"sync_source": {"gmail", "imap", "msmail", "teams", "discord", "beeper", "matrix", "slack", "carddav", "chatwoot", "synctech_sms", "gcal", "omi", "granola", "plaud", "pocket", "circleback", "notion_meetings", "twilio", "twenty", "muesli"}, "reason": {"auth", "network", "rate_limited", "other"}},
+	EventSyncFailed:    {"sync_source": {"gmail", "imap", "msmail", "teams", "discord", "beeper", "matrix", "slack", "carddav", "chatwoot", "synctech_sms", "gcal", "omi", "granola", "plaud", "pocket", "circleback", "notion_meetings", "twilio", "twenty", "muesli", "github", "gitlab", "gitea"}, "reason": {"auth", "network", "rate_limited", "other"}},
 	EventSearchRun:     {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventMessageOpened: {propertySurface: {"web", "tui", "cli"}},
 	EventSyncFinished:  {propertySurface: {"web", "cli"}},
@@ -212,9 +213,9 @@ func reason(err error) string {
 	_, graphThrottled := errors.AsType[*msgraph.ThrottledError](err)
 	retrieveError, _ := errors.AsType[*oauth2.RetrieveError](err)
 	switch {
-	case errors.Is(err, calcontrol.ErrDenied) || errors.Is(err, granola.ErrUnauthorized) || errors.Is(err, omi.ErrUnauthorized) || (retrieveError != nil && retrieveError.ErrorCode == "invalid_grant") || errors.Is(err, msgraph.ErrUnauthorized) || errors.Is(err, gcal.ErrUnauthorized) || errors.Is(err, slack.ErrAuth) || errors.Is(err, notionmeetings.ErrUnauthorized) || errors.Is(err, oauth.ErrTokenUnrefreshable) || errors.Is(err, oauth.ErrInvalidTokenJSON) || errors.Is(err, beeper.ErrUnauthorized) || errors.Is(err, chatwoot.ErrUnauthorized) || imapErr != nil && imapErr.Code == imap.ResponseCodeAuthenticationFailed || status == 401:
+	case errors.Is(err, calcontrol.ErrDenied) || errors.Is(err, granola.ErrUnauthorized) || errors.Is(err, omi.ErrUnauthorized) || (retrieveError != nil && retrieveError.ErrorCode == "invalid_grant") || errors.Is(err, msgraph.ErrUnauthorized) || errors.Is(err, gcal.ErrUnauthorized) || errors.Is(err, slack.ErrAuth) || errors.Is(err, notionmeetings.ErrUnauthorized) || errors.Is(err, oauth.ErrTokenUnrefreshable) || errors.Is(err, oauth.ErrInvalidTokenJSON) || errors.Is(err, beeper.ErrUnauthorized) || errors.Is(err, chatwoot.ErrUnauthorized) || errors.Is(err, forge.ErrUnauthorized) || imapErr != nil && imapErr.Code == imap.ResponseCodeAuthenticationFailed || status == 401:
 		return "auth"
-	case gmailThrottled || graphThrottled || errors.Is(err, gcal.ErrRateLimited) || notionErr != nil && notionErr.Status == 429 || status == 429:
+	case gmailThrottled || graphThrottled || errors.Is(err, gcal.ErrRateLimited) || forge.IsRateLimit(err) || notionErr != nil && notionErr.Status == 429 || status == 429:
 		return "rate_limited"
 	case status == 0 && retrieveError == nil && syncerr.IsTransientNetwork(err):
 		return "network"

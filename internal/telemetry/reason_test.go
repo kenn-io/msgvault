@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/forge"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
@@ -58,6 +59,8 @@ func TestReason(t *testing.T) {
 		{errors.New("invalid_grant status 401 429"), "other"},
 		{&gmail.StatusError{StatusCode: 500}, "other"},
 		{context.DeadlineExceeded, "network"},
+		{forge.ErrUnauthorized, "auth"},
+		{&forge.RateLimitError{Resource: "core"}, "rate_limited"},
 	} {
 		assert.Equal(t, tc.want, reason(fmt.Errorf("sync: %w", tc.err)))
 	}
