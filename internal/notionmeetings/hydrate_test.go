@@ -949,7 +949,21 @@ func TestHydrationDepthAndBlockBoundaries(t *testing.T) {
 			for i := range count - 1 {
 				blocks = append(blocks, paragraph(fmt.Sprintf("child-%d", i), "OWNED", false))
 			}
-			source.children[root.ID] = map[string]*BlockPage{"": {Results: blocks}}
+			pages := make(map[string]*BlockPage)
+			for offset := 0; offset < len(blocks); offset += pageSize {
+				cursor := ""
+				if offset > 0 {
+					cursor = strconv.Itoa(offset)
+				}
+				end := min(offset+pageSize, len(blocks))
+				page := &BlockPage{Results: blocks[offset:end]}
+				if end < len(blocks) {
+					page.HasMore = true
+					page.NextCursor = strconv.Itoa(end)
+				}
+				pages[cursor] = page
+			}
+			source.children[root.ID] = pages
 			result, err := NewHydrator(source).HydrateBlock(t.Context(), source.blocks["meeting-1"])
 			require.NoError(t, err)
 			assert.Equal(t, count <= maxHydrationBlocks, result.NotesTree.Complete)
