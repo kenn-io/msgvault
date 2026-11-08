@@ -228,7 +228,11 @@ func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting
 func (s *syncState) deferTranscriptAttempt(id string, now time.Time) {
 	for i := range s.Pending {
 		if s.Pending[i].BlockID == id {
-			s.Pending[i].NextAttemptAt = now.Add(transcriptRetryCadence).Format(time.RFC3339)
+			next := now.Add(transcriptRetryCadence)
+			if deadline, err := time.Parse(time.RFC3339, s.Pending[i].RetryUntil); err == nil && deadline.Before(next) {
+				next = deadline
+			}
+			s.Pending[i].NextAttemptAt = next.Format(time.RFC3339)
 		}
 	}
 }
