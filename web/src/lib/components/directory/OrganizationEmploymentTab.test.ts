@@ -21,6 +21,7 @@ async function openInlineEmployer(controller: DirectoryEntityController, name: s
 async function rowAction(label: string): Promise<void> {
   await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for /  })[0]);
   await fireEvent.click(await screen.findByRole('menuitem', { name: label }));
+  if (label === 'Delete…') await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
 }
 
 describe('OrganizationEmploymentTab', () => {
@@ -169,7 +170,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 
   it.each([true, false])('explains permanent deletion for current=%s employment', async current => {
-    const { controller } = controllerWith(vi.fn<typeof fetch>());
+    const { controller } = controllerWith(async () => Response.json(employment(11, 1, { is_current: current }), { headers: { ETag: '"employment-11-r1"' } }));
     controller.employments = [employment(11, 1, { is_current: current })];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
     if (!controller.employments.some(job => job.is_current)) await fireEvent.click(screen.getByText(/^\d+ past jobs?$/));
@@ -265,6 +266,7 @@ describe('OrganizationEmploymentTab', () => {
       expect(screen.queryByText(/has 1 job/)).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Delete job…' }));
       const confirm = await screen.findByRole('dialog', { name: 'Delete Engineer at Synthetic Org?' });
+      await waitFor(() => expect(within(confirm).getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
       await fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' }));
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       expect(controller.employments).toEqual([]);
@@ -575,7 +577,7 @@ describe('OrganizationEmploymentTab', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/employments/11' && request.method === 'GET') {
-        return new Response(JSON.stringify(employment(11, revision)), { headers: { ETag: `"employment-11-r${revision}"` } });
+        return new Response(JSON.stringify(employment(11, revision, { start_date: { year: 2024, month: 3 } })), { headers: { ETag: `"employment-11-r${revision}"` } });
       }
       if (path === '/api/v1/employments/11/end') {
         revision += 1;
@@ -759,18 +761,21 @@ it('uses the selected job version when Make primary moves to another row', async
 
 it('deletes the saved version a job delete conflict shows', async () => {
   const tags: (string | null)[] = [];
+  let reads = 0;
   const saved = employment(11, 2, { title: 'Concurrent title' });
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (pathOf(request) === '/api/v1/people/7/employments') return collection([]);
     if (pathOf(request).startsWith('/api/v1/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    if (request.method === 'GET') return Response.json(tags.length ? saved : employment(), { headers: { ETag: tags.length ? '"employment-11-r2"' : '"employment-11-r1"' } });
+    if (request.method === 'GET') { reads++; return Response.json(tags.length ? saved : employment(), { headers: { ETag: tags.length ? '"employment-11-r2"' : '"employment-11-r1"' } }); }
     tags.push(request.headers.get('If-Match'));
     return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
   });
   controller.employments = [employment()];
   render(OrganizationEmploymentTab, { controller, personID: 7 });
   await rowAction('Delete…');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+  expect(reads).toBe(1);
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await screen.findByText('This job changed since you opened it.');
   expect(screen.getByText('Concurrent title')).toBeDefined();

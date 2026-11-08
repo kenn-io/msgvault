@@ -1,6 +1,5 @@
-import type { RelationshipType } from './models';
-import { person } from './person-fixtures.test-support';
-import type { DirectoryPersonSummary } from '../api/generated/models/directoryPersonSummary';
+import { organization, employment } from './entity-data.test-support';
+export { organization, employment, directoryPerson, relationshipType } from './entity-data.test-support';
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
 
@@ -14,12 +13,7 @@ export function pathOf(request: Request): string {
   return new URL(request.url, document.baseURI).pathname;
 }
 
-export function organization(id = 21, revision = 1, name = 'Synthetic Org') {
-  return {
-    id, revision, name, kind: 'company', primary_domain: 'synthetic.example', description: 'A synthetic organization.',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
-}
+
 
 export function organizationProfile(revision = 1, name = 'Synthetic Org') {
   return {
@@ -54,12 +48,7 @@ export function richOrganizationProfile(revision = 3) {
   };
 }
 
-export function employment(id = 11, revision = 1, overrides: Record<string, unknown> = {}) {
-  return {
-    id, revision, person_id: 7, organization_id: 21, source: 'user', is_current: true, is_primary: false,
-    title: 'Engineer', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
+
 
 export function collection(rows = [employment()], projection = { employment_id: 11, organization_id: 21, organization_name: 'Synthetic Org', title: 'Engineer', vcard: {} }) {
   return Response.json({ employments: rows, projection });
@@ -70,22 +59,13 @@ export function controllerWith(fetchFn: typeof fetch, personID = 7) {
   return { client, controller: new DirectoryEntityController(client, personID) };
 }
 
-export function directoryPerson(id: number, overrides: Partial<DirectoryPersonSummary> = {}): DirectoryPersonSummary {
-  const detail = person(id);
-  return { id, revision: detail.revision, display_name: detail.display_name, categories: [], organizations: [], carddav_bindings: [], contact_state: 'active', vcard_uid: detail.vcard_uid, ...overrides };
-}
+
 
 export function candidate(id: number, state = 'candidate') {
   return { id, left_id: id * 10, left_kind: 'participant', right_id: id * 10 + 1, right_kind: 'participant', basis: 'email', source: 'user', state, actionable: state === 'candidate' || state === 'conflict', application_pending: false, review_token: `token-${id}-${state}`, evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
 }
 
-export function relationshipType(overrides: Partial<RelationshipType> = {}): RelationshipType {
-  return {
-    id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by',
-    is_symmetric: false, is_canonical: true, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
+
 
 export function relationship(id = 41, revision = 1, overrides: Record<string, unknown> = {}) {
   return {

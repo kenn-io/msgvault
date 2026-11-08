@@ -78,7 +78,7 @@
   }
 
   async function removeEmployment(): Promise<void> {
-    if (!deletingEmployment || acting) return;
+    if (!deletingEmployment || acting || !removal.prepared) return;
     const target = deletingEmployment;
     if (await removal.run(current => controller.deleteEmployment(target.id, current))) closeDelete();
   }
@@ -86,6 +86,13 @@
   function openDelete(employment: Employment): void {
     removal.reset();
     deletingEmployment = employment;
+    void prepareDelete();
+  }
+
+  async function prepareDelete(): Promise<void> {
+    if (!deletingEmployment) return;
+    await removal.prepare(() => controller.prepareEmploymentMutation(deletingEmployment!.id));
+    if (removal.prepared) deletingEmployment = removal.prepared.data;
   }
 
   function closeDelete(): void {
@@ -139,13 +146,13 @@
     onDone={() => { employmentEditor = undefined; }} onClose={() => { employmentEditor = undefined; }} />
 {/if}
 {#if deletingEmployment}
-  <Dialog title={`Delete ${employmentLabel(deletingEmployment)} at ${controller.organizationName(deletingEmployment.organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
+  <Dialog title={`Delete ${employmentLabel(deletingEmployment)} at ${controller.organizationName(deletingEmployment.organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" primaryDisabled={!removal.prepared} onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
     <p>This permanently removes the job. {#if deletingEmployment.is_current}<button data-link type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
     {#snippet notice()}
       {#if removal.conflict && deletingEmployment}
         <!-- Delete again removes the saved version the notice shows. -->
         <ConflictNotice noun="job" saved={removal.conflict.data} {...conflict(employmentFacts(removal.conflict.data, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)))} message={removal.details} />
-      {:else if removal.details}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => void removeEmployment()} />{/if}
+      {:else if removal.details}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => { if (removal.prepared) void removeEmployment(); else void prepareDelete(); }} />{/if}
     {/snippet}
   </Dialog>
 {/if}

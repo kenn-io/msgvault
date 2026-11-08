@@ -7,6 +7,19 @@ export class WriteAttempt<C = never> {
   details = $state('');
   prepared = $state<C>();
 
+  async prepare(load: () => Promise<C>): Promise<void> {
+    this.busy = true;
+    this.details = '';
+    try {
+      const current = await load();
+      this.prepared = current;
+    } catch (cause) {
+      this.details = cause instanceof Error ? cause.message : 'No response from the server.';
+    } finally {
+      this.busy = false;
+    }
+  }
+
   async run<T>(send: (current: C | undefined) => Promise<DirectoryEntityMutationResult<T, C>>): Promise<boolean> {
     if (this.busy) return false;
     const current = this.conflict ?? this.prepared;

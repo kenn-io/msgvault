@@ -2,8 +2,10 @@ import { setKitTheme } from './kit-ui';
 import { expect, test, type Locator } from '@playwright/test';
 import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 
-const organization = { id: 21, revision: 1, name: 'Example Org', kind: 'company', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
-const employment = { id: 11, revision: 1, person_id: 42, organization_id: 21, title: 'Engineer', source: 'user', is_current: true, is_primary: true, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+import { organization as makeOrganization, employment as makeEmployment } from '../src/lib/directory/entity-data.test-support';
+
+const organization = makeOrganization(21, 1, 'Example Org');
+const employment = makeEmployment(11, 1, { person_id: 42, is_primary: true });
 
 test.beforeEach(async ({ page }) => {
   await installMixedArchive(page);
@@ -92,6 +94,7 @@ test('opening Add job leaves the page behind it in place', async ({ page }) => {
 test('a long delete title wraps on a phone instead of cutting off', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/v1/people/42/employments', route => route.fulfill({ json: { employments: [{ ...employment, title: 'Senior landscape garden designer' }] } }));
+  await page.route('**/api/v1/employments/11', route => route.fulfill({ headers: { ETag: '"employment-11-r1"' }, json: { ...employment, title: 'Senior landscape garden designer' } }));
   await page.reload();
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
   await page.getByRole('region', { name: 'Work', exact: true }).getByRole('button', { name: /^Actions for / }).click();
@@ -240,7 +243,13 @@ for (const width of [1440, 390]) {
   test(`End job conflict stays contained at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await setKitTheme(page, 'dark');
-    await page.route('**/api/v1/employments/11', route => route.fulfill({ headers: { ETag: '"employment-11-r2"' }, json: { ...employment, revision: 2, start_date: { year: 2024 } } }));
+    let reads = 0;
+    await page.route('**/api/v1/employments/11', route => {
+      reads++;
+      return route.fulfill(reads === 1
+        ? { headers: { ETag: '"employment-11-r1"' }, json: employment }
+        : { headers: { ETag: '"employment-11-r2"' }, json: { ...employment, revision: 2, start_date: { year: 2024 } } });
+    });
     await page.route('**/api/v1/employments/11/end', route => route.fulfill({ status: 412, json: { message: 'Changed elsewhere' } }));
     await page.getByRole('region', { name: 'Work', exact: true }).getByRole('button', { name: /^Actions for / }).click();
     await page.getByRole('menuitem', { name: 'End…', exact: true }).click();

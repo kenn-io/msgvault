@@ -2,16 +2,7 @@ import { setKitTheme } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 import { person } from '../src/lib/directory/person-fixtures.test-support';
-import type { DirectoryPersonSummary, RelationshipType } from '../src/lib/directory/models';
-
-function directoryPerson(id: number, overrides: Partial<DirectoryPersonSummary> = {}): DirectoryPersonSummary {
-  const detail = person(id);
-  return { id, revision: detail.revision, display_name: detail.display_name, categories: [], organizations: [], carddav_bindings: [], contact_state: 'active', vcard_uid: detail.vcard_uid, ...overrides };
-}
-
-function relationshipType(overrides: Partial<RelationshipType>): RelationshipType {
-  return { id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by', is_symmetric: false, is_canonical: true, ownership: 'user', is_deletable: overrides.ownership !== 'system', universal_id: `relationship-type-${overrides.id ?? 31}`, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides };
-}
+import { directoryPerson, relationshipType } from '../src/lib/directory/entity-data.test-support';
 
 test('saved person remains selectable at 280px', async ({ page }) => {
   await installDirectoryReviewArchive(page);

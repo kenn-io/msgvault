@@ -34,6 +34,8 @@ function view(id: number, direction: 'incoming' | 'outgoing', label: string, nam
 async function rowAction(label: string): Promise<void> {
   await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for /  })[0]);
   await fireEvent.click(await screen.findByRole('menuitem', { name: label }));
+  if (label === 'Edit…') await waitFor(() => expect(screen.queryByText('Loading connection…')).toBeNull());
+  if (label === 'Delete…') await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
 }
 
 describe('RelationshipsTab', () => {
@@ -291,11 +293,12 @@ describe('RelationshipsTab', () => {
   });
 
   it.each(['incoming', 'outgoing'] as const)('reads the existing %s connection as a sentence', async direction => {
-    const { client, controller } = controllerWith(async () => Response.json({ reviews: [] }));
+    const { client, controller } = controllerWith(async () => Response.json(relationship(), { headers: { ETag: '"person-relationship-41-r1"' } }));
     controller.relationshipTypes = [relationshipType()];
     controller.relationships = [view(41, direction, direction === 'incoming' ? 'is mentored by' : 'mentors', 'Synthetic Peer')];
     render(RelationshipsTab, { client, controller, personID: 7, personName: 'Synthetic Subject' });
     await rowAction('Edit…');
+    await screen.findByRole('textbox', { name: 'Notes' });
     expect(screen.getByRole('dialog').textContent).toContain(`Synthetic Subject ${direction === 'incoming' ? 'is mentored by' : 'mentors'} Synthetic Peer`);
   });
 
@@ -600,7 +603,7 @@ describe('RelationshipsTab', () => {
   it('opens Edit with the connection as context: since when, who added it, and prose notes', async () => {
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationships/41') return new Response(JSON.stringify(relationship(41, 1)), { headers: { ETag: '"relationship-41-r1"' } });
+      if (pathOf(request) === '/api/v1/person-relationships/41') return new Response(JSON.stringify(relationship(41, 1, { start_date: { year: 2022 }, notes: 'Met at the seed exchange.' })), { headers: { ETag: '"relationship-41-r1"' } });
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     }));
     controller.relationships = [view(41, 'outgoing', 'friend', 'Tavi Reed', { relationship: { ...relationship(41, 1), start_date: { year: 2022 }, notes: 'Met at the seed exchange.' } })];
@@ -610,10 +613,32 @@ describe('RelationshipsTab', () => {
     await rowAction('Edit…');
     const dialog = await screen.findByRole('dialog', { name: 'Edit connection' });
     // A connection the person added says only since when; one from somewhere else says where.
-    expect(within(dialog).getByText('Since 2022')).toBeDefined();
+    expect(await within(dialog).findByText('Since 2022')).toBeDefined();
     expect(within(dialog).queryByText(/added by you/)).toBeNull();
     expect(within(dialog).queryByText('You')).toBeNull();
     expect(within(dialog).getByRole('textbox', { name: 'Notes' }).tagName).toBe('TEXTAREA');
+  });
+
+  it('uses the opened connection version when notes change elsewhere', async () => {
+    let revision = 1;
+    let reads = 0;
+    const tags: (string | null)[] = [];
+    const opening = relationship(41, 1, { notes: 'Opening' });
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PATCH') { tags.push(request.headers.get('If-Match')); return Response.json({ message: 'Changed' }, { status: 412 }); }
+      reads++;
+      return Response.json(revision === 1 ? opening : relationship(41, 2, { notes: 'Concurrent' }), { headers: { ETag: `"person-relationship-41-r${revision}"` } });
+    });
+    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: opening })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await rowAction('Edit…');
+    await waitFor(() => expect(reads).toBe(1));
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft' } });
+    revision = 2;
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Keep yours' });
+    expect(tags).toEqual(['"person-relationship-41-r1"']);
   });
 
   it('patches only a changed end date so a fresh server note is not overwritten', async () => {
@@ -720,7 +745,7 @@ describe('RelationshipsTab', () => {
   it('closes an unchanged relationship edit without sending an empty patch', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = requestOf(input);
-      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+      return Response.json(relationship(41, 1, { notes: 'Opening note', end_date: { year: 2026, month: 6 } }), { headers: { ETag: '"person-relationship-41-r1"' } });
     });
     const { client, controller } = controllerWith(fetchFn);
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', {
@@ -732,7 +757,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
-    expect(fetchFn).not.toHaveBeenCalled();
+    expect(fetchFn.mock.calls.map(([input]) => requestOf(input).method)).toEqual(['GET']);
   });
 
   it('deletes the single underlying edge with its fresh ETag', async () => {
@@ -781,6 +806,8 @@ describe('RelationshipsTab', () => {
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer')];
     render(RelationshipsTab, { client, controller, personID: 7 });
     await rowAction('Delete…');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+    expect(reads).toBe(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('This connection changed since you opened it.');
@@ -917,7 +944,7 @@ describe('RelationshipsTab', () => {
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/relationship-types/31' && request.method === 'GET') {
-        return new Response(JSON.stringify(current), { headers: { ETag: '"relationship-type-31-r1"' } });
+        return new Response(JSON.stringify({ ...current, revision }), { headers: { ETag: `"relationship-type-31-r${revision}"` } });
       }
       if (path === '/api/v1/relationship-types/31' && request.method === 'PATCH') {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-type-31-r2"' } });
@@ -1133,8 +1160,9 @@ describe('RelationshipsTab', () => {
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
-  it('deletes a deletable user type with its fresh ETag', async () => {
+  it('deletes a connection type with the version opened', async () => {
     const requests: Request[] = [];
+    let revision = 1;
     const current = relationshipType();
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -1150,6 +1178,9 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+    expect(requests.filter(request => request.method === 'GET')).toHaveLength(1);
+    revision = 2;
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -1162,10 +1193,11 @@ describe('RelationshipsTab', () => {
 it.each([2024, 2028])('validates connection retries against the saved start year %s', async year => {
   const opening = relationship(41, 1, { start_date: { year: 2026 }, notes: 'Original note' });
   const saved = relationship(41, 2, { start_date: { year }, notes: 'Concurrent note' });
+  let reads = 0;
   const { client, controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    return Response.json(saved, { headers: { ETag: '"person-relationship-41-r2"' } });
+    return Response.json(reads++ === 0 ? opening : saved, { headers: { ETag: reads === 1 ? '"person-relationship-41-r1"' : '"person-relationship-41-r2"' } });
   });
   controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
   render(RelationshipsTab, { client, controller, personID: 7 });
@@ -1232,9 +1264,10 @@ it.each(['failed', 'committed'])('shows the latest outcome after a %s connection
 it.each(['cleared notes', 'derived status'])('compares %s after an end-date conflict', async change => {
   const opening = relationship(41, 1, change === 'cleared notes' ? { notes: 'Opening notes' } : {});
   const saved = relationship(41, 2, { end_date: { year: 2025 }, status: 'ended' });
+  let reads = 0;
   const { client, controller } = controllerWith(async input => requestOf(input).method === 'PATCH'
     ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
-    : Response.json(saved, { headers: { ETag: '"person-relationship-41-r2"' } }));
+    : Response.json(reads++ === 0 ? opening : saved, { headers: { ETag: reads === 1 ? '"person-relationship-41-r1"' : '"person-relationship-41-r2"' } }));
   controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
   render(RelationshipsTab, { client, controller, personID: 7 });
   await rowAction('Edit…');

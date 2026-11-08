@@ -75,14 +75,38 @@
   }
 
   async function removeRelationship(): Promise<void> {
-    if (!deletingRelationship || acting) return;
+    if (!deletingRelationship || acting || !removal.prepared) return;
     const target = deletingRelationship.relationship;
     if (await removal.run(current => controller.deleteRelationship(target.id, current))) deletingRelationship = undefined;
   }
 
+  async function prepareDelete(): Promise<void> {
+    if (!deletingRelationship) return;
+    await removal.prepare(() => controller.prepareRelationshipMutation(deletingRelationship!.relationship.id));
+    if (removal.prepared && deletingRelationship) deletingRelationship = { ...deletingRelationship, relationship: removal.prepared.data };
+  }
+
+  function openDelete(view: PersonRelationshipView): void {
+    removal.reset();
+    deletingRelationship = view;
+    void prepareDelete();
+  }
+
   async function removeRelationshipType(): Promise<void> {
-    if (!deletingType || acting) return;
-    if (await typeRemoval.run(() => controller.deleteRelationshipType(deletingType!.id))) deletingType = undefined;
+    if (!deletingType || acting || !typeRemoval.prepared) return;
+    if (await typeRemoval.run(current => controller.deleteRelationshipType(deletingType!.id, current))) deletingType = undefined;
+  }
+
+  async function prepareTypeDelete(): Promise<void> {
+    if (!deletingType) return;
+    await typeRemoval.prepare(() => controller.prepareRelationshipTypeMutation(deletingType!.id));
+    if (typeRemoval.prepared) deletingType = typeRemoval.prepared.data;
+  }
+
+  function openTypeDelete(type: RelationshipType): void {
+    typeRemoval.reset();
+    deletingType = type;
+    void prepareTypeDelete();
   }
 
   function closeDelete(): void {
@@ -117,7 +141,7 @@
             <li>
               <span class="type-name">{typeLabel(type)}</span>
               <Button size="sm" surface="soft" label="Edit" ariaLabel={`Edit ${type.slug} relationship type`} onclick={() => { relationshipTypeEditor = type; }} />
-              {#if type.is_deletable}<Button size="sm" surface="soft" tone="danger" label="Delete" ariaLabel={`Delete ${type.slug} relationship type`} onclick={() => { deletingType = type; }} />{/if}
+              {#if type.is_deletable}<Button size="sm" surface="soft" tone="danger" label="Delete" ariaLabel={`Delete ${type.slug} relationship type`} onclick={() => openTypeDelete(type)} />{/if}
             </li>
           {/each}
         </ul>
@@ -141,20 +165,20 @@
     onDone={() => { relationshipTypeEditor = undefined; }} onClose={() => { relationshipTypeEditor = undefined; }} />
 {/if}
 {#if deletingRelationship}
-  <Dialog title={`Delete connection with ${counterpart(deletingRelationship)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationship()} busy={acting}>
+  <Dialog title={`Delete connection with ${counterpart(deletingRelationship)}?`} width="small" primaryLabel="Delete" primaryTone="danger" primaryDisabled={!removal.prepared} onclose={closeDelete} onprimary={() => void removeRelationship()} busy={acting}>
     <p class="confirm">This permanently removes the connection.</p>
     {#snippet notice()}
       {#if removal.conflict && deletingRelationship}
         <!-- Delete again removes the saved version the notice shows. -->
         <ConflictNotice noun="connection" saved={removal.conflict.data} {...conflict(connectionFacts(removal.conflict.data), connectionFacts(deletingRelationship.relationship), connectionFacts(deletingRelationship.relationship))} message={removal.details} />
-      {:else if removal.details}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => void removeRelationship()} />{/if}
+      {:else if removal.details}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => { if (removal.prepared) void removeRelationship(); else void prepareDelete(); }} />{/if}
     {/snippet}
   </Dialog>
 {/if}
 {#if deletingType}
-  <Dialog title={`Delete ${deletingType.slug} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
+  <Dialog title={`Delete ${deletingType.slug} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" primaryDisabled={!typeRemoval.prepared || !typeRemoval.prepared.data.is_deletable || typeRemoval.prepared.data.ownership === 'system'} onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
     <p class="confirm">This permanently removes the connection type.</p>
-    {#snippet notice()}{#if typeRemoval.failed}<InlineNotice message={typeRemoval.conflict ? 'This connection type changed since you opened it.' : "Couldn't delete this connection type."} details={typeRemoval.details} actionLabel={typeRemoval.conflict ? 'Reload' : 'Retry'} onaction={() => { if (typeRemoval.conflict) void controller.refreshRelationshipTypes().then(() => { if (!controller.errors.relationshipTypes) typeRemoval.reset(); }); else void removeRelationshipType(); }} />{/if}{/snippet}
+    {#snippet notice()}{#if typeRemoval.failed || typeRemoval.details}<InlineNotice message={typeRemoval.conflict ? 'This connection type changed since you opened it.' : "Couldn't delete this connection type."} details={typeRemoval.details} actionLabel={typeRemoval.conflict ? 'Reload' : 'Retry'} onaction={() => { if (typeRemoval.conflict) { typeRemoval.reset(); void prepareTypeDelete(); } else if (typeRemoval.prepared) void removeRelationshipType(); else void prepareTypeDelete(); }} />{/if}{/snippet}
   </Dialog>
 {/if}
 
@@ -169,7 +193,7 @@
   <!-- The person is a link in the row's text, so the row itself takes no tap: Edit… is in ⋯. -->
   <DetailRow actionLabel={counterpart(view)} description={[sentenceCase(view.counterpart_label), dateSpan(view.relationship.start_date, view.relationship.end_date, view.relationship.status !== 'ended', { later: true }), view.relationship.notes ?? ''].filter(Boolean).join(' · ')} menu={[
     { label: 'Edit…', onselect: () => openEditor(view) },
-    { label: 'Delete…', danger: true, onselect: () => { removal.reset(); deletingRelationship = view; } }
+    { label: 'Delete…', danger: true, onselect: () => openDelete(view) }
   ]}>
     {#if onOpenPerson}<button data-link type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if}
   </DetailRow>

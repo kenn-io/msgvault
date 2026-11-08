@@ -50,7 +50,9 @@
     onClose = () => undefined,
   }: Props = $props();
   const initialView = untrack(() => relationship);
-  const initialRelationship = initialView?.relationship;
+  let initialRelationship = $state(initialView?.relationship);
+  let opened = $state<Prepared<PersonRelationship>>();
+  let loading = $state(!!initialView);
   let counterpartID = $state<number | null>(initialView?.counterpart_person_id ?? null);
   let people = $state<DirectoryPerson[]>([]);
   let searching = $state(false);
@@ -70,11 +72,11 @@
     sourcePhrase(initialRelationship.source),
   ].filter(Boolean).join(' · ').replace(/^./, first => first.toUpperCase()) : '');
   const editPhrase = $derived(initialRelationship ? relationshipPhrase(initialRelationship.type_slug, initialView?.direction === 'incoming' ? 'incoming' : 'outgoing', initialView?.direction === 'incoming' ? initialRelationship.reverse_label : initialRelationship.forward_label) : '');
-  let startDate = $state(partialDate(initialRelationship?.start_date));
-  let endDate = $state(partialDate(initialRelationship?.end_date));
+  let startDate = $state(partialDate(initialView?.relationship.start_date));
+  let endDate = $state(partialDate(initialView?.relationship.end_date));
   let datesInvalid = $state(false);
   let endDateError = $state<string | null>(null);
-  let notes = $state(initialRelationship?.notes ?? '');
+  let notes = $state(initialView?.relationship.notes ?? '');
   const attempt = new WriteAttempt<Prepared<PersonRelationship>>();
   let committed = $state(false);
 
@@ -95,12 +97,27 @@
   const debouncedSearch = debounce((value: string) => void searchPeople(value), SEARCH_DEBOUNCE_MS);
   onMount(() => {
     releaseScope = appShortcuts.pushScope('directory-relationship-editor');
+    if (initialView) void prepare();
   });
   onDestroy(() => {
     debouncedSearch.cancel();
     searchAbort?.abort();
     releaseScope?.();
   });
+  async function prepare(): Promise<void> {
+    if (!initialView) return;
+    loading = true;
+    attempt.details = '';
+    try {
+      opened = await controller.prepareRelationshipMutation(initialView.relationship.id);
+      initialRelationship = opened.data;
+      startDate = partialDate(opened.data.start_date);
+      endDate = partialDate(opened.data.end_date);
+      notes = opened.data.notes ?? '';
+    } catch (cause) {
+      attempt.details = failureMessage(cause, 0);
+    } finally { loading = false; }
+  }
   async function searchPeople(value: string): Promise<void> {
     const query = value.trim();
     searchAbort?.abort();
@@ -149,7 +166,7 @@
   }
   async function submit(): Promise<void> {
     if (
-      attempt.busy ||
+      attempt.busy || loading || (!!initialView && !opened) ||
       committed ||
       datesInvalid || !!endDateError ||
       !relationshipTypeSlug ||
@@ -162,7 +179,7 @@
       return;
     }
     const ok = await attempt.run(current => initialRelationship
-      ? controller.updateRelationship(initialRelationship.id, patch!, current)
+      ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
       : controller.createRelationship(createBody(counterpartID!)));
     if (ok) {
       if (controller.errors.relationships) {
@@ -213,7 +230,8 @@
 <Dialog title={initialRelationship ? 'Edit connection' : 'Add connection'} onclose={requestClose}
   primaryLabel={attempt.conflict ? 'Keep yours' : initialRelationship ? 'Save' : 'Add connection'} onprimary={() => void submit()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}
-  busy={attempt.busy} primaryDisabled={committed || !relationshipTypeSlug || datesInvalid || !!endDateError || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || committed || !relationshipTypeSlug || datesInvalid || !!endDateError || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  {#if loading}<p role="status">Loading connection…</p>{:else if !initialView || opened}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="editor" aria-busy={attempt.busy}>
       <section>
@@ -257,9 +275,11 @@
       </section>
     </div>
   <button type="submit" hidden>Save</button>
-</form>
+</form>{/if}
   {#snippet notice()}
-    {#if attempt.conflict}
+    {#if initialView && !opened && !loading}
+      <InlineNotice message="Couldn't load this connection." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
+    {:else if attempt.conflict}
       {@const facts = connectionFacts(patchBody())}
       {@const yours = Object.fromEntries(Object.keys(patchBody()).map(key => { const label = key === 'end_date' ? 'End date' : 'Notes'; return [label, facts[label]]; }))}
       <ConflictNotice noun="connection" saved={attempt.conflict.data} {...conflict(connectionFacts(attempt.conflict.data), connectionFacts(initialRelationship!), yours)} message={attempt.details} />

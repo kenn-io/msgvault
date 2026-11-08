@@ -599,10 +599,10 @@ export class DirectoryEntityController {
     );
     return result;
   }
-  async deleteRelationshipType(id: number): Promise<DirectoryEntityMutationResult<never, Prepared<RelationshipType>>> {
+  async deleteRelationshipType(id: number, snapshot?: Prepared<RelationshipType>): Promise<DirectoryEntityMutationResult<never, Prepared<RelationshipType>>> {
     let prepared: Prepared<RelationshipType>;
     try {
-      prepared = await this.prepareRelationshipTypeMutation(id);
+      prepared = snapshot ?? await this.prepareRelationshipTypeMutation(id);
     } catch (cause: unknown) {
       return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) };
     }
