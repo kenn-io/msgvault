@@ -73,8 +73,8 @@
     if (acting) return;
     if (primaryTarget?.id !== employment.id) primary.reset();
     primaryTarget = employment;
-    // Make primary changes only the flag, so it always writes the latest saved version.
-    await primary.run(() => controller.makeEmploymentPrimary(employment.id));
+    if (!primary.prepared && !await primary.prepare(() => controller.prepareEmploymentMutation(employment.id))) return;
+    await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
   }
 
   async function removeEmployment(): Promise<void> {
@@ -124,7 +124,10 @@
   ]}>
     {employmentLabel(employment)} at <button type="button" data-link onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
   </DetailRow>
-  {#if primary.details && primaryTarget?.id === employment.id}
+  {#if primary.conflict && primaryTarget?.id === employment.id}
+    <ConflictNotice noun="job" saved={primary.conflict.data} {...conflict(employmentFacts(primary.conflict.data, controller), employmentFacts(primaryTarget, controller), { 'Primary job': 'Yes' })} message={primary.details} actionLabel="Keep yours" onaction={() => void makePrimary(employment)} />
+    <button type="button" data-link disabled={acting} onclick={() => { primary.reset(); primaryTarget = undefined; void controller.refreshEmployments(); }}>Use saved</button>
+  {:else if primary.details && primaryTarget?.id === employment.id}
     <InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
   {/if}
 {/snippet}

@@ -171,6 +171,15 @@
       return;
     const patch = initialRelationship ? patchBody() : undefined;
     if (patch && Object.keys(patch).length === 0) {
+      if (attempt.conflict) {
+        await Promise.all([controller.refreshRelationships(), controller.refreshNetwork()]);
+        if (controller.errors.relationships) {
+          committed = true;
+          attempt.conflict = undefined;
+          attempt.details = controller.errors.relationships;
+          return;
+        }
+      }
       onDone();
       return;
     }
@@ -217,7 +226,7 @@
     }
   }
   function requestClose(): void {
-    if (!attempt.busy) { if (attempt.conflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }
+    if (!attempt.busy) { if (attempt.conflict) void Promise.all([controller.refreshRelationships(), controller.refreshNetwork()]); attempt.reset(); onClose(); }
   }
   function failureMessage(value: unknown, status: number): string {
     if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string')

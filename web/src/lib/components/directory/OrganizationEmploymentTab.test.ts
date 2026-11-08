@@ -273,7 +273,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 });
 
-it('retries a colliding Make primary against the latest saved job', async () => {
+it('shows the saved job before retrying Make primary', async () => {
   const tags: (string | null)[] = [];
   let reads = 0;
   const { controller } = controllerWith(async input => {
@@ -284,15 +284,36 @@ it('retries a colliding Make primary against the latest saved job', async () => 
       return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3, { is_primary: true }));
     }
     reads++;
-    return Response.json(employment(11, reads), { headers: { ETag: `"employment-11-r${reads}"` } });
+    return Response.json(employment(11, reads, reads > 1 ? { title: 'New saved title' } : {}), { headers: { ETag: `"employment-11-r${reads}"` } });
   });
   controller.employments = [employment(), employment(12, 1, { organization_id: 23, title: 'Other role' })];
   render(OrganizationEmploymentTab, { controller, personID: 7 });
   await rowAction('Make primary');
-  await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+  await screen.findByText('New saved title');
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(tags).toHaveLength(2));
-  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r3"']);
+  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
   await waitFor(() => expect(screen.queryByText("Couldn't make this job primary.")).toBeNull());
+});
+
+it('keeps the original version when a Make primary conflict refresh fails', async () => {
+  const tags: (string | null)[] = [];
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/primary')) {
+      tags.push(request.headers.get('If-Match'));
+      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    }
+    if (++reads === 2) return Response.json({ message: 'Unavailable' }, { status: 503 });
+    return Response.json(employment(11, reads === 1 ? 1 : 2, reads > 1 ? { title: 'New saved title' } : {}), { headers: { ETag: reads === 1 ? '"employment-11-r1"' : '"employment-11-r2"' } });
+  });
+  controller.employments = [employment()];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await rowAction('Make primary');
+  await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+  await screen.findByText('New saved title');
+  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r1"']);
 });
 
 it('shows a role beside the job title only when it differs', () => {
