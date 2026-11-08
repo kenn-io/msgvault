@@ -629,7 +629,7 @@ func TestHydrationErrorsDoNotExposeIdentifiers(t *testing.T) {
 	source.blockErrs = map[string]error{"meeting-1": cause}
 	_, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
 	require.Error(t, err)
-	require.ErrorIs(err, cause)
+	require.ErrorIs(t, err, cause)
 	assert.NotContains(err.Error(), "PRIVATE_BLOCK_ID")
 	assert.NotContains(err.Error(), "PRIVATE_CURSOR")
 }
