@@ -45,6 +45,7 @@ type SearchMediaSelection struct {
 	Origin          string `json:"origin"`
 	SuppliedInputID string `json:"supplied_input_id,omitempty"`
 	Completeness    string `json:"completeness"`
+	BuildID         string `json:"build_id,omitempty"`
 }
 
 func validSearchTranscript(origin, input, completeness string) bool {
@@ -53,11 +54,17 @@ func validSearchTranscript(origin, input, completeness string) bool {
 }
 
 type SearchEvidence struct {
-	Kind         string              `json:"kind"`
-	BuildID      string              `json:"build_id"`
-	SegmentID    string              `json:"segment_id"`
-	TimeSpan     *MediaTimeSpan      `json:"time_span,omitempty"`
-	MediaSources []SearchMediaSource `json:"media_sources"`
+	Kind                   string              `json:"kind"`
+	BuildID                string              `json:"build_id"`
+	SegmentID              string              `json:"segment_id"`
+	VectorSpaceID          string              `json:"vector_space_id,omitempty"`
+	EmbeddingSetID         string              `json:"embedding_set_id,omitempty"`
+	InputGenerationID      string              `json:"input_generation_id,omitempty"`
+	InputID                string              `json:"input_id,omitempty"`
+	InputKind              string              `json:"input_kind,omitempty"`
+	SourceManifestChecksum string              `json:"source_manifest_checksum,omitempty"`
+	TimeSpan               *MediaTimeSpan      `json:"time_span,omitempty"`
+	MediaSources           []SearchMediaSource `json:"media_sources"`
 }
 
 type SearchHit struct {
@@ -84,11 +91,12 @@ type SearchReport struct {
 	Coverage             SearchCoverage         `json:"coverage"`
 	Results              []SearchHit            `json:"results"`
 	Truncated            bool                   `json:"truncated"`
+	Degradations         []string               `json:"degradations,omitempty"`
 }
 
 func validSearchRequest(request SearchRequest) bool {
 	return strings.TrimSpace(request.Query) != "" &&
-		request.Mode == "lexical" && request.Profile != "" && request.ContentFirst &&
+		(request.Mode == "lexical" || request.Mode == "semantic" || request.Mode == "hybrid") && request.Profile != "" && request.ContentFirst &&
 		request.Limit > 0 && request.Limit <= MaxSearchResults
 }
 
@@ -133,6 +141,7 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 		source, known := sources[selection.SearchMediaSource]
 		_, duplicate := selections[selection.SearchMediaSource]
 		if !known || duplicate || !validSearchTranscript(selection.Origin, selection.SuppliedInputID, selection.Completeness) ||
+			(request.Mode != "lexical" && selection.BuildID == "") ||
 			(selection.Origin == "supplied" && source.SuppliedInputIDs != nil && !slices.Contains(source.SuppliedInputIDs, selection.SuppliedInputID)) {
 			return SearchReport{}, ErrInvalidReceipt
 		}
@@ -142,29 +151,38 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 	builds := make(map[[2]string]bool)
 	for i := range report.Results {
 		hit := &report.Results[i]
-		if !validSearchHit(*hit, request.Fence.VaultUID, ids) || len(hit.Evidence) != 1 {
+		if !validSearchHit(*hit, request.Fence.VaultUID, ids) || len(hit.Evidence) < 1 || len(hit.Evidence) > 2 {
 			return SearchReport{}, ErrInvalidReceipt
 		}
+		// Hybrid carries a lexical and embedding reference for the same selected
+		// build. The producer puts the excerpt's evidence first; fan out once.
+		hitSources := make(map[SearchMediaSource]bool)
+		first := hit.Evidence[0]
+		key := [2]string{hit.ContentVersionID, first.BuildID}
+		if builds[key] {
+			return SearchReport{}, ErrInvalidReceipt
+		}
+		builds[key] = true
 		for _, evidence := range hit.Evidence {
-			if evidence.Kind != "rendition_segment" || evidence.BuildID == "" || evidence.SegmentID == "" ||
-				len(evidence.MediaSources) == 0 {
+			if !validRecordingEvidence(evidence, report.ActualMode) || evidence.BuildID != first.BuildID ||
+				len(evidence.MediaSources) != len(first.MediaSources) {
 				return SearchReport{}, ErrInvalidReceipt
 			}
-			key := [2]string{hit.ContentVersionID, evidence.BuildID}
-			if builds[key] {
-				return SearchReport{}, ErrInvalidReceipt
-			}
-			builds[key] = true
+			withinEvidence := make(map[SearchMediaSource]bool)
 			for _, source := range evidence.MediaSources {
-				_, known := selections[source]
-				if !known || selected[source] || source.ContentVersionID != hit.ContentVersionID {
+				selection, known := selections[source]
+				if !known || selected[source] || withinEvidence[source] || source.ContentVersionID != hit.ContentVersionID ||
+					(selection.BuildID != "" && selection.BuildID != evidence.BuildID) || !slices.Contains(first.MediaSources, source) {
 					return SearchReport{}, ErrInvalidReceipt
 				}
-				selected[source] = true
+				withinEvidence[source], hitSources[source] = true, true
 			}
 			if evidence.TimeSpan != nil && (evidence.TimeSpan.StartMS < 0 || evidence.TimeSpan.EndMS <= evidence.TimeSpan.StartMS) {
 				return SearchReport{}, ErrInvalidReceipt
 			}
+		}
+		for source := range hitSources {
+			selected[source] = true
 		}
 		hit.Excerpt = plainExcerpt(hit.Excerpt)
 	}
@@ -177,12 +195,32 @@ func (c *Client) searchReport(ctx context.Context, request SearchRequest) (Searc
 	if err := c.jsonRequestLimits(ctx, http.MethodPost, "/api/v1/search", request, &report, maxSearchBytes, maxSearchBytes); err != nil {
 		return SearchReport{}, err
 	}
-	if report.ActualMode != "lexical" || report.RequestedMode != "lexical" || report.Results == nil || len(report.Results) > request.Limit ||
-		report.Coverage.State == "" || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
-		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments {
+	modeOK := report.ActualMode == request.Mode || request.Mode == "hybrid" && report.ActualMode == "lexical" &&
+		(slices.Contains(report.Degradations, "semantic_unavailable") || slices.Contains(report.Degradations, "semantic_unconfigured"))
+	coverageOK := report.Coverage.State == "complete" || report.Coverage.State == "incomplete" || report.Coverage.State == "unknown"
+	if !modeOK || report.RequestedMode != request.Mode || report.Results == nil || len(report.Results) > request.Limit ||
+		!coverageOK || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
+		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
+		(report.Coverage.State == "complete" && report.Coverage.CompleteDocuments != report.Coverage.ScopedDocuments) {
 		return SearchReport{}, ErrInvalidReceipt
 	}
 	return report, nil
+}
+
+func validRecordingEvidence(evidence SearchEvidence, mode string) bool {
+	if evidence.BuildID == "" || len(evidence.MediaSources) == 0 || len(evidence.MediaSources) > MaxSearchVersions {
+		return false
+	}
+	switch evidence.Kind {
+	case "rendition_segment":
+		return mode != "semantic" && evidence.SegmentID != ""
+	case "embedding":
+		return mode != "lexical" && evidence.InputKind == "rendition_chunk" && evidence.InputID != "" &&
+			evidence.InputGenerationID != "" && evidence.EmbeddingSetID != "" && evidence.VectorSpaceID != "" &&
+			len(evidence.SourceManifestChecksum) == 64
+	default:
+		return false
+	}
 }
 
 // plainExcerpt removes the match markers Docbank puts around each hit.

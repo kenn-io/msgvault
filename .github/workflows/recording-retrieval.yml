@@ -16,6 +16,34 @@ concurrency:
   group: recording-retrieval-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  generated:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Generate API artifacts from implemented routes
+        run: make api-generate
+      - name: Format and vet remotely
+        run: |
+          go fmt ./...
+          go vet -tags 'fts5 sqlite_vec' ./...
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: recording-generated-api
+          path: |
+            api/openapi.yaml
+            pkg/client/openapi.yaml
+            pkg/client/generated/
+          retention-days: 7
   contracts:
     runs-on: ubuntu-26.04
     timeout-minutes: 25

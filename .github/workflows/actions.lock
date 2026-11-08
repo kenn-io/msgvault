@@ -37,6 +37,7 @@ workflows:
     '.github/workflows/recording-retrieval.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
+        - 'actions/upload-artifact@v7.0.2'
         - 'kenn-io/kit@v0.48.2'
     '.github/workflows/sibling-pins.yml':
         - 'kenn-io/actions@main'

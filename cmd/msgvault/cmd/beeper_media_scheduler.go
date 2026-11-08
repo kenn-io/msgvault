@@ -222,6 +222,7 @@ func newMessageRecordingReader(
 		return reader, err
 	}
 	reader.Client, reader.Destination, reader.UploadConsent = client, destination, cfg.AllSourcesUploadConsent
+	reader.SearchProfile = strings.TrimSpace(cfg.RecordingSearchProfile)
 	return reader, nil
 }
 

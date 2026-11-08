@@ -845,6 +845,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return []*huma.Param{
 			queryStringParam("q", "Words to find in recordings and attachments", true),
 			queryStringParam("mode", "Lexical mode; semantic and hybrid are unavailable", false),
+			queryStringParam("recordings_mode", "Recording transcript mode: lexical (default), semantic, or hybrid; independent of attachment mode", false),
 			queryIntegerParam("person_id", "Durable person ID"),
 			queryIntegerParam("participant_id", "Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id"),
 			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),

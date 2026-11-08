@@ -76,6 +76,7 @@ type MessageRecordingReader struct {
 	Client        *docbankmedia.Client
 	Destination   string
 	UploadConsent bool
+	SearchProfile string
 }
 
 func recordingKey(o store.MessageMediaOccurrence) string {

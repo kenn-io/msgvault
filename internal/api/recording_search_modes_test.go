@@ -19,7 +19,7 @@ func TestRecordingSearchModeConfiguration(t *testing.T) {
 		degradations      []string
 	}{
 		{"default", "q=words", http.StatusOK, "lexical", "lexical", nil},
-		{"hybrid without profile", "q=words&recordings_mode=hybrid", http.StatusOK, "hybrid", "lexical", []string{"semantic_unconfigured"}},
+		{"hybrid without profile", "q=words&recordings_mode=hybrid", http.StatusOK, "hybrid", "unavailable", []string{"semantic_unconfigured", "empty_recording_scope"}},
 		{"semantic without profile", "q=words&recordings_mode=semantic", http.StatusServiceUnavailable, "", "", nil},
 		{"invalid", "q=words&recordings_mode=invalid", http.StatusBadRequest, "", "", nil},
 	} {

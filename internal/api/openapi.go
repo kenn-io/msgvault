@@ -403,7 +403,8 @@ import (
 // 3.46.0 adds measured CLI full-text pagination and semantic ranking cap overflow.
 // 3.47.0 adds retry hints to CLI and fast search.
 // 3.48.0 adds owner-only local message search activation and progress.
-const APISchemaVersion = "3.48.0"
+// 3.49.0 adds independent recording transcript modes and execution reports.
+const APISchemaVersion = "3.49.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
