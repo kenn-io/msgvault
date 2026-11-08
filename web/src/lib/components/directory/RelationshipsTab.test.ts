@@ -112,7 +112,7 @@ describe('RelationshipsTab', () => {
 
   it('distinguishes saved people who share a name without organizations', async () => {
     const { client, controller } = controllerWith(async () => Response.json({ people: [
-      directoryPerson(8, { display_name: 'Synthetic Peer', last_contact_at: '2024-07-01T12:00:00Z' }), directoryPerson(9, { display_name: 'Synthetic Peer', last_contact_at: '2023-02-03T12:00:00Z' }),
+      directoryPerson(8, { display_name: 'Synthetic Peer', last_contact_at: '2024-07-01T12:00:00' }), directoryPerson(9, { display_name: 'Synthetic Peer', last_contact_at: '2023-02-03T12:00:00' }),
     ] }));
     render(RelationshipsTab, { client, controller, personID: 7 });
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
@@ -126,7 +126,7 @@ describe('RelationshipsTab', () => {
     const client = createAPIClient(async () => Response.json({ reviews: [{
       id: 1, person_id: 7, raw_related_value: 'urn:uuid:11111111-2222-3333-4444-555555555555',
       raw_related_type: 'friend', value_kind: 'uri', status: 'pending', source: 'carddav_import',
-      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+      created_at: '2026-07-31T12:00:00', updated_at: '2026-07-31T12:00:00',
     }] }));
     const controller = new DirectoryEntityController(client, 7);
     render(RelationshipsTab, { client, controller, personID: 7 });

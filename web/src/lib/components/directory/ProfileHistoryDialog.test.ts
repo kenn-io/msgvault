@@ -135,7 +135,7 @@ describe('ProfileHistoryDialog', () => {
       return Response.json({ ...emptyProfile(person()), observations: [{
         participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
         normalized_value: 'observed@example.test', identity_key: 'observed-test-key', normalization: 'email', normalization_version: 1,
-        service_slug: 'email', source_id: 987654321, observed_at: '2026-07-31T12:00:00Z',
+        service_slug: 'email', source_id: 987654321, observed_at: '2026-07-31T12:00:00',
         envelope: { ...currentEnvelope, id: 9, source: 'archive_observation', source_ref: 'synthetic-archive' },
       }, { participant_id: 71, address_kind: 'username', original_value: 'observer', normalized_value: 'observer', identity_key: 'observer-key', normalization: 'none', normalization_version: 1, service_slug: 'slack', scope_kind: 'workspace', scope_value: 'T_BETA', source_id: 12, observed_at: when, envelope: { ...currentEnvelope, id: 36, source: 'archive_observation' } }] });
     });
