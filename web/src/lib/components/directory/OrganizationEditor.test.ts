@@ -444,3 +444,61 @@ it('shows the retirement date in a conflict', async () => {
   const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
   expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
 });
+
+it('keeps the dialog open while the other section still has unsaved edits', async () => {
+  const writes: { method: string; tag: string | null; body: { primary_domain?: string; name?: string; names?: { name: string }[] } }[] = [];
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    const body = await request.json();
+    writes.push({ method: request.method, tag: request.headers.get('If-Match'), body });
+    const tag = `"organization-21-r${writes.length + 1}"`;
+    if (request.method === 'PATCH') return Response.json({ ...organization(21, writes.length + 1), ...body }, { headers: { ETag: tag } });
+    return Response.json({ ...organizationProfile(writes.length + 1), names: body.names.map((item: object, index: number) => ({ ...item, organization_id: 21, envelope: envelope(40 + index) })) }, { headers: { ETag: tag } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization domain' }), { target: { value: 'lumengrove.io' } });
+  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Lumen' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  const settled = () => waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  await waitFor(() => expect(writes.map(write => write.method)).toEqual(['PATCH']));
+  await settled();
+  expect(onDone).not.toHaveBeenCalled();
+  expect(aliases).toHaveProperty('value', 'Synthetic Works, Lumen');
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Lumen Grove' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await waitFor(() => expect(writes.map(write => write.method)).toEqual(['PATCH', 'PUT']));
+  await settled();
+  expect(onDone).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Lumen Grove');
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  // Each write sends the version the one before it returned.
+  expect(writes.map(write => [write.method, write.tag])).toEqual([['PATCH', '"organization-21-r1"'], ['PUT', '"organization-21-r2"'], ['PATCH', '"organization-21-r3"']]);
+  expect(writes[1].body.names?.map(item => item.name)).toEqual(['Synthetic Works', 'Lumen']);
+  expect(writes[2].body).toMatchObject({ name: 'Lumen Grove', primary_domain: 'lumengrove.io' });
+});
+
+it('shows and retries the latest save after the other one failed', async () => {
+  const methods: string[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    methods.push(request.method);
+    return request.method === 'PUT'
+      ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
+      : Response.json({ message: 'primary domain "bad domain" is not a valid domain' }, { status: 400 });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await screen.findByText("Couldn't save the aliases and categories.");
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization domain' }), { target: { value: 'bad domain' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await screen.findByText("Couldn't save this organization.");
+  expect(screen.queryByText("Couldn't save the aliases and categories.")).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(methods).toEqual(['PUT', 'PATCH', 'PATCH']));
+});

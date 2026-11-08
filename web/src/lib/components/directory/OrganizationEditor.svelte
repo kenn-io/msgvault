@@ -59,6 +59,9 @@
   const check = new WriteAttempt<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
   const holders = $derived(check.prepared);
   const deleteBlocked = $derived(!holders || holders.count > 0);
+  const fieldsUnsaved = $derived(!!currentProfile && (name.trim() !== currentProfile.organization.name || kind !== currentProfile.organization.kind
+    || primaryDomain.trim() !== (currentProfile.organization.primary_domain ?? '') || description.trim() !== (currentProfile.organization.description ?? '')));
+  const listsUnsaved = $derived([valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories))].some((delta) => delta.added.length || delta.removed.size));
   const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
 
@@ -85,28 +88,51 @@
 
   async function saveOrganization(): Promise<void> {
     if (saveDisabled || submitting) return;
+    // The notice and Retry follow the latest save.
+    profileAttempt.reset();
     let saved: Organization | undefined;
+    let etag: string | undefined;
     const ok = await attempt.run(async current => {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       const result = initialOrganization
         ? await controller.updateOrganization(initialOrganization.id, body, current ?? opened)
         : await controller.createOrganization(body);
-      if (result.ok) saved = result.entity;
+      if (result.ok) { saved = result.entity; etag = result.etag; }
       return result;
     });
-    if (ok) onDone(saved);
+    if (!ok) return;
+    if (!currentProfile || !listsUnsaved) { onDone(saved); return; }
+    keepOpen({ ...currentProfile, organization: saved! }, etag);
   }
 
   async function saveProfile(): Promise<void> {
     if (!initialOrganization || !currentProfile || submitting) return;
+    attempt.reset();
     const aliasDelta = valueDelta(baselineAliases, values(aliases));
     const categoryDelta = valueDelta(baselineCategories, values(categories));
-    const ok = await profileAttempt.run(current => controller.putOrganizationProfile(
-      initialOrganization.id,
-      (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta),
-      current ?? opened
-    ));
-    if (ok) onDone();
+    let saved: OrganizationProfile | undefined;
+    let etag: string | undefined;
+    const ok = await profileAttempt.run(async current => {
+      const result = await controller.putOrganizationProfile(
+        initialOrganization.id,
+        (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta),
+        current ?? opened
+      );
+      if (result.ok) { saved = result.entity; etag = result.etag; }
+      return result;
+    });
+    if (!ok) return;
+    if (!fieldsUnsaved) { onDone(); return; }
+    baselineAliases = (saved!.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
+    baselineCategories = (saved!.categories ?? []).map((item) => item.category);
+    keepOpen(saved!, etag);
+  }
+
+  // Each save writes its own section. While the other section still holds edits the dialog stays open on them, and
+  // their save sends the version this one returned.
+  function keepOpen(profile: OrganizationProfile, etag: string | undefined): void {
+    currentProfile = profile;
+    opened = etag ? { data: profile, etag } : undefined;
   }
 
   async function checkDeletion(): Promise<void> {
