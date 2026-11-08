@@ -43,8 +43,6 @@
   const aliasesShown = $derived(addingAliases || baselineAliases.length > 0);
   const categoriesShown = $derived(addingCategories || baselineCategories.length > 0);
   let contactDetailsOpen = $state(false);
-  // The organization saved but its aliases and categories didn't.
-  let profileUnsaved = $state(false);
   let currentProfile = $state<OrganizationProfile>();
   // The version a write sends as If-Match.
   let opened: Prepared<OrganizationProfile> | undefined;
@@ -52,8 +50,10 @@
   const loading = $derived(!!initialOrganization && !currentProfile && !attempt.details);
   // A failed load leaves nothing to edit, so the form and Save give way to the notice.
   const loadFailed = $derived(!!initialOrganization && !currentProfile && !!attempt.details);
+  // Aliases and categories save on their own, with their own If-Match.
+  const profileAttempt = new WriteAttempt<Prepared<OrganizationProfile>>();
   const removal = new WriteAttempt<Prepared<OrganizationProfile>>();
-  const submitting = $derived(attempt.busy || removal.busy);
+  const submitting = $derived(attempt.busy || profileAttempt.busy || removal.busy);
   let confirmDelete = $state(false);
   // The jobs check: reset on Back, close, and each new check, so a late result from an earlier one is dropped.
   const check = new WriteAttempt<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
@@ -85,67 +85,33 @@
 
   async function saveOrganization(): Promise<void> {
     if (saveDisabled || submitting) return;
-    profileUnsaved = false;
-    let saved = currentProfile?.organization;
+    let saved: Organization | undefined;
     const ok = await attempt.run(async current => {
-      const draft = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
-      let prepared = current ?? opened;
-      const target = prepared?.data.organization ?? saved;
-      const field = (from: Organization | undefined, key: string) => from?.[key as keyof Organization] ?? null;
-      // Yours is only what the person changed since opening; every other field keeps the version being written.
-      const body = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, saved && value === field(currentProfile?.organization, key) ? field(target, key) : value])) as typeof draft;
-      if (!saved || Object.entries(body).some(([key, value]) => value !== field(target, key))) {
-        const result = saved ? await controller.updateOrganization(saved.id, body, prepared) : await controller.createOrganization(body);
-        if (!result.ok) return result;
-        saved = result.entity!;
-        // The form keeps the lists the person opened, so a retry sends the same Yours; the write goes to the version just saved.
-        if (!currentProfile) currentProfile = { ...EMPTY_PROFILE, organization: saved };
-        prepared = opened = result.etag ? { data: { ...EMPTY_PROFILE, ...prepared?.data, organization: saved }, etag: result.etag } : prepared;
-        attempt.prepared = prepared;
-      }
-      // A list the person changed is written whole, as Yours shows it; one they didn't keeps the version being written.
-      const profile = prepared?.data ?? currentProfile!;
-      const next = listsFor(profile);
-      if (listKey(next.names, next.categories) !== listKey(profile.names ?? [], profile.categories ?? [])) {
-        const result = await controller.putOrganizationProfile(saved!.id, fresh => ({ ...profileBody(fresh), ...listsFor(fresh) }), prepared);
-        if (!result.ok) profileUnsaved = true;
-        return result;
-      }
-      return { ok: true };
+      const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
+      const result = initialOrganization
+        ? await controller.updateOrganization(initialOrganization.id, body, current ?? opened)
+        : await controller.createOrganization(body);
+      if (result.ok) saved = result.entity;
+      return result;
     });
     if (ok) onDone(saved);
   }
 
-  const EMPTY_PROFILE = { names: [], categories: [], contact_points: [], addresses: [], identifiers: [], media: [] };
-  function listKey(names: { name: string; name_kind: string }[], categories: { category: string }[]): string {
-    return JSON.stringify([names.filter(item => item.name_kind === 'alias').map(item => item.name), categories.map(item => item.category)]);
-  }
-
-  // The aliases and categories to write over a version: the person's lists where they changed them, its own otherwise.
-  // A value the version still holds keeps its envelope there; a new one is the person's.
-  function listsFor(profile: OrganizationProfile): { names: NameBody[]; categories: CategoryBody[] } {
-    const aliasNames = (profile.names ?? []).filter(item => item.name_kind === 'alias');
-    const nextName = Math.max(-1, ...(profile.names ?? []).map(item => item.envelope.ordinal)) + 1;
-    const nextCategory = Math.max(-1, ...(profile.categories ?? []).map(item => item.envelope.ordinal)) + 1;
-    const aliasValues = changed(aliasDelta) ? draftValues(baselineAliases, aliasDelta) : aliasNames.map(item => item.name);
-    const categoryValues = changed(categoryDelta) ? draftValues(baselineCategories, categoryDelta) : (profile.categories ?? []).map(item => item.category);
-    const newNames = aliasValues.filter(name => !aliasNames.some(item => item.name === name));
-    const newCategories = categoryValues.filter(category => !(profile.categories ?? []).some(item => item.category === category));
-    return {
-      names: [
-        ...(profile.names ?? []).filter(item => item.name_kind !== 'alias' || aliasValues.includes(item.name)).map(nameBody),
-        ...newNames.map((name, index): NameBody => ({ name, name_kind: 'alias', ordinal: nextName + index, source: 'user' })),
-      ],
-      categories: [
-        ...(profile.categories ?? []).filter(item => categoryValues.includes(item.category)).map(categoryBody),
-        ...newCategories.map((category, index): CategoryBody => ({ category, ordinal: nextCategory + index, source: 'user' })),
-      ],
-    };
+  async function saveProfile(): Promise<void> {
+    if (!initialOrganization || !currentProfile || submitting) return;
+    const aliasDelta = valueDelta(baselineAliases, values(aliases));
+    const categoryDelta = valueDelta(baselineCategories, values(categories));
+    const ok = await profileAttempt.run(current => controller.putOrganizationProfile(
+      initialOrganization.id,
+      (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta),
+      current ?? opened
+    ));
+    if (ok) onDone();
   }
 
   async function checkDeletion(): Promise<void> {
     if (!initialOrganization) return;
-    if (!confirmDelete) attempt.reset();
+    if (!confirmDelete) { attempt.reset(); profileAttempt.reset(); }
     confirmDelete = true;
     check.reset();
     await check.prepare(() => controller.organizationEmploymentHolders(initialOrganization.id));
@@ -173,18 +139,11 @@
   }
 
   function requestClose(): void {
-    if (!submitting) { if (attempt.conflict) void controller.refreshOrganizations(); attempt.reset(); removal.reset(); check.reset(); onClose(); }
+    if (!submitting) { if (attempt.conflict || profileAttempt.conflict) void controller.refreshOrganizations(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
   }
 
-  // Splits on commas, but a saved value that holds one ("Example, Inc.") stays whole, and a list left as it opened stays as saved.
-  function values(value: string, saved: string[]): string[] {
-    if (value === saved.join(', ')) return saved;
-    const parts = value.split(','), out: string[] = [];
-    for (let i = 0, j = parts.length; i < parts.length; i = j, j = parts.length) {
-      while (j > i + 1 && !saved.includes(parts.slice(i, j).join(',').trim())) j--;
-      out.push(parts.slice(i, j).join(',').trim());
-    }
-    return out.filter(Boolean);
+  function values(value: string): string[] {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
   }
 
   function present(parts: Array<string | number | undefined>): string {
@@ -280,9 +239,6 @@
     };
   }
 
-  const aliasDelta = $derived(valueDelta(baselineAliases, values(aliases, baselineAliases)));
-  const categoryDelta = $derived(valueDelta(baselineCategories, values(categories, baselineCategories)));
-
   function envelopeBody(envelope: Name['envelope']): EnvelopeBody {
     return {
       ordinal: envelope.ordinal,
@@ -302,28 +258,47 @@
     };
   }
 
-  const changed = (delta: ValueDelta) => delta.added.length > 0 || delta.removed.size > 0;
-  function draftValues(baseline: string[], delta: ValueDelta): string[] {
-    const seen = new Set<string>();
-    return [...baseline.filter(value => !delta.removed.has(value)), ...delta.added].filter(value => {
-      // Match Go's simple lowercase and whitespace rules in NormalizeOrganizationName.
-      const key = Array.from(value, char => char === 'İ' ? 'i' : char.toLowerCase()).join('').split(/\p{White_Space}+/u).filter(Boolean).join(' ');
-      if (seen.has(key)) return false;
-      seen.add(key);
+  // The PUT refuses two aliases or two categories that differ only by case or whitespace, so a new one that matches
+  // a kept or earlier one is left out. Match Go's simple lowercase and whitespace rules in NormalizeOrganizationName.
+  function newValues(kept: string[], added: string[]): string[] {
+    const key = (value: string) => Array.from(value, char => char === 'İ' ? 'i' : char.toLowerCase()).join('').split(/\p{White_Space}+/u).filter(Boolean).join(' ');
+    const seen = new Set(kept.map(key));
+    return added.filter(value => {
+      if (seen.has(key(value))) return false;
+      seen.add(key(value));
       return true;
     });
+  }
+
+  function namesWithDelta(profile: OrganizationProfile, delta: ValueDelta): NameBody[] {
+    const retained = (profile.names ?? []).filter((item) => item.name_kind !== 'alias' || !delta.removed.has(item.name));
+    const nextOrdinal = Math.max(-1, ...(profile.names ?? []).map((item) => item.envelope.ordinal)) + 1;
+    const kept = retained.filter((item) => item.name_kind === 'alias').map((item) => item.name);
+    return [...retained.map(nameBody), ...newValues(kept, delta.added).map((name, index): NameBody => ({ name, name_kind: 'alias', ordinal: nextOrdinal + index, source: 'user' }))];
   }
 
   function nameBody(item: Name): NameBody {
     return { name: item.name, name_kind: item.name_kind as NameBody['name_kind'], ...envelopeBody(item.envelope) };
   }
 
+  function categoriesWithDelta(profile: OrganizationProfile, delta: ValueDelta): CategoryBody[] {
+    const retained = (profile.categories ?? []).filter((item) => !delta.removed.has(item.category));
+    const nextOrdinal = Math.max(-1, ...(profile.categories ?? []).map((item) => item.envelope.ordinal)) + 1;
+    return [...retained.map(categoryBody), ...newValues(retained.map((item) => item.category), delta.added).map((category, index): CategoryBody => ({ category, ordinal: nextOrdinal + index, source: 'user' }))];
+  }
+
   function categoryBody(item: Category): CategoryBody {
     return { category: item.category, ...envelopeBody(item.envelope) };
   }
 
-  function profileBody(profile: OrganizationProfile): OrganizationProfileBody {
+  function profileBody(
+    profile: OrganizationProfile,
+    aliasDelta: ValueDelta,
+    categoryDelta: ValueDelta
+  ): OrganizationProfileBody {
     return {
+      names: namesWithDelta(profile, aliasDelta),
+      categories: categoriesWithDelta(profile, categoryDelta),
       contact_points: (profile.contact_points ?? []).map((item) => ({
         contact_kind: item.address_kind as NonNullable<OrganizationProfileBody['contact_points']>[number]['contact_kind'], original_value: item.original_value,
         ...envelopeBody(item.envelope),
@@ -378,9 +353,22 @@
     {#if open && raw.length}<Disclosure variant="plain" class="fold" title="Raw values">{#each raw as item}<h5>{item.title} · {item.row.value}</h5><dl class="facts">{#each item.details.raw as fact}<div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>{/each}</dl>{/each}</Disclosure>{/if}
   </div>
 {/snippet}
+{#snippet conflictNotice(write: WriteAttempt<Prepared<OrganizationProfile>>, yours: Record<string, string>, onaction: (() => void) | undefined)}
+  {@const saved = write.conflict!.data}
+  {@const savedFacts = organizationFacts(saved)}
+  {@const groups = profileGroups(saved, [...STRUCTURED])}
+  {@const openedGroups = new Map(profileGroups(currentProfile!, [...STRUCTURED]).map(group => [group.title, group.rows.map(row => row.value).join('\n')]))}
+  <!-- Details lists the saved structured values once, by group, and marks the groups that differ from what was opened. -->
+  <ConflictNotice noun="organization" saved={saved.organization} {...conflict(savedFacts, organizationFacts(currentProfile!), yours)} message={write.details}
+    listed={LISTED_FACTS.filter(label => savedFacts[label])} actionLabel={onaction && 'Keep yours'} {onaction}>
+    {#snippet more()}
+      {#if groups.length}{@render profileGroupsBlock(groups, undefined, new Set(groups.filter(group => openedGroups.get(group.title) !== group.rows.map(row => row.value).join('\n')).map(group => group.title)))}{/if}
+    {/snippet}
+  </ConflictNotice>
+{/snippet}
 {#snippet deleteStart()}{#if initialOrganization && currentProfile && !confirmDelete}<Button tone="danger" label="Delete organization…" disabled={submitting} onclick={() => void checkDeletion()} />{/if}{/snippet}
 {#if confirmDelete}
-  <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; attempt.reset(); removal.reset(); check.reset(); }} backLabel={`Back to ${name}`}
+  <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); }} backLabel={`Back to ${name}`}
     primaryLabel={deleteBlocked ? undefined : 'Delete'} primaryTone="danger" cancellable={false} busy={submitting} onprimary={() => void remove()}>
     <div class="delete-step">
       {#if !holders && !check.details}<p role="status">Checking jobs…</p>{/if}
@@ -403,11 +391,12 @@
     {:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
   </Dialog>
 {:else}
-<Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}
-  cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
-{#if !loadFailed}<form onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
+<Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save organization' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}
+  cancelLabel={attempt.conflict || profileAttempt.conflict ? 'Use saved' : 'Cancel'}>
+{#if !loadFailed}
   <div class="editor" aria-busy={loading || submitting}>
     {#if loading}<p role="status">Loading organization…</p>{:else}
+      <form onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
         <label>Name<TextInput ariaLabel="Organization name" bind:value={name} required block size="lg" disabled={submitting} /></label>
         <div class="form-pair">
           <label>Kind<SelectDropdown title="Organization kind" value={kind} options={kindOptions} onchange={(value) => { kind = value; }} disabled={submitting} /></label>
@@ -418,6 +407,10 @@
           {#if groups.length}{@render profileGroupsBlock(groups, 'Contact details')}{/if}
         {/if}
         <label>Description<textarea aria-label="Organization description" bind:value={description} disabled={submitting}></textarea></label>
+        <button type="submit" hidden>Save organization</button>
+      </form>
+      <!-- A new organization gets aliases and categories once it exists. -->
+      {#if currentProfile}<form onsubmit={(event) => { event.preventDefault(); void saveProfile(); }}>
         {#if aliasesShown || categoriesShown}<div class="form-pair">
           {#if aliasesShown}<label>Aliases<TextInput ariaLabel="Organization aliases" bind:value={aliases} block size="lg" disabled={submitting} /></label>{/if}
           {#if categoriesShown}<label>Categories<TextInput ariaLabel="Organization categories" bind:value={categories} block size="lg" disabled={submitting} /></label>{/if}
@@ -426,28 +419,23 @@
           {#if !aliasesShown}<button type="button" class="add-link kit-control-states" disabled={submitting} onclick={() => addingAliases = true}>Add alias…</button>{/if}
           {#if !categoriesShown}<button type="button" class="add-link kit-control-states" disabled={submitting} onclick={() => addingCategories = true}>Add category…</button>{/if}
         </div>{/if}
+        {#if aliasesShown || categoriesShown}<div class="list-save"><Button type="submit" label="Save aliases and categories" disabled={submitting} /></div>{/if}
+      </form>{/if}
     {/if}
   </div>
-<button type="submit" hidden>Save</button>
-</form>{/if}
+{/if}
   {#snippet notice()}
     {#if attempt.conflict}
-      {@const savedFacts = organizationFacts(attempt.conflict.data)}
-      {@const openedFacts = organizationFacts(currentProfile!)}
-      {@const draft = { Name: name.trim(), Kind: sentenceCase(kind), Domain: primaryDomain.trim(), Description: description.trim(), Aliases: draftValues(baselineAliases, aliasDelta).join(', '), Categories: draftValues(baselineCategories, categoryDelta).join(', ') }}
-      <!-- Yours lists only the fields the person changed, the ones Keep yours writes. -->
-      {@const yours = Object.fromEntries(Object.entries(draft).filter(([label, value]) => value !== openedFacts[label]))}
-      {@const groups = profileGroups(attempt.conflict.data, [...STRUCTURED])}
-      {@const openedGroups = new Map(profileGroups(currentProfile!, [...STRUCTURED]).map(group => [group.title, group.rows.map(row => row.value).join('\n')]))}
-      <!-- Details lists the saved structured values once, by group, and marks the groups that differ from what was opened. -->
-      <ConflictNotice noun="organization" saved={attempt.conflict.data.organization} {...conflict(savedFacts, openedFacts, yours)} message={attempt.details}
-        listed={LISTED_FACTS.filter(label => savedFacts[label])}>
-        {#snippet more()}
-          {#if groups.length}{@render profileGroupsBlock(groups, undefined, new Set(groups.filter(group => openedGroups.get(group.title) !== group.rows.map(row => row.value).join('\n')).map(group => group.title)))}{/if}
-        {/snippet}
-      </ConflictNotice>
+      <!-- Yours is what Keep yours writes: the four fields as the form holds them. -->
+      {@render conflictNotice(attempt, { Name: name.trim(), Kind: sentenceCase(kind), Domain: primaryDomain.trim(), Description: description.trim() }, undefined)}
+    {:else if profileAttempt.conflict}
+      {@const lists = profileBody(profileAttempt.conflict.data, valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories)))}
+      <!-- Yours is what Keep yours writes: the saved lists with the person's additions and removals. -->
+      {@render conflictNotice(profileAttempt, { Aliases: lists.names!.filter(item => item.name_kind === 'alias').map(item => item.name).join(', '), Categories: lists.categories!.map(item => item.category).join(', ') }, () => void saveProfile())}
+    {:else if profileAttempt.details}
+      <InlineNotice message="Couldn't save the aliases and categories." details={profileAttempt.details} actionLabel="Retry" onaction={() => void saveProfile()} />
     {:else if attempt.details || controller.createBlocked.organizations}
-      <InlineNotice message={controller.createBlocked.organizations ? "Couldn't confirm the organization was saved." : !currentProfile && initialOrganization ? "Couldn't load this organization." : profileUnsaved ? "Couldn't save the aliases and categories." : "Couldn't save this organization."} details={attempt.details || undefined} actionLabel={controller.createBlocked.organizations ? 'Check again' : 'Retry'} onaction={() => { if (controller.createBlocked.organizations) void refreshAfterUnknown(); else if (initialOrganization && !currentProfile) void loadCurrent(); else void saveOrganization(); }} />
+      <InlineNotice message={controller.createBlocked.organizations ? "Couldn't confirm the organization was saved." : !currentProfile && initialOrganization ? "Couldn't load this organization." : "Couldn't save this organization."} details={attempt.details || undefined} actionLabel={controller.createBlocked.organizations ? 'Check again' : 'Retry'} onaction={() => { if (controller.createBlocked.organizations) void refreshAfterUnknown(); else if (initialOrganization && !currentProfile) void loadCurrent(); else void saveOrganization(); }} />
     {/if}
   {/snippet}
 </Dialog>
@@ -462,7 +450,10 @@
   p { margin: 0; }
   /* The contact block is its own group, 24 from the fields around it: its heading row, then the rows 8 below. */
   .profile { display: grid; gap: var(--space-group); min-width: 0; }
-  .editor > .profile { margin-block: var(--space-group); }
+  .editor .profile { margin-block: var(--space-group); }
+  /* Each save's fields sit on the editor's own grid. */
+  form { display: contents; }
+  .list-save { display: flex; }
   .profile-group { display: grid; }
   /* The heading row is 28, so Details (a 28 text action) sits on it; Heading text, provenance in Meta. When the
    * heading wraps on a phone, Details stays on its first line. */
