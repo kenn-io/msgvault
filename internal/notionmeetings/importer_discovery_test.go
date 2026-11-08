@@ -459,3 +459,33 @@ func TestKnownRefreshRespectsBacklogRetryCadence(t *testing.T) {
 	require.Len(recovered.PendingBacklog, 1)
 	assert.Equal("known-backlog", recovered.PendingBacklog[0].BlockID)
 }
+
+func TestFullRootFrontierAllowsDeferredContinuation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	for _, root := range []string{"root-a", "root-b", "root-c"} {
+		source.children[root] = map[string]*BlockPage{"": {}}
+	}
+	source.children["nested"] = map[string]*BlockPage{"next": {Results: []Block{{Object: "block", ID: "meeting-1", Type: "meeting_notes"}}}}
+	imp.limits.Frontier = 3
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", RootPageIDs: []string{"root-a", "root-b", "root-c"}, SearchAccessible: &noSearch}
+	state := newSyncState()
+	state.Fingerprint = scopeFingerprint("work", Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}, opts)
+	state.Deferred = []deferredScope{{Task: &scopeTask{Kind: "blocks", ID: "nested", Cursor: "next"}, Reason: "frontier_budget", NextAttemptAt: imp.now().Add(-time.Hour)}}
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	result, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(int64(1), result.MeetingsAdded)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", "meeting-1").Scan(&count))
+	assert.Equal(1, count)
+}

@@ -157,7 +157,8 @@ func (state *syncState) deferTask(t scopeTask, reason string, now time.Time) {
 	state.Deferred = append(state.Deferred, deferredScope{Task: &t, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
 }
 func (state *syncState) activateDeferred(now time.Time, limits discoveryLimits) {
-	retained := state.Deferred[:0]
+	retained := make([]deferredScope, 0, len(state.Deferred))
+	var displaced *scopeTask
 	for _, gap := range state.Deferred {
 		if gap.NextAttemptAt.After(now) {
 			retained = append(retained, gap)
@@ -165,6 +166,11 @@ func (state *syncState) activateDeferred(now time.Time, limits discoveryLimits) 
 		}
 		if gap.Task != nil && len(state.Frontier) < limits.Frontier {
 			state.Frontier = append(state.Frontier, *gap.Task)
+		} else if gap.Task != nil && displaced == nil && len(state.Frontier) > 0 {
+			// Reserve one slot for due continuation work even when roots fill the frontier.
+			last := state.Frontier[len(state.Frontier)-1]
+			displaced = &last
+			state.Frontier = append([]scopeTask{*gap.Task}, state.Frontier[:len(state.Frontier)-1]...)
 		} else if gap.Window != nil && len(state.Windows) < limits.Frontier {
 			state.Windows = append(state.Windows, *gap.Window)
 		} else {
@@ -172,6 +178,9 @@ func (state *syncState) activateDeferred(now time.Time, limits discoveryLimits) 
 		}
 	}
 	state.Deferred = retained
+	if displaced != nil {
+		state.deferTask(*displaced, "frontier_budget", now)
+	}
 }
 func (state *syncState) validateTransient() error {
 	s := *state
