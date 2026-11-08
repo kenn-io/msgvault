@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/icloudurl"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -18,45 +18,22 @@ const ICloudDiscoveryURL = "https://contacts.icloud.com/"
 // state for an explicit reconnect rather than replacing them during sync.
 var ErrICloudReconnectRequired = errors.New("iCloud moved your contacts; review address-book choices, published contacts and conflicts, then reconnect with add-carddav --icloud")
 
-var iCloudPartitionHost = regexp.MustCompile(`^p[0-9]{2,53}-contacts\.icloud\.com$`)
-
 // IsICloudDiscoveryURL recognizes only the published HTTPS bootstrap root.
 func IsICloudDiscoveryURL(raw string) bool {
-	target, ok := parseICloudURL(raw)
-	return ok && strings.EqualFold(target.Hostname(), "contacts.icloud.com") &&
-		(target.Path == "" || target.Path == "/") && target.RawPath == ""
+	return icloudurl.IsDiscoveryURL(raw)
 }
 
 // ICloudPartitionOrigin returns the canonical HTTPS origin of an Apple
 // contacts partition. Paths are allowed, but query, userinfo and fragments
 // cannot be part of an iCloud discovery or credential binding.
 func ICloudPartitionOrigin(raw string) (string, bool) {
-	target, ok := parseICloudURL(raw)
-	if !ok || !iCloudPartitionHost.MatchString(strings.ToLower(target.Hostname())) {
-		return "", false
-	}
-	return "https://" + strings.ToLower(target.Hostname()), true
+	return icloudurl.PartitionOrigin(raw)
 }
 
-func parseICloudURL(raw string) (*url.URL, bool) {
-	if strings.TrimSpace(raw) != raw || strings.Contains(raw, "\\") {
-		return nil, false
-	}
-	target, err := url.Parse(raw)
-	if err != nil || target.Scheme != "https" || target.Opaque != "" || target.User != nil ||
-		target.RawQuery != "" || target.ForceQuery || target.Fragment != "" || strings.Contains(raw, "#") {
-		return nil, false
-	}
-	host := target.Hostname()
-	for i := range len(target.Host) {
-		if target.Host[i] >= 0x80 {
-			return nil, false
-		}
-	}
-	if host == "" || (!strings.EqualFold(target.Host, host) && !strings.EqualFold(target.Host, host+":443")) {
-		return nil, false
-	}
-	return target, true
+// ICloudPartitionRootOrigin returns the canonical origin only for a partition
+// root URL, with an optional slash.
+func ICloudPartitionRootOrigin(raw string) (string, bool) {
+	return icloudurl.PartitionRootOrigin(raw)
 }
 
 // NewICloudService uses a restricted bootstrap for the published root and

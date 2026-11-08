@@ -270,8 +270,8 @@ func (c Credential) validateICloud() error {
 	if !c.ICloud {
 		return nil
 	}
-	origin, ok := ICloudPartitionOrigin(c.BaseURL)
-	if !ok || (c.BaseURL != origin && c.BaseURL != origin+"/") || c.OAuth() || c.Password == "" {
+	_, ok := ICloudPartitionRootOrigin(c.BaseURL)
+	if !ok || c.OAuth() || c.Password == "" {
 		return errors.New("iCloud credential requires a password bound to a contacts partition origin")
 	}
 	return nil

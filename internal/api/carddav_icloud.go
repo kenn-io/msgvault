@@ -45,9 +45,11 @@ func (c *CardDAVController) prepareICloudRequest(
 	if !ok {
 		return req, nil, errors.Join(errCardDAVUpstream, carddav.ErrUnsafeHref)
 	}
-	// Preserve the saved spelling for the same iCloud account so a case-only
-	// reconnect does not replace its imported identities or book roles.
-	if previous.Provider == "" && previous.BaseURL == origin && previous.Username != "" && strings.EqualFold(previous.Username, req.Username) {
+	// Preserve a saved partition-root binding for the same iCloud account so
+	// spelling differences do not replace its imported identities or book roles.
+	previousOrigin, root := carddav.ICloudPartitionRootOrigin(previous.BaseURL)
+	if previous.Provider == "" && root && previousOrigin == origin && previous.Username != "" && strings.EqualFold(previous.Username, req.Username) {
+		origin = previous.BaseURL
 		req.Username = previous.Username
 	}
 	req.BaseURL, req.Password = origin, password

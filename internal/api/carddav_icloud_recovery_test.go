@@ -30,6 +30,7 @@ func TestICloudReconnectPreservesIdentityAcrossUsernameCase(t *testing.T) {
 		{"icloud setup", carddav.ICloudDiscoveryURL},
 		{"legacy partition setup", "https://p42-contacts.icloud.com"},
 		{"legacy partition root slash", "https://p42-contacts.icloud.com/"},
+		{"legacy partition explicit port", "https://P42-contacts.icloud.com:443/"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
