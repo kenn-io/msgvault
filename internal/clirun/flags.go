@@ -43,11 +43,15 @@ func NewFlagSet() *pflag.FlagSet {
 // value the check never saw.
 func Parse(flags *pflag.FlagSet, args []string) error {
 	seen := make(map[string]bool)
-	return flags.ParseAll(args, func(flag *pflag.Flag, value string) error {
+	err := flags.ParseAll(args, func(flag *pflag.Flag, value string) error {
 		if seen[flag.Name] {
 			return fmt.Errorf("flag --%s is given more than once", flag.Name)
 		}
 		seen[flag.Name] = true
 		return flags.Set(flag.Name, value)
 	})
+	if err != nil {
+		return fmt.Errorf("parse command arguments: %w", err)
+	}
+	return nil
 }
