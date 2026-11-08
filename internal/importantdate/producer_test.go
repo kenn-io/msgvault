@@ -1,6 +1,8 @@
 package importantdate
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"testing"
@@ -191,4 +193,60 @@ func TestRunSkipsCorrectedRetainedIssues(t *testing.T) {
 	checks.Equal(1, count)
 	checks.False(more)
 	checks.Equal(1, kata.notifications)
+}
+
+type failingRetainedIssueKata struct{ deliveryKataFake }
+
+func (f *failingRetainedIssueKata) GetTask(ctx context.Context, project, uid string) (taskclient.KataTask, error) {
+	if uid == "unreadable-issue" {
+		return taskclient.KataTask{}, errors.New("issue lookup unavailable")
+	}
+	return f.deliveryKataFake.GetTask(ctx, project, uid)
+}
+
+func TestRunContinuesAfterRetainedIssueLookupFailure(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	now := time.Now()
+	tomorrow := now.UTC().AddDate(0, 0, 1)
+	month, day := int(tomorrow.Month()), tomorrow.Day()
+	cfg := Config{Enabled: true, PrivateDestination: true, Project: "private-example", ProjectUID: "project-example", Recipient: "owner/agent", UseCadencePresets: true}
+	cfg.ApplyDefaults()
+	cfg.ConsentScope = DestinationScope("https://example.test", cfg.Project, cfg.ProjectUID)
+	for i := range 2 {
+		participant, err := st.EnsureParticipantByIdentifier("email", fmt.Sprintf("lookup-%d@example.test", i), "Example Contact")
+		must.NoError(err)
+		person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+		must.NoError(err)
+		_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: new(int64(21))}, Source: store.ProvenanceUser})
+		must.NoError(err)
+		_, err = st.AddPersonDateContext(ctx, person.ID, store.PersonDateInput{DateKind: store.PersonDateBirthday, Date: store.PartialDate{Month: &month, Day: &day}, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+		must.NoError(err)
+		must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+person.VCardUID, cfg.ConsentScope, cfg.Recipient, true))
+	}
+	candidates, err := Candidates(ctx, st, cfg, now)
+	must.NoError(err)
+	must.Len(candidates, 2)
+	first := candidates[0]
+	claimed, err := st.ClaimImportantDateDeliveryContext(ctx, first.OccurrenceKey, first.Fingerprint)
+	must.NoError(err)
+	must.True(claimed)
+	changed, err := st.AdvanceImportantDateDeliveryContext(ctx, first.OccurrenceKey, store.ImportantDateClaimed, store.ImportantDateIssueInFlight, "")
+	must.NoError(err)
+	must.True(changed)
+	changed, err = st.AdvanceImportantDateDeliveryContext(ctx, first.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateIssueCreated, "unreadable-issue")
+	must.NoError(err)
+	must.True(changed)
+	kata := &failingRetainedIssueKata{}
+	count, more, err := RunOnce(ctx, st, kata, cfg, now)
+	checks.ErrorContains(err, "issue lookup unavailable")
+	checks.Equal(2, count)
+	checks.False(more)
+	checks.Equal(1, kata.notifications)
+	state, uid, err := st.ImportantDateDeliveryContext(ctx, first.OccurrenceKey)
+	must.NoError(err)
+	checks.Equal(store.ImportantDateIssueCreated, state)
+	checks.Equal("unreadable-issue", uid)
 }
