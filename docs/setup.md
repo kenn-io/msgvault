@@ -24,7 +24,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary.
 
-On Unix, the installer saves PATH changes for Bash, Zsh, and Fish. Open a new terminal or run the command it prints to use msgvault in your current terminal. Set `MSGVAULT_NO_MODIFY_PATH=1` on the installer to leave profiles untouched. Set `MSGVAULT_INSTALL_DIR` to choose another destination; relative paths resolve from the directory where you run the installer. Other shells receive manual PATH instructions.
+On Unix, the installer saves PATH changes for Bash, Zsh, and Fish. Open a new terminal or run the command it prints to use msgvault in your current terminal. Set `MSGVAULT_NO_MODIFY_PATH=1` on the installer to leave profiles untouched. Set `MSGVAULT_INSTALL_DIR` to choose another destination. Other shells receive manual PATH instructions.
 
 Windows releases include native AMD64 and ARM64 packages. On Windows ARM64,
 the PowerShell installer selects the native package when the release provides

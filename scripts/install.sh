@@ -37,27 +37,25 @@ detect_arch() {
 
 # Find install directory
 find_install_dir() {
-    local install_dir
     if [ -n "${MSGVAULT_INSTALL_DIR:-}" ]; then
-        install_dir="$MSGVAULT_INSTALL_DIR"
+        mkdir -p "$MSGVAULT_INSTALL_DIR"
+        echo "$MSGVAULT_INSTALL_DIR"
     elif [ -w "/usr/local/bin" ]; then
-        install_dir="/usr/local/bin"
+        echo "/usr/local/bin"
     else
-        install_dir="$HOME/.local/bin"
+        mkdir -p "$HOME/.local/bin"
+        echo "$HOME/.local/bin"
     fi
-    mkdir -p "$install_dir" || error "Could not create install directory: $install_dir"
-    cd "$install_dir" && pwd -P
 }
 
 # Save PATH for new terminals and show how to update the current shell.
 configure_path() {
-    local install_dir="$1" profile quoted command manual configured=true
+    local install_dir="$1" profile quoted command configured=true
     local profiles=()
     case ":$PATH:" in *:"$install_dir":*) return ;; esac
 
     quoted="'${install_dir//\'/\'\\\'\'}'"
-    command="case \":\$PATH:\" in *:$quoted:*) ;; *) export PATH=\"\$PATH\":$quoted ;; esac"
-    manual="export PATH=\"\$PATH\":$quoted"
+    command="export PATH=\"\$PATH\":$quoted"
     case "${SHELL##*/}" in
         bash)
             profiles=("$HOME/.bashrc")
@@ -73,20 +71,14 @@ configure_path() {
             quoted="${install_dir//\\/\\\\}"
             quoted="'${quoted//\'/\\\'}'"
             command="fish_add_path --append --path $quoted"
-            manual="$command"
             profiles=("${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish")
             ;;
-        *)
-            warn "Configure PATH manually for your shell. Installed executable:"
-            printf '  %s/msgvault\n\n' "$quoted"
-            return
-            ;;
+        *) configured=false ;;
     esac
     case "${MSGVAULT_NO_MODIFY_PATH:-}" in
         1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])
             profiles=()
             configured=false
-            warn "PATH changes disabled by MSGVAULT_NO_MODIFY_PATH."
             ;;
     esac
     for profile in "${profiles[@]}"; do
@@ -97,15 +89,14 @@ configure_path() {
             info "Added msgvault to PATH in $profile"
         else
             configured=false
-            warn "Could not update $profile"
         fi
     done
     if "$configured"; then
         warn "Open a new terminal, or run:"
     else
-        warn "Run in your current shell:"
+        warn "Add this to your shell profile:"
     fi
-    printf '  %s\n\n' "$manual"
+    printf '  %s\n\n' "$command"
 }
 
 # Download with curl or wget

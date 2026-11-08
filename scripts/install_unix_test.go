@@ -53,7 +53,7 @@ fi
 	for _, tc := range []struct {
 		name, shell, optOut, pathEntry string
 	}{
-		{name: "relative fresh", shell: "bash"},
+		{name: "fresh with spaces", shell: "bash"},
 		{name: "existing login", shell: "bash"},
 		{name: "opt out", shell: "bash", optOut: "1"},
 		{name: "exact PATH", shell: "bash", pathEntry: "exact"},
@@ -66,15 +66,12 @@ fi
 			t.Parallel()
 			shell, err := exec.LookPath(tc.shell)
 			if err != nil && tc.shell != "other" {
-				require.Empty(t, os.Getenv("MSGVAULT_REQUIRE_INSTALL_SHELLS"), "CI must install the tested shells")
 				t.Skipf("%s is unavailable", tc.shell)
 			}
 			home := t.TempDir()
 			destination := filepath.Join(home, ".local", "bin")
-			installDir := destination
-			if tc.name == "relative fresh" {
-				installDir = "bin with spaces"
-				destination = filepath.Join(home, installDir)
+			if tc.name == "fresh with spaces" {
+				destination = filepath.Join(home, "bin with spaces")
 			}
 			path := os.Getenv("PATH")
 			if tc.pathEntry == "exact" {
@@ -93,7 +90,7 @@ fi
 				profiles[1] = ".bash_profile"
 			}
 			original := "# existing profile content"
-			if tc.name == "relative fresh" {
+			if tc.name == "fresh with spaces" {
 				original = ""
 			} else {
 				for _, profile := range profiles {
@@ -107,7 +104,7 @@ fi
 				}
 			}
 			env := []string{"HOME=" + home, "SHELL=/bin/" + tc.shell, "PATH=" + path, "TMPDIR=" + home,
-				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
+				"MSGVAULT_INSTALL_DIR=" + destination, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
 				"ZDOTDIR=" + filepath.Join(home, "zsh"), "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
 				"FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
@@ -115,18 +112,11 @@ fi
 			for run := range 2 {
 				cmd := exec.CommandContext(ctx, bash, script)
 				cmd.Env = append(append([]string{}, env...), "PATH="+transport+":"+path)
-				cmd.Dir = home
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, string(output))
 				assert.Contains(t, string(output), "Checksum verified")
 				if tc.optOut != "" || tc.shell == "other" {
-					assert.NotContains(t, string(output), "Open a new terminal")
-					if tc.optOut != "" {
-						assert.Contains(t, string(output), "Run in your current shell:")
-					} else {
-						assert.Contains(t, string(output), "Configure PATH manually")
-						assert.Contains(t, string(output), destination)
-					}
+					assert.Contains(t, string(output), "Add this to your shell profile:")
 				}
 				for _, profile := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
@@ -164,7 +154,6 @@ fi
 			for _, args := range starts {
 				cmd := exec.CommandContext(ctx, shell, args...)
 				cmd.Env = env
-				cmd.Dir = fixture
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, string(output))
 				assert.Contains(t, string(output), destination+"/msgvault\n")

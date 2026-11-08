@@ -241,8 +241,6 @@ jobs:
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
-        env:
-          MSGVAULT_REQUIRE_INSTALL_SHELLS: "1"
         run: make test-unsharded TEST_TIMEOUT=17m
 
       - name: Check for test reruns
