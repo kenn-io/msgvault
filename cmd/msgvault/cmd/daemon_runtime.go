@@ -10,13 +10,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
-	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -644,23 +642,15 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 		return false
 	}
 	if update.IsDevBuildVersion(currentVersion) || strings.HasSuffix(currentVersion, "-dirty") {
-		cli, daemon := strings.TrimSuffix(currentVersion, "-dirty"), strings.TrimSuffix(rt.Record.Version, "-dirty")
-		return semver.IsValid("v"+strings.TrimPrefix(cli, "v")) &&
-			semver.IsValid("v"+strings.TrimPrefix(daemon, "v")) && !update.IsNewer(daemon, cli)
+		cli := strings.TrimSuffix(currentVersion, "-dirty")
+		return semver.IsValid(cli) && semver.IsValid(rt.Record.Version) && !update.IsNewer(rt.Record.Version, cli)
 	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
 }
 
-func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
+func reportRetainedDaemonVersion(w io.Writer, rt *DaemonRuntime) {
 	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
-		options := optionsFromContext(ctx)
-		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-		commands, _ := agenthook.BuildCommand("msgvault", append(args, "daemon", "restart")...)
-		restart := commands.POSIX
-		if runtime.GOOS == "windows" && len(args) > 0 {
-			restart = commands.PowerShell
-		}
-		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to use this version.\n", rt.Record.Version, Version, restart)
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run msgvault daemon restart to use this version.\n", rt.Record.Version, Version)
 	}
 }
 

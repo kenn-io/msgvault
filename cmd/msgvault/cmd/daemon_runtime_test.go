@@ -452,16 +452,9 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 		{name: "equal source stays", daemonVersion: "v0.23.0-45-gabc", currentVersion: "v0.23.0-45-gabc"},
 		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},
 		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
-		{name: "source replaces older release", daemonVersion: "v0.22.0", currentVersion: "v0.23.0-45-gabc", want: true},
 		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
-		{name: "hash keeps versioned daemon", daemonVersion: "v0.24.0", currentVersion: "abc1234"},
 		{name: "source keeps dev daemon", daemonVersion: "dev", currentVersion: "v0.23.0-45-gabc"},
 		{name: "source keeps hash daemon", daemonVersion: "abc1234", currentVersion: "v0.23.0-45-gabc"},
-		{name: "dirty CLI keeps dev daemon", daemonVersion: "dev", currentVersion: "v0.23.0-dirty"},
-		{name: "unknown builds stay", daemonVersion: "abc1234", currentVersion: "dev"},
-		{name: "zero base source replaces release", daemonVersion: "v0.0.0", currentVersion: "v0.0.0-1-gabc", want: true},
-		{name: "zero base dirty replaces release", daemonVersion: "v0.0.0", currentVersion: "v0.0.0-dirty", want: true},
-		{name: "unprefixed source replaces release", daemonVersion: "0.23.0", currentVersion: "0.23.0-45-gabc", want: true},
 		{name: "same base later source replaces earlier", daemonVersion: "v0.23.0-44-gdef", currentVersion: "v0.23.0-45-gabc", want: true},
 		{name: "same base earlier source replaces later", daemonVersion: "v0.23.0-46-gdef", currentVersion: "v0.23.0-45-gabc", want: true},
 	}
@@ -483,7 +476,6 @@ func TestShouldUpgradeDaemonRuntimeWithConfiguredPolicy(t *testing.T) {
 		currentVersion string
 		want           bool
 	}{
-		{name: "always replaces unknown daemon", policy: config.DaemonAutoRestartAlways, daemonVersion: "dev", currentVersion: "v0.23.0-45-gabc", want: true},
 		{
 			name:           "newer policy restarts older daemon",
 			policy:         config.DaemonAutoRestartNewer,
