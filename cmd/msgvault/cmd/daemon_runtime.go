@@ -638,11 +638,11 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 	if rt.Record.Version == "" {
 		return !update.IsDevBuildVersion(currentVersion)
 	}
-	if rt.Record.Version == currentVersion {
+	if currentVersion == "dev" || rt.Record.Version == currentVersion {
 		return false
 	}
 	if update.IsDevBuildVersion(currentVersion) || strings.HasSuffix(currentVersion, "-dirty") {
-		return true
+		return !update.IsNewer(strings.TrimSuffix(rt.Record.Version, "-dirty"), strings.TrimSuffix(currentVersion, "-dirty"))
 	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
 }

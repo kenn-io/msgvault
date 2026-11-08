@@ -158,7 +158,7 @@ Commands that access archive state keep their usual stdout/stderr output while u
 
 This makes local and remote msgvault behavior the same from the CLI's point of view and avoids opening a large SQLite database from foreground CLI processes.
 
-The local daemon publishes its binary version and API schema version. By default, a newer compatible CLI restarts an older local daemon before issuing the request, and a source-build CLI, including a dirty build, replaces any differing daemon version. Configure `[server].daemon_auto_restart` as `newer`, `never`, or `always` to control that lifecycle behavior. Remote servers are not restarted by clients, so compatibility is negotiated from the API schema version exposed in the OpenAPI document.
+The local daemon publishes its binary version and API schema version. By default, a newer compatible CLI restarts an older local daemon before issuing the request, and a versioned source-build CLI, including a dirty build, replaces a differing daemon from the same or an older base release. Configure `[server].daemon_auto_restart` as `newer`, `never`, or `always` to control that lifecycle behavior. Remote servers are not restarted by clients, so compatibility is negotiated from the API schema version exposed in the OpenAPI document.
 
 ---
 
@@ -4636,13 +4636,13 @@ msgvault daemon stop
 msgvault daemon restart
 ```
 
-`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`; a source-build CLI, including a dirty build, also replaces any differing daemon version. Incompatible running daemons are reported with a prompt to stop them first.
+`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`; a versioned source-build CLI, including a dirty build, also replaces a differing daemon from the same or an older base release. Incompatible running daemons are reported with a prompt to stop them first.
 
 The lifecycle commands have no command-specific flags. Configuration comes from `config.toml` with the [runtime environment overrides](configuration.md#environment-variables). See [Web UI & API Server](/docs/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/docs/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/docs/configuration/#vectorembedschedule).
 
 Background daemons started by `daemon start` or auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for a lifecycle-managed background daemon.
 
-`[server].daemon_auto_restart` controls local daemon replacement when the CLI and recorded daemon versions differ. The default `newer` restarts older compatible daemons and replaces any differing daemon version when the CLI is a source build, including a dirty build. `never` leaves lifecycle to the operator or supervisor, and `always` restarts on any version mismatch that is safe for the current API schema. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
+`[server].daemon_auto_restart` controls local daemon replacement when the CLI and recorded daemon versions differ. The default `newer` restarts older compatible daemons and lets a versioned source-build CLI, including a dirty build, replace a differing daemon from the same or an older base release. `never` leaves lifecycle to the operator or supervisor, and `always` restarts on any version mismatch that is safe for the current API schema. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
 For compatibility with existing scripts, `msgvault serve start|status|stop|restart` remains accepted without warnings, but these aliases are hidden from help and shell completion.
 

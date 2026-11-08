@@ -452,6 +452,11 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 		{name: "equal source stays", daemonVersion: "v0.23.0-45-gabc", currentVersion: "v0.23.0-45-gabc"},
 		{name: "release keeps source", daemonVersion: "v0.23.0-45-gabc", currentVersion: "v0.23.0"},
 		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},
+		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
+		{name: "source keeps newer source", daemonVersion: "v0.24.0-2-gdef", currentVersion: "v0.23.0-45-gabc"},
+		{name: "source replaces older release", daemonVersion: "v0.22.0", currentVersion: "v0.23.0-45-gabc", want: true},
+		{name: "dirty CLI keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-dirty"},
+		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
 	}
 
 	for _, tt := range tests {
