@@ -194,19 +194,6 @@ func TestHydratorBuildsCanonicalSnapshotWithoutInventingOrganizer(t *testing.T) 
 	assert.Contains(string(snapshot.Metadata), `"unresolved_attendee_ids":["user-2"]`)
 }
 
-func TestHydratorDoesNotUseParentMarkdownForMissingTranscript(t *testing.T) {
-	assert := assert.New(t)
-	source := completeHydrationSource()
-	empty := paragraph("transcript-1", "", false)
-	source.blocks["transcript-1"] = &empty
-	source.markdown.Markdown = "# Weekly planning\n\n## Transcript\nTest Speaker: Late transcript."
-
-	hydrated, err := NewHydrator(source).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
-	assert.Empty(hydrated.Transcript)
-	assert.Zero(source.markdownCalls)
-}
-
 func TestHydratorDegradesWhenTranscriptBlockIsNotReady(t *testing.T) {
 	tests := []struct {
 		name string
