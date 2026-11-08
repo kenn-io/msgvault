@@ -25,6 +25,8 @@ type ImportantDateLineage struct {
 	Aliases          []ImportantDateLineageAlias    `json:"aliases"`
 	MergeSnapshots   []ImportantDateLineageSnapshot `json:"merge_snapshots"`
 	MergeIDs         []int64                        `json:"merge_ids"`
+	SplitResults     []PersonSplitResult            `json:"split_results"`
+	MissingSplitIDs  []int64                        `json:"missing_split_result_ids"`
 	SplitIDs         []int64                        `json:"split_ids"`
 	OwnedSubjects    []ImportantDateLineageSubject  `json:"owned_subjects"`
 	Deliveries       []ImportantDateLineageDelivery `json:"deliveries"`
@@ -126,7 +128,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	}
 	uids := map[string]struct{}{}
 	merges := map[int64]string{}
-	splits := map[int64]struct{}{}
+	splits := map[int64]*PersonSplitResult{}
 	for _, id := range result.PersonIDs {
 		var uid string
 		var revision, projectionRevision int64
@@ -187,18 +189,32 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		if err := rows.Close(); err != nil {
 			return result, fmt.Errorf("close lineage merges: %w", err)
 		}
-		rows, err = s.db.QueryContext(ctx, `SELECT id, new_person_uid FROM person_splits WHERE source_person_id = ? OR new_person_id = ?`, id, id)
+		rows, err = s.db.QueryContext(ctx, `SELECT id, new_person_uid, result_json FROM person_splits WHERE source_person_id = ? OR new_person_id = ?`, id, id)
 		if err != nil {
 			return result, fmt.Errorf("read lineage splits: %w", err)
 		}
 		for rows.Next() {
 			var splitID int64
 			var newUID string
-			if err := rows.Scan(&splitID, &newUID); err != nil {
+			var storedResult sql.NullString
+			if err := rows.Scan(&splitID, &newUID, &storedResult); err != nil {
 				_ = rows.Close()
 				return result, fmt.Errorf("scan lineage split: %w", err)
 			}
-			splits[splitID] = struct{}{}
+			var splitResult *PersonSplitResult
+			if storedResult.Valid && storedResult.String != "" {
+				var value PersonSplitResult
+				if err := json.Unmarshal([]byte(storedResult.String), &value); err != nil {
+					_ = rows.Close()
+					return result, fmt.Errorf("decode lineage split outcome: %w", err)
+				}
+				if value.Split.ID != splitID {
+					_ = rows.Close()
+					return result, errors.New("lineage split outcome identity mismatch")
+				}
+				splitResult = &value
+			}
+			splits[splitID] = splitResult
 			uids[newUID] = struct{}{}
 		}
 		if err := rows.Err(); err != nil {
@@ -218,8 +234,13 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		result.MergeIDs = append(result.MergeIDs, id)
 		result.MergeSnapshots = append(result.MergeSnapshots, ImportantDateLineageSnapshot{MergeID: id, SHA256: digest})
 	}
-	for id := range splits {
+	for id, outcome := range splits {
 		result.SplitIDs = append(result.SplitIDs, id)
+		if outcome == nil {
+			result.MissingSplitIDs = append(result.MissingSplitIDs, id)
+		} else {
+			result.SplitResults = append(result.SplitResults, *outcome)
+		}
 	}
 	sort.Strings(result.PersonUIDs)
 	sort.Slice(result.Aliases, func(i, j int) bool { return result.Aliases[i].UID < result.Aliases[j].UID })
@@ -323,7 +344,9 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	sort.Slice(result.MergeIDs, func(i, j int) bool { return result.MergeIDs[i] < result.MergeIDs[j] })
 	sort.Slice(result.MergeSnapshots, func(i, j int) bool { return result.MergeSnapshots[i].MergeID < result.MergeSnapshots[j].MergeID })
 	sort.Slice(result.SplitIDs, func(i, j int) bool { return result.SplitIDs[i] < result.SplitIDs[j] })
-	encoded, err := json.Marshal(result)
+	sort.Slice(result.MissingSplitIDs, func(i, j int) bool { return result.MissingSplitIDs[i] < result.MissingSplitIDs[j] })
+	sort.Slice(result.SplitResults, func(i, j int) bool { return result.SplitResults[i].Split.ID < result.SplitResults[j].Split.ID })
+	encoded, err := json.Marshal(result, json.Deterministic(true))
 	if err != nil {
 		return ImportantDateLineage{}, fmt.Errorf("encode important-date lineage: %w", err)
 	}
