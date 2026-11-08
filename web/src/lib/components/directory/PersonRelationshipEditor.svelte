@@ -206,7 +206,10 @@
         uncertainCreate = undefined;
         onDone();
       }
-      else attempt.details = '';
+      else {
+        uncertainCreate = undefined;
+        attempt.details = '';
+      }
     }
   }
   function recoveredCreateMatches(view: PersonRelationshipView, draft: CreatePersonRelationshipRequest): boolean {
@@ -257,13 +260,13 @@
                 highlightFirstOption panelAnchor={sentence} onquery={(query) => { typeQuery = query; }}
                 emptyLabel={controller.errors.relationshipTypes ? '' : typeQuery ? `No type matches “${typeQuery}”` : 'No connection types yet'}
                 onretry={() => void controller.refreshRelationshipTypes()}
-                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes ? "Couldn't load connection types." : ''} errorDetails={controller.errors.relationshipTypes} disabled={attempt.busy}
+                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes ? "Couldn't load connection types." : ''} errorDetails={controller.errors.relationshipTypes} disabled={attempt.busy || !!uncertainCreate}
                 onselect={(value) => { choice = value; }} />
             </span>
             </span>
             <span class="people-picker">
               <FieldPicker remote options={peopleOptions} value={counterpartID === null ? '' : String(counterpartID)}
-                panelAnchor={sentence} disabled={attempt.busy}
+                panelAnchor={sentence} disabled={attempt.busy || !!uncertainCreate}
                 fallbackLabel="Person" placeholder="Person" title="Person"
                 emptyLabel={searchError ? '' : searchText ? `No one matches “${searchText}”` : 'No other saved people'}
                 loading={searching} loadingLabel="Searching…" onquery={handleQuery} error={searchError ? "Couldn't search people." : ''} errorDetails={searchError} onretry={() => void searchPeople(searchText)}
@@ -276,10 +279,10 @@
       </section>
       <section>
         {#if initialRelationship}
-          <DateField bind:value={endDate} start={startDate} bind:error={endDateError} disabled={attempt.busy} />
+          <DateField bind:value={endDate} start={startDate} bind:error={endDateError} disabled={attempt.busy || !!uncertainCreate} />
           {#if initialRelationship.end_date && !endDate.trim()}<p class="muted">To reopen it, add a new connection.</p>{/if}
-        {:else}<DateRange bind:start={startDate} bind:end={endDate} showCurrent={false} bind:invalid={datesInvalid} disabled={attempt.busy} />{/if}
-        <label class="notes">Notes<textarea aria-label="Notes" bind:value={notes} disabled={attempt.busy}></textarea></label>
+        {:else}<DateRange bind:start={startDate} bind:end={endDate} showCurrent={false} bind:invalid={datesInvalid} disabled={attempt.busy || !!uncertainCreate} />{/if}
+        <label class="notes">Notes<textarea aria-label="Notes" bind:value={notes} disabled={attempt.busy || !!uncertainCreate}></textarea></label>
       </section>
     </div>
   <button type="submit" hidden>Save</button>

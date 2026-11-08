@@ -919,7 +919,9 @@ describe('RelationshipsTab', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the connection was saved.");
     expect(screen.getByRole('alert').textContent).not.toContain('outcome unknown');
-    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLInputElement).value).toBe('Retained unknown draft');
+    const notes = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
+    expect(notes.value).toBe('Retained unknown draft');
+    expect(notes.disabled).toBe(true);
     expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
     await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add connection' })).getByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
