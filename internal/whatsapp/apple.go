@@ -121,7 +121,6 @@ func (imp *Importer) importApple(
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
-	summary.SyncID = syncID
 	scoped := *imp
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	imp = &scoped
@@ -143,12 +142,6 @@ func (imp *Importer) importApple(
 			}
 			return
 		}
-		if opts.WriterAlive != nil && !*opts.WriterAlive && summary.MessagesAdded+summary.MessagesUpdated == 0 {
-			if err := imp.store.CompleteSync(syncID, ""); err != nil {
-				retErr = fmt.Errorf("complete sync: %w", err)
-			}
-			return
-		}
 		if err := imp.store.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, source.ID, ""); err != nil {
 			retErr = fmt.Errorf("complete sync: %w", err)
 		}
@@ -158,15 +151,15 @@ func (imp *Importer) importApple(
 
 	lidMap, err := loadAppleLIDMap(ctx, chatDBPath)
 	if err != nil {
-		return summary, fmt.Errorf("load Apple LID mapping: %w", err)
+		return nil, fmt.Errorf("load Apple LID mapping: %w", err)
 	}
 	pushNames, err := loadApplePushNames(ctx, db)
 	if err != nil {
-		return summary, fmt.Errorf("load Apple push names: %w", err)
+		return nil, fmt.Errorf("load Apple push names: %w", err)
 	}
 	duplicateStanzas, duplicateRows, err := fetchDuplicateAppleTextStanzas(ctx, db)
 	if err != nil {
-		return summary, fmt.Errorf("find duplicate Apple stanza IDs: %w", err)
+		return nil, fmt.Errorf("find duplicate Apple stanza IDs: %w", err)
 	}
 	if duplicateRows > 0 {
 		summary.Errors++
@@ -181,25 +174,25 @@ func (imp *Importer) importApple(
 		opts.Phone, opts.DisplayName, "whatsapp",
 	)
 	if err != nil {
-		return summary, fmt.Errorf("ensure self participant: %w", err)
+		return nil, fmt.Errorf("ensure self participant: %w", err)
 	}
 	participantIDs := map[string]int64{opts.Phone: selfParticipantID}
 	summary.Participants = 1
 
 	chats, err := fetchAppleChats(ctx, db)
 	if err != nil {
-		return summary, fmt.Errorf("fetch Apple chats: %w", err)
+		return nil, fmt.Errorf("fetch Apple chats: %w", err)
 	}
 
 	aggregates, markersAvailable, err := fetchAppleChatAggregates(ctx, db)
 	if err != nil {
-		return summary, fmt.Errorf("read Apple chat change markers: %w", err)
+		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
 	}
 	// Without a store identity, markers cannot tell one database from another,
 	// so every chat is read.
 	storeIdentity, err := fetchAppleStoreIdentity(ctx, db)
 	if err != nil {
-		return summary, fmt.Errorf("read Apple chat change markers: %w", err)
+		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
 	}
 	if storeIdentity == "" {
 		markersAvailable, aggregates = false, nil
@@ -208,13 +201,13 @@ func (imp *Importer) importApple(
 		storeIdentity, selfParticipantID, lidMap, pushNames, duplicateStanzas,
 	)
 	if err != nil {
-		return summary, err
+		return nil, err
 	}
 	var previousMarkers map[int64]string
 	if !opts.Full && markersAvailable {
 		previousMarkers, err = imp.previousAppleChatMarkers(ctx, source, syncID, importContext)
 		if err != nil {
-			return summary, err
+			return nil, err
 		}
 	}
 	nextMarkers := make(map[int64]string, len(chats))

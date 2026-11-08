@@ -52,8 +52,6 @@ it.each([
   { name: 'disabled lane still running', lanes: [lane('visual_embedding', { configured: false, active: activeRun })], expected: [['running', '']] },
   { name: 'queued source with completed sync', source: { scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: syncRunStatus() }, lanes: [], expected: [['queued', '']] },
   { name: 'failed source with a queued retry', source: { scheduler_queued: true, latest_sync: syncRunStatus({ status: 'failed', error_message: 'Mailbox unavailable' }) }, lanes: [], expected: [['failed', 'Mailbox unavailable']] },
-  { name: 'unmeasured failed sync still needs attention', source: { latest_sync: syncRunStatus({ status: 'failed', outcome: 'unmeasured', reason: 'fda_denied', error_message: 'unmeasured (no archive writes): fda_denied' }) }, lanes: [], expected: [['failed', 'unmeasured (no archive writes): fda_denied']] },
-  { name: 'unmeasured completed sync is not a failure', source: { latest_sync: syncRunStatus({ outcome: 'unmeasured', reason: 'writer_not_running' }) }, lanes: [], expected: [] },
   { name: 'source with scheduler failure skips its source sync lane', source: { scheduler_last_error: 'Schedule failed' }, lanes: [lane('source_sync')], expected: [['failed', 'Schedule failed']] },
   { name: 'trims a scheduler error to its first line', source: { scheduler_last_error: 'Schedule failed\nmore detail' }, lanes: [], expected: [['failed', 'Schedule failed']] },
   { name: 'active sync with queued follow-up and old failure', source: { scheduler_queued: true, active_sync: syncRunStatus({ status: 'running', completed_at: null }), latest_sync: syncRunStatus({ status: 'failed', error_message: 'Old failure' }) }, lanes: [], expected: [['running', '']] },

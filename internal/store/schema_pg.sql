@@ -1813,9 +1813,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_before TEXT,
     cursor_after TEXT,
     request_fingerprint TEXT,
-    operation_id TEXT,
-    measurement_outcome TEXT,
-    measurement TEXT
+    operation_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS person_sweep_sync_publications (

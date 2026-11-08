@@ -3968,12 +3968,8 @@ func (a *storeAPIAdapter) CreateSyncOperation(sourceID int64, operationID string
 	return a.store.CreateSyncOperation(sourceID, operationID)
 }
 
-func (a *storeAPIAdapter) GetLastMeasuredSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetLastMeasuredSyncContext(ctx, sourceID)
-}
-
-func (a *storeAPIAdapter) GetSyncMeasurement(ctx context.Context, syncID int64) (*store.SyncMeasurement, error) {
-	return a.store.GetSyncMeasurement(ctx, syncID)
+func (a *storeAPIAdapter) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
+	return a.store.GetLastSuccessfulSyncContext(ctx, sourceID)
 }
 
 func (a *storeAPIAdapter) CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error) {

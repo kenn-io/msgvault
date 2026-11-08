@@ -116,10 +116,6 @@ type ImportOptions struct {
 	// change markers match the last successful import.
 	Full bool
 
-	// WriterAlive reports whether the Apple source writer is running. A known
-	// stopped writer and no archive changes must not advance source freshness.
-	WriterAlive *bool
-
 	// After and Before restrict an Apple import to messages sent at or after
 	// After and before Before (zero = unbounded). Messages outside the window
 	// are neither written nor removed. The Android importer rejects them.
@@ -139,7 +135,6 @@ func DefaultOptions() ImportOptions {
 type ImportSummary struct {
 	Duration          time.Duration
 	SourceID          int64
-	SyncID            int64 // Apple imports only; set from run start, also on error
 	ChatsProcessed    int64
 	MessagesProcessed int64
 	MessagesAdded     int64

@@ -1,6 +1,6 @@
 import type { OperationLaneStatus, SourceStatus } from '../api/generated/models';
 import { operationStateChip, OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, type RelatedStatus } from '../operations/labels';
-import { syncRunning, sourceRunState } from '../sources/labels';
+import { syncRunning } from '../sources/labels';
 
 export type JobState = 'queued' | 'running' | 'failed';
 export type JobsHealth = 'ok' | 'queued' | 'running' | 'failed' | 'unavailable';
@@ -29,10 +29,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
     } else {
       const run = source.latest_sync;
       const failedAt = run?.completed_at ?? run?.started_at;
-      // An unmeasured run that failed (Full Disk Access denied, source
-      // missing) still needs attention; one that completed does not.
-      const state = sourceRunState(source);
-      const runFailed = state === 'failed' || (state === 'unmeasured' && run?.status === 'failed');
+      const runFailed = run?.status === 'failed';
       if (runFailed || source.scheduler_last_error) {
         const diagnostics = runFailed
           ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).find(Boolean)
