@@ -212,10 +212,8 @@ func (state *syncState) reason(reason, kind string) {
 }
 func (state *syncState) deferTask(t scopeTask, reason string, now time.Time) {
 	state.reason(reason, t.Kind)
-	for i, gap := range state.Deferred {
+	for _, gap := range state.Deferred {
 		if gap.Task != nil && gap.Task.key() == t.key() && gap.Task.Cursor == t.Cursor && gap.Task.Offset == t.Offset {
-			state.Deferred[i].Reason = reason
-			state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
 			return
 		}
 		for _, peer := range gap.PeerTasks {
@@ -225,6 +223,20 @@ func (state *syncState) deferTask(t scopeTask, reason string, now time.Time) {
 		}
 	}
 	state.Deferred = append(state.Deferred, deferredScope{Task: &t, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
+}
+
+func (state *syncState) deferAttemptedTask(t scopeTask, reason string, now time.Time) {
+	state.deferTask(t, reason, now)
+	// Bundled peers share a retry time; do not delay unrelated peer work.
+	for i, gap := range state.Deferred {
+		if gap.Task != nil && gap.Task.key() == t.key() && gap.Task.Cursor == t.Cursor && gap.Task.Offset == t.Offset {
+			state.Deferred[i].Reason = reason
+			if len(gap.PeerTasks) == 0 && len(gap.PeerWindows) == 0 {
+				state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
+			}
+			return
+		}
+	}
 }
 func (state *syncState) activateDeferred(now time.Time, limits discoveryLimits) {
 	retained := make([]deferredScope, 0, len(state.Deferred))
@@ -506,10 +518,8 @@ func (state *syncState) currentCoverage(search bool) {
 
 func (state *syncState) deferWindow(window queryWindow, reason string, now time.Time) {
 	state.reason(reason, "query")
-	for i, gap := range state.Deferred {
+	for _, gap := range state.Deferred {
 		if gap.Window != nil && gap.Window.From.Equal(window.From) && gap.Window.To.Equal(window.To) {
-			state.Deferred[i].Reason = reason
-			state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
 			return
 		}
 		for _, peer := range gap.PeerWindows {
@@ -519,6 +529,20 @@ func (state *syncState) deferWindow(window queryWindow, reason string, now time.
 		}
 	}
 	state.Deferred = append(state.Deferred, deferredScope{Window: &window, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
+}
+
+func (state *syncState) deferAttemptedWindow(window queryWindow, reason string, now time.Time) {
+	state.deferWindow(window, reason, now)
+	// Bundled peers share a retry time; do not delay unrelated peer work.
+	for i, gap := range state.Deferred {
+		if gap.Window != nil && gap.Window.From.Equal(window.From) && gap.Window.To.Equal(window.To) {
+			state.Deferred[i].Reason = reason
+			if len(gap.PeerTasks) == 0 && len(gap.PeerWindows) == 0 {
+				state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
+			}
+			return
+		}
+	}
 }
 func (state *syncState) resolveWindow(window queryWindow) {
 	retained := state.Deferred[:0]

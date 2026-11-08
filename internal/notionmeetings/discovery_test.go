@@ -104,6 +104,47 @@ func TestNewTranscriptRetrySpillsWhenCursorIsFull(t *testing.T) {
 	assert.Equal(meeting.ID, state.PendingBacklog[0].BlockID)
 }
 
+func TestRediscoveredContinuationKeepsRetryDeadline(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	run, source := schedulerFixture(t)
+	run.limits.Frontier = 1
+	now := run.now
+	task := scopeTask{Kind: "blocks", ID: "root", Cursor: "next"}
+	run.state.deferTask(task, "frontier_budget", now)
+	due := now.Add(transcriptRetryCadence)
+	run.state.Frontier = []scopeTask{{Kind: "blocks", ID: "busy"}}
+	for hour := range 5 {
+		run.now = now.Add(time.Duration(hour+1) * time.Hour)
+		run.continuation(scopeTask{Kind: "blocks", ID: "root"}, true, "next")
+		require.Len(run.state.Deferred, 1)
+		assert.Equal(due, run.state.Deferred[0].NextAttemptAt)
+	}
+	run.state.Frontier = nil
+	run.now = due
+	run.state.activateDeferred(due, run.limits)
+	require.Len(run.state.Frontier, 1)
+	source.childrenErrs = map[string]error{"root/next": &APIError{Kind: ErrProvider, Status: 404}}
+	_, err := run.stepTraversal(t.Context())
+	require.NoError(err)
+	require.Len(run.state.Deferred, 1)
+	assert.Equal(due.Add(transcriptRetryCadence), run.state.Deferred[0].NextAttemptAt)
+}
+
+func TestRediscoveredWindowKeepsRetryDeadline(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	state := newSyncState()
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	window := queryWindow{To: now}
+	state.deferWindow(window, "cursor_budget", now)
+	state.deferWindow(window, "cursor_budget", now.Add(time.Hour))
+	require.Len(state.Deferred, 1)
+	assert.Equal(now.Add(transcriptRetryCadence), state.Deferred[0].NextAttemptAt)
+	state.deferAttemptedWindow(window, "query_cap", now.Add(2*time.Hour))
+	assert.Equal(now.Add(2*time.Hour+transcriptRetryCadence), state.Deferred[0].NextAttemptAt)
+}
+
 func TestQueueBackpressureReplaysEveryCandidate(t *testing.T) {
 	run, source := schedulerFixture(t)
 	run.limits.Frontier = 2

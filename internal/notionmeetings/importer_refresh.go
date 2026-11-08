@@ -33,7 +33,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 			state.Known[id] = known
 			state.deferTranscriptAttempt(id, now)
 		} else {
-			state.deferTask(scopeTask{Kind: "meeting", ID: id}, reason, now)
+			state.deferAttemptedTask(scopeTask{Kind: "meeting", ID: id}, reason, now)
 		}
 		progress("Notion meeting: fetch deferred")
 		return false, nil
@@ -47,7 +47,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 			state.Known[id] = known
 			state.deferTranscriptAttempt(id, now)
 		} else {
-			state.deferTask(scopeTask{Kind: "meeting", ID: id}, "malformed_response", now)
+			state.deferAttemptedTask(scopeTask{Kind: "meeting", ID: id}, "malformed_response", now)
 		}
 		return false, nil
 	}
@@ -83,7 +83,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 			state.Known[id] = known
 			state.deferTranscriptAttempt(id, now)
 		} else {
-			state.deferTask(scopeTask{Kind: "meeting", ID: id}, reason, now)
+			state.deferAttemptedTask(scopeTask{Kind: "meeting", ID: id}, reason, now)
 		}
 		return true, nil
 	}
@@ -144,7 +144,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 				state.Known[id] = previous
 				state.deferTranscriptAttempt(id, now)
 			} else {
-				state.deferTask(scopeTask{Kind: "meeting", ID: id}, "evidence_limit", now)
+				state.deferAttemptedTask(scopeTask{Kind: "meeting", ID: id}, "evidence_limit", now)
 			}
 			return true, nil
 		}

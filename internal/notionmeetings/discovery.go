@@ -55,7 +55,7 @@ func (r *discoveryRun) stepQuery(ctx context.Context) (bool, error) {
 		if err == nil {
 			reason = "malformed_response"
 		}
-		s.deferWindow(window, reason, r.now)
+		s.deferAttemptedWindow(window, reason, r.now)
 		s.Windows = s.Windows[1:]
 		return true, nil
 	}
@@ -74,7 +74,7 @@ func (r *discoveryRun) stepQuery(ctx context.Context) (bool, error) {
 		if split, ok := window.split(result.Results); ok {
 			s.Windows = append(s.Windows, split...)
 		} else {
-			s.deferWindow(window, "query_cap", r.now)
+			s.deferAttemptedWindow(window, "query_cap", r.now)
 		}
 	} else {
 		s.resolveWindow(window)
@@ -129,11 +129,11 @@ func (r *discoveryRun) continuation(task scopeTask, more bool, next string) {
 		return
 	}
 	if next == "" || next == task.Cursor {
-		r.state.deferTask(task, "cursor_cycle", r.now)
+		r.state.deferAttemptedTask(task, "cursor_cycle", r.now)
 		return
 	}
 	if slices.Contains(task.Cursors, next) {
-		r.state.deferTask(task, "cursor_cycle", r.now)
+		r.state.deferAttemptedTask(task, "cursor_cycle", r.now)
 		return
 	}
 	task.Cursors = append(task.Cursors, task.Cursor)
@@ -200,25 +200,25 @@ func (r *discoveryRun) stepTraversal(ctx context.Context) (bool, error) {
 	}
 	if err != nil {
 		s.Frontier = s.Frontier[1:]
-		s.deferTask(task, errorCategory(err), r.now)
+		s.deferAttemptedTask(task, errorCategory(err), r.now)
 		return true, nil
 	}
 	// Validate before advancing so a malformed/oversize response cannot skip work.
 	if (page != nil && (len(page.Results) > size || (page.HasMore && page.NextCursor == ""))) || (blocks != nil && (len(blocks.Results) > size || (blocks.HasMore && blocks.NextCursor == ""))) {
 		s.Frontier = s.Frontier[1:]
-		s.deferTask(task, "malformed_response", r.now)
+		s.deferAttemptedTask(task, "malformed_response", r.now)
 		return true, nil
 	}
 	if task.Kind != "meeting" && page == nil && blocks == nil && db == nil {
 		s.Frontier = s.Frontier[1:]
-		s.deferTask(task, "malformed_response", r.now)
+		s.deferAttemptedTask(task, "malformed_response", r.now)
 		return true, nil
 	}
 	s.Frontier = s.Frontier[1:]
 	s.resolveTask(task)
 	if page != nil {
 		if page.RequestStatus.Type == "incomplete" {
-			s.deferTask(task, "data_source_cap", r.now)
+			s.deferAttemptedTask(task, "data_source_cap", r.now)
 		}
 		for _, object := range page.Results {
 			if strings.TrimSpace(object.ID) == "" {
@@ -259,7 +259,7 @@ func (r *discoveryRun) stepTraversal(ctx context.Context) (bool, error) {
 	}
 	if db != nil {
 		if task.Offset < 0 || task.Offset > len(db.DataSources) {
-			s.deferTask(scopeTask{Kind: "database", ID: task.ID, Depth: task.Depth}, "malformed_response", r.now)
+			s.deferAttemptedTask(scopeTask{Kind: "database", ID: task.ID, Depth: task.Depth}, "malformed_response", r.now)
 			return true, nil
 		}
 		// A database response has no page-size control. Replay a bounded suffix
