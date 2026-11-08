@@ -10,13 +10,15 @@ import (
 )
 
 func TestWriterSharesSendersOfASharedIdentifierType(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
 	write := func(sourceIdentifier string, writer func(*store.Store, *store.Source) *Writer) int64 {
 		source, err := st.GetOrCreateSourceContext(t.Context(), "example_forge", sourceIdentifier)
-		require.NoError(t, err)
+		require.NoError(err)
 		syncID, err := st.StartSyncContext(t.Context(), source.ID, "example_forge")
-		require.NoError(t, err)
+		require.NoError(err)
 		scoped := st.ScopedToSync(source.ID, syncID)
 		result, err := writer(scoped, source).Write(t.Context(), ImportedMessage{
 			ExternalID:   "comment-1",
@@ -26,10 +28,10 @@ func TestWriterSharesSendersOfASharedIdentifierType(t *testing.T) {
 			SentAt:       "2026-11-07T10:00:00Z",
 			BodyMarkdown: "Looks good.",
 		})
-		require.NoError(t, err)
-		require.NoError(t, scoped.CompleteSyncContext(t.Context(), syncID, ""))
+		require.NoError(err)
+		require.NoError(scoped.CompleteSyncContext(t.Context(), syncID, ""))
 		var senderID int64
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT sender_id FROM messages WHERE id = ?`), result.MessageID).Scan(&senderID))
 		return senderID
 	}
@@ -41,13 +43,13 @@ func TestWriterSharesSendersOfASharedIdentifierType(t *testing.T) {
 	}
 
 	first := write("account-a", shared)
-	assert.Equal(t, first, write("account-b", shared), "one account is one participant in every source")
-	assert.NotEqual(t, first, write("account-c", scoped), "without the type an id stays inside its source")
+	assert.Equal(first, write("account-b", shared), "one account is one participant in every source")
+	assert.NotEqual(first, write("account-c", scoped), "without the type an id stays inside its source")
 
 	var identifierType, identifierValue string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT identifier_type, identifier_value FROM participant_identifiers WHERE participant_id = ?
 	`), first).Scan(&identifierType, &identifierValue))
-	assert.Equal(t, "example_forge", identifierType)
-	assert.Equal(t, "1001", identifierValue)
+	assert.Equal("example_forge", identifierType)
+	assert.Equal("1001", identifierValue)
 }
