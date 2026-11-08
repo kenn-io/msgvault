@@ -38,6 +38,6 @@ export function organizationFacts(profile: OrganizationProfile): Facts {
     'Contact details': (profile.contact_points ?? []).map(item => item.original_value).join(', '),
     Addresses: (profile.addresses ?? []).map(item => item.original_value).join(', '),
     Identifiers: (profile.identifiers ?? []).map(item => item.identifier_value).join(', '),
-    Media: (profile.media ?? []).map(item => [item.original_value, item.media_type, item.uri].filter(Boolean).join(' · ')).join(', '),
+    Media: (profile.media ?? []).map(item => [item.original_value, item.media_type, item.uri, item.content_hash].filter(Boolean).join(' · ')).join(', '),
   };
 }

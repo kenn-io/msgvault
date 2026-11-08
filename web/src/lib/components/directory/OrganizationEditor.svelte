@@ -200,7 +200,7 @@
 
   // What a person auditing a saved value may need; the row itself shows the value and its provenance.
   const detailLabels: [string, string][] = [
-    ['name_kind', 'Kind'], ['address_kind', 'Kind'], ['identifier_kind', 'Kind'], ['media_kind', 'Kind'],
+    ['name_kind', 'Kind'], ['address_kind', 'Kind'], ['identifier_kind', 'Kind'], ['media_kind', 'Kind'], ['content_hash', 'Content hash'],
     ['service_slug', 'Service'], ['scope_kind', 'Scope'], ['scope_value', 'Scope value'], ['uri', 'Link'],
     ['post_office_box', 'PO box'], ['extended_address', 'Extended address'], ['street_address', 'Street'],
     ['locality', 'City'], ['region', 'Region'], ['postal_code', 'Postal code'], ['country_name', 'Country'],
@@ -251,6 +251,12 @@
   }
 
   // The provenance most rows share, said once above the groups when two or more share it; a row keeps its own line only when it differs.
+  function profileGroupValue(group: { title: string; rows: ProfileRow[] }): string {
+    return JSON.stringify(group.rows.map(({ value, record }) => [
+      value, group.title === 'Media' ? (record as { content_hash?: string }).content_hash : undefined
+    ]));
+  }
+
   function sharedProvenance(groups: { rows: ProfileRow[] }[]): ProvenanceLine | undefined {
     const counts = new Map<string, { line: ProvenanceLine; count: number }>();
     for (const row of groups.flatMap((group) => group.rows)) {
@@ -405,12 +411,12 @@
   {@const saved = write.conflict!.data}
   {@const savedFacts = organizationFacts(saved)}
   {@const groups = profileGroups(saved, [...STRUCTURED])}
-  {@const openedGroups = new Map(profileGroups(currentProfile!, [...STRUCTURED]).map(group => [group.title, group.rows.map(row => row.value).join('\n')]))}
+  {@const openedGroups = new Map(profileGroups(currentProfile!, [...STRUCTURED]).map(group => [group.title, profileGroupValue(group)]))}
   <!-- Details lists the saved structured values once, by group, and marks the groups that differ from what was opened. -->
   <ConflictNotice noun="organization" saved={saved.organization} {...conflict(savedFacts, organizationFacts(currentProfile!), yours)} message={write.details}
     listed={LISTED_FACTS.filter(label => savedFacts[label])} actionLabel={onaction && 'Keep yours'} {onaction}>
     {#snippet more()}
-      {#if groups.length}{@render profileGroupsBlock(groups, undefined, new Set(groups.filter(group => openedGroups.get(group.title) !== group.rows.map(row => row.value).join('\n')).map(group => group.title)))}{/if}
+      {#if groups.length}{@render profileGroupsBlock(groups, undefined, new Set(groups.filter(group => openedGroups.get(group.title) !== profileGroupValue(group)).map(group => group.title)))}{/if}
     {/snippet}
   </ConflictNotice>
 {/snippet}

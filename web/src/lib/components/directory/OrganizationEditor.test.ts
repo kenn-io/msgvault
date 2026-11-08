@@ -717,6 +717,28 @@ it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s
   }
 });
 
+it('shows replaced media content in organization conflict details', async () => {
+  let reads = 0;
+  const opened = organizationProfile();
+  Object.assign(opened.media[0], { media_type: 'image/png', uri: 'https://example.org/logo.png' });
+  const saved = {
+    ...organizationProfile(2),
+    media: [{ ...opened.media[0], content_hash: 'sha256:replacement' }]
+  };
+  const { controller } = controllerWith(async input => {
+    if (requestOf(input).method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    return Response.json(++reads === 1 ? opened : saved, { headers: { ETag: `\"organization-21-r${reads}\"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+
+  expect(within(alert).getByText('Other details also changed')).toBeDefined();
+  expect(within(alert).getByText('Media · Changed')).toBeDefined();
+  expect(within(alert).getByText('Content hash', { selector: 'dt' }).nextElementSibling?.textContent).toBe('sha256:replacement');
+});
+
 it('sends the version an alias save returned when the organization save follows it', async () => {
   const tags: (string | null)[] = [];
   const onDone = vi.fn();

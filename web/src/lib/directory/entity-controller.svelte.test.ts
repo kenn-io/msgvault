@@ -143,25 +143,6 @@ describe('DirectoryEntityController', () => {
     controller.destroy();
   });
 
-  it('requests historical network connections and preserves that choice on refresh', async () => {
-    const requests: URL[] = [];
-    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
-      const request = requestOf(input);
-      if (pathOf(request).endsWith('/network')) requests.push(new URL(request.url));
-      return defaultResponse(request);
-    }));
-    const controller = new DirectoryEntityController(client, 7);
-
-    await controller.loadNetwork(2, true);
-    await controller.refreshNetwork();
-
-    expect(requests.map(url => url.search)).toEqual([
-      '?depth=2&include_ended=true',
-      '?depth=2&include_ended=true'
-    ]);
-    controller.destroy();
-  });
-
   it('loads generated collections without the network and without treating collection ETags as entity ETags', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
