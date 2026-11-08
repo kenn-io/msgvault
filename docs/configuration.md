@@ -1820,8 +1820,8 @@ exclude_owners = ["my-employer"]  # never fetch these owners' repositories
 | `include_owners` | all | Organizations and users whose repositories are archived |
 | `exclude_owners` | — | Organizations and users whose repositories are never fetched (wins over `include_owners`) |
 
-Owners compare without case. A repository's current owner is checked before
-each thread is fetched. After either list changes, the next sync searches your
+Owners compare without case. Each sync looks up a repository's current owner
+before fetching any of its threads. After either list changes, the next sync searches your
 history again so a newly allowed owner's older threads are archived. See
 [Code forges](usage/forges.md#choose-whose-repositories-are-archived).
 

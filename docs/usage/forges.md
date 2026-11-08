@@ -46,10 +46,10 @@ post in them:
   threads you're subscribed to, review requests, mentions, and releases of
   repositories you watch for releases. An unchanged notification list costs
   nothing against your rate limit.
-- **Involvement search.** Every issue, pull request and discussion you
-  authored, commented on, were assigned, or were mentioned in. The first sync
-  searches your whole history, so threads older than your notifications are
-  archived too.
+- **Searches.** Every issue, pull request and discussion you authored,
+  commented on, were assigned, or were mentioned in, and every pull request
+  you reviewed or were asked to review. The first sync searches your whole
+  history, so threads older than your notifications are archived too.
 
 Notifications about CI runs, security alerts and commits are skipped: they have
 no conversation to archive.
@@ -87,9 +87,9 @@ repositories:
 
 An excluded owner's threads are never fetched or stored. On GitHub they never
 reach msgvault at all: the search leaves them out, and notifications carry
-only titles, which msgvault drops. msgvault also checks a repository's current
-owner before fetching each thread, so a repository moved to an excluded owner
-after it was found is dropped too. After you change either list, the next sync
+only titles, which msgvault drops. Each sync also looks up a repository's
+current owner before fetching any of its threads, so a repository moved to an
+excluded owner after it was found is dropped too. After you change either list, the next sync
 searches your history again, so a newly allowed owner's older threads are
 archived.
 
