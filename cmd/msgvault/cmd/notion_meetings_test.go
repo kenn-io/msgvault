@@ -26,6 +26,22 @@ type fakeNotionProbe struct {
 	usersErr error
 }
 
+func (f fakeNotionProbe) RetrieveSelf(context.Context) (*notionmeetings.User, error) {
+	return &notionmeetings.User{Object: "user", ID: "bot", Type: "bot", Bot: notionmeetings.BotInfo{Owner: notionmeetings.BotOwner{Type: "user", User: notionmeetings.UserRef{ID: "human"}}}}, nil
+}
+func (f fakeNotionProbe) QueryMeetingNotesFiltered(ctx context.Context, n int, _ *notionmeetings.MeetingFilter) (*notionmeetings.QueryResult, error) {
+	return f.QueryMeetingNotes(ctx, n)
+}
+func (f fakeNotionProbe) Search(context.Context, string) (*notionmeetings.DiscoveryPage, error) {
+	return &notionmeetings.DiscoveryPage{Object: "list"}, nil
+}
+func (f fakeNotionProbe) QueryDataSource(context.Context, string, string) (*notionmeetings.DiscoveryPage, error) {
+	return &notionmeetings.DiscoveryPage{Object: "list"}, nil
+}
+func (f fakeNotionProbe) RetrieveDatabase(context.Context, string) (*notionmeetings.Database, error) {
+	return nil, notionmeetings.ErrMalformedResponse
+}
+
 func (f fakeNotionProbe) QueryMeetingNotes(context.Context, int) (*notionmeetings.QueryResult, error) {
 	return f.result, f.err
 }
@@ -49,6 +65,9 @@ func (f fakeNotionProbe) ListUsers(context.Context, string) (*notionmeetings.Use
 func notionProbeBlock(t *testing.T, meeting notionmeetings.MeetingNote) *notionmeetings.Block {
 	t.Helper()
 	meeting.Object, meeting.Type = "block", "meeting_notes"
+	if meeting.CreatedBy.ID == "" {
+		meeting.CreatedBy.ID = "human"
+	}
 	raw, err := json.Marshal(meeting)
 	require.NoError(t, err)
 	var block notionmeetings.Block
@@ -92,7 +111,7 @@ func TestRunNotionMeetingsProbeIsContentAndTokenSafe(t *testing.T) {
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{meeting}, HasMore: true},
 		block:  notionProbeBlock(t, meeting),
-	}, nil)
+	}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 	require.NoError(t, err)
 	assert.Contains(out.String(), "Returned meetings: 1")
 	assert.Contains(out.String(), "Coverage: sample only; sync coverage was not measured")
@@ -110,7 +129,7 @@ func TestRunNotionMeetingsProbeHydratesWithoutPageParent(t *testing.T) {
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1"}}},
 		block:  notionProbeBlock(t, notionmeetings.MeetingNote{ID: "meeting-1", Parent: notionmeetings.Parent{Type: "data_source_id", DataSourceID: "rows-1"}}),
-	}, nil)
+	}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "Read Content: available")
 }
@@ -122,17 +141,17 @@ func TestRunNotionMeetingsProbeChecksBlockWhenQueryHasParent(t *testing.T) {
 			ID: "meeting-1", Parent: notionmeetings.Parent{PageID: "page-1"},
 		}}},
 		blockErr: errors.New("block endpoint unavailable"),
-	}, nil)
+	}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sample hydration")
+	assert.Contains(t, err.Error(), "sample header")
 }
 
 func TestRunNotionMeetingsProbeDegradesWithoutUserInformation(t *testing.T) {
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 		result: &notionmeetings.QueryResult{}, usersErr: notionmeetings.ErrUserInformation,
-	}, nil)
+	}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "Read Content: not tested")
 	assert.Contains(t, out.String(), "User Information: unavailable")
@@ -144,7 +163,7 @@ func TestRunNotionMeetingsProbeDegradesOnTransientUserListingFailure(t *testing.
 		result: &notionmeetings.QueryResult{}, usersErr: &notionmeetings.APIError{
 			Kind: notionmeetings.ErrRateLimited, Status: 503, Code: "service_unavailable",
 		},
-	}, nil)
+	}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "User Information: unavailable")
 	assert.NotContains(t, out.String(), "status 503")
@@ -168,7 +187,7 @@ func TestRunNotionMeetingsProbeOptionalUserListingFailuresRemainNonfatal(t *test
 			var out bytes.Buffer
 			err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{
 				result: &notionmeetings.QueryResult{}, usersErr: tt.err,
-			}, nil)
+			}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 			require.NoError(t, err)
 			assert.Contains(t, out.String(), "User Information: unavailable")
 		})
@@ -225,7 +244,7 @@ func TestNotionProbeUsersToken(t *testing.T) {
 				probe.result.Results = nil
 				expectedRequests = 0
 			}
-			err := runNotionMeetingsProbe(t.Context(), &out, probe, users)
+			err := runNotionMeetingsProbe(t.Context(), &out, probe, users, notionmeetings.ImportOptions{TokenType: "pat"})
 			require.NoError(t, err)
 			assert.NotContains(out.String(), "unless a users token is configured")
 			assert.Contains(out.String(), tc.want)
@@ -259,7 +278,7 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 		return users
 	}
 	rebuildNotionMeetingsCacheAfterScheduledSync = func(context.Context, string) error { return nil }
-	err = runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{Identifier: "work", AccountEmail: "owner@example.com", Token: "pat-example", UsersToken: "ntn-example"})
+	err = runConfiguredNotionMeetingsSync(t.Context(), st, config.NotionMeetingsSource{Identifier: "work", AccountEmail: "owner@example.com", Token: "pat-example", UsersToken: "ntn-example", UserID: "member"})
 	require.NoError(err)
 	assert.Equal(1, users.retrieved)
 	_, absent := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
@@ -273,11 +292,13 @@ func TestNotionProbeHTTPBlockOwnedHydration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/users/me":
+			_, _ = io.WriteString(w, `{"object":"user","id":"bot","type":"bot","bot":{"owner":{"type":"user","user":{"id":"human"}}}}`)
 		case "/v1/blocks/meeting_notes/query":
 			_, err := io.WriteString(w, `{"results":[{"object":"block","id":"private-meeting","type":"meeting_notes","has_children":false,"meeting_notes":{"children":{"transcript_block_id":"stale-transcript"}}}],"has_more":true}`)
 			assert.NoError(err)
 		case "/v1/blocks/private-meeting":
-			_, err := io.WriteString(w, `{"object":"block","id":"private-meeting","type":"meeting_notes","has_children":false,"parent":{"type":"data_source_id","data_source_id":"private-rows"},"meeting_notes":{"title":[{"plain_text":"PRIVATE_TITLE"}],"children":{"transcript_block_id":"own-transcript"}}}`)
+			_, err := io.WriteString(w, `{"object":"block","id":"private-meeting","type":"meeting_notes","has_children":false,"created_by":{"id":"human"},"parent":{"type":"data_source_id","data_source_id":"private-rows"},"meeting_notes":{"title":[{"plain_text":"PRIVATE_TITLE"}],"children":{"transcript_block_id":"own-transcript"}}}`)
 			assert.NoError(err)
 		case "/v1/blocks/own-transcript":
 			_, err := io.WriteString(w, `{"object":"block","id":"own-transcript","type":"paragraph","has_children":false,"paragraph":{"rich_text":[{"plain_text":"PRIVATE_TRANSCRIPT"}]}}`)
@@ -293,10 +314,10 @@ func TestNotionProbeHTTPBlockOwnedHydration(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	var out bytes.Buffer
-	err := runNotionMeetingsProbe(t.Context(), &out, notionmeetings.NewClient(server.URL, "synthetic-token"), nil)
+	err := runNotionMeetingsProbe(t.Context(), &out, notionmeetings.NewClient(server.URL, "synthetic-token"), nil, notionmeetings.ImportOptions{TokenType: "pat"})
 	require.NoError(t, err)
 	assert.Zero(markdownCalls)
-	assert.Contains(out.String(), "Credentials: query verified")
+	assert.Contains(out.String(), "Credentials: self verified")
 	assert.Contains(out.String(), "Meeting query: available")
 	assert.Contains(out.String(), "Sample hydration: available")
 	assert.Contains(out.String(), "User Information: unavailable")
@@ -311,7 +332,7 @@ func TestNotionProbeErrorsArePrivate(t *testing.T) {
 
 	cause := errors.New("GET https://example.test/PRIVATE_ID?cursor=PRIVATE_CURSOR failed")
 	var out bytes.Buffer
-	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{err: cause}, nil)
+	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{err: cause}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 	require.Error(t, err)
 	assert.ErrorIs(err, cause)
 	assert.NotContains(err.Error(), "PRIVATE_ID")
@@ -324,7 +345,7 @@ func TestNotionProbeSamplesOnlyRefreshedAttendee(t *testing.T) {
 	probe := fakeNotionProbe{result: &notionmeetings.QueryResult{Results: []notionmeetings.MeetingNote{{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"old-attendee"}}}}}, HasMore: true}, block: notionProbeBlock(t, notionmeetings.MeetingNote{ID: "meeting-1", MeetingNotes: notionmeetings.MeetingNotesData{CalendarEvent: notionmeetings.MeetingCalendarEvent{Attendees: []string{"new-attendee", "another-attendee"}}}})}
 	users := &fakeNotionUsersProbe{user: &notionmeetings.User{ID: "new-attendee"}}
 	var out bytes.Buffer
-	require.NoError(t, runNotionMeetingsProbe(t.Context(), &out, probe, users))
+	require.NoError(t, runNotionMeetingsProbe(t.Context(), &out, probe, users, notionmeetings.ImportOptions{TokenType: "pat"}))
 	assert.Equal([]string{"new-attendee"}, users.ids)
 	assert.NotContains(out.String(), "old-attendee")
 	assert.NotContains(out.String(), "new-attendee")
@@ -346,12 +367,14 @@ func TestNotionMeetingsSummaryReportsActualCoverage(t *testing.T) {
 
 			transcript := "Meeting-owned transcript."
 			meeting := notionmeetings.MeetingNote{
-				Object: "block", Type: "meeting_notes", ID: "meeting-1", CreatedTime: "2026-11-07T10:00:00Z",
+				Object: "block", Type: "meeting_notes", ID: "meeting-1", CreatedBy: notionmeetings.UserRef{ID: "human"}, CreatedTime: "2026-11-07T10:00:00Z",
 				MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready", Children: notionmeetings.MeetingChildren{TranscriptBlockID: "transcript-1"}},
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
+				case "/v1/users/me":
+					_, _ = io.WriteString(w, `{"object":"user","id":"bot","type":"bot","bot":{"owner":{"type":"user","user":{"id":"human"}}}}`)
 				case "/v1/blocks/meeting_notes/query":
 					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": []notionmeetings.MeetingNote{meeting}, "has_more": tc.hasMore}))
 				case "/v1/blocks/meeting-1":
@@ -373,7 +396,7 @@ func TestNotionMeetingsSummaryReportsActualCoverage(t *testing.T) {
 			_, err := st.GetOrCreateSource(notionmeetings.SourceType, "synthetic")
 			require.NoError(err)
 			importer := notionmeetings.NewImporter(st, notionmeetings.NewClient(server.URL, "synthetic-token"))
-			summary, err := importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic"})
+			summary, err := importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic", TokenType: "pat", SearchAccessible: boolPointer(false)})
 			require.NoError(err)
 			if tc.legacy {
 				var messageID int64
@@ -388,7 +411,7 @@ func TestNotionMeetingsSummaryReportsActualCoverage(t *testing.T) {
 				require.NoError(err)
 				require.NoError(st.UpsertMessageRawWithFormat(messageID, raw, notionmeetings.RawFormat))
 				transcript = ""
-				summary, err = importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic"})
+				summary, err = importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic", TokenType: "pat", SearchAccessible: boolPointer(false)})
 				require.NoError(err)
 				assert.Zero(summary.MeetingsUpdated, "the real import retained the unscoped legacy evidence")
 			}

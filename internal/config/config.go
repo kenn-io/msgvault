@@ -2180,12 +2180,49 @@ func (s PlaudSource) EffectiveAccountEmail() (string, error) {
 // NotionMeetingsSource is one configured Notion AI Meeting Notes identity.
 // Meeting access and optional workspace user access use separate credentials.
 type NotionMeetingsSource struct {
-	Identifier   string `toml:"identifier"`
-	AccountEmail string `toml:"account_email"`
-	Token        string `toml:"token"`
-	UsersToken   string `toml:"users_token"`
-	Schedule     string `toml:"schedule"`
-	Enabled      bool   `toml:"enabled"`
+	TokenType         string   `toml:"token_type"`
+	UserID            string   `toml:"user_id"`
+	RootPageIDs       []string `toml:"root_page_ids"`
+	RootDataSourceIDs []string `toml:"root_data_source_ids"`
+	MeetingBlockIDs   []string `toml:"meeting_block_ids"`
+	SearchAccessible  *bool    `toml:"search_accessible"`
+	Identifier        string   `toml:"identifier"`
+	AccountEmail      string   `toml:"account_email"`
+	Token             string   `toml:"token"`
+	UsersToken        string   `toml:"users_token"`
+	Schedule          string   `toml:"schedule"`
+	Enabled           bool     `toml:"enabled"`
+}
+
+// SearchAccessibleEnabled defaults existing configurations to broader discovery.
+func (s NotionMeetingsSource) SearchAccessibleEnabled() bool {
+	return s.SearchAccessible == nil || *s.SearchAccessible
+}
+func (s *NotionMeetingsSource) normalizeDiscoveryScope() error {
+	s.TokenType = strings.ToLower(strings.TrimSpace(s.TokenType))
+	s.UserID = strings.TrimSpace(s.UserID)
+	if s.TokenType != "" && s.TokenType != "pat" {
+		return errors.New("[[notion_meetings]] token_type must be pat or omitted; configure user_id for other token modes")
+	}
+	for _, entry := range []struct {
+		name string
+		ids  *[]string
+	}{{"root_page_ids", &s.RootPageIDs}, {"root_data_source_ids", &s.RootDataSourceIDs}, {"meeting_block_ids", &s.MeetingBlockIDs}} {
+		seen := map[string]bool{}
+		normalized := make([]string, 0, len(*entry.ids))
+		for _, id := range *entry.ids {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				return fmt.Errorf("[[notion_meetings]] %s contains a blank ID", entry.name)
+			}
+			if !seen[id] {
+				normalized = append(normalized, id)
+				seen[id] = true
+			}
+		}
+		*entry.ids = normalized
+	}
+	return nil
 }
 
 // TwentySource reads Call Recorder evidence through a role-scoped API key.
@@ -2494,6 +2531,9 @@ func (c *Config) validateMeetingSources() error {
 		return err
 	}
 	for i := range c.NotionMeetings {
+		if err := c.NotionMeetings[i].normalizeDiscoveryScope(); err != nil {
+			return err
+		}
 		email, err := c.NotionMeetings[i].EffectiveAccountEmail()
 		if err != nil {
 			return err

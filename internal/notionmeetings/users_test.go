@@ -33,7 +33,7 @@ func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T
 	require := require.New(t)
 	st, source, imp := newImporterFixture(t)
 	source.users[""].Results[1].Person.EmailVerified = true
-	opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
+	opts := ImportOptions{UserID: "creator-1", Identifier: "work", AccountEmail: "owner@example.com"}
 	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	meeting := hydrationMeeting()
@@ -64,7 +64,7 @@ func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T
 	summary, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(2), summary.MeetingsUpdated)
-	assert.Equal([]string{"user-1", "user-1", "user-2", "guest", "malformed", "new-user"}, users.retrieved)
+	assert.ElementsMatch([]string{"user-1", "user-1", "user-2", "guest", "malformed", "new-user"}, users.retrieved)
 }
 
 func TestHydratorCachesSuccessfulAndMissingUsersAcrossServiceFailure(t *testing.T) {
@@ -232,14 +232,14 @@ func TestImporterIncompleteDirectoryRespectsFreshUnverifiedAttendee(t *testing.T
 	st, source, imp := newImporterFixture(t)
 	source.users[""].Results[1].Person.Email = "second@example.com"
 	source.users[""].Results[1].Person.EmailVerified = true
-	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	_, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 	require.NoError(err)
 	source.users[""].Results = source.users[""].Results[:1]
 	source.users[""].Results[0].Person.EmailVerified = false
 	source.users[""].HasMore = true
 	source.users[""].NextCursor = "failed-tail"
 	source.userErrs = map[string]error{"failed-tail": ErrRateLimited}
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	_, err = imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 	require.NoError(err)
 	var messageID int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))

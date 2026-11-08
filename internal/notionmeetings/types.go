@@ -279,7 +279,17 @@ type UserPerson struct {
 	EmailVerified bool   `json:"email_verified"`
 }
 
+type BotOwner struct {
+	Type string  `json:"type"`
+	User UserRef `json:"user"`
+}
+type BotInfo struct {
+	Owner       BotOwner `json:"owner"`
+	WorkspaceID string   `json:"workspace_id"`
+}
+
 type User struct {
+	Bot    BotInfo        `json:"bot"`
 	Object string         `json:"object"`
 	ID     string         `json:"id"`
 	Name   string         `json:"name"`

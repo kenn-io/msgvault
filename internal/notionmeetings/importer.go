@@ -8,7 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	syncStateVersion           = 1
+	syncStateVersion           = 2
 	notionSnapshotVersion      = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
@@ -33,6 +33,7 @@ type Source interface {
 }
 
 type Importer struct {
+	limits discoveryLimits
 	users  UserSource
 	store  *store.Store
 	client Source
@@ -40,7 +41,7 @@ type Importer struct {
 }
 
 func NewImporter(st *store.Store, client Source) *Importer {
-	return &Importer{store: st, client: client, now: time.Now}
+	return &Importer{store: st, client: client, now: time.Now, limits: defaultDiscoveryLimits()}
 }
 
 // WithUserSource resolves attendees with a separate workspace users token.
@@ -50,15 +51,25 @@ func (imp *Importer) WithUserSource(users UserSource) *Importer {
 }
 
 type ImportOptions struct {
-	Identifier   string
-	AccountEmail string
-	Full         bool
-	Limit        int
-	CreatedAfter time.Time
-	Progress     func(string)
+	TokenType         string
+	UserID            string
+	RootPageIDs       []string
+	RootDataSourceIDs []string
+	MeetingBlockIDs   []string
+	SearchAccessible  *bool
+	Identifier        string
+	AccountEmail      string
+	Full              bool
+	Limit             int
+	CreatedAfter      time.Time
+	Progress          func(string)
 }
 
 type ImportSummary struct {
+	IdentityProvenance string
+	ScopeCounts        map[string]int
+	WorkRemaining      int
+	CoverageReasons    map[string]int
 	SourceID           int64
 	MeetingsProcessed  int64
 	MeetingsAdded      int64
@@ -70,9 +81,13 @@ type ImportSummary struct {
 }
 
 type knownMeeting struct {
-	LastEditedTime  string `json:"last_edited_time"`
-	SnapshotSHA256  string `json:"snapshot_sha256,omitempty"`
-	SnapshotVersion int    `json:"snapshot_version"`
+	LastAttemptAt    string            `json:"last_attempt_at,omitempty"`
+	LastSuccessAt    string            `json:"last_success_at,omitempty"`
+	FetchError       string            `json:"fetch_error,omitempty"`
+	SectionFreshness map[string]string `json:"section_freshness,omitempty"`
+	LastEditedTime   string            `json:"last_edited_time"`
+	SnapshotSHA256   string            `json:"snapshot_sha256,omitempty"`
+	SnapshotVersion  int               `json:"snapshot_version"`
 }
 
 type pendingTranscript struct {
@@ -82,14 +97,28 @@ type pendingTranscript struct {
 }
 
 type Coverage struct {
-	HasMore    bool   `json:"has_more"`
-	Returned   int    `json:"returned"`
-	OldestEdit string `json:"oldest_edit,omitempty"`
-	NewestEdit string `json:"newest_edit,omitempty"`
-	Limited    bool   `json:"limited,omitzero"`
+	Reasons         map[string]int       `json:"reasons,omitempty"`
+	Diagnostics     []coverageDiagnostic `json:"diagnostics,omitempty"`
+	DiagnosticCount int                  `json:"diagnostic_count,omitempty"`
+	HasMore         bool                 `json:"has_more"`
+	Returned        int                  `json:"returned"`
+	OldestEdit      string               `json:"oldest_edit,omitempty"`
+	NewestEdit      string               `json:"newest_edit,omitempty"`
+	Limited         bool                 `json:"limited,omitzero"`
 }
 
 type syncState struct {
+	Fingerprint          string                  `json:"scope_fingerprint,omitempty"`
+	Identity             Identity                `json:"identity"`
+	Admissions           []string                `json:"admissions,omitempty"`
+	Frontier             []scopeTask             `json:"frontier,omitempty"`
+	Windows              []queryWindow           `json:"query_windows,omitempty"`
+	Deferred             []deferredScope         `json:"deferred,omitempty"`
+	Seen                 map[string]bool         `json:"visited,omitempty"`
+	Active               bool                    `json:"active"`
+	FreshRequested       bool                    `json:"fresh_requested"`
+	NextLane             int                     `json:"next_lane,omitempty"`
+	RefreshCursor        string                  `json:"refresh_cursor,omitempty"`
 	Version              int                     `json:"version"`
 	LastQueryAt          string                  `json:"last_query_at"`
 	Known                map[string]knownMeeting `json:"known"`
@@ -100,6 +129,9 @@ type syncState struct {
 
 func (s syncState) marshal() (string, error) {
 	sort.Slice(s.Pending, func(i, j int) bool { return s.Pending[i].BlockID < s.Pending[j].BlockID })
+	if err := s.validateTransient(); err != nil {
+		return "", err
+	}
 	encoded, err := json.Marshal(s, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("marshal Notion sync cursor: %w", err)
@@ -108,7 +140,7 @@ func (s syncState) marshal() (string, error) {
 }
 
 func (s syncState) validate() error {
-	if s.Version != syncStateVersion {
+	if s.Version != 1 && s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
 	seen := make(map[string]struct{}, len(s.Pending))
@@ -140,326 +172,348 @@ func (s syncState) validate() error {
 			return errors.New("transcript_retry_until must be an RFC3339 timestamp")
 		}
 	}
-	return nil
+	return s.validateDiscovery()
 }
 
 func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *ImportSummary, retErr error) {
 	if imp == nil || imp.store == nil || imp.client == nil {
 		return nil, errors.New("notion meeting importer is unavailable")
 	}
+	if err := validateDiscoveryOptions(opts); err != nil {
+		return nil, err
+	}
+	limits := imp.limits
+	if limits.Duration <= 0 {
+		limits = defaultDiscoveryLimits()
+	}
+	ctx, cancel := context.WithTimeout(ctx, limits.Duration)
+	defer cancel()
+	ctx = WithAttemptBudget(ctx, limits.Attempts)
 	started := imp.now().UTC()
 	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, strings.TrimSpace(opts.Identifier))
 	if err != nil {
 		return nil, err
 	}
-	sum = &ImportSummary{SourceID: source.ID}
+	sum = &ImportSummary{SourceID: source.ID, ScopeCounts: map[string]int{"page_roots": len(normalizedIDs(opts.RootPageIDs)), "data_source_roots": len(normalizedIDs(opts.RootDataSourceIDs)), "meeting_roots": len(normalizedIDs(opts.MeetingBlockIDs))}}
+	if searchEnabled(opts) {
+		sum.ScopeCounts["accessible_search"] = 1
+	}
+	state, err := imp.loadState(ctx, source.ID)
+	if err != nil {
+		return sum, err
+	}
+	// loadState retains retry deadlines before expired pending slots are freed.
+	state.Pending = slices.DeleteFunc(state.Pending, func(pending pendingTranscript) bool {
+		return pendingExpired(pending, started)
+	})
+	syncID, err := imp.store.StartSyncContext(ctx, source.ID, SourceType)
+	if err != nil {
+		return sum, err
+	}
+	scoped := imp.store.ScopedToSync(source.ID, syncID)
+	lastValidCursor, err := state.marshal()
+	if err != nil {
+		return sum, err
+	}
+	checkpoint := func() (*store.Checkpoint, error) {
+		cursor, err := state.marshal()
+		if err != nil {
+			return nil, err
+		}
+		return &store.Checkpoint{PageToken: cursor, MessagesProcessed: sum.MeetingsProcessed, MessagesAdded: sum.MeetingsAdded, MessagesUpdated: sum.MeetingsUpdated, ErrorsCount: sum.Errors}, nil
+	}
+	save := func() error {
+		cp, err := checkpoint()
+		if err != nil {
+			return err
+		}
+		if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, cp); err != nil {
+			return err
+		}
+		lastValidCursor = cp.PageToken
+		return nil
+	}
+	defer func() {
+		state.currentCoverage(searchEnabled(opts))
+		sum.Duration = imp.now().UTC().Sub(started)
+		sum.WorkRemaining = state.workRemaining()
+		sum.CoverageReasons = state.Coverage.Reasons
+		sum.PartialCoverage = sum.WorkRemaining > 0 || len(state.Coverage.Reasons) > 0
+		if retErr != nil {
+			state.reason(errorCategory(retErr), "run")
+			cp, cpErr := checkpoint()
+			if cpErr != nil {
+				retErr = errors.Join(retErr, cpErr)
+				cp = &store.Checkpoint{PageToken: lastValidCursor, MessagesProcessed: sum.MeetingsProcessed, MessagesAdded: sum.MeetingsAdded, MessagesUpdated: sum.MeetingsUpdated, ErrorsCount: sum.Errors}
+			}
+			// A complete provider cursor must survive cancellation and failed writes.
+			retErr = errors.Join(retErr, scoped.InterruptSyncWithCheckpoint(ctx, syncID, retErr, cp))
+		}
+	}()
+	api, ok := imp.client.(discoverySource)
+	if !ok {
+		return sum, errors.New("Notion source does not support verified identity and broad discovery")
+	}
+	self, err := api.RetrieveSelf(ctx)
+	if err != nil {
+		sum.Errors++
+		return sum, hydrationFailure("verify Notion credentials", err)
+	}
+	identity, err := ResolveIdentity(self, opts.TokenType, opts.UserID)
+	if err != nil {
+		sum.Errors++
+		return sum, err
+	}
+	sum.IdentityProvenance = identity.Provenance
+	fingerprint := scopeFingerprint(opts.Identifier, identity, opts)
+	if fingerprint != state.Fingerprint {
+		// Keep archive IDs, checksums and retry deadlines, but no continuation from
+		// another selection/identity scope can certify this one.
+		state.Admissions = nil
+		state.Frontier = nil
+		state.Windows = nil
+		state.Deferred = nil
+		state.Seen = map[string]bool{}
+		state.Active = false
+		state.Coverage = Coverage{Reasons: map[string]int{}}
+	}
+	state.Coverage.Reasons = map[string]int{}
+	state.Identity = identity
+	state.Fingerprint = fingerprint
+	if opts.Full && state.Active {
+		state.FreshRequested = true
+	}
+	sweepsStarted := 0
+	if !state.Active {
+		state.startSweep(opts, started)
+		sweepsStarted++
+	}
+	state.activateDeferred(started, limits)
+	state.Coverage.Limited = opts.Limit > 0
+	if err := save(); err != nil {
+		return sum, err
+	}
 	if strings.TrimSpace(opts.AccountEmail) != "" {
 		if err := imp.store.AddAccountIdentityContext(ctx, source.ID, opts.AccountEmail, "account-email"); err != nil {
 			return sum, fmt.Errorf("confirm Notion account identity: %w", err)
 		}
 	}
-
-	state := syncState{Version: syncStateVersion, Known: map[string]knownMeeting{}}
-	previous, err := imp.store.GetLastSuccessfulSyncContext(ctx, source.ID)
-	if err == nil && previous.CursorAfter.Valid && previous.CursorAfter.String != "" {
-		if err := json.Unmarshal([]byte(previous.CursorAfter.String), &state); err != nil {
-			return sum, fmt.Errorf("decode previous Notion sync cursor: %w", err)
-		}
-		if err := state.validate(); err != nil {
-			return sum, fmt.Errorf("validate previous Notion sync cursor: %w", err)
-		}
-	} else if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-		return sum, fmt.Errorf("load previous Notion sync cursor: %w", err)
-	}
-	if state.Known == nil {
-		state.Known = map[string]knownMeeting{}
-	}
-	if state.TranscriptRetryUntil == nil {
-		state.TranscriptRetryUntil = map[string]string{}
-	}
-
-	syncID, err := imp.store.StartSync(source.ID, SourceType)
-	if err != nil {
-		return sum, err
-	}
-	scopedStore := imp.store.ScopedToSync(source.ID, syncID)
-	defer func() {
-		if retErr != nil {
-			_ = scopedStore.FailSyncWithCheckpoint(syncID, retErr.Error(), &store.Checkpoint{
-				MessagesProcessed: sum.MeetingsProcessed,
-				MessagesAdded:     sum.MeetingsAdded,
-				MessagesUpdated:   sum.MeetingsUpdated,
-				ErrorsCount:       sum.Errors,
-			})
-		}
-	}()
-
-	result, err := imp.client.QueryMeetingNotes(ctx, maxQueryResults)
-	if err != nil {
-		sum.Errors++
-		return sum, hydrationFailure("query Notion meeting notes", err)
-	}
-	if result == nil {
-		sum.Errors++
-		return sum, errors.New("query Notion meeting notes returned no response")
-	}
-
 	progress := opts.Progress
 	if progress == nil {
 		progress = func(string) {}
 	}
-	next := syncState{
-		Version:              syncStateVersion,
-		LastQueryAt:          imp.now().UTC().Format(time.RFC3339),
-		Known:                map[string]knownMeeting{},
-		TranscriptRetryUntil: make(map[string]string, len(state.TranscriptRetryUntil)),
-		Coverage:             coverageFor(result, opts.Limit > 0),
-	}
-	maps.Copy(next.TranscriptRetryUntil, state.TranscriptRetryUntil)
-	sum.PartialCoverage = result.HasMore
-	if result.HasMore {
-		progress(fmt.Sprintf("Notion discovery is partial: %d meetings returned and more are unavailable through pagination", len(result.Results)))
-	}
-
-	pendingByID := make(map[string]pendingTranscript, len(state.Pending))
-	for _, pending := range state.Pending {
-		if retained := next.TranscriptRetryUntil[pending.BlockID]; retained != "" {
-			retainedAt, _ := time.Parse(time.RFC3339, retained)
-			pendingUntil, _ := time.Parse(time.RFC3339, pending.RetryUntil)
-			if retainedAt.After(pendingUntil) {
-				pending.RetryUntil = retained
-			}
-		}
-		next.TranscriptRetryUntil[pending.BlockID] = pending.RetryUntil
-		pendingByID[pending.BlockID] = pending
-		if known, ok := state.Known[pending.BlockID]; ok {
-			next.Known[pending.BlockID] = known
-		}
-	}
-
-	visible := make(map[string]MeetingNote, len(result.Results))
-	work := make(map[string]MeetingNote)
-	workOrder := make([]string, 0, len(result.Results)+len(state.Pending))
-	due := make(map[string]bool)
-	seen := make(map[string]struct{}, len(result.Results))
-	for _, meeting := range result.Results {
-		id := strings.TrimSpace(meeting.ID)
-		if id == "" {
-			sum.Errors++
-			return sum, errors.New("notion discovery returned a meeting without an ID")
-		}
-		if _, duplicate := seen[id]; duplicate {
-			sum.Errors++
-			return sum, errors.New("notion discovery returned a duplicate meeting ID")
-		}
-		seen[id] = struct{}{}
-		visible[id] = meeting
-		if known, ok := state.Known[id]; ok {
-			next.Known[id] = known
-		}
-	}
-
-	now := imp.now().UTC()
-	for id, pending := range pendingByID {
-		if pendingExpired(pending, now) {
-			delete(pendingByID, id)
-			continue
-		}
-		if !pendingDue(pending, now) {
-			continue
-		}
-		due[id] = true
-		if meeting, ok := visible[id]; ok {
-			work[id] = meeting
-			workOrder = append(workOrder, id)
-			continue
-		}
-		meeting, loadErr := imp.retrieveMeeting(ctx, id)
-		if loadErr != nil {
-			sum.Errors++
-			if !errors.Is(loadErr, ErrRateLimited) {
-				return sum, hydrationFailure("load pending Notion meeting", loadErr)
-			}
-			pending.NextAttemptAt = now.Add(transcriptRetryCadence).Format(time.RFC3339)
-			pendingByID[id] = pending
-			progress("pending Notion meeting: load failed; retry deferred")
-			continue
-		}
-		work[id] = meeting
-		workOrder = append(workOrder, id)
-	}
-	sum.MaintenanceRetries = int64(len(due))
-
-	remaining := max(opts.Limit, 0)
-	for _, meeting := range result.Results {
-		id := meeting.ID
-		if due[id] {
-			continue
-		}
-		if !opts.CreatedAfter.IsZero() && candidateTime(meeting).Before(opts.CreatedAfter) {
-			continue
-		}
-		if opts.Limit > 0 && remaining == 0 {
-			continue
-		}
-		if opts.Limit > 0 {
-			remaining--
-		}
-		work[id] = meeting
-		workOrder = append(workOrder, id)
-	}
-
+	run := &discoveryRun{state: &state, client: api, source: imp.client, limits: limits, now: started}
+	refresh := state.refreshIDs(limits.KnownRefresh)
+	processed := map[string]bool{}
+	admitted := 0
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
-	archiver := meetingarchive.New(scopedStore)
-	var hardErrors []error
-	for _, id := range workOrder {
-		if err := ctx.Err(); err != nil {
-			hardErrors = append(hardErrors, err)
-			break
+	admissionStep := func(ctx context.Context) (bool, error) {
+		index := -1
+		for i, id := range state.Admissions {
+			_, known := state.Known[id]
+			if processed[id] || known || opts.Limit <= 0 || admitted < opts.Limit {
+				index = i
+				break
+			}
 		}
-		meeting := work[id]
-		sum.MeetingsProcessed++
-		hydrated, hydrateErr := hydrator.Hydrate(ctx, meeting)
-		if hydrateErr != nil {
-			sum.Errors++
-			hardErrors = append(hardErrors, hydrationFailure("hydrate Notion meeting", hydrateErr))
-			progress("Notion meeting: hydration failed")
-			continue
+		if index < 0 {
+			return false, nil
 		}
-
-		// Archived preservation can replace this tree with complete older evidence.
-		// Maintenance follows the current fetch, including nonempty prefixes.
-		providerTranscriptIncomplete := strings.TrimSpace(hydrated.Transcript) == "" ||
-			!hydrated.TranscriptTree.Complete || hydrated.TranscriptTree.Filtered
-		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
-		if recoverErr != nil {
-			sum.Errors++
-			hardErrors = append(hardErrors, hydrationFailure("recover archived Notion evidence", recoverErr))
-			continue
-		}
-		keepArchive := preserveArchivedSections(hydrated, archived)
-		if hydrated.AttendeeResolutionDegraded {
-			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)
-			if archived.MessageID != 0 {
-				recipients, recipientErr := imp.store.GetMessageRecipientsContext(ctx, archived.MessageID, "to")
-				if recipientErr != nil {
-					sum.Errors++
-					hardErrors = append(hardErrors, hydrationFailure("recover archived Notion attendees", recipientErr))
-					continue
+		id := state.Admissions[index]
+		if !processed[id] {
+			_, known := state.Known[id]
+			selected, err := imp.processMeeting(ctx, scoped, &state, sum, opts, id, progress, hydrator)
+			if err != nil {
+				if errors.Is(err, ErrRequestBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					// Retain interrupted work behind independent admissions. Retirement
+					// still requires a successful archive publication below.
+					state.Admissions = append(append(state.Admissions[:index], state.Admissions[index+1:]...), id)
 				}
-				preserveArchivedAttendeeRelationships(hydrated, recipients, archived.ResolvedUsers)
+				return false, err
 			}
-		}
-
-		terminal := terminalStatus(hydrated.Discovery.MeetingNotes.Status)
-		if providerTranscriptIncomplete && !terminal {
-			previousPending, hasPrevious := pendingByID[id]
-			if retained := next.TranscriptRetryUntil[id]; retained != "" {
-				previousPending.RetryUntil = retained
-				hasPrevious = true
+			if selected && !known {
+				admitted++
 			}
-			pending, keep := schedulePending(hydrated, now, previousPending, hasPrevious)
-			if keep {
-				pendingByID[id] = pending
-				next.TranscriptRetryUntil[id] = pending.RetryUntil
-			} else {
-				delete(pendingByID, id)
-				hydrated.Warnings = append(hydrated.Warnings, "transcript retry window expired")
-			}
-		} else {
-			delete(pendingByID, id)
+			processed[id] = true
 		}
-
-		if keepArchive {
-			sum.PartialCoverage = true
-			progress("legacy_unscoped: archived meeting retained unchanged; current sections are incomplete")
-			continue
-		}
-
-		snapshot, snapshotErr := hydrated.ArchiveSnapshot(source.ID, opts.Identifier, opts.AccountEmail)
-		if snapshotErr != nil {
-			sum.Errors++
-			hardErrors = append(hardErrors, hydrationFailure("build Notion archive snapshot", snapshotErr))
-			continue
-		}
-		checksum := checksumBytes(snapshot.Raw)
-		known, exists := state.Known[id]
-		if archived.HasEvidence && exists && !opts.Full && known.SnapshotVersion == notionSnapshotVersion &&
-			known.SnapshotSHA256 == checksum {
-			// The archived meeting is current, but attendee linking may not
-			// have finished before an earlier run stopped.
-			if _, linkErr := archiver.LinkIdentities(ctx, source.ID, snapshot.Attendees); linkErr != nil {
-				sum.Errors++
-				hardErrors = append(hardErrors, hydrationFailure("link Notion attendee identities", linkErr))
+		state.Admissions = append(state.Admissions[:index], state.Admissions[index+1:]...)
+		return true, nil
+	}
+	refreshStep := func(ctx context.Context) (bool, error) {
+		for len(refresh) > 0 {
+			id := refresh[0]
+			refresh = refresh[1:]
+			if processed[id] {
+				state.RefreshCursor = id
 				continue
 			}
-			next.Known[id] = knownMeeting{
-				LastEditedTime:  meeting.LastEditedTime,
-				SnapshotSHA256:  checksum,
-				SnapshotVersion: notionSnapshotVersion,
+			waiting := false
+			for _, pending := range state.Pending {
+				if pending.BlockID == id && !pendingDue(pending, started) && !opts.Full && !run.visible[id] {
+					waiting = true
+					break
+				}
 			}
-			progress("verified Notion meeting")
-			continue
+			if waiting {
+				state.RefreshCursor = id
+				continue
+			}
+			_, err := imp.processMeeting(ctx, scoped, &state, sum, opts, id, progress, hydrator)
+			if err != nil {
+				if errors.Is(err, ErrRequestBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					// Rotation records the interrupted attempt, not successful freshness.
+					state.RefreshCursor = id
+				}
+				return false, err
+			}
+			state.RefreshCursor = id
+			processed[id] = true
+			sum.MaintenanceRetries++
+			return true, nil
 		}
-		archiveResult, archiveErr := archiver.Upsert(ctx, snapshot, meetingarchive.UpsertOptions{
-			Force: opts.Full,
-		})
-		if archiveResult.Created {
-			sum.MeetingsAdded++
-		} else if archiveResult.Changed {
-			sum.MeetingsUpdated++
+		return false, nil
+	}
+	steps := []func(context.Context) (bool, error){run.stepQuery, run.stepTraversal, admissionStep, refreshStep}
+	idle := 0
+	for idle < len(steps) {
+		if err := ctx.Err(); err != nil {
+			return sum, err
 		}
-		if archiveErr != nil {
-			sum.Errors++
-			hardErrors = append(hardErrors, hydrationFailure("archive Notion meeting", archiveErr))
-			continue
+		lane := state.NextLane
+		state.NextLane = (lane + 1) % len(steps)
+		before := state.copyDiscovery()
+		changed, stepErr := steps[lane](ctx)
+		if lane < 2 && changed {
+			if boundErr := state.validateTransientWith(limits); boundErr != nil {
+				state = before
+				// Retain the predecessor page as deferred work instead of accepting an
+				// unrepresentable continuation or blocking independent branches forever.
+				if lane == 0 && len(state.Windows) > 0 {
+					window := state.Windows[0]
+					state.Windows = state.Windows[1:]
+					state.deferWindow(window, "cursor_budget", started)
+				}
+				if lane == 1 && len(state.Frontier) > 0 {
+					task := state.Frontier[0]
+					state.Frontier = state.Frontier[1:]
+					state.deferTask(task, "cursor_budget", started)
+				}
+				if state.validateTransient() != nil {
+					state = before
+					state.reason("cursor_budget", "run")
+				}
+				goto complete
+			}
 		}
-		next.Known[id] = knownMeeting{
-			LastEditedTime:  meeting.LastEditedTime,
-			SnapshotSHA256:  checksum,
-			SnapshotVersion: notionSnapshotVersion,
+		if errors.Is(stepErr, ErrRequestBudget) {
+			state.reason("request_budget", "run")
+			goto complete
 		}
-		progress("imported Notion meeting")
+		if stepErr != nil {
+			if lane < 2 {
+				sum.Errors++
+			}
+			return sum, hydrationFailure("advance Notion import", stepErr)
+		}
+		if changed {
+			idle = 0
+			if err := save(); err != nil {
+				return sum, err
+			}
+			if lane < 2 {
+				progress("Notion discovery checkpoint saved")
+			}
+		} else {
+			idle++
+		}
+		if len(state.Frontier) == 0 && len(state.Windows) == 0 {
+			state.Active = false
+			if sweepsStarted == 0 && state.FreshRequested && run.requests < limits.Requests {
+				state.startSweep(opts, started)
+				sweepsStarted++
+				idle = 0
+			}
+		}
 	}
 
-	if len(hardErrors) > 0 {
-		retErr = errors.Join(hardErrors...)
-		return sum, retErr
+complete:
+	if run.requests >= limits.Requests && (len(state.Frontier) > 0 || len(state.Windows) > 0) {
+		state.reason("discovery_budget", "run")
 	}
-	for id, pending := range pendingByID {
-		next.Pending = append(next.Pending, pending)
-		if known, ok := state.Known[id]; ok {
-			if _, exists := next.Known[id]; !exists {
-				next.Known[id] = known
-			}
-		}
+	if len(state.Admissions) > 0 {
+		state.reason("unfinished_progress", "pending")
 	}
-	for id := range next.Known {
-		if _, inWindow := visible[id]; inWindow {
-			continue
-		}
-		if _, pending := pendingByID[id]; !pending {
-			delete(next.Known, id)
-		}
+	if len(state.Frontier) == 0 && len(state.Windows) == 0 {
+		state.Active = false
 	}
-	cursor, err := next.marshal()
+	state.currentCoverage(searchEnabled(opts))
+	if err := save(); err != nil {
+		return sum, err
+	}
+	cursor, err := state.marshal()
 	if err != nil {
 		return sum, err
 	}
-	checkpoint := &store.Checkpoint{
-		MessagesProcessed: sum.MeetingsProcessed,
-		MessagesAdded:     sum.MeetingsAdded,
-		MessagesUpdated:   sum.MeetingsUpdated,
-		ErrorsCount:       sum.Errors,
-	}
-	if err := scopedStore.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+	if err := scoped.CompleteSyncContext(ctx, syncID, cursor); err != nil {
 		return sum, err
 	}
-	if err := scopedStore.CompleteSync(syncID, cursor); err != nil {
-		return sum, err
-	}
-	sum.Duration = imp.now().UTC().Sub(started)
 	return sum, nil
+}
+
+func (imp *Importer) loadState(ctx context.Context, sourceID int64) (syncState, error) {
+	state := newSyncState()
+	previous, err := imp.store.GetLatestCheckpointedSyncByType(ctx, sourceID, SourceType)
+	cursor := ""
+	if err == nil {
+		cursor = previous.CursorBefore.String
+	} else if !errors.Is(err, store.ErrSyncRunNotFound) {
+		return state, fmt.Errorf("load recoverable Notion cursor: %w", err)
+	}
+	if cursor == "" {
+		previous, err = imp.store.GetLastSuccessfulSyncByType(ctx, sourceID, SourceType)
+		if err == nil {
+			cursor = previous.CursorAfter.String
+		} else if !errors.Is(err, store.ErrSyncRunNotFound) {
+			return state, fmt.Errorf("load previous Notion cursor: %w", err)
+		}
+	}
+	legacy := cursor == ""
+	if cursor != "" {
+		if err := json.Unmarshal([]byte(cursor), &state); err != nil {
+			return state, fmt.Errorf("decode previous Notion sync cursor: %w", err)
+		}
+		if err := state.validate(); err != nil {
+			return state, fmt.Errorf("validate previous Notion sync cursor: %w", err)
+		}
+		legacy = state.Version == 1
+	}
+	state.initialize()
+	if legacy {
+		archived, err := imp.store.SourceMessageMetadata(ctx, sourceID)
+		if err != nil {
+			return state, err
+		}
+		for id := range archived {
+			if _, ok := state.Known[id]; !ok {
+				state.Known[id] = knownMeeting{}
+			}
+		}
+	}
+	return state, nil
+}
+
+func (s syncState) refreshIDs(limit int) []string {
+	ids := make([]string, 0, len(s.Known))
+	for id := range s.Known {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	start := sort.SearchStrings(ids, s.RefreshCursor)
+	for start < len(ids) && ids[start] <= s.RefreshCursor {
+		start++
+	}
+	rotated := append(append([]string{}, ids[start:]...), ids[:start]...)
+	return rotated[:min(len(rotated), limit)]
 }
 
 func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNote, error) {

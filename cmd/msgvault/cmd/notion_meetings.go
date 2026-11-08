@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +40,8 @@ const notionMeetingsConfigHint = `Add to your config.toml:
   identifier = "notion-personal"      # stable label for this identity
   account_email = "you@example.com"   # primary identity for relationships
   token = "ntn_..."                   # read-only Notion integration token
+  token_type = "pat"                  # infer verified human owner only for a PAT
+  # user_id = "..."                   # required for other token modes
   enabled = true
   # schedule = "15 */6 * * *"         # optional daemon schedule`
 
@@ -106,51 +110,94 @@ func (e *notionProbeError) Error() string {
 }
 func (e *notionProbeError) Unwrap() error { return e.cause }
 
-func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource) error {
+func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource, opts notionmeetings.ImportOptions) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	ctx = notionmeetings.WithAttemptBudget(ctx, 512)
+
 	_, _ = fmt.Fprintln(out, "Notion AI Meeting Notes access probe:")
+	selfSource, ok := client.(interface {
+		RetrieveSelf(context.Context) (*notionmeetings.User, error)
+	})
+	if !ok {
+		return &notionProbeError{stage: "probe Notion credentials", cause: notionmeetings.ErrUnknownIdentity}
+	}
+	self, err := selfSource.RetrieveSelf(ctx)
+	if err != nil {
+		_, _ = fmt.Fprintln(out, "  Credentials: unavailable")
+		return &notionProbeError{stage: "probe Notion credentials", cause: err}
+	}
+	_, _ = fmt.Fprintln(out, "  Credentials: self verified")
+	identity, err := notionmeetings.ResolveIdentity(self, opts.TokenType, opts.UserID)
+	if err != nil {
+		_, _ = fmt.Fprintln(out, "  Identity: unknown (set token_type=pat or configure user_id)")
+		return &notionProbeError{stage: "probe Notion identity", cause: err}
+	}
+	_, _ = fmt.Fprintf(out, "  Identity: %s\n", identity.Provenance)
+	writeNotionScope(out, opts)
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
-		if errors.Is(err, notionmeetings.ErrUnauthorized) {
-			_, _ = fmt.Fprintln(out, "  Credentials: invalid or expired")
-		} else {
-			_, _ = fmt.Fprintln(out, "  Credentials: not verified by meeting query")
-		}
 		_, _ = fmt.Fprintln(out, "  Meeting query: unavailable")
-		_, _ = fmt.Fprintln(out, "  Sample hydration: not tested")
-		return &notionProbeError{stage: "probe Notion meeting query", cause: err}
+		if !errors.Is(err, notionmeetings.ErrMeetingAccess) && !errors.Is(err, notionmeetings.ErrReadContent) {
+			return &notionProbeError{stage: "probe Notion meeting query", cause: err}
+		}
+		result = &notionmeetings.QueryResult{}
+	} else {
+		_, _ = fmt.Fprintln(out, "  Meeting query: available")
 	}
 	if result == nil {
 		return &notionProbeError{stage: "probe Notion meeting query", cause: notionmeetings.ErrMalformedResponse}
 	}
-	_, _ = fmt.Fprintln(out, "  Credentials: query verified")
-	_, _ = fmt.Fprintln(out, "  Meeting query: available")
 	_, _ = fmt.Fprintf(out, "  Returned meetings: %d\n", len(result.Results))
 	_, _ = fmt.Fprintln(out, "  Coverage: sample only; sync coverage was not measured")
 	var sampled *notionmeetings.HydratedMeeting
-	if len(result.Results) == 0 {
+	sampleID := ""
+	if len(result.Results) > 0 {
+		sampleID = result.Results[0].ID
+	} else if len(opts.MeetingBlockIDs) > 0 {
+		sampleID = opts.MeetingBlockIDs[0]
+	}
+	if sampleID == "" {
 		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no visible meeting)")
 		_, _ = fmt.Fprintln(out, "  Sample hydration: not tested (no visible meeting)")
 	} else {
-		sampled, err = notionmeetings.NewHydrator(notionProbeContent{client}).Hydrate(ctx, result.Results[0])
-		if err != nil {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: unavailable")
-			return &notionProbeError{stage: "probe Notion sample hydration", cause: err}
+		block, loadErr := client.RetrieveBlock(ctx, sampleID)
+		if loadErr != nil {
+			return &notionProbeError{stage: "probe Notion sample header", cause: loadErr}
 		}
-		_, _ = fmt.Fprintln(out, "  Read Content: available")
-		children := sampled.Discovery.MeetingNotes.Children
-		incomplete := (children.SummaryBlockID != "" && (!sampled.SummaryTree.Complete || sampled.SummaryTree.Filtered)) ||
-			(children.NotesBlockID != "" && (!sampled.NotesTree.Complete || sampled.NotesTree.Filtered)) ||
-			(children.TranscriptBlockID != "" && (!sampled.TranscriptTree.Complete || sampled.TranscriptTree.Filtered))
-		if incomplete {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: incomplete (some meeting sections could not be read)")
-		} else if strings.TrimSpace(sampled.Transcript) == "" {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: available (transcript pending)")
+		var meeting notionmeetings.MeetingNote
+		if block == nil || json.Unmarshal(block.Raw, &meeting) != nil || meeting.ID != sampleID || meeting.Type != "meeting_notes" {
+			return &notionProbeError{stage: "probe Notion sample header", cause: notionmeetings.ErrMalformedResponse}
+		}
+		matched := meeting.CreatedBy.ID == identity.UserID
+		for _, id := range meeting.MeetingNotes.CalendarEvent.Attendees {
+			if id == identity.UserID {
+				matched = true
+			}
+		}
+		if meeting.InTrash || meeting.Archived {
+			_, _ = fmt.Fprintln(out, "  Sample hydration: not tested (archived or trash)")
+		} else if !matched {
+			_, _ = fmt.Fprintln(out, "  Sample hydration: not selected for connected human")
 		} else {
-			_, _ = fmt.Fprintln(out, "  Sample hydration: available")
+			sampled, err = notionmeetings.NewHydrator(notionProbeContent{client}).HydrateBlock(ctx, block)
+			if err != nil {
+				_, _ = fmt.Fprintln(out, "  Sample hydration: unavailable")
+				return &notionProbeError{stage: "probe Notion sample hydration", cause: err}
+			}
+			_, _ = fmt.Fprintln(out, "  Read Content: available")
+			children := sampled.Discovery.MeetingNotes.Children
+			incomplete := (children.SummaryBlockID != "" && (!sampled.SummaryTree.Complete || sampled.SummaryTree.Filtered)) || (children.NotesBlockID != "" && (!sampled.NotesTree.Complete || sampled.NotesTree.Filtered)) || (children.TranscriptBlockID != "" && (!sampled.TranscriptTree.Complete || sampled.TranscriptTree.Filtered))
+			if incomplete {
+				_, _ = fmt.Fprintln(out, "  Sample hydration: incomplete (some meeting sections could not be read)")
+			} else if strings.TrimSpace(sampled.Transcript) == "" {
+				_, _ = fmt.Fprintln(out, "  Sample hydration: available (transcript pending)")
+			} else {
+				_, _ = fmt.Fprintln(out, "  Sample hydration: available")
+			}
 		}
 	}
+
 	if users == nil {
 		page, err := client.ListUsers(ctx, "")
 		if ctx.Err() != nil {
@@ -200,6 +247,15 @@ func configuredNotionClients(source config.NotionMeetingsSource) (notionmeetings
 	return newNotionMeetingsClient(notionmeetings.DefaultBaseURL, source.Token), users
 }
 
+func notionImportOptions(source config.NotionMeetingsSource) notionmeetings.ImportOptions {
+	accountEmail, _ := source.EffectiveAccountEmail()
+	return notionmeetings.ImportOptions{Identifier: source.Identifier, AccountEmail: accountEmail, TokenType: source.TokenType, UserID: source.UserID, RootPageIDs: source.RootPageIDs, RootDataSourceIDs: source.RootDataSourceIDs, MeetingBlockIDs: source.MeetingBlockIDs, SearchAccessible: source.SearchAccessible}
+}
+func writeNotionScope(out io.Writer, opts notionmeetings.ImportOptions) {
+	search := opts.SearchAccessible == nil || *opts.SearchAccessible
+	_, _ = fmt.Fprintf(out, "  Scope: page roots: %d; data-source roots: %d; meeting IDs: %d; accessible search: %t\n", len(opts.RootPageIDs), len(opts.RootDataSourceIDs), len(opts.MeetingBlockIDs), search)
+}
+
 var addNotionMeetingsCmd = &cobra.Command{
 	Use:   "add-notion-meetings [identifier]",
 	Short: "Register and validate a Notion AI Meeting Notes source",
@@ -225,7 +281,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 			return fmt.Errorf("[[notion_meetings]] entry %q has no token\n\n%s", source.Identifier, notionMeetingsConfigHint)
 		}
 		client, users := configuredNotionClients(*source)
-		if err := runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users); err != nil {
+		if err := runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users, notionImportOptions(*source)); err != nil {
 			return err
 		}
 		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
@@ -249,12 +305,14 @@ var addNotionMeetingsCmd = &cobra.Command{
 var syncNotionMeetingsCmd = &cobra.Command{
 	Use:   "sync-notion-meetings [identifier]",
 	Short: "Sync Notion AI Meeting Notes",
-	Long: `Sync the latest visible Notion AI Meeting Notes into the canonical meeting archive.
+	Long: `Sync accessible Notion meeting blocks created by or attended by the configured human.
 
-Notion currently returns at most 50 attendee-visible meetings and does not
-provide a discovery cursor. Every run checks that visible window. --after is
-a local visible-set filter. --limit caps discovery work but not due transcript
-maintenance. --probe validates access without printing meeting content.`,
+Discovery combines bounded attendee-query date windows, accessible search,
+configured roots, and remembered meeting IDs. Search is best effort; this does
+not enumerate the entire workspace. Runs resume saved progress and refresh old
+meetings. --after filters new admissions by occurrence time; --limit caps new
+admissions. --full requests a new bounded sweep after unfinished work and forces
+selected archive refreshes. --probe reports capabilities without meeting content.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
@@ -288,7 +346,7 @@ maintenance. --probe validates access without printing meeting content.`,
 		}
 		if syncNotionMeetingsProbe {
 			client, users := configuredNotionClients(sources[0])
-			return runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users)
+			return runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users, notionImportOptions(sources[0]))
 		}
 
 		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
@@ -299,16 +357,15 @@ maintenance. --probe validates access without printing meeting content.`,
 		dbPath := cfg.DatabaseDSN()
 		var pendingWrites int64
 		for _, source := range sources {
-			accountEmail, _ := source.EffectiveAccountEmail()
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Notion meetings for %s\n\n", source.Identifier)
 			client, users := configuredNotionClients(source)
 			importer := notionmeetings.NewImporter(st, client).WithUserSource(users)
-			summary, importErr := importer.Import(cmd.Context(), notionmeetings.ImportOptions{
-				Identifier: source.Identifier, AccountEmail: accountEmail,
-				Full: syncNotionMeetingsFull || !after.IsZero(), Limit: syncNotionMeetingsLimit,
-				CreatedAfter: after,
-				Progress:     func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) },
-			})
+			options := notionImportOptions(source)
+			options.Full = syncNotionMeetingsFull
+			options.Limit = syncNotionMeetingsLimit
+			options.CreatedAfter = after
+			options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
+			summary, importErr := importer.Import(cmd.Context(), options)
 			if summary != nil {
 				pendingWrites += summary.MeetingsAdded + summary.MeetingsUpdated
 			}
@@ -332,6 +389,18 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 	_, _ = fmt.Fprintf(out, "  Meetings processed: %d\n", summary.MeetingsProcessed)
 	_, _ = fmt.Fprintf(out, "  Meetings added:     %d\n", summary.MeetingsAdded)
 	_, _ = fmt.Fprintf(out, "  Meetings updated:   %d\n", summary.MeetingsUpdated)
+	_, _ = fmt.Fprintf(out, "  Identity: %s\n", summary.IdentityProvenance)
+	_, _ = fmt.Fprintf(out, "  Scope: page roots: %d; data-source roots: %d; meeting IDs: %d; accessible search: %t\n", summary.ScopeCounts["page_roots"], summary.ScopeCounts["data_source_roots"], summary.ScopeCounts["meeting_roots"], summary.ScopeCounts["accessible_search"] > 0)
+	_, _ = fmt.Fprintf(out, "  Work remaining: %d\n", summary.WorkRemaining)
+	reasons := make([]string, 0, len(summary.CoverageReasons))
+	for reason := range summary.CoverageReasons {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		_, _ = fmt.Fprintf(out, "  %s: %d\n", reason, summary.CoverageReasons[reason])
+	}
+
 	if summary.MaintenanceRetries > 0 {
 		_, _ = fmt.Fprintf(out, "  Maintenance items: %d\n", summary.MaintenanceRetries)
 	}
@@ -357,15 +426,13 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 	if strings.TrimSpace(source.Token) == "" {
 		return recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, fmt.Errorf("notion meeting source %q has no token", source.Identifier))
 	}
-	accountEmail, err := source.EffectiveAccountEmail()
+	_, err = source.EffectiveAccountEmail()
 	if err != nil {
 		return recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, err)
 	}
 	client, users := configuredNotionClients(source)
 	importer := notionmeetings.NewImporter(st, client).WithUserSource(users)
-	summary, importErr := importer.Import(ctx, notionmeetings.ImportOptions{
-		Identifier: source.Identifier, AccountEmail: accountEmail,
-	})
+	summary, importErr := importer.Import(ctx, notionImportOptions(source))
 	var writes int64
 	if summary != nil {
 		writes = summary.MeetingsAdded + summary.MeetingsUpdated
@@ -380,11 +447,11 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 
 func init() {
 	syncNotionMeetingsCmd.Flags().IntVar(&syncNotionMeetingsLimit, "limit", 0,
-		"max visible meetings hydrated and verified per run; due transcript maintenance is additional (0 = unlimited)")
+		"maximum new meeting admissions per bounded run; known refresh is additional (0 = unlimited)")
 	syncNotionMeetingsCmd.Flags().StringVar(&syncNotionMeetingsAfter, "after", "",
-		"local visible-set lower bound (YYYY-MM-DD; implies --full)")
+		"new-admission occurrence lower bound (YYYY-MM-DD); remembered meetings still refresh")
 	syncNotionMeetingsCmd.Flags().BoolVar(&syncNotionMeetingsFull, "full", false,
-		"force selected snapshots through archive upsert instead of skipping matching checksums")
+		"force bounded refresh and request a fresh sweep after unfinished work")
 	syncNotionMeetingsCmd.Flags().BoolVar(&syncNotionMeetingsProbe, "probe", false,
 		"validate capabilities and result shape without printing meeting content")
 	rootCmd.AddCommand(addNotionMeetingsCmd)

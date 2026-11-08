@@ -187,6 +187,9 @@ func importNotion(ctx context.Context, st *store.Store) (int64, error) {
 	}
 	const meeting = `{"object":"block","id":"notion-scheduled","type":"meeting_notes","has_children":true,"parent":{"type":"page_id","page_id":"notion-page"},"created_time":"2026-01-03T10:00:00Z","last_edited_time":"2026-01-03T11:00:00Z","meeting_notes":{"title":[{"plain_text":"Notion scheduled hour"}],"status":"notes_ready","children":{"summary_block_id":"notion-summary","notes_block_id":"notion-notes","transcript_block_id":"notion-transcript"},"calendar_event":{"start_time":"2026-01-03T10:00:00Z","end_time":"2026-01-03T11:00:00Z","attendees":["alex-user"]}}}`
 	server := jsonServer(map[string]string{
+		"GET /v1/users/me":                     `{"object":"user","id":"fixture-bot","type":"bot","bot":{"owner":{"type":"user","user":{"id":"alex-user"}}}}`,
+		"POST /v1/search":                      `{"object":"list","results":[],"has_more":false}`,
+		"GET /v1/users/alex-user":              `{"object":"user","id":"alex-user","type":"person","name":"Alex Example","person":{"email":"alex@example.com","email_verified":true}}`,
 		"POST /v1/blocks/meeting_notes/query":  `{"results":[` + meeting + `],"has_more":false}`,
 		"GET /v1/blocks/notion-scheduled":      meeting,
 		"GET /v1/blocks/notion-summary":        `{"object":"block","id":"notion-summary","type":"paragraph","has_children":false,"paragraph":{"rich_text":[{"plain_text":"A synthetic scheduled decision."}]}}`,
@@ -197,7 +200,7 @@ func importNotion(ctx context.Context, st *store.Store) (int64, error) {
 		"GET /v1/users":                        `{"results":[{"object":"user","id":"alex-user","type":"person","name":"Alex Example","person":{"email":"alex@example.com","email_verified":true}}],"has_more":false}`,
 	})
 	defer server.Close()
-	result, err := notionmeetings.NewImporter(st, notionmeetings.NewClient(server.URL, "synthetic-token")).Import(ctx, notionmeetings.ImportOptions{Identifier: "fixture-notion", AccountEmail: "owner@example.org", Full: true})
+	result, err := notionmeetings.NewImporter(st, notionmeetings.NewClient(server.URL, "synthetic-token")).Import(ctx, notionmeetings.ImportOptions{TokenType: "pat", Identifier: "fixture-notion", AccountEmail: "owner@example.org", Full: true})
 	if err != nil {
 		return 0, err
 	}

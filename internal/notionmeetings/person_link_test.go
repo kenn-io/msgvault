@@ -35,7 +35,7 @@ func TestNotionUserKeepsPersonAcrossEmailChange(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, source, imp := newImporterFixture(t)
-	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	_, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 	require.NoError(err)
 	participantID, err := st.EnsureParticipant("attendee@example.com", "", "example.com")
 	require.NoError(err)
@@ -43,7 +43,7 @@ func TestNotionUserKeepsPersonAcrossEmailChange(t *testing.T) {
 	require.NoError(err)
 
 	source.users[""].Results[0].Person.Email = "attendee.new@example.com"
-	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	_, err = imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 	require.NoError(err)
 
 	assert.Equal(person.ID, boundPersonForEmail(t, st, "attendee.new@example.com"),
@@ -54,13 +54,13 @@ func TestNotionChecksumSkipStillLinksAttendees(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, _, imp := newImporterFixture(t)
-	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	_, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 	require.NoError(err)
 	// Simulate linking that never completed after the meeting was written.
 	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM participant_contact_observations`)
 	require.NoError(err)
 
-	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	second, err := imp.Import(t.Context(), ImportOptions{UserID: "creator-1", Identifier: "work"})
 	require.NoError(err)
 	assert.Equal(int64(0), second.MeetingsUpdated, "the unchanged meeting is not rewritten")
 
