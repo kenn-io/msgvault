@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-08"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -31,36 +31,35 @@ appear in full under Inherited Flags.
 
 ## loops
 
-Show the conversations waiting on a reply, and clear them, through the
-selected daemon. Requires API schema 3.44.0. See [Open loops](usage/open-loops.md)
-for the rules.
+On unreleased `main`, list the conversations waiting on a reply, and mark
+them done, snooze them, or reopen them, through the selected daemon. The
+daemon needs API schema 3.44.0 or newer. See [Open loops](usage/open-loops.md)
+for what counts as a loop.
 
 ```bash
 msgvault loops list
 msgvault loops list --limit 10 --json
 msgvault loops list --person 42
 msgvault loops done 4521
+msgvault loops done 4521 --questions 4521,4530
 msgvault loops snooze 4521 --until 48h
 msgvault loops reopen 4521
 ```
 
-| Command | Flags and behavior |
+| Command | What it does |
 |---|---|
-| `list` | `--limit` 1..200 (default 50), `--json`, `--person <positive id>` to show one person's loops |
-| `done` | One message ID; marks that loop done. `--questions <ids>` marks only the `question_message_ids` from `list --json`. A distinct question can list again |
-| `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions; `--questions <ids>` marks only the listed questions |
-| `reopen` | One message ID; clears the done or snooze decision on that exact question |
+| `list` | Lists loops. `--limit` from 1 to 200 (default 50), `--person <id>` for one saved person, `--json` for machine-readable output. |
+| `done <message-id>` | Marks the loop done. `--questions <ids>` marks only those questions: the item's `question_message_ids` from `list --json`. |
+| `snooze <message-id> --until <when>` | Hides the loop until a duration such as `48h`, a date (`YYYY-MM-DD`, midnight local time), or an RFC3339 time. Takes `--questions` like `done`. |
+| `reopen <message-id>` | Clears the done or snooze decision on one question. |
 
-`list` prints a "Waiting on you" section and a "Waiting on them" section,
-oldest first, with the age, person, subject, and message ID of each loop. A
-section with no loops is left out. When `--limit` cuts the list, a line says
-so. A line also
-says how many stored messages could not be read, when there are any. If the
-scan needs more than 1,000 uncached message classifications,
-the command returns completed conversations and warns that more loops may be
-missing; JSON sets `coverage_incomplete`. An empty complete list prints
-`No open loops.` A message that is not an open loop, such as one you already
-answered, fails with `<id> isn't an open loop.`
+`list` prints a **Waiting on you** and a **Waiting on them** section, oldest
+first, with the age, person, subject, and message ID of each loop. It adds a
+line when `--limit` cuts the list, when stored messages couldn't be read, or
+when more history remains. Run it again to continue; JSON sets
+`coverage_incomplete`. With nothing open, it prints `No open loops.` Acting on
+a message that doesn't start an open loop, such as one you already answered,
+fails with `<id> isn't an open loop.`
 
 ## meetings
 
@@ -4567,6 +4566,7 @@ msgvault mcp [flags]
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--confirm-sensitive-drafts` | `false` | On unreleased `main`, require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
@@ -4682,7 +4682,8 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 | `--mcp-allow-carddav-writes` | `false` | Enable confirmed CardDAV publication and sync. |
 | `--mcp-allow-calendar-writes` | `false` | Enable calendar mutations. |
 | `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
-| `--mcp-allow-loop-writes` | `false` | Enable approved open-loop done, snooze, and reopen decisions. |
+| `--mcp-allow-loop-writes` | `false` | On unreleased `main`, enable approved open-loop done, snooze, and reopen decisions. |
+| `--mcp-confirm-sensitive-drafts` | `false` | On unreleased `main`, require client confirmation before creating or editing drafts with detected sensitive content. Writes still require `--mcp-allow-writes`. |
 | `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
 
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
@@ -5262,9 +5263,12 @@ are kept. Beeper and Discord sources also recompute their provider-derived
 text and metadata, and email retained under those labels is repaired from its
 MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
-them. Source syncs and imports run the same work first, so use this command
-for on-demand repair, file imports you will not run again, or retrying an
-interrupted pass.
+them. Every source also indexes the Message-ID, In-Reply-To, References and
+attached-original identifiers of emails still pending it, which
+related-copy lookups read. Missing or unreadable payloads are recorded
+as incomplete and do not block later messages. Source syncs and imports run the
+same work first, so use this command for on-demand repair, file imports you will
+not run again, or retrying an interrupted pass.
 
 ## gc
 
