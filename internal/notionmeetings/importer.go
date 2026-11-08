@@ -211,23 +211,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return sum, err
 	}
 	// Rotate legacy overflow into bounded active slots after retaining deadlines.
-	state.schedulePendingBacklog(started, limits.Pending)
-	if state.validateTransientWith(limits) != nil {
-		// Retry entries that cannot fit remain in the durable backlog. Find the
-		// largest active prefix that leaves room for the rest of the cursor.
-		low, high := 0, len(state.Pending)
-		for low < high {
-			middle := (low + high + 1) / 2
-			candidate := state
-			candidate.schedulePendingBacklog(started, middle)
-			if candidate.validateTransientWith(limits) == nil {
-				low = middle
-			} else {
-				high = middle - 1
-			}
-		}
-		state.schedulePendingBacklog(started, low)
-	}
+	state.fitPendingBacklog(started, limits)
 	lastValidCursor, err := state.marshal()
 	if err != nil {
 		return sum, err
@@ -452,6 +436,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		state.NextLane = (lane + 1) % len(steps)
 		before := state.copyDiscovery()
 		changed, stepErr := steps[lane](ctx)
+		if lane >= 2 && changed && len(state.Pending) > 0 && state.validateTransientWith(limits) != nil {
+			state.fitPendingBacklog(started, limits)
+		}
 		if lane < 2 && changed {
 			if boundErr := state.validateTransientWith(limits); boundErr != nil {
 				state = before.copyDiscovery()

@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,23 @@ func TestInterruptedDiscoveryRotatesContinuations(t *testing.T) {
 	require.NoError(err)
 	require.Len(run.state.Frontier, 1)
 	assert.Equal("slow", run.state.Frontier[0].ID)
+}
+
+func TestNewTranscriptRetrySpillsWhenCursorIsFull(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	state := newSyncState()
+	limits := defaultDiscoveryLimits()
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	meeting := hydrationMeeting()
+	meeting.ID = strings.Repeat("x", limits.Bytes)
+	state.updateTranscriptPending(meeting.ID, &HydratedMeeting{Discovery: meeting}, true, now)
+	require.Error(state.validateTransientWith(limits))
+	state.fitPendingBacklog(now, limits)
+	require.NoError(state.validateTransientWith(limits))
+	assert.Empty(state.Pending)
+	require.Len(state.PendingBacklog, 1)
+	assert.Equal(meeting.ID, state.PendingBacklog[0].BlockID)
 }
 
 func TestQueueBackpressureReplaysEveryCandidate(t *testing.T) {

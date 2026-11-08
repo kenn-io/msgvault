@@ -103,6 +103,28 @@ func (state *syncState) schedulePendingBacklog(now time.Time, limit int) {
 	state.Pending = pending[:active:active]
 	state.PendingBacklog = pending[active:]
 }
+
+func (state *syncState) fitPendingBacklog(now time.Time, limits discoveryLimits) {
+	state.schedulePendingBacklog(now, limits.Pending)
+	if state.validateTransientWith(limits) == nil {
+		return
+	}
+	// Retry entries that cannot fit remain in the durable backlog. Find the
+	// largest active prefix that leaves room for the rest of the cursor.
+	low, high := 0, len(state.Pending)
+	for low < high {
+		middle := (low + high + 1) / 2
+		candidate := *state
+		candidate.schedulePendingBacklog(now, middle)
+		if candidate.validateTransientWith(limits) == nil {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	state.schedulePendingBacklog(now, low)
+}
+
 func normalizedIDs(ids []string) []string {
 	set := map[string]bool{}
 	for _, id := range ids {
