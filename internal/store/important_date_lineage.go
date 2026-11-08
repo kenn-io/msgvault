@@ -15,6 +15,7 @@ import (
 type ImportantDateLineage struct {
 	IdentityRevision int64                         `json:"identity_revision"`
 	PersonIDs        []int64                       `json:"person_ids"`
+	MissingPersonIDs []int64                       `json:"missing_person_ids"`
 	PersonUIDs       []string                      `json:"person_uids"`
 	People           []ImportantDateLineagePerson  `json:"people"`
 	Aliases          []ImportantDateLineageAlias   `json:"aliases"`
@@ -113,6 +114,9 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		err := s.db.QueryRowContext(ctx, `SELECT vcard_uid, revision FROM persons WHERE id = ?`, id).Scan(&uid, &revision)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return result, fmt.Errorf("read lineage person: %w", err)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			result.MissingPersonIDs = append(result.MissingPersonIDs, id)
 		}
 		if err == nil {
 			uids[uid] = struct{}{}
