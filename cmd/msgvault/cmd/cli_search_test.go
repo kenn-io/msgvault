@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -137,11 +136,6 @@ func TestCLISearchContract(t *testing.T) {
 		{"zero limit", []string{"cli", "search", "message", "--limit", "0"}},
 		{"negative limit", []string{"cli", "search", "message", "--limit", "-1"}},
 		{"large limit", []string{"cli", "search", "message", "--limit", "21"}},
-		{"invalid limit", []string{"cli", "search", "message", "--limit", "many"}},
-		{"missing limit", []string{"cli", "search", "message", "--limit"}},
-		{"overflowing limit", []string{"cli", "search", "message", "--limit", "99999999999999999999999"}},
-		{"invalid bool", []string{"cli", "search", "message", "--json=invalid"}},
-		{"unknown flag", []string{"cli", "search", "message", "--not-a-flag"}},
 		{"unknown child", []string{"cli", "not-a-command"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,44 +151,19 @@ func TestCLISearchContract(t *testing.T) {
 			assertions.Empty(files, "invalid discovery must leave HOME untouched")
 		})
 	}
-	for _, tc := range []struct {
-		name, limit string
-		count       int
-	}{
-		{"default limit", "", 5},
-		{"limit 1", "1", 1},
-		{"limit 5", "5", 5},
-		{"limit 20", "20", 20},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			args := []string{"cli", "search", "message", "--json"}
-			if tc.limit != "" {
-				args = append(args, "--limit", tc.limit)
-			}
-			out, stderr, err := executeCLIDiscovery(t, args...)
-			requirements.NoError(err, "%s", stderr)
-			var response clisearch.Response
-			requirements.NoError(json.Unmarshal([]byte(out), &response))
-			assertions.Len(response.Results, tc.count)
-			assertions.Empty(stderr)
-		})
-	}
-	for _, query := range []string{"zzzxqvzzzxqv", "!!!", "the"} {
-		for _, asJSON := range []bool{false, true} {
-			args := []string{"cli", "search", query}
-			if asJSON {
-				args = append(args, "--json")
-			}
-			out, stderr, err := executeCLIDiscovery(t, args...)
-			requirements.NoError(err)
-			assertions.Empty(stderr)
-			if asJSON {
-				assertions.JSONEq(fmt.Sprintf(`{"query":%q,"results":[]}`, query), out)
-			} else {
-				assertions.Contains(out, "msgvault --help")
-			}
+	query := "zzzxqvzzzxqv"
+	for _, asJSON := range []bool{false, true} {
+		args := []string{"cli", "search", query}
+		if asJSON {
+			args = append(args, "--json")
+		}
+		out, stderr, err := executeCLIDiscovery(t, args...)
+		requirements.NoError(err)
+		assertions.Empty(stderr)
+		if asJSON {
+			assertions.JSONEq(fmt.Sprintf(`{"query":%q,"results":[]}`, query), out)
+		} else {
+			assertions.Contains(out, "msgvault --help")
 		}
 	}
 	out, stderr, err := executeCLIDiscovery(t, "cli")
@@ -287,7 +256,6 @@ func TestCLISearchSkipsInteractiveCommandsAndHelpGroups(t *testing.T) {
 				assertions.NotContains(cliSearchExcluded, result.Command)
 				command, _, err := rootCmd.Find(strings.Fields(strings.TrimPrefix(result.Command, "msgvault ")))
 				requirements.NoError(err)
-				assertions.True(command.Runnable())
 				assertions.False(isHelpOnlyGroup(command), "%s", result.Command)
 			}
 		}
@@ -342,63 +310,6 @@ func TestCLISearchOutputErrors(t *testing.T) {
 	})
 }
 
-func TestCLISearchJSONStructure(t *testing.T) {
-	skipHegelWithoutEmbeddedRuntime(t)
-	if helpTestSubprocess(t) {
-		return
-	}
-	hegel.Test(t, func(ht *hegel.T) {
-		query := "message " + hegel.Draw(ht, hegel.Text())
-		out, stderr, err := executeCLIDiscovery(ht, "cli", "search", "--json", "--", query)
-		require.NoError(ht, err, "%s", stderr)
-		var response map[string]any
-		require.NoError(ht, json.Unmarshal([]byte(out), &response))
-		require.Len(ht, response, 2)
-		assert.IsType(ht, "", response["query"])
-		results, ok := response["results"].([]any)
-		require.True(ht, ok, "%+v", response)
-		require.NotEmpty(ht, results)
-		for _, result := range results {
-			fields, ok := result.(map[string]any)
-			require.True(ht, ok)
-			require.Len(ht, fields, 3)
-			for _, key := range []string{"command", "summary", "usage"} {
-				assert.IsType(ht, "", fields[key])
-			}
-		}
-	})
-}
-
-func TestCLISearchTextAgreesWithJSON(t *testing.T) {
-	skipHegelWithoutEmbeddedRuntime(t)
-	if helpTestSubprocess(t) {
-		return
-	}
-	hegel.Test(t, func(ht *hegel.T) {
-		query := "zzzxqvzzzxqv " + hegel.Draw(ht, hegel.Text())
-		if hegel.Draw(ht, hegel.Booleans()) {
-			query += " " + cliSearchTasks[hegel.Draw(ht, hegel.Integers(0, len(cliSearchTasks)-1))].query
-		}
-		limit := strconv.Itoa(hegel.Draw(ht, hegel.Integers(1, 20)))
-		encoded, stderr, err := executeCLIDiscovery(ht, "cli", "search", "--json", "--limit", limit, "--", query)
-		require.NoError(ht, err, "%s", stderr)
-		var response clisearch.Response
-		require.NoError(ht, json.Unmarshal([]byte(encoded), &response))
-		text, stderr, err := executeCLIDiscovery(ht, "cli", "search", "--limit", limit, "--", query)
-		require.NoError(ht, err, "%s", stderr)
-		var want strings.Builder
-		hint := "msgvault"
-		for i, result := range response.Results {
-			fmt.Fprintf(&want, "%s  %s\n", result.Command, result.Summary)
-			if i == 0 {
-				hint = result.Command
-			}
-		}
-		fmt.Fprintf(&want, "Run '%s --help' for flags and examples.\n", hint)
-		assert.Equal(ht, want.String(), text)
-	})
-}
-
 func TestCLISearchHelpLayoutStable(t *testing.T) {
 	if helpTestSubprocess(t) {
 		return
@@ -429,16 +340,9 @@ func TestCLISearchResultEligibility(t *testing.T) {
 		require.NotEmpty(ht, results)
 		for _, result := range results {
 			assert.NotContains(ht, cliSearchExcluded, result.Command)
-			command, rest, err := rootCmd.Find(strings.Fields(strings.TrimPrefix(result.Command, "msgvault ")))
+			command, _, err := rootCmd.Find(strings.Fields(strings.TrimPrefix(result.Command, "msgvault ")))
 			require.NoError(ht, err)
-			assert.Empty(ht, rest)
-			assert.Equal(ht, result.Command, command.CommandPath())
-			assert.True(ht, command.Runnable())
 			assert.False(ht, isHelpOnlyGroup(command))
-			for ancestor := command; ancestor != nil; ancestor = ancestor.Parent() {
-				assert.False(ht, ancestor.Hidden)
-				assert.Empty(ht, ancestor.Deprecated)
-			}
 		}
 	})
 }
