@@ -32,24 +32,28 @@ import (
 )
 
 type recordingEvalRecord struct {
-	ID, Profile, Origin, Text string
-	SourceID                  string `json:"source_id"`
-	SourceVersionID           string `json:"source_version_id"`
-	ContentVersionID          string `json:"content_version_id"`
-	SuppliedInputID           string `json:"supplied_input_id"`
-	SourceSHA256              string `json:"source_sha256"`
-	ByteLength                int64  `json:"byte_length"`
-	StartMS                   *int64 `json:"start_ms"`
-	EndMS                     *int64 `json:"end_ms"`
+	ID               string `json:"id"`
+	Profile          string `json:"profile"`
+	Origin           string `json:"origin"`
+	Text             string `json:"text"`
+	SourceID         string `json:"source_id"`
+	SourceVersionID  string `json:"source_version_id"`
+	ContentVersionID string `json:"content_version_id"`
+	SuppliedInputID  string `json:"supplied_input_id"`
+	SourceSHA256     string `json:"source_sha256"`
+	ByteLength       int64  `json:"byte_length"`
+	StartMS          *int64 `json:"start_ms"`
+	EndMS            *int64 `json:"end_ms"`
 }
 
 type recordingEvalManifest struct {
-	URL, Profile  string
-	APIKey        string         `json:"api_key"`
-	VaultUID      string         `json:"vault_uid"`
-	Quality       string         `json:"quality"`
-	ModelMetadata map[string]any `json:"model_metadata"`
-	Records       []recordingEvalRecord
+	URL           string                `json:"url"`
+	Profile       string                `json:"profile"`
+	APIKey        string                `json:"api_key"`
+	VaultUID      string                `json:"vault_uid"`
+	Quality       string                `json:"quality"`
+	ModelMetadata map[string]any        `json:"model_metadata"`
+	Records       []recordingEvalRecord `json:"records"`
 }
 
 type recordingEvalOccurrence struct {
@@ -164,6 +168,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 
 	for _, profile := range profiles {
 		scenario("judgments/"+profile, func(t *testing.T) {
+			t.Helper()
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			_, server, occurrences := seedRecordingEvaluation(t, manifest, profile)
@@ -234,6 +239,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 	}
 
 	scenario("empty-local-scope", func(t *testing.T) {
+		t.Helper()
 		f := newRecordingFixture(t)
 		f.client = recordingEvalClient(t, manifest)
 		server := f.server(true)
@@ -246,6 +252,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 		}
 	})
 	scenario("no-selected-transcript", func(t *testing.T) {
+		t.Helper()
 		assertions := assert.New(t)
 		f := newRecordingFixture(t)
 		f.client = recordingEvalClient(t, manifest)
@@ -270,6 +277,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 		}
 	})
 	scenario("selected-build-without-profile-vectors", func(t *testing.T) {
+		t.Helper()
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		f := newRecordingFixture(t)
@@ -309,6 +317,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 		}
 	})
 	scenario("different-current-caption-even-without-matches", func(t *testing.T) {
+		t.Helper()
 		f, server, _ := seedRecordingEvaluation(t, manifest, manifest.Profile)
 		record := manifest.Records[0]
 		other := record
@@ -327,6 +336,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 
 	for _, action := range []string{"replace-local-bytes", "hide-local", "revoke-local", "change-person-scope"} {
 		scenario(action, func(t *testing.T) {
+			t.Helper()
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			f, _, occurrences := seedRecordingEvaluation(t, manifest, manifest.Profile)
@@ -394,6 +404,7 @@ func TestMediaRetrievalQualification(t *testing.T) {
 
 	for _, mutation := range []struct{ action, id string }{{"replace", "a-v1"}, {"hide", "a-v2"}, {"revoke", "b-v1"}} {
 		scenario("source-"+mutation.action, func(t *testing.T) {
+			t.Helper()
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			profile := manifest.Profile
@@ -457,8 +468,9 @@ func TestMediaRetrievalQualification(t *testing.T) {
 		})
 	}
 	scenario("unreachable", func(t *testing.T) {
+		t.Helper()
 		f, _, _ := seedRecordingEvaluation(t, manifest, manifest.Profile)
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		unavailable := manifest
 		unavailable.URL = "http://" + listener.Addr().String()
@@ -518,7 +530,7 @@ func seedRecordingEvaluation(t *testing.T, manifest recordingEvalManifest, profi
 			MessageID      string `json:"message_id"`
 			ConversationID string `json:"conversation_id"`
 			Body           string `json:"body"`
-		}
+		} `json:"messages"`
 	}
 	raw, err := os.ReadFile(filepath.Join("..", "eval", "testdata", "media", "mailbox.json"))
 	require.NoError(t, err)

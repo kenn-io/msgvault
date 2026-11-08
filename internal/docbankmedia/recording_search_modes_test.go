@@ -18,11 +18,17 @@ import (
 func TestRecordingSearchAcceptsNonlexicalReport(t *testing.T) {
 	for _, mode := range []string{"semantic", "hybrid"} {
 		t.Run(mode, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			source := SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request SearchRequest
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-				assert.Equal(t, mode, request.Mode)
-				require.NoError(t, json.NewEncoder(w).Encode(SearchReport{
+				if !assertions.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+					http.Error(w, "invalid synthetic request", http.StatusBadRequest)
+					return
+				}
+				assertions.Equal(mode, request.Mode)
+				assertions.NoError(json.NewEncoder(w).Encode(SearchReport{
 					RequestedMode: mode, ActualMode: mode, MediaSourceSelection: true,
 					MediaSelections: []SearchMediaSelection{}, Results: []SearchHit{},
 					Coverage: SearchCoverage{State: "incomplete", ScopedDocuments: 1},
@@ -30,14 +36,14 @@ func TestRecordingSearchAcceptsNonlexicalReport(t *testing.T) {
 			}))
 			t.Cleanup(remote.Close)
 			client, err := NewClient(remote.URL, nil)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			report, err := client.Search(t.Context(), SearchRequest{
 				Query: "delivery time", Mode: mode, Profile: "recording-vectors", Limit: 20, ContentFirst: true,
 				Fence:        &SearchFence{VaultUID: "fixture", ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174000"}},
-				MediaSources: []SearchMediaSelector{{SearchMediaSource: SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}}},
+				MediaSources: []SearchMediaSelector{{SearchMediaSource: source}},
 			})
-			require.NoError(t, err)
-			assert.Equal(t, mode, report.ActualMode)
+			requirements.NoError(err)
+			assertions.Equal(mode, report.ActualMode)
 		})
 	}
 }
@@ -46,6 +52,9 @@ func TestRecordingSearchUnavailableReport(t *testing.T) {
 	for _, mode := range []string{"lexical", "semantic", "hybrid"} {
 		for _, malformed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/malformed=%t", mode, malformed), func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
+				source := SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}
 				report := SearchReport{RequestedMode: mode, ActualMode: "unavailable", MediaSourceSelection: true,
 					MediaSelections: []SearchMediaSelection{}, Results: []SearchHit{},
 					Coverage: SearchCoverage{State: "incomplete", ScopedDocuments: 1}}
@@ -55,16 +64,16 @@ func TestRecordingSearchUnavailableReport(t *testing.T) {
 				remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(report) }))
 				t.Cleanup(remote.Close)
 				client, err := NewClient(remote.URL, nil)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				got, err := client.Search(t.Context(), SearchRequest{Query: "telescope", Mode: mode, Profile: "vectors", ContentFirst: true, Limit: 20,
 					Fence:        &SearchFence{VaultUID: "fixture", ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174000"}},
-					MediaSources: []SearchMediaSelector{{SearchMediaSource: SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}}}})
+					MediaSources: []SearchMediaSelector{{SearchMediaSource: source}}})
 				if malformed || mode == "lexical" {
-					require.ErrorIs(t, err, ErrInvalidReceipt)
+					requirements.ErrorIs(err, ErrInvalidReceipt)
 				} else {
-					require.NoError(t, err)
-					assert.Equal(t, "unavailable", got.ActualMode)
-					assert.Empty(t, got.Results)
+					requirements.NoError(err)
+					assertions.Equal("unavailable", got.ActualMode)
+					assertions.Empty(got.Results)
 				}
 			})
 		}
@@ -124,7 +133,11 @@ func TestRecordingSearchExactSourceProperty(t *testing.T) {
 func TestRecordingSearchEmbeddingEvidenceBoundary(t *testing.T) {
 	for _, name := range []string{"semantic", "hybrid", "missing build", "wrong selected build", "missing input", "missing generation", "missing set", "missing space", "missing manifest", "invalid manifest", "duplicate evidence", "wrong input kind", "unknown kind", "bad time", "wrong requested mode", "silent downgrade", "invalid coverage", "incomplete counts", "foreign source"} {
 		t.Run(name, func(t *testing.T) {
-			source := map[string]any{"source_id": "source", "source_version_id": "version", "content_version_id": "123e4567-e89b-42d3-a456-426614174000"}
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			const contentID = "123e4567-e89b-42d3-a456-426614174000"
+			selectedSource := SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: contentID}
+			source := map[string]any{"source_id": "source", "source_version_id": "version", "content_version_id": contentID}
 			evidence := map[string]any{"kind": "embedding", "build_id": "selected", "input_id": "input", "input_kind": "rendition_chunk", "input_generation_id": "generation", "embedding_set_id": "set", "vector_space_id": "space", "source_manifest_checksum": strings.Repeat("a", 64), "media_sources": []any{source}}
 			mode := "semantic"
 			if name == "hybrid" {
@@ -132,10 +145,11 @@ func TestRecordingSearchEmbeddingEvidenceBoundary(t *testing.T) {
 			}
 			selection := map[string]any{"source_id": "source", "source_version_id": "version", "content_version_id": source["content_version_id"], "origin": "generated", "completeness": "complete", "build_id": "selected"}
 			coverage := map[string]any{"state": "complete", "scoped_documents": 1, "complete_documents": 1}
-			report := map[string]any{"requested_mode": mode, "actual_mode": mode, "media_source_selection": true, "media_selections": []any{selection}, "coverage": coverage, "results": []any{map[string]any{"vault_uid": "fixture", "node_id": 1, "content_version_id": source["content_version_id"], "rank": 1, "excerpt": "telescope arrives Friday", "evidence": []any{evidence}}}}
+			hit := map[string]any{"vault_uid": "fixture", "node_id": 1, "content_version_id": contentID, "rank": 1, "excerpt": "telescope arrives Friday", "evidence": []any{evidence}}
+			report := map[string]any{"requested_mode": mode, "actual_mode": mode, "media_source_selection": true, "media_selections": []any{selection}, "coverage": coverage, "results": []any{hit}}
 			switch name {
 			case "hybrid":
-				report["results"].([]any)[0].(map[string]any)["evidence"] = []any{map[string]any{"kind": "rendition_segment", "build_id": "selected", "segment_id": "segment", "media_sources": []any{source}}, evidence}
+				hit["evidence"] = []any{map[string]any{"kind": "rendition_segment", "build_id": "selected", "segment_id": "segment", "media_sources": []any{source}}, evidence}
 			case "missing build":
 				delete(evidence, "build_id")
 			case "wrong selected build":
@@ -153,7 +167,7 @@ func TestRecordingSearchEmbeddingEvidenceBoundary(t *testing.T) {
 			case "invalid manifest":
 				evidence["source_manifest_checksum"] = strings.Repeat("x", 64)
 			case "duplicate evidence":
-				report["results"].([]any)[0].(map[string]any)["evidence"] = []any{evidence, evidence}
+				hit["evidence"] = []any{evidence, evidence}
 			case "wrong input kind":
 				evidence["input_kind"] = "original_file"
 			case "unknown kind":
@@ -172,19 +186,19 @@ func TestRecordingSearchEmbeddingEvidenceBoundary(t *testing.T) {
 				evidence["media_sources"] = []any{map[string]any{"source_id": "other", "source_version_id": "version", "content_version_id": source["content_version_id"]}}
 			}
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				require.NoError(t, json.NewEncoder(w).Encode(report))
+				assertions.NoError(json.NewEncoder(w).Encode(report))
 			}))
 			t.Cleanup(remote.Close)
 			client, err := NewClient(remote.URL, nil)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			got, err := client.Search(t.Context(), SearchRequest{Query: "arrival", Mode: mode, Limit: 20, Profile: "vectors", ContentFirst: true,
-				Fence: &SearchFence{VaultUID: "fixture", ContentVersionIDs: []string{source["content_version_id"].(string)}}, MediaSources: []SearchMediaSelector{{SearchMediaSource: SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: source["content_version_id"].(string)}}}})
+				Fence: &SearchFence{VaultUID: "fixture", ContentVersionIDs: []string{contentID}}, MediaSources: []SearchMediaSelector{{SearchMediaSource: selectedSource}}})
 			if name == "semantic" || name == "hybrid" {
-				require.NoError(t, err)
-				require.Len(t, got.Results, 1)
-				assert.Equal(t, "telescope arrives Friday", got.Results[0].Excerpt)
+				requirements.NoError(err)
+				requirements.Len(got.Results, 1)
+				assertions.Equal("telescope arrives Friday", got.Results[0].Excerpt)
 			} else {
-				require.Error(t, err)
+				requirements.Error(err)
 			}
 		})
 	}
