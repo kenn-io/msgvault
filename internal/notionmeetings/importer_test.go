@@ -1712,3 +1712,33 @@ func TestImporterPreservesNonTextEvidenceOnIncompleteRefresh(t *testing.T) {
 	assert.True(evidence.Notes.Preserved)
 	assert.Contains(string(evidence.Notes.Root), "image.png")
 }
+
+func TestImporterRetainsSectionsWhenReferencesOmitted(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	var header map[string]any
+	require.NoError(json.Unmarshal(source.blocks["meeting-1"].Raw, &header))
+	payload, ok := header["meeting_notes"].(map[string]any)
+	require.True(ok)
+	children, ok := payload["children"].(map[string]any)
+	require.True(ok)
+	delete(children, "summary_block_id")
+	delete(children, "notes_block_id")
+	header["last_edited_time"] = "2026-08-30T10:00:00Z"
+	raw, err := json.Marshal(header)
+	require.NoError(err)
+	require.NoError(json.Unmarshal(raw, source.blocks["meeting-1"]))
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
+	require.NoError(err)
+	assert.True(result.PartialCoverage)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	stored, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	content := meetingcontent.Decode(RawFormat, stored, nil)
+	assert.Equal("Decide the release scope.", content.Summary.Text)
+	assert.Contains(content.Notes.Text, "Owner will prepare the rollout.")
+}
