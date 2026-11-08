@@ -209,7 +209,7 @@ When enabled, set `private_destination = true`, an explicit Kata project and rec
 
 Changing a person's date or parent relationship requires a fresh consent grant for the affected subject. Changing the Kata endpoint or recreating the project also requires a fresh grant. Revocation clears all recorded destinations for that subject, even if Kata is unavailable.
 
-The job sends no greetings and uses no model. It creates a generic preparation issue and a native inbox request containing subject identity only after consent. It retains uncertain delivery states and does not retry them automatically. The status command lists retained states. After inspecting an uncertain outcome, use `person important-date resolve` to record a delivered or cancelled result without resending. After inspecting prior issues and resolving pending attempts, approve a changed date with `person important-date accept-correction` for future occurrences.
+The job sends no greetings and uses no model. After consent, it creates a generic preparation issue whose metadata links the subject, and can send a generic native inbox request pointing to the issue. It retains uncertain delivery states and does not retry them automatically. The status command lists retained states. After inspecting an uncertain outcome, use `person important-date resolve` to record a delivered or cancelled result without resending. After inspecting prior issues and resolving pending attempts, approve a changed date with `person important-date accept-correction` for future occurrences.
 
 ## People sweep inference
 

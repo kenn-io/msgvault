@@ -138,7 +138,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 	}}
 	reconcile.Flags().StringVar(&reconcileDigest, "digest", "", "Digest from the inspected lineage view")
 	reconcile.Flags().Int64Var(&reconcileRevision, "identity-revision", -1, "Identity revision from the inspected lineage view")
-	reconcile.Flags().StringVar(&reconcileKey, "key", "", "Unique idempotency key for this decision")
+	reconcile.Flags().StringVar(&reconcileKey, "key", "", "Unique key; reuse for the same decision")
 	reconcile.Flags().StringVar(&reconcileDecisions, "decisions-json", "", "Explicit subject and meaning mappings as a JSON array")
 	reconcile.Flags().BoolVar(&inspectedSnapshots, "inspected-snapshots", false, "Confirm that required merge snapshots were inspected")
 	reconcile.Flags().Int64SliceVar(&reviewedSplitIDs, "reviewed-split", nil, "Explicitly reviewed ambiguous split ID (repeatable)")
