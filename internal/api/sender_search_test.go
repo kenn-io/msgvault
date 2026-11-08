@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestCLISenderNameHintWithinGrant(t *testing.T) {
+func TestCLISenderSearchWithinGrant(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.com", "one", "Project plan", "")
@@ -34,20 +34,17 @@ func TestCLISenderNameHintWithinGrant(t *testing.T) {
 	t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	require.NoError(err)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=from:alex@exam", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=from:alex", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	var response struct {
-		Results []json.RawMessage `json:"results"`
-		Hints   []struct {
-			Message string `json:"message"`
-		} `json:"hints"`
+		Results []struct {
+			ID int64 `json:"id"`
+		} `json:"results"`
 	}
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	assert.Empty(response.Results)
-	require.Len(response.Hints, 1)
-	assert.Contains(response.Hints[0].Message, "alex@example.com (1 message)")
-	assert.NotContains(response.Hints[0].Message, "alex@example.org")
+	require.Len(response.Results, 1)
+	assert.Equal(id, response.Results[0].ID)
 }

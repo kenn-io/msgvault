@@ -260,3 +260,37 @@ func TestVectorFilenameFilterBeforeRanking(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(lexical, "filename filters apply to the lexical leg before fusion")
 }
+
+func TestVectorSenderTermsBeforeRanking(t *testing.T) {
+	b, ctx := newFusedBackendForTest(t)
+	gen := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0), 2: unitVec(768, 0), 3: unitVec(768, 1)})
+	_, err := b.mainDB.ExecContext(ctx, `CREATE TABLE participants(id INTEGER PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
+ ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
+ INSERT INTO participants VALUES(10,'alex@example.com',NULL,'Participant Kim'),(20,'alex@example.company',NULL,'Decoy');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,10,'from','Alex Header'),(2,10,'from','Other'),(3,20,'from','Decoy');`)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		term string
+		want []int64
+	}{
+		{"header", []int64{1}}, {"kim", []int64{1, 2}}, {"alex@example.com", []int64{1, 2}}, {"@example.com", []int64{1, 2}}, {"bob@example.com", nil},
+	} {
+		t.Run(tc.term, func(t *testing.T) {
+			filter := vector.Filter{SenderTerms: []string{tc.term}}
+			hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, filter)
+			require.NoError(t, err)
+			ids := make([]int64, 0, len(hits))
+			for _, hit := range hits {
+				ids = append(ids, hit.MessageID)
+			}
+			assert.ElementsMatch(t, tc.want, ids)
+			fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{QueryVec: unitVec(768, 0), Generation: gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter})
+			require.NoError(t, err)
+			ids = ids[:0]
+			for _, hit := range fused {
+				ids = append(ids, hit.MessageID)
+			}
+			assert.ElementsMatch(t, tc.want, ids)
+		})
+	}
+}

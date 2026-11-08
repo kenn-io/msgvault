@@ -54,7 +54,7 @@ stored snippet, available match_snippet, and attachment names/counts.
 Use show-thread <message-id> to read a conversation chronologically.
 
 Supported operators:
-  from:        Sender email address or domain
+  from:        Sender name, address, or domain
   to:          Recipient email address
   cc:          CC recipient
   bcc:         BCC recipient

@@ -65,7 +65,9 @@ func TestSearchOperatorsLookupPlan(t *testing.T) {
 					}
 					explained := explainPlan(t, s, sql, plan.args...)
 					checks.NotRegexp(`SCAN m\b`, explained)
-					checks.NotContains(explained, "SCAN mr2", explained)
+					if op != "from" {
+						checks.NotContains(explained, "SCAN mr2", explained)
+					}
 				}
 			})
 		}
@@ -82,11 +84,6 @@ func TestSearchOperatorsLookupPlan(t *testing.T) {
 		plan := s.buildMessageSearchSQL(t.Context(), search.Parse(input), true)
 		checks.Equal(1, strings.Count(plan.where, "m.id IN (SELECT"), input)
 		checks.Contains(plan.where, "EXISTS (", input)
-		for i, arg := range plan.args {
-			if arg == "%rare%" {
-				checks.True(strings.HasPrefix(plan.conditions[i+1], "m.id IN ("), input)
-			}
-		}
 		explained := explainPlan(t, s, "SELECT COUNT(*) FROM messages m WHERE "+plan.where, plan.args...)
 		checks.NotRegexp(`SCAN m\b`, explained)
 	}

@@ -1523,6 +1523,12 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 	// satisfaction (one token via sender_id, another via recipient
 	// row) cannot create matches the SQLite path would not also
 	// produce.
+	for _, term := range f.SenderTerms {
+		predicate, senderArgs := search.SenderCondition(term, "p.email_address", "p.phone_number", "p.display_name", "mr.display_name")
+		clauses = append(clauses, `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id
+			WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND `+predicate+`)`)
+		args = append(args, senderArgs...)
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue

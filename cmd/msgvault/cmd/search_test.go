@@ -1125,7 +1125,7 @@ func TestSearchCmd_EmptyResultsPrintHintsToStderr(t *testing.T) {
 		assert.Equal(t, "/api/v1/cli/search", r.URL.Path)
 		assert.Equal(t, "from:alex", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"results":[],"hints":[{"code":"sender_name_requires_address","message":"try from:alex@example.com","retry_with":{"query":"from:alex@example.com"}}]}`))
+		_, _ = w.Write([]byte(`{"results":[],"hints":[{"code":"search_tip","message":"try a broader query"}]}`))
 	}))
 	defer srv.Close()
 	for _, tc := range []struct {
@@ -1147,7 +1147,7 @@ func TestSearchCmd_EmptyResultsPrintHintsToStderr(t *testing.T) {
 			stdout, stderr := doneOut(), doneErr()
 			require.NoError(t, err)
 			assert.Equal(t, tc.stdout, stdout)
-			assert.Contains(t, stderr, "Hint: try from:alex@example.com\n")
+			assert.Contains(t, stderr, "Hint: try a broader query\n")
 		})
 	}
 }

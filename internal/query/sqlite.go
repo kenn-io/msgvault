@@ -2185,6 +2185,22 @@ func appendSQLiteAddressCondition(
 	if len(addresses) == 0 {
 		return conditions, args
 	}
+	if recipientType == "from" {
+		for _, address := range addresses {
+			participant, participantArgs := search.SenderCondition(address, "p_addr.email_address", "p_addr.phone_number", "p_addr.display_name")
+			matching := `SELECT mr_addr.message_id FROM message_recipients mr_addr
+				WHERE mr_addr.recipient_type = 'from' AND mr_addr.participant_id IN (
+					SELECT p_addr.id FROM participants p_addr WHERE ` + participant + `)`
+			args = append(args, participantArgs...)
+			if !strings.Contains(address, "@") {
+				matching += ` UNION SELECT mr_addr.message_id FROM message_recipients mr_addr
+					WHERE mr_addr.recipient_type = 'from' AND LOWER(mr_addr.display_name) LIKE ? ESCAPE '\'`
+				args = append(args, participantArgs[0])
+			}
+			conditions = append(conditions, "m.id IN ("+matching+")")
+		}
+		return conditions, args
+	}
 	parts := make([]string, 0, len(addresses))
 	matchArgs := make([]any, 0, len(addresses)*2)
 	for _, address := range addresses {
@@ -2192,9 +2208,6 @@ func appendSQLiteAddressCondition(
 		case strings.HasPrefix(address, "@"):
 			parts = append(parts, `LOWER(p_addr.email_address) LIKE ? ESCAPE '\'`)
 			matchArgs = append(matchArgs, "%"+escapeSQLiteLike(strings.ToLower(address)))
-		case recipientType == "from":
-			parts = append(parts, "LOWER(p_addr.email_address) = LOWER(?)")
-			matchArgs = append(matchArgs, address)
 		default:
 			lower := strings.ToLower(address)
 			parts = append(parts, "(LOWER(p_addr.email_address) = ? OR p_addr.phone_number = ?)")
@@ -2902,14 +2915,5 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
-	result := &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}
-	if limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
-		result.Hints = e.matchSenderName(ctx, q, func(ctx context.Context, scoped *search.Query) ([]string, []any, string) {
-			return e.buildFilteredMetadataSearchQueryParts(ctx, scoped, filter)
-		})
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
+	return &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}, nil
 }
