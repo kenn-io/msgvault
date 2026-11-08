@@ -680,7 +680,8 @@ func preserveArchivedSections(meeting *HydratedMeeting, archived archivedMeeting
 		{"transcript", &meeting.TranscriptTree, &meeting.Transcript, old.Transcript, oldTexts.Transcript},
 	}
 	for _, section := range sections {
-		if strings.TrimSpace(section.priorText) == "" || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
+		hasPrior := strings.TrimSpace(section.priorText) != "" || (archived.HasEvidence && old.SchemaVersion == 2 && len(section.prior.Root) != 0 && len(section.prior.Blocks) != 0)
+		if !hasPrior || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
 			continue
 		}
 		if !archived.HasEvidence || old.SchemaVersion != 2 {
