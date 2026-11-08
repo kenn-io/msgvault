@@ -54,6 +54,13 @@ func liveExploreFixture(t *testing.T) sqliteExploreFixture {
 		}
 		b.AddMessage(opt)
 	}
+	// Microseconds distinguish imported chat timestamps and adjacent date bounds.
+	for _, microsecond := range []int{100, 200} {
+		b.AddMessage(MessageOpt{SourceID: source, Subject: fmt.Sprintf("Precision %d", microsecond), SentAt: base.Add(10*time.Hour + time.Duration(microsecond)*time.Microsecond)})
+	}
+	for _, microsecond := range []int{200, 100} {
+		b.AddMessage(MessageOpt{SourceID: other, MessageType: "whatsapp", ConversationID: 901, ConversationType: "group_chat", ConversationTitle: "Precision chat", SentAt: base.Add(11*time.Hour + time.Duration(microsecond)*time.Microsecond)})
+	}
 	b.AddConversationParticipant(900, bob)
 	b.AddAttachment(2, 256, "chat.txt")
 	// These rows compare UTC instants whose textual ordering disagrees.
@@ -109,8 +116,11 @@ func TestSQLiteExploreMatchesCache(t *testing.T) {
 	live, cache := fixture.live, fixture.cache
 	after := time.Date(2026, 7, 1, 12, 15, 0, 0, time.UTC)
 	before := after.Add(3 * time.Hour)
+	precisionAfter := time.Date(2026, 7, 1, 22, 0, 0, 150000, time.UTC)
+	precisionBefore := precisionAfter.Add(100 * time.Microsecond)
 	requests := map[string]ExploreRequest{
 		"all":                {},
+		"microsecond dates":  {Context: Context{After: &precisionAfter, Before: &precisionBefore}},
 		"source":             {Context: Context{SourceIDs: []int64{2}}},
 		"account":            {Context: Context{AccountScopes: []search.AccountScope{{SourceID: new(int64(1)), Unattributed: true}}}},
 		"dates":              {Context: Context{After: &after, Before: &before}},

@@ -1,11 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -107,38 +108,38 @@ func TestExploreReportsTransientCacheInitialization(t *testing.T) {
 
 func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	srv, _, _ := liveExploreTestServer(t)
 	srv.SetAnalyticsInitializationActive(true)
 	response := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1}`)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	var page ExploreHTTPResponse
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &page))
-	require.Len(page.Rows, 1)
-	assert.Equal("Newest", page.Rows[0].Title)
-	assert.Contains(page.Warnings[0], "while the analytical cache rebuilds")
-	require.NotEmpty(page.NextCursor)
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &page))
+	requirements.Len(page.Rows, 1)
+	assertions.Equal("Newest", page.Rows[0].Title)
+	assertions.Contains(page.Warnings[0], "while the analytical cache rebuilds")
+	requirements.NotEmpty(page.NextCursor)
 	srv.SetAnalyticsInitializationActive(false)
 	next := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+page.NextCursor+`"}`)
-	require.Equal(http.StatusOK, next.Code, next.Body.String())
+	requirements.Equal(http.StatusOK, next.Code, next.Body.String())
 	var second ExploreHTTPResponse
-	require.NoError(json.Unmarshal(next.Body.Bytes(), &second))
-	require.Len(second.Rows, 1)
-	assert.Equal("Older", second.Rows[0].Title)
-	assert.Equal(page.CacheRevision, second.CacheRevision)
-	assert.Contains(second.Warnings[0], "then restart msgvault")
+	requirements.NoError(json.Unmarshal(next.Body.Bytes(), &second))
+	requirements.Len(second.Rows, 1)
+	assertions.Equal("Older", second.Rows[0].Title)
+	assertions.Equal(page.CacheRevision, second.CacheRevision)
+	assertions.Contains(second.Warnings[0], "then restart msgvault")
 
 	for _, active := range []bool{true, false} {
 		srv.SetAnalyticsInitializationActive(active)
 		refused := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"participant","values":["1"]}]}`)
-		require.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
+		requirements.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
 		var unavailable ExploreCacheUnavailableResponse
-		require.NoError(json.Unmarshal(refused.Body.Bytes(), &unavailable))
+		requirements.NoError(json.Unmarshal(refused.Body.Bytes(), &unavailable))
 		if active {
-			assert.Equal(query.CacheReadiness("building"), unavailable.Readiness)
+			assertions.Equal(query.CacheReadiness("building"), unavailable.Readiness)
 		} else {
-			assert.NotEmpty(unavailable.RecoveryAction)
+			assertions.NotEmpty(unavailable.RecoveryAction)
 		}
 	}
 	for route, body := range map[string]string{
@@ -146,31 +147,58 @@ func TestExploreReportsTransientCacheInitializationWithSQLFallback(t *testing.T)
 		"/api/v1/explore/preflight": `{"selection":{"mode":"all_matching","predicate":{},"cache_revision":"live"}}`,
 	} {
 		refused := postExploreJSON(t, srv, route, body)
-		assert.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
+		assertions.Equal(http.StatusServiceUnavailable, refused.Code, refused.Body.String())
 	}
 	srv.SetAnalyticsEngine(newExploreDuckDBFixture(t), AnalyticsModeDuckDB)
 	changed := postExploreJSON(t, srv, "/api/v1/explore", `{"limit":1,"cursor":"`+page.NextCursor+`"}`)
-	assert.Equal(http.StatusConflict, changed.Code, changed.Body.String())
-	assert.Contains(changed.Body.String(), "archive_revision_changed")
+	assertions.Equal(http.StatusConflict, changed.Code, changed.Body.String())
+	assertions.Contains(changed.Body.String(), "archive_revision_changed")
 }
 
 func liveExploreTestServer(t *testing.T) (*Server, *store.Store, string) {
 	t.Helper()
-	require := require.New(t)
+	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "archive.db")
 	st := testutil.NewSQLiteTestStoreAt(t, path)
 	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','archive@example.test');
  INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type) VALUES(1,1,'thread','email_thread');
  INSERT INTO messages(id,source_id,source_message_id,conversation_id,message_type,subject,snippet,sent_at) VALUES
  (1,1,'older',1,'email','Older','needle OR needle','2026-07-01'),(2,1,'newest',1,'email','Newest','needle OR needle','2026-07-02'); INSERT INTO message_bodies(message_id,body_text) VALUES(1,'needle OR needle'),(2,'needle OR needle');`)
-	require.NoError(err)
+	requirements.NoError(err)
 	_, err = st.RebuildFTS(nil)
-	require.NoError(err)
+	requirements.NoError(err)
 	engine := query.NewSQLiteExploreEngine(st.DB(), path)
-	t.Cleanup(func() { require.NoError(engine.Close()) })
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
 	srv := newTestServerWithEngine(t, engine)
 	srv.SetAnalyticsEngine(engine, AnalyticsModeSQLFallback)
 	return srv, st, path
+}
+
+func TestLiveExploreRefusesSemanticBeforeCandidatesOrReader(t *testing.T) {
+	t.Parallel()
+	srv, backend := newReviewSemanticIntersectionServer(t)
+	live, _, _ := liveExploreTestServer(t)
+	engine, ok := live.queryEngineForContext(t.Context()).(*query.SQLiteEngine)
+	require.True(t, ok)
+	srv.SetAnalyticsEngine(engine, AnalyticsModeSQLFallback)
+	for _, held := range []bool{false, true} {
+		if held {
+			_, release, _, err := engine.BeginExploreSnapshot(t.Context())
+			require.NoError(t, err)
+			defer release()
+		}
+		for _, mode := range []string{"semantic", "hybrid"} {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/explore", bytes.NewBufferString(`{"query":"needle","search_mode":"`+mode+`"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, request)
+			cancel()
+			assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), "analytical_cache_unavailable")
+			assert.Zero(t, backend.searchLimit, "unsupported searches must not query the vector index")
+		}
+	}
 }
 
 type liveExploreSearchStore struct {
@@ -190,31 +218,31 @@ func (s *liveExploreSearchStore) SearchMessageIDsQueryContext(ctx context.Contex
 
 func TestLiveExploreSearchSharesSnapshot(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	srv, st, path := liveExploreTestServer(t)
 	writer, err := store.OpenForTest(t.Context(), path)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(writer.Close()) })
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(writer.Close()) })
 	mock, ok := srv.store.(*mockStore)
-	require.True(ok)
+	requirements.True(ok)
 	searchStore := &liveExploreSearchStore{mockStore: mock, archive: st}
 	srv.store = searchStore
 	searchStore.afterCandidates = func() {
 		_, err := writer.DB().ExecContext(t.Context(), "UPDATE messages SET subject='Changed' WHERE id=2")
-		require.NoError(err)
+		requirements.NoError(err)
 		searchStore.afterCandidates = nil
 	}
 	first := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"needle OR needle","search_mode":"full_text","limit":1}`)
-	require.Equal(http.StatusOK, first.Code, first.Body.String())
+	requirements.Equal(http.StatusOK, first.Code, first.Body.String())
 	var page ExploreHTTPResponse
-	require.NoError(json.Unmarshal(first.Body.Bytes(), &page))
-	require.Len(page.Rows, 1)
-	assert.Equal("Newest", page.Rows[0].Title)
-	assert.GreaterOrEqual(len(page.Warnings), 2)
+	requirements.NoError(json.Unmarshal(first.Body.Bytes(), &page))
+	requirements.Len(page.Rows, 1)
+	assertions.Equal("Newest", page.Rows[0].Title)
+	assertions.GreaterOrEqual(len(page.Warnings), 2)
 	next := postExploreJSON(t, srv, "/api/v1/explore", `{"query":"needle OR needle","search_mode":"full_text","limit":1,"cursor":"`+page.NextCursor+`"}`)
-	assert.Equal(http.StatusConflict, next.Code, next.Body.String())
-	assert.Contains(next.Body.String(), "archive_revision_changed")
+	assertions.Equal(http.StatusConflict, next.Code, next.Body.String())
+	assertions.Contains(next.Body.String(), "archive_revision_changed")
 }
 
 func TestExploreUnavailableUsesRequestInitializationSnapshot(t *testing.T) {

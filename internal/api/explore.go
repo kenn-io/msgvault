@@ -282,10 +282,20 @@ func (s *Server) handleExplore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, scope *ExploreFilter) {
+	var request ExploreHTTPRequest
+	if !decodeExploreJSON(w, r, &request) {
+		return
+	}
+	canonicalizeExploreRequest(&request)
 	engine := s.queryEngineForContext(r.Context())
 	explorer, cached := engine.(query.Explorer)
 	var entries query.EntryExplorer = explorer
 	live := !cached && s.analyticsModeForContext(r.Context()) == AnalyticsModeSQLFallback
+	if live && (request.SearchMode == exploreSearchModeSemantic || request.SearchMode == exploreSearchModeHybrid) {
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
+		return
+	}
+	var releaseSnapshot func()
 	if live {
 		if reader, ok := engine.(*query.SQLiteEngine); ok {
 			started := time.Now()
@@ -296,11 +306,12 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 				return
 			}
 			defer release()
+			releaseSnapshot = release
 			r = r.WithContext(ctx)
 			entries = reader
 		}
 	}
-	prepared, ok := s.prepareExploreRequest(w, r, scope)
+	prepared, ok := s.prepareExploreRequest(w, r, request, scope)
 	if !ok {
 		return
 	}
@@ -374,6 +385,9 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		}
 		writeError(w, http.StatusServiceUnavailable, "identity_matches_unavailable", "Message identity matches could not be resolved")
 		return
+	}
+	if releaseSnapshot != nil {
+		releaseSnapshot()
 	}
 	response := ExploreHTTPResponse{
 		Rows: result.Rows, CacheRevision: result.CacheRevision,
@@ -785,12 +799,7 @@ func exploreCanonicalQueryHash(queryText, mode string) string {
 	return hashCanonicalValue(canonicalParsedExploreQuery(parsed), false)
 }
 
-func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, scope *ExploreFilter) (explorePrepared, bool) {
-	var request ExploreHTTPRequest
-	if !decodeExploreJSON(w, r, &request) {
-		return explorePrepared{}, false
-	}
-	canonicalizeExploreRequest(&request)
+func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, request ExploreHTTPRequest, scope *ExploreFilter) (explorePrepared, bool) {
 	if request.Limit == 0 {
 		request.Limit = exploreDefaultLimit
 	}

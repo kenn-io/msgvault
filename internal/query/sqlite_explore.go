@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 	"uuid"
 
 	"go.kenn.io/msgvault/internal/identityindex"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"golang.org/x/sync/semaphore"
 )
@@ -120,7 +122,10 @@ func (e *SQLiteEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 		defer release()
 	}
 	conditions, args := buildExploreConditionsWithDialect(request, exploreConditionDialect{
-		dateComparison: e.dialect.DateComparison, dateParam: e.dialect.DateParam,
+		dateComparison: func(column, operator string) string {
+			return sqliteutil.TimestampKeyFunction + "(" + column + ") " + operator + " ?"
+		},
+		dateParam:    func(value time.Time) any { return sqliteutil.TimestampKey(value) },
 		messageTypes: sqliteMessageTypeCondition,
 		candidates: func(ids []int64) (string, any) {
 			encoded, _ := json.Marshal(ids)
@@ -141,7 +146,7 @@ func (e *SQLiteEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	if limit == 0 {
 		limit = defaultExploreLimit
 	}
-	order := e.dialect.DateOrderExpression("occurred_at")
+	order := sqliteutil.TimestampKeyFunction + "(occurred_at)"
 	keysSQL := core + `, entry_keys AS (
   SELECT ` + sqlMessageEntryKeyExpr("") + ` AS entry_key, ` + identityindex.EntryKindSQL("message_type") + ` AS entry_kind,
    message_id AS anchor_id, conversation_id, source_id, ` + order + ` AS order_at
@@ -207,7 +212,7 @@ func buildSQLiteExplorePageSQL(core, conditions, chat string, values []string) s
  ), page AS MATERIALIZED (
  SELECT p.entry_key, p.entry_kind, p.position,
  (SELECT message_id FROM members m WHERE m.entry_key = p.entry_key
-  ORDER BY julianday(occurred_at) DESC, message_id DESC LIMIT 1) AS anchor_id
+  ORDER BY ` + sqliteutil.TimestampKeyFunction + `(occurred_at) DESC, message_id DESC LIMIT 1) AS anchor_id
  FROM page_keys p
  ), links AS (
  SELECT m.entry_key, mr.participant_id FROM members m JOIN message_recipients mr ON mr.message_id = m.message_id

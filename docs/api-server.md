@@ -2692,7 +2692,7 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 In auto mode on SQLite, `POST /api/v1/explore` serves live archive rows while the analytical cache rebuilds and after a failed build. Date, source, account, identity, domain, mailing-list, kind, and full-text filters remain available. Responses include a warning about operations that need the cache, with recovery instructions after a failed build.
 
-Grouping, person filters, semantic and hybrid search, bulk actions, Files, and People still require the cache. A live cursor expires when the archive changes or the replacement cache publishes; restart pagination after `409 archive_revision_changed`.
+Grouping, person filters, semantic and hybrid search, bulk actions, Files, People, and the reader’s Open person action still require the cache. A live cursor expires when the archive changes or the replacement cache publishes; restart pagination after `409 archive_revision_changed`.
 
 ### Participant and domain timelines
 
