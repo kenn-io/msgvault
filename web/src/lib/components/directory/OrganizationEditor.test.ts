@@ -739,6 +739,24 @@ it('shows replaced media content in organization conflict details', async () => 
   expect(within(alert).getByText('Content hash', { selector: 'dt' }).nextElementSibling?.textContent).toBe('sha256:replacement');
 });
 
+it('marks a contact group changed when its destination URI changes', async () => {
+  let reads = 0;
+  const opened = richOrganizationProfile(1);
+  opened.contact_points[0].uri = 'https://example.org/original';
+  const saved = richOrganizationProfile(2);
+  saved.contact_points[0].uri = 'https://example.org/replacement';
+  const { controller } = controllerWith(async input => {
+    if (requestOf(input).method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    return Response.json(++reads === 1 ? opened : saved, { headers: { ETag: `\"organization-21-r${reads}\"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  await fireEvent.click(within(alert).getByText('Details'));
+  expect(within(alert).getByText('Email · Changed')).toBeDefined();
+});
+
 it('sends the version an alias save returned when the organization save follows it', async () => {
   const tags: (string | null)[] = [];
   const onDone = vi.fn();

@@ -35,7 +35,7 @@ export function organizationFacts(profile: OrganizationProfile): Facts {
     Categories: (profile.categories ?? []).map(item => item.category).join(', '), Description: text(org.description),
     'Legal names': (profile.names ?? []).filter(item => item.name_kind === 'legal').map(item => item.name).join(', '),
     Status: org.retired_at ? `Retired ${readablePartialDate(org.retired_at.slice(0, 10))}` : 'Active',
-    'Contact details': (profile.contact_points ?? []).map(item => item.original_value).join(', '),
+    'Contact details': (profile.contact_points ?? []).map(item => item.uri && item.uri !== item.original_value ? `${item.original_value} · ${item.uri}` : item.original_value).join(', '),
     Addresses: (profile.addresses ?? []).map(item => item.original_value).join(', '),
     Identifiers: (profile.identifiers ?? []).map(item => item.identifier_value).join(', '),
     Media: (profile.media ?? []).map(item => [item.original_value, item.media_type, item.uri, item.content_hash].filter(Boolean).join(' · ')).join(', '),

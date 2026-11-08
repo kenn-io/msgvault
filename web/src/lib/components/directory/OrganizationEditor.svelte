@@ -253,7 +253,7 @@
   // The provenance most rows share, said once above the groups when two or more share it; a row keeps its own line only when it differs.
   function profileGroupValue(group: { title: string; rows: ProfileRow[] }): string {
     return JSON.stringify(group.rows.map(({ value, record }) => [
-      value, group.title === 'Media' ? (record as { content_hash?: string }).content_hash : undefined
+      value, group.title === 'Media' ? (record as { content_hash?: string }).content_hash : group.title === 'Email' || group.title === 'Phone' || group.title === 'Website' ? (record as { uri?: string }).uri : undefined
     ]));
   }
 

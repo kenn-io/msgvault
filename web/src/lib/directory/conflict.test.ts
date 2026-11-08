@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import { conflict, employmentFacts } from './conflict';
-import { employment } from './entity-fixtures.test-support';
+import { conflict, employmentFacts, organizationFacts } from './conflict';
+import { employment, richOrganizationProfile } from './entity-fixtures.test-support';
 
 it('compares writable values and records changes outside the draft', () => {
   const facts = { Notes: 'Opening' };
@@ -21,4 +21,20 @@ it('compares writable values and records changes outside the draft', () => {
   const moved = employment(11, 2, { person_id: 8 });
   const movedDiff = conflict(employmentFacts(moved, names), employmentFacts(opened, names), { 'Job title': 'Draft title' });
   expect(movedDiff.other).toEqual([{ label: 'Person', saved: 'another person', yours: 'this person' }]);
+});
+
+it('reports a contact destination URI change in organization facts', () => {
+  const opened = richOrganizationProfile(1);
+  opened.contact_points[0].uri = 'https://example.org/original';
+  const saved = richOrganizationProfile(2);
+  saved.contact_points[0].uri = 'https://example.org/replacement';
+  const openedFacts = organizationFacts(opened);
+  const savedFacts = organizationFacts(saved);
+
+  expect(savedFacts['Contact details']).not.toBe(openedFacts['Contact details']);
+  expect(conflict(savedFacts, openedFacts, { Name: 'Draft name' }).other).toContainEqual({
+    label: 'Contact details',
+    saved: savedFacts['Contact details'],
+    yours: openedFacts['Contact details']
+  });
 });
