@@ -120,10 +120,17 @@ type slowCountsStore struct {
 
 	calls   atomic.Int32
 	release chan struct{}
+	delay   time.Duration
 }
 
 func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
-	if s.calls.Add(1) > 1 {
+	if s.delay > 0 {
+		select {
+		case <-time.After(s.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	} else if s.calls.Add(1) > 1 {
 		select {
 		case <-s.release:
 		case <-ctx.Done():
@@ -131,6 +138,38 @@ func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map
 		}
 	}
 	return s.Store.CountMessagesBySourceContext(ctx)
+}
+
+func TestHandleCLIAccountsRepeatDoesNotWaitForSlowCounts(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	synctest.Test(t, func(t *testing.T) {
+		srv, slow, _ := newSlowAccountsServer(t, st)
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+		slow.delay = 3 * time.Second
+		srv.statsSnapshotWait = 2 * time.Second
+		getAccounts := func() cliAccountsResponse {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
+			req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var resp cliAccountsResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			return resp
+		}
+		assert.True(t, getAccounts().CountsPending)
+		time.Sleep(3 * time.Second)
+		synctest.Wait()
+
+		started := time.Now()
+		resp := getAccounts()
+		assert.Zero(t, time.Since(started), "a known slow count returns its previous snapshot immediately")
+		require.Len(t, resp.Accounts, 1)
+		assert.EqualValues(t, 1, resp.Accounts[0].MessageCount)
+		assert.False(t, resp.CountsPending)
+		assert.True(t, resp.Stale)
+		assert.False(t, resp.AsOf.IsZero())
+	})
 }
 
 // newSlowAccountsServer serves one account with one message behind slowCountsStore.

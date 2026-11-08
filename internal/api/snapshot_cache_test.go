@@ -88,8 +88,49 @@ func TestSnapshotCacheSlowComputeServesPreviousValue(t *testing.T) {
 		value, _, stale, err = cache.get(t.Context(), t.Context(), "k", 2*time.Second,
 			func(context.Context) (int, error) { return 3, nil })
 		require.NoError(err)
+		assert.Equal(2, value, "a known slow refresh serves its previous snapshot immediately")
+		assert.True(stale)
+		synctest.Wait()
+		value, _, stale, err = cache.get(t.Context(), t.Context(), "k", 2*time.Second,
+			func(context.Context) (int, error) { return 3, nil })
+		require.NoError(err)
 		assert.Equal(3, value, "a fast later compute is fresh again")
 		assert.False(stale)
+	})
+}
+
+func TestSnapshotCacheSlowRefreshServesPreviousWithoutWaiting(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var cache snapshotCache[int]
+		compute := func(context.Context) (int, error) {
+			time.Sleep(5 * time.Second)
+			return 1, nil
+		}
+		_, _, _, err := cache.get(t.Context(), t.Context(), "k", 2*time.Second, compute)
+		require.ErrorIs(t, err, errSnapshotWaitTimeout)
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+
+		started := time.Now()
+		value, asOf, stale, err := cache.get(t.Context(), t.Context(), "k", 2*time.Second,
+			func(context.Context) (int, error) { return 2, nil })
+		require.NoError(t, err)
+		assert.Zero(t, time.Since(started))
+		assert.Equal(t, 1, value)
+		assert.True(t, stale)
+		assert.False(t, asOf.IsZero())
+		synctest.Wait()
+
+		started = time.Now()
+		value, _, stale, err = cache.get(t.Context(), t.Context(), "k", 2*time.Second,
+			func(context.Context) (int, error) {
+				time.Sleep(time.Second)
+				return 3, nil
+			})
+		require.NoError(t, err)
+		assert.Equal(t, time.Second, time.Since(started))
+		assert.Equal(t, 3, value, "a fast refresh restores waiting for fresh counts")
+		assert.False(t, stale)
 	})
 }
 

@@ -1020,6 +1020,8 @@ the state of the index.
 Stats answer within about 2 seconds while a sync or cache build loads the
 archive:
 
+- When the last count took longer than 2 seconds, the response serves the
+  previous counts at once while a fresh count runs.
 - If fresh counts are not ready by then, the response reuses the previous
   counts and sets `"stale": true`, with `as_of` giving when they were
   computed. The fresh counts replace them when they finish.
