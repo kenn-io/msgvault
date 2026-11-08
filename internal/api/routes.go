@@ -101,13 +101,26 @@ func configureHuma() {
 		// The API uses encoding/json/v2, which encodes nil slices as empty
 		// arrays. Keep Huma's schemas aligned with that wire contract.
 		huma.DefaultArrayNullable = false
-		huma.NewError = func(status int, message string, _ ...error) huma.StatusError {
-			if message == "" {
-				message = http.StatusText(status)
-			}
-			return newAPIHTTPError(status, errorCodeForStatus(status), message)
-		}
 	})
+}
+
+// transformHumaError gives Huma's own errors, such as request validation
+// failures and huma.ErrorXXX results, this API's {error,message} envelope.
+// It runs only for this API. Replacing huma.NewError instead would change the
+// error responses of every other Huma API in the same process.
+func transformHumaError(ctx huma.Context, _ string, value any) (any, error) {
+	model, ok := value.(*huma.ErrorModel)
+	if !ok {
+		return value, nil
+	}
+	message := model.Detail
+	if message == "" {
+		message = http.StatusText(model.Status)
+	}
+	// huma.ErrorModel negotiates application/problem+json; the envelope
+	// is plain JSON.
+	ctx.SetHeader("Content-Type", "application/json")
+	return newAPIHTTPError(model.Status, errorCodeForStatus(model.Status), message), nil
 }
 
 func errorCodeForStatus(status int) string {
@@ -171,6 +184,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	// success and error bodies on the single bare {error,message} envelope the
 	// raw handlers already use, instead of the $schema-wrapped variant.
 	config.CreateHooks = nil
+	config.Transformers = append(config.Transformers, transformHumaError)
 	config.Components.Schemas.RegisterTypeAlias(
 		reflect.TypeFor[query.MessageSummary](),
 		reflect.TypeFor[CLIQueryMessageSummary](),
@@ -189,7 +203,38 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 		},
 	}
 
-	return humago.New(mux, config)
+	api := humago.New(mux, config)
+	documentAPIErrors(api)
+	return api
+}
+
+// documentAPIErrors makes the OpenAPI document describe the error envelope
+// transformHumaError writes. Huma documents each operation's errors with the
+// type huma.NewError returns, which this API no longer replaces, so the hook
+// swaps that schema for apiHTTPError and drops Huma's own error types from
+// the components.
+func documentAPIErrors(api huma.API) {
+	registry := api.OpenAPI().Components.Schemas
+	envelope := registry.Schema(reflect.TypeFor[apiHTTPError](), true, "")
+	humaModel := registry.Schema(reflect.TypeFor[huma.ErrorModel](), true, "").Ref
+	humaDetail := registry.Schema(reflect.TypeFor[huma.ErrorDetail](), true, "").Ref
+	dropHumaErrors := func() {
+		for _, ref := range []string{humaModel, humaDetail} {
+			delete(registry.Map(), strings.TrimPrefix(ref, "#/components/schemas/"))
+		}
+	}
+	dropHumaErrors()
+	api.OpenAPI().OnAddOperation = append(api.OpenAPI().OnAddOperation,
+		func(_ *huma.OpenAPI, op *huma.Operation) {
+			for _, response := range op.Responses {
+				if media := response.Content["application/problem+json"]; media != nil &&
+					media.Schema != nil && media.Schema.Ref == humaModel {
+					delete(response.Content, "application/problem+json")
+					response.Content["application/json"] = &huma.MediaType{Schema: envelope}
+				}
+			}
+			dropHumaErrors()
+		})
 }
 
 func (s *Server) setupAPIV1Group(api huma.API) huma.API {
@@ -443,6 +488,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		s.handleCLIAttachment,
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusForbidden,
 		http.StatusNotFound,
 		http.StatusRequestEntityTooLarge,
 		http.StatusInternalServerError,
@@ -492,6 +538,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		s.handleGetAttachmentContent,
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusForbidden,
 		http.StatusNotFound,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,

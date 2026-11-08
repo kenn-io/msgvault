@@ -408,6 +408,18 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest,
 	   %s`,
 		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
+	var senderArgs []any
+	var senderSQL strings.Builder
+	for _, term := range req.Filter.SenderTerms {
+		predicate, _, args := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		for _, arg := range args {
+			name := fmt.Sprintf("sender_term_%d", len(senderArgs))
+			senderArgs = append(senderArgs, sql.Named(name, arg))
+			predicate = strings.Replace(predicate, "?", ":"+name, 1)
+		}
+		senderSQL.WriteString(" AND " + predicate)
+	}
+	filterWhere += senderSQL.String()
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
 		name := fmt.Sprintf("account_scope_%d", len(accountArgs))
@@ -567,6 +579,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
 	}
 
 	filterArgs = append(filterArgs, senderGroupArgs...)
+	filterArgs = append(filterArgs, senderArgs...)
 	filterArgs = append(filterArgs, senderExactGroupArgs...)
 	filterArgs = append(filterArgs, recipientAnyGroupArgs...)
 	filterArgs = append(filterArgs, toGroupArgs...)

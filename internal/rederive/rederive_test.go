@@ -2,6 +2,7 @@ package rederive
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -188,4 +189,23 @@ func derivedDataRevision(t *testing.T, st *store.Store) int64 {
 		) AS BIGINT), 0)
 	`).Scan(&revision))
 	return revision
+}
+
+// Every sync heals first, so an email archived before email linkage existed
+// is picked up without a repair-derived run. The store owns what repair derives.
+func TestHealRepairsPendingEmailLinkage(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "heal@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Heal")
+	require.NoError(err)
+	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "mail", MessageType: "email"},
+	})
+	require.NoError(err)
+	Heal(t.Context(), slog.Default(), st, src)
+	var outcome string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT email_linkage_outcome FROM messages WHERE id = ?`), id).Scan(&outcome))
+	assert.NotEqual(t, "pending", outcome)
 }

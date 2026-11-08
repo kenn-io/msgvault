@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-08"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -160,9 +160,10 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.49.0**.
+it is separate from the binary release version. The current schema is **3.50.0**.
 
-Schema 3.49.0 adds attachment processing outcomes and worker errors.
+Schema 3.49.0 adds the `verification.read` modifier for delegated archive reads.
+Schema 3.50.0 adds attachment processing outcomes and worker errors.
 
 Schema 3.48.0 adds owner-only local embedding setup and progress through `GET` and `POST /api/v1/embeddings/local`.
 
@@ -1838,43 +1839,46 @@ Attachment metadata and message details include an optional `docbank` array of r
 
 ### Open loops
 
-`GET /api/v1/loops` lists conversations that wait on a reply, oldest first.
-Query parameters are `person_id` and `limit` (1 to 200, default 50). It reads conversations of any age from the archive when you ask. It returns `items` and `truncated`. Each
-item has `kind`, `anchor_message_id`, `question_message_ids` (the questions
-the item covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty`
-(`participant_id`, optional `person_id`, `display_name`, `address`), `summary`,
-`owed_since_at`, and `last_activity_at`. `truncated` is true when more loops are
-open than `limit`. `skipped_unparseable` counts stored messages the list could
-not read, because their original failed to parse. A reply in one of them may
-have settled a loop that still lists. The scan computes evidence for at most 1,000 uncached messages per request. It retains body classifications and MIME facts, so another request continues farther through history. If the budget runs out, or the request reaches its time limit, it returns only
-completed conversations and sets `coverage_incomplete`. A smaller `limit` does
-not shorten the scan. While a backup or other archive work holds the daemon, a
-list still answers but saves no new evidence. A bad parameter returns 400.
+These owner-only routes back `msgvault loops`, the Open loops section in
+People Details, and the MCP loop tools. See [Open loops](usage/open-loops.md)
+for what counts as a loop.
 
-`POST /api/v1/loops/{message_id}/done` and
+`GET /api/v1/loops` lists loops, oldest first. Optional query parameters are
+`person_id` and `limit` (1 to 200, default 50). The response has these fields:
+
+| Field | Meaning |
+|---|---|
+| `items` | The loops. Each has `kind` (`reply_owed` or `awaiting_reply`), `anchor_message_id` (the message that started the wait), `question_message_ids` (the questions it covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty` (`participant_id`, optional `person_id`, `display_name`, `address`), `summary`, `owed_since_at`, and `last_activity_at`. |
+| `truncated` | More loops are open than `limit` returned. |
+| `coverage_incomplete` | The request stopped before checking all history, because it read 1,000 new messages or ran out of time. Items come only from conversations checked in full. Call again to continue; saved results carry over. |
+| `skipped_unparseable` | Stored emails that couldn't be parsed. A reply in one of them may have answered a listed loop. |
+
+A list doesn't wait for backups or syncs. While one is running, the list still
+answers, but saves nothing new for the next request. A smaller `limit` doesn't
+shorten the scan. A bad parameter returns 400.
+
+`POST /api/v1/loops/{message_id}/done` marks a loop done.
 `POST /api/v1/loops/{message_id}/snooze` with `{"until": "<RFC3339 time>"}`
-record your decision on this person's open questions. Pass the item's
-`question_message_ids` as a query parameter, repeated or comma-separated, to
-mark only the questions you listed; a question that appeared later stays open,
-whatever its date. The list must include `message_id`, or the request returns
-400. Without it, the decision covers every question visible when you act. A distinct question
-imported later can list again, whatever its message date. These
-routes return `anchor_message_id`, `state` (`done` or `snoozed`), and
-`snoozed_until`. They re-read the conversation first and return 404
-`loop_not_found` when the message is not a loop that list would show now: it
-anchors no current loop, the loop has not waited out its 24 or 72 hours, or
-a listed question is no longer open in it. A
-snooze time in the past returns 400. When re-reading the conversation reaches
-the evidence budget, they save nothing and return 503 `loop_scan_incomplete`
-with `Retry-After: 1`; retry to continue. Like other writes, done, snooze, and
-reopen can return 503 `operation_in_progress` while other archive work holds
-the daemon.
+hides it until that time. Use the item's `anchor_message_id` as `message_id`.
+To mark only the questions you listed, pass `question_message_ids` as a query
+parameter, repeated or comma-separated. It must include `message_id`. Without
+it, the decision covers every question open now. Both routes re-read the
+conversation first and return `anchor_message_id`, `state` (`done` or
+`snoozed`), and `snoozed_until`.
 
-`POST /api/v1/loops/{message_id}/reopen` clears the done or snooze decision on
-that exact question. It returns `anchor_message_id` and `state: "open"`, or
-404 `loop_decision_not_found` when the message has no decision. Responses are
-not cacheable. These routes are owner-only: delegated agent tokens receive 401.
-See [Open loops](usage/open-loops.md) for the rules.
+`POST /api/v1/loops/{message_id}/reopen` clears the decision on that one
+question and returns `state: "open"`.
+
+| Status | Error | When |
+|---|---|---|
+| 400 | `invalid_request` | A bad ID or parameter, a snooze time in the past, or `question_message_ids` that leaves out `message_id`. |
+| 404 | `loop_not_found` | The message doesn't start an open loop now. It was answered, it is still inside its 24- or 72-hour wait, or a listed question is no longer open. |
+| 404 | `loop_decision_not_found` | Reopen found no decision on that question. |
+| 503 | `loop_scan_incomplete` | Re-reading the conversation reached the 1,000-message limit. Nothing was saved. Retry after `Retry-After` (1 second). |
+| 503 | `operation_in_progress` | Other archive work holds the daemon. Retry later. |
+
+Responses are not cacheable. Delegated agent tokens receive 401, and remote
+clients receive 403.
 
 ---
 
@@ -2041,7 +2045,7 @@ query in `q`. The response includes the page in `messages` and the full match
 count in `total_count`; no separate count request is needed. If the count is
 unavailable, `total_count` is `-1`.
 
-An empty first page on SQLite can include `hints` with code `sender_name_requires_address` and a corrected `retry_with.query` for an incomplete sender name or address. CLI search returns the same shape.
+`from:` accepts a sender name, address, or domain. See [sender matching](https://msgvault.io/docs/usage/searching/#domain-search) for the matching rules.
 
 Use `limit` and `offset` to page through results. `limit=0` returns the count
 without fetching a page. Aggregate `stats` are omitted by default. Supply
@@ -2692,6 +2696,12 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 
+### Messages during cache rebuilds
+
+In auto mode on SQLite, `POST /api/v1/explore` serves live archive rows while the analytical cache rebuilds and after a failed build. Date, source, account, identity, domain, mailing-list, kind, and full-text filters remain available. Responses include a warning about operations that need the cache, with recovery instructions after a failed build.
+
+Grouping, person filters, semantic and hybrid search, per-row exact-match counts, bulk actions, Files, People, and the reader’s Open person action still require the cache. A live cursor expires when the archive changes or the replacement cache publishes; restart pagination after `409 archive_revision_changed`.
+
 ### Participant and domain timelines
 
 `POST /api/v1/participants/{id}/timeline` and `POST /api/v1/domains/{domain}/timeline` omit drafts and unsent items. Participant timelines include events and meetings only when the archive owner participated. These rules apply to every caller, including CLI and MCP clients.
@@ -3251,11 +3261,11 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds (defaults to `86400` when `cors_origins` is set) |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS and host headers |
-| `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
+| `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 
-`daemon_idle_timeout` only affects daemons started by `msgvault daemon start` or auto-started by a CLI command. A foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the configured timeout for lifecycle-managed background daemons.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
 `daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
@@ -3327,3 +3337,21 @@ It never sends message content to a provider.
 See the [CLI field semantics](cli-reference.md#embeddings-status) and the
 [published OpenAPI schema](https://github.com/kenn-io/msgvault/blob/main/api/openapi.yaml).
 MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or newer when vector search is enabled.
+
+## Verification content
+
+Delegated HTTP, CLI, and MCP message reads without `verification.read` replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Owner reads and stored messages stay unchanged.
+
+Detection considers subject, snippet, conversation title, attachment filenames, and both body formats together. It folds fullwidth digits to ASCII and looks for 4–10 digits, including spaced digits, or 6–10-character codes containing at least three digits tied to a code cue. Codes of 5–10 characters mixing ASCII letters and digits, or 6–10 uppercase letters only except `INVALID` and `DISABLED`, also count directly after a verification, security, login, sign-in, authentication, or one-time code, PIN, or password cue, or an OTP, passcode, or 2FA cue. Confirmation cues keep the three-digit rule. A cue in one field can describe a value in another. Years from 1900 through 2099 count only after a cue in the same field. Sign-in links need an opaque token or UUID and a sign-in cue or credential query key, such as `token` or `oobCode`. Unsubscribe and preferences paths are excluded. A sign-in cue anywhere in the message applies to every link with an opaque token, including click-tracked links, so newsletters that mention signing in and carry tracked links are withheld. Fields of 1 MiB or more are withheld.
+
+Without `verification.read`, downloads declared `message/*` or named `.eml` on any authorized record of the hash return 403 `verification_masked`. Other text-class downloads, declared `text/*` or sniffed as text, check their bytes and every authorized parent message of the hash. They return 403 if any parent is withheld, the bytes contain a NUL, invalid UTF-8, or a `Content-Transfer-Encoding:` header line in any letter case, or the detector withholds the text or filenames. Text of 1 MiB or more is withheld. Allowed text and binary files download unchanged. Withheld parents mask filenames in metadata and download headers. Parent bodies and attachment metadata are loaded in batches, so a shared hash can be checked across more than 32,766 messages.
+
+Agent grants are held in daemon memory, so tokens issued before an upgrade stop working when the daemon restarts. Replacement tokens with the same permissions see masked verification messages and the attachment refusals above unless the grant includes `verification.read`.
+
+A cue can precede its value by up to 60 runes, including blank lines. A period may end the cue line or separate the cue from a code ending the same line. Up to six words, with one short parenthetical, can separate a cue from its value when the value follows `is`, `:` or `=`; ordinary phrases such as `Error code from the processor: 50213` are withheld as a result.
+
+These heuristics can miss unfamiliar wording and layouts, lowercase letter-only codes, short link tokens, credentials inside binary files, or text stored under a binary type that sniffing misses. Non-English text such as `Tu código es 482913` is not detected. Lists and threads classify a message whose body exists only in its original MIME by subject, snippet, title, and filenames.
+
+Search rows are masked in place, with membership and counts unchanged.
+
+Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.

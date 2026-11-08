@@ -8,7 +8,7 @@
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
-  import { Disclosure, Notice, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Disclosure, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -58,6 +58,7 @@
   import SettingField from './SettingField.svelte';
   import type { OperationStatusAuthority } from '../../explore/models';
   import SettingsOverview from './SettingsOverview.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
 
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   type SettingUpdate = GeneratedSettingUpdate;
@@ -631,7 +632,7 @@
       {#snippet panel(activeId)}
         <div class="notices">
           {#if plainHTTPWarning && activeId === 'server'}
-            <Notice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
+            <InlineNotice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}

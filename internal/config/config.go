@@ -261,7 +261,7 @@ type ServerConfig struct {
 	CORSCredentials         bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge              int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
 	TrustedProxies          []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
-	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
+	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Automatically started daemon idle timeout (0 disables)
 	DaemonAutoRestart       string        `toml:"daemon_auto_restart"` // never, newer, or always
 	DaemonAutoStart         *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 
@@ -618,6 +618,7 @@ type Config struct {
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
+	FacebookComments   []FacebookCommentsSource        `toml:"facebook_comments"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -1162,6 +1163,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "facebook_comments" {
+			return nil, fmt.Errorf("unknown Facebook comments config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1329,6 +1333,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateFacebookCommentsSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()

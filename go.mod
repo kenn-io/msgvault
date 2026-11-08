@@ -33,7 +33,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/css v1.0.1
 	github.com/icholy/digest v1.2.0
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/jhillyerd/enmime/v2 v2.5.0
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.31
@@ -44,7 +44,7 @@ require (
 	github.com/pdfcpu/pdfcpu v0.15.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/rotisserie/eris v0.5.4
-	github.com/shirou/gopsutil/v4 v4.26.9
+	github.com/shirou/gopsutil/v4 v4.26.10
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
@@ -130,7 +130,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.1 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect

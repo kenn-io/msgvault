@@ -326,7 +326,7 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 			strings.Join(scopeConditions, " AND ")+")")
 		args = append(args, scopeArgs...)
 	}
-	if identityCondition, identityArgs := buildIdentityPredicateCondition(request.Context.Identity, "identity_entry."); identityCondition != "" {
+	if identityCondition, identityArgs := buildIdentityPredicateCondition(request.Context.Identity, "identity_entry.", func(column string) string { return "LOWER(" + column + ")" }, "envelope_address"); identityCondition != "" {
 		conditions = append(conditions, `(EXISTS (
 			SELECT 1 FROM analytical_entries identity_entry
 			WHERE identity_entry.message_id = f.message_id
