@@ -467,6 +467,8 @@ describe('RelationshipsTab', () => {
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
       const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships')!;
       await expect(post.clone().json()).resolves.toMatchObject({
+        source_person_id: 8,
+        target_person_id: 7,
         start_date: '2025',
         end_date: '2026-08',
         notes: 'Synthetic note'
