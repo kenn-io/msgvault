@@ -77,6 +77,20 @@ func TestFetchKeepsAPublicFeedOffPrivateAddresses(t *testing.T) {
 	assert.Equal("Example Project releases", fetched.Feed.Title)
 }
 
+func TestFetchKeepsANumericPublicHostOffPrivateAddresses(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, server.URL+"/feed.atom", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(t, err)
+
+	// 16843009 is 1.1.1.1 to a resolver that reads inet_aton forms.
+	_, err = publicFetcher(t, server, "16843009").Fetch(t.Context(), "http://16843009:"+port+"/moved.atom", Validators{})
+	require.ErrorIs(t, err, ErrPrivateDestination, "a numeric public host can't redirect to a loopback address")
+}
+
 func TestFetchClosesItsConnection(t *testing.T) {
 	keptAlive := make(chan bool, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

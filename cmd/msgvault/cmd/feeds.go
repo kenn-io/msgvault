@@ -73,7 +73,7 @@ removed feed again resumes it.`,
 			return errors.Join(err, feedFailures(summary), cacheErr)
 		},
 	}
-	cmd.Flags().String("opml", "", "follow every feed listed in this OPML file")
+	cmd.Flags().String("opml", "", "OPML subscription file")
 	return addManualSyncCacheFlags(cmd)
 }
 
@@ -255,9 +255,8 @@ func newSyncFeedsCmd() *cobra.Command {
 		Use:   "sync-feeds [url]...",
 		Short: "Archive new items from followed feeds",
 		Long: `Fetch every followed feed, or the given ones, and archive each item the
-archive does not hold yet. Unchanged feeds are not downloaded again; --full
-downloads every feed again. A feed that fails is reported and the others still
-sync.`,
+archive does not hold yet. Unchanged feeds are not downloaded again. A feed
+that fails is reported and the others still sync.`,
 		Example: `  msgvault sync-feeds
   msgvault sync-feeds https://example.com/releases.atom`,
 		RunE: func(cmd *cobra.Command, args []string) error {

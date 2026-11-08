@@ -226,7 +226,9 @@ func privateHost(host string) bool {
 	if literal, err := netip.ParseAddr(host); err == nil {
 		return netguard.ProhibitedIP(literal)
 	}
-	return netguard.ProhibitedHostname(host)
+	// A numeric name such as 16843009 is no local name: the system
+	// resolver may read it as a public address.
+	return netguard.LocalHostname(host)
 }
 
 // withoutFeedURL drops the feed's own address from a transport error: every
