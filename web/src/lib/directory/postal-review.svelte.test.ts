@@ -19,6 +19,10 @@ function deferred<T>() {
 }
 
 describe('PostalReviewSession', () => {
+  it('shows decoded extended components without repeating the first seven ADR fields', () => {
+    const address = { address_kind: 'postal', street_address: '12 Example Street', locality: 'Example City', extended_components: ';;12 Example Street;Example City;;;;Room\\;3;Floor 2' };
+    expect(postalAddressText(address)).toBe('12 Example Street, Example City, Room;3, Floor 2');
+  });
   it('shows a current label when no current components or free text exist', () => {
     expect(postalAddressText({ address_kind: 'postal', label: 'Mailing label', original_value: '' })).toBe('Mailing label');
   });

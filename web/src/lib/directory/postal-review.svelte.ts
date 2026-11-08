@@ -101,6 +101,24 @@ export class PostalReviewSession {
 }
 
 /** Display components without exposing a private storage envelope. */
+function postalExtendedText(value: string | undefined): string[] {
+  if (!value) return [];
+  const parts: string[] = [];
+  let current = '';
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i]!;
+    if (char === '\\' && i + 1 < value.length) {
+      const next = value[i + 1]!;
+      if (next === 'n' || next === 'N') { current += '\n'; i++; }
+      else if (next === '\\' || next === ',' || next === ';') { current += next; i++; }
+      else current += char;
+    } else if (char === ';') { parts.push(current); current = ''; }
+    else current += char;
+  }
+  parts.push(current);
+  return parts.slice(7).filter(Boolean);
+}
+
 export function postalAddressText(input: Partial<Input>): string {
   let countryCode = input.country_code;
   if (input.country_name && countryCode) {
@@ -110,7 +128,7 @@ export function postalAddressText(input: Partial<Input>): string {
     } catch { /* Keep unknown codes visible. */ }
   }
   const parts = [input.post_office_box, input.extended_address, input.street_address, input.locality,
-    input.region, input.postal_code, input.country_name, countryCode, input.extended_components].filter((part): part is string => !!part);
+    input.region, input.postal_code, input.country_name, countryCode, ...postalExtendedText(input.extended_components)].filter((part): part is string => !!part);
   const components = parts.join(', ');
   const segments = (value: string) => value.split(/[,\n]+/).map(part => part.trim()).filter(Boolean).join(', ');
   const freeText = input.free_text && (parts.some(part => part.trim() === input.free_text!.trim()) || segments(input.free_text) === segments(components)) ? '' : input.free_text;
