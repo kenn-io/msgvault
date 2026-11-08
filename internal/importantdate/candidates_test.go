@@ -101,3 +101,27 @@ func TestCandidatesRequireExplicitCustomOrUnassignedPolicy(t *testing.T) {
 	must.Len(preview.Candidates, 1)
 	checks.Equal(TierC, preview.Candidates[0].Tier)
 }
+
+func TestTargetedCandidateRetainsOwnedSubjectRouting(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	id, err := st.EnsureParticipantByIdentifier("email", "owner@example.test", "Example Owner")
+	must.NoError(err)
+	person, _, err := st.CreatePersonFromParticipantContext(ctx, id)
+	must.NoError(err)
+	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: new(int64(21))}, Source: store.ProvenanceUser})
+	must.NoError(err)
+	pet, err := st.CreateImportantDateSubjectContext(ctx, store.ImportantDateSubjectInput{OwnerUID: person.VCardUID, Kind: "pet", DisplayName: "Example pet", Date: store.PartialDate{Month: new(10), Day: new(23)}})
+	must.NoError(err)
+	cfg := Config{Enabled: true, PrivateDestination: true, Project: "private-example", Recipient: "owner/agent", UseCadencePresets: true}
+	cfg.ApplyDefaults()
+	now := time.Date(2027, 10, 1, 12, 0, 0, 0, time.UTC)
+	all, err := Candidates(ctx, st, cfg, now)
+	must.NoError(err)
+	must.Len(all, 1)
+	targeted, err := CandidateForSubject(ctx, st, cfg, now, "owned/"+pet.UID, "person/"+person.VCardUID)
+	must.NoError(err)
+	checks.Equal(all, targeted)
+}
