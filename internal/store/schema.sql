@@ -2064,6 +2064,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     cursor_after TEXT,
     request_fingerprint TEXT,
     operation_id TEXT,
+    measurement_outcome TEXT,
     measurement TEXT
 );
 

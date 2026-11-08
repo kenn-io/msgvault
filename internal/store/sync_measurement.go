@@ -29,9 +29,11 @@ const (
 	SyncNoArchiveWritesErrorPrefix = "unmeasured (no archive writes): "
 )
 
-// SyncMeasurement records what a run could observe about its source.
+// SyncMeasurement records what a run could observe about its source. Outcome
+// is stored in sync_runs.measurement_outcome so queries can filter on it; the
+// other fields are stored as JSON in sync_runs.measurement.
 type SyncMeasurement struct {
-	Outcome       string     `json:"outcome"`
+	Outcome       string     `json:"-"`
 	Reason        string     `json:"reason,omitempty"`
 	ReadStartedAt *time.Time `json:"read_started_at,omitempty"`
 	// SourceMtime is the newest modification time among the source database
@@ -67,7 +69,8 @@ func (s *Store) SetSyncMeasurement(ctx context.Context, syncID int64, m SyncMeas
 		return fmt.Errorf("encode sync measurement: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, s.Rebind(
-		`UPDATE sync_runs SET measurement = ? WHERE id = ?`), string(payload), syncID); err != nil {
+		`UPDATE sync_runs SET measurement_outcome = ?, measurement = ? WHERE id = ?`),
+		m.Outcome, string(payload), syncID); err != nil {
 		return fmt.Errorf("set sync measurement %d: %w", syncID, err)
 	}
 	return nil
@@ -75,8 +78,7 @@ func (s *Store) SetSyncMeasurement(ctx context.Context, syncID int64, m SyncMeas
 
 // GetLastMeasuredSyncContext returns the newest completed run that did not
 // record an unmeasured outcome, so a run that could not see new data does not
-// count as fresh. Measurements are stored as compact JSON written by
-// SetSyncMeasurement, which makes the text match exact on both dialects.
+// count as fresh.
 func (s *Store) GetLastMeasuredSyncContext(ctx context.Context, sourceID int64) (*SyncRun, error) {
 	row := s.db.QueryRowContext(ctx, s.Rebind(`
 		SELECT id, source_id, started_at, completed_at, status,
@@ -84,10 +86,10 @@ func (s *Store) GetLastMeasuredSyncContext(ctx context.Context, sourceID int64) 
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'
-		  AND (measurement IS NULL OR measurement NOT LIKE ?)
+		  AND (measurement_outcome IS NULL OR measurement_outcome <> ?)
 		ORDER BY completed_at DESC, id DESC
 		LIMIT 1
-	`), sourceID, `%"outcome":"`+SyncOutcomeUnmeasured+`"%`)
+	`), sourceID, SyncOutcomeUnmeasured)
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("last measured sync for source %d: %w", sourceID, ErrSyncRunNotFound)
@@ -98,19 +100,22 @@ func (s *Store) GetLastMeasuredSyncContext(ctx context.Context, sourceID int64) 
 // GetSyncMeasurement returns the measurement stored on a run, or
 // ErrSyncMeasurementNotFound when the run recorded none.
 func (s *Store) GetSyncMeasurement(ctx context.Context, syncID int64) (*SyncMeasurement, error) {
-	var raw sql.NullString
+	var outcome, raw sql.NullString
 	err := s.db.QueryRowContext(ctx, s.Rebind(
-		`SELECT measurement FROM sync_runs WHERE id = ?`), syncID).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && (!raw.Valid || raw.String == "")) {
+		`SELECT measurement_outcome, measurement FROM sync_runs WHERE id = ?`), syncID).Scan(&outcome, &raw)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (!outcome.Valid || outcome.String == "")) {
 		return nil, ErrSyncMeasurementNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get sync measurement %d: %w", syncID, err)
 	}
 	var m SyncMeasurement
-	if err := json.Unmarshal([]byte(raw.String), &m); err != nil {
-		return nil, fmt.Errorf("decode sync measurement %d: %w", syncID, err)
+	if raw.Valid && raw.String != "" {
+		if err := json.Unmarshal([]byte(raw.String), &m); err != nil {
+			return nil, fmt.Errorf("decode sync measurement %d: %w", syncID, err)
+		}
 	}
+	m.Outcome = outcome.String
 	return &m, nil
 }
 
