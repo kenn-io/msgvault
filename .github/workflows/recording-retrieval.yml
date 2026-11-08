@@ -1,5 +1,12 @@
 name: Recording retrieval qualification
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/recording-retrieval.yml'
+      - 'internal/api/**'
+      - 'internal/docbankmedia/**'
+      - 'internal/eval/**'
+      - 'scripts/qualify-recording-retrieval*'
   push:
     branches: [feat/recording-semantic-search]
   workflow_dispatch:
