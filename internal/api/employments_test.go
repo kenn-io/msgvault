@@ -154,7 +154,6 @@ func TestEmploymentPrimaryReplacementRequiresUserSource(t *testing.T) {
 	require.Equal(http.StatusOK, firstAfterRejectedWrites.Code)
 	require.NoError(json.Unmarshal(firstAfterRejectedWrites.Body.Bytes(), &primary))
 	assert.True(primary.IsPrimary, "rejected writes must preserve the user's primary choice")
-
 }
 
 func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
