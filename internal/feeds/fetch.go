@@ -134,7 +134,9 @@ func (f *Fetcher) Fetch(ctx context.Context, feedURL string, validators Validato
 }
 
 // client returns an HTTP client whose every connection, redirects included,
-// is checked against the feed's network. It uses no proxy and no cookies.
+// is checked against the feed's network. It uses no proxy and no cookies,
+// and closes each connection after its response, since the client is
+// built for one fetch and nothing would reuse or close an idle one.
 func (f *Fetcher) client(allowPrivate bool) *http.Client {
 	timeout := f.Timeout
 	if timeout <= 0 {
@@ -145,7 +147,7 @@ func (f *Fetcher) client(allowPrivate bool) *http.Client {
 		Transport: &http.Transport{
 			DialContext:         f.guardedDial(allowPrivate),
 			TLSHandshakeTimeout: dialTimeout,
-			ForceAttemptHTTP2:   true,
+			DisableKeepAlives:   true,
 		},
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {

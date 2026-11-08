@@ -72,6 +72,19 @@ func TestFetchKeepsAPublicFeedOffPrivateAddresses(t *testing.T) {
 	assert.Equal("Example Project releases", fetched.Feed.Title)
 }
 
+func TestFetchClosesItsConnection(t *testing.T) {
+	keptAlive := make(chan bool, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keptAlive <- !r.Close
+		_, _ = w.Write([]byte(atomFeed))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := NewFetcher("msgvault-test").Fetch(t.Context(), server.URL+"/feed.atom", Validators{})
+	require.NoError(t, err)
+	assert.False(t, <-keptAlive, "a one-fetch client leaves no idle connection behind")
+}
+
 func TestFollowRejectsAnUnsolicitedNotModified(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
