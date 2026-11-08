@@ -27,6 +27,11 @@ func TestPublicPostalAddressDistinguishesLegacyTextFromSnapshot(t *testing.T) {
 	require.NoError(err)
 	snapshot := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}.PublicAddress()
 	assert.Nil(snapshot.FreeText)
+	structured := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: ";;12 Example Street;Example City;;;Canada", CountryCode: new("CA")}.PublicAddress()
+	require.NotNil(structured.StreetAddress)
+	require.NotNil(structured.Locality)
+	assert.Equal("12 Example Street", *structured.StreetAddress)
+	assert.Equal("Example City", *structured.Locality)
 }
 
 func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, claims []personfacts.ProposedClaim, statuses []personfacts.EvidenceStatusChange) personfacts.GenerationInput {

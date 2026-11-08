@@ -130,7 +130,7 @@
                 {#if row.postalReview}
                   {@const review = row.postalReview}
                   <div class="postal-claim-review">
-                    {#if !review.eligible}<p>Cannot apply suggestion</p>{/if}
+                    {#if !review.eligible && !review.reason_codes.map(postalReason).filter(Boolean).length}<p>Cannot apply suggestion</p>{/if}
                     {#if review.reason_codes.map(postalReason).filter(Boolean).length}<p>{review.reason_codes.map(postalReason).filter(Boolean).join(' · ')}</p>{/if}
                     {#if review.supporting_evidence_ids.length}<p>Supporting evidence IDs: {review.supporting_evidence_ids.join(', ')}</p><Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else if !review.reason_codes.map(postalReason).includes('Evidence unavailable')}<p>No supporting evidence</p>{/if}
                     {#if review.assessment}

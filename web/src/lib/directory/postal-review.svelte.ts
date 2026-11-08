@@ -120,13 +120,13 @@ export function postalReason(code: string): string | undefined {
     provider_unconfirmed: 'Some address components could not be confirmed', provider_component_not_confirmed: 'Some address components could not be confirmed',
     provider_inferred: 'The provider inferred some components', provider_replaced: 'The provider replaced some components', provider_corrected: 'The provider corrected some components',
     provider_unexpected: 'The provider found an unexpected component', provider_unresolved: 'The provider could not interpret part of the address',
-    provider_confirmation_required: 'The provider recommends reviewing this address', provider_country_changed: 'The provider changed the country', provider_country_unknown: 'The provider could not confirm the country',
+    provider_country_changed: 'The provider changed the country', provider_country_unknown: 'The provider could not confirm the country',
     provider_not_configured: 'The provider is not configured', provider_unavailable: 'The provider is unavailable', provider_request_failed: 'The provider request failed', provider_response_invalid: 'The provider response could not be used',
     provider_disabled: 'Google checks are disabled', unit_not_confirmed: 'Unit not confirmed', po_box_not_confirmed: 'PO box not confirmed',
     'malformed-value': 'The address is invalid', 'unsupported-target': 'This address target is unsupported',
     'unaligned-evidence': 'Evidence does not match this suggestion', 'identity-mismatch': 'Evidence does not match this person', 'sensitive-policy': 'Sensitive facts are disabled',
   };
-  if (code === 'not_verified' || code === 'provider_confirmed') return undefined;
+  if (code === 'not_verified' || code === 'provider_confirmed' || code === 'provider_confirmation_required') return undefined;
   return reasons[code];
 }
 

@@ -94,7 +94,7 @@
   let extendedAddress = $state(seedAddress?.extended_address ?? '');
   let countryCode = $state(seedAddress?.country_code ?? '');
   let originalText = $state(untrack(() => originalInput?.original_value ?? seedAddress?.original_value ?? ''));
-  let currentText = $state(seedAddress?.free_text ?? (currentAddress?.address_kind === 'postal' && !postalAddressText({ ...currentAddress, original_value: '', free_text: '' }) ? currentAddress.original_value : '') ?? '');
+  let currentText = $state(seedAddress?.free_text ?? '');
   let streetAddress = $state(seedAddress?.street_address ?? '');
   let locality = $state(seedAddress?.locality ?? '');
   let region = $state(seedAddress?.region ?? '');
@@ -130,11 +130,14 @@
 
   const ordinal = initialCurrent?.envelope.ordinal ?? 0;
   const supersede = initialCurrent ? [initialCurrent.envelope.id] : [];
+  const replacementAddress = () => initialCandidate && addressTarget.startsWith('supersede:')
+    ? controller.structuredProfile?.addresses.find(address => address.envelope.id === Number(addressTarget.slice('supersede:'.length)))
+    : undefined;
   const envelope = (): GeneratedValueEnvelopeInput => ({
     source: 'user',
-    ...(initialCurrent && sameDiscriminator() ? { ordinal } : {}),
+    ...(replacementAddress() ? { ordinal: replacementAddress()!.envelope.ordinal } : initialCurrent && sameDiscriminator() ? { ordinal } : {}),
     ...(initialSection === 'addresses' ? {
-      ...keep(currentAddress?.envelope, ['pref', 'type_label', 'type_tokens']),
+      ...keep((replacementAddress() ?? currentAddress)?.envelope, ['pref', 'type_label', 'type_tokens']),
       ...(initialCandidate ? { source_ref: initialCandidate.sourceRef } : currentAddress?.envelope.source_ref?.startsWith('person-fact-claim:') ? { source_ref: currentAddress.envelope.source_ref } : {}),
     } : {}),
   });

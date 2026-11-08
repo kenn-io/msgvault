@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/postaladdress"
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 // PostalInput exposes the address components independently of storage pointers.
@@ -175,9 +176,24 @@ func (a PersonAddress) PublicAddress() PersonAddress {
 				ExtendedComponents: a.ExtendedComponents, Label: a.Label, CountryCode: a.CountryCode,
 			})
 		}
-	} else if a.FreeText == nil && a.StreetAddress == nil && a.PostOfficeBox == nil && a.ExtendedAddress == nil && a.Locality == nil && a.Region == nil && a.PostalCode == nil && a.CountryName == nil && a.ExtendedComponents == nil && !strings.Contains(a.OriginalValue, ";") && strings.TrimSpace(a.OriginalValue) != "" {
-		// Legacy unstructured text is the current value, not a provenance snapshot.
-		a.FreeText = new(a.OriginalValue)
+	} else if a.FreeText == nil && a.StreetAddress == nil && a.PostOfficeBox == nil && a.ExtendedAddress == nil && a.Locality == nil && a.Region == nil && a.PostalCode == nil && a.CountryName == nil && a.ExtendedComponents == nil && strings.TrimSpace(a.OriginalValue) != "" {
+		// Legacy ADR text is current data. A tagged snapshot is provenance only.
+		parts, err := vcard.SplitStructuredText(a.OriginalValue)
+		if err == nil && len(parts) >= 7 {
+			fields := []**string{&a.PostOfficeBox, &a.ExtendedAddress, &a.StreetAddress, &a.Locality, &a.Region, &a.PostalCode, &a.CountryName}
+			for i, field := range fields {
+				if parts[i] != "" {
+					*field = new(parts[i])
+				}
+			}
+			if len(parts) > 7 {
+				if extra, err := json.Marshal(parts[7:]); err == nil {
+					a.ExtendedComponents = new(string(extra))
+				}
+			}
+		} else {
+			a.FreeText = new(a.OriginalValue)
+		}
 	}
 	return a
 }

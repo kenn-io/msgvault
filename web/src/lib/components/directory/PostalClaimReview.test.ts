@@ -11,7 +11,7 @@ const person = { id: 7, revision: 3, participant_ids: [], vcard_uid: 'person-7',
 const raw = { address_kind: 'postal', street_address: '12 Example Street', extended_address: 'Unit 7', country_code: 'CA', original_value: 'Source address text' };
 const revision = `sha256:${'a'.repeat(64)}`;
 
-function setup(reason?: string) {
+function setup(reason?: string, evidenceResponse?: Promise<Response>) {
   const requests: Request[] = [];
   let adopted = false;
   const server = { reason, absent: false, fail: false, raw, personRevision: 3, readClaims: undefined as (() => Promise<Response>) | undefined };
@@ -27,7 +27,7 @@ function setup(reason?: string) {
       if (server.absent) return Response.json({ claims: [] });
       return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'equals', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], fingerprint: 'local' } } }] });
     }
-    if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
+    if (path.endsWith('/fact-evidence')) return evidenceResponse ?? Response.json({ evidence: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
     if (path.endsWith('/fact-pins')) return Response.json({ pins: [] });
     if (request.method === 'PATCH') { adopted = true; return Response.json(emptyProfile({ ...person, revision: 4 }), { headers: { ETag: '"person-7-r4"' } }); }
@@ -41,6 +41,20 @@ function setup(reason?: string) {
 }
 
 describe('Postal claim review', () => {
+  it('keeps an edited claim open when the initial evidence response arrives', async () => {
+    let release!: (response: Response) => void;
+    const evidence = new Promise<Response>(resolve => { release = resolve; });
+    const { ledger } = setup(undefined, evidence);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
+    const street = await screen.findByLabelText('Street address');
+    await fireEvent.input(street, { target: { value: 'Edited street' } });
+    release(Response.json({ evidence: [] }));
+    await waitFor(() => expect(ledger.evidence.loading).toBe(false));
+    expect(screen.getByLabelText('Street address')).toHaveProperty('value', 'Edited street');
+  });
+
   it('uses server eligibility, reveals the sensitive address deliberately, and adopts once through guarded profile PATCH', async () => {
     const { requests } = setup();
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));

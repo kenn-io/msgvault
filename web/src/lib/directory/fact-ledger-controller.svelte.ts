@@ -557,8 +557,8 @@ export class FactLedgerController {
       page.rows = projected as never[];
       page.offset = targetOffset;
       page.endReached = projected.length < FACT_LEDGER_PAGE_LIMIT;
-      this.revealedEvidence.clear();
-      this.revealedClaims.clear();
+      if (section === 'evidence') this.revealedEvidence.clear();
+      if (section === 'claims') this.revealedClaims.clear();
     } catch {
       if (this.owns(section, abort, generation, context)) this.failPage(section, targetOffset);
     } finally {

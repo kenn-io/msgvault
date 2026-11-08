@@ -145,6 +145,29 @@ describe('Postal address editor', () => {
     expect(body.addresses.add[0]).toMatchObject({ original_input: raw, envelope: { source: 'user', source_ref: 'person-fact-claim:synthetic-claim' } });
     expect(body.addresses.add[0].envelope).not.toHaveProperty('confidence');
   });
+
+  it('retains presentation metadata when replacing an address with a suggestion', async () => {
+    const current: PersonAddress = { person_id: 7, address_kind: 'postal', street_address: 'Old street', original_value: 'Old street', envelope: { id: 11, ordinal: 3, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    const { controller, requests } = setup({ current });
+    render(StructuredProfileEditor, { controller, section: 'addresses', postalCandidate: { input: raw, sourceRef: 'person-fact-claim:synthetic-claim', personRevision: 3 } });
+    await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'supersede:11' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const body = await requests[0]!.clone().json();
+    expect(body.addresses.supersede).toEqual([11]);
+    expect(body.addresses.add[0].envelope).toMatchObject({ source: 'user', source_ref: 'person-fact-claim:synthetic-claim', ordinal: 3, pref: 1, type_label: 'home', type_tokens: ['home'] });
+  });
+
+  it('does not restore original text into a cleared current address', async () => {
+    const original: Input = { address_kind: 'postal', original_value: 'Old street', country_code: 'CA' };
+    const current: PersonAddress = { person_id: 7, address_kind: 'postal', original_value: 'Old street', country_code: 'CA', assessment: { original, proposed: { address_kind: 'postal', country_code: 'CA' }, status: 'needs_review', reason_codes: [], fingerprint: 'local' }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    const { controller, requests } = setup({ current });
+    render(StructuredProfileEditor, { controller, section: 'addresses', current });
+    expect(screen.getByLabelText('Current address text')).toHaveProperty('value', '');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect((await requests[0]!.clone().json()).addresses.add[0]).not.toHaveProperty('free_text');
+  });
 });
 
 
