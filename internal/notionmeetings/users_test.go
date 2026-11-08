@@ -264,27 +264,25 @@ func (slowOptionalUserSource) RetrieveUser(ctx context.Context, id string) (*Use
 }
 
 func TestImporterPublishesContentWhenOptionalLookupBudgetExpires(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st, source, imp := newImporterFixture(t)
 	meeting := hydrationMeeting()
 	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "user-3"}
 	source.query.Results = []MeetingNote{meeting}
 	installMeetingHeader(t, source.fakeHydrationSource, meeting)
 	imp.WithUserSource(slowOptionalUserSource{})
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-		defer cancel()
-		result, err := imp.Import(ctx, ImportOptions{Identifier: "work"})
-		require.NoError(err)
-		assert.Equal(int64(1), result.MeetingsAdded)
-		var messageID int64
-		require.NoError(st.DB().QueryRowContext(ctx, `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
-		body, err := st.GetMessageBodyText(ctx, messageID)
-		require.NoError(err)
-		assert.Contains(body, "Test Speaker: Ready to ship.")
-		assert.NoError(ctx.Err())
-	})
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := imp.Import(ctx, ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.Equal(int64(1), result.MeetingsAdded)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	body, err := st.GetMessageBodyText(ctx, messageID)
+	require.NoError(err)
+	assert.Contains(body, "Test Speaker: Ready to ship.")
+	assert.NoError(ctx.Err())
 }
 
 type slowOptionalDirectorySource struct{ *fakeHydrationSource }

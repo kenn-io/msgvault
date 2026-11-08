@@ -166,6 +166,9 @@ func (h *Hydrator) hydrateBlock(ctx context.Context, meetingBlock *Block) (*Hydr
 			continue
 		}
 		tree, err := h.readTree(ctx, section.id)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		tree.SourceLastEditedTime = meeting.LastEditedTime
 		if err != nil {
 			if !sectionTemporarilyUnavailable(err) {
@@ -336,6 +339,9 @@ func (h *Hydrator) resolveAttendees(ctx context.Context, result *HydratedMeeting
 				if lookupCtx.Err() != nil {
 					h.usersUnavailable, h.usersIncomplete, h.usersFailure = true, true, err
 					break
+				}
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return err
 				}
 				h.usersUnavailable = true
 				h.usersFailure = err
