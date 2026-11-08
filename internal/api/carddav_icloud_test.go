@@ -178,5 +178,5 @@ func TestCardDAVAccountErrorExposesOnlyTypedDiscoveryDiagnostic(t *testing.T) {
 	w := httptest.NewRecorder()
 	(&Server{}).writeCardDAVAccountError(w, errors.Join(errCardDAVUpstream, &carddav.DiscoveryOriginError{}), "generic")
 	assert.Equal(t, http.StatusBadGateway, w.Code)
-	assert.Contains(t, w.Body.String(), "CardDAV discovery refused an unsafe href")
+	assert.Contains(t, w.Body.String(), "Server returned an unsafe address")
 }

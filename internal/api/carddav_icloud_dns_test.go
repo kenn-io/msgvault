@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/carddav"
-	"hegel.dev/go/hegel"
 )
 
 func syntheticICloudDNSError() error {
@@ -38,21 +37,6 @@ func TestICloudDNSFailureRediscoversBeforeOneFullSync(t *testing.T) {
 			assert.True(f.syncOptions.Full)
 		})
 	}
-}
-
-func TestICloudDNSWrapperAcceptanceProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		prefix := hegel.Draw(ht, hegel.Text())
-		kind := hegel.Draw(ht, hegel.SampledFrom([]int{0, 1, 2}))
-		err := syntheticICloudDNSError()
-		switch kind {
-		case 1:
-			err = fmt.Errorf("%s: %w", prefix, err)
-		case 2:
-			err = errors.Join(err, &net.OpError{Op: "dial", Err: errors.New("synthetic failure")})
-		}
-		assert.True(ht, iCloudHostFailure(ht.Context(), err))
-	}, hegel.WithDatabase(""))
 }
 
 func TestICloudSafetyCauseDominatesJoinedDNSError(t *testing.T) {

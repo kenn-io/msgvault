@@ -16,7 +16,7 @@ const ICloudDiscoveryURL = "https://contacts.icloud.com/"
 
 // ErrICloudReconnectRequired leaves non-default book choices and owned remote
 // state for an explicit reconnect rather than replacing them during sync.
-var ErrICloudReconnectRequired = errors.New("iCloud partition changed; reconnect with add-carddav --icloud after reviewing saved address-book choices and remote work")
+var ErrICloudReconnectRequired = errors.New("iCloud moved your contacts; review address-book choices, published contacts and conflicts, then reconnect with add-carddav --icloud")
 
 var iCloudPartitionHost = regexp.MustCompile(`^p[0-9]{2,53}-contacts\.icloud\.com$`)
 

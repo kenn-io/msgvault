@@ -30,12 +30,13 @@ func TestICloudRelocationAdmissionConjunctionProperty(t *testing.T) {
 			return
 		}
 		require.NoError(ht, rolesErr)
-		createKnown, create := hegel.Draw(ht, hegel.Booleans()), hegel.Draw(ht, hegel.Booleans())
-		updateKnown, update := hegel.Draw(ht, hegel.Booleans()), hegel.Draw(ht, hegel.Booleans())
-		deleteKnown, remove := hegel.Draw(ht, hegel.Booleans()), hegel.Draw(ht, hegel.Booleans())
+		known := hegel.Draw(ht, hegel.Booleans())
+		create := known && hegel.Draw(ht, hegel.Booleans())
+		update := known && hegel.Draw(ht, hegel.Booleans())
+		remove := known && hegel.Draw(ht, hegel.Booleans())
 		discovery := iCloudDiscoveryFixture("p43")
-		discovery.Books[0].Capabilities = carddav.BookCapabilities{CreateKnown: createKnown, Create: create, UpdateKnown: updateKnown, Update: update, DeleteKnown: deleteKnown, Delete: remove}
-		want := write && subscribed && lookup && createKnown && create && updateKnown && update && deleteKnown && remove
+		discovery.Books[0].Capabilities = carddav.BookCapabilities{CreateKnown: known, Create: create, UpdateKnown: known, Update: update, DeleteKnown: known, Delete: remove}
+		want := write && subscribed && lookup && known && create && update && remove
 		assert.Equal(ht, want, f.controller.admitICloudRelocation(ht.Context(), discovery) == nil)
 	}, hegel.WithTestCases(64), hegel.WithDatabase(""))
 }

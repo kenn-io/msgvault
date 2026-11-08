@@ -51,6 +51,6 @@ func TestAddICloudRejectsOtherProviderFlagsBeforePassword(t *testing.T) {
 	for _, flag := range []string{"--google", "--microsoft"} {
 		cmd := newAddCardDAVCmd()
 		cmd.SetArgs([]string{"--icloud", flag, "synthetic@example.net"})
-		require.Error(t, cmd.Execute())
+		require.ErrorContains(t, cmd.Execute(), "--icloud cannot be combined with --google or --microsoft")
 	}
 }

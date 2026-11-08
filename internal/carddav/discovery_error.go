@@ -15,9 +15,9 @@ type DiscoveryOriginError struct{ origin string }
 
 func (e *DiscoveryOriginError) Error() string {
 	if e.origin == "" {
-		return "CardDAV discovery refused an unsafe href"
+		return "Server returned an unsafe address"
 	}
-	return "CardDAV discovery refused origin " + e.origin
+	return "Blocked server address: " + e.origin
 }
 
 func (e *DiscoveryOriginError) Unwrap() error { return ErrUnsafeHref }

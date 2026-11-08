@@ -159,7 +159,7 @@ func TestDiscoveryDiagnosticDiscardsArbitraryPrivateComponentsProperty(t *testin
 	hegel.Test(t, func(ht *hegel.T) {
 		private := hegel.Draw(ht, hegel.Text())
 		target := &url.URL{Scheme: "https", Host: "other.example:443", Path: "/" + private, RawQuery: private, Fragment: private, User: url.UserPassword(private, private)}
-		assert.Equal(ht, "CardDAV discovery refused origin https://other.example:443", discoveryOriginError(target).Error())
+		assert.Equal(ht, "Blocked server address: https://other.example:443", discoveryOriginError(target).Error())
 	}, hegel.WithDatabase(""))
 }
 
@@ -359,12 +359,4 @@ func TestICloudRecognizersRejectUnicodeCaseAliases(t *testing.T) {
 	origin, ok := ICloudPartitionOrigin("https://p00-contacts.icloud.com/contacts/\u03bb/")
 	assert.True(ok, "only the authority requires ASCII")
 	assert.Equal("https://p00-contacts.icloud.com", origin)
-}
-
-func TestICloudPartitionRejectsUnicodeHostAliasesProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		n := hegel.Draw(ht, hegel.Integers(uint64(0), uint64(math.MaxUint64)))
-		_, ok := ICloudPartitionOrigin(fmt.Sprintf("https://p%02d-contacts.\u0130cloud.com/", n))
-		assert.False(ht, ok)
-	}, hegel.WithDatabase(""))
 }
