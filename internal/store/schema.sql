@@ -4785,3 +4785,15 @@ CREATE TABLE IF NOT EXISTS important_date_deliveries (
  state TEXT NOT NULL CHECK (state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'delivered', 'unknown', 'cancelled')),
  issue_uid TEXT NOT NULL DEFAULT ''
 );
+
+-- Explicitly maintained dependents and pets are not inferred from free text.
+CREATE TABLE IF NOT EXISTS important_date_subjects (
+ uid TEXT PRIMARY KEY,
+ owner_uid TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK (kind IN ('dependent', 'pet')),
+ display_name TEXT NOT NULL,
+ birth_year INTEGER,
+ birth_month INTEGER NOT NULL,
+ birth_day INTEGER NOT NULL,
+ withdrawn INTEGER NOT NULL DEFAULT 0 CHECK (withdrawn IN (0, 1))
+);
