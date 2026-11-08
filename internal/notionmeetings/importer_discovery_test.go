@@ -585,6 +585,40 @@ func TestFreshSweepSeedsRootsWithinRemainingCursorBudget(t *testing.T) {
 	assert.Equal(task.Cursor, saved.Deferred[0].Task.Cursor)
 }
 
+func TestCompactSweepSeedsBeforeRepeatedDueRetries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	imp.limits.Requests = 1
+	source.children["root"] = map[string]*BlockPage{"": {}}
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", RootPageIDs: []string{"root"}, SearchAccessible: &noSearch}
+	state := newSyncState()
+	state.Identity = Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}
+	state.Fingerprint = scopeFingerprint("work", state.Identity, opts)
+	state.Active = true
+	state.SeedNext = 1
+	state.NextLane = 1
+	task := scopeTask{Kind: "blocks", ID: "retry"}
+	state.Deferred = []deferredScope{{Task: &task, Reason: "inaccessible_subtree", NextAttemptAt: imp.now()}}
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	saved, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	assert.True(saved.Seen["blocks:root"])
+	assert.Zero(saved.SeedNext)
+	require.Len(saved.Deferred, 1)
+	require.NotNil(saved.Deferred[0].Task)
+	assert.Equal("retry", saved.Deferred[0].Task.ID)
+}
+
 func TestSaturatedDeferredQueueRetainsFailedAdmission(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

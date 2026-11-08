@@ -291,16 +291,40 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if opts.Full && state.Active {
 		state.FreshRequested = true
 	}
-	if state.Active && (len(state.Deferred) >= limits.Scopes || state.SeedNext > 0) {
-		before := state.copyDiscovery()
-		state.activateOneDeferred(started, limits)
-		if state.validateTransientWith(limits) != nil {
-			state = before
-		}
-	}
 	seeds := configuredSeeds(opts)
 	if state.SeedNext > len(seeds) {
 		return sum, errors.New("invalid saved root position")
+	}
+	seedCandidate := func() (syncState, bool) {
+		candidate := state.copyDiscovery()
+		if candidate.SeedNext == 0 || candidate.SeedNext > len(seeds) {
+			return candidate, false
+		}
+		task := seeds[candidate.SeedNext-1]
+		if !candidate.Seen[task.key()] {
+			candidate.Seen[task.key()] = true
+			candidate.Frontier = append(candidate.Frontier, task)
+		}
+		candidate.SeedNext++
+		if candidate.SeedNext > len(seeds) {
+			candidate.SeedNext = 0
+		}
+		return candidate, candidate.validateTransientWith(limits) == nil
+	}
+	if state.Active {
+		retry := len(state.Deferred) >= limits.Scopes
+		if state.SeedNext > 0 {
+			// Give a root that fits a turn before activating another due retry.
+			_, fits := seedCandidate()
+			retry = len(state.Frontier) == 0 && !fits
+		}
+		if retry {
+			before := state.copyDiscovery()
+			state.activateOneDeferred(started, limits)
+			if state.validateTransientWith(limits) != nil {
+				state = before
+			}
+		}
 	}
 	beginSweep := func() {
 		before := state.copyDiscovery()
@@ -334,10 +358,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			}
 			return
 		}
-		compactState := state.copyDiscovery()
-		state.activateOneDeferred(started, limits)
-		if state.validateTransientWith(limits) != nil {
-			state = compactState
+		if _, fits := seedCandidate(); !fits {
+			compactState := state.copyDiscovery()
+			state.activateOneDeferred(started, limits)
+			if state.validateTransientWith(limits) != nil {
+				state = compactState
+			}
 		}
 	}
 	sweepsStarted := 0
@@ -473,21 +499,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if len(state.Frontier) != 0 || state.SeedNext == 0 {
 			return run.stepTraversal(ctx)
 		}
-		index := state.SeedNext - 1
-		if index >= len(seeds) {
-			return false, errors.New("invalid saved root position")
-		}
-		candidate := state.copyDiscovery()
-		task := seeds[index]
-		if !candidate.Seen[task.key()] {
-			candidate.Seen[task.key()] = true
-			candidate.Frontier = append(candidate.Frontier, task)
-		}
-		candidate.SeedNext++
-		if candidate.SeedNext > len(seeds) {
-			candidate.SeedNext = 0
-		}
-		if candidate.validateTransientWith(limits) != nil {
+		candidate, fits := seedCandidate()
+		if !fits {
 			return false, nil
 		}
 		state = candidate
