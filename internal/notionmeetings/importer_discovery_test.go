@@ -670,6 +670,63 @@ func TestCompactSeedsResumeAfterScopeCeiling(t *testing.T) {
 	}
 }
 
+func TestCompactSeedsResumeAfterVisitedBytesFillCursor(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	imp.limits.Requests = 1
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch}
+	for i := range 3 {
+		id := fmt.Sprintf("root-%d-%s", i, strings.Repeat("x", 700))
+		opts.RootPageIDs = append(opts.RootPageIDs, id)
+		source.children[id] = map[string]*BlockPage{"": {}}
+	}
+	counting := &countingRootSource{discoveryFixture: source, reads: map[string]int{}}
+	imp.client = counting
+	state := newSyncState()
+	state.Identity = Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}
+	state.Fingerprint = scopeFingerprint("work", state.Identity, opts)
+	state.Active = true
+	state.SeedNext = 1
+	state.NextLane = 1
+	task := scopeTask{Kind: "blocks", ID: "deferred", Cursor: strings.Repeat("p", 256)}
+	state.Deferred = []deferredScope{{Task: &task, Reason: "inaccessible_subtree", NextAttemptAt: imp.now().Add(time.Hour)}}
+	baseline, err := json.Marshal(state)
+	require.NoError(err)
+	imp.limits.Bytes = len(baseline) + 1900
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	result, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	saved, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	assert.False(saved.Active)
+	assert.Positive(saved.SeedNext)
+	assert.Positive(result.CoverageReasons["cursor_budget"])
+	for range 10 {
+		_, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		if counting.reads[opts.RootPageIDs[0]] > 0 && counting.reads[opts.RootPageIDs[1]] > 0 && counting.reads[opts.RootPageIDs[2]] > 0 {
+			break
+		}
+	}
+	for _, id := range opts.RootPageIDs {
+		assert.Positive(counting.reads[id])
+	}
+	saved, err = imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	require.Len(saved.Deferred, 1)
+	require.NotNil(saved.Deferred[0].Task)
+	assert.Equal(task.Cursor, saved.Deferred[0].Task.Cursor)
+}
+
 func TestSaturatedDeferredQueueRetainsFailedAdmission(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

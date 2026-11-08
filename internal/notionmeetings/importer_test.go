@@ -759,8 +759,13 @@ func TestSyncStateRejectsInvalidTimesWithSafeLocalDiagnostics(t *testing.T) {
 			}
 			err := state.validate()
 			require.Error(err)
-			want := field + " must be an RFC3339 timestamp"
-			if field == "transcript_retry_until" {
+			var want string
+			switch field {
+			case "pending.next_attempt_at":
+				want = "saved next retry time must use RFC3339"
+			case "pending.retry_until":
+				want = "saved retry deadline must use RFC3339"
+			case "transcript_retry_until":
 				want = "transcript retry deadline must use RFC3339"
 			}
 			assert.Equal(want, err.Error())

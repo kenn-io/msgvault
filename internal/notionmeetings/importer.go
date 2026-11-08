@@ -158,10 +158,10 @@ func (state *syncState) validate() error {
 		}
 		seen[pending.BlockID] = struct{}{}
 		if _, err := time.Parse(time.RFC3339, pending.NextAttemptAt); err != nil {
-			return errors.New("pending.next_attempt_at must be an RFC3339 timestamp")
+			return errors.New("saved next retry time must use RFC3339")
 		}
 		if _, err := time.Parse(time.RFC3339, pending.RetryUntil); err != nil {
-			return errors.New("pending.retry_until must be an RFC3339 timestamp")
+			return errors.New("saved retry deadline must use RFC3339")
 		}
 	}
 	deadlineIDs := make([]string, 0, len(s.TranscriptRetryUntil))
@@ -604,12 +604,24 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		} else {
 			idle++
 		}
-		if len(state.Frontier) == 0 && len(state.Windows) == 0 && state.SeedNext > 0 && len(state.Seen) >= limits.Scopes {
-			// Continue the unseeded suffix in a new bounded sweep rather than
-			// keeping this exhausted sweep active forever.
-			state.Active = false
-			state.reason("scope_limit", "run")
-			goto complete
+		if len(state.Frontier) == 0 && len(state.Windows) == 0 && state.SeedNext > 0 {
+			_, fits := seedCandidate()
+			reason := ""
+			if len(state.Seen) >= limits.Scopes {
+				reason = "scope_limit"
+			} else if len(state.Seen) > 0 && !fits {
+				reason = "cursor_budget"
+			}
+			if reason != "" {
+				// The next segment retries the unseeded suffix with an empty
+				// visited set; all deferred obligations remain in the cursor.
+				state.Active = false
+				state.reason(reason, "run")
+				if state.validateTransientWith(limits) != nil {
+					state.Coverage.Diagnostics = nil
+				}
+				goto complete
+			}
 		}
 		if len(state.Frontier) == 0 && len(state.Windows) == 0 && state.SeedNext == 0 {
 			state.Active = false
