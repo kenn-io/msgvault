@@ -14,6 +14,7 @@
     onexisting?: () => void; icon?: Snippet<[TypeaheadOption]>; panelAnchor?: HTMLElement;
     disabled?: boolean; remote?: boolean; highlightFirstOption?: boolean;
   } = $props();
+  let query = $state('');
 
   // Kit names the open search by its placeholder, so the field writes the closed picker's words over it: opening the
   // picker doesn't change what it says, and the search keeps its name. An open panel ends at its last row, like a menu.
@@ -32,8 +33,8 @@
 <div class="field-picker" role="group" aria-label={title} {@attach keepPlaceholder}>
   <Typeahead {options} {value} {placeholder} {fallbackLabel} {title} disabled={disabled || creating}
     {loading} {loadingLabel} {panelAnchor} {highlightFirstOption} {icon}
-    {remote} emptyLabel={error ? '' : emptyLabel} allowCustom={!!oncreate} customLabel={createLabel}
-    {onquery} onselect={async name => { if (oncreate && !options.some(option => option.name === name)) oncreate(name); else await onselect(name); }}
+    {remote} emptyLabel={error ? '' : emptyLabel} allowCustom={!!oncreate && !options.some(option => option.label.trim().toLowerCase() === query.trim().toLowerCase())} customLabel={createLabel}
+    onquery={value => { query = value; onquery?.(value); }} onselect={async name => { if (oncreate && !options.some(option => option.name === name)) oncreate(name); else await onselect(name); }}
     header={error && !loading ? errorRow : undefined} />
   {#if creating}<div class="creation">
     {@render creation?.()}

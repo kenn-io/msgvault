@@ -77,6 +77,7 @@
   let endDateError = $state<string | null>(null);
   let notes = $state(initialView?.relationship.notes ?? '');
   const attempt = new WriteAttempt<Prepared<PersonRelationship>>();
+  const submittedFields = new Set<string>();
   const loading = $derived(!!initialView && !opened && !attempt.details);
   let committed = $state(false);
 
@@ -173,6 +174,7 @@
       onDone();
       return;
     }
+    if (patch) Object.keys(patch).forEach(key => submittedFields.add(key));
     const ok = await attempt.run(current => initialRelationship
       ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
       : controller.createRelationship(createBody(counterpartID!)));
@@ -200,8 +202,11 @@
     const openingEndDate = partialDate(initialRelationship?.end_date);
     const nextNotes = notes.trim();
     const openingNotes = initialRelationship?.notes?.trim() ?? '';
-    if (nextEndDate && nextEndDate !== openingEndDate) body.end_date = nextEndDate;
-    if (nextNotes !== openingNotes) body.notes = nextNotes || null;
+    const saved = attempt.conflict?.data ?? attempt.prepared?.data ?? initialRelationship;
+    const savedEndDate = partialDate(saved?.end_date);
+    const savedNotes = saved?.notes?.trim() ?? '';
+    if (nextEndDate && (nextEndDate !== openingEndDate || submittedFields.has('end_date')) && nextEndDate !== savedEndDate) body.end_date = nextEndDate;
+    if ((nextNotes !== openingNotes || submittedFields.has('notes')) && nextNotes !== savedNotes) body.notes = nextNotes || null;
     return body;
   }
   async function refreshAfterUncertainOutcome(): Promise<void> {

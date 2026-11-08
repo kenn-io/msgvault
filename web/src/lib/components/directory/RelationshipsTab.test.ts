@@ -660,6 +660,31 @@ describe('RelationshipsTab', () => {
     await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-08' });
   });
 
+  it('saves notes changed back to their opening value after a conflict', async () => {
+    const opening = relationship(41, 1, { notes: 'Opening' });
+    const saved = relationship(41, 2, { notes: 'Elsewhere' });
+    const bodies: unknown[] = [];
+    let reads = 0;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PATCH') {
+        bodies.push(await request.json());
+        return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(opening, { headers: { ETag: '"relationship-41-r3"' } });
+      }
+      if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: `"relationship-41-r${reads}"` } });
+      return Response.json({ relationships: [] });
+    });
+    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await rowAction('Edit…');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Keep yours' });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Opening' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(bodies).toEqual([{ notes: 'Draft' }, { notes: 'Opening' }]));
+  });
+
   it('omits a cleared end date while saving notes on an ended connection', async () => {
     const opening = relationship(41, 1, { status: 'ended', end_date: { year: 2023 }, notes: 'Old' });
     const bodies: unknown[] = [];
