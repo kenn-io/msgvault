@@ -419,32 +419,30 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/source build/msgvault", nil }
 	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	for _, tt := range []struct {
-		name    string
-		options invocationOptions
-		restart string
-		daemon  string
+		name       string
+		options    invocationOptions
+		restart    string
+		powerShell string
+		daemon     string
 	}{
-		{name: "default archive", daemon: "v0.23.0", restart: map[string]string{
-			"linux":   "'/tmp/source build/msgvault' daemon restart",
-			"darwin":  "'/tmp/source build/msgvault' daemon restart",
-			"windows": "& '/tmp/source build/msgvault' 'daemon' 'restart'",
-		}[runtime.GOOS]},
-		{name: "both selections", daemon: "v0.23.0", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"}, restart: map[string]string{
-			"linux":   "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
-			"darwin":  "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
-			"windows": "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'",
-		}[runtime.GOOS]},
-		{name: "retained same base source", daemon: "v0.23.0-46-gdef", restart: map[string]string{
-			"linux":   "'/tmp/source build/msgvault' daemon restart",
-			"darwin":  "'/tmp/source build/msgvault' daemon restart",
-			"windows": "& '/tmp/source build/msgvault' 'daemon' 'restart'",
-		}[runtime.GOOS]},
+		{name: "default archive", daemon: "v0.23.0",
+			restart:    "'/tmp/source build/msgvault' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
+		{name: "both selections", daemon: "v0.23.0", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"},
+			restart:    "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'"},
+		{name: "retained same base source", daemon: "v0.23.0-46-gdef",
+			restart:    "'/tmp/source build/msgvault' daemon restart",
+			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
 		{name: "equal source stays quiet", daemon: "v0.23.0-45-gabc"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var stderr bytes.Buffer
 			ctx := testInvocationContext(t.Context(), nil, tt.options)
 			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemon}})
+			if runtime.GOOS == "windows" {
+				tt.restart = tt.powerShell
+			}
 			if tt.restart == "" {
 				assert.Empty(t, stderr.String())
 				return
