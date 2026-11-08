@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -198,7 +199,16 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 				_ = rows.Close()
 				return result, fmt.Errorf("scan lineage delivery: %w", err)
 			}
-			result.Deliveries = append(result.Deliveries, item)
+			// Person UIDs may contain colons. Match the full subject after
+			// removing the fixed kind and year suffixes, not just a prefix.
+			yearAt := strings.LastIndexByte(item.OccurrenceKey, ':')
+			kindAt := -1
+			if yearAt > 0 {
+				kindAt = strings.LastIndexByte(item.OccurrenceKey[:yearAt], ':')
+			}
+			if kindAt >= 0 && item.OccurrenceKey[:kindAt]+":" == prefix {
+				result.Deliveries = append(result.Deliveries, item)
+			}
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
