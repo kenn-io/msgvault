@@ -294,10 +294,20 @@ func (c *KataClient) ProjectUID(ctx context.Context, name string) (string, error
 	if err := c.transport.doJSON(ctx, http.MethodGet, "/api/v1/projects", nil, nil, &response, http.StatusOK); err != nil {
 		return "", err
 	}
+	var uid string
 	for _, project := range response.Projects {
-		if project.Name == name && project.Active && project.DeletedAt == nil && strings.TrimSpace(project.UID) != "" {
-			return project.UID, nil
+		if project.Name != name || !project.Active || project.DeletedAt != nil {
+			continue
 		}
+		// Writes use the project ID cached at connection time. A name that
+		// now resolves elsewhere must not authorize writes to that old ID.
+		if uid != "" || strings.TrimSpace(project.UID) == "" || (name == c.project && project.ID != c.projectID) {
+			return "", ErrWrongProject
+		}
+		uid = project.UID
 	}
-	return "", ErrWrongProject
+	if uid == "" {
+		return "", ErrWrongProject
+	}
+	return uid, nil
 }
