@@ -118,10 +118,9 @@ func TestHandleStatsVectorTimeoutIsPartial(t *testing.T) {
 type slowCountsStore struct {
 	*store.Store
 
-	calls        atomic.Int32
-	release      chan struct{}
-	delay        time.Duration
-	catalogDelay time.Duration
+	calls   atomic.Int32
+	release chan struct{}
+	delay   time.Duration
 }
 
 func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map[int64]store.SourceMessageCounts, error) {
@@ -139,17 +138,6 @@ func (s *slowCountsStore) CountMessagesBySourceContext(ctx context.Context) (map
 		}
 	}
 	return s.Store.CountMessagesBySourceContext(ctx)
-}
-
-func (s *slowCountsStore) ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
-	if s.catalogDelay > 0 {
-		select {
-		case <-time.After(s.catalogDelay):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	return s.Store.ListVirtualAccountsContext(ctx)
 }
 
 func TestHandleCLIAccountsRepeatDoesNotWaitForSlowCounts(t *testing.T) {
@@ -213,6 +201,62 @@ func TestHandleCLIAccountsRepeatDoesNotWaitForSlowCounts(t *testing.T) {
 				close(slow.release)
 				synctest.Wait()
 				assert.EqualValues(t, 2, getAccounts().Accounts[0].MessageCount, "the shared refresh observes appended messages")
+			})
+		})
+	}
+}
+
+func TestHandleCLIAccountsNewSourceWaitsForCounts(t *testing.T) {
+	for name, blocked := range map[string]bool{"fast": false, "blocked": true} {
+		t.Run(name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			synctest.Test(t, func(t *testing.T) {
+				srv, slow, _ := newSlowAccountsServer(t, st)
+				defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+				get := func(pending bool) *httptest.ResponseRecorder {
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
+					if pending {
+						req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+					}
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, req)
+					return w
+				}
+				require.Equal(t, http.StatusOK, get(false).Code)
+				src, err := st.GetOrCreateSource("gmail", "new@example.org")
+				require.NoError(t, err)
+				conv, err := st.EnsureConversation(t.Context(), src.ID, "new-thread", "")
+				require.NoError(t, err)
+				_, err = st.UpsertMessage(&store.Message{
+					SourceID: src.ID, ConversationID: conv, SourceMessageID: "new-msg", MessageType: "email",
+				})
+				require.NoError(t, err)
+				if blocked {
+					legacy := get(false)
+					assert.Equal(t, http.StatusServiceUnavailable, legacy.Code)
+					assert.Contains(t, legacy.Body.String(), "query_timeout")
+					pending := get(true)
+					require.Equal(t, http.StatusOK, pending.Code)
+					var resp cliAccountsResponse
+					require.NoError(t, json.Unmarshal(pending.Body.Bytes(), &resp))
+					assert.True(t, resp.CountsPending, "the old snapshot cannot count the new source")
+					assert.False(t, resp.Stale)
+					require.Len(t, resp.Accounts, 2)
+					for _, account := range resp.Accounts {
+						assert.Zero(t, account.MessageCount, "pending counts are placeholders")
+					}
+				}
+				close(slow.release)
+				synctest.Wait()
+				fresh := get(false)
+				require.Equal(t, http.StatusOK, fresh.Code)
+				var resp cliAccountsResponse
+				require.NoError(t, json.Unmarshal(fresh.Body.Bytes(), &resp))
+				assert.False(t, resp.CountsPending)
+				require.Len(t, resp.Accounts, 2)
+				for _, account := range resp.Accounts {
+					assert.EqualValues(t, 1, account.MessageCount, "both sources have stored messages")
+				}
 			})
 		})
 	}

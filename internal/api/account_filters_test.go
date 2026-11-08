@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -104,39 +103,6 @@ func TestHandleCLIAccountsSurvivesCatalogFailure(t *testing.T) {
 	require.Len(resp.Accounts, 1)
 	assert.Equal(t, "archive-1", resp.Accounts[0].Email)
 	assert.Empty(t, resp.Accounts[0].VirtualAccounts)
-}
-
-func TestHandleCLIAccountsExpiredCatalogReturnsImmediately(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		srv, slow, sourceID := newSlowAccountsServer(t, st)
-		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
-		close(slow.release)
-		require.NoError(t, st.AddAccountIdentity(sourceID, "work@example.org", "manual"))
-		getAccounts := func() cliAccountsResponse {
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			var resp cliAccountsResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			return resp
-		}
-		first := getAccounts()
-		assert.False(t, first.VirtualAccountsUnavailable)
-		require.Len(t, first.Accounts, 1)
-		require.NotEmpty(t, first.Accounts[0].VirtualAccounts)
-		slow.catalogDelay = 3 * time.Second
-		time.Sleep(virtualAccountCatalogFreshFor + time.Second)
-
-		started := time.Now()
-		repeat := getAccounts()
-		assert.Zero(t, time.Since(started))
-		assert.True(t, repeat.VirtualAccountsUnavailable)
-		assert.Equal(t, first.Accounts[0].VirtualAccounts, repeat.Accounts[0].VirtualAccounts)
-		time.Sleep(3 * time.Second)
-		synctest.Wait()
-		assert.False(t, getAccounts().VirtualAccountsUnavailable, "the completed catalog is current again")
-	})
 }
 
 func TestHandleCLIAccountsShowsNewIdentityDespiteCachedCatalog(t *testing.T) {

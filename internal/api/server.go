@@ -684,7 +684,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 			logger: opts.Logger, serveStaleImmediately: true,
 		},
 		virtualAccountSnapshots: snapshotCache[map[int64][]store.VirtualAccount]{
-			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor, serveStaleImmediately: true,
+			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor,
 		},
 		statsSnapshotWait:  statsSnapshotWait,
 		vectorStatsTimeout: vectorStatsTimeout,
