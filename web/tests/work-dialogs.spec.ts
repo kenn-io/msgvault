@@ -212,6 +212,7 @@ for (const width of [1440, 390]) {
 }
 
 test('an organization that fails to load shows its error 12 inside the dialog on both sides', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Example Org', exact: true })).toBeVisible();
   await page.route('**/api/v1/organizations/21', route => route.fulfill({ status: 503, json: { message: 'Synthetic organization unavailable' } }));
   await page.getByRole('button', { name: 'Example Org', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Example Org', exact: true });
