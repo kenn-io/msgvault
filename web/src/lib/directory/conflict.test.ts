@@ -11,13 +11,14 @@ it('compares writable values and records changes outside the draft', () => {
   expect(conflict(facts, facts, {})).toEqual({ rows: [], other: [] });
 
   const opened = employment();
-  const diff = conflict(employmentFacts({ ...opened, organization_id: 22 }, String), employmentFacts(opened, String), { 'End date': '2026' });
+  const names = { personID: opened.person_id, organizationName: String };
+  const diff = conflict(employmentFacts({ ...opened, organization_id: 22 }, names), employmentFacts(opened, names), { 'End date': '2026' });
   expect(diff.rows.some(row => row.label === 'Organization')).toBe(false);
   expect(diff.other).toContainEqual({ label: 'Organization', saved: '22', yours: '21' });
 
   expect(conflict({ Notes: 'Saved' }, { Notes: 'Opening' }, { Notes: '' }).rows).toEqual([{ label: 'Notes', saved: 'Saved', yours: '' }]);
 
   const moved = employment(11, 2, { person_id: 8 });
-  const movedDiff = conflict(employmentFacts(moved), employmentFacts(opened), { 'Job title': 'Draft title' });
+  const movedDiff = conflict(employmentFacts(moved, names), employmentFacts(opened, names), { 'Job title': 'Draft title' });
   expect(movedDiff.other).toHaveLength(1);
 });

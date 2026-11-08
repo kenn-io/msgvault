@@ -35,7 +35,7 @@
     <DateField bind:value={endDate} start={formatPartialDate((attempt.conflict?.data ?? attempt.prepared?.data ?? shown).start_date)} bind:error={dateError} disabled={attempt.busy} />
   </form>
   {#snippet notice()}
-    {#if attempt.conflict}<ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, id => controller.organizationName(id)), employmentFacts(shown, id => controller.organizationName(id)), { 'End date': readablePartialDate(endDate) })} message={attempt.details} />
+    {#if attempt.conflict}<ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, controller), employmentFacts(shown, controller), { 'End date': readablePartialDate(endDate) })} message={attempt.details} />
     {:else if !opened && attempt.details}<InlineNotice message="Couldn't load this job." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
     {:else if attempt.failed}<InlineNotice message="Couldn't end this job." details={attempt.details} actionLabel="Retry" onaction={() => void submit()} />{/if}
   {/snippet}

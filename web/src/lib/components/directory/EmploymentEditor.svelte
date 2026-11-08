@@ -187,7 +187,7 @@
     {#if attempt.conflict}
       {@const facts = employmentFacts({ title, role, start_date: startDate, end_date: endDate, is_current: isCurrent, department, location, description })}
       {@const yours = Object.fromEntries(['Job title', 'Role on the team', 'Start date', 'End date', 'Department', 'Location', 'Description'].map(label => [label, facts[label]]))}
-      <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, id => controller.organizationName(id)), employmentFacts(opened?.data ?? initialEmployment!, id => controller.organizationName(id)), yours)} message={attempt.details} />
+      <ConflictNotice noun="job" saved={attempt.conflict.data} {...conflict(employmentFacts(attempt.conflict.data, controller), employmentFacts(opened?.data ?? initialEmployment!, controller), yours)} message={attempt.details} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
       <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void controller.refreshOrganizations().then(() => { if (!controller.createBlocked.organizations) attempt.details = ''; }); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}

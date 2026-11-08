@@ -13,9 +13,9 @@ export function conflict(saved: Facts, opened: Facts, yours: Facts): { rows: Cha
 }
 const text = (value: unknown) => value === undefined || value === null ? '' : String(value).trim();
 
-export function employmentFacts(job: Partial<Pick<Employment, 'person_id' | 'organization_id' | 'title' | 'role' | 'is_current' | 'is_primary' | 'department' | 'location' | 'description' | 'confidence' | 'source' | 'source_ref'>> & { start_date?: Employment['start_date'] | string | null; end_date?: Employment['end_date'] | string | null }, organizationName: (id: number) => string = () => 'this organization'): Facts {
+export function employmentFacts(job: Partial<Pick<Employment, 'person_id' | 'organization_id' | 'title' | 'role' | 'is_current' | 'is_primary' | 'department' | 'location' | 'description' | 'confidence' | 'source' | 'source_ref'>> & { start_date?: Employment['start_date'] | string | null; end_date?: Employment['end_date'] | string | null }, names: { personID: number; organizationName(id: number): string } = { personID: 0, organizationName: () => 'this organization' }): Facts {
   return {
-    Person: text(job.person_id), Organization: job.organization_id === undefined ? '' : organizationName(job.organization_id),
+    Person: job.person_id === undefined ? '' : job.person_id === names.personID ? 'this person' : 'another person', Organization: job.organization_id === undefined ? '' : names.organizationName(job.organization_id),
     'Job title': text(job.title), 'Role on the team': text(job.role), 'Start date': readablePartialDate(job.start_date),
     'End date': job.is_current ? 'Present' : readablePartialDate(job.end_date), 'Primary job': job.is_primary ? 'Yes' : 'No',
     Department: text(job.department), Location: text(job.location), Description: text(job.description),

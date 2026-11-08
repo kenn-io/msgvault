@@ -126,7 +126,7 @@
   </DetailRow>
   {#if primary.details && primaryTarget?.id === employment.id}
     {#if primary.conflict}
-      <ConflictNotice noun="job" saved={primary.conflict.data} {...conflict(employmentFacts(primary.conflict.data, id => controller.organizationName(id)), employmentFacts(primaryTarget, id => controller.organizationName(id)), { 'Primary job': 'Yes' })} message={primary.details} actionLabel="Reload"
+      <ConflictNotice noun="job" saved={primary.conflict.data} {...conflict(employmentFacts(primary.conflict.data, controller), employmentFacts(primaryTarget, controller), { 'Primary job': 'Yes' })} message={primary.details} actionLabel="Reload"
         onaction={() => void controller.refreshEmployments().then(() => { if (!controller.errors.employments) primary.reset(); })} />
     {:else}<InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />{/if}
   {/if}
@@ -151,7 +151,7 @@
     {#snippet notice()}
       {#if removal.conflict && deletingEmployment}
         <!-- Delete again removes the saved version the notice shows. -->
-        <ConflictNotice noun="job" saved={removal.conflict.data} {...conflict(employmentFacts(removal.conflict.data, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)))} message={removal.details} />
+        <ConflictNotice noun="job" saved={removal.conflict.data} {...conflict(employmentFacts(removal.conflict.data, controller), employmentFacts(deletingEmployment, controller), employmentFacts(deletingEmployment, controller))} message={removal.details} />
       {:else if removal.details}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => { if (removal.prepared) void removeEmployment(); else void prepareDelete(); }} />{/if}
     {/snippet}
   </Dialog>
