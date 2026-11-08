@@ -2060,6 +2060,59 @@ msgvault sync-gitlab --full
 
 ---
 
+## add-gitea
+
+Register a [Gitea or Forgejo account](/docs/usage/forges/#gitea-and-forgejo)
+as a `gitea` source, on the server `--url` names. Requires an access token
+with read access to `notification`, `issue`, `repository` and `user`. The
+token is checked with `GET /user` and one request each scope guards, then
+stored in the tokens directory. The source's identifier is
+`<server>:user:<account-id>`, such as `codeberg.org:user:5678`.
+
+```bash
+msgvault add-gitea --url https://codeberg.org
+msgvault add-gitea --url https://git.example.com --token-file ~/gitea-token.txt
+MSGVAULT_GITEA_TOKEN="..." msgvault add-gitea --url https://codeberg.org
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--url` | | The server's web address, path included (required) |
+| `--token-file` | | Read the token from a file instead of prompting |
+| `--no-default-identity` | `false` | Do not auto-confirm the account as the source's "me" identity |
+
+After adding, sync with `msgvault sync-gitea`.
+
+---
+
+## sync-gitea
+
+Archive the Gitea and Forgejo threads that changed since the last sync, for
+every added account or the one named by its login. Threads are found through
+the account's notifications, searches for the issues and pull requests it
+created, was assigned, mentioned in, asked to review, or reviewed, its own
+comment activity, and a check of up to 50 archived threads in turn. That
+check first reads the thread's update time, then recent edits to plain thread
+comments if the update time has not changed. Edits to existing code comments
+are detected only when the thread is fetched again. Each changed
+thread is fetched whole, newest first. The `[gitea]` `include_owners` and
+`exclude_owners` lists choose whose repositories are archived. One failing
+account does not stop the others; the command exits non-zero listing the
+failures. See
+[Code forges](/docs/usage/forges/#gitea-and-forgejo).
+
+```bash
+msgvault sync-gitea
+msgvault sync-gitea octocat
+msgvault sync-gitea --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Find and fetch every thread again, not only those changed since the last sync; unchanged posts are not rewritten |
+
+---
+
 ## add-calendar
 
 Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.

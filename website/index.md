@@ -53,8 +53,9 @@ attachments alongside the records you browse.
   Messenger, and SMS imports.
 - **Meetings** — Granola, Plaud, Pocket, Circleback, Omi, Twenty, Twilio, Notion
   AI Meeting Notes, and Muesli in the same searchable record.
-- **Code forges** — GitHub and GitLab issues, pull and merge requests, reviews,
-  and discussions you take part in, and GitHub releases you watch.
+- **Code forges** — GitHub, GitLab, Gitea, and Forgejo issues, pull and merge
+  requests, reviews, and discussions you take part in, and GitHub releases you
+  watch.
 - **Calendar** — Google Calendar events, organizers, and attendees, read-only.
 - **Contacts** — import contacts from a CardDAV address book and choose which
   saved profiles to sync back.

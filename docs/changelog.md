@@ -21,6 +21,11 @@ All notable changes to msgvault, grouped by release.
   approval. Add an account with `msgvault add-gitlab`, then sync with
   `sync-gitlab` or the `[gitlab]` schedule. See
   [Code forges](usage/forges.md#gitlab).
+- Archive the issues and pull requests you take part in on a Gitea or Forgejo
+  server, such as Codeberg, with every comment, review and review comment. Add
+  an account with `msgvault add-gitea --url <server>`, then sync with
+  `sync-gitea` or the `[gitea]` schedule. See
+  [Code forges](usage/forges.md#gitea-and-forgejo).
 - Archive messages from sources msgvault has no connector for, such as the
   items of the feeds you follow, with `POST /api/v1/import/message`. Each
   message keeps the type its sender chose, such as `feed_item`, for search

@@ -1849,6 +1849,29 @@ exclude_owners = ["my-employer"]  # never fetch these groups' and users' project
 A project's owner is its top-level group or user, so a group's subgroups go
 with it. Owners compare without case.
 
+### `[gitea]` {#gitea}
+
+Sync the [Gitea and Forgejo accounts](usage/forges.md#gitea-and-forgejo) added
+with `msgvault add-gitea`, on any server. One block covers every added account;
+tokens are per-account files.
+
+```toml
+[gitea]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/15 * * * *"         # 5-field cron; empty = manual sync only
+include_owners = []               # only these owners' repositories (empty = all)
+exclude_owners = ["my-employer"]  # never fetch these owners' repositories
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules Gitea sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `include_owners` | all | Organizations and users whose repositories are archived |
+| `exclude_owners` | — | Organizations and users whose repositories are never fetched (wins over `include_owners`) |
+
+Owners compare without case.
+
 ### `[teams]`
 
 Media policy for [Microsoft Teams](/docs/usage/teams/) chats and channels. Teams
