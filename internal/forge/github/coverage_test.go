@@ -191,12 +191,23 @@ func TestAFailedDiscussionLookupHoldsOnlyThatNotification(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, first.Archived, "the pull request and the release still sync")
 	assert.NotContains(archived(t, st, source.ID), "D_9")
+	assert.Equal(1, first.Missed, "the run says what it couldn't find")
+	var status, errorKind string
+	var errorsCount int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT r.status, r.errors_count, i.error_kind FROM sync_runs r
+		JOIN sync_run_items i ON i.sync_run_id = r.id
+		WHERE r.source_id = ? ORDER BY r.id DESC LIMIT 1`), source.ID).Scan(&status, &errorsCount, &errorKind))
+	assert.Equal("completed", status)
+	assert.Equal(1, errorsCount, "the missed discussion is an error of the run")
+	assert.Equal("forge_discovery_missed", errorKind)
 
 	delete(f.fail, "RecentDiscussions")
 	second, err := syncGitHub(t, st, f, source, withoutSecretCorp)
 	require.NoError(err)
 	assert.Contains(archived(t, st, source.ID), "D_9", "the held notification is read again")
 	assert.Positive(second.Archived)
+	assert.Zero(second.Missed)
 }
 
 func TestADiscussionNoLongerListedIsSkipped(t *testing.T) {

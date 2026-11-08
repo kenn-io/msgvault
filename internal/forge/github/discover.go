@@ -71,7 +71,8 @@ func (f *Forge) Discover(ctx context.Context, raw []byte, owners forge.OwnerFilt
 	if err != nil {
 		return err
 	}
-	if err := f.scanNotifications(ctx, &state, owners, page); err != nil {
+	missed, err := f.scanNotifications(ctx, &state, owners, page)
+	if err != nil {
 		return err
 	}
 	for _, search := range []struct {
@@ -89,6 +90,9 @@ func (f *Forge) Discover(ctx context.Context, raw []byte, owners forge.OwnerFilt
 		if err := f.searchThreads(ctx, search.kind, search.query, &state, search.through, owners, page); err != nil {
 			return err
 		}
+	}
+	if len(missed) > 0 {
+		return &forge.IncompleteError{Missed: missed}
 	}
 	return nil
 }
@@ -112,10 +116,12 @@ type notification struct {
 
 // scanNotifications lists every notification thread updated after the last
 // complete scan, read or not. A scan that stops early starts over next time;
-// the threads it found are already queued.
+// the threads it found are already queued. It returns the notified
+// discussions it couldn't look up; they hold the cursor, so the next scan
+// tries them again.
 func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners forge.OwnerFilter,
 	page func([]forge.ThreadRef, []byte) error,
-) error {
+) ([]forge.Missed, error) {
 	query := url.Values{"all": {"true"}, "per_page": {strconv.Itoa(notificationsPerPage)}}
 	if since := state.Notifications.Since; !since.IsZero() {
 		query.Set("since", since.Add(-time.Second).UTC().Format(time.RFC3339))
@@ -126,20 +132,19 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 	}
 	latest := state.Notifications.Since
 	lastModified := ""
-	// complete stays true while every notification was turned into a
-	// thread; one that couldn't be holds the cursor, so the next scan tries
-	// it again.
-	complete := true
+	// missed holds the notifications that couldn't be turned into threads;
+	// any of them holds the cursor, so the next scan tries them again.
+	var missed []forge.Missed
 	next := "/notifications"
 	for first := true; next != ""; first = false {
 		var batch []notification
 		resp, err := f.client.getJSON(ctx, next, query, header, &batch)
 		if err != nil {
-			return fmt.Errorf("list GitHub notifications: %w", err)
+			return nil, fmt.Errorf("list GitHub notifications: %w", err)
 		}
 		if first {
 			if resp.Status == http.StatusNotModified {
-				return nil
+				return nil, nil
 			}
 			lastModified = resp.Header.Get("Last-Modified")
 		}
@@ -159,9 +164,11 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 					// No such discussion any more: nothing to archive.
 					continue
 				case forge.IsRateLimit(err):
-					return err
+					return nil, err
 				case err != nil:
-					complete = false
+					missed = append(missed, forge.Missed{
+						Name: fmt.Sprintf("%s discussion %q", ref.Repo, n.Subject.Title), Err: err,
+					})
 					continue
 				}
 				for _, number := range numbers {
@@ -175,14 +182,14 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 		}
 		// The next link carries the query; only the first page is conditional.
 		next, query, header = forge.NextLink(resp.Header.Get("Link")), nil, nil
-		if next == "" && complete {
+		if next == "" && len(missed) == 0 {
 			state.Notifications = notificationCursor{LastModified: lastModified, Since: latest}
 		}
 		if err := page(refs, state.encode()); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return missed, nil
 }
 
 // notificationRef is the thread a notification points at. A discussion's

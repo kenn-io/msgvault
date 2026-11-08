@@ -443,6 +443,9 @@ func (fs *forgeSource) printSummary(out io.Writer, source *store.Source, summary
 	if summary.Failed > 0 {
 		_, _ = fmt.Fprintf(out, ", %d failed", summary.Failed)
 	}
+	if summary.Missed > 0 {
+		_, _ = fmt.Fprintf(out, ", %d found but not identified (the next sync looks again)", summary.Missed)
+	}
 	_, _ = fmt.Fprintln(out)
 	if summary.Remaining == 0 {
 		return

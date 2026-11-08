@@ -236,6 +236,29 @@ var (
 	ErrUnavailable = errors.New("not available to this token")
 )
 
+// IncompleteError is what Discover returns when it read every stream but
+// could not turn some of what it found into threads, such as a notified
+// discussion whose lookup failed. Discover keeps the cursor of each stream
+// that missed something behind it, so the next sync tries again. The core
+// counts each miss as an error of the run and archives what was queued.
+type IncompleteError struct {
+	Missed []Missed
+}
+
+// Missed is one thing discovery found but could not turn into a thread.
+type Missed struct {
+	// Name is how errors and logs name it, as its forge does.
+	Name string
+	Err  error
+}
+
+func (e *IncompleteError) Error() string {
+	if len(e.Missed) == 1 {
+		return fmt.Sprintf("discovery missed %s: %v", e.Missed[0].Name, e.Missed[0].Err)
+	}
+	return fmt.Sprintf("discovery missed %d threads", len(e.Missed))
+}
+
 // RateLimitError means a rate limit stops the run until Reset. The sync
 // keeps its queue and the next sync continues.
 type RateLimitError struct {

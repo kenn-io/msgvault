@@ -57,6 +57,10 @@ type Summary struct {
 	Excluded int
 	// Failed counts threads that failed in this run; they stay queued.
 	Failed int
+	// Missed counts what discovery found but couldn't turn into a thread,
+	// such as a notified discussion whose lookup failed; the next sync
+	// looks again.
+	Missed int
 	// Remaining counts the threads still queued for a later sync.
 	Remaining int
 	// RateLimit is set when a rate limit paused the run.
@@ -250,9 +254,19 @@ func (r *run) discover(ctx context.Context) error {
 			}
 			return nil
 		})
+	var incomplete *IncompleteError
 	switch {
 	case err == nil:
 		r.state.Full = false
+		return nil
+	case errors.As(err, &incomplete):
+		r.state.Full = false
+		for _, missed := range incomplete.Missed {
+			r.summary.Missed++
+			r.counts.ErrorsCount++
+			r.syncer.logger.WarnContext(ctx, "forge discovery missed a thread", "thread", missed.Name, "error", missed.Err)
+			r.recordItemID(ctx, "discovery:"+missed.Name, store.SyncRunItemStatusError, "forge_discovery_missed", missed.Err)
+		}
 		return nil
 	case errors.Is(err, errPause):
 		r.stoppedEarly = true
