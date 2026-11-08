@@ -256,6 +256,28 @@ func TestDownloadFileRefusesOffHostAndStripsTokenOnRedirect(t *testing.T) {
 	assert.Equal("Bearer xoxp-test", rt.authHeaders[1])
 }
 
+func TestDownloadFileRefusesCleartextRedirect(t *testing.T) {
+	t.Parallel()
+	// A same-host hop keeps the bearer token, so an http:// redirect to
+	// files.slack.com would send it in cleartext. The signed delivery URL is
+	// a credential too. Both are refused before the target is fetched.
+	for _, host := range []string{"files.slack.com", "slack-files.com"} {
+		t.Run(host, func(t *testing.T) {
+			t.Parallel()
+			rt := &recordingTransport{body: "bytes"}
+			rt.redirect = "http://" + host + "/files-pri/T01-F01/a.png"
+			rt.redirectOnce = true
+			c := NewClient("", "xoxp-test")
+			c.mediaTransport = rt
+
+			_, err := c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F01/a.png", 100)
+			require.ErrorContains(t, err, "refusing non-HTTPS redirect")
+			assert.Equal(t, []string{"https://files.slack.com/files-pri/T01-F01/a.png"}, rt.requests,
+				"the cleartext redirect target must never be requested")
+		})
+	}
+}
+
 func TestDownloadFileStopsRedirectLoop(t *testing.T) {
 	t.Parallel()
 	rt := &recordingTransport{body: "bytes"}

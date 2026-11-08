@@ -109,6 +109,13 @@ func (c *Client) DownloadFile(ctx context.Context, rawURL string, maxBytes int64
 				return fmt.Errorf(
 					"slack file GET: stopped after %d redirects", maxMediaRedirects)
 			}
+			// A same-host hop keeps the token, and the signed target URL is
+			// itself a credential, so neither may travel in cleartext. Check
+			// the scheme before the host so no hop downgrades to http.
+			if req.URL.Scheme != "https" {
+				return fmt.Errorf(
+					"slack file GET: refusing non-HTTPS redirect to %s", req.URL.Host)
+			}
 			// Carrying the token to another host would hand it to whoever
 			// controls that host. The signed redirect target does not need it.
 			if !strings.EqualFold(req.URL.Host, mediaHost) {
