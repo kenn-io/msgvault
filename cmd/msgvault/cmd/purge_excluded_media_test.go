@@ -197,11 +197,11 @@ func TestPurgeExcludedMatrixMediaAfterAllToDirectScopeChange(t *testing.T) {
 	req, check := require.New(t), assert.New(t)
 	f := newPurgeMediaFixture(t, sourceTypeBeeper)
 	f.config.Matrix.MediaScope = string(attachmentpolicy.ScopeAll)
-	_, err := f.store.DB().Exec(`UPDATE sources SET source_type = 'matrix', identifier = '@archive:example.org'`)
+	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE sources SET source_type = 'matrix', identifier = '@archive:example.org'`)
 	req.NoError(err)
-	_, err = f.store.DB().Exec(`UPDATE conversations SET conversation_type = 'group_chat' WHERE conversation_type = 'channel'`)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET conversation_type = 'group_chat' WHERE conversation_type = 'channel'`)
 	req.NoError(err)
-	_, err = f.store.DB().Exec(`UPDATE attachments SET source_attachment_id = REPLACE(source_attachment_id, 'beeper:', 'matrix:')`)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE attachments SET source_attachment_id = REPLACE(source_attachment_id, 'beeper:', 'matrix:')`)
 	req.NoError(err)
 	run := func() {
 		command := newPurgeExcludedMediaLocalCmd(f.deps())
@@ -219,7 +219,7 @@ func TestPurgeExcludedMatrixMediaAfterAllToDirectScopeChange(t *testing.T) {
 	check.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
 	check.FileExists(f.fullPath)
 	var reason string
-	req.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT attachment_skip_reason FROM attachments WHERE id = ?`), f.excludedID).Scan(&reason))
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT attachment_skip_reason FROM attachments WHERE id = ?`), f.excludedID).Scan(&reason))
 	check.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
 }
 

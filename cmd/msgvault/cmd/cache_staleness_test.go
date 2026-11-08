@@ -59,7 +59,7 @@ func TestCacheRefreshMatrixAttachmentSizeUpdatesMessageFacts(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	var size int64
 	path := filepath.ToSlash(filepath.Join(analyticsDir, "messages", "*", "*.parquet"))
-	req.NoError(db.QueryRow(`SELECT size_estimate FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`, path, messageID).Scan(&size))
+	req.NoError(db.QueryRowContext(t.Context(), `SELECT size_estimate FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`, path, messageID).Scan(&size))
 	check.Equal(int64(42), size)
 	check.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
 }

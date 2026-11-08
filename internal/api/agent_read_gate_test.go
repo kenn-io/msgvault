@@ -202,7 +202,7 @@ func TestAgentMatrixMediaCannotExposeOtherSourceBlob(t *testing.T) {
 	t.Cleanup(srv.agentGrants.Close)
 	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	req.NoError(err)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
 	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, r)

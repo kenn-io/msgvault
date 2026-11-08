@@ -1556,16 +1556,16 @@ func TestImportLegacyMediaDiscoveryResumesBudget(t *testing.T) {
 			room, err := f.store.EnsureConversationWithType(f.sourceID, "!room:example.org", "direct_chat", "Legacy")
 			req.NoError(err)
 			var ids []int64
-			tx, err := f.store.DB().Begin()
+			tx, err := f.store.DB().BeginTx(t.Context(), nil)
 			req.NoError(err)
 			defer func() { _ = tx.Rollback() }()
 			for i := range legacyMediaDiscoveryBudget + 1 {
 				eventID := fmt.Sprintf("$legacy%d", i)
 				var messageID int64
-				req.NoError(tx.QueryRow(f.store.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type) VALUES (?, ?, ?, ?) RETURNING id`), f.sourceID, room, eventID, SourceType).Scan(&messageID))
+				req.NoError(tx.QueryRowContext(t.Context(), f.store.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type) VALUES (?, ?, ?, ?) RETURNING id`), f.sourceID, room, eventID, SourceType).Scan(&messageID))
 				ids = append(ids, messageID)
 				raw := fmt.Sprintf(`{"type":"m.room.message","event_id":%q,"sender":"@member:example.org","content":{"msgtype":"m.text","body":"legacy"}}`, eventID)
-				_, err := tx.Exec(f.store.Rebind(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, ?, 'none')`), messageID, []byte(raw), rawFormat)
+				_, err := tx.ExecContext(t.Context(), f.store.Rebind(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, ?, 'none')`), messageID, []byte(raw), rawFormat)
 				req.NoError(err)
 			}
 			req.NoError(tx.Commit())

@@ -1184,7 +1184,7 @@ func TestImporterKeepsMergedMatrixHistoryOutOfProviderWork(t *testing.T) {
 	assert.Zero(sum.PendingEncrypted)
 	assert.Empty(mediaRequests)
 	var conversationType string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_type FROM conversations WHERE id = ?`), room).Scan(&conversationType))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_type FROM conversations WHERE id = ?`), room).Scan(&conversationType))
 	assert.Equal("direct_chat", conversationType)
 	var retryState string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT attachment_state FROM attachments WHERE message_id = ?`), retryID).Scan(&retryState))
