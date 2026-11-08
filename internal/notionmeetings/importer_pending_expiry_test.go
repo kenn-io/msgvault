@@ -162,6 +162,9 @@ func TestDuePendingSelectionIsIndependentOfKnownRefresh(t *testing.T) {
 }
 
 func TestImporterMigratesLegacyPendingOverflow(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st, source, imp := newImporterFixture(t)
 	source.query.Results = nil
 	now := imp.now()
@@ -174,32 +177,32 @@ func TestImporterMigratesLegacyPendingOverflow(t *testing.T) {
 		state.Pending = append(state.Pending, pendingTranscript{BlockID: id, NextAttemptAt: now.Add(time.Hour).Format(time.RFC3339), RetryUntil: deadline})
 	}
 	cursor, err := json.Marshal(state)
-	require.NoError(t, err)
+	require.NoError(err)
 	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
-	require.NoError(t, err)
+	require.NoError(err)
 	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
-	require.NoError(t, err)
-	require.NoError(t, st.CompleteSyncContext(t.Context(), run, string(cursor)))
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, string(cursor)))
 	noSearch := false
 	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", UserID: "creator-1", SearchAccessible: &noSearch})
-	require.NoError(t, err)
+	require.NoError(err)
 	recovered, err := imp.loadState(t.Context(), src.ID)
-	require.NoError(t, err)
-	assert.Len(t, recovered.Pending, 200)
-	assert.Len(t, recovered.PendingBacklog, 5)
-	assert.Len(t, recovered.Known, 205)
-	assert.Len(t, recovered.TranscriptRetryUntil, 205)
-	assert.Equal(t, deadline, recovered.TranscriptRetryUntil["legacy-204"])
-	assert.Equal(t, syncStateVersion, recovered.Version)
+	require.NoError(err)
+	assert.Len(recovered.Pending, 200)
+	assert.Len(recovered.PendingBacklog, 5)
+	assert.Len(recovered.Known, 205)
+	assert.Len(recovered.TranscriptRetryUntil, 205)
+	assert.Equal(deadline, recovered.TranscriptRetryUntil["legacy-204"])
+	assert.Equal(syncStateVersion, recovered.Version)
 	imp.now = func() time.Time { return now.Add(time.Hour) }
 	opts := ImportOptions{Identifier: "work", UserID: "creator-1", SearchAccessible: &noSearch}
 	_, err = imp.Import(t.Context(), opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = imp.Import(t.Context(), opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	recovered, err = imp.loadState(t.Context(), src.ID)
-	require.NoError(t, err)
-	assert.Len(t, recovered.PendingBacklog, 5)
-	assert.NotEqual(t, "legacy-204", recovered.PendingBacklog[4].BlockID)
-	assert.Equal(t, deadline, recovered.TranscriptRetryUntil["legacy-204"])
+	require.NoError(err)
+	assert.Len(recovered.PendingBacklog, 5)
+	assert.NotEqual("legacy-204", recovered.PendingBacklog[4].BlockID)
+	assert.Equal(deadline, recovered.TranscriptRetryUntil["legacy-204"])
 }

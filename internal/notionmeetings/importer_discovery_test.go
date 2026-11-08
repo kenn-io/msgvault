@@ -327,6 +327,9 @@ func TestLimitCountsOnlyNewSelectedAdmissions(t *testing.T) {
 }
 
 func TestImporterVisitsDueTranscriptOutsideKnownRefreshWindow(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st, source, imp := broadFixture(t)
 	source.query.Results = nil
 	meeting := hydrationMeeting()
@@ -342,24 +345,27 @@ func TestImporterVisitsDueTranscriptOutsideKnownRefreshWindow(t *testing.T) {
 	state.Pending = []pendingTranscript{{BlockID: meeting.ID, NextAttemptAt: now.Add(-time.Hour).Format(time.RFC3339), RetryUntil: now.Add(time.Hour).Format(time.RFC3339)}}
 	state.initialize()
 	cursor, err := state.marshal()
-	require.NoError(t, err)
+	require.NoError(err)
 	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
-	require.NoError(t, err)
+	require.NoError(err)
 	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
-	require.NoError(t, err)
-	require.NoError(t, st.CompleteSyncContext(t.Context(), run, cursor))
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
 	counter := &headerCountingSource{discoveryFixture: source, reads: map[string]int{}}
 	imp.client = counter
 	noSearch := false
 	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch})
-	require.NoError(t, err)
-	assert.Positive(t, counter.reads[meeting.ID])
+	require.NoError(err)
+	assert.Positive(counter.reads[meeting.ID])
 	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
-	assert.Equal(t, 1, count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
+	assert.Equal(1, count)
 }
 
 func TestOversizedEvidenceDefersOneMeetingAndContinues(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	st, source, imp := broadFixture(t)
 	large := hydrationMeeting()
 	large.ID = "oversized"
@@ -377,13 +383,13 @@ func TestOversizedEvidenceDefersOneMeetingAndContinues(t *testing.T) {
 	source.query.Results = []MeetingNote{large, next}
 	noSearch := false
 	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch})
-	require.NoError(t, err)
-	assert.Positive(t, result.CoverageReasons["evidence_limit"])
+	require.NoError(err)
+	assert.Positive(result.CoverageReasons["evidence_limit"])
 	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", next.ID).Scan(&count))
-	assert.Equal(t, 1, count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", next.ID).Scan(&count))
+	assert.Equal(1, count)
 	state, err := imp.loadState(t.Context(), result.SourceID)
-	require.NoError(t, err)
-	require.NotEmpty(t, state.Deferred)
-	assert.Equal(t, "evidence_limit", state.Deferred[0].Reason)
+	require.NoError(err)
+	require.NotEmpty(state.Deferred)
+	assert.Equal("evidence_limit", state.Deferred[0].Reason)
 }
