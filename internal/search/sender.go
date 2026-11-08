@@ -9,62 +9,53 @@ func EscapeLike(value string) string {
 
 // senderMatch classifies domains, complete addresses, and metadata fragments.
 func senderMatch(value string) (operator, pattern string, metadata bool) {
-	value = strings.ToLower(value)
+	value = normalizeAddr(value)
 	if strings.HasPrefix(value, "@") {
 		return "LIKE", "%" + EscapeLike(value), false
 	}
-	local, domain, address := strings.Cut(value, "@")
-	if address && local != "" && strings.Contains(domain, ".") && !strings.HasPrefix(domain, ".") && !strings.HasSuffix(domain, ".") {
-		return "=", value, false
+	if address, err := ParseAccountAddress(value); err == nil {
+		return "=", address, false
 	}
 	return "LIKE", "%" + EscapeLike(value) + "%", true
 }
 
-// SenderCondition matches any normalized from: value against sender metadata.
-// The SQL owner supplies column expressions and its Unicode folding function.
-func SenderCondition(values []string, email, phone string, lower func(string) string, names ...string) (string, []any) {
+func senderCondition(value string, lower func(string) string) (string, []any) {
+	operator, pattern, metadata := senderMatch(value)
+	columns := []string{"p2.email_address"}
+	if metadata {
+		columns = append(columns, "p2.phone_number", "p2.display_name")
+	}
 	var parts []string
 	var args []any
-	for _, value := range values {
-		operator, pattern, metadata := senderMatch(value)
-		columns := []string{email}
-		if metadata {
-			columns = append(columns, phone)
-			columns = append(columns, names...)
+	for _, column := range columns {
+		condition := lower("COALESCE("+column+", '')") + " " + operator + " ?"
+		if operator == "LIKE" {
+			condition += ` ESCAPE '\'`
 		}
-		for _, column := range columns {
-			condition := lower("COALESCE("+column+", '')") + " " + operator + " ?"
-			if operator == "LIKE" {
-				condition += ` ESCAPE '\'`
-			}
-			parts = append(parts, condition)
-			args = append(args, pattern)
-		}
+		parts = append(parts, condition)
+		args = append(args, pattern)
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", args
 }
 
-// SenderLookup shares correlated and participant-first message lookups.
-// Both forms bind the same arguments so adaptive search can switch between them.
-func SenderLookup(values []string, lower func(string) string) (condition, matching string, args []any) {
-	participant, args := SenderCondition(values, "p2.email_address", "p2.phone_number", lower, "p2.display_name")
-	predicate := participant
-	matching = `SELECT mr2.message_id FROM message_recipients mr2 WHERE mr2.recipient_type = 'from'
-  AND mr2.participant_id IN (SELECT p2.id FROM participants p2 WHERE ` + participant + `)`
-	var headers []string
-	for _, value := range values {
-		_, pattern, metadata := senderMatch(value)
-		if metadata {
-			headers = append(headers, lower("COALESCE(mr2.display_name, '')")+` LIKE ? ESCAPE '\'`)
-			args = append(args, pattern)
-		}
+// SenderLookup matches one from: value through From rows and direct senders.
+// Both forms bind identical arguments so adaptive search can switch between them.
+// Callers supply trusted table references and the outer message alias.
+func SenderLookup(value string, lower func(string) string, messages, recipients, participants, alias string) (condition, matching string, args []any) {
+	participant, participantArgs := senderCondition(value, lower)
+	args = append(args, participantArgs...)
+	from := `EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id
+  WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + participant + `)`
+	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
+  AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)`
+	if _, pattern, metadata := senderMatch(value); metadata {
+		header := lower("COALESCE(mr2.display_name, '')") + ` LIKE ? ESCAPE '\'`
+		from += ` OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + header + `)`
+		matching += ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND ` + header
+		args = append(args, pattern)
 	}
-	if len(headers) > 0 {
-		header := "(" + strings.Join(headers, " OR ") + ")"
-		predicate = "(" + participant + " OR " + header + ")"
-		matching += ` UNION SELECT mr2.message_id FROM message_recipients mr2 WHERE mr2.recipient_type = 'from' AND ` + header
-	}
-	condition = `EXISTS (SELECT 1 FROM message_recipients mr2 JOIN participants p2 ON p2.id = mr2.participant_id
-  WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from' AND ` + predicate + `)`
+	condition = `(` + from + ` OR EXISTS (SELECT 1 FROM ` + participants + ` p2 WHERE p2.id = ` + alias + `.sender_id AND ` + participant + `))`
+	matching += ` UNION SELECT ms.id FROM ` + messages + ` ms WHERE ms.sender_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)`
+	args = append(args, participantArgs...)
 	return condition, matching, args
 }

@@ -472,13 +472,7 @@ func TestSearchMixedExactAndDomainFilter(t *testing.T) {
 	q := &search.Query{FromAddrs: []string{"alice@example.com", "@other.com"}}
 	results := env.MustSearch(q, 100, 0)
 
-	require.NotEmpty(t, results, "Expected at least one result")
-	assertAllResults(t, results, "FromEmail matches alice@example.com or @other.com", func(m MessageSummary) bool {
-		return m.FromEmail == "alice@example.com" || strings.HasSuffix(m.FromEmail, "@other.com")
-	})
-	assertAnyResult(t, results, "FromEmail equals alice@example.com", func(m MessageSummary) bool {
-		return m.FromEmail == "alice@example.com"
-	})
+	assert.Empty(t, results, "both from: values must match")
 }
 
 // TestSearchFastCountMatchesSearch verifies that SearchFastCount returns the same
@@ -562,10 +556,10 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 			expected: &search.Query{AccountIDs: []int64{sourceID42}},
 		},
 		{
-			name:     "SenderAppends",
+			name:     "SenderRemainsSeparate",
 			initial:  &search.Query{FromAddrs: []string{"alice@example.com"}},
 			filter:   MessageFilter{Sender: "bob@example.com"},
-			expected: &search.Query{FromAddrs: []string{"alice@example.com", "bob@example.com"}},
+			expected: &search.Query{FromAddrs: []string{"alice@example.com"}},
 		},
 		{
 			name:     "RecipientAppends",
@@ -589,7 +583,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 			name:     "Domain",
 			initial:  &search.Query{},
 			filter:   MessageFilter{Domain: "example.com"},
-			expected: &search.Query{FromAddrs: []string{"@example.com"}},
+			expected: &search.Query{},
 		},
 		{
 			name: "MultipleFilters",
@@ -607,7 +601,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 			},
 			expected: &search.Query{
 				TextTerms:     []string{"search", "term"},
-				FromAddrs:     []string{"alice@example.com", "bob@example.com", "@domain.com"},
+				FromAddrs:     []string{"alice@example.com"},
 				ToAddrs:       []string{"carol@example.com"},
 				Labels:        []string{"starred"},
 				HasAttachment: new(true),
@@ -688,15 +682,15 @@ func TestMergeFilterIntoQuery_SliceAliasingMutation(t *testing.T) {
 	backing := make([]string, 1, 10)
 	backing[0] = "original@example.com"
 
-	q := &search.Query{FromAddrs: backing[:1]}
-	filter := MessageFilter{Sender: "added@example.com"}
+	q := &search.Query{ToAddrs: backing[:1]}
+	filter := MessageFilter{Recipient: "added@example.com"}
 
 	merged := MergeFilterIntoQuery(q, filter)
 
-	require.Len(t, merged.FromAddrs, 2)
+	require.Len(t, merged.ToAddrs, 2)
 
-	require.Len(t, q.FromAddrs, 1, "Original query was mutated via slice aliasing")
-	assert.Equal(t, "original@example.com", q.FromAddrs[0], "Original FromAddrs[0] was changed")
+	require.Len(t, q.ToAddrs, 1, "Original query was mutated via slice aliasing")
+	assert.Equal(t, "original@example.com", q.ToAddrs[0], "Original ToAddrs[0] was changed")
 }
 
 // TestSearchByDomains_HidesDeleted verifies SearchByDomains applies the

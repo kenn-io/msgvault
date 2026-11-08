@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -1078,25 +1077,6 @@ func TestAggregateSearchMatchesDisplayedKeysAndStats(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(1), stats.MessageCount)
 		})
-	}
-}
-
-// TestEscapeSQLiteLike verifies that wildcard characters are escaped
-// so they match literally in label search.
-func TestEscapeSQLiteLike(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input, want string
-	}{
-		{"work", "work"},
-		{"100%", `100\%`},
-		{"in_box", `in\_box`},
-		{`path\raw`, `path\\raw`},
-		{`%_\`, `\%\_\\`},
-	}
-	for _, tt := range tests {
-		got := search.EscapeLike(tt.input)
-		assert.Equal(t, tt.want, got, "search.EscapeLike(%q)", tt.input)
 	}
 }
 

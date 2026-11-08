@@ -3113,30 +3113,6 @@ func TestDuckDBEngine_GetDeletionTargetsByFilter_AfterBefore(t *testing.T) {
 // Search Query Filter Tests
 // =============================================================================
 
-// TestEscapeILIKE verifies that ILIKE wildcard characters are escaped.
-func TestEscapeILIKE(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"hello", "hello"},
-		{"100%", "100\\%"},
-		{"test_email", "test\\_email"},
-		{"50% off!", "50\\% off!"},
-		{"foo_bar_baz", "foo\\_bar\\_baz"},
-		{"a\\b", "a\\\\b"},
-		{"100%_test\\path", "100\\%\\_test\\\\path"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := search.EscapeLike(tt.input)
-			assert.Equal(t, tt.want, got, "search.EscapeLike(%q)", tt.input)
-		})
-	}
-}
-
 // TestBuildWhereClause_SearchOperators tests that buildWhereClause handles
 // various search operators correctly.
 func TestBuildWhereClause_SearchOperators(t *testing.T) {
@@ -3156,7 +3132,7 @@ func TestBuildWhereClause_SearchOperators(t *testing.T) {
 		{
 			name:        "from operator",
 			searchQuery: "from:alice",
-			wantClauses: []string{"recipient_type = 'from'", "LOWER(COALESCE(p.email_address, '')) LIKE"},
+			wantClauses: []string{"recipient_type = 'from'", "LOWER(COALESCE(p2.email_address, '')) LIKE"},
 		},
 		{
 			name:        "to operator",
@@ -3390,7 +3366,7 @@ func TestBuildSearchConditions_EscapedWildcards(t *testing.T) {
 			query: &search.Query{
 				FromAddrs: []string{"test_user%"},
 			},
-			wantClauses: []string{"LOWER(COALESCE(p.email_address, '')) LIKE", "ESCAPE"},
+			wantClauses: []string{"LOWER(COALESCE(p2.email_address, '')) LIKE", "ESCAPE"},
 			wantInArgs:  []string{"test\\_user\\%"},
 		},
 		{

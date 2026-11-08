@@ -1514,12 +1514,9 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		}
 		clauses = append(clauses, "("+strings.Join(messageTypeClauses, " OR ")+")")
 	}
-	// Match any from: value against the message's From recipient rows,
-	// using the same sender metadata as SQLite search.
-	if len(f.SenderTerms) > 0 {
-		predicate, senderArgs := search.SenderCondition(f.SenderTerms, "p.email_address", "p.phone_number", (&store.SQLiteDialect{}).UnicodeLowerExpression, "p.display_name", "mr.display_name")
-		clauses = append(clauses, `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id
-			WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND `+predicate+`)`)
+	for _, term := range f.SenderTerms {
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		clauses = append(clauses, predicate)
 		args = append(args, senderArgs...)
 	}
 	for _, group := range f.SenderGroups {

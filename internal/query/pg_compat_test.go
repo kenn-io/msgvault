@@ -64,8 +64,13 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 			SizeEstimate:    int64(1000 + i*250),
 		})
 		setupRequire.NoError(err, "UpsertMessage")
-		setupRequire.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}),
-			"ReplaceMessageRecipients from")
+		if i == 0 {
+			_, err = st.DB().ExecContext(t.Context(), (&store.PostgreSQLDialect{}).Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), aliceID, mid)
+			// SQLite also accepts PostgreSQL's numbered parameters.
+			setupRequire.NoError(err)
+		} else {
+			setupRequire.NoError(st.ReplaceMessageRecipients(mid, "from", []int64{aliceID}, []string{"Alice"}), "ReplaceMessageRecipients from")
+		}
 
 		setupRequire.NoError(st.ReplaceMessageRecipients(mid, "to", []int64{bobID}, []string{"Bob"}),
 			"ReplaceMessageRecipients to")

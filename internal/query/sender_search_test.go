@@ -1,6 +1,7 @@
 package query
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,15 +27,24 @@ func TestSenderSearch(t *testing.T) {
 	env.AddMessage(dbtest.MessageOpts{FromID: header})
 	phone := env.AddParticipant(dbtest.ParticipantOpts{Phone: new("+12025550123")})
 	env.AddMessage(dbtest.MessageOpts{FromID: phone})
-	for _, tc := range []struct {
+	chat := env.AddParticipant(dbtest.ParticipantOpts{Phone: new("+12025550999"), DisplayName: new("Alex Chat")})
+	chatID := env.AddMessage(dbtest.MessageOpts{})
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET sender_id = ? WHERE id = ?`, chat, chatID)
+	require.NoError(t, err)
+	for _, address := range []string{"root@localhost", "root@localhost.example"} {
+		sender := env.AddParticipant(dbtest.ParticipantOpts{Email: &address})
+		env.AddMessage(dbtest.MessageOpts{FromID: sender})
+	}
+	cases := []struct {
 		input string
 		want  []int64
 	}{
-		{"from:alex", []int64{100, 101, 102, 103, 105}},
+		{"from:alex", []int64{100, 101, 102, 103, 105, 109}},
 		{"from:kim", []int64{100, 101, 102, 103}},
 		{"from:élodie", []int64{106, 107}}, {"from:álvaro", []int64{106}},
-		{"from:alex@exam", []int64{100, 101, 102, 103, 105}},
-		{"from:alex@example.com from:jimbob@example.com", []int64{100, 101, 102, 103, 104}},
+		{"from:alex@", []int64{100, 101, 102, 103, 105}},
+		{"from:alex@exam", nil},
+		{"from:alex@example.com from:jimbob@example.com", nil},
 		{"from:alex@example.com", []int64{100, 101, 102, 103}},
 		{"from:bob@example.com", nil},
 		{"from:example.com", []int64{1, 2, 3, 100, 101, 102, 103, 104}},
@@ -42,7 +52,10 @@ func TestSenderSearch(t *testing.T) {
 		{"from:participant", []int64{106, 107}},
 		{`from:header_%\name`, []int64{106}},
 		{"from:5550123", []int64{108}},
-	} {
+		{"from:chat", []int64{109}}, {"from:5550999", []int64{109}},
+		{"from:root@localhost", []int64{110}},
+	}
+	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			rows, err := env.Engine.Search(t.Context(), search.Parse(tc.input), 100, 0)
@@ -57,6 +70,28 @@ func TestSenderSearch(t *testing.T) {
 			assert.Equal(int64(len(tc.want)), fast.TotalCount)
 		})
 	}
+	t.Run("scanner", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "sender.db")
+		_, err := env.DB.ExecContext(t.Context(), "VACUUM INTO ?", path)
+		require.NoError(t, err)
+		engine, err := NewDuckDBEngine(t.Context(), "", path, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, engine.Close()) })
+		if !engine.hasSQLite() {
+			t.Skip("DuckDB sqlite_scanner extension unavailable")
+		}
+		for _, tc := range cases {
+			t.Run(tc.input, func(t *testing.T) {
+				rows, err := engine.Search(t.Context(), search.Parse(tc.input), 100, 0)
+				require.NoError(t, err)
+				var ids []int64
+				for _, row := range rows {
+					ids = append(ids, row.ID)
+				}
+				assert.ElementsMatch(t, tc.want, ids)
+			})
+		}
+	})
 }
 
 func TestDuckDBSenderSearch(t *testing.T) {
@@ -75,16 +110,24 @@ func TestDuckDBSenderSearch(t *testing.T) {
 		}
 		b.AddFrom(id, sender, name)
 	}
+	chat := b.AddPhoneParticipant("+12025550999", "Alex Chat")
+	b.AddMessage(MessageOpt{SenderID: &chat, Subject: "senderfixture"})
+	for _, address := range []string{"root@localhost", "root@localhost.example"} {
+		sender := b.AddParticipant(address, "localhost", "Root")
+		id := b.AddMessage(MessageOpt{Subject: "senderfixture"})
+		b.AddFrom(id, sender, "")
+	}
 	engine := b.BuildEngine()
 	for _, tc := range []struct {
 		input string
 		want  []int64
 	}{
-		{"from:alex", []int64{1, 2, 3, 4, 6}},
+		{"from:alex", []int64{1, 2, 3, 4, 6, 10}},
 		{"from:kim", []int64{1, 2, 3, 4}},
 		{"from:élodie", []int64{7, 8}}, {"from:álvaro", []int64{7}},
-		{"from:alex@exam", []int64{1, 2, 3, 4, 6}},
-		{"from:alex@example.com from:jimbob@example.com", []int64{1, 2, 3, 4, 5}},
+		{"from:alex@", []int64{1, 2, 3, 4, 6}},
+		{"from:alex@exam", nil},
+		{"from:alex@example.com from:jimbob@example.com", nil},
 		{"from:alex@example.com", []int64{1, 2, 3, 4}},
 		{"from:bob@example.com", nil},
 		{"from:example.com", []int64{1, 2, 3, 4, 5}},
@@ -92,6 +135,7 @@ func TestDuckDBSenderSearch(t *testing.T) {
 		{"from:participant", []int64{7, 8}},
 		{`from:header_%\name`, []int64{7}},
 		{"from:5550123", []int64{9}},
+		{"from:chat", []int64{10}}, {"from:5550999", []int64{10}}, {"from:root@localhost", []int64{11}},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -115,5 +159,32 @@ func TestDuckDBSenderSearch(t *testing.T) {
 			require.NoError(rows2.Err())
 			assert.ElementsMatch(tc.want, ids)
 		})
+	}
+}
+
+func TestSenderSearchWithinExactScope(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	env := newTestEnv(t)
+	for _, number := range []string{"+12025550999", "+120255509990"} {
+		participant := env.AddParticipant(dbtest.ParticipantOpts{Phone: &number, DisplayName: new("Alex Chat")})
+		id := env.AddMessage(dbtest.MessageOpts{Subject: "scopefixture"})
+		_, err := env.DB.ExecContext(t.Context(), `UPDATE messages SET sender_id = ? WHERE id = ?`, participant, id)
+		require.NoError(err)
+	}
+	for _, filter := range []MessageFilter{
+		{Sender: "+12025550999"},
+		{Sender: "+12025550999", SenderName: "Alex Chat"},
+	} {
+		q := search.Parse("from:alex")
+		fast, err := env.Engine.SearchFastWithStats(t.Context(), q, "from:alex", filter, ViewNoStats, 100, 0)
+		require.NoError(err)
+		require.Len(fast.Messages, 1)
+		assert.Equal(int64(100), fast.Messages[0].ID)
+		assert.Equal(int64(1), fast.TotalCount)
+		deep, err := env.Engine.SearchDeepWithStats(t.Context(), q, filter, 100, 0)
+		require.NoError(err)
+		require.Len(deep.Messages, 1)
+		assert.Equal(int64(100), deep.Messages[0].ID)
+		assert.Equal(int64(1), deep.TotalCount)
 	}
 }

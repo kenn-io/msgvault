@@ -217,11 +217,10 @@ type Chunk struct {
 }
 
 // Filter carries the structured filters pushed into both signal CTEs
-// in hybrid search. Values are pre-resolved to IDs at the Go layer
-// (addresses → participant IDs, labels → label IDs) so backend code
-// only deals in integers.
+// in hybrid search. Sender terms remain values; recipient addresses and labels
+// resolve to IDs at the Go layer.
 //
-// SenderTerms match any from: value against sender metadata. Other repeated
+// SenderTerms require each from: value to match sender metadata. Other repeated
 // operators use independent message-level requirements; ID groups are OR within
 // each group and AND across groups.
 //
@@ -250,7 +249,7 @@ type Filter struct {
 	MessageIDs         []int64   // exact bounded candidate population; empty = unrestricted
 	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
 	ConversationIDs    []int64   // exact messages.conversation_id values; empty = unrestricted
-	SenderTerms        []string  // any normalized from: value; message and participant metadata
+	SenderTerms        []string  // each normalized from: value; message and participant metadata
 	SenderGroups       [][]int64 // structured domain selections; AND across, OR within
 	SenderExactGroups  [][]int64 // exact structured sender; from rows OR messages.sender_id
 	RecipientAnyGroups [][]int64 // exact structured recipient; to/cc/bcc rows are OR'd

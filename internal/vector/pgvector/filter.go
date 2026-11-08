@@ -62,13 +62,12 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		}
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
-	if len(f.SenderTerms) > 0 {
-		predicate, senderArgs := search.SenderCondition(f.SenderTerms, "p.email_address", "p.phone_number", (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "p.display_name", "mr.display_name")
+	for _, term := range f.SenderTerms {
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
 		for _, arg := range senderArgs {
 			predicate = strings.Replace(predicate, "?", bind(arg), 1)
 		}
-		clauses = append(clauses, `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id
-			WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND `+predicate+`)`)
+		clauses = append(clauses, predicate)
 	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {

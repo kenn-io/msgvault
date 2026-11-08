@@ -74,6 +74,9 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{alex}, nil))
 		senderIDs = append(senderIDs, id)
 	}
+	require.NoError(st.ReplaceMessageRecipients(ids[0], "from", nil, nil))
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id = ? WHERE id = ?`, alex, ids[0])
+	require.NoError(err)
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(root, "vectors.db"), MainPath: dbPath, MainDB: st.DB(), Dimension: 4})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(backend.Close()) })
@@ -117,7 +120,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	for _, tc := range []struct {
 		query string
 		count int
-	}{{"from:alex", 4}, {"from:bob@example.com", 0}, {"from:élodie", 4}, {"from:alex@exam", 4}} {
+	}{{"from:alex", 4}, {"from:bob@example.com", 0}, {"from:élodie", 4}, {"from:alex@exam", 0}} {
 		var rows []query.MessageSummary
 		decode(run("search", tc.query, "--json"), &rows)
 		assert.Len(rows, tc.count)
@@ -131,11 +134,7 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 	}
 	var repeated []query.MessageSummary
 	decode(run("search", "from:alex@example.com from:jimbob@example.com", "--json"), &repeated)
-	got := make([]int64, 0, len(repeated))
-	for _, row := range repeated {
-		got = append(got, row.ID)
-	}
-	assert.ElementsMatch(append(append([]int64(nil), senderIDs...), ids[2]), got)
+	assert.Empty(repeated)
 	for _, mode := range []string{"vector", "hybrid"} {
 		var result struct {
 			Results []query.MessageSummary `json:"results"`

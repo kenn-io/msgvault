@@ -2313,18 +2313,10 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 
 	conditions = append(conditions, searchMessageVisibilityWhere("m", q))
 
-	// From filter
-	if len(q.FromAddrs) > 0 {
-		joins = append(joins, `
-			JOIN sqlite_db.message_recipients mr_from ON mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-			JOIN sqlite_db.participants p_from ON p_from.id = mr_from.participant_id
-		`)
-		placeholders := make([]string, len(q.FromAddrs))
-		for i, addr := range q.FromAddrs {
-			placeholders[i] = "?"
-			args = append(args, addr)
-		}
-		conditions = append(conditions, fmt.Sprintf("LOWER(p_from.email_address) IN (%s)", strings.Join(placeholders, ",")))
+	for _, address := range q.FromAddrs {
+		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "sqlite_db.messages", "sqlite_db.message_recipients", "sqlite_db.participants", "m")
+		conditions = append(conditions, condition)
+		args = append(args, senderArgs...)
 	}
 
 	// To filter
@@ -3454,16 +3446,10 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 }
 
 func appendDuckDBSenderConditions(conditions []string, args []any, addresses []string) ([]string, []any) {
-	if len(addresses) > 0 {
-		lower := func(column string) string { return "LOWER(" + column + ")" }
-		from, fromArgs := search.SenderCondition(addresses, "p.email_address", "p.phone_number", lower, "p.display_name", "mr.display_name")
-		direct, directArgs := search.SenderCondition(addresses, "p.email_address", "p.phone_number", lower, "p.display_name")
-		conditions = append(conditions, `(EXISTS (
-			SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
-			WHERE mr.message_id = msg.id AND mr.recipient_type = 'from' AND `+from+`)
-			OR EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND `+direct+`))`)
-		args = append(args, fromArgs...)
-		args = append(args, directArgs...)
+	for _, address := range addresses {
+		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg")
+		conditions = append(conditions, condition)
+		args = append(args, senderArgs...)
 	}
 	return conditions, args
 }

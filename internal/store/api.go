@@ -829,8 +829,8 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	// Operators come last so a condition before them identifies a search
 	// already narrowed by another filter.
 	var operators []searchOperator
-	if len(q.FromAddrs) > 0 {
-		condition, matching, senderArgs := search.SenderLookup(q.FromAddrs, s.dialect.UnicodeLowerExpression)
+	for _, address := range q.FromAddrs {
+		condition, matching, senderArgs := search.SenderLookup(address, s.dialect.UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
 		if !rowIDs {
 			operators = append(operators, searchOperator{condition: len(conditions), matching: matching, args: senderArgs})
 		}

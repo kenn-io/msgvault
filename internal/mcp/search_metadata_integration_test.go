@@ -242,7 +242,7 @@ func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
 	seedMetadataSearch(t, db)
 	_, err := db.ExecContext(t.Context(), `INSERT INTO participants (id,email_address,display_name) VALUES (1,'alex@example.com','Élodie Alex Kim'), (2,'jimbob@example.com','Jim Bob');
  INSERT INTO message_recipients (message_id,participant_id,recipient_type) VALUES (1,1,'from'), (2,2,'from');
- UPDATE message_recipients SET display_name = 'Álvaro Header' WHERE message_id = 1;`)
+ UPDATE message_recipients SET display_name = 'Álvaro Header' WHERE message_id = 1; UPDATE messages SET sender_id=1 WHERE id=3;`)
 	require.NoError(t, err)
 	var requests atomic.Int32
 	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
@@ -250,9 +250,9 @@ func TestSearchMetadataSenderSearchRoundTrip(t *testing.T) {
 		query string
 		want  []int64
 	}{
-		{"from:alex", []int64{1}}, {"from:kim", []int64{1}}, {"from:bob@example.com", nil},
-		{"from:élodie", []int64{1}}, {"from:álvaro", []int64{1}}, {"from:alex@exam", []int64{1}},
-		{"from:alex@example.com from:jimbob@example.com", []int64{1, 2}},
+		{"from:alex", []int64{1, 3}}, {"from:kim", []int64{1, 3}}, {"from:bob@example.com", nil},
+		{"from:élodie", []int64{1, 3}}, {"from:álvaro", []int64{1}}, {"from:alex@exam", nil},
+		{"from:alex@example.com from:jimbob@example.com", nil},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": tc.query})
@@ -279,8 +279,8 @@ func TestSearchMetadataSenderParquetRoundTrip(t *testing.T) {
 	t.Cleanup(func() { require.NoError(db.Close()) })
 	datasets := map[string]string{
 		"relationship_activity": `SELECT 1::BIGINT message_id, NULL::BIGINT canonical_id, false unsent WHERE false`,
-		"messages":              `SELECT id, 1::BIGINT source_id, CAST(id AS VARCHAR) source_message_id, 1::BIGINT conversation_id, 'senderfixture' subject, '' snippet, TIMESTAMP '2026-01-01' sent_at, 10::BIGINT size_estimate, false has_attachments, false archive_only, NULL::TIMESTAMP deleted_from_source_at FROM range(1,6) t(id)`,
-		"participants":          `SELECT * FROM (VALUES (1,'alex@example.com','example.com','Élodie Alex Kim'),(2,'jimbob@example.com','example.com','Jim Bob')) t(id,email_address,domain,display_name)`,
+		"messages":              `SELECT id, 1::BIGINT source_id, CAST(id AS VARCHAR) source_message_id, 1::BIGINT conversation_id, 'senderfixture' subject, '' snippet, TIMESTAMP '2026-01-01' sent_at, 10::BIGINT size_estimate, false has_attachments, false archive_only, NULL::TIMESTAMP deleted_from_source_at, CASE WHEN id=6 THEN 3 ELSE NULL END::BIGINT sender_id FROM range(1,7) t(id)`,
+		"participants":          `SELECT * FROM (VALUES (1,'alex@example.com','example.com','Élodie Alex Kim'),(2,'jimbob@example.com','example.com','Jim Bob'),(3,'root@localhost','localhost','Alex Chat')) t(id,email_address,domain,display_name)`,
 		"message_recipients":    `SELECT id message_id, CASE WHEN id=5 THEN 2 ELSE 1 END participant_id, 'from' recipient_type, '' display_name FROM range(1,6) t(id)`,
 		"sources":               `SELECT 1::BIGINT id, 'reader@example.com' identifier`,
 		"conversations":         `SELECT 1::BIGINT id, 'thread' source_conversation_id`,
@@ -297,7 +297,7 @@ func TestSearchMetadataSenderParquetRoundTrip(t *testing.T) {
 	for _, tc := range []struct {
 		input string
 		want  []int64
-	}{{"from:alex", []int64{1, 2, 3, 4}}, {"from:bob@example.com", nil}, {"from:élodie", []int64{1, 2, 3, 4}}, {"from:alex@exam", []int64{1, 2, 3, 4}}, {"from:alex@example.com from:jimbob@example.com", []int64{1, 2, 3, 4, 5}}} {
+	}{{"from:alex", []int64{1, 2, 3, 4, 6}}, {"from:bob@example.com", nil}, {"from:élodie", []int64{1, 2, 3, 4}}, {"from:root@localhost", []int64{6}}, {"from:chat", []int64{6}}, {"from:alex@exam", nil}, {"from:alex@example.com from:jimbob@example.com", nil}} {
 		t.Run(tc.input, func(t *testing.T) {
 			response := runTool[searchMetadataResponse](t, ToolSearchMetadata, h.searchMetadata, map[string]any{"query": tc.input})
 			ids := make([]int64, 0, len(response.Data))

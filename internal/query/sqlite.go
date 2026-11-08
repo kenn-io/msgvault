@@ -2180,8 +2180,12 @@ func (e *SQLiteEngine) appendSQLiteAddressCondition(
 		return conditions, args
 	}
 	if recipientType == "from" {
-		_, matching, senderArgs := search.SenderLookup(addresses, e.dialect.UnicodeLowerExpression)
-		return append(conditions, "m.id IN ("+matching+")"), append(args, senderArgs...)
+		for _, address := range addresses {
+			_, matching, senderArgs := search.SenderLookup(address, e.dialect.UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+			conditions = append(conditions, "m.id IN ("+matching+")")
+			args = append(args, senderArgs...)
+		}
+		return conditions, args
 	}
 	parts := make([]string, 0, len(addresses))
 	matchArgs := make([]any, 0, len(addresses)*2)
@@ -2574,9 +2578,8 @@ func searchResultsSQL(pageSource, whereClause string) string {
 // Most context filters are appended to existing query filters.
 // For OR queries, drill-down fields land on the parent and AND with each alternative.
 //
-// Note on semantics: Appending to FromAddrs/ToAddrs produces OR semantics
-// within each dimension (IN clause). Labels use per-term EXISTS subqueries
-// with AND semantics (message must have all labels). MessageType and date
+// Recipient addresses use OR within their dimension. Labels and from: values
+// use per-term requirements. MessageType and date
 // filters are scoped intersections so an in-view search cannot widen outside
 // the current drill-down context.
 func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
@@ -2634,11 +2637,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Sender filter - append to existing from: filters
-	if filter.Sender != "" {
-		merged.FromAddrs = append(merged.FromAddrs, filter.Sender)
-	}
-
 	// Recipient filter - append to existing to: filters
 	if filter.Recipient != "" {
 		merged.ToAddrs = append(merged.ToAddrs, filter.Recipient)
@@ -2664,11 +2662,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	if filter.WithAttachmentsOnly {
 		hasAttachment := true
 		merged.HasAttachment = &hasAttachment
-	}
-
-	// Domain filter - add as @domain pattern (handled specially in Search)
-	if filter.Domain != "" {
-		merged.FromAddrs = append(merged.FromAddrs, "@"+filter.Domain)
 	}
 
 	// Hide-deleted filter
@@ -2708,7 +2701,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Note: SenderName, RecipientName, ListID, and
+	// Note: Sender, SenderName, Domain, RecipientName, ListID, and
 	// EmptyValueTargets cannot be represented in search.Query.
 	// ListID scopes must use an exact-capable engine path rather than
 	// being translated to the substring list: search operator.

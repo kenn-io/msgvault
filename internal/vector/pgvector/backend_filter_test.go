@@ -381,8 +381,8 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	f := seedThree(t)
 	_, err := f.db.ExecContext(f.ctx, `CREATE TABLE participants(id BIGINT PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
- INSERT INTO participants(id,email_address,display_name) VALUES(1000,'alex@example.com','Élodie Kim'),(2000,'alex@example.company','Decoy');
- INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Álvaro Header'),(2,1000,'from','Other'),(3,2000,'from','Decoy');`)
+ INSERT INTO participants(id,email_address,phone_number,display_name) VALUES(1000,'alex@example.com',NULL,'Élodie Kim'),(2000,'root@localhost','+12025550999','Alex Chat');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Álvaro Header'),(2,1000,'from','Other'); UPDATE messages SET sender_id = 2000 WHERE id = 3;`)
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		term string
@@ -390,8 +390,9 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	}{
 		{"from:header", []int64{1}}, {"from:kim", []int64{1, 2}}, {"from:alex@example.com", []int64{1, 2}}, {"from:@example.com", []int64{1, 2}}, {"from:bob@example.com", nil},
 		{"from:élodie", []int64{1, 2}}, {"from:álvaro", []int64{1}},
-		{"from:alex@exam", []int64{1, 2, 3}},
-		{"from:bob@example.com from:header", []int64{1}},
+		{"from:alex@exam", nil}, {"from:chat", []int64{3}}, {"from:5550999", []int64{3}}, {"from:root@localhost", []int64{3}},
+		{"from:kim from:header", []int64{1}},
+		{"from:bob@example.com from:header", nil},
 	} {
 		t.Run(tc.term, func(t *testing.T) {
 			filter, err := hybrid.BuildFilter(f.ctx, f.db, (&store.PostgreSQLDialect{}).Rebind, search.Parse(tc.term))

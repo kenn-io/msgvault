@@ -525,7 +525,7 @@ const (
 		"before:/after: (YYYY-MM-DD), older_than:/newer_than: (e.g. 7d, 2w, 1m, 1y), larger:/smaller: (e.g. 5M), " +
 		"account:, received: (exact addresses; received: excludes sent mail and calendar events). " +
 		"from: matches full email addresses exactly, domains by suffix, and other values within sender names, addresses, or phone numbers. Bare domains on to: match any address at that domain. Different operators are ANDed; " +
-		"repeated from:, account:, or received: values are ORed. " +
+		"repeated from: values are ANDed; repeated account: or received: values are ORed. " +
 		"Not supported: negation (-) or parentheses grouping."
 	searchMetadataOperatorDoc = searchOperatorDoc + " " +
 		"Full-text message search accepts a standalone unquoted | between complete alternatives for OR; other modes read pipes as text."
