@@ -313,7 +313,7 @@ func TestNotionProbeErrorsArePrivate(t *testing.T) {
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{err: cause}, nil)
 	require.Error(t, err)
-	require.ErrorIs(err, cause)
+	require.ErrorIs(t, err, cause)
 	assert.NotContains(err.Error(), "PRIVATE_ID")
 	assert.NotContains(err.Error(), "PRIVATE_CURSOR")
 }
