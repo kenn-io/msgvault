@@ -79,3 +79,14 @@ func TestNextOccurrenceOnSkippedMidnight(t *testing.T) {
 	checks.Equal("2018-11-04", got.In(loc).Format(time.DateOnly))
 	checks.Equal(1, DaysUntil(now, got, loc))
 }
+
+func TestNextOccurrenceSkipsNonexistentCivilDate(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	loc, err := time.LoadLocation("Pacific/Apia")
+	must.NoError(err)
+	now := time.Date(2011, 12, 29, 12, 0, 0, 0, loc)
+	got, ok := NextOccurrence(store.PartialDate{Month: new(12), Day: new(30)}, now, loc, LeapFebruary28)
+	must.True(ok)
+	checks.Equal("2012-12-30", got.In(loc).Format(time.DateOnly))
+}

@@ -113,3 +113,29 @@ func TestRunContinuesAfterBoundedBatch(t *testing.T) {
 	checks.Equal(1, count)
 	checks.False(more)
 }
+
+func TestRunRefusesChangedProjectIdentity(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	participant, err := st.EnsureParticipantByIdentifier("email", "contact@example.test", "Example Contact")
+	must.NoError(err)
+	person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+	must.NoError(err)
+	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: new(int64(21))}, Source: store.ProvenanceUser})
+	must.NoError(err)
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1)
+	month, day := int(tomorrow.Month()), tomorrow.Day()
+	_, err = st.AddPersonDateContext(ctx, person.ID, store.PersonDateInput{DateKind: store.PersonDateBirthday, Date: store.PartialDate{Month: &month, Day: &day}, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	must.NoError(err)
+	cfg := Config{Enabled: true, PrivateDestination: true, Project: "private-example", ProjectUID: "original-project", Recipient: "owner/agent", UseCadencePresets: true}
+	cfg.ApplyDefaults()
+	cfg.ConsentScope = DestinationScope("https://example.test", cfg.Project, cfg.ProjectUID)
+	must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+person.VCardUID, cfg.ConsentScope, cfg.Recipient, true))
+	kata := &deliveryKataFake{projectUID: "replacement-project"}
+	_, _, err = RunOnce(ctx, st, kata, cfg, time.Now())
+	must.NoError(err)
+	checks.Zero(kata.creates)
+	checks.Zero(kata.notifications)
+}

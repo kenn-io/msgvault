@@ -49,6 +49,7 @@ func (f *deliveryStoreFake) WithImportantDateConsentContext(ctx context.Context,
 }
 
 type deliveryKataFake struct {
+	projectUID             string
 	lookupError            error
 	existing               bool
 	notifyError            error
@@ -56,6 +57,9 @@ type deliveryKataFake struct {
 }
 
 func (f *deliveryKataFake) ProjectUID(context.Context, string) (string, error) {
+	if f.projectUID != "" {
+		return f.projectUID, nil
+	}
 	return "project-example", nil
 }
 func (f *deliveryKataFake) FindActionTask(context.Context, string, string) (taskclient.KataTask, bool, error) {
