@@ -41,6 +41,8 @@ type fakeForge struct {
 	afterPage func(index int)
 	// afterPost runs after the core took a thread's page of posts.
 	afterPost func(key string, index int)
+	// titles replaces a thread's title, by key.
+	titles map[string]string
 	// discover, when set, replaces the paged discovery.
 	discover func(ctx context.Context, known KnownThreads, page func([]ThreadRef, []byte) error) error
 
@@ -102,6 +104,9 @@ func (f *fakeForge) Fetch(_ context.Context, ref ThreadRef, continuation []byte,
 		return fmt.Errorf("%w: %s", ErrUnavailable, ref.Key)
 	}
 	head := ThreadHead{ConversationID: "conv-" + ref.Key, Title: "[" + ref.Repo + "] Thread " + ref.Key, URL: "https://forge.example.com/" + ref.Key}
+	if title, ok := f.titles[ref.Key]; ok {
+		head.Title = title
+	}
 	for i := index(continuation); i < len(pages); i++ {
 		if failure, ok := f.failures[ref.Key]; ok && failure.page == i {
 			return failure.err
@@ -881,4 +886,19 @@ func TestAThreadFetchedAcrossSyncsIsKnownFromWhenItsFirstPageWasRead(t *testing.
 	require.Len(known, 1)
 	assert.True(read.Equal(known[0].ReadAt), "an edit to the opening post during the pause is after ReadAt")
 	assert.True(read.Add(time.Hour).Equal(known[0].CheckedAt))
+}
+
+func TestAThreadTitleHoldingNULIsArchived(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	f.titles = map[string]string{"i1": "[acme/widgets] Broken\x00 title (#1)"}
+
+	summary, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	require.Equal(1, summary.Archived, "the thread is archived, not left failing in the queue")
+	require.Zero(summary.Failed)
 }

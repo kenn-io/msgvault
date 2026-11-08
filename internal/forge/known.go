@@ -29,8 +29,10 @@ type threadFacts struct {
 }
 
 // recordThread stores a fetched thread's facts on its conversation. A
-// thread found by search keeps the reason its last notification gave.
+// thread found by search keeps the reason its last notification gave. The
+// title and link are cleaned as posts are.
 func recordThread(ctx context.Context, st *store.Store, sourceID int64, head ThreadHead, ref ThreadRef, readAt, checkedAt time.Time) error {
+	head.Title, head.URL = clean(head.Title), clean(head.URL)
 	conversationID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, head.ConversationID, ConversationType, head.Title)
 	if err != nil {
 		return fmt.Errorf("resolve conversation of %s: %w", ref.Name(), err)
