@@ -50,13 +50,9 @@ func classifyParticipantIdentifier(
 		classification.ScopeKind = new("server")
 		classification.ScopeValue = new(server)
 	case kind == "github" || kind == "gitlab" || kind == "gitea":
-		at := strings.LastIndex(value, ":user:")
-		if at < 0 {
-			return participantIdentifierClassification{}, false
-		}
-		instance, userID := value[:at], value[at+len(":user:"):]
+		instance, userID, found := strings.CutLast(value, ":user:")
 		id, err := strconv.ParseInt(userID, 10, 64)
-		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != userID || !isForgeInstance(instance) {
+		if !found || err != nil || id <= 0 || strconv.FormatInt(id, 10) != userID || !isForgeInstance(instance) {
 			return participantIdentifierClassification{}, false
 		}
 		classification.ServiceSlug = kind

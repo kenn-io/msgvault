@@ -39,13 +39,10 @@ func TestWriterSharesSendersOfASharedIdentifierType(t *testing.T) {
 	shared := func(st *store.Store, source *store.Source) *Writer {
 		return NewWriter(st, source).WithSenderIdentifierType("example_forge")
 	}
-	scoped := func(st *store.Store, source *store.Source) *Writer {
-		return NewWriter(st, source)
-	}
 
 	first := write("account-a", shared)
 	assert.Equal(first, write("account-b", shared), "one account is one participant in every source")
-	assert.NotEqual(first, write("account-c", scoped), "without the type an id stays inside its source")
+	assert.NotEqual(first, write("account-c", NewWriter), "without the type an id stays inside its source")
 
 	var identifierType, identifierValue string
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
@@ -55,12 +52,12 @@ func TestWriterSharesSendersOfASharedIdentifierType(t *testing.T) {
 	assert.Equal("1001", identifierValue)
 }
 
-// startWriter starts a sync run of a source of type example_forge and
-// returns a writer scoped to it, as a connector's sync builds one.
-func startWriter(t *testing.T, st *store.Store, sourceIdentifier string) *Writer {
+// startWriter starts a sync run of an example_forge source and returns a
+// writer scoped to it, as a connector's sync builds one.
+func startWriter(t *testing.T, st *store.Store) *Writer {
 	t.Helper()
 	require := require.New(t)
-	source, err := st.GetOrCreateSourceContext(t.Context(), "example_forge", sourceIdentifier)
+	source, err := st.GetOrCreateSourceContext(t.Context(), "example_forge", "account-a")
 	require.NoError(err)
 	syncID, err := st.StartSyncContext(t.Context(), source.ID, "example_forge")
 	require.NoError(err)
@@ -82,7 +79,7 @@ func TestWriterWriteFromKeepsTheConnectorsEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	writer := startWriter(t, st, "account-a").WithConversationType("thread")
+	writer := startWriter(t, st).WithConversationType("thread")
 
 	evidence := Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"}
 	result, err := writer.WriteFrom(t.Context(), examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"}), evidence)
@@ -110,7 +107,7 @@ func TestWriterDefaultsToTheImportConversationType(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
-	result, err := startWriter(t, st, "account-a").Write(t.Context(), examplePost("comment-1", MessageImportSender{Name: "octo"}))
+	result, err := startWriter(t, st).Write(t.Context(), examplePost("comment-1", MessageImportSender{Name: "octo"}))
 	require.NoError(err)
 	var conversationType, rawFormat string
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
@@ -128,7 +125,7 @@ func TestWriterWriteFromWritesOnlyChangedEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	writer := startWriter(t, st, "account-a")
+	writer := startWriter(t, st)
 	post := examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"})
 	evidence := Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"}
 
@@ -180,7 +177,7 @@ func TestWriterWriteFromRejectsUnusableEvidence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			_, err := startWriter(t, st, "account-a").WriteFrom(t.Context(),
+			_, err := startWriter(t, st).WriteFrom(t.Context(),
 				examplePost("comment-1", MessageImportSender{Name: "octo"}), tc.evidence)
 			require.Error(t, err)
 			var messages int
@@ -197,7 +194,7 @@ func TestWriterJoinsAnAccountToItsMailParticipant(t *testing.T) {
 	// The person's participant from their mail, archived by another source.
 	mail, err := st.EnsureParticipantContext(t.Context(), "octo@example.com", "Octo Cat", "example.com")
 	require.NoError(err)
-	writer := startWriter(t, st, "account-a").WithSenderIdentifierType("example_forge")
+	writer := startWriter(t, st).WithSenderIdentifierType("example_forge")
 	write := func(externalID string, sender MessageImportSender) int64 {
 		result, err := writer.Write(t.Context(), examplePost(externalID, sender))
 		require.NoError(err)
@@ -235,7 +232,7 @@ func TestWriterKeepsParticipantsOfDifferentPeopleApart(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	mail, err := st.EnsureParticipantContext(t.Context(), "octo@example.com", "Octo Cat", "example.com")
 	require.NoError(err)
-	writer := startWriter(t, st, "account-a").WithSenderIdentifierType("example_forge")
+	writer := startWriter(t, st).WithSenderIdentifierType("example_forge")
 	earlier, err := writer.Write(t.Context(), examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"}))
 	require.NoError(err)
 	var accountOnly int64
