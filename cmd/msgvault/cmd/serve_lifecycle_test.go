@@ -1122,7 +1122,7 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 	require :=
 		require.New(t)
 
-	withTestVersion(t, "v1.1.0")
+	withTestVersion(t, "v0.23.0-45-gabc")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
 	portText := strconv.Itoa(server.Port)
@@ -1131,7 +1131,7 @@ func TestRunServeStartUpgradesOlderDaemon(t *testing.T) {
 		Network: daemon.NetworkTCP,
 		Address: net.JoinHostPort(server.Host, portText),
 		Service: daemonService,
-		Version: "v1.0.0",
+		Version: "v0.23.0",
 		Metadata: map[string]string{
 			runtimeHost:             server.Host,
 			runtimePort:             portText,
@@ -1244,7 +1244,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 	require :=
 		require.New(t)
 
-	withTestVersion(t, "v1.1.0")
+	withTestVersion(t, "v0.23.0-45-gabc")
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
 	portText := strconv.Itoa(server.Port)
@@ -1253,7 +1253,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 		Network: daemon.NetworkTCP,
 		Address: net.JoinHostPort(server.Host, portText),
 		Service: daemonService,
-		Version: "v1.0.0",
+		Version: "v0.23.0",
 		Metadata: map[string]string{
 			runtimeHost:             server.Host,
 			runtimePort:             portText,
@@ -1281,7 +1281,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Empty(stderr.String())
+	assert.Equal("msgvault: daemon v0.23.0 is running; this CLI is v0.23.0-45-gabc. Run msgvault daemon restart to use this version.\n", stderr.String())
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {

@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -635,7 +637,20 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 	if rt.Record.Version == "" {
 		return !update.IsDevBuildVersion(currentVersion)
 	}
+	if rt.Record.Version == currentVersion {
+		return false
+	}
+	if update.IsDevBuildVersion(currentVersion) || update.IsDevBuildVersion(rt.Record.Version) ||
+		strings.HasSuffix(currentVersion, "-dirty") || strings.HasSuffix(rt.Record.Version, "-dirty") {
+		return true
+	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
+}
+
+func reportRetainedDaemonVersion(w io.Writer, rt *DaemonRuntime) {
+	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run msgvault daemon restart to use this version.\n", rt.Record.Version, Version)
+	}
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {

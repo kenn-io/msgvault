@@ -1240,74 +1240,125 @@ func daemonRuntimeForHTTPServer(t *testing.T, server *httptest.Server, authFinge
 	}
 }
 
-func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(
-		t)
+func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name, cli, daemon         string
+		disabled, replace, notice bool
+	}{
+		{"source replaces release", "v0.23.0-45-gabc", "v0.23.0", false, true, false},
+		{"never keeps release", "v0.23.0-45-gabc", "v0.23.0", false, false, true},
+		{"disabled auto-start keeps release", "v0.23.0-45-gabc", "v0.23.0", true, false, true},
+		{"release keeps newer release", "v0.23.0", "v0.24.0", false, false, false},
+		{"equal source versions", "v0.23.0-45-gabc", "v0.23.0-45-gabc", false, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(
+				t)
 
-	withTestVersion(t, "v1.1.0")
-	dataDir := t.TempDir()
-	localCfg := lifecycleTestConfig(dataDir)
-	localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
-	testCtx := withStoreResolverConfig(t, localCfg)
+			withTestVersion(t, tt.cli)
+			dataDir := t.TempDir()
+			localCfg := lifecycleTestConfig(dataDir)
+			if tt.notice && !tt.disabled {
+				localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
+			}
+			if tt.disabled {
+				localCfg.Server.DaemonAutoStart = new(false)
+				localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
+			}
+			testCtx := withStoreResolverConfig(t, localCfg)
 
-	mux := http.NewServeMux()
-	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
-		Service: daemonService,
-		Version: "v1.0.0",
-	}))
-	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"total_messages":9}`))
-	})
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(
-		err, "split listener address")
+			mux := http.NewServeMux()
+			mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+				Service: daemonService,
+				Version: tt.daemon,
+			}))
+			mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"total_messages":9}`))
+			})
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"ok"}`))
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+			require.NoError(
+				err, "split listener address")
 
-	port, err := strconv.Atoi(portText)
-	require.NoError(
-		err, "parse listener port")
+			port, err := strconv.Atoi(portText)
+			require.NoError(
+				err, "parse listener port")
 
-	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(host, portText),
-		Service: daemonService,
-		Version: "v1.0.0",
-		Metadata: map[string]string{
-			runtimeHost:             host,
-			runtimePort:             strconv.Itoa(port),
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeCreateTime:       matchingProcessCreateTime(t),
-		},
-	})
-	require.NoError(
-		err, "write runtime")
+			_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+				PID:     os.Getpid(),
+				Network: daemon.NetworkTCP,
+				Address: net.JoinHostPort(host, portText),
+				Service: daemonService,
+				Version: tt.daemon,
+				Metadata: map[string]string{
+					runtimeHost:             host,
+					runtimePort:             strconv.Itoa(port),
+					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+					runtimeAPISchemaVersion: api.APISchemaVersion,
+					runtimeCreateTime:       matchingProcessCreateTime(t),
+				},
+			})
+			require.NoError(
+				err, "write runtime")
 
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		require.FailNow("never policy must not start over a compatible daemon")
-		return nil, errors.New("unreachable")
-	})
+			successorServer := httptest.NewServer(mux)
+			t.Cleanup(successorServer.Close)
+			successor := daemonRuntimeForHTTPServer(t, successorServer, daemonAPIKeyFingerprint(""))
+			successor.Record.Version = tt.cli
+			stopped, started := false, false
+			stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
+				require.True(tt.replace, "retained daemon must not stop")
+				stopped = true
+				return nil
+			})
+			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+				require.True(tt.replace, "retained daemon must not start")
+				started = true
+				return &backgroundServeProcess{PID: os.Getpid(), Wait: make(chan error)}, nil
+			})
+			stubWaitForBackgroundServeReady(t, func(context.Context, string, <-chan error, time.Duration) (*DaemonRuntime, bool, error) {
+				return successor, true, nil
+			})
+			var st *daemonclient.Client
+			var info HTTPStoreInfo
+			stderr := captureStderrDuring(t, func() { st, info, err = OpenHTTPStore(testCtx) })
 
-	st, info, err := OpenHTTPStore(testCtx)
-	require.NoError(
-		err, "OpenHTTPStore")
+			require.NoError(
+				err, "OpenHTTPStore")
 
-	t.Cleanup(func() { _ = st.Close() })
+			t.Cleanup(func() { _ = st.Close() })
 
-	stats, err := st.GetStats()
-	require.NoError(
-		err, "GetStats")
+			stats, err := st.GetStats()
+			require.NoError(
+				err, "GetStats")
 
-	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
-	assert.Equal(int64(9), stats.MessageCount)
+			assert.Equal(HTTPStoreLocalDaemon, info.Kind)
+			assert.Equal(int64(9), stats.MessageCount)
+			assert.Equal(tt.replace, stopped)
+			assert.Equal(tt.replace, started)
+			assert.Equal(tt.replace, info.StartedLocalDaemon)
+			wantURL := server.URL
+			if tt.replace {
+				wantURL = successorServer.URL
+			}
+			assert.Equal(wantURL, info.URL)
+			if tt.notice {
+				assert.Equal("msgvault: daemon "+tt.daemon+" is running; this CLI is "+tt.cli+". Run msgvault daemon restart to use this version.\n", stderr)
+			} else if tt.replace {
+				assert.Contains(stderr, "Starting local msgvault daemon")
+				assert.NotContains(stderr, "Run msgvault daemon restart")
+			} else {
+				assert.Empty(stderr)
+			}
+		})
+	}
 }
 
 func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testing.T) {

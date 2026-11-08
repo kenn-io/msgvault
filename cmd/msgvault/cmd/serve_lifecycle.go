@@ -392,6 +392,7 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 		return err
 	}
 	if rt := prep.Reusable; rt != nil {
+		reportRetainedDaemonVersion(cmd.ErrOrStderr(), rt)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 		return nil
 	}
