@@ -212,7 +212,7 @@
     </div>
     {#if review}
       <article aria-label="Review detail">
-        <h2>{review.reviewer.isAnonymous ? 'Anonymous reviewer' : review.reviewer.displayName || 'Reviewer'}</h2>
+        {#if !matchingListReview || matchingListReview.reviewer.displayName !== review.reviewer.displayName || matchingListReview.reviewer.isAnonymous !== review.reviewer.isAnonymous}<h2>{review.reviewer.isAnonymous ? 'Anonymous reviewer' : review.reviewer.displayName || 'Reviewer'}</h2>{/if}
         {#if !matchingListReview || matchingListReview.starRating !== review.starRating}<p>{review.starRating ?? 'Rating unavailable'}</p>{/if}
         <p class="exact">{review.comment || 'Rating only; no review text.'}</p>
         {#if review.updateTime}<p class="muted">Updated {review.updateTime}</p>{/if}
@@ -235,14 +235,14 @@
         {#if !archiveSync?.coverage_note}<p class="muted">Backfill follows Google's API pages; page exhaustion does not guarantee lifetime coverage.</p>{/if}
       </div>
       {#if target}
-        <Button label="Backfill available history" disabled={archiveBusy || !selected?.enabled} onclick={() => void startBackfill()} />
+        <Button label="Import review history" disabled={archiveBusy || !selected?.enabled} onclick={() => void startBackfill()} />
         <Button label="Refresh archive status" disabled={archiveBusy} onclick={() => void refreshArchiveStatus()} />
       {/if}
     </div>
     {#if archiveSync}
       <p role="status">Archive status: <strong>{archiveStatus(archiveSync.status)}</strong>. Pages fetched: {archiveSync.pages_fetched}; reviews fetched: {archiveSync.reviews_fetched}; archived: {archiveSync.archived_review_count}{#if archiveSync.total_review_count} of Google's reported {archiveSync.total_review_count}{/if}.</p>
       {#if archiveSync.coverage_note}<p class="muted">{archiveSync.coverage_note}</p>{/if}
-      {#if archiveSync.last_error_code}<p role="status">{archiveSync.last_error_code === 'cursor_cycle' ? 'Google repeated a page. Restart from the first page; existing reviews are kept.' : 'The import was interrupted. Start backfill again to resume.'}</p>{/if}
+      {#if archiveSync.last_error_code}<p role="status">{archiveSync.last_error_code === 'cursor_cycle' ? 'Google repeated a page. Restart from the first page; existing reviews are kept.' : 'Start the import again to resume.'}</p>{/if}
     {/if}
     <div class="archive-search">
       <label for="google-review-archive-query">Search archived reviews</label>
@@ -258,7 +258,7 @@
       <div class="archive-results">
         {#each archiveResult.results as item}
           <article class="archive-result">
-            <p><strong>{item.review.reviewer.isAnonymous ? 'Anonymous reviewer' : item.review.reviewer.displayName || 'Reviewer'}</strong> · {item.review.starRating || 'Rating unavailable'} · {item.target}</p>
+            <p><strong>{item.review.reviewer.isAnonymous ? 'Anonymous reviewer' : item.review.reviewer.displayName || 'Reviewer'}</strong> · {item.review.starRating || 'Rating unavailable'}{#if !target || item.target !== target} · {item.target}{/if}</p>
             <p class="exact">{item.review.comment || 'Rating only; no review text.'}</p>
             {#if item.review.reviewReply}<p><strong>Owner response:</strong> <span class="exact">{item.review.reviewReply.comment}</span></p>{/if}
             <p class="muted">Created {item.review.createTime || 'unknown'} · Archived {item.archived_at}</p>

@@ -59,7 +59,8 @@ func (s *Store) BeginGoogleReviewsBackfill(ctx context.Context, target, location
 		if err != nil {
 			return err
 		}
-		if state.Status == "api_exhausted" {
+		switch state.Status {
+		case "api_exhausted":
 			if state.RunID == math.MaxInt64 {
 				return googlereviews.ErrArchive
 			}
@@ -77,7 +78,7 @@ func (s *Store) BeginGoogleReviewsBackfill(ctx context.Context, target, location
 			state.CompletedAt = nil
 			state.UpdatedAt = timePointer(now)
 			state.Status = "running"
-		} else if state.Status == "partial" {
+		case "partial":
 			if state.LastErrorCode == "cursor_cycle" {
 				if state.RunID == math.MaxInt64 {
 					return googlereviews.ErrArchive
@@ -319,7 +320,7 @@ func (s *Store) SearchGoogleReviews(ctx context.Context, query, target string, o
 		if err != nil {
 			return fmt.Errorf("search Google Reviews archive: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		response.Results = make([]googlereviews.ArchivedReview, 0, limit)
 		for rows.Next() {
 			var targetName, location, reviewID, displayName, photoURL, rating, comment string
@@ -366,7 +367,7 @@ func readGoogleReviewsBackfillState(ctx context.Context, tx *loggedTx, postgres 
 		total_review_count, archived_review_count, last_error_code, started_at, completed_at, updated_at
 		FROM google_reviews_sync_state WHERE target_name = ? AND location_name = ?`
 	if postgres {
-		query += " FOR UPDATE"
+		query += (&PostgreSQLDialect{}).SelectForUpdate()
 	}
 	var state googlereviews.BackfillState
 	var startedAt, updatedAt string
@@ -417,7 +418,7 @@ func validGoogleReviewID(value string) bool {
 		return false
 	}
 	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' {
 			return false
 		}
 	}
@@ -429,7 +430,7 @@ func validGoogleReviewErrorCode(value string) bool {
 		return false
 	}
 	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_') {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
 			return false
 		}
 	}

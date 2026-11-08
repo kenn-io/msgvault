@@ -29,6 +29,23 @@ function fixture(handle: (body: Body) => unknown | Promise<unknown>) {
   });
   return { client, seen };
 }
+// Resolve the mocked HTTP response and wait until the actual response body has
+// been consumed before allowing Svelte to flush the resulting request chain.
+async function finishStale(finish: (value: unknown) => void, value: unknown) {
+  const response = Response.json(value);
+  const readText = response.text.bind(response);
+  let consumed!: () => void;
+  const bodyRead = new Promise<void>(resolve => { consumed = resolve; });
+  response.text = async () => {
+    const text = await readText();
+    consumed();
+    return text;
+  };
+  finish(response);
+  await bodyRead;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await tick();
+}
 afterEach(cleanup);
 
 it('starts backfill, reports API exhaustion limits, and searches archived reviews', async () => {
@@ -48,7 +65,7 @@ it('starts backfill, reports API exhaustion limits, and searches archived review
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   await screen.findByText('No more pages');
-  await fireEvent.click(screen.getByRole('button', { name: 'Backfill available history' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Import review history' }));
   await screen.findByText('Importing');
   expect(screen.getByText('API pagination does not guarantee lifetime coverage.')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh archive status' }));
@@ -333,7 +350,8 @@ it('clears unresolved recovery on target switch and ignores a late receipt respo
     if (body.action === 'get') return { review };
     if (body.action === 'preview_reply') return { preview: { review, comment: body.comment, confirmation_token: 'token1', receipt_id: 'receipt1', expires_at: '2099-01-01T00:00:00Z' } };
     if (body.action === 'confirm_reply') throw new TypeError('Connection lost');
-    return new Promise(resolve => finish = resolve);
+    if (body.action === 'receipt') return new Promise(resolve => finish = resolve);
+    return {};
   });
   const view = render(GoogleReviewsWorkspace, { client });
   await screen.findByRole('option', { name: 'shop' });
@@ -347,8 +365,7 @@ it('clears unresolved recovery on target switch and ignores a late receipt respo
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'other' } });
   await screen.findByText('No reviews on this page.');
-  finish({ receipt: { id: 'receipt1', status: 'submitting', created_at: '', updated_at: '' } });
-  await tick();
+  await finishStale(finish, { receipt: { id: 'receipt1', status: 'submitting', created_at: '', updated_at: '' } });
   expect(screen.queryByRole('button', { name: 'Check receipt' })).toBeNull();
   expect(screen.queryByText(/Outcome unknown|Submission is in progress/)).toBeNull();
   expect(screen.queryByText('receipt1')).toBeNull();
@@ -416,7 +433,7 @@ it('uses the requested workspace copy, preview failure text, and submit label', 
     return {};
   });
   render(GoogleReviewsWorkspace, { client });
-  expect(screen.getByText('Use your own approved Google project to read, archive, and search reviews.')).toBeDefined();
+  expect(screen.getByText('Use your own approved Google project.')).toBeDefined();
   await screen.findByRole('option', { name: 'shop' });
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
   const row = await screen.findByRole('button', { name: /Example Reviewer/ });
@@ -450,8 +467,7 @@ it('ignores late detail and list responses after changing target and clears cont
   await fireEvent.click(await screen.findByRole('button', { name: /Example Reviewer/ }));
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'other' } });
   await screen.findByText('No reviews on this page.');
-  finish({ review });
-  await tick();
+  await finishStale(finish, { review });
   expect(screen.queryByText('<b>Helpful service</b>')).toBeNull();
   expect(screen.queryByRole('textbox', { name: 'Public response' })).toBeNull();
 });
@@ -491,13 +507,13 @@ it('ignores a late page after target switch and after unmount', async () => {
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'other' } });
   await screen.findByText('No reviews on this page.');
-  finish({ reviews: [review] });
-  await tick();
+  await finishStale(finish, { reviews: [review] });
   expect(screen.queryByRole('button', { name: /Example Reviewer/ })).toBeNull();
+  const previousFinish = finish;
   await fireEvent.change(screen.getByLabelText('Target'), { target: { value: 'shop' } });
+  await waitFor(() => expect(finish).not.toBe(previousFinish));
   view.unmount();
-  finish({ reviews: [review] });
-  await tick();
+  await finishStale(finish, { reviews: [review] });
   expect(screen.queryByText('Example Reviewer')).toBeNull();
 });
 

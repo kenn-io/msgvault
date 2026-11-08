@@ -3,7 +3,7 @@ import { createAPIClient } from '../api/client';
 import { control, PreviewConflictError, ReceiptUnavailableError } from './api';
 
 it.each([
-  [502, 'google_reviews_credentials', 'Authorize the configured Google account again. Check its named app and required scopes.'],
+  [502, 'google_reviews_credentials', 'Reconnect the configured Google account and app with the required permissions.'],
   [403, 'google_reviews_permission', 'Google denied access. Check project approval, verified location, and account permissions.'],
   [429, 'google_reviews_quota', 'Google quota reached. Wait before refreshing live reviews.'],
   [503, 'google_reviews_temporary', 'Google is temporarily unavailable. Retry a live read later.'],
@@ -25,7 +25,7 @@ it('classifies a missing receipt separately from a missing live review', async (
 it('explains that starting an archive backfill requires owner authentication', async () => {
   const client = createAPIClient(async () => Response.json({ error: 'google_reviews_denied' }, { status: 403 }));
   await expect(control(client, { action: 'backfill', target: 'shop' }, new AbortController().signal))
-    .rejects.toThrow('Owner authentication is required to start a Google Reviews archive backfill.');
+    .rejects.toThrow('Sign in as the owner to import review history.');
 });
 
 it.each([

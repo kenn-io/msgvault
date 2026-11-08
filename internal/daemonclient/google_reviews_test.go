@@ -52,24 +52,27 @@ func TestGoogleReviewClientDoesNotReplayUnknownConfirmation(t *testing.T) {
 }
 
 func TestGoogleReviewsArchiveSearchUsesAuthenticatedGeneratedRequest(t *testing.T) {
+	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/google-reviews/archive/search", r.URL.Path)
-		assert.Equal(t, "synthetic needle", r.URL.Query().Get("q"))
-		assert.Equal(t, "shop", r.URL.Query().Get("target"))
-		assert.Equal(t, "2", r.URL.Query().Get("page"))
-		assert.Equal(t, "10", r.URL.Query().Get("page_size"))
-		assert.Equal(t, "owner", r.Header.Get("X-Api-Key"))
+		assert.Equal("/api/v1/google-reviews/archive/search", r.URL.Path)
+		assert.Equal("synthetic needle", r.URL.Query().Get("q"))
+		assert.Equal("shop", r.URL.Query().Get("target"))
+		assert.Equal("2", r.URL.Query().Get("page"))
+		assert.Equal("10", r.URL.Query().Get("page_size"))
+		assert.Equal("owner", r.Header.Get("X-Api-Key"))
 		_, err := w.Write([]byte(`{"query":"synthetic needle","target":"shop","total":0,"page":2,"page_size":10,"results":[]}`))
-		require.NoError(t, err)
+		if !assert.NoError(err) {
+			return
+		}
 	}))
 	defer server.Close()
 	client, err := New(Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	require.NoError(t, err)
-	defer func() { assert.NoError(t, client.Close()) }()
+	defer func() { assert.NoError(client.Close()) }()
 	result, err := client.SearchGoogleReviewsArchive(t.Context(), googlereviews.ArchiveSearchRequest{
 		Query: "synthetic needle", Target: "shop", Page: 2, PageSize: 10,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), result.Total)
-	assert.Equal(t, 2, result.Page)
+	assert.Equal(int64(0), result.Total)
+	assert.Equal(2, result.Page)
 }

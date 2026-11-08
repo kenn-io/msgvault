@@ -376,11 +376,6 @@ func withCoverageNote(state BackfillState) BackfillState {
 
 func (s *Service) runBackfill(ctx context.Context, key string, target Target, state BackfillState) {
 	defer s.finishBackfill(key)
-	provider, _, err := s.provider(ctx, target)
-	if err != nil {
-		s.failBackfill(ctx, target, archiveErrorCode(err))
-		return
-	}
 	for {
 		if state.PagesFetched == math.MaxInt64 {
 			s.failBackfill(ctx, target, "page_count_limit")
@@ -393,6 +388,13 @@ func (s *Service) runBackfill(ctx context.Context, key string, target Target, st
 		current, err := s.target(ctx, target.Name)
 		if err != nil || !reflect.DeepEqual(current, target) {
 			s.failBackfill(ctx, target, "configuration_changed")
+			return
+		}
+		// Each page gets a freshly checked token so long imports can refresh
+		// without reusing a snapshot that has expired or changed accounts.
+		provider, _, err := s.provider(ctx, target)
+		if err != nil {
+			s.failBackfill(ctx, target, archiveErrorCode(err))
 			return
 		}
 		page, err := provider.List(ctx, target.Location, state.NextPageToken, 50)

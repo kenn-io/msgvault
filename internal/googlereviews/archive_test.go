@@ -27,7 +27,7 @@ func (a *archiveTestStore) BeginGoogleReviewsBackfill(_ context.Context, target,
 	defer a.mu.Unlock()
 	a.begins++
 	if a.state.Status != "running" {
-		a.state = BackfillState{Target: target, Location: location, Status: "running", RunID: 1, StartedAt: timePointerForTest(time.Now())}
+		a.state = BackfillState{Target: target, Location: location, Status: "running", RunID: 1, StartedAt: new(time.Now())}
 	}
 	return a.state, nil
 }
@@ -145,6 +145,8 @@ func (p *archiveTestProvider) UpdateReply(context.Context, string, string) (Repl
 }
 
 func TestBackfillResumesPagesAndNeverWritesProvider(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	const location = "accounts/a/locations/l"
 	archive := &archiveTestStore{done: make(chan struct{})}
 	provider := &archiveTestProvider{pages: map[string]Page{
@@ -160,31 +162,33 @@ func TestBackfillResumesPagesAndNeverWritesProvider(t *testing.T) {
 	t.Cleanup(service.Close)
 
 	_, err := service.Execute(t.Context(), "", Request{Action: "backfill", Target: "shop"})
-	require.ErrorIs(t, err, ErrDenied)
+	require.ErrorIs(err, ErrDenied)
 	result, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
-	require.NoError(t, err)
-	require.NotNil(t, result.ArchiveSync)
-	assert.Equal(t, "running", result.ArchiveSync.Status)
+	require.NoError(err)
+	require.NotNil(result.ArchiveSync)
+	assert.Equal("running", result.ArchiveSync.Status)
 
 	select {
 	case <-archive.done:
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "backfill did not reach an observable completed state")
+	case <-time.After(30 * time.Second):
+		require.FailNow("backfill did not reach an observable completed state")
 	}
 	status, err := service.Execute(t.Context(), "owner", Request{Action: "archive_status", Target: "shop"})
-	require.NoError(t, err)
-	require.NotNil(t, status.ArchiveSync)
-	assert.Equal(t, "api_exhausted", status.ArchiveSync.Status)
-	assert.Equal(t, int64(2), status.ArchiveSync.PagesFetched)
-	assert.Equal(t, int64(2), status.ArchiveSync.ReviewsFetched)
-	assert.Equal(t, backfillCoverageNote, status.ArchiveSync.CoverageNote)
-	assert.Equal(t, []int{50, 50}, provider.pageSizes)
-	assert.Zero(t, provider.puts)
+	require.NoError(err)
+	require.NotNil(status.ArchiveSync)
+	assert.Equal("api_exhausted", status.ArchiveSync.Status)
+	assert.Equal(int64(2), status.ArchiveSync.PagesFetched)
+	assert.Equal(int64(2), status.ArchiveSync.ReviewsFetched)
+	assert.Equal(backfillCoverageNote, status.ArchiveSync.CoverageNote)
+	assert.Equal([]int{50, 50}, provider.pageSizes)
+	assert.Zero(provider.puts)
 }
 
 func TestBackfillPersistsOnlyClassifiedProviderFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	const location = "accounts/a/locations/l"
-	archive := &archiveTestStore{}
+	archive := &archiveTestStore{done: make(chan struct{})}
 	provider := &archiveTestProvider{err: ErrQuota}
 	target := Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: location, Enabled: true, OwnProject: true}
 	service := NewService(Options{
@@ -194,22 +198,24 @@ func TestBackfillPersistsOnlyClassifiedProviderFailure(t *testing.T) {
 	})
 	t.Cleanup(service.Close)
 	_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	select {
 	case <-archive.done:
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "backfill failure was not persisted")
+	case <-time.After(30 * time.Second):
+		require.FailNow("backfill failure was not persisted")
 	}
 	status, statusErr := service.Execute(t.Context(), "owner", Request{Action: "archive_status", Target: "shop"})
-	require.NoError(t, statusErr)
-	require.NotNil(t, status.ArchiveSync)
-	assert.Equal(t, "partial", status.ArchiveSync.Status)
-	assert.Equal(t, "quota", status.ArchiveSync.LastErrorCode)
-	assert.Zero(t, provider.puts)
+	require.NoError(statusErr)
+	require.NotNil(status.ArchiveSync)
+	assert.Equal("partial", status.ArchiveSync.Status)
+	assert.Equal("quota", status.ArchiveSync.LastErrorCode)
+	assert.Zero(provider.puts)
 }
 
 func TestConcurrentBackfillRequestsShareOneWorker(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	const location = "accounts/a/locations/l"
 	archive := &archiveTestStore{done: make(chan struct{})}
 	provider := &archiveTestProvider{
@@ -226,37 +232,37 @@ func TestConcurrentBackfillRequestsShareOneWorker(t *testing.T) {
 	t.Cleanup(service.Close)
 
 	_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
-	require.NoError(t, err)
+	require.NoError(err)
 	select {
 	case <-provider.listEntered:
 	case <-time.After(30 * time.Second):
-		require.FailNow(t, "backfill worker did not start its provider read")
+		require.FailNow("backfill worker did not start its provider read")
 	}
 
 	result, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
-	require.NoError(t, err)
-	require.NotNil(t, result.ArchiveSync)
-	assert.Equal(t, "running", result.ArchiveSync.Status)
-	assert.Equal(t, 1, provider.calls)
+	require.NoError(err)
+	require.NotNil(result.ArchiveSync)
+	assert.Equal("running", result.ArchiveSync.Status)
+	assert.Equal(1, provider.calls)
 	archive.mu.Lock()
-	assert.Equal(t, 1, archive.begins)
+	assert.Equal(1, archive.begins)
 	archive.mu.Unlock()
 
 	close(provider.listRelease)
 	select {
 	case <-archive.done:
 	case <-time.After(30 * time.Second):
-		require.FailNow(t, "backfill worker did not finish its observable archive update")
+		require.FailNow("backfill worker did not finish its observable archive update")
 	}
-	assert.Zero(t, provider.puts)
+	assert.Zero(provider.puts)
 }
-
-func timePointerForTest(value time.Time) *time.Time { return &value }
 
 var _ Archive = (*archiveTestStore)(nil)
 var _ Provider = (*archiveTestProvider)(nil)
 
 func TestInvalidateSettlesBackfillAndRejectsStaleResume(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	const location = "accounts/a/locations/l"
 	archive := &archiveTestStore{done: make(chan struct{})}
 	provider := &archiveTestProvider{pages: map[string]Page{"": {}}, listEntered: make(chan struct{}, 1), listRelease: make(chan struct{})}
@@ -270,33 +276,35 @@ func TestInvalidateSettlesBackfillAndRejectsStaleResume(t *testing.T) {
 	})
 	t.Cleanup(service.Close)
 	_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "alias"})
-	require.NoError(t, err)
+	require.NoError(err)
 	select {
 	case <-provider.listEntered:
 	case <-time.After(30 * time.Second):
-		require.FailNow(t, "provider read did not start")
+		require.FailNow("provider read did not start")
 	}
 	first, err := service.Execute(t.Context(), "owner", Request{Action: "invalidate_target", Target: "shop"})
-	require.NoError(t, err)
-	require.NotEmpty(t, first.CredentialChangeToken)
+	require.NoError(err)
+	require.NotEmpty(first.CredentialChangeToken)
 	archive.mu.Lock()
-	assert.Equal(t, "partial", archive.state.Status)
-	assert.Empty(t, archive.reviews)
+	assert.Equal("partial", archive.state.Status)
+	assert.Empty(archive.reviews)
 	archive.mu.Unlock()
 	_, err = service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "alias"})
-	assert.ErrorIs(t, err, ErrCredentials)
+	require.ErrorIs(err, ErrCredentials)
 	second, err := service.Execute(t.Context(), "owner", Request{Action: "invalidate_target", Target: "shop"})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = service.Execute(t.Context(), "owner", Request{Action: "resume_target", Target: "shop", ConfirmationToken: first.CredentialChangeToken})
-	assert.ErrorIs(t, err, ErrConflict)
+	require.ErrorIs(err, ErrConflict)
 	_, err = service.Execute(t.Context(), "owner", Request{Action: "resume_target", Target: "shop", ConfirmationToken: second.CredentialChangeToken})
-	require.NoError(t, err)
+	require.NoError(err)
 	close(provider.listRelease)
 	_, err = service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "alias"})
-	assert.NoError(t, err)
+	require.NoError(err)
 }
 
 func TestBackfillStopsWhenTargetDisabledBetweenPages(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	const location = "accounts/a/locations/l"
 	archive := &archiveTestStore{done: make(chan struct{})}
 	var mu sync.Mutex
@@ -310,15 +318,51 @@ func TestBackfillStopsWhenTargetDisabledBetweenPages(t *testing.T) {
 	})
 	t.Cleanup(service.Close)
 	_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
-	require.NoError(t, err)
+	require.NoError(err)
 	select {
 	case <-archive.done:
 	case <-time.After(30 * time.Second):
-		require.FailNow(t, "configuration change was not recorded")
+		require.FailNow("configuration change was not recorded")
 	}
 	archive.mu.Lock()
-	assert.Equal(t, "configuration_changed", archive.state.LastErrorCode)
-	assert.Equal(t, int64(1), archive.state.PagesFetched)
+	assert.Equal("configuration_changed", archive.state.LastErrorCode)
+	assert.Equal(int64(1), archive.state.PagesFetched)
 	archive.mu.Unlock()
-	assert.Equal(t, 1, provider.calls)
+	assert.Equal(1, provider.calls)
+}
+
+func TestBackfillChecksProviderAgainForEachPage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const location = "accounts/a/locations/l"
+	archive := &archiveTestStore{done: make(chan struct{})}
+	first := &archiveTestProvider{pages: map[string]Page{"": {NextPageToken: "second"}}}
+	refreshed := &archiveTestProvider{pages: map[string]Page{"second": {}}}
+	target := Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: location, Enabled: true, OwnProject: true}
+	var calls int
+	service := NewService(Options{
+		Archive: archive,
+		Targets: func(context.Context) ([]Target, error) { return []Target{target}, nil },
+		Provider: func(context.Context, Target) (Provider, string, error) {
+			calls++
+			if calls == 1 {
+				return first, "first-token", nil
+			}
+			return refreshed, "refreshed-token", nil
+		},
+	})
+	t.Cleanup(service.Close)
+	_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
+	require.NoError(err)
+	select {
+	case <-archive.done:
+	case <-time.After(30 * time.Second):
+		require.FailNow("backfill did not finish")
+	}
+	assert.Equal(2, calls)
+	assert.Equal(1, first.calls)
+	assert.Equal(1, refreshed.calls)
+	archive.mu.Lock()
+	assert.Equal("api_exhausted", archive.state.Status)
+	archive.mu.Unlock()
 }

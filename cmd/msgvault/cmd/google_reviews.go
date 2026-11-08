@@ -91,7 +91,7 @@ func newGoogleReviewsCmd(run googleReviewsRunner) *cobra.Command {
 				return err
 			}
 			if result == nil {
-				return errors.New("Google review response unavailable")
+				return errors.New("google review response unavailable")
 			}
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
 		}
@@ -139,7 +139,7 @@ func newGoogleReviewsCmd(run googleReviewsRunner) *cobra.Command {
 				return errors.New("configuration unavailable")
 			}
 			if isRemoteModeFor(state) || isAgentMode(state) {
-				return errors.New("Google review authorization and disconnect run on the daemon host only")
+				return errors.New("google review authorization and disconnect run on the daemon host only")
 			}
 			target, err := googleReviewTarget(state.cfg, args[0])
 			if err != nil {

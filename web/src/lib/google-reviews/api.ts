@@ -39,8 +39,8 @@ export async function control(client: APIClient, body: GoogleReviewsRequest, sig
   }
   if (response.status === 401) throw new Error('Sign in again, or authorize the configured Google account.');
   if (response.status === 403) {
-    if (body.action === 'backfill') throw new Error('Owner authentication is required to start a Google Reviews archive backfill.');
-    throw new Error('Access denied. Responses require an owner key, an owner session, and an enabled target.');
+    if (body.action === 'backfill') throw new Error('Sign in as the owner to import review history.');
+    throw new Error('Access denied. Use owner access and enable replies for this target.');
   }
   if (response.status === 404) throw new Error('Review or receipt unavailable. Refresh live reviews.');
   if (response.status === 409) throw new Error('Review changed or preview expired. Refresh and create a new preview.');

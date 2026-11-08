@@ -67,24 +67,26 @@ func TestActionFieldIsolation(t *testing.T) {
 }
 
 func TestArchivePageValidationBindsReviewNamesToLocation(t *testing.T) {
+	require := require.New(t)
 	page := Page{Reviews: []Review{{Name: "accounts/a/locations/l/reviews/r1", ReviewID: "r1", CreateTime: "2025-01-01T00:00:00Z"}}}
-	require.NoError(t, page.ValidateFor("shop", "accounts/a/locations/l"))
-	assert.ErrorIs(t, page.ValidateFor("shop", "accounts/a/locations/other"), ErrInvalid)
+	require.NoError(page.ValidateFor("shop", "accounts/a/locations/l"))
+	require.ErrorIs(page.ValidateFor("shop", "accounts/a/locations/other"), ErrInvalid)
 	page.Reviews[0].ReviewID = "../r1"
-	assert.ErrorIs(t, page.ValidateFor("shop", "accounts/a/locations/l"), ErrInvalid)
+	require.ErrorIs(page.ValidateFor("shop", "accounts/a/locations/l"), ErrInvalid)
 	page = Page{Reviews: []Review{{ReviewID: "r1", ReviewReply: &Reply{Comment: strings.Repeat("x", 2<<20)}}}}
-	assert.ErrorIs(t, page.ValidateFor("shop", "accounts/a/locations/l"), ErrInvalid)
+	require.ErrorIs(page.ValidateFor("shop", "accounts/a/locations/l"), ErrInvalid)
 }
 
 func TestTargetPolicy(t *testing.T) {
+	require := require.New(t)
 	valid := Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: "accounts/a/locations/l", Enabled: true, OwnProject: true}
-	require.NoError(t, valid.Validate())
+	require.NoError(valid.Validate())
 	for _, change := range []func(*Target){func(v *Target) { v.OAuthApp = "" }, func(v *Target) { v.OwnProject = false }, func(v *Target) { v.Location = "accounts/a/locations/../" }, func(v *Target) { v.Provider = "facebook" }} {
 		v := valid
 		change(&v)
-		require.Error(t, v.Validate())
+		require.Error(v.Validate())
 	}
 	valid.Enabled = false
 	valid.Location = ""
-	require.NoError(t, valid.Validate())
+	require.NoError(valid.Validate())
 }

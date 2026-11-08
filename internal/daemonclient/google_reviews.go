@@ -31,11 +31,11 @@ func (c *Client) ControlGoogleReviews(ctx context.Context, request googlereviews
 		return nil, err
 	}
 	if response.JSON200 == nil {
-		return nil, errors.New("Google review response unavailable; use the pre-issued receipt to check an attempted confirmation")
+		return nil, errors.New("google review response unavailable; use the pre-issued receipt to check an attempted confirmation")
 	}
 	var result googlereviews.Result
 	if json.Unmarshal(response.Body, &result) != nil {
-		return nil, errors.New("Google review response invalid; use the pre-issued receipt to check an attempted confirmation")
+		return nil, errors.New("google review response invalid; use the pre-issued receipt to check an attempted confirmation")
 	}
 	return &result, nil
 }
@@ -57,11 +57,11 @@ func (c *Client) SearchGoogleReviewsArchive(ctx context.Context, request googler
 		return nil, err
 	}
 	if response.JSON200 == nil {
-		return nil, errors.New("Google Reviews archive search response unavailable")
+		return nil, errors.New("google Reviews archive search response unavailable")
 	}
 	var result googlereviews.ArchiveSearchResponse
 	if json.Unmarshal(response.Body, &result) != nil {
-		return nil, errors.New("Google Reviews archive response was invalid")
+		return nil, errors.New("google Reviews archive response was invalid")
 	}
 	return &result, nil
 }
