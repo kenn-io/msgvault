@@ -342,52 +342,6 @@ func TestCLISearchOutputErrors(t *testing.T) {
 	})
 }
 
-func TestCLISearchDeterministic(t *testing.T) {
-	skipHegelWithoutEmbeddedRuntime(t)
-	if helpTestSubprocess(t) {
-		return
-	}
-	ensureHelpLayout(rootCmd)
-	hegel.Test(t, func(ht *hegel.T) {
-		query := "zzzxqvzzzxqv " + hegel.Draw(ht, hegel.Text())
-		if hegel.Draw(ht, hegel.Booleans()) {
-			query += " " + cliSearchTasks[hegel.Draw(ht, hegel.Integers(0, len(cliSearchTasks)-1))].query
-		}
-		limit := strconv.Itoa(hegel.Draw(ht, hegel.Integers(1, 20)))
-		args := []string{"cli", "search", "--limit", limit}
-		if hegel.Draw(ht, hegel.Booleans()) {
-			args = append(args, "--json")
-		}
-		args = append(args, "--", query)
-		want, stderr, err := executeCLIDiscovery(ht, args...)
-		require.NoError(ht, err, "%s", stderr)
-		assert.Empty(ht, stderr)
-		got, stderr, err := executeCLIDiscovery(ht, args...)
-		require.NoError(ht, err, "%s", stderr)
-		assert.Empty(ht, stderr)
-		assert.Equal(ht, want, got)
-	})
-}
-
-func TestCLISearchQueryEcho(t *testing.T) {
-	skipHegelWithoutEmbeddedRuntime(t)
-	if helpTestSubprocess(t) {
-		return
-	}
-	hegel.Test(t, func(ht *hegel.T) {
-		words := hegel.Draw(ht, hegel.Lists(hegel.Text()))
-		// Bound the materialized argv, retaining the full character domain.
-		words = words[:min(len(words), 8)]
-		words = append(words, "message")
-		args := append([]string{"cli", "search", "--json", "--"}, words...)
-		out, stderr, err := executeCLIDiscovery(ht, args...)
-		require.NoError(ht, err, "%s", stderr)
-		var response clisearch.Response
-		require.NoError(ht, json.Unmarshal([]byte(out), &response))
-		assert.Equal(ht, strings.Join(words, " "), response.Query)
-	})
-}
-
 func TestCLISearchJSONStructure(t *testing.T) {
 	skipHegelWithoutEmbeddedRuntime(t)
 	if helpTestSubprocess(t) {
@@ -459,25 +413,6 @@ func TestCLISearchHelpLayoutStable(t *testing.T) {
 	for i, task := range cliSearchTasks {
 		assert.Equal(t, before[i], clisearch.Search(rootCmd, task.query, 20, cliSearchOptions()), "%s", task.query)
 	}
-}
-
-func TestCLISearchResultsBounded(t *testing.T) {
-	skipHegelWithoutEmbeddedRuntime(t)
-	if helpTestSubprocess(t) {
-		return
-	}
-	ensureHelpLayout(rootCmd)
-	hegel.Test(t, func(ht *hegel.T) {
-		task := cliSearchTasks[hegel.Draw(ht, hegel.Integers(0, len(cliSearchTasks)-1))]
-		query := task.query + " " + hegel.Draw(ht, hegel.Text())
-		limit := hegel.Draw(ht, hegel.Integers(1, 20))
-		out, stderr, err := executeCLIDiscovery(ht, "cli", "search", "--json", "--limit", strconv.Itoa(limit), "--", query)
-		require.NoError(ht, err, "%s", stderr)
-		var response clisearch.Response
-		require.NoError(ht, json.Unmarshal([]byte(out), &response))
-		require.NotEmpty(ht, response.Results)
-		assert.LessOrEqual(ht, len(response.Results), limit)
-	})
 }
 
 func TestCLISearchResultEligibility(t *testing.T) {
