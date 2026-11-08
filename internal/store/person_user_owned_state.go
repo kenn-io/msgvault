@@ -44,6 +44,12 @@ func (s *Store) personHasUserOwnedStateTx(
 				WHERE person_id = persons.id AND source = 'user')
 			OR EXISTS (SELECT 1 FROM person_dates
 				WHERE person_id = persons.id AND source = 'user')
+			OR EXISTS (SELECT 1 FROM important_date_subjects subject
+				WHERE subject.owner_uid = persons.vcard_uid OR EXISTS (
+					SELECT 1 FROM important_date_identity_bindings binding
+					JOIN important_date_reconciliations reconciliation ON reconciliation.uid = binding.reconciliation_uid AND reconciliation.active = 1
+					WHERE binding.original_subject = 'owned/' || subject.uid AND binding.effective_owner = 'person/' || persons.vcard_uid
+				))
 			OR EXISTS (SELECT 1 FROM person_categories
 				WHERE person_id = persons.id AND source = 'user')
 			OR EXISTS (SELECT 1 FROM person_media

@@ -1620,3 +1620,39 @@ func TestCardDAVDisplayNameOwnershipUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestCardDAVTombstoneRetainsPersonWithImportantDateSubject(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	input := remoteResource(book.CanonicalURL+"owner.vcf", "remote-owner-example", "Example Owner", "owner@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
+	})
+	must.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	must.NoError(err)
+	must.NotNil(resource.PersonID)
+	person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
+	must.NoError(err)
+	subject, err := st.CreateImportantDateSubjectContext(t.Context(), store.ImportantDateSubjectInput{
+		OwnerUID: person.VCardUID, Kind: "pet", DisplayName: "Example pet",
+		Date: store.PartialDate{Month: new(10), Day: new(23)},
+	})
+	must.NoError(err)
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	must.NoError(err)
+	must.Len(books, 1)
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: books[0].SyncRevision, RemovedHrefs: []string{input.Href},
+	})
+	must.NoError(err)
+	_, err = st.GetPersonContext(t.Context(), person.ID)
+	must.NoError(err)
+	subjects, err := st.ListImportantDateSubjectsContext(t.Context(), person.VCardUID)
+	must.NoError(err)
+	must.Len(subjects, 1)
+	checks.Equal(subject.UID, subjects[0].UID)
+}
