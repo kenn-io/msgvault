@@ -76,8 +76,6 @@ func daemonAccountsToStats(accounts []daemonclient.CLIAccount, countsPending boo
 			MessageCount:       account.MessageCount,
 			CountsPending:      countsPending,
 			SourceDeletedCount: account.SourceDeletedCount,
-			Stale:              account.Stale,
-			AsOf:               account.AsOf,
 			LastSync:           account.LastSync,
 		}
 	}
@@ -111,14 +109,11 @@ func formatMessagesCell(s accountStats) string {
 	if s.CountsPending {
 		return "pending"
 	}
-	count := formatCount(s.MessageCount)
 	if s.SourceDeletedCount > 0 {
-		count = fmt.Sprintf("%s (+%s deleted from source)", count, formatCount(s.SourceDeletedCount))
+		return fmt.Sprintf("%s (+%s deleted from source)",
+			formatCount(s.MessageCount), formatCount(s.SourceDeletedCount))
 	}
-	if s.Stale {
-		count += " (snapshot)"
-	}
-	return count
+	return formatCount(s.MessageCount)
 }
 
 func outputAccountsJSON(stats []accountStats) error {
@@ -140,10 +135,6 @@ func outputAccountsJSON(stats []accountStats) error {
 		} else {
 			entry["message_count"] = s.MessageCount
 			entry["source_deleted_count"] = s.SourceDeletedCount
-			if s.Stale {
-				entry["stale"] = true
-				entry["as_of"] = s.AsOf
-			}
 		}
 		if s.LastSync != nil && !s.LastSync.IsZero() {
 			entry["last_sync"] = s.LastSync.Format(time.RFC3339)
@@ -189,8 +180,6 @@ type accountStats struct {
 	DisplayName        string
 	MessageCount       int64
 	SourceDeletedCount int64
-	Stale              bool
-	AsOf               *time.Time
 	LastSync           *time.Time
 }
 

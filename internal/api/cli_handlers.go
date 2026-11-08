@@ -2822,8 +2822,13 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
 	if counter, ok := s.store.(sourceMessageCounter); ok && !s.sourceScopedRead(r) {
-		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
-			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
+		sourceIdentities := make([]string, len(sources))
+		for i, src := range sources {
+			sourceIdentities[i] = fmt.Sprintf("%d:%q:%q", src.ID, src.SourceType, src.Identifier)
+		}
+		slices.Sort(sourceIdentities)
+		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.getVersion(
+			r.Context(), s.importContext, "", strings.Join(sourceIdentities, "\n"), s.statsSnapshotWait, counter.CountMessagesBySourceContext,
 		)
 		// Older clients can't tell placeholder zeros from real counts, so only opted-in callers get them.
 		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"

@@ -1033,12 +1033,13 @@ Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
 anyway: the response sets `"counts_pending": true`, and every account's
 `message_count` and `source_deleted_count` is a placeholder `0`.
 
-Once an account-count snapshot exists, message counts reuse it immediately
-while a refresh runs, even after a long gap between listings. The response carries
-the actual previous counts, `"stale": true`, and the original `as_of`.
+Once an account-count snapshot exists for the listed account identities, message
+counts reuse it immediately while a refresh runs, even after a long gap between
+listings. The response carries the actual previous counts, `"stale": true`, and the original `as_of`.
 It omits `counts_pending`. This also applies to fast archives after new mail arrives.
-The CLI marks these counts with ` (snapshot)` in the messages column and adds
-`stale: true` and the original `as_of` to JSON rows. Pending counts still show `pending`.
+Adding or replacing an account uses the existing bounded count wait. If that
+wait expires, an older snapshot can still be returned as stale. Pending counts
+apply when no previous snapshot exists.
 
 The pending-counts header also gives virtual-account discovery a zero wait
 budget: previous children can be returned with `virtual_accounts_unavailable: true`,

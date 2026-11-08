@@ -368,3 +368,37 @@ func TestHandleCLIAccountsOptionalCatalogPreservesStrictRefresh(t *testing.T) {
 		assert.Equal(t, first, strict)
 	})
 }
+
+func TestHandleCLIAccountsReplacementWaitsForOwnCounts(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite reuses the removed source ID")
+	st := testutil.NewTestStore(t)
+	synctest.Test(t, func(t *testing.T) {
+		srv, slow, sourceID := newSlowAccountsServer(t, st)
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+		getAccounts := func() cliAccountsResponse {
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var resp cliAccountsResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			return resp
+		}
+		first := getAccounts()
+		require.Len(t, first.Accounts, 1)
+		require.EqualValues(t, 1, first.Accounts[0].MessageCount)
+		require.NoError(t, st.RemoveSource(sourceID))
+		replacement, err := st.GetOrCreateSource("gmail", "replacement@example.org")
+		require.NoError(t, err)
+		require.Equal(t, sourceID, replacement.ID, "the real SQLite creation path reuses the highest ID")
+		close(slow.release)
+		fresh := getAccounts()
+		require.Len(t, fresh.Accounts, 1)
+		assert.Equal(t, replacement.Identifier, fresh.Accounts[0].Email)
+		assert.Zero(t, fresh.Accounts[0].MessageCount, "the new account must not inherit the removed account's count")
+		assert.False(t, fresh.Stale, "a replacement follows the existing refresh wait")
+		started := time.Now()
+		repeat := getAccounts()
+		assert.Zero(t, time.Since(started))
+		assert.True(t, repeat.Stale, "matching accounts retain immediate reuse")
+	})
+}

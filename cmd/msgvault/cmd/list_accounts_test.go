@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -115,19 +113,4 @@ func TestListAccountsPendingCountsRemainExplicit(t *testing.T) {
 	assert.Contains(output, `"counts_pending": true`)
 	assert.NotContains(output, "message_count", "unknown counts are omitted rather than zero")
 	assert.Equal("0", formatMessagesCell(accountStats{}), "known empty accounts still show zero")
-}
-
-func TestListAccountsSnapshotCounts(t *testing.T) {
-	asOf := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
-	stats := daemonAccountsToStats([]daemonclient.CLIAccount{{ID: 7, Email: "counts@example.test", Type: "gmail", MessageCount: 1234, SourceDeletedCount: 2, Stale: true, AsOf: &asOf}}, false)
-	require.Len(t, stats, 1)
-	assert.Equal(t, "1,234 (+2 deleted from source) (snapshot)", formatMessagesCell(stats[0]))
-	done := captureStdout(t)
-	require.NoError(t, outputAccountsJSON(stats))
-	var rows []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(done()), &rows))
-	require.Len(t, rows, 1)
-	assert.Equal(t, float64(1234), rows[0]["message_count"])
-	assert.Equal(t, true, rows[0]["stale"])
-	assert.Equal(t, "2024-01-02T03:04:05Z", rows[0]["as_of"])
 }
