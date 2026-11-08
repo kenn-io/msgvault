@@ -89,6 +89,8 @@
   const seedAddress = initialCandidate?.input ?? currentAddress;
   let originalInput = $state<Input | undefined>(initialCandidate?.input ?? (currentAddress?.address_kind === 'postal' ? currentAddress.assessment?.original ?? copyPostalInput(currentAddress) : undefined));
   let addressTarget = $state('');
+  let addressTargetInvalid = $state(false);
+  let addressTargetSelect = $state<HTMLSelectElement>();
   let addressEdited = $state(false);
   let editedAfterCapture = $state(false);
   let postOfficeBox = $state(seedAddress?.post_office_box ?? '');
@@ -358,7 +360,12 @@
     event?.preventDefault();
     if (submitting || !controller.canWriteProfile || controller !== initialController || (controller.person?.id ?? controller.structuredProfile?.person.id ?? 0) !== initialPersonID) return;
     validationError = null;
-    if (initialCandidate && !addressTarget) { validationError = 'Choose how to save this address.'; return; }
+    if (initialCandidate && !addressTarget) {
+      addressTargetInvalid = true;
+      await tick();
+      addressTargetSelect?.focus();
+      return;
+    }
     const body = patch();
     if (initialSection === 'addresses') {
       const address = body.addresses?.add?.[0];
@@ -463,12 +470,13 @@
     {:else if section === 'addresses'}
       {#if initialCandidate}
         <p class="postal-note">Edits keep the original source.</p>
-        <label>Save address as<select bind:value={addressTarget} disabled={submitting}>
+        <label>Save address as<select bind:this={addressTargetSelect} bind:value={addressTarget} aria-required="true" aria-invalid={addressTargetInvalid && !addressTarget} aria-describedby={addressTargetInvalid && !addressTarget ? `${uid}-address-target-error` : undefined} disabled={submitting}>
           <option value="">Choose…</option><option value="add">Add a new address</option>
           {#each controller.structuredProfile?.addresses.filter(address => address.address_kind === 'postal') ?? [] as address (address.envelope.id)}
             <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText({ ...address, original_value: '' }) || 'No current address'}</option>
           {/each}
         </select></label>
+        {#if addressTargetInvalid && !addressTarget}<p id="{uid}-address-target-error" class="field-error">Choose how to save this address.</p>{/if}
       {/if}
       <label
         >Address kind

@@ -62,7 +62,13 @@ describe('Postal claim review', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
     expect(await screen.findByLabelText('Unit or apartment')).toHaveProperty('value', 'Unit 7');
     expect(requests.some(request => request.url.endsWith('/addresses/assess'))).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    const target = screen.getByLabelText('Save address as');
+    expect(document.activeElement).toBe(target);
+    expect(target.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText('Choose how to save this address.')).toBeDefined();
     await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
+    expect(screen.queryByText('Choose how to save this address.')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
     const patch = requests.find(request => request.method === 'PATCH')!;
