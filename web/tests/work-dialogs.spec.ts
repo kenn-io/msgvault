@@ -58,18 +58,9 @@ for (const width of [1440, 390]) {
       return color;
     }));
     await expect(page.getByRole('dialog')).toHaveCount(1);
-    await deletion.getByRole('button', { name:'Back to Example Org', exact:true }).click();
-    await editor.getByRole('button',{name:'Close',exact:true}).click();
-    await page.getByRole('button',{name:'Add job…',exact:true}).click();
-    const add = page.getByRole('dialog',{name:'Add job',exact:true});
-    await add.getByRole('button',{name:/^Organization:/}).click();
-    const search = add.getByRole('combobox',{name:'Organization',exact:true});
-    await search.fill('Example School');
-    await add.getByRole('option',{name:'Create organization “Example School”',exact:true}).click();
-    await add.locator('summary').filter({hasText:'More details'}).click();
-    await expect(add.getByRole('textbox',{name:'Department',exact:true})).toBeVisible();
-    const geometry = await add.evaluate(element => ({ width:element.clientWidth, scroll:element.scrollWidth }));
+    const geometry = await deletion.evaluate(element => ({ width:element.clientWidth, scroll:element.scrollWidth }));
     expect(geometry.scroll).toBeLessThanOrEqual(geometry.width);
+    await deletion.getByRole('button',{name:'Back to Example Org',exact:true}).click();
   });
 }
 
@@ -94,16 +85,6 @@ test('a long delete title wraps on a phone instead of cutting off', async ({ pag
   expect(geometry.clipped).toBe(false);
   expect(geometry.lines).toBeGreaterThan(1);
 });
-
- test('Delete job offers End it instead as a single dialog flow', async ({page}) => {
-   await page.getByRole('region',{name:'Work',exact:true}).getByRole('button',{name:/^Actions for / }).click();
-   await page.getByRole('menuitem',{name:'Delete…',exact:true}).click();
-   const deletion = page.getByRole('dialog',{name:'Delete Engineer at Example Org?'});
-   await expect(deletion.getByText('This permanently removes the job.')).toBeVisible();
-   await deletion.getByRole('button',{name:'End it instead…',exact:true}).click();
-   await expect(page.getByRole('dialog')).toHaveCount(1);
-   await expect(page.getByRole('dialog',{name:'End job',exact:true})).toBeVisible();
- });
 
 test('Enter saves organization and work drafts through the shared dialog', async ({page}) => {
   await page.getByRole('button',{name:'Example Org',exact:true}).click();

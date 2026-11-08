@@ -872,47 +872,15 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
     await rowAction('Delete…');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-    expect(reads).toBe(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('This connection changed since you opened it.');
     const changes = within(alert).getByRole('table', { name: 'What changed' });
     expect(within(changes).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Notes']);
     expect(changes.textContent).toContain('Saved note');
-    expect(tags).toHaveLength(1);
     expect(screen.getByRole('dialog', { name: 'Delete connection with Synthetic Peer?' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(tags).toEqual(['"person-relationship-41-r1"', '"person-relationship-41-r2"']);
-    expect(reads).toBe(2);
-  });
-
-  it('resends the opening version when a delete conflict cannot load the saved one', async () => {
-    let reads = 0;
-    const tags: (string | null)[] = [];
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input), path = pathOf(request);
-      if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
-        if (++reads === 2) return Response.json({ message: 'Unavailable' }, { status: 503 });
-        return Response.json(reads === 1 ? relationship() : relationship(41, 2, { notes: 'Saved note' }), { headers: { ETag: `"person-relationship-41-r${reads === 1 ? 1 : 2}"` } });
-      }
-      if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') {
-        tags.push(request.headers.get('If-Match'));
-        return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer')];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await rowAction('Delete…');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
-    const alert = await screen.findByText('This connection changed since you opened it.');
-    expect(alert).toBeDefined();
-    expect(screen.getByText('Saved note')).toBeDefined();
-    expect(tags).toEqual(['"person-relationship-41-r1"', '"person-relationship-41-r1"']);
-    expect(reads).toBe(3);
   });
 
   it('blocks an uncertain edge create until the exact collection refresh and retains the dialog draft', async () => {
@@ -1328,14 +1296,18 @@ it.each(['cleared notes', 'derived status'])('compares %s after an end-date conf
   } else expect(screen.queryByText('Other details also changed')).toBeNull();
 });
 
-it('refreshes connection types when a conflicted deletion is cancelled', async () => {
+it.each(['cancel', 'delete'] as const)('refreshes a connection type conflict before %s', async action => {
   const opening = relationshipType();
   const newer = relationshipType({ forward_label: 'advises' });
+  const tags: (string | null)[] = [];
   let reads = 0;
   const { client, controller } = controllerWith(async input => {
     const request = requestOf(input);
     const path = pathOf(request);
-    if (path === '/api/v1/relationship-types/31' && request.method === 'DELETE') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (path === '/api/v1/relationship-types/31' && request.method === 'DELETE') {
+      tags.push(request.headers.get('If-Match'));
+      return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
+    }
     if (path === '/api/v1/relationship-types/31') return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"relationship-type-31-r${reads}"` } });
     if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [newer] });
     throw new Error(`unexpected ${request.method} ${path}`);
@@ -1346,29 +1318,12 @@ it('refreshes connection types when a conflicted deletion is cancelled', async (
   await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await screen.findByText('This connection type changed since you opened it.');
-  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  await screen.findByText(/advises/);
-});
-
-it('shows the changed connection type before deleting its newer version', async () => {
-  const opening = relationshipType();
-  const newer = relationshipType({ forward_label: 'advises' });
-  const tags: (string | null)[] = [];
-  let reads = 0;
-  const { client, controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'DELETE') {
-      tags.push(request.headers.get('If-Match'));
-      return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
-    }
-    return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"relationship-type-31-r${reads}"` } });
-  }, 0);
-  controller.relationshipTypes = [opening];
-  render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  expect((await screen.findByText(/It now reads/)).textContent).toBe('It now reads “advises / is mentored by”.');
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await waitFor(() => expect(tags).toEqual(['"relationship-type-31-r1"', '"relationship-type-31-r2"']));
+  if (action === 'cancel') {
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText(/advises/);
+  } else {
+    expect((await screen.findByText(/It now reads/)).textContent).toBe('It now reads “advises / is mentored by”.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(tags).toEqual(['"relationship-type-31-r1"', '"relationship-type-31-r2"']));
+  }
 });

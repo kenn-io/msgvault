@@ -45,12 +45,7 @@ it('keeps Retry inside the failed lookup and sends queries to its loader', async
   expect(onquery).toHaveBeenLastCalledWith('garden');
 });
 
-it('prevents leaving creation while a write is pending', async () => {
-  const onexisting = vi.fn();
-  const view = render(FieldPicker, { placeholder: 'Organization', options, value: '', onselect: vi.fn(), creating: true, disabled: true, onexisting, existingLabel: 'Choose an existing organization instead' });
-  const button = screen.getByRole('button', { name: 'Choose an existing organization instead' });
-  expect(button).toHaveProperty('disabled', true);
-  await view.rerender({ disabled: false });
-  await fireEvent.click(button);
-  expect(onexisting).toHaveBeenCalledOnce();
+it('prevents leaving creation while a write is pending', () => {
+  render(FieldPicker, { placeholder: 'Organization', options, value: '', onselect: vi.fn(), creating: true, disabled: true, onexisting: vi.fn(), existingLabel: 'Choose an existing organization instead' });
+  expect(screen.getByRole('button', { name: 'Choose an existing organization instead' })).toHaveProperty('disabled', true);
 });

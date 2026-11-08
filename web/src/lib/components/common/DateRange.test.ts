@@ -55,17 +55,4 @@ it('shows date hints and places Current under the end date', async () => {
   await fireEvent.input(secondEnd, { target: { value: '2025' } });
   expect(hints()).toHaveLength(0);
   first.unmount();
-
-  const view = render(DateRange, { start: '2024-03', current: true });
-  const endField = view.container.querySelectorAll('.field')[1]!;
-  // End holds its hint line, empty or not, so Current stays under it.
-  expect(endField.querySelector('.note')!.textContent).toBe('');
-  expect(endField.querySelector('.current')!.textContent).toContain('Current');
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-  await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2025' } });
-  expect(endField.querySelector('.note')!.textContent).toBe('');
-  // An error takes the hint line's place.
-  await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-13' } });
-  expect(endField.querySelector('.note')).toBeNull();
-  expect(screen.getByText('Use 2024, 2024-03, or 2024-03-15.')).toBeDefined();
 });

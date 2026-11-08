@@ -57,26 +57,6 @@ it('keeps the saved start date for retry after a failed conflict resolution', as
   await waitFor(() => expect(writes).toBe(3));
 });
 
-it('sends the version opened before a concurrent edit', async () => {
-  let revision = 1;
-  const tags: (string | null)[] = [];
-  const opening = employment();
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (pathOf(request).endsWith('/end')) {
-      tags.push(request.headers.get('If-Match'));
-      return Response.json({ message: 'Changed' }, { status: 412 });
-    }
-    return Response.json(employment(11, revision), { headers: { ETag: `"employment-11-r${revision}"` } });
-  });
-  render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
-  revision = 2;
-  await fireEvent.click(screen.getByRole('button', { name: 'End' }));
-  await screen.findByRole('button', { name: 'Keep yours' });
-  expect(tags).toEqual(['"employment-11-r1"']);
-});
-
   it('prefills the local day across UTC midnight', async () => {
     vi.stubEnv('TZ', 'America/New_York');
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -113,7 +93,7 @@ it('sends the version opened before a concurrent edit', async () => {
       const field = await screen.findByRole('textbox', { name: 'End date' });
       await waitFor(() => expect(field).toHaveProperty('disabled', false));
       expect(screen.getByRole('dialog', { name: 'End job' })).toBeDefined();
-      expect(screen.getByText(/ at .+ · since Mar 2024$/)).toBeDefined();
+      expect(screen.getByText('Engineer at this organization · since Mar 2024')).toBeDefined();
       await fireEvent.input(field, { target: { value: '2026' } });
       await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'End' }));

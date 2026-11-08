@@ -42,18 +42,13 @@ describe('relationship choices', () => {
     expect(relationshipPhrase('met', 'outgoing', 'met')).toBe('has met');
     expect(relationshipPhrase('custom', 'outgoing', 'mentors')).toBe('mentors');
     expect(relationshipPhrase('custom', 'outgoing', 'parent')).toBe('parent');
+    expect(relationshipPhrase('friend', 'outgoing', 'buddy')).toBe('buddy');
+    expect(relationshipPhrase('agent', 'incoming', 'representative')).toBe('representative');
+    expect(relationshipPhrase('agent', 'outgoing', 'pal')).toBe('pal');
   });
 });
 
 it('uses type and direction for phrasing when a custom label matches a built-in label', () => {
   const choices = relationshipTypeOptions([type('custom', 'parent', 'child', { ownership: 'user' })])[0].children!;
   expect(choices.map(choice => choice.displayLabel)).toEqual(['child', 'parent']);
-});
-
-it.each([
-  ['friend', 'outgoing', 'buddy', 'buddy'],
-  ['agent', 'incoming', 'representative', 'representative'],
-  ['agent', 'outgoing', 'pal', 'pal'],
-] as const)('keeps the catalog label for renamed %s %s', (slug, direction, label, expected) => {
-  expect(relationshipPhrase(slug, direction, label)).toBe(expected);
 });
