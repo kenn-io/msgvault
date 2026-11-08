@@ -14,13 +14,13 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
-	"go.kenn.io/msgvault/internal/meetingidentity"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
 	syncStateVersion           = 1
-	notionSnapshotVersion      = 1
+	notionSnapshotVersion      = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
 	unknownTranscriptRetrySpan = 48 * time.Hour
@@ -117,14 +117,14 @@ func (s syncState) validate() error {
 			return fmt.Errorf("pending[%d] has a blank block_id", index)
 		}
 		if _, duplicate := seen[pending.BlockID]; duplicate {
-			return fmt.Errorf("pending contains duplicate block_id %q", pending.BlockID)
+			return errors.New("pending contains duplicate block_id")
 		}
 		seen[pending.BlockID] = struct{}{}
 		if _, err := time.Parse(time.RFC3339, pending.NextAttemptAt); err != nil {
-			return fmt.Errorf("pending %q has invalid next_attempt_at: %w", pending.BlockID, err)
+			return errors.New("saved next retry time must use RFC3339")
 		}
 		if _, err := time.Parse(time.RFC3339, pending.RetryUntil); err != nil {
-			return fmt.Errorf("pending %q has invalid retry_until: %w", pending.BlockID, err)
+			return errors.New("saved retry deadline must use RFC3339")
 		}
 	}
 	deadlineIDs := make([]string, 0, len(s.TranscriptRetryUntil))
@@ -137,7 +137,7 @@ func (s syncState) validate() error {
 			return errors.New("transcript retry deadline has a blank block ID")
 		}
 		if _, err := time.Parse(time.RFC3339, s.TranscriptRetryUntil[id]); err != nil {
-			return fmt.Errorf("transcript retry deadline %q is invalid: %w", id, err)
+			return errors.New("transcript retry deadline must use RFC3339")
 		}
 	}
 	return nil
@@ -197,7 +197,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	result, err := imp.client.QueryMeetingNotes(ctx, maxQueryResults)
 	if err != nil {
 		sum.Errors++
-		return sum, fmt.Errorf("query Notion meeting notes: %w", err)
+		return sum, hydrationFailure("query Notion meeting notes", err)
 	}
 	if result == nil {
 		sum.Errors++
@@ -250,7 +250,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		if _, duplicate := seen[id]; duplicate {
 			sum.Errors++
-			return sum, fmt.Errorf("notion discovery returned duplicate meeting ID %q", id)
+			return sum, errors.New("notion discovery returned a duplicate meeting ID")
 		}
 		seen[id] = struct{}{}
 		visible[id] = meeting
@@ -278,11 +278,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		if loadErr != nil {
 			sum.Errors++
 			if !errors.Is(loadErr, ErrRateLimited) {
-				return sum, fmt.Errorf("load pending Notion meeting %s: %w", id, loadErr)
+				return sum, hydrationFailure("load pending Notion meeting", loadErr)
 			}
 			pending.NextAttemptAt = now.Add(transcriptRetryCadence).Format(time.RFC3339)
 			pendingByID[id] = pending
-			progress("pending Notion meeting " + id + ": load failed; retry deferred")
+			progress("pending Notion meeting: load failed; retry deferred")
 			continue
 		}
 		work[id] = meeting
@@ -322,28 +322,30 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		hydrated, hydrateErr := hydrator.Hydrate(ctx, meeting)
 		if hydrateErr != nil {
 			sum.Errors++
-			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: %w", id, hydrateErr))
-			progress(fmt.Sprintf("meeting %s: hydration failed", id))
+			hardErrors = append(hardErrors, hydrationFailure("read Notion meeting", hydrateErr))
+			progress("Notion meeting: hydration failed")
 			continue
 		}
 
-		providerTranscriptMissing := strings.TrimSpace(hydrated.Transcript) == ""
+		// Archived preservation can replace this tree with complete older evidence.
+		// Maintenance follows the current fetch, including nonempty prefixes.
+		providerTranscriptIncomplete := strings.TrimSpace(hydrated.Transcript) == "" ||
+			!hydrated.TranscriptTree.Complete || hydrated.TranscriptTree.Filtered
+		children := hydrated.Discovery.MeetingNotes.Children
+		if (children.SummaryBlockID != "" && (!hydrated.SummaryTree.Complete || hydrated.SummaryTree.Filtered)) ||
+			(children.NotesBlockID != "" && (!hydrated.NotesTree.Complete || hydrated.NotesTree.Filtered)) ||
+			(children.TranscriptBlockID != "" && (!hydrated.TranscriptTree.Complete || hydrated.TranscriptTree.Filtered)) {
+			sum.PartialCoverage = true
+		}
 		archived, recoverErr := imp.archivedState(ctx, source.ID, id)
 		if recoverErr != nil {
 			sum.Errors++
-			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived evidence: %w", id, recoverErr))
+			hardErrors = append(hardErrors, hydrationFailure("recover archived Notion evidence", recoverErr))
 			continue
 		}
-		existingTranscript := ""
-		if archived.HasEvidence {
-			existingTranscript = archived.Evidence.Canonical.Transcript
-		}
-		if strings.TrimSpace(existingTranscript) == "" {
-			existingTranscript = transcriptFromArchivedBody(archived.Body)
-		}
-		if providerTranscriptMissing && existingTranscript != "" {
-			hydrated.Transcript = existingTranscript
-			hydrated.Warnings = append(hydrated.Warnings, "provider temporarily omitted the transcript; preserved the archived transcript")
+		keepArchive := preserveArchivedSections(hydrated, archived)
+		if hydrated.SummaryTree.Preserved || hydrated.NotesTree.Preserved || hydrated.TranscriptTree.Preserved {
+			sum.PartialCoverage = true
 		}
 		if hydrated.AttendeeResolutionDegraded {
 			preserveArchivedAttendees(hydrated, archived.ResolvedUsers)
@@ -351,15 +353,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				recipients, recipientErr := imp.store.GetMessageRecipientsContext(ctx, archived.MessageID, "to")
 				if recipientErr != nil {
 					sum.Errors++
-					hardErrors = append(hardErrors, fmt.Errorf("meeting %s: recover archived attendees: %w", id, recipientErr))
+					hardErrors = append(hardErrors, hydrationFailure("recover archived Notion attendees", recipientErr))
 					continue
 				}
 				preserveArchivedAttendeeRelationships(hydrated, recipients, archived.ResolvedUsers)
 			}
 		}
 
-		terminal := terminalStatus(meeting.MeetingNotes.Status)
-		if providerTranscriptMissing && !terminal {
+		terminal := terminalStatus(hydrated.Discovery.MeetingNotes.Status)
+		if providerTranscriptIncomplete && !terminal {
 			previousPending, hasPrevious := pendingByID[id]
 			if retained := next.TranscriptRetryUntil[id]; retained != "" {
 				previousPending.RetryUntil = retained
@@ -377,10 +379,16 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			delete(pendingByID, id)
 		}
 
+		if keepArchive {
+			sum.PartialCoverage = true
+			progress("Archived meeting retained unchanged; current sections are incomplete")
+			continue
+		}
+
 		snapshot, snapshotErr := hydrated.ArchiveSnapshot(source.ID, opts.Identifier, opts.AccountEmail)
 		if snapshotErr != nil {
 			sum.Errors++
-			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: build archive snapshot: %w", id, snapshotErr))
+			hardErrors = append(hardErrors, hydrationFailure("build Notion archive snapshot", snapshotErr))
 			continue
 		}
 		checksum := checksumBytes(snapshot.Raw)
@@ -391,7 +399,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			// have finished before an earlier run stopped.
 			if _, linkErr := archiver.LinkIdentities(ctx, source.ID, snapshot.Attendees); linkErr != nil {
 				sum.Errors++
-				hardErrors = append(hardErrors, fmt.Errorf("meeting %s: link attendee identities: %w", id, linkErr))
+				hardErrors = append(hardErrors, hydrationFailure("link Notion attendee identities", linkErr))
 				continue
 			}
 			next.Known[id] = knownMeeting{
@@ -399,7 +407,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				SnapshotSHA256:  checksum,
 				SnapshotVersion: notionSnapshotVersion,
 			}
-			progress("verified Notion meeting " + id)
+			progress("verified Notion meeting")
 			continue
 		}
 		archiveResult, archiveErr := archiver.Upsert(ctx, snapshot, meetingarchive.UpsertOptions{
@@ -412,7 +420,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		if archiveErr != nil {
 			sum.Errors++
-			hardErrors = append(hardErrors, fmt.Errorf("meeting %s: archive: %w", id, archiveErr))
+			hardErrors = append(hardErrors, hydrationFailure("archive Notion meeting", archiveErr))
 			continue
 		}
 		next.Known[id] = knownMeeting{
@@ -420,7 +428,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			SnapshotSHA256:  checksum,
 			SnapshotVersion: notionSnapshotVersion,
 		}
-		progress("imported Notion meeting " + id)
+		progress("imported Notion meeting")
 	}
 
 	if len(hardErrors) > 0 {
@@ -472,7 +480,7 @@ func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNot
 	if err := json.Unmarshal(block.Raw, &meeting); err != nil {
 		return MeetingNote{}, fmt.Errorf("decode meeting-note block: %w", err)
 	}
-	if meeting.ID != id || meeting.Type != "meeting_notes" {
+	if meeting.ID != id || meeting.Type != meetingNotesType {
 		return MeetingNote{}, errors.New("retrieved block has unexpected ID or type")
 	}
 	return meeting, nil
@@ -531,25 +539,153 @@ func decodeArchivedEvidence(raw []byte, expectedID string) (rawEvidence, bool) {
 	if json.Unmarshal(raw, &evidence) != nil {
 		return rawEvidence{}, false
 	}
-	if evidence.SchemaVersion != notionSnapshotVersion {
+	if evidence.SchemaVersion != 1 && evidence.SchemaVersion != notionSnapshotVersion {
 		return rawEvidence{}, false
 	}
 	var discovery MeetingNote
 	if json.Unmarshal(evidence.Discovery, &discovery) != nil ||
-		discovery.ID != expectedID || discovery.Type != "meeting_notes" {
+		discovery.ID != expectedID || discovery.Type != meetingNotesType {
 		return rawEvidence{}, false
 	}
 	var meetingBlock Block
 	if json.Unmarshal(evidence.MeetingBlock, &meetingBlock) != nil ||
-		meetingBlock.ID != expectedID || meetingBlock.Type != "meeting_notes" {
+		meetingBlock.ID != expectedID || meetingBlock.Type != meetingNotesType {
 		return rawEvidence{}, false
 	}
-	var markdown MarkdownPage
-	if json.Unmarshal(evidence.PageMarkdown, &markdown) != nil ||
-		markdown.Object != "page_markdown" || strings.TrimSpace(markdown.ID) == "" {
-		return rawEvidence{}, false
+	if evidence.SchemaVersion == 1 {
+		var markdown MarkdownPage
+		if json.Unmarshal(evidence.PageMarkdown, &markdown) != nil || markdown.Object != "page_markdown" || strings.TrimSpace(markdown.ID) == "" {
+			return rawEvidence{}, false
+		}
+	} else {
+		content := meetingcontent.Decode(RawFormat, raw, nil)
+		// Only the reconstructed admitted blocks can prove canonical text. An
+		// invalid section or conflicting header must never be promoted as scoped.
+		for _, reason := range []string{content.Summary.Reason, content.Notes.Reason, content.Transcript.Reason} {
+			if reason != "" && reason != "incomplete_tree" {
+				return rawEvidence{}, false
+			}
+		}
+		if content.Summary.Text != evidence.Canonical.Summary || content.Notes.Text != evidence.Canonical.Notes || content.Transcript.Text != evidence.Canonical.Transcript {
+			return rawEvidence{}, false
+		}
+		// A fresh tree belongs to the validated current header. Reject conflicting
+		// provenance before preservation could bind it to an older source header.
+		for _, tree := range []rawBlockTree{evidence.Summary, evidence.Notes, evidence.Transcript} {
+			if len(tree.Root) > 0 && !tree.Preserved &&
+				(tree.SourceLastEditedTime != discovery.LastEditedTime || len(tree.SourceMeetingBlock) > 0) {
+				return rawEvidence{}, false
+			}
+		}
 	}
 	return evidence, true
+}
+
+// preserveArchivedSections never attributes legacy body or page Markdown to a
+// meeting block. If attribution cannot be proved, the caller retains the whole
+// old archive and reports the stale scope instead of writing a v2 snapshot.
+func preserveArchivedSections(meeting *HydratedMeeting, archived archivedMeetingState) bool {
+	if archived.MessageID == 0 {
+		return false
+	}
+	old := archived.Evidence
+	oldTexts := canonicalEvidence{
+		Summary:    archivedBodySection(archived.Body, "Summary"),
+		Notes:      archivedBodySection(archived.Body, "Notes"),
+		Transcript: transcriptFromArchivedBody(archived.Body),
+	}
+	if archived.HasEvidence {
+		oldTexts = old.Canonical
+	}
+	sections := []struct {
+		name      string
+		id        string
+		tree      *blockTree
+		text      *string
+		prior     rawBlockTree
+		priorText string
+	}{
+		{"summary", meeting.Discovery.MeetingNotes.Children.SummaryBlockID, &meeting.SummaryTree, &meeting.Summary, old.Summary, oldTexts.Summary},
+		{"notes", meeting.Discovery.MeetingNotes.Children.NotesBlockID, &meeting.NotesTree, &meeting.Notes, old.Notes, oldTexts.Notes},
+		{"transcript", meeting.Discovery.MeetingNotes.Children.TranscriptBlockID, &meeting.TranscriptTree, &meeting.Transcript, old.Transcript, oldTexts.Transcript},
+	}
+	for _, section := range sections {
+		if section.name != "transcript" && section.id == "" && sectionReferencePresent(meeting.Discovery.Raw, section.name) {
+			continue
+		}
+		hasPrior := strings.TrimSpace(section.priorText) != "" || (archived.HasEvidence &&
+			((old.SchemaVersion == 2 && len(section.prior.Root) != 0 && len(section.prior.Blocks) != 0) ||
+				(old.SchemaVersion == 1 && (len(section.prior.Root) != 0 || len(section.prior.Pages) != 0 || len(section.prior.Blocks) != 0))))
+		if !hasPrior || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
+			continue
+		}
+		if !archived.HasEvidence || old.SchemaVersion != 2 {
+			return true
+		}
+		tree, ok := restoreArchivedTree(section.prior)
+		if !ok || renderTree(tree) != section.priorText {
+			return true
+		}
+		tree.Preserved = true
+		if len(tree.SourceMeetingBlock) == 0 {
+			tree.SourceMeetingBlock = old.MeetingBlock
+		}
+		*section.tree = tree
+		*section.text = section.priorText
+		meeting.Warnings = append(meeting.Warnings, "provider returned incomplete "+section.name+"; preserved archived meeting-owned "+section.name)
+	}
+	return false
+}
+
+// An omitted field is not evidence that the provider removed a section.
+func sectionReferencePresent(raw []byte, section string) bool {
+	var block struct {
+		MeetingNotes struct {
+			Children map[string]any `json:"children"`
+		} `json:"meeting_notes"`
+	}
+	if json.Unmarshal(raw, &block) != nil {
+		return false
+	}
+	_, ok := block.MeetingNotes.Children[section+"_block_id"]
+	return ok
+}
+
+func restoreArchivedTree(raw rawBlockTree) (blockTree, bool) {
+	if len(raw.Root) == 0 || len(raw.Blocks) == 0 || len(raw.Blocks) > maxHydrationBlocks {
+		return blockTree{}, false
+	}
+	var root Block
+	if json.Unmarshal(raw.Root, &root) != nil || root.ID == "" || root.Object != "block" || root.Type == meetingNotesType {
+		return blockTree{}, false
+	}
+	tree := blockTree{Root: &root, Complete: raw.Complete, Filtered: raw.Filtered, SourceLastEditedTime: raw.SourceLastEditedTime, SourceMeetingBlock: raw.SourceMeetingBlock}
+	seen := map[string]bool{}
+	for _, item := range raw.Blocks {
+		var block Block
+		if json.Unmarshal(item, &block) != nil || block.ID == "" || block.Object != "block" || block.Type == meetingNotesType || seen[block.ID] {
+			return blockTree{}, false
+		}
+		seen[block.ID] = true
+		tree.Blocks = append(tree.Blocks, block)
+	}
+	if tree.Blocks[0].ID != root.ID {
+		return blockTree{}, false
+	}
+	return tree, true
+}
+
+func archivedBodySection(body, label string) string {
+	_, text, ok := strings.Cut(body, "\n\n"+label+":\n")
+	if !ok {
+		return ""
+	}
+	for _, next := range []string{"Summary", "Notes", "Transcript"} {
+		if prefix, _, found := strings.Cut(text, "\n\n"+next+":\n"); found {
+			text = prefix
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 func transcriptFromArchivedBody(body string) string {
@@ -569,7 +705,7 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 	archivedByID := make(map[string]resolvedUser, len(archived))
 	for _, user := range archived {
 		id := strings.TrimSpace(user.ID)
-		email := meetingidentity.Normalize(user.Email)
+		email := normalizedUserEmail(user.Email)
 		if id == "" || email == "" || !user.EmailVerified {
 			continue
 		}
@@ -622,7 +758,7 @@ func preserveArchivedAttendees(meeting *HydratedMeeting, archived []resolvedUser
 
 		user.ID = strings.TrimSpace(user.ID)
 		user.Name = strings.TrimSpace(user.Name)
-		user.Email = meetingidentity.Normalize(user.Email)
+		user.Email = normalizedUserEmail(user.Email)
 		if user.Name != "" {
 			label = user.Name
 		}
@@ -670,7 +806,7 @@ func preserveArchivedAttendeeRelationships(
 	currentByID := make(map[string]int, len(meeting.ResolvedUsers))
 	emailUsers := make(map[string]map[int]struct{}, len(meeting.ResolvedUsers))
 	addEmailUser := func(email string, userIndex int) {
-		email = meetingidentity.Normalize(email)
+		email = normalizedUserEmail(email)
 		if email == "" {
 			return
 		}
@@ -682,9 +818,9 @@ func preserveArchivedAttendeeRelationships(
 		users[userIndex] = struct{}{}
 	}
 	addAlias := func(userIndex int, email string) {
-		email = meetingidentity.Normalize(email)
+		email = normalizedUserEmail(email)
 		user := &meeting.ResolvedUsers[userIndex]
-		if email == "" || email == meetingidentity.Normalize(user.Email) {
+		if email == "" || email == normalizedUserEmail(user.Email) {
 			return
 		}
 		for _, alias := range user.EmailAliases {
@@ -697,7 +833,7 @@ func preserveArchivedAttendeeRelationships(
 	for index := range meeting.ResolvedUsers {
 		user := &meeting.ResolvedUsers[index]
 		id := strings.TrimSpace(user.ID)
-		email := meetingidentity.Normalize(user.Email)
+		email := normalizedUserEmail(user.Email)
 		if id == "" || email == "" || !user.EmailVerified {
 			continue
 		}
@@ -724,7 +860,7 @@ func preserveArchivedAttendeeRelationships(
 	}
 	currentParticipants := make(map[int64]map[int]struct{}, len(emailUsers))
 	for _, recipient := range archived {
-		email := meetingidentity.Normalize(recipient.EmailAddress)
+		email := normalizedUserEmail(recipient.EmailAddress)
 		users := emailUsers[email]
 		if len(users) == 0 {
 			continue
@@ -740,7 +876,7 @@ func preserveArchivedAttendeeRelationships(
 	}
 	seen := make(map[string]struct{}, len(meeting.Attendees)+len(archived))
 	for _, attendee := range meeting.Attendees {
-		email := meetingidentity.Normalize(attendee.Email)
+		email := normalizedUserEmail(attendee.Email)
 		if email != "" {
 			seen[email] = struct{}{}
 		}
@@ -751,7 +887,7 @@ func preserveArchivedAttendeeRelationships(
 		if len(users) == 0 {
 			continue
 		}
-		email := meetingidentity.Normalize(recipient.EmailAddress)
+		email := normalizedUserEmail(recipient.EmailAddress)
 		if email == "" {
 			continue
 		}

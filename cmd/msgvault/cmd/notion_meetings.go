@@ -67,86 +67,127 @@ func resolveNotionMeetingsSources(args []string, probe bool, cfg *config.Config)
 type notionMeetingsQuerySource interface {
 	QueryMeetingNotes(ctx context.Context, limit int) (*notionmeetings.QueryResult, error)
 	RetrieveBlock(ctx context.Context, blockID string) (*notionmeetings.Block, error)
-	RetrievePageMarkdown(ctx context.Context, pageID string, includeTranscript bool) (*notionmeetings.MarkdownPage, error)
+	RetrieveBlockChildren(ctx context.Context, blockID, cursor string) (*notionmeetings.BlockPage, error)
 	ListUsers(ctx context.Context, cursor string) (*notionmeetings.UserPage, error)
 }
 
+// Probe content independently of optional attendee lookup. The latter is sampled
+// separately so probing a meeting does not resolve every attendee's identity.
+type notionProbeContent struct{ notionMeetingsQuerySource }
+
+func (notionProbeContent) ListUsers(context.Context, string) (*notionmeetings.UserPage, error) {
+	return nil, notionmeetings.ErrUserInformation
+}
+
+type notionProbeError struct {
+	stage string
+	cause error
+}
+
+func (e *notionProbeError) Error() string {
+	reason := "request unavailable"
+	switch {
+	case errors.Is(e.cause, notionmeetings.ErrUnauthorized):
+		reason = "integration token is invalid or expired"
+	case errors.Is(e.cause, notionmeetings.ErrMeetingAccess):
+		reason = "Meeting Notes access is unavailable"
+	case errors.Is(e.cause, notionmeetings.ErrReadContent):
+		reason = "Read Content access is unavailable"
+	case errors.Is(e.cause, notionmeetings.ErrRateLimited):
+		reason = "provider retry budget exhausted"
+	case errors.Is(e.cause, notionmeetings.ErrMalformedResponse):
+		reason = "malformed response"
+	case errors.Is(e.cause, context.Canceled):
+		reason = "operation canceled"
+	case errors.Is(e.cause, context.DeadlineExceeded):
+		reason = "operation deadline exceeded"
+	}
+	return e.stage + ": " + reason
+}
+func (e *notionProbeError) Unwrap() error { return e.cause }
+
 func runNotionMeetingsProbe(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource) error {
+	return runNotionMeetingsProbeWithTimeout(ctx, out, client, users, 2*time.Minute)
+}
+
+func runNotionMeetingsProbeWithTimeout(ctx context.Context, out io.Writer, client notionMeetingsQuerySource, users notionmeetings.UserSource, timeout time.Duration) error {
+	parentCtx := ctx
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	_, _ = fmt.Fprintln(out, "Notion AI Meeting Notes access probe:")
 	result, err := client.QueryMeetingNotes(ctx, 1)
 	if err != nil {
-		return fmt.Errorf("probe Notion AI Meeting Notes access: %w", err)
+		if !errors.Is(err, notionmeetings.ErrUnauthorized) {
+			_, _ = fmt.Fprintln(out, "  Credentials: not verified by meeting query")
+		}
+		_, _ = fmt.Fprintln(out, "  Meeting query: unavailable")
+		_, _ = fmt.Fprintln(out, "  Sample content: not tested")
+		return &notionProbeError{stage: "probe Notion meeting query", cause: err}
 	}
 	if result == nil {
-		return errors.New("probe Notion AI Meeting Notes access returned no response")
+		return &notionProbeError{stage: "probe Notion meeting query", cause: notionmeetings.ErrMalformedResponse}
 	}
-	_, _ = fmt.Fprintln(out, "Notion AI Meeting Notes probe succeeded.")
+	_, _ = fmt.Fprintln(out, "  Credentials: query verified")
+	_, _ = fmt.Fprintln(out, "  Meeting query: available")
 	_, _ = fmt.Fprintf(out, "  Returned meetings: %d\n", len(result.Results))
-	_, _ = fmt.Fprintf(out, "  Partial coverage: %t\n", result.HasMore)
+	_, _ = fmt.Fprintln(out, "  Coverage: sample only; sync coverage was not measured")
+	var sampled *notionmeetings.HydratedMeeting
 	if len(result.Results) == 0 {
 		_, _ = fmt.Fprintln(out, "  Read Content: not tested (no visible meeting)")
 	} else {
-		meeting := result.Results[0]
-		block, retrieveErr := client.RetrieveBlock(ctx, meeting.ID)
-		if retrieveErr != nil {
-			return fmt.Errorf("probe Notion meeting block access: %w", retrieveErr)
-		}
-		if block == nil {
-			return errors.New("probe Notion meeting block access returned no response")
-		}
-		pageID := strings.TrimSpace(meeting.Parent.PageID)
-		if pageID == "" {
-			pageID = strings.TrimSpace(block.Parent.PageID)
-		}
-		if pageID == "" {
-			return errors.New("probe result has no parent page ID")
-		}
-		if _, err := client.RetrievePageMarkdown(ctx, pageID, true); err != nil {
-			return fmt.Errorf("probe Notion Read Content access: %w", err)
+		sampled, err = notionmeetings.NewHydrator(notionProbeContent{client}).Hydrate(ctx, result.Results[0])
+		if err != nil {
+			return &notionProbeError{stage: "check sample content", cause: err}
 		}
 		_, _ = fmt.Fprintln(out, "  Read Content: available")
+		children := sampled.Discovery.MeetingNotes.Children
+		incomplete := (children.SummaryBlockID != "" && (!sampled.SummaryTree.Complete || sampled.SummaryTree.Filtered)) ||
+			(children.NotesBlockID != "" && (!sampled.NotesTree.Complete || sampled.NotesTree.Filtered)) ||
+			(children.TranscriptBlockID != "" && (!sampled.TranscriptTree.Complete || sampled.TranscriptTree.Filtered))
+		if incomplete {
+			_, _ = fmt.Fprintln(out, "  Sample content: incomplete (some meeting sections could not be read)")
+		} else if strings.TrimSpace(sampled.Transcript) == "" {
+			_, _ = fmt.Fprintln(out, "  Transcript: pending")
+		}
 	}
 	if users == nil {
-		if _, err := client.ListUsers(ctx, ""); errors.Is(err, notionmeetings.ErrUserInformation) {
+		page, err := client.ListUsers(ctx, "")
+		if parentCtx.Err() != nil {
+			return parentCtx.Err()
+		}
+		if err != nil || page == nil {
 			_, _ = fmt.Fprintln(out, "  User Information: unavailable (attendees remain display-only unless a users token is configured)")
-		} else if errors.Is(err, notionmeetings.ErrRateLimited) {
-			_, _ = fmt.Fprintf(out, "  User Information: unavailable (error: %v; attendees remain display-only)\n", err)
-		} else if err != nil {
-			return fmt.Errorf("probe Notion User Information access: %w", err)
 		} else {
 			_, _ = fmt.Fprintln(out, "  User Information: available")
 		}
 		return nil
 	}
 	attendeeID := ""
-	for _, meeting := range result.Results {
-		for _, id := range meeting.MeetingNotes.CalendarEvent.Attendees {
+	if sampled != nil {
+		for _, id := range sampled.Discovery.MeetingNotes.CalendarEvent.Attendees {
 			if strings.TrimSpace(id) != "" {
 				attendeeID = id
 				break
 			}
-		}
-		if attendeeID != "" {
-			break
 		}
 	}
 	if attendeeID == "" {
 		_, _ = fmt.Fprintln(out, "  Users token: untested (no visible attendee ID)")
 		return nil
 	}
-	lookupCtx, cancel := context.WithTimeout(ctx, notionmeetings.UserLookupTimeout)
-	defer cancel()
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, notionmeetings.UserLookupTimeout)
+	defer cancelLookup()
 	user, err := users.RetrieveUser(lookupCtx, attendeeID)
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if parentCtx.Err() != nil {
+		return parentCtx.Err()
 	}
-	if err != nil {
-		_, _ = fmt.Fprintf(out, "  Users token: unavailable (%v)\n", err)
+	if err != nil || user == nil {
+		_, _ = fmt.Fprintln(out, "  Users token: unavailable (attendees remain display-only)")
 	} else if user.Person.EmailVerified && strings.TrimSpace(user.Person.Email) != "" {
 		_, _ = fmt.Fprintln(out, "  Users token: verified email available for sampled attendee")
 	} else {
 		_, _ = fmt.Fprintln(out, "  Users token: no verified email for sampled attendee (check Read user information including email addresses)")
 	}
-
 	return nil
 }
 
@@ -294,7 +335,7 @@ func writeNotionMeetingsSummary(out io.Writer, summary *notionmeetings.ImportSum
 		_, _ = fmt.Fprintf(out, "  Maintenance items: %d\n", summary.MaintenanceRetries)
 	}
 	if summary.PartialCoverage {
-		_, _ = fmt.Fprintln(out, "  Coverage: partial (Notion reports more than the visible 50-item window)")
+		_, _ = fmt.Fprintln(out, "  Coverage: partial (some meetings or sections remain incomplete)")
 	}
 }
 

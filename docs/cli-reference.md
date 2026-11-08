@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-07"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1159,7 +1159,9 @@ msgvault add-notion-meetings [identifier]
 ```
 
 The matching `[[notion_meetings]]` entry requires `account_email` and `token`.
-With one entry, the identifier may be omitted.
+With one entry, the identifier may be omitted. Validation checks query access
+and hydrates one sampled meeting from its own current section blocks. A page
+parent is not required. Optional user lookup failures remain nonfatal.
 
 ---
 
@@ -1186,7 +1188,7 @@ maintenance runs outside `--limit`.
 | `--limit` | `0` | Maximum visible meetings hydrated and verified; due maintenance is additional |
 | `--after` | — | Local visible-set lower bound in `YYYY-MM-DD` form; implies `--full` |
 | `--full` | `false` | Force selected snapshots through archive upsert instead of skipping matching checksums |
-| `--probe` | `false` | Validate capabilities and result shape without printing meeting content |
+| `--probe` | `false` | Check query access, one meeting's section hydration, and optional attendee lookup without printing meeting content; the sample does not measure sync coverage |
 
 See [Meeting Transcripts](/docs/usage/meetings/#notion-ai-meeting-notes) for setup,
 privacy, retry behavior, and stored evidence.

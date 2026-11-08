@@ -39,13 +39,12 @@ func TestImporterOrdinarySyncUpdatesAndPreservesOnlyFailedAttendees(t *testing.T
 	meeting := hydrationMeeting()
 	meeting.ID = "meeting-2"
 	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "new-user"}
-	block := *source.blocks["meeting-1"]
-	block.ID = meeting.ID
-	source.blocks[meeting.ID] = &block
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
 	source.query.Results = append(source.query.Results, meeting)
 
 	users := &fakeUserSource{users: map[string]*User{"user-2": {Person: UserPerson{Email: "unverified@example.com"}}, "guest": {Person: UserPerson{Email: "guest@example.com", EmailVerified: true}}}, errs: map[string]error{"user-1": &APIError{Kind: ErrProvider, Status: http.StatusNotFound}, "malformed": ErrMalformedResponse, "new-user": ErrMalformedResponse}}
 	source.query.Results[0].MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "guest", "malformed"}
+	installMeetingHeader(t, source.fakeHydrationSource, source.query.Results[0])
 	second, err := imp.WithUserSource(users).Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), second.MeetingsUpdated)
@@ -76,6 +75,7 @@ func TestHydratorCachesSuccessfulAndMissingUsersAcrossServiceFailure(t *testing.
 	h := NewHydrator(source).WithUserSource(users)
 	meeting := hydrationMeeting()
 	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"missing", "malformed", "user-1", "unverified", "blocked", "new-user"}
+	installMeetingHeader(t, source, meeting)
 	for range 2 {
 		result, err := h.Hydrate(t.Context(), meeting)
 		require.NoError(err)
@@ -102,14 +102,15 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 			var userRequests atomic.Int32
 			meeting := hydrationMeeting()
 			meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1"}
+			installMeetingHeader(t, source, meeting)
 			if budget == "requests" {
 				pages := map[string]*BlockPage{}
-				for i := range maxHydrationRequests - 5 {
+				for i := range maxHydrationRequests - 4 {
 					cursor := ""
 					if i > 0 {
 						cursor = strconv.Itoa(i)
 					}
-					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-6, NextCursor: strconv.Itoa(i + 1)}
+					pages[cursor] = &BlockPage{HasMore: i < maxHydrationRequests-5, NextCursor: strconv.Itoa(i + 1)}
 				}
 				source.children["notes-1"] = pages
 			} else {
@@ -118,7 +119,9 @@ func TestHydratorOptionalLocalBudgetsDoNotPoisonCache(t *testing.T) {
 					padding := 0
 					switch r.URL.Path {
 					case "/v1/blocks/meeting-1":
-						response = map[string]any{"object": "block", "id": "meeting-1", "type": "meeting_notes", "has_children": false, "meeting_notes": map[string]any{}}
+						raw, err := json.Marshal(meeting)
+						assert.NoError(err)
+						assert.NoError(json.Unmarshal(raw, &response))
 					case "/v1/pages/page-1/markdown":
 						response = map[string]any{"object": "page_markdown", "id": "page-1", "markdown": "# Transcript\nTest Speaker: Ready to ship.", "truncated": false, "unknown_block_ids": []string{}}
 					case "/v1/users/user-1":
@@ -194,27 +197,141 @@ func TestHydratorOptionalDeadlineAndParentCancellation(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		client := NewClient("https://notion.example", "users-example")
-		transport := &usersRetryTransport{delay: func() { time.Sleep(30 * time.Second) }}
+		transport := &usersRetryTransport{delay: func() { time.Sleep(3 * time.Second) }}
 		client.http.Transport = transport
-		h := NewHydrator(completeHydrationSource()).WithUserSource(client)
+		source := completeHydrationSource()
+		h := NewHydrator(source).WithUserSource(client)
 		meeting := hydrationMeeting()
 		meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "user-3"}
+		installMeetingHeader(t, source, meeting)
 		start := time.Now()
 		first, err := h.Hydrate(t.Context(), meeting)
 		require.NoError(err)
 		require.Len(first.Attendees, 3)
-		assert.Equal(90*time.Second, time.Since(start))
+		assert.Equal(9*time.Second, time.Since(start))
 		meeting.MeetingNotes.CalendarEvent.Attendees = append(meeting.MeetingNotes.CalendarEvent.Attendees, "timeout")
+		installMeetingHeader(t, source, meeting)
 		start = time.Now()
 		second, err := h.Hydrate(t.Context(), meeting)
 		require.NoError(err)
 		assert.Equal("Test Speaker: Ready to ship.", second.Transcript)
 		require.Len(second.Attendees, 3)
 		require.ErrorIs(h.usersFailure, context.DeadlineExceeded)
-		assert.Equal(UserLookupTimeout, time.Since(start))
+		assert.Equal(optionalLookupBudget, time.Since(start))
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err = h.Hydrate(ctx, hydrationMeeting())
 		require.ErrorIs(err, context.Canceled)
+	})
+}
+
+func TestImporterIncompleteDirectoryRespectsFreshUnverifiedAttendee(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, source, imp := newImporterFixture(t)
+	source.users[""].Results[1].Person.Email = "second@example.com"
+	source.users[""].Results[1].Person.EmailVerified = true
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	source.users[""].Results = source.users[""].Results[:1]
+	source.users[""].Results[0].Person.EmailVerified = false
+	source.users[""].HasMore = true
+	source.users[""].NextCursor = "failed-tail"
+	source.userErrs = map[string]error{"failed-tail": ErrRateLimited}
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	recipients, err := st.GetMessageRecipientsContext(t.Context(), messageID, "to")
+	require.NoError(err)
+	require.Len(recipients, 1)
+	assert.Equal("second@example.com", recipients[0].EmailAddress, "only the absent user's previously verified email survives the failed directory tail")
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	assert.NotContains(string(raw), "attendee@example.com")
+}
+
+type slowOptionalUserSource struct{}
+
+func (slowOptionalUserSource) RetrieveUser(ctx context.Context, id string) (*User, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(50 * time.Second):
+		return &User{ID: id, Person: UserPerson{Email: id + "@example.com", EmailVerified: true}}, nil
+	}
+}
+
+func TestImporterPublishesContentWhenOptionalLookupBudgetExpires(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	meeting := hydrationMeeting()
+	meeting.MeetingNotes.CalendarEvent.Attendees = []string{"user-1", "user-2", "user-3"}
+	source.query.Results = []MeetingNote{meeting}
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	imp.WithUserSource(slowOptionalUserSource{})
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := imp.Import(ctx, ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	assert.Equal(int64(1), result.MeetingsAdded)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	body, err := st.GetMessageBodyText(ctx, messageID)
+	require.NoError(err)
+	assert.Contains(body, "Test Speaker: Ready to ship.")
+	assert.NoError(ctx.Err())
+}
+
+type slowOptionalDirectorySource struct {
+	*fakeHydrationSource
+
+	calls *int
+}
+
+func (s slowOptionalDirectorySource) ListUsers(ctx context.Context, _ string) (*UserPage, error) {
+	*s.calls++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestHydratorRetainsContentOnDirectoryBudgetExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		calls := 0
+		source := slowOptionalDirectorySource{fakeHydrationSource: completeHydrationSource(), calls: &calls}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		hydrator := NewHydrator(source)
+		for range 2 {
+			result, err := hydrator.Hydrate(ctx, hydrationMeeting())
+			require.NoError(err)
+			assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
+			assert.True(result.AttendeeResolutionDegraded)
+		}
+		assert.Equal(1, calls)
+		assert.NoError(ctx.Err())
+	})
+}
+
+func TestHydratorReservesShortParentDeadlineForContent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		calls := 0
+		source := slowOptionalDirectorySource{fakeHydrationSource: completeHydrationSource(), calls: &calls}
+		ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+		defer cancel()
+		started := time.Now()
+		result, err := NewHydrator(source).Hydrate(ctx, hydrationMeeting())
+		require.NoError(err)
+		assert.Equal(3*time.Second, time.Since(started))
+		assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
+		assert.True(result.AttendeeResolutionDegraded)
+		assert.Equal(1, calls)
+		assert.NoError(ctx.Err())
 	})
 }
