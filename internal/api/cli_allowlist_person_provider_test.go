@@ -312,6 +312,13 @@ func TestCLIAllowlistPersonEnrichmentForwardsOnlyCommandCredentials(t *testing.T
 		"--identifier-class=email", "--normalization-version=email-v1", "--key-id=" + strings.Repeat("b", 64),
 		"--digest=" + strings.Repeat("c", 64), "--reason=opt_out", "--actor=cli"}
 	checks.False(srv.cliRunEnvAllowedForCommand(digestSuppression, "ENRICHMENT_SUPPRESSION_KEY"))
+	repeatedProvider := []string{"person", "enrichment", "run", "--person=7", "--provider=exa-secondary",
+		"--provider=exa-primary", "--idempotency-key=run-1"}
+	checks.False(srv.cliRunEnvAllowedForCommand(repeatedProvider, "EXA_PRIMARY_KEY"))
+	checks.False(srv.cliRunEnvAllowedForCommand(repeatedProvider, "EXA_SECONDARY_KEY"))
+	separateProvider := []string{"person", "enrichment", "run", "--person", "7", "--provider", "exa-primary",
+		"--idempotency-key", "run-1", "-v"}
+	checks.True(srv.cliRunEnvAllowedForCommand(separateProvider, "EXA_PRIMARY_KEY"))
 	checks.False(srv.cliRunEnvAllowedForCommand([]string{"person", "enrichment", "status"}, "EXA_PRIMARY_KEY"))
 }
 
@@ -330,4 +337,62 @@ func TestCLIAllowlistPersonSweepForwardsCredentialDespiteInvalidDaemonSetting(t 
 
 	srv := &Server{cfg: cfg}
 	require.True(srv.cliRunEnvAllowedForCommand([]string{"person", "sweep", "run"}, "PEOPLE_SWEEP_KEY"))
+}
+
+func TestCLIAllowlistGuardedProviderCheckForwardsCredentialForEveryLoggingFlagForm(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.People.Sweep.Providers = map[string]peoplesweep.ProviderConfig{
+		"named": completeAPIProvider("NAMED_KEY", "named-model"),
+	}
+	selected := cfg.People.Sweep
+	selected.Enabled = true
+	selected.Provider = peoplesweep.ProviderSelection{Name: "named"}
+	profile, err := selected.Profile()
+	require.NoError(err)
+	srv := &Server{cfg: cfg}
+
+	guard := "--if-fingerprint=" + profile.Fingerprint
+	for _, logging := range [][]string{
+		nil,
+		{"--log-level=warn", "--verbose"},
+		{"--log-level", "warn"},
+		{"-v"},
+		{"--log-sql-slow-ms", "250"},
+	} {
+		args := append([]string{"person", "provider", "check", "named", guard}, logging...)
+		require.True(cliRunCommandAllowed(args), args)
+		assert.True(t, srv.cliRunEnvAllowedForCommand(args, "NAMED_KEY"), args)
+		assert.False(t, srv.cliRunEnvAllowedForCommand(args, "OTHER_KEY"), args)
+	}
+
+	stale := []string{"person", "provider", "check", "named", "--if-fingerprint=" + strings.Repeat("a", 64)}
+	assert.False(t, srv.cliRunEnvAllowedForCommand(stale, "NAMED_KEY"))
+}
+
+func TestCLIRunCommandAllowedRejectsRepeatedPersonFlags(t *testing.T) {
+	t.Parallel()
+	for name, args := range map[string][]string{
+		"raw actor overwritten by empty value": {
+			"person", "enrichment", "suppress", "--person=7", "--reason=opt_out",
+			"--actor=RAW-MARKER", "--actor=",
+		},
+		"repeated enrichment provider": {
+			"person", "enrichment", "run", "--person=7", "--provider=exa-primary",
+			"--provider=exa-secondary", "--idempotency-key=run-1",
+		},
+		"repeated provider fingerprint guard": {
+			"person", "provider", "check", "alpha",
+			"--if-fingerprint=" + strings.Repeat("a", 64), "--if-fingerprint=" + strings.Repeat("b", 64),
+		},
+		"repeated logging flag":        {"person", "provider", "status", "--log-level=warn", "--log-level=debug"},
+		"verbose given long and short": {"person", "provider", "status", "--verbose", "-v"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.False(t, cliRunCommandAllowed(args))
+		})
+	}
 }

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/accountops"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -1471,9 +1472,11 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 		if enrichmentRun {
 			return s.cliRunPersonEnrichmentRunEnvAllowed(args, name)
 		}
-		personSuppression := args[1] == "enrichment" && args[2] == "suppress" &&
-			cliRunArgsContainFlag(args, "person")
-		return personSuppression && s.cfg != nil &&
+		if args[1] != "enrichment" || args[2] != "suppress" {
+			return false
+		}
+		flags, ok := cliRunPersonEnrichmentFlags(args[2:])
+		return ok && flags.Changed("person") && s.cfg != nil &&
 			s.cfg.People.Enrichment.SuppressionKeyEnv != "" &&
 			s.cfg.People.Enrichment.SuppressionKeyEnv == name
 	}
@@ -1486,26 +1489,18 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 // Local onboarding may supply the selected profile's key for one synthetic
 // check. Ordinary checks continue to use daemon-owned credentials.
 func (s *Server) cliRunSavedProviderCheckEnvAllowed(args []string, name string) bool {
-	fingerprint, ok := cliRunFlagValue(args, "if-fingerprint")
-	if !ok || !cliRunPersonProviderArgsAllowed("check", args[3:]) {
+	flags, ok := cliRunPersonProviderFlags("check", args[3:])
+	if !ok || !flags.Changed("if-fingerprint") {
 		return false
 	}
-	var profileName string
-	for i := 3; i < len(args); i++ {
-		if args[i] == "--if-fingerprint" {
-			i++
-		} else if !strings.HasPrefix(args[i], "--") {
-			profileName = args[i]
-		}
-	}
 	sweep, ok := s.currentPeopleSweepConfig()
-	if !ok || profileName == "" {
+	if !ok {
 		return false
 	}
 	sweep.Enabled = true
-	sweep.Provider = peoplesweep.ProviderSelection{Name: profileName}
+	sweep.Provider = peoplesweep.ProviderSelection{Name: flags.Arg(0)}
 	profile, err := sweep.Profile()
-	return err == nil && profile.Fingerprint == fingerprint &&
+	return err == nil && profile.Fingerprint == flags.Lookup("if-fingerprint").Value.String() &&
 		profile.Auth != peoplesweep.AuthNone && profile.Credential == peoplesweep.CredentialEnv &&
 		profile.CredentialRef == name
 }
@@ -1517,10 +1512,11 @@ func (s *Server) cliRunPersonEnrichmentRunEnvAllowed(args []string, name string)
 	if suppressionEnv := s.cfg.People.Enrichment.SuppressionKeyEnv; suppressionEnv != "" && suppressionEnv == name {
 		return true
 	}
-	providerName, ok := cliRunFlagValue(args, "provider")
+	flags, ok := cliRunPersonEnrichmentFlags(args[2:])
 	if !ok {
 		return false
 	}
+	providerName := flags.Lookup("provider").Value.String()
 	for _, provider := range s.cfg.People.Enrichment.Providers {
 		if provider.Enabled && provider.Name == providerName &&
 			provider.APIKeyEnv != "" && provider.APIKeyEnv == name {
@@ -1528,19 +1524,6 @@ func (s *Server) cliRunPersonEnrichmentRunEnvAllowed(args []string, name string)
 		}
 	}
 	return false
-}
-
-func cliRunFlagValue(args []string, name string) (string, bool) {
-	flag := "--" + name
-	for i, arg := range args {
-		if value, ok := strings.CutPrefix(arg, flag+"="); ok {
-			return value, value != ""
-		}
-		if arg == flag && i+1 < len(args) {
-			return args[i+1], args[i+1] != ""
-		}
-	}
-	return "", false
 }
 
 func cliRunArgsContainFlag(args []string, name string) bool {
@@ -1853,6 +1836,13 @@ func cliRunCommandAllowed(args []string) bool {
 }
 
 func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
+	_, ok := cliRunPersonProviderFlags(operation, args)
+	return ok
+}
+
+// cliRunPersonProviderFlags parses and checks the arguments of a person
+// provider operation, so credential forwarding reads the same values.
+func cliRunPersonProviderFlags(operation string, args []string) (*pflag.FlagSet, bool) {
 	flags := clirun.NewFlagSet()
 	maxPositionals := 1
 	switch operation {
@@ -1884,23 +1874,23 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 		flags.Bool("yes", false, "")
 		flags.Bool("json", false, "")
 	default:
-		return false
+		return nil, false
 	}
-	if flags.Parse(args) != nil || flags.NArg() > maxPositionals {
-		return false
+	if clirun.Parse(flags, args) != nil || flags.NArg() > maxPositionals {
+		return nil, false
 	}
 	for _, profile := range flags.Args() {
 		if peoplesweep.ValidateProviderProfileName(profile) != nil {
-			return false
+			return nil, false
 		}
 	}
 	for _, name := range []string{"if-fingerprint", "fingerprint"} {
 		if flags.Changed(name) && !validPersonProviderFingerprint(flags.Lookup(name).Value.String()) {
-			return false
+			return nil, false
 		}
 	}
 	// A guarded revoke or check names the profile whose fingerprint it guards.
-	return !flags.Changed("if-fingerprint") || flags.NArg() == 1
+	return flags, !flags.Changed("if-fingerprint") || flags.NArg() == 1
 }
 
 func validPersonProviderFingerprint(fingerprint string) bool {
@@ -1916,32 +1906,39 @@ func validPersonProviderFingerprint(fingerprint string) bool {
 }
 
 func cliRunPersonEnrichmentAllowed(args []string) bool {
+	_, ok := cliRunPersonEnrichmentFlags(args)
+	return ok
+}
+
+// cliRunPersonEnrichmentFlags parses and checks the arguments of a person
+// enrichment operation, so credential forwarding reads the same values.
+func cliRunPersonEnrichmentFlags(args []string) (*pflag.FlagSet, bool) {
 	if len(args) == 0 {
-		return false
+		return nil, false
 	}
 	flags := clirun.NewFlagSet()
-	parsed := func() bool { return flags.Parse(args[1:]) == nil }
+	parsed := func() bool { return clirun.Parse(flags, args[1:]) == nil }
 	switch args[0] {
 	case "status":
 		flags.Int("limit", 0, "")
 		flags.Bool("json", false, "")
-		return parsed() && flags.NArg() == 0
+		return flags, parsed() && flags.NArg() == 0
 	case "profiles":
 		flags.Bool("json", false, "")
-		return parsed() && flags.NArg() == 0
+		return flags, parsed() && flags.NArg() == 0
 	case "consent":
 		flags.Bool("json", false, "")
-		return parsed() && flags.NArg() == 1 && isLowerSHA256(flags.Arg(0))
+		return flags, parsed() && flags.NArg() == 1 && isLowerSHA256(flags.Arg(0))
 	case "revoke":
 		flags.Bool("all", false, "")
 		flags.Bool("json", false, "")
-		return parsed() && flags.NArg() <= 1 && (flags.NArg() == 0 || isLowerSHA256(flags.Arg(0)))
+		return flags, parsed() && flags.NArg() <= 1 && (flags.NArg() == 0 || isLowerSHA256(flags.Arg(0)))
 	case "run":
 		person := flags.Int64("person", 0, "")
 		provider := flags.String("provider", "", "")
 		idempotencyKey := flags.String("idempotency-key", "", "")
 		flags.Bool("json", false, "")
-		return parsed() && flags.NArg() == 0 && *person > 0 &&
+		return flags, parsed() && flags.NArg() == 0 && *person > 0 &&
 			cliRunSafeToken(*provider) && cliRunSafeToken(*idempotencyKey)
 	case "suppress":
 		person := flags.Int64("person", 0, "")
@@ -1953,11 +1950,11 @@ func cliRunPersonEnrichmentAllowed(args []string) bool {
 		reason := flags.String("reason", "", "")
 		actor := flags.String("actor", "", "")
 		if !parsed() || flags.NArg() != 0 {
-			return false
+			return nil, false
 		}
 		validReason := *reason == "opt_out" || *reason == "data_subject_request"
 		if flags.Changed("person") {
-			return *person > 0 && *namespace == "" && *class == "" && *version == "" &&
+			return flags, *person > 0 && *namespace == "" && *class == "" && *version == "" &&
 				*keyID == "" && *digest == "" && *actor == "" && validReason
 		}
 		kind, fingerprint, found := strings.Cut(*namespace, ":")
@@ -1966,11 +1963,11 @@ func cliRunPersonEnrichmentAllowed(args []string) bool {
 			"provider_person_id": "provider-person-id-v1", "name_company": "name-company-v1",
 		}
 		wantVersion, validClass := versionByClass[*class]
-		return found && (kind == "exa" || kind == "sixtyfour") && isLowerSHA256(fingerprint) &&
+		return flags, found && (kind == "exa" || kind == "sixtyfour") && isLowerSHA256(fingerprint) &&
 			validClass && *version == wantVersion &&
 			isLowerSHA256(*keyID) && isLowerSHA256(*digest) && validReason && *actor == "cli"
 	default:
-		return false
+		return nil, false
 	}
 }
 

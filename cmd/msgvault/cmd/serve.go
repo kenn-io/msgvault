@@ -2774,7 +2774,7 @@ func attachmentRemovalCommand(args []string) bool {
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
 	flags := clirun.NewFlagSet()
-	return flags.Parse(args) == nil && flags.NArg() == 0
+	return clirun.Parse(flags, args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(
