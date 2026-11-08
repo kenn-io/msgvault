@@ -57,7 +57,7 @@
   const organizationOptions = $derived.by(() => {
     const organizations = [...controller.organizations];
     if (selectedOrganization && !organizations.some((item) => item.id === selectedOrganization?.id)) organizations.push(selectedOrganization);
-    return organizations.map(organization => ({ name: String(organization.id), label: organization.name, meta: organization.primary_domain ?? '' }));
+    return organizations.map(organization => ({ name: `organization:${organization.id}`, label: organization.name, meta: organization.primary_domain ?? '' }));
   });
 
   onMount(() => {
@@ -111,7 +111,9 @@
     const draft: JobFields = { title, role, department, location, description, start_date: startDate, end_date: isCurrent ? null : endDate };
     if (!current || !opened) return draft;
     const was = jobFields(opened.data), now = jobFields(current);
-    const same = (a: string | null, b: string | null) => a?.trim() === b?.trim();
+    // A date typed as 20240305 is the same date as 2024-03-05, as the conflict notice reads it.
+    const dashed = (value: string | null) => value?.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+    const same = (a: string | null, b: string | null) => dashed(a) === dashed(b);
     return Object.fromEntries((Object.keys(draft) as (keyof JobFields)[]).map(key => [key, same(draft[key], was[key]) ? now[key] : draft[key]])) as JobFields;
   }
 
@@ -170,11 +172,11 @@
       {#if initialEmployment}<p class="context">At {selectedOrganization?.name ?? 'this organization'}</p>
       {:else}
       <div class="field"><span>Organization</span>
-          <FieldPicker remote title="Organization" placeholder="Organization" fallbackLabel={creatingOrganization ? 'New organization' : 'Search or create'} value={creatingOrganization ? '' : organizationID} options={organizationOptions}
+          <FieldPicker remote title="Organization" placeholder="Organization" fallbackLabel={creatingOrganization ? 'New organization' : 'Search or create'} value={creatingOrganization || !organizationID ? '' : `organization:${organizationID}`} options={organizationOptions}
             loading={controller.organizationsLoading} errorDetails={controller.errors.organizations} error={controller.errors.organizations ? "Couldn't load organizations." : ''}
             onretry={() => void controller.refreshOrganizations(organizationQuery)}
             onquery={query => { organizationQuery = query; void controller.refreshOrganizations(query); }}
-            onselect={value => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value); }}
+            onselect={value => { organizationID = value.replace('organization:', ''); selectedOrganization = controller.organizations.find(item => String(item.id) === organizationID); }}
             createLabel={'Create organization “{query}”'} existingLabel="Choose an existing organization instead"
             oncreate={query => { organizationName = query; creatingOrganization = true; }} creating={creatingOrganization}
             onexisting={() => creatingOrganization = false} disabled={attempt.busy}>

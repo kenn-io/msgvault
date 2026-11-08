@@ -443,6 +443,21 @@ it('shows the retirement date in a conflict', async () => {
   expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
 });
 
+it('shows a media link once in a conflict', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    const profile = organizationProfile(++reads);
+    return Response.json({ ...profile, media: [{ ...profile.media[0], uri: 'https://example.org/logo.png' }] }, { headers: { ETag: `"organization-21-r${reads}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  const media = within((await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement).getByRole('region', { name: 'Media' });
+  expect(media.textContent!.split('https://example.org/logo.png')).toHaveLength(2);
+});
+
 it('preserves a concurrent contact after a core conflict and alias save', async () => {
   const onDone = vi.fn();
   let revision = 1;

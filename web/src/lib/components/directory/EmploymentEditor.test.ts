@@ -168,6 +168,27 @@ it('checks Keep yours against the start date it keeps from the saved version', a
   expect(bodies[1]).toMatchObject({ start_date: '2020', end_date: '2021', is_current: false });
 });
 
+it('Keep yours keeps a start date changed elsewhere when the person retyped the same date', async () => {
+  let reads = 0;
+  const bodies: Record<string, unknown>[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'PATCH') {
+      bodies.push(await request.json());
+      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(employment(11, 3));
+    }
+    if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    return Response.json(employment(11, ++reads, { start_date: reads === 1 ? { year: 2022, month: 3, day: 5 } : { year: 2020 } }), { headers: { ETag: `"employment-11-r${reads}"` } });
+  });
+  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '20220305' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(bodies).toHaveLength(2));
+  expect(bodies[1]).toMatchObject({ title: 'Lead', start_date: '2020' });
+});
+
 it('describes a job moved to an unloaded person', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
@@ -303,6 +324,17 @@ it('keeps an edited end date when another editor reopens the job', async () => {
     expect(dialog.textContent).not.toContain('Create organization');
     await fireEvent.click(screen.getByRole('button', { name: 'Choose an existing organization instead' }));
     expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
+  });
+
+  it("offers to create an organization named like another one's ID", async () => {
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization(21, 1, 'Lumen Grove')], total: 1 });
+      if (path === '/api/v1/people/7/employments') return collection([]);
+      throw new Error(`unexpected ${path}`);
+    });
+    await openInlineEmployer(controller, '21');
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', '21');
   });
 
   it('rejects an end date before the start before creating an employer', async () => {
