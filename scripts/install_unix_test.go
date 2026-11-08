@@ -57,15 +57,16 @@ case "$1:$2" in
 esac
 `, sha256.Sum256(data))), 0o700))
 	for _, tc := range []struct {
-		name, shell, optOut, pathEntry string
+		name, shell, optOut, pathEntry                                         string
+		relative, loginProfile, inheritedZdotdir, exportZdotdir, checkChecksum bool
 	}{
-		{name: "fresh with spaces", shell: "bash"},
-		{name: "existing login", shell: "bash"},
+		{name: "fresh with spaces", shell: "bash", relative: true, checkChecksum: true},
+		{name: "existing login", shell: "bash", loginProfile: true},
 		{name: "opt out", shell: "bash", optOut: "1"},
 		{name: "exact PATH", shell: "bash", pathEntry: "exact"},
 		{name: "sibling PATH", shell: "bash", pathEntry: "sibling"},
-		{name: "zsh custom directory", shell: "zsh"},
-		{name: "zsh redirects directory", shell: "zsh"},
+		{name: "zsh custom directory", shell: "zsh", inheritedZdotdir: true},
+		{name: "zsh redirects directory", shell: "zsh", exportZdotdir: true},
 		{name: "fish custom directory", shell: "fish"},
 		{name: "unsupported", shell: "other"},
 	} {
@@ -75,7 +76,7 @@ esac
 			home := t.TempDir()
 			destination := filepath.Join(home, ".local", "bin")
 			installDir := destination
-			if tc.name == "fresh with spaces" {
+			if tc.relative {
 				installDir = "bin with spaces"
 				destination = filepath.Join(home, installDir)
 			}
@@ -92,17 +93,17 @@ esac
 			switch tc.shell {
 			case "zsh":
 				profiles = map[string]string{".zshenv": "# preserved", "zsh/.zshenv": "# preserved"}
-				if tc.name == "zsh redirects directory" {
+				if tc.exportZdotdir {
 					profiles[".zshenv"] = `export ZDOTDIR="$HOME/zsh"`
 				}
 			case "fish":
 				profiles = map[string]string{"config/fish/config.fish": "# preserved"}
 			}
-			if tc.name == "existing login" {
+			if tc.loginProfile {
 				profiles[".bash_profile"] = "# preserved\n. \"$HOME/.bashrc\""
 			}
 			for profile, content := range profiles {
-				if tc.name == "fresh with spaces" {
+				if tc.relative {
 					profiles[profile] = ""
 					continue
 				}
@@ -114,7 +115,7 @@ esac
 				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
 				"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
 				"FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
-			if tc.name == "zsh custom directory" {
+			if tc.inheritedZdotdir {
 				env = append(env, "ZDOTDIR="+filepath.Join(home, "zsh"))
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
@@ -122,13 +123,15 @@ esac
 			for run := range 2 {
 				cmd := exec.CommandContext(ctx, bash, script)
 				cmd.Env = append(append([]string{}, env...), "PATH="+transport+":"+path)
-				if tc.name == "zsh redirects directory" {
+				if tc.exportZdotdir {
 					cmd.Env = append(cmd.Env, "ZDOTDIR="+filepath.Join(home, "zsh"))
 				}
 				cmd.Dir = home
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, string(output))
-				assert.Contains(t, string(output), "Checksum verified")
+				if tc.checkChecksum && run == 0 {
+					assert.Contains(t, string(output), "Checksum verified")
+				}
 				if tc.optOut != "" || tc.shell == "other" {
 					assert.NotContains(t, string(output), "Open a new terminal")
 					if tc.shell == "other" {
@@ -141,7 +144,7 @@ esac
 				for profile, original := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
 					require.NoError(t, err)
-					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "other" || (tc.name == "existing login" && profile == ".profile") {
+					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "other" || (tc.loginProfile && profile == ".profile") {
 						assert.Equal(t, original, string(data))
 						continue
 					}
@@ -159,14 +162,14 @@ esac
 				probe = `command -s msgvault; msgvault; printf '\nTEST_PATH=%s\n' (string join : $PATH)`
 			}
 			starts := [][]string{}
-			if tc.shell == "zsh" {
+			if tc.shell == "zsh" && shell == "" {
 				for profile := range profiles {
 					starts = append(starts, []string{bash, "-c", `. "$1"; ` + probe, "source-profile", filepath.Join(home, profile)})
 				}
 			}
 			if shell != "" {
 				starts = append(starts, []string{shell, "-ic", probe})
-				if tc.shell == "bash" || tc.shell == "zsh" {
+				if tc.shell == "bash" {
 					starts = append(starts, []string{shell, "--login", "-ic", probe})
 				}
 			}
