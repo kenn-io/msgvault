@@ -4,13 +4,10 @@ package scripts
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +29,8 @@ func TestInstallPath(t *testing.T) {
 	req.NoError(os.Mkdir(transport, 0o700))
 	tools := filepath.Join(fixture, "tools")
 	req.NoError(os.Mkdir(tools, 0o700))
-	for name := range strings.FieldsSeq("uname mkdir mktemp tar gzip awk sha256sum shasum cut mv chmod grep dirname rm cp id run-parts head tr") {
+	// The shell probes also read system login profiles that use these tools.
+	for name := range strings.FieldsSeq("uname mkdir mktemp tar gzip mv chmod grep dirname rm cp id run-parts tr") {
 		path, err := exec.LookPath(name)
 		if err == nil {
 			req.NoError(os.Symlink(path, filepath.Join(tools, name)))
@@ -44,19 +42,15 @@ func TestInstallPath(t *testing.T) {
 	archive := filepath.Join(fixture, "release.tar.gz")
 	output, err := exec.CommandContext(ctx, "tar", "-czf", archive, "-C", fixture, "msgvault").CombinedOutput()
 	req.NoError(err, string(output))
-	data, err := os.ReadFile(archive)
-	req.NoError(err)
-	req.NoError(os.WriteFile(filepath.Join(transport, "curl"), []byte(fmt.Sprintf(`#!/bin/sh
+	req.NoError(os.WriteFile(filepath.Join(transport, "curl"), []byte(`#!/bin/sh
 case "$1:$2" in
     -fsSLI:-o) [ "$6" = https://github.com/kenn-io/msgvault/releases/latest ] || exit 1
         printf https://github.com/kenn-io/msgvault/releases/tag/v1.0.0 ;;
     -fsSL:https://github.com/kenn-io/msgvault/releases/download/v1.0.0/msgvault_1.0.0_*.tar.gz)
         cp "$FIXTURE/release.tar.gz" "$4" ;;
-    -fsSL:https://github.com/kenn-io/msgvault/releases/download/v1.0.0/SHA256SUMS)
-        printf '%x  msgvault_1.0.0_%%s_%%s.tar.gz\n' "$FIXTURE_OS" "$FIXTURE_ARCH" > "$4" ;;
     *) exit 1 ;;
 esac
-`, sha256.Sum256(data))), 0o700))
+`), 0o700))
 	for _, tc := range []struct {
 		name, shell, optOut, pathEntry        string
 		relative, loginProfile, exportZdotdir bool
@@ -68,7 +62,7 @@ esac
 		{name: "sibling PATH", shell: "bash", pathEntry: "sibling"},
 		{name: "zsh redirects directory", shell: "zsh", exportZdotdir: true},
 		{name: "fish custom directory", shell: "fish"},
-		{name: "unsupported", shell: "other"},
+		{name: "unsupported", shell: "sh"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -77,6 +71,7 @@ esac
 			shell, _ := exec.LookPath(tc.shell)
 			home := t.TempDir()
 			destination := filepath.Join(home, ".local", "bin")
+			manual := `export PATH="$PATH":'` + destination + `'`
 			installDir := destination
 			if tc.relative {
 				installDir = "bin with spaces"
@@ -117,7 +112,7 @@ esac
 			env := []string{"HOME=" + home, "SHELL=/bin/" + tc.shell, "PATH=" + path, "TMPDIR=" + home,
 				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
 				"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
-				"FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
+				"FIXTURE=" + fixture}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
 			for run := range 2 {
@@ -129,11 +124,12 @@ esac
 				cmd.Dir = home
 				output, err := cmd.CombinedOutput()
 				require.NoError(err, string(output))
-				if tc.optOut != "" || tc.shell == "other" {
+				if tc.optOut != "" || tc.shell == "sh" {
 					assert.NotContains(string(output), "Open a new terminal")
-					if tc.shell == "other" {
+					if tc.shell == "sh" {
 						assert.Contains(string(output), "Configure PATH manually for your shell.")
 						assert.Contains(string(output), destination+"'/msgvault\n")
+						assert.Contains(string(output), "\n  "+manual+"\n")
 					} else {
 						assert.Contains(string(output), "Run in your current shell:")
 					}
@@ -143,7 +139,7 @@ esac
 				for profile, original := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
 					require.NoError(err)
-					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "other" || (tc.loginProfile && profile == ".profile") {
+					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "sh" || (tc.loginProfile && profile == ".profile") {
 						assert.Equal(original, string(data))
 						continue
 					}
@@ -155,10 +151,13 @@ esac
 					assert.Contains(string(output), "\n  "+line+"\n")
 				}
 			}
-			if tc.optOut != "" || tc.shell == "other" || tc.pathEntry == "exact" {
+			if tc.optOut != "" || tc.pathEntry == "exact" {
 				return
 			}
 			probe := `command -v msgvault; msgvault; printf '\nTEST_PATH=%s\n' "$PATH"`
+			if tc.shell == "sh" {
+				probe = manual + "; " + probe
+			}
 			if tc.shell == "fish" {
 				probe = `command -s msgvault; msgvault; printf '\nTEST_PATH=%s\n' (string join : $PATH)`
 			}

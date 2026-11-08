@@ -78,7 +78,7 @@ configure_path() {
             ;;
         *)
             warn "Configure PATH manually for your shell. Installed executable:"
-            printf '  %s/msgvault\n\n' "$quoted"
+            printf '  %s/msgvault\n\nFor POSIX shells, run:\n  export PATH="$PATH":%s\n\n' "$quoted" "$quoted"
             return
             ;;
     esac
