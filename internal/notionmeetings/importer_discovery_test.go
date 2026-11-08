@@ -517,11 +517,50 @@ func TestSaturatedDeferredQueueRotatesReplayableFrontier(t *testing.T) {
 	require.NoError(err)
 	saved, err := imp.loadState(t.Context(), src.ID)
 	require.NoError(err)
-	require.Len(saved.Frontier, 2)
+	require.Len(saved.Frontier, 1)
 	assert.Equal("meeting-1", saved.Frontier[0].ID)
-	assert.Equal("blocked", saved.Frontier[1].ID)
 	assert.Len(saved.Deferred, imp.limits.Scopes)
+	require.Len(saved.Deferred[0].PeerTasks, 1)
+	assert.Equal("blocked", saved.Deferred[0].PeerTasks[0].ID)
 	result, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), result.MeetingsAdded)
+}
+
+func TestSaturatedFailingRetriesPermitFreshQuery(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	queries := 0
+	source.windows = func(context.Context, int, *MeetingFilter) (*QueryResult, error) {
+		queries++
+		return &QueryResult{}, nil
+	}
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch, Full: true}
+	state := newSyncState()
+	state.Fingerprint = scopeFingerprint("work", Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}, opts)
+	state.Active = true
+	state.NextLane = 1
+	state.Frontier = []scopeTask{{Kind: "blocks", ID: "blocked", Depth: imp.limits.Depth + 1}}
+	for i := range imp.limits.Scopes {
+		task := scopeTask{Kind: "blocks", ID: fmt.Sprintf("deferred-%05d", i)}
+		state.Deferred = append(state.Deferred, deferredScope{Task: &task, Reason: "inaccessible_subtree", NextAttemptAt: imp.now()})
+	}
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	saved, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	assert.False(saved.Active)
+	assert.Len(saved.Deferred, imp.limits.Scopes)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Positive(queries, "a new query must run despite saturated failing retries")
 }

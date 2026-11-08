@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	syncStateVersion           = 3
+	syncStateVersion           = 4
 	notionSnapshotVersion      = 2
 	transcriptRetryCadence     = 6 * time.Hour
 	transcriptRetryWindow      = 7 * 24 * time.Hour
@@ -143,7 +143,7 @@ func (state *syncState) marshal() (string, error) {
 
 func (state *syncState) validate() error {
 	s := *state
-	if s.Version != 1 && s.Version != 2 && s.Version != syncStateVersion {
+	if s.Version != 1 && s.Version != 2 && s.Version != 3 && s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
 	allPending := append(append([]pendingTranscript(nil), s.Pending...), s.PendingBacklog...)
@@ -439,6 +439,22 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					state.deferTask(task, "cursor_budget", started)
 				}
 				if state.validateTransient() != nil {
+					state = before.copyDiscovery()
+					var task *scopeTask
+					var window *queryWindow
+					if lane == 0 && len(state.Windows) > 0 {
+						item := state.Windows[0]
+						window = &item
+						state.Windows = state.Windows[1:]
+					}
+					if lane == 1 && len(state.Frontier) > 0 {
+						item := state.Frontier[0]
+						task = &item
+						state.Frontier = state.Frontier[1:]
+					}
+					if state.coalescePredecessor(task, window, started, limits) {
+						goto complete
+					}
 					state = before.copyDiscovery()
 					// Keep the predecessor replayable, but let independent work lead
 					// the next run when no deferred slot is available.

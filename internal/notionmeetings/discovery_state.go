@@ -31,11 +31,34 @@ type scopeTask struct {
 func (t scopeTask) key() string { return t.Kind + ":" + t.ID }
 
 type deferredScope struct {
-	Task          *scopeTask   `json:"task,omitempty"`
-	Window        *queryWindow `json:"window,omitempty"`
-	Reason        string       `json:"reason"`
-	NextAttemptAt time.Time    `json:"next_attempt_at"`
+	Task          *scopeTask    `json:"task,omitempty"`
+	Window        *queryWindow  `json:"window,omitempty"`
+	PeerTasks     []scopeTask   `json:"peer_tasks,omitempty"`
+	PeerWindows   []queryWindow `json:"peer_windows,omitempty"`
+	Reason        string        `json:"reason"`
+	NextAttemptAt time.Time     `json:"next_attempt_at"`
 }
+
+// nextDeferred keeps bundled predecessors replayable after the first item is
+// activated. Bundled work shares the earliest retry time of its group.
+func nextDeferred(gap deferredScope) (deferredScope, bool) {
+	if len(gap.PeerTasks) > 0 {
+		task := gap.PeerTasks[0]
+		gap.Task, gap.Window = &task, nil
+		gap.PeerTasks = gap.PeerTasks[1:]
+		gap.Reason = "cursor_budget"
+		return gap, true
+	}
+	if len(gap.PeerWindows) > 0 {
+		window := gap.PeerWindows[0]
+		gap.Task, gap.Window = nil, &window
+		gap.PeerWindows = gap.PeerWindows[1:]
+		gap.Reason = "cursor_budget"
+		return gap, true
+	}
+	return deferredScope{}, false
+}
+
 type coverageDiagnostic struct {
 	Reason string `json:"reason"`
 	Kind   string `json:"kind,omitempty"`
@@ -153,28 +176,51 @@ func (state *syncState) deferTask(t scopeTask, reason string, now time.Time) {
 			state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
 			return
 		}
+		for _, peer := range gap.PeerTasks {
+			if peer.key() == t.key() && peer.Cursor == t.Cursor && peer.Offset == t.Offset {
+				return
+			}
+		}
 	}
 	state.Deferred = append(state.Deferred, deferredScope{Task: &t, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
 }
 func (state *syncState) activateDeferred(now time.Time, limits discoveryLimits) {
 	retained := make([]deferredScope, 0, len(state.Deferred))
 	var displaced *scopeTask
+	swappedOnce := false
 	for _, gap := range state.Deferred {
 		if gap.NextAttemptAt.After(now) {
 			retained = append(retained, gap)
 			continue
 		}
+		activated := false
+		var swapped *scopeTask
 		if gap.Task != nil && len(state.Frontier) < limits.Frontier {
 			state.Frontier = append(state.Frontier, *gap.Task)
-		} else if gap.Task != nil && displaced == nil && len(state.Frontier) > 0 {
+			activated = true
+		} else if gap.Task != nil && !swappedOnce && len(state.Frontier) > 0 {
 			// Reserve one slot for due continuation work even when roots fill the frontier.
 			last := state.Frontier[len(state.Frontier)-1]
-			displaced = &last
+			swapped = &last
+			swappedOnce = true
 			state.Frontier = append([]scopeTask{*gap.Task}, state.Frontier[:len(state.Frontier)-1]...)
+			activated = true
 		} else if gap.Window != nil && len(state.Windows) < limits.Frontier {
 			state.Windows = append(state.Windows, *gap.Window)
+			activated = true
 		} else {
 			retained = append(retained, gap)
+		}
+		if activated {
+			if next, ok := nextDeferred(gap); ok {
+				if swapped != nil {
+					next.PeerTasks = append(next.PeerTasks, *swapped)
+					next.NextAttemptAt = now.Add(transcriptRetryCadence)
+				}
+				retained = append(retained, next)
+			} else if swapped != nil {
+				displaced = swapped
+			}
 		}
 	}
 	state.Deferred = retained
@@ -197,17 +243,56 @@ func (state *syncState) activateOneDeferred(now time.Time, limits discoveryLimit
 			// are full; a successful retry can then free frontier capacity.
 			last := state.Frontier[len(state.Frontier)-1]
 			state.Frontier = append([]scopeTask{*gap.Task}, state.Frontier[:len(state.Frontier)-1]...)
-			state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
-			state.deferTask(last, "frontier_budget", now)
+			if next, ok := nextDeferred(gap); ok {
+				next.PeerTasks = append(next.PeerTasks, last)
+				next.NextAttemptAt = now.Add(transcriptRetryCadence)
+				state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
+				state.Deferred = append(state.Deferred, next)
+			} else {
+				state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
+				state.deferTask(last, "frontier_budget", now)
+			}
 			return
 		} else if gap.Window != nil && len(state.Windows) < limits.Frontier {
 			state.Windows = append(state.Windows, *gap.Window)
 		} else {
 			continue
 		}
-		state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
+		if next, ok := nextDeferred(gap); ok {
+			state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
+			state.Deferred = append(state.Deferred, next)
+		} else {
+			state.Deferred = append(state.Deferred[:i], state.Deferred[i+1:]...)
+		}
 		return
 	}
+}
+
+// coalescePredecessor retains exact replay work under an existing retry's
+// schedule when a separate deferred entry cannot fit.
+func (state *syncState) coalescePredecessor(task *scopeTask, window *queryWindow, now time.Time, limits discoveryLimits) bool {
+	if len(state.Deferred) == 0 || (task == nil) == (window == nil) {
+		return false
+	}
+	candidate := state.copyDiscovery()
+	gap := &candidate.Deferred[0]
+	if task != nil {
+		gap.PeerTasks = append(gap.PeerTasks, *task)
+	} else {
+		gap.PeerWindows = append(gap.PeerWindows, *window)
+	}
+	if next := now.Add(transcriptRetryCadence); next.Before(gap.NextAttemptAt) {
+		gap.NextAttemptAt = next
+	}
+	candidate.reason("cursor_budget", "run")
+	if candidate.validateTransientWith(limits) != nil {
+		candidate.Coverage.Diagnostics = nil
+		if candidate.validateTransientWith(limits) != nil {
+			return false
+		}
+	}
+	*state = candidate
+	return true
 }
 func (state *syncState) validateTransient() error {
 	s := *state
@@ -232,7 +317,11 @@ func (state *syncState) validateTransientWith(limits discoveryLimits) error {
 }
 func (state *syncState) workRemaining() int {
 	s := *state
-	return len(s.Admissions) + len(s.Frontier) + len(s.Windows) + len(s.Pending) + len(s.PendingBacklog) + len(s.Deferred)
+	count := len(s.Admissions) + len(s.Frontier) + len(s.Windows) + len(s.Pending) + len(s.PendingBacklog) + len(s.Deferred)
+	for _, gap := range s.Deferred {
+		count += len(gap.PeerTasks) + len(gap.PeerWindows)
+	}
+	return count
 }
 
 // copyDiscovery isolates a provider page until all its work fits a durable cursor.
@@ -242,6 +331,10 @@ func (state *syncState) copyDiscovery() syncState {
 	s.Frontier = append([]scopeTask(nil), s.Frontier...)
 	s.Windows = append([]queryWindow(nil), s.Windows...)
 	s.Deferred = append([]deferredScope(nil), s.Deferred...)
+	for i := range s.Deferred {
+		s.Deferred[i].PeerTasks = append([]scopeTask(nil), s.Deferred[i].PeerTasks...)
+		s.Deferred[i].PeerWindows = append([]queryWindow(nil), s.Deferred[i].PeerWindows...)
+	}
 	s.Seen = maps.Clone(s.Seen)
 	s.Coverage.Reasons = maps.Clone(s.Coverage.Reasons)
 	s.Coverage.Diagnostics = append([]coverageDiagnostic(nil), s.Coverage.Diagnostics...)
@@ -304,6 +397,16 @@ func (state *syncState) validateDiscovery() error {
 		} else if err := validateWindow(*gap.Window); err != nil {
 			return err
 		}
+		for _, peer := range gap.PeerTasks {
+			if err := validateScopeTask(peer); err != nil {
+				return err
+			}
+		}
+		for _, peer := range gap.PeerWindows {
+			if err := validateWindow(peer); err != nil {
+				return err
+			}
+		}
 	}
 	return s.validateTransient()
 }
@@ -317,8 +420,14 @@ func (state *syncState) resolveTask(task scopeTask) {
 	retained := state.Deferred[:0]
 	for _, gap := range state.Deferred {
 		if gap.Task != nil && gap.Task.key() == task.key() && gap.Task.Cursor == task.Cursor && gap.Task.Offset == task.Offset {
+			if next, ok := nextDeferred(gap); ok {
+				retained = append(retained, next)
+			}
 			continue
 		}
+		gap.PeerTasks = slices.DeleteFunc(gap.PeerTasks, func(peer scopeTask) bool {
+			return peer.key() == task.key() && peer.Cursor == task.Cursor && peer.Offset == task.Offset
+		})
 		retained = append(retained, gap)
 	}
 	state.Deferred = retained
@@ -329,6 +438,10 @@ func (state *syncState) currentCoverage(search bool) {
 	current := map[string]int{}
 	for _, gap := range state.Deferred {
 		current[gap.Reason]++
+		current["cursor_budget"] += len(gap.PeerTasks) + len(gap.PeerWindows)
+	}
+	if current["cursor_budget"] == 0 {
+		delete(current, "cursor_budget")
 	}
 	for _, known := range state.Known {
 		if known.FetchError != "" && known.FetchError != "not_selected" {
@@ -340,7 +453,7 @@ func (state *syncState) currentCoverage(search bool) {
 	}
 	for _, reason := range []string{"request_budget", "discovery_budget", "unfinished_progress", "cursor_budget", "time_budget", "interrupted", "users_unavailable", "pending_budget"} {
 		if n := state.Coverage.Reasons[reason]; n > 0 {
-			current[reason] = n
+			current[reason] = max(current[reason], n)
 		}
 	}
 	state.Coverage.Reasons = current
@@ -354,20 +467,33 @@ func (state *syncState) deferWindow(window queryWindow, reason string, now time.
 			state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
 			return
 		}
+		for _, peer := range gap.PeerWindows {
+			if peer.From.Equal(window.From) && peer.To.Equal(window.To) {
+				return
+			}
+		}
 	}
 	state.Deferred = append(state.Deferred, deferredScope{Window: &window, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
 }
 func (state *syncState) resolveWindow(window queryWindow) {
 	retained := state.Deferred[:0]
 	for _, gap := range state.Deferred {
-		if gap.Window != nil {
-			fromContained := window.From.IsZero() || (!gap.Window.From.IsZero() && !gap.Window.From.Before(window.From))
-			toContained := window.To.IsZero() || (!gap.Window.To.IsZero() && !gap.Window.To.After(window.To))
-			if fromContained && toContained {
-				continue
+		gap.PeerWindows = slices.DeleteFunc(gap.PeerWindows, func(peer queryWindow) bool {
+			return containsWindow(window, peer)
+		})
+		if gap.Window != nil && containsWindow(window, *gap.Window) {
+			if next, ok := nextDeferred(gap); ok {
+				retained = append(retained, next)
 			}
+			continue
 		}
 		retained = append(retained, gap)
 	}
 	state.Deferred = retained
+}
+
+func containsWindow(outer, inner queryWindow) bool {
+	fromContained := outer.From.IsZero() || (!inner.From.IsZero() && !inner.From.Before(outer.From))
+	toContained := outer.To.IsZero() || (!inner.To.IsZero() && !inner.To.After(outer.To))
+	return fromContained && toContained
 }

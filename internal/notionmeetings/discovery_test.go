@@ -295,3 +295,24 @@ func TestSaturatedDeferredSwapRetainsDisplacedWork(t *testing.T) {
 	assert.Equal("blocked", state.Deferred[1].Task.ID)
 	require.NoError(state.validateTransientWith(limits))
 }
+
+func TestResolvingDeferredGroupRetainsPeerWork(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	state := newSyncState()
+	original := scopeTask{Kind: "blocks", ID: "original"}
+	peer := scopeTask{Kind: "blocks", ID: "peer"}
+	window := queryWindow{To: now}
+	state.Deferred = []deferredScope{{Task: &original, PeerTasks: []scopeTask{peer}, PeerWindows: []queryWindow{window}, Reason: "inaccessible_subtree", NextAttemptAt: now}}
+	state.resolveTask(original)
+	require.Len(state.Deferred, 1)
+	require.NotNil(state.Deferred[0].Task)
+	assert.Equal("peer", state.Deferred[0].Task.ID)
+	state.resolveTask(peer)
+	require.Len(state.Deferred, 1)
+	require.NotNil(state.Deferred[0].Window)
+	assert.Equal(window, *state.Deferred[0].Window)
+	state.resolveWindow(window)
+	assert.Empty(state.Deferred)
+}
