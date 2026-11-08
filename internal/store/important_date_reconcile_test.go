@@ -78,6 +78,15 @@ func TestImportantDateReconciliationRetainsMergeCollisions(t *testing.T) {
 	stable, err := st.ImportantDateIdentityStableContext(ctx, merged.Person.ID)
 	must.NoError(err)
 	checks.True(stable, "a reviewed unchanged lineage may be eligible after fresh consent")
+	must.NoError(st.SetImportantDateConsentContext(ctx, target, "private-example", "owner/agent", true))
+	active, err = st.HasImportantDateConsentContext(ctx, target, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.True(active)
+	_, err = st.RetirePersonUIDAliasContext(ctx, "new-retired-example", &merged.Person.ID, "test")
+	must.NoError(err)
+	stable, err = st.ImportantDateIdentityStableContext(ctx, merged.Person.ID)
+	must.NoError(err)
+	checks.False(stable, "an identity mutation invalidates the reviewed topology")
 }
 
 func TestImportantDateSplitGuardSuppressesHistoricOccurrence(t *testing.T) {
