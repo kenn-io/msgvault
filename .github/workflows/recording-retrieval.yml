@@ -1,0 +1,43 @@
+name: Recording retrieval qualification
+on:
+  push:
+    branches: [feat/recording-semantic-search]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: recording-retrieval-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contracts:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgvault_test
+          POSTGRES_PASSWORD: msgvault_test
+          POSTGRES_DB: msgvault_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      GOPROXY: https://proxy.golang.org|direct
+      MSGVAULT_TEST_DB: ${{ matrix.backend == 'postgres' && 'postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable' || '' }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Exercise recording modes and existing lifecycle contracts
+        run: go test -tags 'fts5 sqlite_vec' -timeout 15m ./internal/docbankmedia ./internal/api -run 'TestRecordingSearch|TestMediaSearch|TestMessageRecordings'
