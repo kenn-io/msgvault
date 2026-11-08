@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -123,11 +124,11 @@ func (p *archiveTestProvider) List(ctx context.Context, _, token string, pageSiz
 		case <-p.listRelease:
 		}
 	}
-	if p.err != nil {
-		return Page{}, p.err
-	}
 	if p.onList != nil {
 		p.onList()
+	}
+	if p.err != nil {
+		return Page{}, p.err
 	}
 	page, ok := p.pages[token]
 	if !ok {
@@ -441,4 +442,55 @@ func TestBackfillHoldsArchiveGateOnlyForWrites(t *testing.T) {
 	service.backfills.Wait()
 	assert.Equal(int32(2), acquisitions.Load())
 	assert.False(providerBlocked.Load())
+}
+
+func TestBackfillFailureWaitsForArchiveGate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		const location = "accounts/a/locations/l"
+		archive := &archiveTestStore{done: make(chan struct{})}
+		gate := make(chan struct{}, 1)
+		held := make(chan struct{})
+		provider := &archiveTestProvider{err: ErrQuota}
+		provider.onList = func() { gate <- struct{}{}; close(held) }
+		target := Target{Name: "shop", Provider: "google", Email: "owner@example.com", OAuthApp: "business", Location: location, Enabled: true, OwnProject: true}
+		service := NewService(Options{
+			Archive:  archive,
+			Targets:  func(context.Context) ([]Target, error) { return []Target{target}, nil },
+			Provider: func(context.Context, Target) (Provider, string, error) { return provider, "binding", nil },
+			BeginArchiveWrite: func(ctx context.Context) (func(), bool) {
+				select {
+				case gate <- struct{}{}:
+					return func() { <-gate }, true
+				case <-ctx.Done():
+					return nil, false
+				}
+			},
+		})
+		defer service.Close()
+		_, err := service.Execute(t.Context(), "owner", Request{Action: "backfill", Target: "shop"})
+		require.NoError(err)
+		select {
+		case <-held:
+		case <-time.After(30 * time.Second):
+			require.FailNow("provider did not acquire the archive gate")
+		}
+		synctest.Wait()
+		time.Sleep(6 * time.Second)
+		synctest.Wait()
+		archive.mu.Lock()
+		assert.Equal("running", archive.state.Status)
+		archive.mu.Unlock()
+		<-gate
+		select {
+		case <-archive.done:
+		case <-time.After(30 * time.Second):
+			require.FailNow("failure was not recorded after gate release")
+		}
+		archive.mu.Lock()
+		assert.Equal("partial", archive.state.Status)
+		assert.Equal("quota", archive.state.LastErrorCode)
+		archive.mu.Unlock()
+	})
 }

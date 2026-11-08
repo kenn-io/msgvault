@@ -488,6 +488,9 @@ func archiveErrorCode(err error) string {
 }
 
 func (s *Service) beginArchiveWrite(ctx context.Context) (func(), bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
 	if s.options.BeginArchiveWrite == nil {
 		return func() {}, true
 	}
@@ -495,16 +498,24 @@ func (s *Service) beginArchiveWrite(ctx context.Context) (func(), bool) {
 }
 
 func (s *Service) failBackfill(ctx context.Context, target Target, errorCode string) {
-	// Persist the resume checkpoint after daemon shutdown cancels the worker;
-	// this bounded cleanup must finish after service-context cancellation.
-	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
+	// Normal failures wait for the archive gate so a backup cannot leave an
+	// exited worker reported as running. Service shutdown cancels that wait.
+	persistCtx := s.backfillCtx
 	release, ok := s.beginArchiveWrite(persistCtx)
+	if ok {
+		defer release()
+		_, _ = s.options.Archive.FailGoogleReviewsBackfill(persistCtx, target.Name, target.Location, errorCode)
+		return
+	}
+	// Shutdown may still allow a brief checkpoint write after cancellation.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	release, ok = s.beginArchiveWrite(cleanupCtx)
 	if !ok {
 		return
 	}
 	defer release()
-	_, _ = s.options.Archive.FailGoogleReviewsBackfill(persistCtx, target.Name, target.Location, errorCode)
+	_, _ = s.options.Archive.FailGoogleReviewsBackfill(cleanupCtx, target.Name, target.Location, errorCode)
 }
 
 func (s *Service) SearchArchive(ctx context.Context, request ArchiveSearchRequest) (ArchiveSearchResponse, error) {
