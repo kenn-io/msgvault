@@ -84,7 +84,11 @@ jobs:
       - name: Download modules
         run: kit-retry 3 5 go mod download
       - name: Exercise recording modes and existing lifecycle contracts
-        run: go test -tags 'fts5 sqlite_vec' -timeout 15m ./internal/docbankmedia ./internal/api ./internal/daemonclient ./internal/mcp ./cmd/msgvault/cmd -run 'TestRecordingSearch|TestMediaSearch|TestMessageRecordings|TestMedia|TestSearchMedia'
+        run: >-
+          go test -tags 'fts5 sqlite_vec' -timeout 15m
+          ./internal/docbankmedia ./internal/api ./internal/daemonclient ./internal/mcp
+          ./cmd/msgvault/cmd ./internal/beeper ./internal/recordingref
+          -run 'TestRecordingSearch|TestMediaSearch|TestMessageRecordings|TestMedia|TestSearchMedia|TestStoredMediaProviderMatrix|TestStoredMediaEmailFallback|TestStoredMediaProcessingChoice|TestRecordingReference'
   evaluation:
     runs-on: ubuntu-26.04
     timeout-minutes: 40
@@ -109,7 +113,7 @@ jobs:
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       # Pin the companion implementation; the report also records both checkout SHAs.
-      DOCBANK_REVISION: ed6e2fe7e6f4e0b68b183d6d572754b90671cd35
+      DOCBANK_REVISION: 2d62ff2ff4d72b77282a5c91181209eaebc35819
       DOCBANK_EVAL_CGO_ENABLED: ${{ matrix.cgo }}
       MSGVAULT_TEST_DB: ${{ matrix.backend == 'postgres' && 'postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable' || '' }}
       QUALITY: ${{ matrix.quality }}
