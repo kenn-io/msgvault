@@ -316,3 +316,22 @@ func TestHydratorRetainsContentOnDirectoryBudgetExpiry(t *testing.T) {
 		assert.NoError(ctx.Err())
 	})
 }
+
+func TestHydratorReservesShortParentDeadlineForContent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		calls := 0
+		source := slowOptionalDirectorySource{fakeHydrationSource: completeHydrationSource(), calls: &calls}
+		ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+		defer cancel()
+		started := time.Now()
+		result, err := NewHydrator(source).Hydrate(ctx, hydrationMeeting())
+		require.NoError(err)
+		assert.Equal(3*time.Second, time.Since(started))
+		assert.Equal("Test Speaker: Ready to ship.", result.Transcript)
+		assert.True(result.AttendeeResolutionDegraded)
+		assert.Equal(1, calls)
+		assert.NoError(ctx.Err())
+	})
+}
