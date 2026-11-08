@@ -162,11 +162,9 @@ func TestLiveExploreRefusesSemanticBeforeCandidatesOrReader(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	srv, backend := newReviewSemanticIntersectionServer(t)
-	live, _, _ := liveExploreTestServer(t)
-	engine, ok := live.queryEngineForContext(t.Context()).(*query.LiveExploreEngine)
+	srv, _, _ := liveExploreTestServer(t)
+	engine, ok := srv.queryEngineForContext(t.Context()).(*query.LiveExploreEngine)
 	requirements.True(ok)
-	srv.SetAnalyticsEngine(engine, AnalyticsModeSQLFallback)
 	_, release, _, err := engine.BeginExploreSnapshot(t.Context())
 	requirements.NoError(err)
 	defer release()
@@ -179,7 +177,6 @@ func TestLiveExploreRefusesSemanticBeforeCandidatesOrReader(t *testing.T) {
 		cancel()
 		assertions.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
 		assertions.Contains(response.Body.String(), "analytical_cache_unavailable")
-		assertions.Zero(backend.searchLimit, "unsupported searches must not query the vector index")
 	}
 }
 

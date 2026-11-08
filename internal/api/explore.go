@@ -370,7 +370,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	if prepared.offset > 0 {
 		cursor, err := s.decodeExploreCursor(prepared.request.Cursor)
 		if err != nil || cursor.Revision != result.CacheRevision {
-			writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; restart pagination")
+			writeError(w, http.StatusConflict, "archive_revision_changed", "Results changed; restart pagination")
 			return
 		}
 	}

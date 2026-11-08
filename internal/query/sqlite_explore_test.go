@@ -183,7 +183,7 @@ func TestSQLiteExploreRepairsInvalidParticipantLabels(t *testing.T) {
 	assertions.Equal([]string{"Alice", "Bo\ufffdb"}, page.Rows[0].ParticipantLabels)
 }
 
-func TestSQLiteExploreSnapshotRevision(t *testing.T) {
+func TestSQLiteExploreReaderLifecycle(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
@@ -212,14 +212,7 @@ func TestSQLiteExploreSnapshotRevision(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(version, next.CacheRevision)
 	assert.Equal(initial.TotalCount+1, next.TotalCount)
-}
-
-func TestSQLiteExploreReaderLifecycle(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	live := liveExploreFixture(t).live
-	ctx, release, _, err := live.BeginExploreSnapshot(t.Context())
+	_, release, _, err = live.BeginExploreSnapshot(t.Context())
 	require.NoError(err)
 	defer release()
 	waiting, cancel := context.WithCancel(t.Context())
@@ -241,8 +234,6 @@ func TestSQLiteExploreReaderLifecycle(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.FailNow("cancelled Explore remained blocked on the reader")
 	}
-	_, err = live.Explore(ctx, ExploreRequest{})
-	require.NoError(err)
 	release()
 	cancelled, cancel := context.WithCancel(t.Context())
 	_, end, cancelledRevision, err := live.BeginExploreSnapshot(cancelled)

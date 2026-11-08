@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-11-08"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -289,11 +289,10 @@ the background after HTTP is ready. In `engine = "auto"`, aggregate views use
 live SQL while that work runs and switch to DuckDB after the cache is ready and
 opens successfully; a failed build or open keeps live SQL. In
 `engine = "duckdb"`, analytics remain unavailable until the required cache is
-ready, with no SQL fallback. While that automatic initialization is active,
-cache-dependent Web UI views report that preparation is in progress and retry
+ready, with no SQL fallback. In auto mode, Messages serves live archive rows during a full rebuild and switches to the published cache when it opens. If no usable cache is produced, the live rows stay available with recovery steps. Other cache-dependent Web UI views report that preparation is in progress and retry
 until the cache becomes ready; terminal unavailable states retain the explicit
 rebuild action. Set `auto_build_cache = false` to skip automatic startup
-maintenance; scheduled syncs, ingest commands, and
+maintenance and its live Messages path; scheduled syncs, ingest commands, and
 `msgvault build-cache` can refresh or build the cache explicitly.
 
 Each build writes and verifies a same-filesystem staging tree before publishing

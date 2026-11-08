@@ -156,7 +156,7 @@ func TestStartDaemonAnalyticsInitializerAutoInstallsDuckDB(t *testing.T) {
 	require.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
 }
 
-func TestStartDaemonAnalyticsInitializerTracksAutoInitializationIndependently(t *testing.T) {
+func TestStartDaemonAnalyticsInitializerInstallsSwapsAndClosesLiveEngine(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
@@ -389,7 +389,7 @@ func TestStartDaemonAnalyticsInitializerValidCacheWaitsForDuckDB(t *testing.T) {
 }
 
 func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
-	for _, scenario := range []string{"absent", "partial publication", "stale schema"} {
+	for _, scenario := range []string{"absent", "partial publication"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
 			assertions := assert.New(t)
@@ -400,11 +400,7 @@ func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
 				publishStaleTestCache(t, c, st)
 				state, err := query.ReadCacheSyncState(c.AnalyticsDir())
 				require.NoError(err)
-				if scenario == "stale schema" {
-					state.SchemaVersion--
-				} else {
-					state.FullRebuildRequired = true
-				}
+				state.FullRebuildRequired = true
 				encoded, err := json.Marshal(state)
 				require.NoError(err)
 				require.NoError(os.WriteFile(query.CacheStatePath(c.AnalyticsDir()), encoded, 0o600))

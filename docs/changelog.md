@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-08"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -10,6 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
+- Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
