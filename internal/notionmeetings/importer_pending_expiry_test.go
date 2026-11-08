@@ -202,7 +202,7 @@ func TestImporterMigratesLegacyPendingOverflow(t *testing.T) {
 	require.NoError(err)
 	recovered, err = imp.loadState(t.Context(), src.ID)
 	require.NoError(err)
-	assert.Len(recovered.PendingBacklog, 5)
+	require.Len(recovered.PendingBacklog, 5)
 	assert.NotEqual("legacy-204", recovered.PendingBacklog[4].BlockID)
 	assert.Equal(deadline, recovered.TranscriptRetryUntil["legacy-204"])
 }
