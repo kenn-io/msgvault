@@ -20,7 +20,7 @@ type deliveryStoreFake struct {
 }
 
 func (f *deliveryStoreFake) ClaimImportantDateDeliveryContext(context.Context, string, string) (bool, error) {
-	if f.claimed {
+	if f.claimed && f.state != store.ImportantDateRetryIssue {
 		return false, nil
 	}
 	f.claimed = true
@@ -38,7 +38,7 @@ func (f *deliveryStoreFake) AdvanceImportantDateDeliveryContext(_ context.Contex
 func (f *deliveryStoreFake) ImportantDateDeliveryContext(context.Context, string) (store.ImportantDateDeliveryState, string, error) {
 	return f.state, f.issueUID, nil
 }
-func (f *deliveryStoreFake) WithImportantDateConsentContext(ctx context.Context, _, _, _ string, dispatch func(context.Context) error) (bool, error) {
+func (f *deliveryStoreFake) WithImportantDateConsentContext(ctx context.Context, _, _, _, _ string, dispatch func(context.Context) error) (bool, error) {
 	if !f.consent {
 		return false, nil
 	}
@@ -49,12 +49,19 @@ func (f *deliveryStoreFake) WithImportantDateConsentContext(ctx context.Context,
 }
 
 type deliveryKataFake struct {
+	lookupError            error
 	existing               bool
 	notifyError            error
 	creates, notifications int
 }
 
+func (f *deliveryKataFake) ProjectUID(context.Context, string) (string, error) {
+	return "project-example", nil
+}
 func (f *deliveryKataFake) FindActionTask(context.Context, string, string) (taskclient.KataTask, bool, error) {
+	if f.lookupError != nil {
+		return taskclient.KataTask{}, false, f.lookupError
+	}
 	if f.existing {
 		return taskclient.KataTask{UID: "issue-example", Project: "private-example", Status: "open"}, true, nil
 	}
@@ -70,45 +77,72 @@ func (f *deliveryKataFake) NotifyIssue(context.Context, string, string, string, 
 }
 
 func TestDeliveryDoesNotRetryUncertainNotification(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
 	st := &deliveryStoreFake{consent: true}
 	kata := &deliveryKataFake{notifyError: errors.New("response lost")}
 	service := DeliveryService{Store: st, Kata: kata}
-	input := DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", Recipient: "owner/agent"}
+	input := DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}
 	err := service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil })
-	require.Error(t, err)
-	assert.Equal(t, store.ImportantDateUnknown, st.state)
-	assert.Equal(t, 1, kata.notifications)
+	must.Error(err)
+	checks.Equal(store.ImportantDateUnknown, st.state)
+	checks.Equal(1, kata.notifications)
 	err = service.Deliver(t.Context(), input, func(context.Context) (bool, error) { return true, nil })
-	require.NoError(t, err)
-	assert.Equal(t, 1, kata.notifications)
+	must.NoError(err)
+	checks.Equal(1, kata.notifications)
 }
 
 func TestDeliveryDoesNotWriteWithoutConsent(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
 	st := &deliveryStoreFake{}
 	kata := &deliveryKataFake{}
 	service := DeliveryService{Store: st, Kata: kata}
-	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
-	require.NoError(t, err)
-	assert.Zero(t, kata.creates)
-	assert.Zero(t, kata.notifications)
+	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	must.NoError(err)
+	checks.Zero(kata.creates)
+	checks.Zero(kata.notifications)
+	checks.Equal(store.ImportantDateRetryIssue, st.state)
 }
 
 func TestDeliveryDoesNotRenotifyExistingIssue(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
 	st := &deliveryStoreFake{consent: true}
 	kata := &deliveryKataFake{existing: true}
 	service := DeliveryService{Store: st, Kata: kata}
-	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
-	require.NoError(t, err)
-	assert.Equal(t, store.ImportantDateCancelled, st.state)
-	assert.Zero(t, kata.notifications)
+	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	must.NoError(err)
+	checks.Equal(store.ImportantDateCancelled, st.state)
+	checks.Zero(kata.notifications)
 }
 
 func TestDeliveryStopsIfOperatorResolvedBeforeDispatch(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
 	st := &deliveryStoreFake{consent: true, resolveBeforeDispatch: true}
 	kata := &deliveryKataFake{}
 	service := DeliveryService{Store: st, Kata: kata}
-	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
-	require.NoError(t, err)
-	assert.Zero(t, kata.creates)
-	assert.Zero(t, kata.notifications)
+	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	must.NoError(err)
+	checks.Zero(kata.creates)
+	checks.Zero(kata.notifications)
+}
+
+func TestDeliveryCancelsDefiniteLookupFailure(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := &deliveryStoreFake{consent: true}
+	kata := &deliveryKataFake{lookupError: errors.New("lookup unavailable")}
+	service := DeliveryService{Store: st, Kata: kata}
+	err := service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	must.Error(err)
+	checks.Equal(store.ImportantDateRetryIssue, st.state)
+	checks.Zero(kata.creates)
+	checks.Zero(kata.notifications)
+	kata.lookupError = nil
+	err = service.Deliver(t.Context(), DeliveryInput{OccurrenceKey: "occurrence-example", Fingerprint: "fingerprint-example", SubjectUID: "person/subject-example", OwnerUID: "person/owner-example", Project: "private-example", ConsentScope: "scope-example", Recipient: "owner/agent"}, func(context.Context) (bool, error) { return true, nil })
+	must.NoError(err)
+	checks.Equal(store.ImportantDateDelivered, st.state)
+	checks.Equal(1, kata.notifications)
 }

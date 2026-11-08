@@ -17,37 +17,47 @@ type ProducerStore interface {
 
 // RunOnce performs a bounded local calendar scan. Every actual write has a
 // second scan under the identity and consent fence; no model is involved.
-func RunOnce(ctx context.Context, st ProducerStore, kata DeliveryKata, cfg Config, now time.Time) (int, error) {
+func RunOnce(ctx context.Context, st ProducerStore, kata DeliveryKata, cfg Config, now time.Time) (int, bool, error) {
 	if !cfg.Enabled {
-		return 0, nil
+		return 0, false, nil
+	}
+	if cfg.ConsentScope == "" || cfg.ProjectUID == "" {
+		return 0, false, fmt.Errorf("important-date destination scope is required")
 	}
 	candidates, err := Candidates(ctx, st, cfg, now)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	service := DeliveryService{Store: st, Kata: kata}
 	attempts := 0
 	for _, candidate := range candidates {
 		if attempts >= maxDeliveriesPerRun {
-			break
+			return attempts, true, nil
 		}
 		exists, err := st.ImportantDateDeliveryExistsContext(ctx, candidate.OccurrenceKey)
 		if err != nil {
-			return attempts, err
+			return attempts, false, err
 		}
 		if exists {
 			continue
 		}
-		active, err := st.HasImportantDateConsentContext(ctx, candidate.SubjectUID, cfg.Project, cfg.Recipient)
+		active, err := st.HasImportantDateConsentContext(ctx, candidate.SubjectUID, cfg.ConsentScope, cfg.Recipient)
 		if err != nil {
-			return attempts, err
+			return attempts, false, err
 		}
 		if !active {
 			continue
 		}
-		input := DeliveryInput{OccurrenceKey: candidate.OccurrenceKey, Fingerprint: candidate.Fingerprint, SubjectUID: candidate.SubjectUID, OwnerUID: candidate.OwnerUID, Project: cfg.Project, Recipient: cfg.Recipient}
+		input := DeliveryInput{OccurrenceKey: candidate.OccurrenceKey, Fingerprint: candidate.Fingerprint, SubjectUID: candidate.SubjectUID, OwnerUID: candidate.OwnerUID, Project: cfg.Project, ConsentScope: cfg.ConsentScope, Recipient: cfg.Recipient}
 		attempts++
 		err = service.Deliver(ctx, input, func(fenced context.Context) (bool, error) {
+			projectUID, err := kata.ProjectUID(fenced, cfg.Project)
+			if err != nil {
+				return false, err
+			}
+			if projectUID != cfg.ProjectUID {
+				return false, nil
+			}
 			current, err := Candidates(fenced, st, cfg, time.Now())
 			if err != nil {
 				return false, err
@@ -60,8 +70,8 @@ func RunOnce(ctx context.Context, st ProducerStore, kata DeliveryKata, cfg Confi
 			return false, nil
 		})
 		if err != nil {
-			return attempts, fmt.Errorf("important-date delivery failed: %w", err)
+			return attempts, false, fmt.Errorf("important-date delivery failed: %w", err)
 		}
 	}
-	return attempts, nil
+	return attempts, false, nil
 }

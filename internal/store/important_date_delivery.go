@@ -14,6 +14,7 @@ type ImportantDateDeliveryState string
 const (
 	ImportantDateClaimed        ImportantDateDeliveryState = "claimed"
 	ImportantDateIssueInFlight  ImportantDateDeliveryState = "issue_in_flight"
+	ImportantDateRetryIssue     ImportantDateDeliveryState = "retry_issue"
 	ImportantDateIssueCreated   ImportantDateDeliveryState = "issue_created"
 	ImportantDateNotifyInFlight ImportantDateDeliveryState = "notify_in_flight"
 	ImportantDateDelivered      ImportantDateDeliveryState = "delivered"
@@ -47,7 +48,7 @@ func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fing
 			return nil
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO important_date_deliveries (occurrence_key, fingerprint, state, issue_uid)
-			VALUES (?, ?, 'claimed', '') ON CONFLICT (occurrence_key) DO NOTHING`, key, fingerprint)
+			VALUES (?, ?, 'claimed', '') ON CONFLICT (occurrence_key) DO UPDATE SET state = 'claimed', fingerprint = excluded.fingerprint WHERE important_date_deliveries.state = 'retry_issue' AND important_date_deliveries.issue_uid = ''`, key, fingerprint)
 		if err != nil {
 			return fmt.Errorf("claim important-date delivery: %w", err)
 		}
@@ -65,9 +66,9 @@ func (s *Store) ClaimImportantDateDeliveryContext(ctx context.Context, key, fing
 // Unknown outcomes cannot automatically return to an executable state.
 func (s *Store) AdvanceImportantDateDeliveryContext(ctx context.Context, key string, from, to ImportantDateDeliveryState, issueUID string) (bool, error) {
 	valid := (from == ImportantDateClaimed && (to == ImportantDateIssueInFlight || to == ImportantDateCancelled)) ||
-		(from == ImportantDateIssueInFlight && (to == ImportantDateIssueCreated || to == ImportantDateUnknown)) ||
+		(from == ImportantDateIssueInFlight && (to == ImportantDateIssueCreated || to == ImportantDateUnknown || to == ImportantDateCancelled || to == ImportantDateRetryIssue)) ||
 		(from == ImportantDateIssueCreated && (to == ImportantDateNotifyInFlight || to == ImportantDateCancelled)) ||
-		(from == ImportantDateNotifyInFlight && (to == ImportantDateDelivered || to == ImportantDateUnknown))
+		(from == ImportantDateNotifyInFlight && (to == ImportantDateDelivered || to == ImportantDateUnknown || to == ImportantDateCancelled))
 	if !valid || strings.TrimSpace(key) == "" || ((to == ImportantDateIssueCreated || from == ImportantDateIssueCreated || from == ImportantDateNotifyInFlight) && strings.TrimSpace(issueUID) == "") {
 		return false, ErrImportantDateTransition
 	}
@@ -110,7 +111,7 @@ func (s *Store) ImportantDateHasOtherPendingContext(ctx context.Context, prefix,
 	}
 	var pending bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries
-		WHERE substr(occurrence_key, 1, ?) = ? AND occurrence_key <> ?
+		WHERE substr(occurrence_key, 1, ?) = ? AND occurrence_key <> ? AND state <> 'retry_issue'
 		AND (fingerprint <> ? OR state IN ('claimed', 'issue_in_flight', 'issue_created', 'notify_in_flight', 'unknown')))`, utf8.RuneCountInString(prefix), prefix, currentKey, fingerprint).Scan(&pending)
 	if err != nil {
 		return false, fmt.Errorf("check pending important-date occurrences: %w", err)
@@ -122,7 +123,7 @@ func (s *Store) ImportantDateHasOtherPendingContext(ctx context.Context, prefix,
 // retained state, including dismissed, completed, or uncertain deliveries.
 func (s *Store) ImportantDateDeliveryExistsContext(ctx context.Context, key string) (bool, error) {
 	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ?)`, key).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_deliveries WHERE occurrence_key = ? AND state <> 'retry_issue')`, key).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check important-date delivery: %w", err)
 	}
 	return exists, nil

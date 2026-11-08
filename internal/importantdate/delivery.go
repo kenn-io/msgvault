@@ -17,10 +17,11 @@ type DeliveryStore interface {
 	ClaimImportantDateDeliveryContext(context.Context, string, string) (bool, error)
 	ImportantDateDeliveryContext(context.Context, string) (store.ImportantDateDeliveryState, string, error)
 	AdvanceImportantDateDeliveryContext(context.Context, string, store.ImportantDateDeliveryState, store.ImportantDateDeliveryState, string) (bool, error)
-	WithImportantDateConsentContext(context.Context, string, string, string, func(context.Context) error) (bool, error)
+	WithImportantDateConsentContext(context.Context, string, string, string, string, func(context.Context) error) (bool, error)
 }
 
 type DeliveryKata interface {
+	ProjectUID(context.Context, string) (string, error)
 	FindActionTask(context.Context, string, string) (taskclient.KataTask, bool, error)
 	CreateTaskReused(context.Context, string, string, taskclient.KataCreate) (taskclient.KataTask, bool, error)
 	NotifyIssue(context.Context, string, string, string, string) error
@@ -30,7 +31,7 @@ type DeliveryService struct {
 	Store DeliveryStore
 	Kata  DeliveryKata
 }
-type DeliveryInput struct{ OccurrenceKey, Fingerprint, SubjectUID, OwnerUID, Project, Recipient string }
+type DeliveryInput struct{ OccurrenceKey, Fingerprint, SubjectUID, OwnerUID, Project, ConsentScope, Recipient string }
 
 var errDeliveryIneligible = errors.New("important-date occurrence is no longer eligible")
 
@@ -38,7 +39,7 @@ var errDeliveryIneligible = errors.New("important-date occurrence is no longer e
 // aliases and merge collisions before calling and revalidate the exact event
 // and private destination through the supplied fenced callback on each write.
 func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, revalidate func(context.Context) (bool, error)) error {
-	if s.Store == nil || s.Kata == nil || revalidate == nil || strings.TrimSpace(input.OccurrenceKey) == "" || strings.TrimSpace(input.Fingerprint) == "" || strings.TrimSpace(input.SubjectUID) == "" || !strings.HasPrefix(input.OwnerUID, "person/") || strings.TrimPrefix(input.OwnerUID, "person/") == "" || strings.TrimSpace(input.Project) == "" || strings.TrimSpace(input.Recipient) == "" {
+	if s.Store == nil || s.Kata == nil || revalidate == nil || strings.TrimSpace(input.OccurrenceKey) == "" || strings.TrimSpace(input.Fingerprint) == "" || strings.TrimSpace(input.SubjectUID) == "" || !strings.HasPrefix(input.OwnerUID, "person/") || strings.TrimPrefix(input.OwnerUID, "person/") == "" || strings.TrimSpace(input.Project) == "" || strings.TrimSpace(input.ConsentScope) == "" || strings.TrimSpace(input.Recipient) == "" {
 		return errors.New("invalid important-date delivery request")
 	}
 	claimed, err := s.Store.ClaimImportantDateDeliveryContext(ctx, input.OccurrenceKey, input.Fingerprint)
@@ -52,7 +53,8 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 	marker := hex.EncodeToString(digest[:])
 	var issue taskclient.KataTask
 	var reused bool
-	active, err := s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.Project, input.Recipient, func(fenced context.Context) error {
+	attempted := false
+	active, err := s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.OwnerUID, input.ConsentScope, input.Recipient, func(fenced context.Context) error {
 		state, _, err := s.Store.ImportantDateDeliveryContext(fenced, input.OccurrenceKey)
 		if err != nil {
 			return err
@@ -72,6 +74,7 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 			return err
 		}
 		if !reused {
+			attempted = true
 			personUID := strings.TrimPrefix(input.OwnerUID, "person/")
 			if strings.HasPrefix(input.SubjectUID, "person/") {
 				personUID = strings.TrimPrefix(input.SubjectUID, "person/")
@@ -81,7 +84,11 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 		return err
 	})
 	if err != nil || !active {
-		_ = s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, store.ImportantDateUnknown, "")
+		outcome := store.ImportantDateRetryIssue
+		if attempted {
+			outcome = store.ImportantDateUnknown
+		}
+		_ = s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueInFlight, outcome, "")
 		if errors.Is(err, errDeliveryIneligible) || !active && err == nil {
 			return nil
 		}
@@ -100,7 +107,8 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 	if err := s.advance(ctx, input.OccurrenceKey, store.ImportantDateIssueCreated, store.ImportantDateNotifyInFlight, issue.UID); err != nil {
 		return err
 	}
-	active, err = s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.Project, input.Recipient, func(fenced context.Context) error {
+	attempted = false
+	active, err = s.Store.WithImportantDateConsentContext(ctx, input.SubjectUID, input.OwnerUID, input.ConsentScope, input.Recipient, func(fenced context.Context) error {
 		state, issueUID, err := s.Store.ImportantDateDeliveryContext(fenced, input.OccurrenceKey)
 		if err != nil {
 			return err
@@ -115,10 +123,15 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 		if !valid {
 			return errDeliveryIneligible
 		}
+		attempted = true
 		return s.Kata.NotifyIssue(fenced, input.Project, issue.UID, input.Recipient, "Review the upcoming date in msgvault")
 	})
 	if err != nil || !active {
-		_ = s.advance(ctx, input.OccurrenceKey, store.ImportantDateNotifyInFlight, store.ImportantDateUnknown, issue.UID)
+		outcome := store.ImportantDateCancelled
+		if attempted {
+			outcome = store.ImportantDateUnknown
+		}
+		_ = s.advance(ctx, input.OccurrenceKey, store.ImportantDateNotifyInFlight, outcome, issue.UID)
 		if errors.Is(err, errDeliveryIneligible) || !active && err == nil {
 			return nil
 		}

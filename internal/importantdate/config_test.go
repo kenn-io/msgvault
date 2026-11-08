@@ -7,16 +7,26 @@ import (
 )
 
 func TestConfigRequiresPrivateDestinationAndExplicitEnable(t *testing.T) {
+	checks := assert.New(t)
 	cfg := Config{}
 	cfg.ApplyDefaults()
-	assert.False(t, cfg.Enabled)
-	assert.NoError(t, cfg.Validate())
+	checks.False(cfg.Enabled)
+	checks.NoError(cfg.Validate())
 	cfg.Enabled = true
-	assert.Error(t, cfg.Validate())
+	checks.Error(cfg.Validate())
 	cfg.PrivateDestination = true
 	cfg.Project = "private-example"
 	cfg.Recipient = "owner/agent"
-	assert.NoError(t, cfg.Validate())
+	checks.NoError(cfg.Validate())
 	cfg.Timezone = "Local"
-	assert.Error(t, cfg.Validate())
+	checks.Error(cfg.Validate())
+}
+
+func TestDestinationScopeBindsInstanceAndProjectIdentity(t *testing.T) {
+	checks := assert.New(t)
+	base := DestinationScope("https://private.example.test", "private", "project-uid-one")
+	checks.NotEmpty(base)
+	checks.NotEqual(base, DestinationScope("https://other.example.test", "private", "project-uid-one"))
+	checks.NotEqual(base, DestinationScope("https://private.example.test", "private", "project-uid-two"))
+	checks.Empty(DestinationScope("", "private", "project-uid-one"))
 }

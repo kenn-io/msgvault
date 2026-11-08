@@ -183,7 +183,7 @@ values and the commands warn until `msgvault activity build` rebuilds it. See
 
 ## Important-date alerts
 
-The optional calendar job checks declared birthdays and anniversaries without running the people sweep. It is disabled by default. Enable it only when the configured Kata project and recipient are private and approved for the subjects. Each subject also needs recipient-specific consent; see [important-date commands](cli-reference.md#person-important-date).
+The optional calendar job checks declared birthdays and anniversaries without running the people sweep. It is disabled by default. Enable it only when the configured Kata project and recipient are private and approved for the subjects. Each subject also needs consent for the exact Kata endpoint, project identity, and recipient; see [important-date commands](cli-reference.md#person-important-date).
 
 ```toml
 [people.important_dates]
@@ -204,6 +204,8 @@ lead_d = 7
 When enabled, set `private_destination = true`, an explicit Kata project and recipient, and enable the existing [Kata integration](#integrationskata). `timezone` is UTC or an IANA zone. Leap-day choices are `february_28`, `march_1`, and `leap_years_only`. The schedule uses the shared five-field cron grammar. Lead times are calendar days from 1 through 366.
 
 `use_cadence_presets` explicitly maps contact-frequency values 21, 60, 180, and 365 days to A, B, C, and D. It does not infer importance from other intervals. Custom and unassigned values are excluded. Current derived, incomplete, conflicting, and non-Gregorian dates are skipped. A linked child or recorded dependent or pet inherits an eligible parent's tier, but needs its own consent. Merged and split identities are quarantined pending reconciliation.
+
+Changing the Kata endpoint or recreating the project requires a fresh consent grant. Revocation clears all recorded destinations for that subject, even if Kata is unavailable.
 
 The job sends no greetings and uses no model. It creates a generic preparation issue and a native inbox request containing subject identity only after consent. It retains uncertain delivery states and does not retry them automatically. The status command lists retained states. After inspecting an uncertain outcome, use `person important-date resolve` to record a delivered or cancelled result without resending. A changed date remains quarantined across years pending further reconciliation.
 

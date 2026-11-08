@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -77,13 +78,16 @@ func (s *Store) HasImportantDateConsentContext(ctx context.Context, subject, pro
 // Record the in-flight state in a separate committed transaction before calling.
 // An error can mean the external write
 // committed; callers must retain an unknown delivery state rather than retry.
-func (s *Store) WithImportantDateConsentContext(ctx context.Context, subject, project, recipient string, dispatch func(context.Context) error) (bool, error) {
-	if !validImportantDateConsent(subject, project, recipient) || dispatch == nil {
+func (s *Store) WithImportantDateConsentContext(ctx context.Context, subject, owner, project, recipient string, dispatch func(context.Context) error) (bool, error) {
+	if !validImportantDateConsent(subject, project, recipient) || !strings.HasPrefix(owner, "person/") || dispatch == nil {
 		return false, errors.New("invalid important-date consent dispatch")
 	}
 	var active bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.lockImportantDatePeopleTx(ctx, tx, subject, owner); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_consents WHERE subject_uid = ? AND project = ? AND recipient = ? AND granted = 1)`, subject, project, recipient).Scan(&active); err != nil {
@@ -95,4 +99,71 @@ func (s *Store) WithImportantDateConsentContext(ctx context.Context, subject, pr
 		return dispatch(withWritableSnapshot(ctx, s.db.DB, tx))
 	})
 	return active, err
+}
+
+// lockImportantDatePeopleTx fences writers that update a relationship or
+// cadence before bumping a person's projection revision in the same transaction.
+// Lock the subject first, then discover and lock every potential parent.
+func (s *Store) lockImportantDatePeopleTx(ctx context.Context, tx *loggedTx, subject, owner string) error {
+	ownerUID := strings.TrimPrefix(owner, "person/")
+	var ownerID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM persons WHERE vcard_uid = ?`, ownerUID).Scan(&ownerID); err != nil {
+		return fmt.Errorf("resolve important-date owner: %w", err)
+	}
+	subjectID := ownerID
+	if strings.HasPrefix(subject, "person/") {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM persons WHERE vcard_uid = ?`, strings.TrimPrefix(subject, "person/")).Scan(&subjectID); err != nil {
+			return fmt.Errorf("resolve important-date person: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision = revision WHERE id = ?`, subjectID); err != nil {
+		return fmt.Errorf("lock important-date person: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT r.source_person_id FROM person_relationships r JOIN relationship_types t ON t.id = r.relationship_type_id WHERE r.target_person_id = ? AND t.slug = 'parent' ORDER BY r.source_person_id`, subjectID)
+	if err != nil {
+		return fmt.Errorf("list important-date parents: %w", err)
+	}
+	ids := []int64{ownerID}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	slices.Sort(ids)
+	for _, id := range slices.Compact(ids) {
+		if id == subjectID {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision = revision WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("lock important-date parent: %w", err)
+		}
+	}
+	return nil
+}
+
+// RevokeImportantDateConsentContext revokes every destination for a subject,
+// including destinations that are currently unreachable.
+func (s *Store) RevokeImportantDateConsentContext(ctx context.Context, subject string) error {
+	if strings.TrimSpace(subject) == "" {
+		return errors.New("invalid important-date subject")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE important_date_consents SET granted = 0 WHERE subject_uid = ?`, subject); err != nil {
+			return fmt.Errorf("revoke important-date consent: %w", err)
+		}
+		return nil
+	})
 }

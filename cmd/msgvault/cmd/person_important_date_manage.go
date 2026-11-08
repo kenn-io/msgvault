@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/importantdate"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/taskclient"
 )
 
 // These owner-only commands execute in the daemon subprocess so the daemon
@@ -87,7 +88,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return errors.New("configuration unavailable")
 		}
 		cfg := state.cfg.People.ImportantDates
-		if !cfg.PrivateDestination || strings.TrimSpace(cfg.Project) == "" || strings.TrimSpace(cfg.Recipient) == "" {
+		if grant && (!cfg.PrivateDestination || strings.TrimSpace(cfg.Project) == "" || strings.TrimSpace(cfg.Recipient) == "") {
 			return errors.New("configure an explicit private destination first")
 		}
 		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
@@ -95,7 +96,25 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		if err := st.SetImportantDateConsentContext(cmd.Context(), args[0], cfg.Project, cfg.Recipient, grant); err != nil {
+		if !grant {
+			if err := st.RevokeImportantDateConsentContext(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Consent revoked for all destinations")
+			return err
+		}
+		if !state.cfg.Integrations.Kata.Enabled {
+			return errors.New("enable the Kata integration first")
+		}
+		client, err := taskclient.ConnectKata(cmd.Context(), taskclient.IntegrationConfig{Enabled: true, Endpoint: state.cfg.Integrations.Kata.Endpoint, APIKey: state.cfg.Integrations.Kata.APIKey, DefaultProject: cfg.Project})
+		if err != nil {
+			return fmt.Errorf("connect important-date destination: %w", err)
+		}
+		projectUID, err := client.ProjectUID(cmd.Context(), cfg.Project)
+		if err != nil {
+			return fmt.Errorf("resolve important-date project: %w", err)
+		}
+		if err := st.SetImportantDateConsentContext(cmd.Context(), args[0], importantdate.DestinationScope(state.cfg.Integrations.Kata.Endpoint, cfg.Project, projectUID), cfg.Recipient, grant); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Consent updated")

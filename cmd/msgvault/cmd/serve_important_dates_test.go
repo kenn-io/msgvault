@@ -11,16 +11,18 @@ import (
 )
 
 func TestImportantDateScheduleIsOptIn(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
 	sched := scheduler.New(nil)
 	cfg := importantdate.Config{}
 	cfg.ApplyDefaults()
 	run := func(context.Context) error { return nil }
-	require.NoError(t, addImportantDateJob(sched, cfg, run))
-	assert.False(t, sched.IsJobScheduled(importantDateJobName))
+	must.NoError(addImportantDateJob(sched, cfg, run))
+	checks.False(sched.IsJobScheduled(importantDateJobName))
 	cfg.Enabled = true
 	cfg.PrivateDestination = true
 	cfg.Project = "private-example"
 	cfg.Recipient = "owner/agent"
-	require.NoError(t, addImportantDateJob(sched, cfg, run))
-	assert.True(t, sched.IsJobScheduled(importantDateJobName))
+	must.NoError(addImportantDateJob(sched, cfg, run))
+	checks.True(sched.IsJobScheduled(importantDateJobName))
 }

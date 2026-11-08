@@ -284,3 +284,20 @@ func taskFromKataIssue(project string, issue kata.ShowIssueOut, labels []string,
 	}
 	return task
 }
+
+// ProjectUID resolves the current immutable identity of an active project.
+func (c *KataClient) ProjectUID(ctx context.Context, name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", ErrWrongProject
+	}
+	var response kata.ListProjectsResponseBody
+	if err := c.transport.doJSON(ctx, http.MethodGet, "/api/v1/projects", nil, nil, &response, http.StatusOK); err != nil {
+		return "", err
+	}
+	for _, project := range response.Projects {
+		if project.Name == name && project.Active && project.DeletedAt == nil && strings.TrimSpace(project.UID) != "" {
+			return project.UID, nil
+		}
+	}
+	return "", ErrWrongProject
+}

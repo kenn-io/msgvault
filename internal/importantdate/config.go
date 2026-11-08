@@ -1,6 +1,8 @@
 package importantdate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +13,8 @@ import (
 
 // Config is opt-in and names a destination explicitly declared owner-private.
 type Config struct {
+	ConsentScope       string        `toml:"-"`
+	ProjectUID         string        `toml:"-"`
 	Enabled            bool          `toml:"enabled"`
 	PrivateDestination bool          `toml:"private_destination"`
 	Project            string        `toml:"project"`
@@ -74,4 +78,14 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// DestinationScope binds consent to the exact configured endpoint and project.
+// A change to either requires a new grant; credentials never enter the scope.
+func DestinationScope(endpoint, project, projectUID string) string {
+	if strings.TrimSpace(endpoint) == "" || strings.TrimSpace(project) == "" || strings.TrimSpace(projectUID) == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte("important-date-destination-v1\x00" + endpoint + "\x00" + project + "\x00" + projectUID))
+	return hex.EncodeToString(digest[:])
 }

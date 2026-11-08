@@ -37,7 +37,19 @@ func newImportantDateScheduledRun(cfg *config.Config, st *store.Store) func(cont
 		if err != nil {
 			return fmt.Errorf("connect important-date destination: %w", err)
 		}
-		_, err = importantdate.RunOnce(ctx, st, client, settings, time.Now())
-		return err
+		projectUID, err := client.ProjectUID(ctx, settings.Project)
+		if err != nil {
+			return fmt.Errorf("resolve important-date project: %w", err)
+		}
+		settings.ProjectUID = projectUID
+		settings.ConsentScope = importantdate.DestinationScope(cfg.Integrations.Kata.Endpoint, settings.Project, projectUID)
+		_, more, err := importantdate.RunOnce(ctx, st, client, settings, time.Now())
+		if err != nil {
+			return err
+		}
+		if more {
+			return scheduler.ErrReschedule
+		}
+		return nil
 	}
 }
