@@ -140,6 +140,63 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 		}
 		return writeJSONOutput(cmd, rows)
 	}}
-	group.AddCommand(add, list, consent, status, preview)
+	var updateName, updateDate string
+	var revision int64
+	update := &cobra.Command{Use: "update <subject-uid>", Short: "Correct a dependent or pet birthday", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		date, err := store.ParsePartialDate(updateDate)
+		if err != nil {
+			return errors.New("invalid date")
+		}
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration unavailable")
+		}
+		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		changed, err := st.UpdateImportantDateSubjectContext(cmd.Context(), args[0], revision, updateName, date, false)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errors.New("subject revision changed or subject is unavailable")
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Subject updated")
+		return err
+	}}
+	update.Flags().StringVar(&updateName, "name", "", "Subject name")
+	update.Flags().StringVar(&updateDate, "date", "", "Birthday as YYYY-MM-DD or --MM-DD")
+	update.Flags().Int64Var(&revision, "revision", 0, "Current revision from list")
+	var withdrawRevision int64
+	withdraw := &cobra.Command{Use: "withdraw <subject-uid>", Short: "Withdraw an explicit dependent or pet", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if !isDaemonCLISubprocess() {
+			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		}
+		state := invocationFromCommand(cmd)
+		if state == nil || state.cfg == nil {
+			return errors.New("configuration unavailable")
+		}
+		st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		changed, err := st.UpdateImportantDateSubjectContext(cmd.Context(), args[0], withdrawRevision, "", store.PartialDate{}, true)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errors.New("subject revision changed or subject is unavailable")
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Subject withdrawn")
+		return err
+	}}
+	withdraw.Flags().Int64Var(&withdrawRevision, "revision", 0, "Current revision from list")
+	group.AddCommand(add, list, consent, status, preview, update, withdraw)
 	return group
 }

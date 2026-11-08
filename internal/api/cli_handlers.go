@@ -1750,7 +1750,7 @@ func cliRunCommandAllowed(args []string) bool {
 		switch args[1] {
 		case "important-date":
 			switch args[2] {
-			case "add", "list", "consent", "status", "preview":
+			case "add", "list", "consent", "status", "preview", "update", "withdraw":
 				return true
 			}
 		case "provider":

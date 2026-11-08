@@ -17,6 +17,7 @@ type ImportantDateSubject struct {
 	Kind        string      `json:"kind"`
 	DisplayName string      `json:"display_name"`
 	Date        PartialDate `json:"date"`
+	Revision    int64       `json:"revision"`
 }
 
 type ImportantDateSubjectInput struct {
@@ -51,7 +52,7 @@ func (s *Store) CreateImportantDateSubjectContext(ctx context.Context, input Imp
 		if err != nil {
 			return fmt.Errorf("create important-date subject: %w", err)
 		}
-		result = &ImportantDateSubject{UID: uid.String(), OwnerUID: input.OwnerUID, Kind: input.Kind, DisplayName: strings.TrimSpace(input.DisplayName), Date: input.Date}
+		result = &ImportantDateSubject{UID: uid.String(), OwnerUID: input.OwnerUID, Kind: input.Kind, DisplayName: strings.TrimSpace(input.DisplayName), Date: input.Date, Revision: 1}
 		return nil
 	})
 	return result, err
@@ -59,7 +60,7 @@ func (s *Store) CreateImportantDateSubjectContext(ctx context.Context, input Imp
 
 // ListImportantDateSubjectsContext lists explicit active subjects for one owner.
 func (s *Store) ListImportantDateSubjectsContext(ctx context.Context, ownerUID string) ([]ImportantDateSubject, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT uid, owner_uid, kind, display_name, birth_year, birth_month, birth_day FROM important_date_subjects
+	rows, err := s.db.QueryContext(ctx, `SELECT uid, owner_uid, kind, display_name, birth_year, birth_month, birth_day, revision FROM important_date_subjects
 		WHERE withdrawn = 0 AND owner_uid IN (
 			SELECT vcard_uid FROM persons WHERE vcard_uid = ?
 			UNION ALL SELECT retired_uid FROM person_uid_aliases
@@ -74,7 +75,7 @@ func (s *Store) ListImportantDateSubjectsContext(ctx context.Context, ownerUID s
 		var subject ImportantDateSubject
 		var year sql.NullInt64
 		var month, day int
-		if err := rows.Scan(&subject.UID, &subject.OwnerUID, &subject.Kind, &subject.DisplayName, &year, &month, &day); err != nil {
+		if err := rows.Scan(&subject.UID, &subject.OwnerUID, &subject.Kind, &subject.DisplayName, &year, &month, &day, &subject.Revision); err != nil {
 			return nil, fmt.Errorf("read important-date subject: %w", err)
 		}
 		subject.Date = PartialDate{Month: &month, Day: &day}
@@ -88,4 +89,52 @@ func (s *Store) ListImportantDateSubjectsContext(ctx context.Context, ownerUID s
 		return nil, fmt.Errorf("list important-date subjects: %w", err)
 	}
 	return subjects, nil
+}
+
+// UpdateImportantDateSubjectContext revises or withdraws a subject under an
+// optimistic revision check, preserving the prior explicit value in history.
+func (s *Store) UpdateImportantDateSubjectContext(ctx context.Context, uid string, revision int64, name string, date PartialDate, withdraw bool) (bool, error) {
+	if strings.TrimSpace(uid) == "" || revision <= 0 || (!withdraw && (strings.TrimSpace(name) == "" || date.Month == nil || date.Day == nil || date.Validate() != nil)) {
+		return false, errors.New("invalid important-date subject update")
+	}
+	var changed bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO important_date_subject_history (subject_uid, revision, display_name, birth_year, birth_month, birth_day, withdrawn)
+			SELECT uid, revision, display_name, birth_year, birth_month, birth_day, withdrawn FROM important_date_subjects
+			WHERE uid = ? AND revision = ? AND withdrawn = 0 ON CONFLICT (subject_uid, revision) DO NOTHING`, uid, revision)
+		if err != nil {
+			return fmt.Errorf("retain important-date subject history: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+		if withdraw {
+			result, err = tx.ExecContext(ctx, `UPDATE important_date_subjects SET withdrawn = 1, revision = revision + 1 WHERE uid = ? AND revision = ? AND withdrawn = 0`, uid, revision)
+		} else {
+			result, err = tx.ExecContext(ctx, `UPDATE important_date_subjects SET display_name = ?, birth_year = ?, birth_month = ?, birth_day = ?, revision = revision + 1 WHERE uid = ? AND revision = ? AND withdrawn = 0`, strings.TrimSpace(name), date.Year, *date.Month, *date.Day, uid, revision)
+		}
+		if err != nil {
+			return fmt.Errorf("update important-date subject: %w", err)
+		}
+		count, err = result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = count == 1
+		if !changed {
+			return errors.New("important-date subject changed concurrently")
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE important_date_consents SET granted = 0 WHERE subject_uid = ?`, "owned/"+uid); err != nil {
+			return fmt.Errorf("revoke changed-subject consent: %w", err)
+		}
+		return nil
+	})
+	return changed, err
 }

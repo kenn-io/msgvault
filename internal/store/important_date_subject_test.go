@@ -27,3 +27,29 @@ func TestImportantDateSubjectExplicitRecord(t *testing.T) {
 	_, err = st.CreateImportantDateSubjectContext(t.Context(), input)
 	assert.Error(t, err)
 }
+
+func TestImportantDateSubjectUpdateAndWithdrawal(t *testing.T) {
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	id := newTestPerson(t, st)
+	person, err := st.GetPerson(id)
+	require.NoError(t, err)
+	subject, err := st.CreateImportantDateSubjectContext(ctx, store.ImportantDateSubjectInput{OwnerUID: person.VCardUID, Kind: "dependent", DisplayName: "Example child", Date: store.PartialDate{Month: new(10), Day: new(23)}})
+	require.NoError(t, err)
+	require.NoError(t, st.SetImportantDateConsentContext(ctx, "owned/"+subject.UID, "private-example", "owner/agent", true))
+	changed, err := st.UpdateImportantDateSubjectContext(ctx, subject.UID, subject.Revision, "Example child", store.PartialDate{Month: new(11), Day: new(5)}, false)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	active, err := st.HasImportantDateConsentContext(ctx, "owned/"+subject.UID, "private-example", "owner/agent")
+	require.NoError(t, err)
+	assert.False(t, active)
+	changed, err = st.UpdateImportantDateSubjectContext(ctx, subject.UID, subject.Revision, "Example child", store.PartialDate{Month: new(11), Day: new(6)}, false)
+	require.NoError(t, err)
+	assert.False(t, changed)
+	changed, err = st.UpdateImportantDateSubjectContext(ctx, subject.UID, subject.Revision+1, "", store.PartialDate{}, true)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	items, err := st.ListImportantDateSubjectsContext(ctx, person.VCardUID)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}

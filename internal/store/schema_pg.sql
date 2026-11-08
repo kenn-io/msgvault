@@ -4390,6 +4390,7 @@ CREATE TABLE IF NOT EXISTS important_date_subjects (
  birth_year INTEGER,
  birth_month INTEGER NOT NULL,
  birth_day INTEGER NOT NULL,
+ revision INTEGER NOT NULL DEFAULT 1,
  withdrawn INTEGER NOT NULL DEFAULT 0 CHECK (withdrawn IN (0, 1))
 );
 
@@ -4400,4 +4401,16 @@ CREATE TABLE IF NOT EXISTS important_date_consents (
  recipient TEXT NOT NULL,
  granted INTEGER NOT NULL CHECK (granted IN (0, 1)),
  PRIMARY KEY (subject_uid, project, recipient)
+);
+
+-- Retain the prior value of an explicitly edited or withdrawn subject.
+CREATE TABLE IF NOT EXISTS important_date_subject_history (
+ subject_uid TEXT NOT NULL,
+ revision INTEGER NOT NULL,
+ display_name TEXT NOT NULL,
+ birth_year INTEGER,
+ birth_month INTEGER NOT NULL,
+ birth_day INTEGER NOT NULL,
+ withdrawn INTEGER NOT NULL,
+ PRIMARY KEY (subject_uid, revision)
 );
