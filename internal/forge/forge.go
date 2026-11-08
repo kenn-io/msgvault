@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -198,12 +199,22 @@ func ParseInstance(raw string) (Instance, *url.URL, error) {
 		// An IPv6 address keeps its brackets, as in a URL.
 		host = "[" + host + "]"
 	}
-	path := strings.TrimRight(parsed.EscapedPath(), "/")
-	base := &url.URL{Scheme: parsed.Scheme, Host: host}
-	if path != "" {
-		base = base.JoinPath(strings.TrimRight(parsed.Path, "/"))
+	// One canonical path, with dot segments resolved, repeated slashes
+	// collapsed and no trailing slash, gives both the instance and the base
+	// URL, so parsing the base URL again gives the same instance.
+	escaped := ""
+	if strings.Trim(parsed.EscapedPath(), "/") != "" {
+		escaped = strings.TrimRight(path.Clean("/"+parsed.EscapedPath()), "/")
 	}
-	return Instance(host + path), base, nil
+	base := &url.URL{Scheme: parsed.Scheme, Host: host}
+	if escaped != "" {
+		unescaped, err := url.PathUnescape(escaped)
+		if err != nil {
+			return "", nil, fmt.Errorf("forge URL has an invalid path: %q", raw)
+		}
+		base.Path, base.RawPath = unescaped, escaped
+	}
+	return Instance(host + escaped), base, nil
 }
 
 // AccountKey is an account's key outside its source: its participant

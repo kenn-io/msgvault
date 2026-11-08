@@ -511,6 +511,10 @@ func TestParseInstance(t *testing.T) {
 		{raw: "http://nas.local:3000", instance: "nas.local:3000", base: "http://nas.local:3000"},
 		{raw: "http://[::1]:3000/", instance: "[::1]:3000", base: "http://[::1]:3000"},
 		{raw: "https://[FD00::1]", instance: "[fd00::1]", base: "https://[fd00::1]"},
+		{raw: "https://git.example.com/a/../gitlab/./", instance: "git.example.com/gitlab", base: "https://git.example.com/gitlab"},
+		{raw: "https://git.example.com//forge//gitea", instance: "git.example.com/forge/gitea", base: "https://git.example.com/forge/gitea"},
+		{raw: "https://git.example.com/a/..", instance: "git.example.com", base: "https://git.example.com"},
+		{raw: "https://git.example.com/my%20forge/", instance: "git.example.com/my%20forge", base: "https://git.example.com/my%20forge"},
 		{raw: "ftp://example.com", bad: true},
 		{raw: "https://user:pass@example.com", bad: true},
 		{raw: "https://example.com/?x=1", bad: true},
@@ -523,6 +527,9 @@ func TestParseInstance(t *testing.T) {
 		require.NoError(err, tc.raw)
 		assert.Equal(Instance(tc.instance), instance, tc.raw)
 		assert.Equal(tc.base, base.String(), tc.raw)
+		again, _, err := ParseInstance(base.String())
+		require.NoError(err, tc.raw)
+		assert.Equal(instance, again, "the base URL names the same instance: %s", tc.raw)
 	}
 }
 
