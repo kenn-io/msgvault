@@ -109,7 +109,7 @@ jobs:
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       # Pin the companion implementation; the report also records both checkout SHAs.
-      DOCBANK_REVISION: e21a0bc4c51feeb778466e9ecc5b459a486b904b
+      DOCBANK_REVISION: ed6e2fe7e6f4e0b68b183d6d572754b90671cd35
       DOCBANK_EVAL_CGO_ENABLED: ${{ matrix.cgo }}
       MSGVAULT_TEST_DB: ${{ matrix.backend == 'postgres' && 'postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable' || '' }}
       QUALITY: ${{ matrix.quality }}

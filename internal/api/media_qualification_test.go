@@ -59,24 +59,25 @@ type recordingEvalOccurrence struct {
 }
 
 type recordingEvalMetric struct {
-	Topic                  string                      `json:"topic"`
-	Profile                string                      `json:"profile"`
-	RequestedMode          string                      `json:"requested_mode"`
-	ActualMode             string                      `json:"actual_mode"`
-	Coverage               docbankmedia.SearchCoverage `json:"coverage"`
-	Partial                bool                        `json:"partial"`
-	PendingOccurrences     int                         `json:"pending_occurrences"`
-	UnavailableOccurrences int                         `json:"unavailable_occurrences"`
-	AttributionUnavailable int                         `json:"attribution_unavailable"`
-	Degradations           []string                    `json:"degradations,omitempty"`
-	Cutoff                 int                         `json:"cutoff"`
-	MessagePrecision       float64                     `json:"message_precision"`
-	MessageRecall          float64                     `json:"message_recall"`
-	ConversationPrecision  float64                     `json:"conversation_precision"`
-	ConversationRecall     float64                     `json:"conversation_recall"`
-	HardNegativesAtCutoff  int                         `json:"hard_negatives_at_cutoff"`
-	Messages               []string                    `json:"ranked_messages"`
-	Conversations          []string                    `json:"ranked_conversations"`
+	Topic                             string                      `json:"topic"`
+	Profile                           string                      `json:"profile"`
+	RequestedMode                     string                      `json:"requested_mode"`
+	ActualMode                        string                      `json:"actual_mode"`
+	Coverage                          docbankmedia.SearchCoverage `json:"coverage"`
+	Partial                           bool                        `json:"partial"`
+	PendingOccurrences                int                         `json:"pending_occurrences"`
+	UnavailableOccurrences            int                         `json:"unavailable_occurrences"`
+	AttributionUnavailable            int                         `json:"attribution_unavailable"`
+	Degradations                      []string                    `json:"degradations,omitempty"`
+	Cutoff                            int                         `json:"cutoff"`
+	MessagePrecision                  float64                     `json:"message_precision"`
+	MessageRecall                     float64                     `json:"message_recall"`
+	ConversationPrecision             float64                     `json:"conversation_precision"`
+	ConversationRecall                float64                     `json:"conversation_recall"`
+	MessageHardNegativesAtCutoff      int                         `json:"message_hard_negatives_at_cutoff"`
+	ConversationHardNegativesAtCutoff int                         `json:"conversation_hard_negatives_at_cutoff"`
+	Messages                          []string                    `json:"ranked_messages"`
+	Conversations                     []string                    `json:"ranked_conversations"`
 }
 
 type recordingEvalScenario struct {
@@ -201,7 +202,14 @@ func TestMediaRetrievalQualification(t *testing.T) {
 					grade, exists := messageQrels[topic.ID][key]
 					require.True(t, exists, "missing corpus judgment")
 					if grade == 0 {
-						metric.HardNegativesAtCutoff++
+						metric.MessageHardNegativesAtCutoff++
+					}
+				}
+				for _, key := range eval.TruncateKeys(metric.Conversations, metric.Cutoff) {
+					grade, exists := conversationQrels[topic.ID][key]
+					require.True(t, exists, "missing conversation judgment")
+					if grade == 0 {
+						metric.ConversationHardNegativesAtCutoff++
 					}
 				}
 				if topic.ID == "q1" && mode == "lexical" {
@@ -232,6 +240,66 @@ func TestMediaRetrievalQualification(t *testing.T) {
 		if mode != "lexical" {
 			assert.Equal(t, "unavailable", response.ActualMode)
 			assert.True(t, response.Partial)
+		}
+	})
+	scenario("no-selected-transcript", func(t *testing.T) {
+		f := newRecordingFixture(t)
+		f.client = recordingEvalClient(t, manifest)
+		record := manifest.Records[0]
+		record.SuppliedInputID, record.Text = manifest.Records[1].SuppliedInputID, manifest.Records[1].Text
+		seedRecordingEvalOccurrence(t, f, manifest, record, "excluded-caption", "excluded-caption", "excluded-caption")
+		server := f.server(true)
+		server.messageRecordings.SearchProfile = manifest.Profile
+		if mode != "lexical" {
+			require.NoError(t, recordingEvalControl(t.Context(), manifest, "arm", ""))
+			defer func() {
+				require.NoError(t, recordingEvalControl(context.WithoutCancel(t.Context()), manifest, "release", ""))
+			}()
+		}
+		response := requireRecordingEvalSearch(t, server, "telescope", mode)
+		assert.Empty(t, response.Results)
+		assert.True(t, response.Partial)
+		assert.Equal(t, 1, response.UnavailableOccurrences)
+		assert.Equal(t, 0, response.Coverage.CompleteDocuments)
+		if mode != "lexical" {
+			assert.Equal(t, "unavailable", response.ActualMode)
+		}
+	})
+	scenario("selected-build-without-profile-vectors", func(t *testing.T) {
+		f := newRecordingFixture(t)
+		f.client = recordingEvalClient(t, manifest)
+		var generated recordingEvalRecord
+		for _, record := range manifest.Records {
+			if record.Origin == "generated" {
+				generated = record
+			}
+		}
+		require.NotEmpty(t, generated.ID)
+		seed := seedRecordingEvalOccurrence(t, f, manifest, generated, "generated-only", "generated-only", "generated-only")
+		server := f.server(true)
+		server.messageRecordings.SearchProfile = manifest.Profile
+		if mode != "lexical" {
+			require.NoError(t, recordingEvalControl(t.Context(), manifest, "arm", ""))
+			defer func() {
+				require.NoError(t, recordingEvalControl(context.WithoutCancel(t.Context()), manifest, "release", ""))
+			}()
+		}
+		response := requireRecordingEvalSearch(t, server, "telescope", mode)
+		if mode == "semantic" {
+			assert.Empty(t, response.Results)
+			assert.Equal(t, "unavailable", response.ActualMode)
+		} else {
+			require.Len(t, response.Results, 1)
+			assert.Equal(t, seed.seed.messageID, response.Results[0].MessageID)
+			assert.Equal(t, "lexical", response.ActualMode)
+		}
+		if mode != "lexical" {
+			assert.True(t, response.Partial)
+			assert.Equal(t, "incomplete", response.Coverage.State)
+			assert.Zero(t, response.Coverage.CompleteDocuments)
+		}
+		if mode == "hybrid" {
+			assert.Contains(t, response.Degradations, "semantic_unavailable")
 		}
 	})
 	scenario("different-current-caption-even-without-matches", func(t *testing.T) {
@@ -304,6 +372,13 @@ func TestMediaRetrievalQualification(t *testing.T) {
 					forbiddenResults++
 				}
 				assert.NotEqual(t, selected.seed.messageID, hit.MessageID)
+			}
+			if action != "change-person-scope" {
+				var live []int64
+				for _, hit := range response.Results {
+					live = append(live, hit.MessageID)
+				}
+				assert.Contains(t, live, occurrences[1].seed.messageID, "the other live occurrence of shared bytes must survive")
 			}
 			assert.True(t, response.Partial)
 		})

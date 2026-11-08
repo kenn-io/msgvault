@@ -43,7 +43,7 @@ func TestRecordingSearchAcceptsNonlexicalReport(t *testing.T) {
 }
 
 func TestRecordingSearchUnavailableReport(t *testing.T) {
-	for _, mode := range []string{"semantic", "hybrid"} {
+	for _, mode := range []string{"lexical", "semantic", "hybrid"} {
 		for _, malformed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/malformed=%t", mode, malformed), func(t *testing.T) {
 				report := SearchReport{RequestedMode: mode, ActualMode: "unavailable", MediaSourceSelection: true,
@@ -59,7 +59,7 @@ func TestRecordingSearchUnavailableReport(t *testing.T) {
 				got, err := client.Search(t.Context(), SearchRequest{Query: "telescope", Mode: mode, Profile: "vectors", ContentFirst: true, Limit: 20,
 					Fence:        &SearchFence{VaultUID: "fixture", ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174000"}},
 					MediaSources: []SearchMediaSelector{{SearchMediaSource: SearchMediaSource{SourceID: "source", SourceVersionID: "version", ContentVersionID: "123e4567-e89b-42d3-a456-426614174000"}}}})
-				if malformed {
+				if malformed || mode == "lexical" {
 					require.ErrorIs(t, err, ErrInvalidReceipt)
 				} else {
 					require.NoError(t, err)

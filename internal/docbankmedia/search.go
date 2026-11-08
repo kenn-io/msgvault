@@ -199,7 +199,7 @@ func (c *Client) searchReport(ctx context.Context, request SearchRequest) (Searc
 	}
 	modeOK := report.ActualMode == request.Mode || request.Mode == "hybrid" && report.ActualMode == "lexical" &&
 		(slices.Contains(report.Degradations, "semantic_unavailable") || slices.Contains(report.Degradations, "semantic_unconfigured"))
-	modeOK = modeOK || report.ActualMode == "unavailable" && len(report.Results) == 0 &&
+	modeOK = modeOK || request.Mode != "lexical" && report.MediaSourceSelection && report.ActualMode == "unavailable" && len(report.Results) == 0 &&
 		report.Coverage.State == "incomplete" && report.Coverage.CompleteDocuments == 0
 	coverageOK := report.Coverage.State == "complete" || report.Coverage.State == "incomplete" || report.Coverage.State == "unknown"
 	if !modeOK || report.RequestedMode != request.Mode || report.Results == nil || len(report.Results) > request.Limit ||

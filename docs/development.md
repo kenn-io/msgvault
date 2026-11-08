@@ -156,6 +156,8 @@ The **Recording retrieval qualification** workflow runs the synthetic media corp
 
 `python3 scripts/qualify-recording-retrieval.py --docbank <exact-checkout> --quality deterministic-contract --output <artifact-directory>` runs lexical, semantic and hybrid requests with a fresh fixture process per mode. The workflow supplies PostgreSQL when selected and separately builds Docbank with CGO enabled or disabled. `--quality real-model --encoder-python <isolated-python>` uses the pinned public MiniLM encoder through a loopback fixture service. Its report records the model revision, formatter and library versions. Deterministic vectors establish contracts, not model quality.
 
+The PostgreSQL lanes exercise Msgvault's Store. Docbank uses a separate SQLite fixture, with its CGO and pure-Go engines qualified independently. These results do not qualify a PostgreSQL Docbank vault.
+
 Artifacts record both repository SHAs, corpus digest, backend, Docbank SQLite engine, per-profile occurrence and conversation precision/recall at three, hard negatives, coverage and lifecycle outcomes. Conversation rankings are deduplicated before cutoff. Missing profile coverage is measured against the full corpus rather than hidden by merging profile runs. Irrelevant neighbors are quality errors; stale, revoked or out-of-scope results are forbidden lifecycle leaks. A run fails on missing mappings, stale presentation, unavailable required fixture setup or a failed scenario. Ordinary CI skips the explicit external-fixture test unless the runner supplies its private manifest.
 
 Qualification covers retrieval and presentation. Source capture, generic routing, ASR and conversational projection have separate evidence:
