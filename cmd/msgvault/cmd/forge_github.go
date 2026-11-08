@@ -21,9 +21,8 @@ func init() {
 		addHelp: `Add a GitHub account as an archive source.
 
 Archives the issues, pull requests and discussions the account takes part in,
-with every comment and review, and the releases of repositories it watches.
-Syncs find changed threads through the account's notifications and a search
-for threads that involve it, so threads it only commented on are archived too.
+with every comment and review, and the releases of repositories it watches:
+threads it was notified about, and threads it only commented on.
 
 Requires a classic personal access token: GitHub's notifications API doesn't
 accept fine-grained tokens. Create one at https://github.com/settings/tokens
