@@ -252,6 +252,11 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 	case sender.Email != "":
 		_, domain, _ := strings.Cut(sender.Email, "@")
 		id, err = st.EnsureParticipantContext(ctx, sender.Email, sender.Name, domain)
+		if err == nil {
+			// An existing participant keeps its name; one without a name
+			// takes this sender's, as the phone and identifier paths do.
+			_, err = st.UpdateParticipantDisplayNameByEmail(ctx, sender.Email, sender.Name)
+		}
 	case sender.Phone != "":
 		id, err = st.EnsurePhoneParticipantContext(ctx, sender.Phone, sender.Name)
 	default:

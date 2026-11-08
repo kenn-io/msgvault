@@ -142,6 +142,13 @@ func TestRequestNormalizeValidates(t *testing.T) {
 		{"sent at offset", func(r *Request) { r.Message.SentAt = "2026-11-07T10:00:00" }, "message.sent_at must be an RFC3339 timestamp"},
 		{"two bodies", func(r *Request) { r.Message.BodyText = "also" }, "mutually exclusive"},
 		{"nothing to show", func(r *Request) { r.Message.Title, r.Message.BodyMarkdown = "", "" }, "message requires a title or a body"},
+		{"nul in title", func(r *Request) { r.Message.Title = "a\x00b" }, "message.title must not contain NUL characters"},
+		{"nul in body", func(r *Request) { r.Message.BodyMarkdown = "a\x00b" }, "message.body_markdown must not contain NUL characters"},
+		{"nul in external id", func(r *Request) { r.Message.ExternalID = "a\x00b" }, "message.external_id must not contain NUL characters"},
+		{"nul in sender name", func(r *Request) { r.Message.Sender.Name = "a\x00b" }, "message.sender.name must not contain NUL characters"},
+		{"nul in metadata", func(r *Request) {
+			r.Message.Metadata = map[string]any{"tags": []any{"ok", "a\x00b"}}
+		}, "message.metadata must not contain NUL characters"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

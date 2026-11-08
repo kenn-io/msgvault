@@ -1,6 +1,8 @@
 package messageimport
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
 	"html"
@@ -147,12 +149,29 @@ func buildCanonicalMessage(message NormalizedMessage) canonicalMessage {
 func senderIdentifier(sourceIdentifier string, sender MessageImportSender) string {
 	switch {
 	case sender.ID != "":
-		return "id:" + url.QueryEscape(sourceIdentifier) + ":" + sender.ID
+		return boundedIdentifier("id", url.QueryEscape(sourceIdentifier)+":"+sender.ID)
 	case sender.URL != "":
-		return "url:" + identityURL(sender.URL)
+		return boundedIdentifier("url", identityURL(sender.URL))
 	default:
-		return "name:" + url.QueryEscape(sourceIdentifier) + ":" + sender.Name
+		return boundedIdentifier("name", url.QueryEscape(sourceIdentifier)+":"+sender.Name)
 	}
+}
+
+// maxIdentifierValueBytes keeps a participant identifier inside
+// PostgreSQL's B-tree entry limit (about 2,700 bytes), which the unique
+// index on participant identifiers must hold.
+const maxIdentifierValueBytes = 1024
+
+// boundedIdentifier is kind:value, or kind-sha256:<digest of value> when the
+// value is too long to index. The digest names the same sender every time,
+// so a long URL is still one sender across sources.
+func boundedIdentifier(kind, value string) string {
+	identifier := kind + ":" + value
+	if len(identifier) <= maxIdentifierValueBytes {
+		return identifier
+	}
+	digest := sha256.Sum256([]byte(value))
+	return kind + "-sha256:" + hex.EncodeToString(digest[:])
 }
 
 // identityURL folds the case-insensitive parts of a URL so that one site is

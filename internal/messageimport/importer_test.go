@@ -2,7 +2,9 @@ package messageimport
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -383,6 +385,28 @@ func TestImporterResolvesSenders(t *testing.T) {
 	t.Run("the account email marks a message as sent by the owner", func(t *testing.T) {
 		_, fromMe := senderOf(t, "feeds", "e2", MessageImportSender{Email: "user@example.com"})
 		assert.True(t, fromMe)
+	})
+	t.Run("a name fills an email participant that has none", func(t *testing.T) {
+		require := require.New(t)
+		existing, err := st.EnsureParticipantContext(t.Context(), "unnamed@example.com", "", "example.com")
+		require.NoError(err)
+		sender, _ := senderOf(t, "feeds", "e3", MessageImportSender{Email: "unnamed@example.com", Name: "Named"})
+		require.Equal(existing, sender)
+		var name string
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+			SELECT COALESCE(display_name, '') FROM participants WHERE id = ?
+		`), existing).Scan(&name))
+		require.Equal("Named", name)
+	})
+	t.Run("a URL too long to index whole is still one sender", func(t *testing.T) {
+		// Incompressible, so PostgreSQL can't fit it in an index entry.
+		random := make([]byte, 2400)
+		_, err := rand.Read(random)
+		require.NoError(t, err)
+		longURL := "https://site.example/" + base64.RawURLEncoding.EncodeToString(random)
+		first, _ := senderOf(t, "feeds", "l1", MessageImportSender{URL: longURL})
+		second, _ := senderOf(t, "bookmarks", "l2", MessageImportSender{URL: longURL})
+		assert.Equal(t, first, second)
 	})
 	t.Run("a phone joins that number's participant", func(t *testing.T) {
 		existing, err := st.EnsurePhoneParticipantContext(t.Context(), "+15550100123", "Texter")

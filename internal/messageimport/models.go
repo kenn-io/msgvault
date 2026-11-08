@@ -151,6 +151,9 @@ func normalizeSource(source MessageImportSource) (MessageImportSource, error) {
 
 func normalizeMessage(message ImportedMessage) (NormalizedMessage, error) {
 	out := NormalizedMessage{Metadata: message.Metadata}
+	if err := validateMetadataText("message.metadata", message.Metadata); err != nil {
+		return NormalizedMessage{}, err
+	}
 
 	out.ExternalID = strings.TrimSpace(message.ExternalID)
 	if err := validateBoundedRequired("message.external_id", out.ExternalID, maxExternalIDChars); err != nil {
@@ -206,8 +209,8 @@ func normalizeMessage(message ImportedMessage) (NormalizedMessage, error) {
 		if out.BodyFormat != BodyFormatNone {
 			return NormalizedMessage{}, validationError("message.body_markdown, message.body_html and message.body_text are mutually exclusive")
 		}
-		if !utf8.ValidString(value) {
-			return NormalizedMessage{}, validationError("%s must be valid UTF-8", body.field)
+		if err := validateText(body.field, value); err != nil {
+			return NormalizedMessage{}, err
 		}
 		out.Body = value
 		out.BodyFormat = body.format
@@ -324,8 +327,8 @@ func normalizeEmail(field, value string) (string, error) {
 	if value == "" {
 		return "", validationError("%s is required", field)
 	}
-	if !utf8.ValidString(value) {
-		return "", validationError("%s must be valid UTF-8", field)
+	if err := validateText(field, value); err != nil {
+		return "", err
 	}
 	parsed, err := mail.ParseAddress(value)
 	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, value) {
@@ -346,6 +349,43 @@ func parseTimestamp(field, value string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
+// validateText rejects text the archive can't store on every backend:
+// invalid UTF-8, or a NUL character, which PostgreSQL text and JSONB refuse.
+func validateText(field, value string) error {
+	if !utf8.ValidString(value) {
+		return validationError("%s must be valid UTF-8", field)
+	}
+	if strings.ContainsRune(value, 0) {
+		return validationError("%s must not contain NUL characters", field)
+	}
+	return nil
+}
+
+// validateMetadataText applies validateText to every key and string value
+// in metadata, which is stored as JSON.
+func validateMetadataText(field string, value any) error {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, nested := range value {
+			if err := validateText(field, key); err != nil {
+				return err
+			}
+			if err := validateMetadataText(field, nested); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, nested := range value {
+			if err := validateMetadataText(field, nested); err != nil {
+				return err
+			}
+		}
+	case string:
+		return validateText(field, value)
+	}
+	return nil
+}
+
 func validateBoundedRequired(field, value string, maxChars int) error {
 	if value == "" {
 		return validationError("%s is required", field)
@@ -354,8 +394,8 @@ func validateBoundedRequired(field, value string, maxChars int) error {
 }
 
 func validateBoundedOptional(field, value string, maxChars int) error {
-	if !utf8.ValidString(value) {
-		return validationError("%s must be valid UTF-8", field)
+	if err := validateText(field, value); err != nil {
+		return err
 	}
 	if utf8.RuneCountInString(value) > maxChars {
 		return validationError("%s must be at most %d characters", field, maxChars)

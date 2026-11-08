@@ -97,6 +97,8 @@ by two sources names two different senders.
 - `sent_at` uses RFC 3339 with an explicit offset.
 - Fields your source adds belong under `message.metadata`. Unknown fields
   elsewhere are rejected, and the request is limited to 16 MiB.
+- Text, metadata included, must be valid UTF-8 without NUL characters, which
+  PostgreSQL can't store.
 - Keyword search finds a message as soon as the import returns.
 
 ## Limitations
