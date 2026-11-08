@@ -1636,9 +1636,11 @@ func TestImporterPreservedSnapshotStabilizes(t *testing.T) {
 }
 
 func TestImporterAcceptsEmptyCompleteSummaryAndNotes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st, source, imp := newImporterFixture(t)
 	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, id := range []string{"summary-1", "notes-1"} {
 		empty := paragraph(id, "", false)
 		source.blocks[id] = &empty
@@ -1648,13 +1650,13 @@ func TestImporterAcceptsEmptyCompleteSummaryAndNotes(t *testing.T) {
 	source.query.Results = []MeetingNote{meeting}
 	installMeetingHeader(t, source.fakeHydrationSource, meeting)
 	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
-	require.NoError(t, err)
-	assert.False(t, result.PartialCoverage)
+	require.NoError(err)
+	assert.False(result.PartialCoverage)
 	var messageID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
 	raw, err := st.GetMessageRaw(messageID)
-	require.NoError(t, err)
+	require.NoError(err)
 	content := meetingcontent.Decode(RawFormat, raw, nil)
-	assert.Empty(t, content.Summary.Text)
-	assert.Empty(t, content.Notes.Text)
+	assert.Empty(content.Summary.Text)
+	assert.Empty(content.Notes.Text)
 }

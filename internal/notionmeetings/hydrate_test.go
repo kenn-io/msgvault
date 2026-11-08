@@ -699,11 +699,12 @@ func TestV2BlockRenderingRoundTrip(t *testing.T) {
 }
 
 func TestSnapshotRejectsEvidenceLargerThanReaderLimit(t *testing.T) {
+	require := require.New(t)
 	source := completeHydrationSource()
 	text := strings.Repeat("a", 12<<20)
 	for _, id := range []string{"summary-1", "notes-1"} {
 		block := paragraph(id, text, false)
-		require.Less(t, int64(len(block.Raw)), maxResponseSize)
+		require.Less(int64(len(block.Raw)), maxResponseSize)
 		source.blocks[id] = &block
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -721,9 +722,9 @@ func TestSnapshotRejectsEvidenceLargerThanReaderLimit(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	result, err := NewHydrator(NewClient(server.URL, "synthetic")).Hydrate(t.Context(), hydrationMeeting())
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = result.ArchiveSnapshot(1, "synthetic", "")
-	require.Error(t, err)
+	require.Error(err)
 	assert.Contains(t, err.Error(), "evidence limit")
 }
 

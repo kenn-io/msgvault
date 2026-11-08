@@ -131,7 +131,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	// canonical text duplicate admitted blocks, so the source byte budget alone
 	// cannot guarantee a readable archive. Fail before replacing stored content.
 	if len(raw) > 64<<20 {
-		return meetingarchive.Snapshot{}, errors.New("Notion meeting exceeded archive evidence limit")
+		return meetingarchive.Snapshot{}, errors.New("notion meeting exceeded archive evidence limit")
 	}
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,
