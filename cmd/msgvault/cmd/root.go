@@ -35,6 +35,7 @@ func newRootCommand() *cobra.Command {
 Archive email, chats, and meetings offline.
 
 Start here:
+  msgvault cli search "<what you want to do>"
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json

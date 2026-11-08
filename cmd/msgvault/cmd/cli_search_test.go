@@ -234,14 +234,16 @@ func TestCLISearchKeepsMatrixEligibleWithCredentialFileOrStdin(t *testing.T) {
 	if helpTestSubprocess(t) {
 		return
 	}
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	ensureHelpLayout(rootCmd)
 	query := "add Matrix account with a password file or a password from stdin"
 	out, stderr, err := executeCLIDiscovery(t, "cli", "search", query, "--limit", "20", "--json")
-	require.NoError(t, err, "%s", stderr)
+	requirements.NoError(err, "%s", stderr)
 	var response clisearch.Response
-	require.NoError(t, json.Unmarshal([]byte(out), &response))
-	assert.Equal(t, query, response.Query)
-	assert.Empty(t, stderr)
+	requirements.NoError(json.Unmarshal([]byte(out), &response))
+	assertions.Equal(query, response.Query)
+	assertions.Empty(stderr)
 	matrixEligible := false
 	for _, result := range response.Results {
 		if result.Command == "msgvault add-matrix" {
@@ -249,7 +251,7 @@ func TestCLISearchKeepsMatrixEligibleWithCredentialFileOrStdin(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, matrixEligible, "Matrix account setup should remain discoverable when credential files or stdin avoid interactive login: %+v", response.Results)
+	assertions.True(matrixEligible, "Matrix account setup should remain discoverable when credential files or stdin avoid interactive login: %+v", response.Results)
 }
 
 func TestCLISearchExcludesInlineBrowserAuthorization(t *testing.T) {
