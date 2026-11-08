@@ -115,7 +115,7 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		}
 		for _, view := range children {
 			rel := view.Relationship
-			if rel.TypeSlug != "parent" || rel.SourcePersonID != person.ID || !rel.Source.IsDeclared() || !relationshipStarted(rel.StartDate, now, location) || !stable[view.CounterpartPersonID] {
+			if rel.TypeSlug != "parent" || rel.SourcePersonID != person.ID || rel.Status != store.RelationshipStatusActive || !rel.Source.IsDeclared() || !relationshipStarted(rel.StartDate, now, location) || !stable[view.CounterpartPersonID] {
 				continue
 			}
 			child, ok := byID[view.CounterpartPersonID]

@@ -39,3 +39,11 @@ func TestCandidatesDeduplicateChildWithTwoParents(t *testing.T) {
 	assert.Equal(t, "person/"+child.VCardUID, candidates[0].SubjectUID)
 	assert.Equal(t, TierA, candidates[0].Tier)
 }
+
+func TestRelationshipStartRequiresCompletePastDate(t *testing.T) {
+	now := time.Date(2027, 10, 1, 12, 0, 0, 0, time.UTC)
+	assert.True(t, relationshipStarted(nil, now, time.UTC))
+	assert.True(t, relationshipStarted(&store.PartialDate{Year: new(2027), Month: new(9), Day: new(30)}, now, time.UTC))
+	assert.False(t, relationshipStarted(&store.PartialDate{Year: new(2027), Month: new(10), Day: new(2)}, now, time.UTC))
+	assert.False(t, relationshipStarted(&store.PartialDate{Year: new(2027)}, now, time.UTC))
+}
