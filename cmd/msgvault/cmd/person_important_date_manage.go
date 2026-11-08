@@ -153,7 +153,7 @@ func newPersonImportantDateManageCommand() *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		rows, err := importantdate.Candidates(cmd.Context(), st, state.cfg.People.ImportantDates, time.Now())
+		rows, err := importantdate.PreviewCandidates(cmd.Context(), st, state.cfg.People.ImportantDates, time.Now())
 		if err != nil {
 			return err
 		}

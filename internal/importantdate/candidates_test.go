@@ -45,6 +45,10 @@ func TestCandidatesDeduplicateChildWithTwoParents(t *testing.T) {
 	candidates, err = Candidates(ctx, st, cfg, time.Date(2027, 10, 1, 12, 0, 0, 0, time.UTC))
 	must.NoError(err)
 	checks.Empty(candidates, "direct tier D must win before the lead window is applied")
+	preview, err := PreviewCandidates(ctx, st, cfg, time.Date(2027, 10, 1, 12, 0, 0, 0, time.UTC))
+	must.NoError(err)
+	checks.Empty(preview.Candidates)
+	checks.Equal(1, preview.Skipped["outside_lead_window"])
 }
 
 func TestRelationshipStartRequiresCompletePastDate(t *testing.T) {

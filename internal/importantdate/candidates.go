@@ -36,7 +36,31 @@ type CandidateStore interface {
 // Candidates scans current declared facts without inference or external writes.
 // Subjects involved in a merge or split are quarantined until reconciliation.
 func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time) ([]Candidate, error) {
+	return candidates(ctx, st, cfg, now, nil)
+}
+
+// Preview reports aggregate reasons for exclusions without exposing date evidence.
+// Counts describe evaluation decisions, not necessarily unique people.
+type Preview struct {
+	Candidates []Candidate    `json:"candidates"`
+	Skipped    map[string]int `json:"skipped"`
+}
+
+func PreviewCandidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time) (Preview, error) {
+	result := Preview{Skipped: make(map[string]int)}
+	rows, err := candidates(ctx, st, cfg, now, result.Skipped)
+	result.Candidates = rows
+	return result, err
+}
+
+func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Time, skipped map[string]int) ([]Candidate, error) {
+	skip := func(reason string) {
+		if skipped != nil {
+			skipped[reason]++
+		}
+	}
 	if !cfg.Enabled || !cfg.UseCadencePresets {
+		skip("disabled_or_preset_mapping_not_enabled")
 		return nil, nil
 	}
 	if err := cfg.Validate(); err != nil {
@@ -61,6 +85,7 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 			return nil, err
 		}
 		if !stable[person.ID] {
+			skip("identity_requires_reconciliation")
 			continue
 		}
 		values, err := st.ListPersonAttributeValuesContext(ctx, person.ID, store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugContactFrequency})
@@ -73,10 +98,18 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 			}
 		}
 	}
+	for _, person := range people {
+		if stable[person.ID] {
+			if _, ok := tiers[person.ID]; !ok {
+				skip("unassigned_or_custom_cadence")
+			}
+		}
+	}
 	selected := make(map[string]Candidate)
 	add := func(subject, owner, kind string, date store.PartialDate, tier Tier, direct bool) {
 		occurrence, ok := NextOccurrence(date, now, location, cfg.LeapDay)
 		if !ok {
+			skip("no_future_occurrence")
 			return
 		}
 		key := fmt.Sprintf("%s:%s:%d", subject, kind, occurrence.Year())
@@ -101,6 +134,8 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 			date, status := SelectDeclaredDate(dates, kind, now)
 			if status == DateEligible {
 				add("person/"+person.VCardUID, "person/"+person.VCardUID, string(kind), date, tier, true)
+			} else {
+				skip(string(status))
 			}
 		}
 		children, err := st.ListPersonRelationshipsContext(ctx, person.ID, store.PersonRelationshipListOptions{})
@@ -123,6 +158,8 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 			date, status := SelectDeclaredDate(childDates, store.PersonDateBirthday, now)
 			if status == DateEligible {
 				add("person/"+child.VCardUID, "person/"+person.VCardUID, "birthday", date, tier, false)
+			} else {
+				skip(string(status))
 			}
 		}
 		owned, err := st.ListImportantDateSubjectsContext(ctx, person.VCardUID)
@@ -138,6 +175,7 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		lead := map[Tier]int{TierA: cfg.LeadA, TierB: cfg.LeadB, TierC: cfg.LeadC, TierD: cfg.LeadD}[candidate.Tier]
 		days := DaysUntil(now, candidate.Occurrence, location)
 		if days < 0 || days > lead {
+			skip("outside_lead_window")
 			continue
 		}
 		prefix := candidate.SubjectUID + ":" + candidate.Kind + ":"
@@ -147,6 +185,8 @@ func Candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		}
 		if !pending {
 			result = append(result, candidate)
+		} else {
+			skip("prior_occurrence_requires_reconciliation")
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].OccurrenceKey < result[j].OccurrenceKey })
