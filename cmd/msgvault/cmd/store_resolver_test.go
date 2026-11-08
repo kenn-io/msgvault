@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -1248,6 +1249,14 @@ type openHTTPStoreDaemonVersionCase struct {
 }
 
 func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
+	homeRestart := "msgvault --home '/tmp/archive space' daemon restart"
+	configRestart := "msgvault --config /tmp/archive.toml daemon restart"
+	bothRestart := "msgvault --config /tmp/archive.toml --home '/tmp/archive space' daemon restart"
+	if runtime.GOOS == "windows" {
+		homeRestart = "& 'msgvault' '--home' '/tmp/archive space' 'daemon' 'restart'"
+		configRestart = "& 'msgvault' '--config' '/tmp/archive.toml' 'daemon' 'restart'"
+		bothRestart = "& 'msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/archive space' 'daemon' 'restart'"
+	}
 	for _, tt := range []openHTTPStoreDaemonVersionCase{
 		{"source replaces release", "v0.23.0-45-gabc", "v0.23.0", false, true, false, invocationOptions{}, "msgvault daemon restart"},
 		{"never keeps release", "v0.23.0-45-gabc", "v0.23.0", false, false, true, invocationOptions{}, "msgvault daemon restart"},
@@ -1255,9 +1264,9 @@ func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
 		{"release keeps newer release", "v0.23.0", "v0.24.0", false, false, false, invocationOptions{}, "msgvault daemon restart"},
 		{"equal source versions", "v0.23.0-45-gabc", "v0.23.0-45-gabc", false, false, false, invocationOptions{}, "msgvault daemon restart"},
 		{"source keeps newer release", "v0.23.0-45-gabc", "v0.24.0", false, false, false, invocationOptions{}, "msgvault daemon restart"},
-		{"selected home", "v0.23.0-45-gabc", "v0.23.0", false, false, true, invocationOptions{homeDir: "/tmp/archive space"}, "msgvault --home '/tmp/archive space' daemon restart"},
-		{"selected config", "v0.23.0-45-gabc", "v0.23.0", false, false, true, invocationOptions{cfgFile: "/tmp/archive.toml"}, "msgvault --config /tmp/archive.toml daemon restart"},
-		{"both selections", "v0.23.0-45-gabc", "v0.23.0", false, false, true, invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/archive space"}, "msgvault --config /tmp/archive.toml --home '/tmp/archive space' daemon restart"},
+		{"selected home", "v0.23.0-45-gabc", "v0.23.0", false, false, true, invocationOptions{homeDir: "/tmp/archive space"}, homeRestart},
+		{"selected config", "v0.23.0-45-gabc", "v0.23.0", false, false, true, invocationOptions{cfgFile: "/tmp/archive.toml"}, configRestart},
+		{"both selections", "v0.23.0-45-gabc", "v0.23.0", false, false, true, invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/archive space"}, bothRestart},
 	} {
 		t.Run(tt.name, func(t *testing.T) { testOpenHTTPStoreDaemonVersionPolicy(t, tt) })
 	}

@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/update"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"golang.org/x/crypto/argon2"
@@ -654,8 +654,12 @@ func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRun
 	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
 		options := optionsFromContext(ctx)
 		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-		restart := oauth.FormatShellCommand(runtime.GOOS, append([]string{"msgvault"}, args...)...)
-		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s daemon restart to use this version.\n", rt.Record.Version, Version, restart)
+		commands, _ := agenthook.BuildCommand("msgvault", append(args, "daemon", "restart")...)
+		restart := commands.POSIX
+		if runtime.GOOS == "windows" && len(args) > 0 {
+			restart = commands.PowerShell
+		}
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to use this version.\n", rt.Record.Version, Version, restart)
 	}
 }
 
