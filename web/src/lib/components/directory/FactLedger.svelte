@@ -126,7 +126,7 @@
               {:else if sensitivity === 'sensitive' && !controller.revealedClaims.has(row.rowToken)}
                 <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
               {:else}
-                <dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>
+                {#if !row.postalReview}<dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>{/if}
                 {#if row.postalReview}
                   {@const review = row.postalReview}
                   <div class="postal-claim-review">
@@ -134,6 +134,7 @@
                     {#if review.reason_codes.map(postalReason).filter(Boolean).length}<p>{review.reason_codes.map(postalReason).filter(Boolean).join(' · ')}</p>{/if}
                     {#if review.supporting_evidence_ids.length}<p>Supporting evidence IDs: {review.supporting_evidence_ids.join(', ')}</p><Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else if !review.reason_codes.map(postalReason).includes('Evidence unavailable')}<p>No supporting evidence</p>{/if}
                     {#if review.assessment}
+                      {#if review.assessment.original.original_value && review.assessment.original.original_value !== postalAddressText(review.assessment.original)}<p>Source text: {review.assessment.original.original_value}</p>{/if}
                       <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original)}</dd></div>{#if postalAddressText(review.assessment.original) !== postalAddressText(review.assessment.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed)}</dd></div>{/if}<div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
                       {#if review.eligible && row.claimKey && profileController && controller.personID === profileController.person?.id}
                         <Button label="Review address" size="sm" disabled={!profileController.canWriteProfile || controller.postalReview?.loading === true || !!controller.postalReview?.candidate} onclick={() => openPostalDraft(row.rowToken)} />

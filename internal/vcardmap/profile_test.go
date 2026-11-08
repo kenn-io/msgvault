@@ -1390,3 +1390,13 @@ func TestPostalAddressSnapshotDoesNotRestoreStreetWhenOnlyCountryCodeRemains(t *
 	assert.Equal(";;;;;;", value)
 	assert.Nil(label)
 }
+
+func TestPostalAddressSnapshotExportsGeoWithoutRestoringText(t *testing.T) {
+	require := require.New(t)
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
+	require.NoError(err)
+	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, GeoURI: new("geo:1,2")})
+	require.NoError(err)
+	assert.Equal(t, ";;;;;;", value)
+	assert.Nil(t, label)
+}

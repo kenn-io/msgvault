@@ -90,6 +90,7 @@
   let originalInput = $state<Input | undefined>(initialCandidate?.input ?? (currentAddress?.address_kind === 'postal' ? currentAddress.assessment?.original ?? copyPostalInput(currentAddress) : undefined));
   let addressTarget = $state('');
   let addressEdited = $state(false);
+  let editedAfterCapture = $state(false);
   let postOfficeBox = $state(seedAddress?.post_office_box ?? '');
   let extendedAddress = $state(seedAddress?.extended_address ?? '');
   let countryCode = $state(seedAddress?.country_code ?? '');
@@ -278,7 +279,7 @@
         } else if (!input.original_value) {
           input.original_value = [locality, region, postalCode, countryName].map(value => value.trim()).filter(Boolean).join(', ');
         }
-        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...((currentTextTouched || initialCandidate) && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
+        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...((currentTextTouched || initialCandidate || editedAfterCapture) && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
         const value = dateValue.trim();
@@ -332,6 +333,7 @@
   }
   function edited(): void {
     if (initialSection !== 'addresses') return;
+    if (originalInput) editedAfterCapture = true;
     addressEdited = true;
     review.invalidate();
   }

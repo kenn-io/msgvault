@@ -653,7 +653,7 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 		if !isBlank(address.Label) {
 			return vcard.JoinStructuredText(components), address.Label, nil
 		}
-		if !isBlank(address.CountryCode) {
+		if !isBlank(address.CountryCode) || !isBlank(address.GeoURI) || !isBlank(address.Timezone) {
 			return vcard.JoinStructuredText(components), nil, nil
 		}
 		// A snapshot records the source, not the current address. It cannot

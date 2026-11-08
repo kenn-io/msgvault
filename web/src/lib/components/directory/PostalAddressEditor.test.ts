@@ -204,6 +204,20 @@ describe('Postal address editor', () => {
     await waitFor(() => expect(requests).toHaveLength(1));
     expect((await requests[0]!.clone().json()).addresses.add[0].free_text).toBe('');
   });
+
+  it('sends an explicit empty current text after checking and clearing a manual draft', async () => {
+    const { controller, requests } = setup();
+    render(StructuredProfileEditor, { controller, section: 'addresses' });
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Old street' } });
+    await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: 'CA' } });
+    await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: 'Old street' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+    await screen.findByText('Original address');
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect((await requests[1]!.clone().json()).addresses.add[0].free_text).toBe('');
+  });
 });
 
 
