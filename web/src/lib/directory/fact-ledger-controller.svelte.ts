@@ -38,6 +38,7 @@ export interface FactTargetOption {
   readonly canonical: string;
 }
 export interface FactEvidenceRow {
+  id: number;
   rowToken: string;
   sourceClass: string;
   directness: string;
@@ -634,6 +635,7 @@ export class FactLedgerController {
 }
 function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
   return {
+    id: row.id,
     rowToken: `evidence-${index}`,
     sourceClass: row.source_class,
     directness: row.directness,

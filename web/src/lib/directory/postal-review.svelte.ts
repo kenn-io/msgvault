@@ -93,7 +93,7 @@ export class PostalReviewSession {
       this.resultKey = key;
       this.resultExternal = external;
     } catch {
-      if (current()) this.error = 'Address check unavailable. You can keep or save your address.';
+      if (current()) this.error = 'Address check unavailable.';
     } finally {
       if (current()) this.pending = false;
     }
@@ -105,7 +105,7 @@ export function postalAddressText(input: Partial<Input>): string {
   const components = [input.post_office_box, input.extended_address, input.street_address, input.locality,
     input.region, input.postal_code, input.country_name || input.country_code, input.extended_components]
     .filter(Boolean).join(', ');
-  return [input.free_text, components].filter(Boolean).join(', ') || input.original_value || '';
+  return (input.free_text === components ? components : [input.free_text, components].filter(Boolean).join(', ')) || input.original_value || '';
 }
 
 export function postalReason(code: string): string | undefined {

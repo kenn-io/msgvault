@@ -774,6 +774,7 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/participants/7/timeline",
 		"/api/v1/participants/7/files/search",
 		"/api/v1/people/7/files/search",
+		"/api/v1/people/7/addresses/assess",
 		"/api/v1/domains/search",
 		"/api/v1/domains/example.com/summary",
 		"/api/v1/domains/example.com/timeline",
@@ -895,7 +896,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	meetingContextPath := "/api/v1/meetings/context"
 	meetingMetricsPath := "/api/v1/meetings/metrics"
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", "/api/v1/people/{id}/addresses/assess", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)

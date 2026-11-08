@@ -17,6 +17,18 @@ import (
 
 const postalClaimJSON = `{"street_address":" 12 Example Street ","extended_address":" Unit 7 ","locality":"Example City","country_code":" ca ","source_text":"  My address is 12 Example Street, Unit 7.  "}`
 
+func TestPublicPostalAddressDistinguishesLegacyTextFromSnapshot(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	legacy := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", CountryCode: new("CA")}.PublicAddress()
+	require.NotNil(legacy.FreeText)
+	assert.Equal("12 Example Street", *legacy.FreeText)
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
+	require.NoError(err)
+	snapshot := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}.PublicAddress()
+	assert.Nil(snapshot.FreeText)
+}
+
 func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, claims []personfacts.ProposedClaim, statuses []personfacts.EvidenceStatusChange) personfacts.GenerationInput {
 	t.Helper()
 	input := personFactProjectionInput(personID, suffix, claims, statuses)

@@ -1351,6 +1351,16 @@ func TestPostalAddressSnapshotExportsCurrentLabel(t *testing.T) {
 	assert.Equal(t, label, *got)
 }
 
+func TestPostalSnapshotPreservesLabelAndFreeText(t *testing.T) {
+	require := require.New(t)
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal"})
+	require.NoError(err)
+	_, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, Label: new("Delivery instructions"), FreeText: new("12 Example Street")})
+	require.NoError(err)
+	require.NotNil(label)
+	assert.Equal(t, "Delivery instructions\n12 Example Street", *label)
+}
+
 func TestPostalAddressPartialComponentsKeepFreeText(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

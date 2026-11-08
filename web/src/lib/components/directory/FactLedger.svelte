@@ -97,7 +97,7 @@
         <div class="cards" aria-busy={controller.evidence.loading}>
           {#each controller.evidence.rows as row (row.rowToken)}
             <Card level="default" padding="sm" ariaLabel="Fact evidence">
-              <dl><div><dt>Source class</dt><dd>{row.sourceClass}</dd></div><div><dt>Directness</dt><dd>{row.directness}</dd></div><div><dt>Authority</dt><dd>{row.authority}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{row.eventTime}</dd></div><div><dt>Recorded time</dt><dd>{row.recordedTime}</dd></div><div><dt>Support</dt><dd>{row.supported ? 'Supported' : 'Unsupported'}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
+              <dl><div><dt>Evidence ID</dt><dd>{row.id}</dd></div><div><dt>Source class</dt><dd>{row.sourceClass}</dd></div><div><dt>Directness</dt><dd>{row.directness}</dd></div><div><dt>Authority</dt><dd>{row.authority}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{row.eventTime}</dd></div><div><dt>Recorded time</dt><dd>{row.recordedTime}</dd></div><div><dt>Support</dt><dd>{row.supported ? 'Supported' : 'Unsupported'}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div><div><dt>Created</dt><dd>{row.createdAt}</dd></div></dl>
               {#if row.excerpt !== null}
                 {#if controller.revealedEvidence.has(row.rowToken)}<p class="revealed"><strong>Evidence excerpt</strong><span>{row.excerpt}</span></p>
                 {:else}<Button label="Reveal evidence excerpt" size="sm" onclick={() => controller.revealEvidence(row.rowToken)} />{/if}
@@ -132,7 +132,7 @@
                   <div class="postal-claim-review">
                     {#if !review.eligible}<p>Cannot apply suggestion</p>{/if}
                     {#if review.reason_codes.map(postalReason).filter(Boolean).length}<p>{review.reason_codes.map(postalReason).filter(Boolean).join(' · ')}</p>{/if}
-                    {#if review.supporting_evidence_ids.length}<Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else if !review.reason_codes.map(postalReason).includes('Evidence unavailable')}<p>No supporting evidence</p>{/if}
+                    {#if review.supporting_evidence_ids.length}<p>Supporting evidence IDs: {review.supporting_evidence_ids.join(', ')}</p><Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else if !review.reason_codes.map(postalReason).includes('Evidence unavailable')}<p>No supporting evidence</p>{/if}
                     {#if review.assessment}
                       <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original)}</dd></div>{#if postalAddressText(review.assessment.original) !== postalAddressText(review.assessment.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed)}</dd></div>{/if}<div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
                       {#if review.eligible && row.claimKey && profileController && controller.personID === profileController.person?.id}

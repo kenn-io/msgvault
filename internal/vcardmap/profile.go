@@ -645,6 +645,9 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	if _, ok := postaladdress.DecodeOriginalInput(address.OriginalValue); ok {
 		// Current free text is an explicit edit; the snapshot remains provenance.
 		if !isBlank(address.FreeText) {
+			if !isBlank(address.Label) && *address.Label != *address.FreeText {
+				return vcard.JoinStructuredText(components), new(*address.Label + "\n" + *address.FreeText), nil
+			}
 			return vcard.JoinStructuredText(components), address.FreeText, nil
 		}
 		if !isBlank(address.Label) {

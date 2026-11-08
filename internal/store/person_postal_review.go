@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -174,6 +175,9 @@ func (a PersonAddress) PublicAddress() PersonAddress {
 				ExtendedComponents: a.ExtendedComponents, Label: a.Label, CountryCode: a.CountryCode,
 			})
 		}
+	} else if a.FreeText == nil && a.StreetAddress == nil && a.PostOfficeBox == nil && a.ExtendedAddress == nil && a.Locality == nil && a.Region == nil && a.PostalCode == nil && a.CountryName == nil && a.ExtendedComponents == nil && !strings.Contains(a.OriginalValue, ";") && strings.TrimSpace(a.OriginalValue) != "" {
+		// Legacy unstructured text is the current value, not a provenance snapshot.
+		a.FreeText = new(a.OriginalValue)
 	}
 	return a
 }
