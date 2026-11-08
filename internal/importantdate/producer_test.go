@@ -173,6 +173,7 @@ func TestRunSkipsCorrectedRetainedIssues(t *testing.T) {
 		must.NoError(err)
 		must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+person.VCardUID, cfg.ConsentScope, cfg.Recipient, true))
 	}
+	now = time.Now()
 	candidates, err := Candidates(ctx, st, cfg, now)
 	must.NoError(err)
 	must.Len(candidates, 26)
@@ -230,6 +231,7 @@ func TestRunContinuesAfterRetainedIssueLookupFailure(t *testing.T) {
 		must.NoError(err)
 		must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+person.VCardUID, cfg.ConsentScope, cfg.Recipient, true))
 	}
+	now = time.Now()
 	candidates, err := Candidates(ctx, st, cfg, now)
 	must.NoError(err)
 	must.Len(candidates, 2)
@@ -245,7 +247,7 @@ func TestRunContinuesAfterRetainedIssueLookupFailure(t *testing.T) {
 	must.True(changed)
 	kata := &failingRetainedIssueKata{}
 	count, more, err := RunOnce(ctx, st, kata, cfg, now)
-	checks.ErrorContains(err, "issue lookup unavailable")
+	must.ErrorContains(err, "issue lookup unavailable")
 	checks.Equal(2, count)
 	checks.False(more)
 	checks.Equal(1, kata.notifications)
@@ -277,6 +279,7 @@ func TestRunBatchContinuesPastRepeatedPreflightFailures(t *testing.T) {
 		must.NoError(err)
 		must.NoError(st.SetImportantDateConsentContext(ctx, "person/"+person.VCardUID, cfg.ConsentScope, cfg.Recipient, true))
 	}
+	now = time.Now()
 	candidates, err := Candidates(ctx, st, cfg, now)
 	must.NoError(err)
 	must.Len(candidates, 26)
@@ -293,7 +296,7 @@ func TestRunBatchContinuesPastRepeatedPreflightFailures(t *testing.T) {
 	}
 	kata := &failingRetainedIssueKata{}
 	count, cursor, err := RunBatch(ctx, st, kata, cfg, now, "")
-	checks.ErrorContains(err, "issue lookup unavailable")
+	must.ErrorContains(err, "issue lookup unavailable")
 	checks.Equal(25, count)
 	must.NotEmpty(cursor)
 	count, cursor, err = RunBatch(ctx, st, kata, cfg, now, cursor)
