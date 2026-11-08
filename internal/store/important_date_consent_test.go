@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -70,4 +71,40 @@ func TestImportantDateConsentRefusesUnknownSubject(t *testing.T) {
 	st := storetest.New(t).Store
 	err := st.SetImportantDateConsentContext(t.Context(), "person/missing-example", "private-example", "owner/agent", true)
 	checks.Error(err)
+}
+
+// PostgreSQL must keep both the subject and its parent locked throughout the
+// external-write callback, because relationship and cadence writers update
+// those person rows in their transactions.
+func TestImportantDateDispatchLocksEligibilityPeoplePostgreSQL(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL row locks")
+	}
+	ctx := t.Context()
+	makePerson := func(address string) *store.Person {
+		id, err := st.EnsureParticipantByIdentifier("email", address, "Example Person")
+		must.NoError(err)
+		person, _, err := st.CreatePersonFromParticipantContext(ctx, id)
+		must.NoError(err)
+		return person
+	}
+	parent := makePerson("parent-lock@example.test")
+	child := makePerson("child-lock@example.test")
+	_, err := st.AddPersonRelationshipContext(ctx, store.PersonRelationshipInput{SourcePersonID: parent.ID, TargetPersonID: child.ID, TypeSlug: "parent", Source: store.ProvenanceUser, Actor: "test"})
+	must.NoError(err)
+	subject := "person/" + child.VCardUID
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	active, err := st.WithImportantDateConsentContext(ctx, subject, "person/"+parent.VCardUID, "private-example", "owner/agent", func(context.Context) error {
+		for _, personID := range []int64{child.ID, parent.ID} {
+			var id int64
+			err := st.DB().QueryRowContext(ctx, `SELECT id FROM persons WHERE id = $1 FOR UPDATE NOWAIT`, personID).Scan(&id)
+			checks.ErrorContains(err, "could not obtain lock")
+		}
+		return nil
+	})
+	must.NoError(err)
+	checks.True(active)
 }
