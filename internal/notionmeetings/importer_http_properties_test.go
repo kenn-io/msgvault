@@ -33,7 +33,7 @@ func TestHTTPAdmissionConservationAcrossStoreRestarts(t *testing.T) {
 		expected := map[string]bool{}
 		meetings := map[string]MeetingNote{}
 		reads := map[string]int{}
-		for i := 0; i < count; i++ {
+		for i := range count {
 			id := fmt.Sprintf("meeting-%d", i)
 			m := hydrationMeeting()
 			m.ID = id
@@ -62,9 +62,12 @@ func TestHTTPAdmissionConservationAcrossStoreRestarts(t *testing.T) {
 			case r.URL.Path == "/v1/blocks/root/children":
 				start, _ := strconv.Atoi(r.URL.Query().Get("start_cursor"))
 				size, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-				require.Positive(ht, size)
+				if !assert.Positive(ht, size) {
+					http.Error(w, "invalid page size", http.StatusBadRequest)
+					return
+				}
 				ids := []Block{{Object: "block", ID: "root", Type: "child_page"}}
-				for i := 0; i < count; i++ {
+				for i := range count {
 					ids = append(ids, Block{Object: "block", ID: fmt.Sprintf("meeting-%d", i), Type: "meeting_notes"})
 				}
 				end := min(len(ids), start+size)

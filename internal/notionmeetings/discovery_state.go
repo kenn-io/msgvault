@@ -44,29 +44,29 @@ type coverageDiagnostic struct {
 func newSyncState() syncState {
 	return syncState{Version: syncStateVersion, Known: map[string]knownMeeting{}, TranscriptRetryUntil: map[string]string{}, Seen: map[string]bool{}, Coverage: Coverage{Reasons: map[string]int{}}}
 }
-func (s *syncState) initialize() {
-	s.Version = syncStateVersion
-	if s.Known == nil {
-		s.Known = map[string]knownMeeting{}
+func (state *syncState) initialize() {
+	state.Version = syncStateVersion
+	if state.Known == nil {
+		state.Known = map[string]knownMeeting{}
 	}
-	if s.TranscriptRetryUntil == nil {
-		s.TranscriptRetryUntil = map[string]string{}
+	if state.TranscriptRetryUntil == nil {
+		state.TranscriptRetryUntil = map[string]string{}
 	}
-	for _, pending := range append(append([]pendingTranscript(nil), s.Pending...), s.PendingBacklog...) {
-		if retained := s.TranscriptRetryUntil[pending.BlockID]; retained == "" || retained < pending.RetryUntil {
-			s.TranscriptRetryUntil[pending.BlockID] = pending.RetryUntil
+	for _, pending := range append(append([]pendingTranscript(nil), state.Pending...), state.PendingBacklog...) {
+		if retained := state.TranscriptRetryUntil[pending.BlockID]; retained == "" || retained < pending.RetryUntil {
+			state.TranscriptRetryUntil[pending.BlockID] = pending.RetryUntil
 		}
 	}
-	if s.Seen == nil {
-		s.Seen = map[string]bool{}
+	if state.Seen == nil {
+		state.Seen = map[string]bool{}
 	}
-	if s.Coverage.Reasons == nil {
-		s.Coverage.Reasons = map[string]int{}
+	if state.Coverage.Reasons == nil {
+		state.Coverage.Reasons = map[string]int{}
 	}
 }
 
-func (s *syncState) schedulePendingBacklog(now time.Time, limit int) {
-	pending := append(append([]pendingTranscript(nil), s.Pending...), s.PendingBacklog...)
+func (state *syncState) schedulePendingBacklog(now time.Time, limit int) {
+	pending := append(append([]pendingTranscript(nil), state.Pending...), state.PendingBacklog...)
 	pending = slices.DeleteFunc(pending, func(item pendingTranscript) bool { return pendingExpired(item, now) })
 	sort.Slice(pending, func(i, j int) bool {
 		left, _ := time.Parse(time.RFC3339, pending[i].NextAttemptAt)
@@ -77,8 +77,8 @@ func (s *syncState) schedulePendingBacklog(now time.Time, limit int) {
 		return left.Before(right)
 	})
 	active := min(len(pending), limit)
-	s.Pending = pending[:active:active]
-	s.PendingBacklog = pending[active:]
+	state.Pending = pending[:active:active]
+	state.PendingBacklog = pending[active:]
 }
 func normalizedIDs(ids []string) []string {
 	set := map[string]bool{}
@@ -110,68 +110,68 @@ func scopeFingerprint(source string, identity Identity, opts ImportOptions) stri
 	raw, _ := json.Marshal(value, json.Deterministic(true))
 	return checksumBytes(raw)
 }
-func (s *syncState) startSweep(opts ImportOptions, now time.Time) {
-	s.Active = true
-	s.FreshRequested = false
-	s.Seen = map[string]bool{}
-	s.Windows = []queryWindow{{To: now.UTC().Truncate(time.Minute).Add(time.Minute)}}
+func (state *syncState) startSweep(opts ImportOptions, now time.Time) {
+	state.Active = true
+	state.FreshRequested = false
+	state.Seen = map[string]bool{}
+	state.Windows = []queryWindow{{To: now.UTC().Truncate(time.Minute).Add(time.Minute)}}
 	for _, id := range normalizedIDs(opts.RootPageIDs) {
-		s.Frontier = append(s.Frontier, scopeTask{Kind: "blocks", ID: id})
-		s.Seen["blocks:"+id] = true
+		state.Frontier = append(state.Frontier, scopeTask{Kind: "blocks", ID: id})
+		state.Seen["blocks:"+id] = true
 	}
 	for _, id := range normalizedIDs(opts.RootDataSourceIDs) {
-		s.Frontier = append(s.Frontier, scopeTask{Kind: "data_source", ID: id})
-		s.Seen["data_source:"+id] = true
+		state.Frontier = append(state.Frontier, scopeTask{Kind: "data_source", ID: id})
+		state.Seen["data_source:"+id] = true
 	}
 	if searchEnabled(opts) {
-		s.Frontier = append(s.Frontier, scopeTask{Kind: "search"})
-		s.Seen["search:"] = true
-		s.reason("search_best_effort", "search")
+		state.Frontier = append(state.Frontier, scopeTask{Kind: "search"})
+		state.Seen["search:"] = true
+		state.reason("search_best_effort", "search")
 	}
 	// Explicit meeting IDs are admitted by the scheduler in bounded batches, not
 	// appended here beyond the pending cap.
 	for _, id := range normalizedIDs(opts.MeetingBlockIDs) {
-		s.Frontier = append(s.Frontier, scopeTask{Kind: "meeting", ID: id})
-		s.Seen["meeting:"+id] = true
+		state.Frontier = append(state.Frontier, scopeTask{Kind: "meeting", ID: id})
+		state.Seen["meeting:"+id] = true
 	}
 }
-func (s *syncState) reason(reason, kind string) {
-	if s.Coverage.Reasons == nil {
-		s.Coverage.Reasons = map[string]int{}
+func (state *syncState) reason(reason, kind string) {
+	if state.Coverage.Reasons == nil {
+		state.Coverage.Reasons = map[string]int{}
 	}
-	s.Coverage.Reasons[reason]++
-	s.Coverage.DiagnosticCount++
-	if len(s.Coverage.Diagnostics) < 100 {
-		s.Coverage.Diagnostics = append(s.Coverage.Diagnostics, coverageDiagnostic{Reason: reason, Kind: kind})
+	state.Coverage.Reasons[reason]++
+	state.Coverage.DiagnosticCount++
+	if len(state.Coverage.Diagnostics) < 100 {
+		state.Coverage.Diagnostics = append(state.Coverage.Diagnostics, coverageDiagnostic{Reason: reason, Kind: kind})
 	}
 }
-func (s *syncState) deferTask(t scopeTask, reason string, now time.Time) {
-	s.reason(reason, t.Kind)
-	for i, gap := range s.Deferred {
+func (state *syncState) deferTask(t scopeTask, reason string, now time.Time) {
+	state.reason(reason, t.Kind)
+	for i, gap := range state.Deferred {
 		if gap.Task != nil && gap.Task.key() == t.key() && gap.Task.Cursor == t.Cursor && gap.Task.Offset == t.Offset {
-			s.Deferred[i].Reason = reason
-			s.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
+			state.Deferred[i].Reason = reason
+			state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
 			return
 		}
 	}
-	s.Deferred = append(s.Deferred, deferredScope{Task: &t, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
+	state.Deferred = append(state.Deferred, deferredScope{Task: &t, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
 }
-func (s *syncState) activateDeferred(now time.Time, limits discoveryLimits) {
-	retained := s.Deferred[:0]
-	for _, gap := range s.Deferred {
+func (state *syncState) activateDeferred(now time.Time, limits discoveryLimits) {
+	retained := state.Deferred[:0]
+	for _, gap := range state.Deferred {
 		if gap.NextAttemptAt.After(now) {
 			retained = append(retained, gap)
 			continue
 		}
-		if gap.Task != nil && len(s.Frontier) < limits.Frontier {
-			s.Frontier = append(s.Frontier, *gap.Task)
-		} else if gap.Window != nil && len(s.Windows) < limits.Frontier {
-			s.Windows = append(s.Windows, *gap.Window)
+		if gap.Task != nil && len(state.Frontier) < limits.Frontier {
+			state.Frontier = append(state.Frontier, *gap.Task)
+		} else if gap.Window != nil && len(state.Windows) < limits.Frontier {
+			state.Windows = append(state.Windows, *gap.Window)
 		} else {
 			retained = append(retained, gap)
 		}
 	}
-	s.Deferred = retained
+	state.Deferred = retained
 }
 func (state *syncState) validateTransient() error {
 	s := *state
@@ -277,24 +277,24 @@ func validateDiscoveryOptions(opts ImportOptions) error {
 	return s.validateTransient()
 }
 
-func (s *syncState) resolveTask(task scopeTask) {
-	retained := s.Deferred[:0]
-	for _, gap := range s.Deferred {
+func (state *syncState) resolveTask(task scopeTask) {
+	retained := state.Deferred[:0]
+	for _, gap := range state.Deferred {
 		if gap.Task != nil && gap.Task.key() == task.key() && gap.Task.Cursor == task.Cursor && gap.Task.Offset == task.Offset {
 			continue
 		}
 		retained = append(retained, gap)
 	}
-	s.Deferred = retained
+	state.Deferred = retained
 }
 
 // Reasons describe current debt; DiagnosticCount and Diagnostics retain history.
-func (s *syncState) currentCoverage(search bool) {
+func (state *syncState) currentCoverage(search bool) {
 	current := map[string]int{}
-	for _, gap := range s.Deferred {
+	for _, gap := range state.Deferred {
 		current[gap.Reason]++
 	}
-	for _, known := range s.Known {
+	for _, known := range state.Known {
 		if known.FetchError != "" && known.FetchError != "not_selected" {
 			current[known.FetchError]++
 		}
@@ -303,27 +303,27 @@ func (s *syncState) currentCoverage(search bool) {
 		current["search_best_effort"] = 1
 	}
 	for _, reason := range []string{"request_budget", "discovery_budget", "unfinished_progress", "cursor_budget", "time_budget", "interrupted", "users_unavailable", "pending_budget"} {
-		if n := s.Coverage.Reasons[reason]; n > 0 {
+		if n := state.Coverage.Reasons[reason]; n > 0 {
 			current[reason] = n
 		}
 	}
-	s.Coverage.Reasons = current
+	state.Coverage.Reasons = current
 }
 
-func (s *syncState) deferWindow(window queryWindow, reason string, now time.Time) {
-	s.reason(reason, "query")
-	for i, gap := range s.Deferred {
+func (state *syncState) deferWindow(window queryWindow, reason string, now time.Time) {
+	state.reason(reason, "query")
+	for i, gap := range state.Deferred {
 		if gap.Window != nil && gap.Window.From.Equal(window.From) && gap.Window.To.Equal(window.To) {
-			s.Deferred[i].Reason = reason
-			s.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
+			state.Deferred[i].Reason = reason
+			state.Deferred[i].NextAttemptAt = now.Add(transcriptRetryCadence)
 			return
 		}
 	}
-	s.Deferred = append(s.Deferred, deferredScope{Window: &window, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
+	state.Deferred = append(state.Deferred, deferredScope{Window: &window, Reason: reason, NextAttemptAt: now.Add(transcriptRetryCadence)})
 }
-func (s *syncState) resolveWindow(window queryWindow) {
-	retained := s.Deferred[:0]
-	for _, gap := range s.Deferred {
+func (state *syncState) resolveWindow(window queryWindow) {
+	retained := state.Deferred[:0]
+	for _, gap := range state.Deferred {
 		if gap.Window != nil {
 			fromContained := window.From.IsZero() || (!gap.Window.From.IsZero() && !gap.Window.From.Before(window.From))
 			toContained := window.To.IsZero() || (!gap.Window.To.IsZero() && !gap.Window.To.After(window.To))
@@ -333,5 +333,5 @@ func (s *syncState) resolveWindow(window queryWindow) {
 		}
 		retained = append(retained, gap)
 	}
-	s.Deferred = retained
+	state.Deferred = retained
 }

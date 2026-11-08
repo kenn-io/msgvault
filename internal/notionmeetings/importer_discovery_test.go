@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -258,14 +259,14 @@ func (s *headerCountingSource) RetrieveBlock(ctx context.Context, id string) (*B
 }
 func TestKnownRefreshActuallyVisitsEntireArchivedCycle(t *testing.T) {
 	for _, count := range []int{0, 1, 31, 32, 33, 65} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
 			st, source, imp := broadFixture(t)
 			source.query.Results = nil
 			ids := []string{}
-			for i := 0; i < count; i++ {
+			for i := range count {
 				m := hydrationMeeting()
 				m.ID = fmt.Sprintf("known-%03d", i)
 				installMeetingHeader(t, source.fakeHydrationSource, m)
@@ -277,7 +278,7 @@ func TestKnownRefreshActuallyVisitsEntireArchivedCycle(t *testing.T) {
 			assert.Equal(int64(count), first.MeetingsAdded)
 			counter := &headerCountingSource{discoveryFixture: source, reads: map[string]int{}}
 			imp.client = counter
-			for pass := 0; pass < (count+31)/32; pass++ {
+			for range (count + 31) / 32 {
 				_, err = imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch})
 				require.NoError(err)
 			}

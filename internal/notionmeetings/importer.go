@@ -258,7 +258,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}()
 	api, ok := imp.client.(discoverySource)
 	if !ok {
-		return sum, errors.New("Notion source does not support verified identity and broad discovery")
+		return sum, errors.New("notion source does not support verified identity and broad discovery")
 	}
 	self, err := api.RetrieveSelf(ctx)
 	if err != nil {

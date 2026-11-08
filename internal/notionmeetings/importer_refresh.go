@@ -180,11 +180,11 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 	state.updateTranscriptPending(id, hydrated, providerTranscriptIncomplete, now)
 	return true, nil
 }
-func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting, incomplete bool, now time.Time) {
+func (state *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting, incomplete bool, now time.Time) {
 	index := -1
 	previous := pendingTranscript{}
 	hasPrevious := false
-	for i, pending := range s.Pending {
+	for i, pending := range state.Pending {
 		if pending.BlockID == id {
 			index = i
 			previous = pending
@@ -192,45 +192,45 @@ func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting
 			break
 		}
 	}
-	for i, pending := range s.PendingBacklog {
+	for i, pending := range state.PendingBacklog {
 		if pending.BlockID == id {
 			previous = pending
 			hasPrevious = true
-			s.PendingBacklog = append(s.PendingBacklog[:i], s.PendingBacklog[i+1:]...)
+			state.PendingBacklog = append(state.PendingBacklog[:i], state.PendingBacklog[i+1:]...)
 			break
 		}
 	}
-	if retained := s.TranscriptRetryUntil[id]; retained != "" {
+	if retained := state.TranscriptRetryUntil[id]; retained != "" {
 		previous.RetryUntil = retained
 		hasPrevious = true
 	}
 	if incomplete && !terminalStatus(hydrated.Discovery.MeetingNotes.Status) {
 		pending, keep := schedulePending(hydrated, now, previous, hasPrevious)
 		if keep {
-			s.TranscriptRetryUntil[id] = pending.RetryUntil
+			state.TranscriptRetryUntil[id] = pending.RetryUntil
 			if index >= 0 {
-				s.Pending[index] = pending
-			} else if len(s.Pending) < defaultDiscoveryLimits().Pending {
-				s.Pending = append(s.Pending, pending)
+				state.Pending[index] = pending
+			} else if len(state.Pending) < defaultDiscoveryLimits().Pending {
+				state.Pending = append(state.Pending, pending)
 			} else {
-				s.PendingBacklog = append(s.PendingBacklog, pending)
-				s.reason("pending_budget", "transcript")
+				state.PendingBacklog = append(state.PendingBacklog, pending)
+				state.reason("pending_budget", "transcript")
 			}
 			return
 		}
 	}
 	if index >= 0 {
-		s.Pending = append(s.Pending[:index], s.Pending[index+1:]...)
+		state.Pending = append(state.Pending[:index], state.Pending[index+1:]...)
 	}
 }
-func (s *syncState) deferTranscriptAttempt(id string, now time.Time) {
-	for i := range s.Pending {
-		if s.Pending[i].BlockID == id {
+func (state *syncState) deferTranscriptAttempt(id string, now time.Time) {
+	for i := range state.Pending {
+		if state.Pending[i].BlockID == id {
 			next := now.Add(transcriptRetryCadence)
-			if deadline, err := time.Parse(time.RFC3339, s.Pending[i].RetryUntil); err == nil && deadline.Before(next) {
+			if deadline, err := time.Parse(time.RFC3339, state.Pending[i].RetryUntil); err == nil && deadline.Before(next) {
 				next = deadline
 			}
-			s.Pending[i].NextAttemptAt = next.Format(time.RFC3339)
+			state.Pending[i].NextAttemptAt = next.Format(time.RFC3339)
 		}
 	}
 }
