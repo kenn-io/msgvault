@@ -93,7 +93,7 @@
   let postOfficeBox = $state(seedAddress?.post_office_box ?? '');
   let extendedAddress = $state(seedAddress?.extended_address ?? '');
   let countryCode = $state(seedAddress?.country_code ?? '');
-  let originalText = $state(untrack(() => originalInput?.original_value ?? seedAddress?.original_value ?? ''));
+  let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : seedAddress?.original_value ?? ''));
   let currentText = $state(seedAddress?.free_text ?? '');
   let streetAddress = $state(seedAddress?.street_address ?? '');
   let locality = $state(seedAddress?.locality ?? '');
@@ -508,7 +508,7 @@
               <div><dt>Original address</dt><dd>{postalAddressText(result.original)}</dd></div>
               {#if postalAddressText(result.original) !== postalAddressText(result.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed)}</dd></div>{/if}
             </dl>
-            <p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? (postalReasons(result.reason_codes).length ? 'You can still save the address.' : 'Provider unavailable — local entry is still available') : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>
+            {#if result.status !== 'unavailable' || !postalReasons(result.reason_codes).length}<p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? 'Provider unavailable' : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>{/if}
             {#if postalReasons(result.reason_codes).length}<p>{postalReasons(result.reason_codes).join(' · ')}</p>{/if}
             {#if result.provider === 'google' && result.checked_at && (result.status === 'validated' || result.status === 'needs_review')}<p class="google-attribution"><a href="https://maps.google.com" target="_blank" rel="noreferrer" translate="no" style="white-space: nowrap; font-family: Arial, sans-serif; font-style: normal; font-weight: 400; font-size: 14px; color: #1f1f1f; background-color: #ffffff; letter-spacing: normal">Google Maps</a></p>{/if}
             <div class="editor-actions">
