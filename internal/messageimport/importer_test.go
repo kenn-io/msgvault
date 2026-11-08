@@ -251,6 +251,45 @@ func TestImporterMakesMessagesSearchable(t *testing.T) {
 	assert.Empty(t, searchIDs(&search.Query{TextTerms: []string{"widgetsync"}}), "the replaced body leaves the index")
 }
 
+func TestImporterIndexesWhatARebuildIndexes(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	// A participant known by an email and, from another source, a phone. A
+	// rebuild indexes a non-email message's sender by phone, else email.
+	participant, err := st.EnsureParticipantContext(t.Context(), "both@example.com", "Both", "example.com")
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
+		UPDATE participants SET phone_number = ? WHERE id = ?
+	`), "+15550100777", participant)
+	require.NoError(err)
+
+	req := validRequest(t)
+	req.Message.Sender = MessageImportSender{Name: "Both", Email: "both@example.com"}
+	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
+	require.NoError(err)
+
+	indexed := func() string {
+		t.Helper()
+		query := `SELECT subject || char(10) || body || char(10) || from_addr || char(10) ||
+			to_addr || char(10) || cc_addr FROM messages_fts WHERE rowid = ?`
+		if st.IsPostgreSQL() {
+			query = `SELECT search_fts::text FROM messages WHERE id = ?`
+		}
+		var entry string
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), result.MessageID).Scan(&entry))
+		return entry
+	}
+	afterImport := indexed()
+	assert.Contains(t, afterImport, "15550100777", "the sender is indexed by phone")
+	_, err = st.RebuildFTS(nil)
+	require.NoError(err)
+	assert.Equal(t, indexed(), afterImport, "a rebuild changes nothing")
+}
+
 func TestImporterScopesExternalIDsBySource(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

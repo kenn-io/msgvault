@@ -109,7 +109,11 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
-	SyncRunItem               *SyncRunItem
+	// FTSFromStoredRows indexes the message from its stored rows, as a
+	// search-index rebuild does, in place of FTS, so the indexed sender
+	// follows the same rule a rebuild applies.
+	FTSFromStoredRows bool
+	SyncRunItem       *SyncRunItem
 	// RecomputeConversationStats refreshes the stats of the message's
 	// conversation, and of the conversation it left, in the write's own
 	// transaction, so no interruption leaves either one stale.
@@ -2591,7 +2595,13 @@ func (s *Store) persistMessageWith(
 	if err := s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID, delivery); err != nil {
 		return 0, err
 	}
-	if data.FTS != nil && s.fts5Available {
+	switch {
+	case !s.fts5Available:
+	case data.FTSFromStoredRows:
+		if _, err := q.Exec(s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {
+			return 0, fmt.Errorf("index message from stored rows: %w", err)
+		}
+	case data.FTS != nil:
 		fts := *data.FTS
 		fts.MessageID = messageID
 		if err := s.dialect.FTSUpsert(q, fts); err != nil {

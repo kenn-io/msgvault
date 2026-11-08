@@ -185,10 +185,6 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		return writeResult{}, err
 	}
 	sender := snapshot.Sender
-	senderAddress := sender.Email
-	if senderAddress == "" {
-		senderAddress = sender.Phone
-	}
 	metadata := sql.NullString{String: string(snapshot.Metadata), Valid: true}
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message: &store.Message{
@@ -223,12 +219,9 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 			EmailAddresses: []string{sender.Email},
 		}},
 		PreserveLabels: true,
-		// The same fields a search-index rebuild derives from the stored rows.
-		FTS: &store.FTSDoc{
-			Subject:  snapshot.Title,
-			Body:     snapshot.BodyText,
-			FromAddr: senderAddress,
-		},
+		// The index takes the stored sender's phone or email by the rule a
+		// rebuild applies, which may differ from the address the request sent.
+		FTSFromStoredRows: true,
 		// A message moved to another conversation changes both conversations.
 		RecomputeConversationStats: true,
 	})
