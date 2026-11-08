@@ -38,8 +38,8 @@ detect_arch() {
 # Find install directory
 find_install_dir() {
     if [ -n "${MSGVAULT_INSTALL_DIR:-}" ]; then
-        mkdir -p "$MSGVAULT_INSTALL_DIR"
-        echo "$MSGVAULT_INSTALL_DIR"
+        mkdir -p "$MSGVAULT_INSTALL_DIR" || error "Could not create install directory: $MSGVAULT_INSTALL_DIR"
+        cd "$MSGVAULT_INSTALL_DIR" && pwd -P
     elif [ -w "/usr/local/bin" ]; then
         echo "/usr/local/bin"
     else
@@ -55,7 +55,7 @@ configure_path() {
     case ":$PATH:" in *:"$install_dir":*) return ;; esac
 
     quoted="'${install_dir//\'/\'\\\'\'}'"
-    command="export PATH=\"\$PATH\":$quoted"
+    command="case \":\$PATH:\" in *:$quoted:*) ;; *) export PATH=\"\$PATH\":$quoted ;; esac"
     case "${SHELL##*/}" in
         bash)
             profiles=("$HOME/.bashrc")
@@ -88,13 +88,14 @@ configure_path() {
         if mkdir -p "$(dirname "$profile")" && printf '\n%s\n' "$command" >> "$profile"; then
             info "Added msgvault to PATH in $profile"
         else
+            warn "Could not update $profile"
             configured=false
         fi
     done
     if "$configured"; then
         warn "Open a new terminal, or run:"
     else
-        warn "Add this to your shell profile:"
+        warn "Run in your current shell:"
     fi
     printf '  %s\n\n' "$command"
 }

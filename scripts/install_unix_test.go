@@ -28,6 +28,14 @@ func TestInstallPath(t *testing.T) {
 	fixture := t.TempDir()
 	transport := filepath.Join(fixture, "transport")
 	require.NoError(t, os.Mkdir(transport, 0o700))
+	tools := filepath.Join(fixture, "tools")
+	require.NoError(t, os.Mkdir(tools, 0o700))
+	for _, name := range strings.Fields("uname mkdir mktemp tar gzip awk sha256sum shasum cut mv chmod grep dirname rm cp id run-parts head tr") {
+		path, err := exec.LookPath(name)
+		if err == nil {
+			require.NoError(t, os.Symlink(path, filepath.Join(tools, name)))
+		}
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(fixture, "msgvault"), []byte("#!/bin/sh\nprintf 'installed sentinel\\n'\n"), 0o700))
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
@@ -66,14 +74,17 @@ fi
 			t.Parallel()
 			shell, err := exec.LookPath(tc.shell)
 			if err != nil && tc.shell != "other" {
+				require.NotEqual(t, "test", os.Getenv("GITHUB_JOB"), "CI must install the tested shells")
 				t.Skipf("%s is unavailable", tc.shell)
 			}
 			home := t.TempDir()
 			destination := filepath.Join(home, ".local", "bin")
+			installDir := destination
 			if tc.name == "fresh with spaces" {
-				destination = filepath.Join(home, "bin with spaces")
+				installDir = "bin with spaces"
+				destination = filepath.Join(home, installDir)
 			}
-			path := os.Getenv("PATH")
+			path := tools
 			if tc.pathEntry == "exact" {
 				path += ":" + destination
 			} else if tc.pathEntry == "sibling" {
@@ -104,7 +115,7 @@ fi
 				}
 			}
 			env := []string{"HOME=" + home, "SHELL=/bin/" + tc.shell, "PATH=" + path, "TMPDIR=" + home,
-				"MSGVAULT_INSTALL_DIR=" + destination, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
+				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
 				"ZDOTDIR=" + filepath.Join(home, "zsh"), "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
 				"FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
@@ -112,11 +123,12 @@ fi
 			for run := range 2 {
 				cmd := exec.CommandContext(ctx, bash, script)
 				cmd.Env = append(append([]string{}, env...), "PATH="+transport+":"+path)
+				cmd.Dir = home
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, string(output))
 				assert.Contains(t, string(output), "Checksum verified")
 				if tc.optOut != "" || tc.shell == "other" {
-					assert.Contains(t, string(output), "Add this to your shell profile:")
+					assert.Contains(t, string(output), "Run in your current shell:")
 				}
 				for _, profile := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
@@ -149,15 +161,22 @@ fi
 			}
 			starts := [][]string{{"-ic", probe}}
 			if tc.shell == "bash" || tc.shell == "zsh" {
-				starts = append(starts, []string{"--login", "-c", probe})
+				starts = append(starts, []string{"--login", "-ic", probe})
 			}
 			for _, args := range starts {
+				args[len(args)-1] += `; printf '\n%s\n' "$PATH"`
 				cmd := exec.CommandContext(ctx, shell, args...)
 				cmd.Env = env
+				cmd.Dir = fixture
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, string(output))
 				assert.Contains(t, string(output), destination+"/msgvault\n")
 				assert.Contains(t, string(output), "installed sentinel\n")
+				count := 2 // Executable resolution and its single PATH entry.
+				if tc.pathEntry == "sibling" {
+					count++
+				}
+				assert.Equal(t, count, strings.Count(string(output), destination))
 			}
 		})
 	}
