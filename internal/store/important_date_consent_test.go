@@ -108,3 +108,25 @@ func TestImportantDateDispatchLocksEligibilityPeoplePostgreSQL(t *testing.T) {
 	must.NoError(err)
 	checks.True(active)
 }
+
+func TestPersonDateMutationsRevokeImportantDateConsent(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	personID := newTestPerson(t, st)
+	person, err := st.GetPerson(personID)
+	must.NoError(err)
+	subject := "person/" + person.VCardUID
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	date, err := st.AddPersonDateContext(ctx, personID, store.PersonDateInput{DateKind: store.PersonDateBirthday, Date: store.PartialDate{Month: new(10), Day: new(23)}, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	must.NoError(err)
+	active, err := st.HasImportantDateConsentContext(ctx, subject, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active)
+	must.NoError(st.SetImportantDateConsentContext(ctx, subject, "private-example", "owner/agent", true))
+	must.NoError(st.SupersedePersonDateContext(ctx, personID, date.Envelope.ID, nil))
+	active, err = st.HasImportantDateConsentContext(ctx, subject, "private-example", "owner/agent")
+	must.NoError(err)
+	checks.False(active)
+}
