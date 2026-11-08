@@ -1,0 +1,198 @@
+//go:build !windows
+
+package scripts
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestInstallPath(t *testing.T) {
+	req := require.New(t)
+	script, err := filepath.Abs("install.sh")
+	req.NoError(err)
+	_, err = os.ReadFile(script) // Include the child script in Go's test cache inputs.
+	req.NoError(err)
+	bash, err := exec.LookPath("bash")
+	req.NoError(err)
+	fixture := t.TempDir()
+	transport := filepath.Join(fixture, "transport")
+	req.NoError(os.Mkdir(transport, 0o700))
+	tools := filepath.Join(fixture, "tools")
+	req.NoError(os.Mkdir(tools, 0o700))
+	// The shell probes also read system login profiles that use these tools.
+	for name := range strings.FieldsSeq("uname mkdir mktemp tar gzip mv chmod grep dirname rm cp id run-parts tr") {
+		path, err := exec.LookPath(name)
+		if err == nil {
+			req.NoError(os.Symlink(path, filepath.Join(tools, name)))
+		}
+	}
+	req.NoError(os.WriteFile(filepath.Join(fixture, "msgvault"), []byte("#!/bin/sh\nprintf 'installed sentinel\\n'\n"), 0o700))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	archive := filepath.Join(fixture, "release.tar.gz")
+	output, err := exec.CommandContext(ctx, "tar", "-czf", archive, "-C", fixture, "msgvault").CombinedOutput()
+	req.NoError(err, string(output))
+	req.NoError(os.WriteFile(filepath.Join(transport, "curl"), []byte(`#!/bin/sh
+case "$1:$2" in
+    -fsSLI:-o) [ "$6" = https://github.com/kenn-io/msgvault/releases/latest ] || exit 1
+        printf https://github.com/kenn-io/msgvault/releases/tag/v1.0.0 ;;
+    -fsSL:https://github.com/kenn-io/msgvault/releases/download/v1.0.0/msgvault_1.0.0_*.tar.gz)
+        cp "$FIXTURE/release.tar.gz" "$4" ;;
+    *) exit 1 ;;
+esac
+`), 0o700))
+	for _, tc := range []struct {
+		name, shell, optOut, pathEntry        string
+		relative, loginProfile, exportZdotdir bool
+	}{
+		{name: "fresh with spaces", shell: "bash", relative: true},
+		{name: "existing login", shell: "bash", loginProfile: true},
+		{name: "opt out", shell: "bash", optOut: "1"},
+		{name: "exact PATH", shell: "bash", pathEntry: "exact"},
+		{name: "sibling PATH", shell: "bash", pathEntry: "sibling"},
+		{name: "zsh redirects directory", shell: "zsh", exportZdotdir: true},
+		{name: "fish custom directory", shell: "fish"},
+		{name: "unsupported", shell: "sh"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			t.Parallel()
+			shell, _ := exec.LookPath(tc.shell)
+			home := t.TempDir()
+			destination := filepath.Join(home, ".local", "bin")
+			manual := `export PATH="$PATH":'` + destination + `'`
+			installDir := destination
+			if tc.relative {
+				installDir = "bin with spaces"
+				destination = filepath.Join(home, installDir)
+			}
+			path := tools
+			switch tc.pathEntry {
+			case "exact":
+				require.NoError(os.MkdirAll(filepath.Dir(destination), 0o700))
+				require.NoError(os.Mkdir(filepath.Join(home, "target"), 0o700))
+				require.NoError(os.Symlink(filepath.Join(home, "target"), destination))
+				path += ":" + destination
+			case "sibling":
+				path += ":" + destination + "ary"
+			}
+			profiles := map[string]string{".bashrc": "# preserved", ".profile": "# preserved"}
+			switch tc.shell {
+			case "zsh":
+				profiles = map[string]string{".zshenv": "# preserved", "zsh/.zshenv": "# preserved"}
+				if tc.exportZdotdir {
+					profiles[".zshenv"] = `export ZDOTDIR="$HOME/zsh"`
+				}
+			case "fish":
+				profiles = map[string]string{"config/fish/config.fish": "# preserved"}
+			}
+			if tc.loginProfile {
+				profiles[".bash_profile"] = "# preserved\n. \"$HOME/.bashrc\""
+			}
+			for profile, content := range profiles {
+				if tc.relative {
+					profiles[profile] = ""
+					continue
+				}
+				file := filepath.Join(home, profile)
+				require.NoError(os.MkdirAll(filepath.Dir(file), 0o700))
+				require.NoError(os.WriteFile(file, []byte(content), 0o600))
+			}
+			env := []string{"HOME=" + home, "SHELL=/bin/" + tc.shell, "PATH=" + path, "TMPDIR=" + home,
+				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
+				"XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
+				"FIXTURE=" + fixture}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			for run := range 2 {
+				cmd := exec.CommandContext(ctx, bash, script)
+				cmd.Env = append(append([]string{}, env...), "PATH="+transport+":"+path)
+				if tc.exportZdotdir {
+					cmd.Env = append(cmd.Env, "ZDOTDIR="+filepath.Join(home, "zsh"))
+				}
+				cmd.Dir = home
+				output, err := cmd.CombinedOutput()
+				require.NoError(err, string(output))
+				if tc.optOut != "" || tc.shell == "sh" {
+					assert.NotContains(string(output), "Open a new terminal")
+					if tc.shell == "sh" {
+						assert.Contains(string(output), "Configure PATH manually for your shell.")
+						assert.Contains(string(output), destination+"'/msgvault\n")
+						assert.Contains(string(output), "\n  "+manual+"\n")
+					} else {
+						assert.Contains(string(output), "Run in your current shell:")
+					}
+				} else if tc.pathEntry != "exact" {
+					assert.Contains(string(output), "Open a new terminal, or run:")
+				}
+				for profile, original := range profiles {
+					data, err := os.ReadFile(filepath.Join(home, profile))
+					require.NoError(err)
+					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "sh" || (tc.loginProfile && profile == ".profile") {
+						assert.Equal(original, string(data))
+						continue
+					}
+					if run == 0 {
+						assert.Contains(string(output), filepath.Join(home, profile))
+					}
+					assert.Regexp("^"+regexp.QuoteMeta(original)+"\n[^\n]+\n$", string(data))
+					line := strings.TrimSuffix(strings.TrimPrefix(string(data), original+"\n"), "\n")
+					assert.Contains(string(output), "\n  "+line+"\n")
+				}
+			}
+			if tc.optOut != "" || tc.pathEntry == "exact" {
+				return
+			}
+			probe := `command -v msgvault; msgvault; printf '\nTEST_PATH=%s\n' "$PATH"`
+			if tc.shell == "sh" {
+				probe = manual + "; " + probe
+			}
+			if tc.shell == "fish" {
+				probe = `command -s msgvault; msgvault; printf '\nTEST_PATH=%s\n' (string join : $PATH)`
+			}
+			starts := [][]string{}
+			if tc.shell == "zsh" && shell == "" {
+				for profile := range profiles {
+					starts = append(starts, []string{bash, "-c", `. "$1"; ` + probe, "source-profile", filepath.Join(home, profile)})
+				}
+			}
+			if shell != "" {
+				starts = append(starts, []string{shell, "-ic", probe})
+				if tc.shell == "bash" {
+					starts = append(starts, []string{shell, "--login", "-ic", probe})
+				}
+			}
+			for _, args := range starts {
+				cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+				cmd.Env, cmd.Dir = env, fixture
+				output, err := cmd.CombinedOutput()
+				require.NoError(err, string(output))
+				assert.Contains(string(output), destination+"/msgvault\n")
+				assert.Contains(string(output), "installed sentinel\n")
+				_, value, found := strings.Cut(string(output), "\nTEST_PATH=")
+				require.True(found, string(output))
+				count := 0
+				for entry := range strings.SplitSeq(strings.TrimSpace(value), ":") {
+					if entry == destination {
+						count++
+					}
+				}
+				assert.Equal(1, count)
+			}
+			if shell == "" {
+				t.Skipf("%s not installed; startup not checked", tc.shell)
+			}
+		})
+	}
+}
