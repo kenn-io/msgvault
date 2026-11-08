@@ -17,7 +17,7 @@ afterEach(() => { vi.restoreAllMocks(); Reflect.deleteProperty(navigator, 'locks
 
 describe('RecurringTaskForm', () => {
   it('retains the draft when the form is closed', async () => {
-    const view = render(RecurringTaskForm, { client: createAPIClient(vi.fn<typeof fetch>()), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    const view = render(RecurringTaskForm, { props: { client: createAPIClient(vi.fn<typeof fetch>()), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByRole('textbox', { name: 'Recurring task title' });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Recurring task title' }), { target: { value: 'Review notes' } });
     view.unmount();
@@ -27,7 +27,7 @@ describe('RecurringTaskForm', () => {
   it('preserves an unreadable saved request and does not create a replacement', async () => {
     localStorage.setItem('msgvault.recurring-draft.uid.person-seven', '{broken');
     const fetchMock = vi.fn<typeof fetch>();
-    render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByText(/cannot load saved drafts for this person/i);
     expect(screen.queryByRole('button', { name: 'Create recurring task' })).toBeNull();
     expect(localStorage.getItem('msgvault.recurring-draft.uid.person-seven')).toBe('{broken');
@@ -36,7 +36,7 @@ describe('RecurringTaskForm', () => {
 
   it('keeps an oversized first request editable and sends it after the notes are shortened', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 503 }));
-    render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByRole('textbox', { name: 'Recurring task title' });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Recurring task title' }), { target: { value: 'Review notes' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Parent task owner' }), { target: { value: 'synthetic' } });
@@ -64,7 +64,7 @@ describe('RecurringTaskForm', () => {
       if (key === 'msgvault.recurring-draft.uid.person-seven' && JSON.parse(value).attempted) throw new Error('quota');
       return save.call(localStorage, key, value);
     });
-    render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByRole('textbox', { name: 'Recurring task title' });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Recurring task title' }), { target: { value: 'Review notes' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Parent task owner' }), { target: { value: 'synthetic' } });
@@ -88,7 +88,7 @@ describe('RecurringTaskForm', () => {
         ? new Response(null, { status: 503 })
         : Response.json({ error: 'invalid_schedule', message: 'Schedule is invalid' }, { status: 422 });
     }));
-    render(RecurringTaskForm, { client, personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client, personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByRole('textbox', { name: 'Recurring task title' });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Recurring task title' }), { target: { value: 'Review notes' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Parent task owner' }), { target: { value: 'synthetic' } });
@@ -110,7 +110,7 @@ describe('RecurringTaskForm', () => {
 
   it('allows correcting a rejected first retry key', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json({ error: 'invalid_idempotency_key', message: 'Check the device clock' }, { status: 422 })));
-    render(RecurringTaskForm, { client, personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client, personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByRole('textbox', { name: 'Recurring task title' });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Recurring task title' }), { target: { value: 'Review notes' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Parent task owner' }), { target: { value: 'synthetic' } });
@@ -127,7 +127,7 @@ describe('RecurringTaskForm', () => {
   it('blocks another tab and preserves the attempted identity when ownership transfers', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 503 }));
     const props = { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() };
-    const first = render(RecurringTaskForm, props);
+    const first = render(RecurringTaskForm, { props });
     await screen.findByRole('textbox', { name: 'Recurring task title' });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Recurring task title' }), { target: { value: 'Review notes' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Parent task owner' }), { target: { value: 'synthetic' } });
@@ -138,7 +138,7 @@ describe('RecurringTaskForm', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create recurring task' }));
     await screen.findByText(/outcome is unknown/i);
     const saved = localStorage.getItem('msgvault.recurring-draft.uid.person-seven');
-    const second = render(RecurringTaskForm, props);
+    const second = render(RecurringTaskForm, { props });
     await within(second.container).findByText(/open in another tab/i);
     second.unmount();
     expect(localStorage.getItem('msgvault.recurring-draft.uid.person-seven')).toBe(saved);
@@ -146,7 +146,7 @@ describe('RecurringTaskForm', () => {
     await waitFor(() => expect(localStorage.getItem('msgvault.recurring-draft.uid.person-seven')).toBe(saved));
     await Promise.resolve();
     await Promise.resolve();
-    const next = render(RecurringTaskForm, { ...props, personID: 8, personUIDs: ['survivor', 'person-seven'] });
+    const next = render(RecurringTaskForm, { props: { ...props, personID: 8, personUIDs: ['survivor', 'person-seven'] } });
     await within(next.container).findByRole('button', { name: 'Retry recurring task' });
     expect(within(next.container).getByRole('textbox', { name: 'Recurring task title' })).toHaveProperty('disabled', true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -158,7 +158,7 @@ describe('RecurringTaskForm', () => {
   it('migrates an older numeric draft before the person is merged', async () => {
     const legacy = { key: '2026-11-08T12:00:00Z/550e8400-e29b-41d4-a716-446655440000', attempted: true, project: 'example', target: 'target-one', title: 'Review', body: '', list: 'agenda', owner: 'synthetic', settings: { trigger_kind: 'cron', cron: '0 9 * * *', interval_seconds: 60, timezone: 'UTC', occurrence_title: 'Review', occurrence_body: '', recipient: 'synthetic', catchup: 'latest', grace_seconds: 0 } };
     localStorage.setItem('msgvault.recurring-draft.7', JSON.stringify(legacy));
-    render(RecurringTaskForm, { client: createAPIClient(vi.fn<typeof fetch>()), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client: createAPIClient(vi.fn<typeof fetch>()), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByRole('button', { name: 'Retry recurring task' });
     expect(JSON.parse(localStorage.getItem('msgvault.recurring-draft.uid.person-seven') ?? '{}').key).toBe(legacy.key);
     expect(localStorage.getItem('msgvault.recurring-draft.7')).toBeNull();
@@ -168,7 +168,7 @@ describe('RecurringTaskForm', () => {
     const legacy = { key: '2026-11-08T12:00:00Z/550e8400-e29b-41d4-a716-446655440000', attempted: true, project: 'example', target: 'target-one', title: 'Review', body: '', list: 'agenda', owner: 'synthetic', settings: { trigger_kind: 'cron', cron: '', interval_seconds: 60, timezone: 'UTC', occurrence_title: 'Review', occurrence_body: '', recipient: 'synthetic', catchup: 'latest', grace_seconds: 0 } };
     localStorage.setItem('msgvault.recurring-draft.7', JSON.stringify(legacy));
     const fetchMock = vi.fn<typeof fetch>();
-    render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 8, personUIDs: ['survivor', 'person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client: createAPIClient(fetchMock), personID: 8, personUIDs: ['survivor', 'person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByText(/cannot load saved drafts for this person/i);
     expect(localStorage.getItem('msgvault.recurring-draft.7')).toBe(JSON.stringify(legacy));
     expect(fetchMock).not.toHaveBeenCalled();
@@ -178,7 +178,7 @@ describe('RecurringTaskForm', () => {
     const saved = { key: '2026-11-08T12:00:00Z/550e8400-e29b-41d4-a716-446655440000', attempted: true, project: 'example', target: 'target-one', title: 'First', body: '', list: 'agenda', owner: 'synthetic', settings: { trigger_kind: 'cron', cron: '', interval_seconds: 60, timezone: 'UTC', occurrence_title: 'Review', occurrence_body: '', recipient: 'synthetic', catchup: 'latest', grace_seconds: 0 } };
     localStorage.setItem('msgvault.recurring-draft.uid.first', JSON.stringify(saved));
     localStorage.setItem('msgvault.recurring-draft.uid.second', JSON.stringify({ ...saved, key: `${saved.key}-other`, title: 'Second' }));
-    const view = render(RecurringTaskForm, { client: createAPIClient(vi.fn<typeof fetch>()), personID: 8, personUIDs: ['first', 'second'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    const view = render(RecurringTaskForm, { props: { client: createAPIClient(vi.fn<typeof fetch>()), personID: 8, personUIDs: ['first', 'second'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await fireEvent.click(await screen.findByRole('button', { name: 'Resume draft: Second' }));
     expect(screen.getByRole('textbox', { name: 'Recurring task title' })).toHaveProperty('value', 'Second');
     view.unmount();
@@ -190,7 +190,7 @@ describe('RecurringTaskForm', () => {
     const saved = { key: '2026-11-08T12:00:00Z/550e8400-e29b-41d4-a716-446655440000', attempted: true, project: 'old-project', target: 'target-one', title: 'Review', body: '', list: 'agenda', owner: 'synthetic', settings: { trigger_kind: 'cron', cron: '', interval_seconds: 60, timezone: 'UTC', occurrence_title: 'Review', occurrence_body: '', recipient: 'synthetic', catchup: 'latest', grace_seconds: 0 } };
     localStorage.setItem('msgvault.recurring-draft.uid.person-seven', JSON.stringify(saved));
     const fetchMock = vi.fn<typeof fetch>();
-    render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'new-project', target: 'target-two', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'new-project', target: 'target-two', onCreated: vi.fn(), onClose: vi.fn() } });
     await fireEvent.click(await screen.findByRole('button', { name: 'Retry recurring task' }));
     expect(screen.getByText(/original Kata project is unavailable or changed/i)).toBeDefined();
     expect(localStorage.getItem('msgvault.recurring-draft.uid.person-seven')).toBe(JSON.stringify(saved));
@@ -200,7 +200,7 @@ describe('RecurringTaskForm', () => {
   it('refuses creation if browser coordination is unavailable', async () => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });
     const fetchMock = vi.fn<typeof fetch>();
-    render(RecurringTaskForm, { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() });
+    render(RecurringTaskForm, { props: { client: createAPIClient(fetchMock), personID: 7, personUIDs: ['person-seven'], project: 'example', target: 'target-one', onCreated: vi.fn(), onClose: vi.fn() } });
     await screen.findByText(/use a supported browser/i);
     expect(screen.queryByRole('button', { name: 'Create recurring task' })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
