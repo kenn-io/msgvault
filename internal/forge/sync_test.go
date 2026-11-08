@@ -539,3 +539,34 @@ func TestSyncKeepsEvidenceThatDiffersOnlyInFieldOrder(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(t, again.Updated, "the same JSON in another order is the same evidence")
 }
+
+func TestSyncKeepsTheAccountsPostsItsOwnWhenItsEmailJoinsAPerson(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	withEmail := octo
+	withEmail.Email = "octo@example.com"
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{
+		post("p1", "issue", ann, "Title", "Body.", "2026-11-01T10:00:00Z"),
+		post("c1", "issue_comment", withEmail, "", "Mine.", "2026-11-02T10:00:00Z"),
+	}}
+
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	fromMe := map[string]bool{}
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(
+		`SELECT source_message_id, is_from_me FROM messages WHERE source_id = ?`), source.ID)
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		var mine bool
+		require.NoError(rows.Scan(&id, &mine))
+		fromMe[id] = mine
+	}
+	require.NoError(rows.Err())
+	assert.Equal(t, map[string]bool{"p1": false, "c1": true}, fromMe,
+		"the account's email joins it to a person; its posts stay the account's own")
+}

@@ -216,7 +216,7 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 			Type:           "from",
 			ParticipantIDs: []int64{senderID},
 			DisplayNames:   []string{sender.Name},
-			EmailAddresses: []string{sender.Email},
+			EmailAddresses: []string{envelopeEmail(snapshot)},
 		}},
 		PreserveLabels: true,
 		// The index takes the stored sender's phone or email by the rule a
@@ -229,6 +229,18 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		return WriteResult{}, fmt.Errorf("persist message: %w", err)
 	}
 	return WriteResult{MessageID: messageID, Created: !existed, Changed: true}, nil
+}
+
+// envelopeEmail is the address the message's 'from' envelope records. A
+// sender named by a connector's own account identity sent the message from
+// that account, not from its email, which only joins the account to a
+// person: its envelope stays empty, as a chat source's does, so whether the
+// message is the owner's is decided by the account's identifiers.
+func envelopeEmail(snapshot Snapshot) string {
+	if snapshot.SenderIdentifierType != "" && snapshot.Sender.ID != "" {
+		return ""
+	}
+	return snapshot.Sender.Email
 }
 
 // storedMatches treats an unreadable stored copy as changed so the write
