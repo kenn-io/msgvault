@@ -20,8 +20,6 @@ type UploadTokenBody = TokenUploadRequest
 
 type EndBackupFreezeBody = BackupFreezeEndRequest
 
-type ControlBusinessReviewsBody = BusinessReviewsRequest
-
 type ControlCalendarBody = CalendarRequest
 
 type SaveCardDAVAccountBody = CardDAVAccountRequest
@@ -111,6 +109,8 @@ type GroupFilesBody = FileGroupsHTTPRequest
 type SearchFilesBody = FileSearchHTTPRequest
 
 type SuggestFilesBody = FileSuggestionHTTPRequest
+
+type ControlGoogleReviewsBody = GoogleReviewsRequest
 
 type LinkIdentityParticipantsBody = IdentityLinkRequest
 

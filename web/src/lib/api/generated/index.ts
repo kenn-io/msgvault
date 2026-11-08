@@ -1,9 +1,9 @@
 export * as ApiService from './api/api';
-export * as BusinessReviewsService from './business-reviews/business-reviews';
 export * as CalendarService from './calendar/calendar';
 export * as CliService from './cli/cli';
 export * as DaemonService from './daemon/daemon';
 export * as ExplorationService from './exploration/exploration';
+export * as GoogleReviewsService from './google-reviews/google-reviews';
 export * as MeetingsService from './meetings/meetings';
 export * as SearchService from './search/search';
 export * as SessionService from './session/session';

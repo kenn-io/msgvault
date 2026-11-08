@@ -702,50 +702,6 @@ func (o *EndBackupFreezeRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
-// ControlBusinessReviewsRequestOptions is the options needed to make a request to ControlBusinessReviews.
-type ControlBusinessReviewsRequestOptions struct {
-	Body *ControlBusinessReviewsBody
-}
-
-// Validate validates all the fields in the options.
-// Use it if fields validation was not run.
-func (o *ControlBusinessReviewsRequestOptions) Validate() error {
-	var errors runtime.ValidationErrors
-
-	if o.Body != nil {
-		if v, ok := any(o.Body).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("Body", err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-
-	return errors
-}
-
-// GetPathParams returns the path params as a map.
-func (o *ControlBusinessReviewsRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *ControlBusinessReviewsRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *ControlBusinessReviewsRequestOptions) GetBody() any {
-	return o.Body
-}
-
-// GetHeader returns the headers as a map.
-func (o *ControlBusinessReviewsRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
 // GetCacheBuildStatusRequestOptions is the options needed to make a request to GetCacheBuildStatus.
 type GetCacheBuildStatusRequestOptions struct {
 	PathParams *GetCacheBuildStatusPath
@@ -4830,6 +4786,94 @@ func (o *GetFileContentRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetFileContentRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SearchGoogleReviewsArchiveRequestOptions is the options needed to make a request to SearchGoogleReviewsArchive.
+type SearchGoogleReviewsArchiveRequestOptions struct {
+	Query *SearchGoogleReviewsArchiveQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SearchGoogleReviewsArchiveRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchGoogleReviewsArchiveRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchGoogleReviewsArchiveRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchGoogleReviewsArchiveRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchGoogleReviewsArchiveRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ControlGoogleReviewsRequestOptions is the options needed to make a request to ControlGoogleReviews.
+type ControlGoogleReviewsRequestOptions struct {
+	Body *ControlGoogleReviewsBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ControlGoogleReviewsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ControlGoogleReviewsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ControlGoogleReviewsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ControlGoogleReviewsRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ControlGoogleReviewsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

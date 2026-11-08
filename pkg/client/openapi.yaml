@@ -834,166 +834,6 @@ components:
         - dimension
         - progress
       type: object
-    BusinessReviewsCapability:
-      properties:
-        available:
-          type: boolean
-        provider:
-          type: string
-        read:
-          type: boolean
-        reason:
-          type: string
-        reply:
-          type: boolean
-      required:
-        - provider
-        - available
-        - read
-        - reply
-      type: object
-    BusinessReviewsPreview:
-      properties:
-        comment:
-          type: string
-        confirmation_token:
-          type: string
-        expires_at:
-          format: date-time
-          type: string
-        receipt_id:
-          type: string
-        review:
-          $ref: "#/components/schemas/BusinessReviewsReview"
-      required:
-        - review
-        - comment
-      type: object
-    BusinessReviewsReceipt:
-      properties:
-        created_at:
-          format: date-time
-          type: string
-        id:
-          type: string
-        status:
-          type: string
-        updated_at:
-          format: date-time
-          type: string
-      required:
-        - id
-        - status
-        - created_at
-        - updated_at
-      type: object
-    BusinessReviewsReply:
-      properties:
-        comment:
-          type: string
-        policyViolation:
-          type: string
-        reviewReplyState:
-          type: string
-        updateTime:
-          type: string
-      required:
-        - comment
-      type: object
-    BusinessReviewsRequest:
-      additionalProperties: false
-      properties:
-        action:
-          type: string
-        comment:
-          type: string
-        confirmation_token:
-          type: string
-        confirmed:
-          type: boolean
-        page_size:
-          format: int64
-          type: integer
-        page_token:
-          type: string
-        receipt_id:
-          type: string
-        review_id:
-          type: string
-        target:
-          type: string
-      required:
-        - action
-      type: object
-    BusinessReviewsResult:
-      properties:
-        capabilities:
-          items:
-            $ref: "#/components/schemas/BusinessReviewsCapability"
-          type: array
-        next_page_token:
-          type: string
-        preview:
-          $ref: "#/components/schemas/BusinessReviewsPreview"
-        receipt:
-          $ref: "#/components/schemas/BusinessReviewsReceipt"
-        review:
-          $ref: "#/components/schemas/BusinessReviewsReview"
-        reviews:
-          items:
-            $ref: "#/components/schemas/BusinessReviewsReview"
-          type: array
-        targets:
-          items:
-            $ref: "#/components/schemas/BusinessReviewsTargetInfo"
-          type: array
-      type: object
-    BusinessReviewsReview:
-      properties:
-        comment:
-          type: string
-        createTime:
-          type: string
-        name:
-          type: string
-        reviewId:
-          type: string
-        reviewReply:
-          $ref: "#/components/schemas/BusinessReviewsReply"
-        reviewer:
-          $ref: "#/components/schemas/BusinessReviewsReviewer"
-        starRating:
-          type: string
-        updateTime:
-          type: string
-      required:
-        - reviewer
-      type: object
-    BusinessReviewsReviewer:
-      properties:
-        displayName:
-          type: string
-        isAnonymous:
-          type: boolean
-        profilePhotoUrl:
-          type: string
-      type: object
-    BusinessReviewsTargetInfo:
-      properties:
-        enabled:
-          type: boolean
-        name:
-          type: string
-        provider:
-          type: string
-        replies_enabled:
-          type: boolean
-      required:
-        - name
-        - provider
-        - enabled
-        - replies_enabled
-      type: object
     CLIAddCalendarPlanRequest:
       additionalProperties: false
       properties:
@@ -6868,6 +6708,248 @@ components:
           type: array
       required:
         - gmail_ids
+      type: object
+    GoogleReviewsArchiveSearchResponse:
+      properties:
+        page:
+          format: int64
+          type: integer
+        page_size:
+          format: int64
+          type: integer
+        query:
+          type: string
+        results:
+          items:
+            $ref: "#/components/schemas/GoogleReviewsArchivedReview"
+          type: array
+        target:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - query
+        - total
+        - page
+        - page_size
+        - results
+      type: object
+    GoogleReviewsArchivedReview:
+      properties:
+        archived_at:
+          format: date-time
+          type: string
+        review:
+          $ref: "#/components/schemas/GoogleReviewsReview"
+        target:
+          type: string
+      required:
+        - target
+        - review
+        - archived_at
+      type: object
+    GoogleReviewsBackfillState:
+      properties:
+        archived_review_count:
+          format: int64
+          type: integer
+        completed_at:
+          format: date-time
+          type: string
+        coverage_note:
+          type: string
+        last_error_code:
+          type: string
+        pages_fetched:
+          format: int64
+          type: integer
+        reviews_fetched:
+          format: int64
+          type: integer
+        started_at:
+          format: date-time
+          type: string
+        status:
+          type: string
+        target:
+          type: string
+        total_review_count:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - target
+        - status
+        - pages_fetched
+        - reviews_fetched
+        - total_review_count
+        - archived_review_count
+        - coverage_note
+      type: object
+    GoogleReviewsCapability:
+      properties:
+        available:
+          type: boolean
+        provider:
+          type: string
+        read:
+          type: boolean
+        reason:
+          type: string
+        reply:
+          type: boolean
+      required:
+        - provider
+        - available
+        - read
+        - reply
+      type: object
+    GoogleReviewsPreview:
+      properties:
+        comment:
+          type: string
+        confirmation_token:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        receipt_id:
+          type: string
+        review:
+          $ref: "#/components/schemas/GoogleReviewsReview"
+      required:
+        - review
+        - comment
+      type: object
+    GoogleReviewsReceipt:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        status:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - status
+        - created_at
+        - updated_at
+      type: object
+    GoogleReviewsReply:
+      properties:
+        comment:
+          type: string
+        policyViolation:
+          type: string
+        reviewReplyState:
+          type: string
+        updateTime:
+          type: string
+      required:
+        - comment
+      type: object
+    GoogleReviewsRequest:
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+        comment:
+          type: string
+        confirmation_token:
+          type: string
+        confirmed:
+          type: boolean
+        page_size:
+          format: int64
+          type: integer
+        page_token:
+          type: string
+        receipt_id:
+          type: string
+        review_id:
+          type: string
+        target:
+          type: string
+      required:
+        - action
+      type: object
+    GoogleReviewsResult:
+      properties:
+        archive_sync:
+          $ref: "#/components/schemas/GoogleReviewsBackfillState"
+        capabilities:
+          items:
+            $ref: "#/components/schemas/GoogleReviewsCapability"
+          type: array
+        next_page_token:
+          type: string
+        preview:
+          $ref: "#/components/schemas/GoogleReviewsPreview"
+        receipt:
+          $ref: "#/components/schemas/GoogleReviewsReceipt"
+        review:
+          $ref: "#/components/schemas/GoogleReviewsReview"
+        reviews:
+          items:
+            $ref: "#/components/schemas/GoogleReviewsReview"
+          type: array
+        targets:
+          items:
+            $ref: "#/components/schemas/GoogleReviewsTargetInfo"
+          type: array
+      type: object
+    GoogleReviewsReview:
+      properties:
+        comment:
+          type: string
+        createTime:
+          type: string
+        name:
+          type: string
+        reviewId:
+          type: string
+        reviewReply:
+          $ref: "#/components/schemas/GoogleReviewsReply"
+        reviewer:
+          $ref: "#/components/schemas/GoogleReviewsReviewer"
+        starRating:
+          type: string
+        updateTime:
+          type: string
+      required:
+        - reviewer
+      type: object
+    GoogleReviewsReviewer:
+      properties:
+        displayName:
+          type: string
+        isAnonymous:
+          type: boolean
+        profilePhotoUrl:
+          type: string
+      type: object
+    GoogleReviewsTargetInfo:
+      properties:
+        enabled:
+          type: boolean
+        name:
+          type: string
+        provider:
+          type: string
+        replies_enabled:
+          type: boolean
+      required:
+        - name
+        - provider
+        - enabled
+        - replies_enabled
       type: object
     HealthResponse:
       properties:
@@ -17226,7 +17308,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.49.0
+  version: 3.50.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -18161,99 +18243,6 @@ paths:
       summary: End a backup freeze window
       tags:
         - API
-  /api/v1/business-reviews/control:
-    post:
-      operationId: controlBusinessReviews
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BusinessReviewsRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BusinessReviewsResult"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "413":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "415":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "429":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: Inspect live business reviews or confirm an exact owner reply
-      tags:
-        - Business reviews
   /api/v1/cache-builds/{job_id}:
     get:
       operationId: getCacheBuildStatus
@@ -23413,6 +23402,175 @@ paths:
       summary: Download content for one authoritative file row
       tags:
         - API
+  /api/v1/google-reviews/archive/search:
+    get:
+      operationId: searchGoogleReviewsArchive
+      parameters:
+        - description: Full-text query over archived review text, reviewer names, ratings, and replies (maximum 256 UTF-8 bytes)
+          in: query
+          name: q
+          required: true
+          schema:
+            minLength: 1
+            type: string
+        - description: Restrict results to one archive target
+          in: query
+          name: target
+          schema:
+            type: string
+        - description: One-based result page (default 1)
+          in: query
+          name: page
+          schema:
+            default: 1
+            format: int64
+            maximum: 100000
+            minimum: 1
+            type: integer
+        - description: Results per page (default 20, maximum 100)
+          in: query
+          name: page_size
+          schema:
+            default: 20
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoogleReviewsArchiveSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Search archived Google reviews
+      tags:
+        - Google Reviews
+  /api/v1/google-reviews/control:
+    post:
+      operationId: controlGoogleReviews
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoogleReviewsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoogleReviewsResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read live Google reviews, check archive backfill status, start a backfill, or confirm an exact owner reply
+      tags:
+        - Google Reviews
   /api/v1/health:
     get:
       operationId: getHealth
