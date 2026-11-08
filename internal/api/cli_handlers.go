@@ -2819,14 +2819,14 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	if s.requestAuthentication(r).Grant != nil {
 		sources = slices.DeleteFunc(sources, func(src *store.Source) bool { return !slices.Contains(agentReadSourceIDs(r), src.ID) })
 	}
+	// Opted-in callers accept placeholder counts and immediate reuse of a matching catalog.
+	allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
 	if counter, ok := s.store.(sourceMessageCounter); ok && !s.sourceScopedRead(r) {
 		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
 			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
 		)
-		// Older clients can't tell placeholder zeros from real counts, so only opted-in callers get them.
-		allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
 		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
 		if err != nil && !response.CountsPending {
 			if s.writeIfContextError(w, err) {
@@ -2880,7 +2880,7 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 		} else {
 			virtual, _, stale, err = s.virtualAccountSnapshots.getVersion(
 				r.Context(), s.importContext, "", s.virtualAccountCatalogVersion(r.Context(), lister),
-				s.statsSnapshotWait, lister.ListVirtualAccountsContext,
+				s.statsSnapshotWait, allowPending, lister.ListVirtualAccountsContext,
 			)
 		}
 		// The catalog is extra detail; a slow or failed read still returns

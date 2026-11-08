@@ -323,15 +323,15 @@ func TestSnapshotCacheOlderVersionNeverReplacesNewerValue(t *testing.T) {
 		}
 
 		// A slow read at version 1 is still running when version 2 arrives.
-		_, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "1", time.Second, read("v1", 10*time.Second))
+		_, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "1", time.Second, false, read("v1", 10*time.Second))
 		require.ErrorIs(err, errSnapshotWaitTimeout)
-		value, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, read("v2", 0))
+		value, _, _, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, false, read("v2", 0))
 		require.NoError(err)
 		assert.Equal("v2", value)
 
 		time.Sleep(10 * time.Second)
 		synctest.Wait()
-		value, _, stale, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, read("v3", time.Hour))
+		value, _, stale, err := cache.getVersion(t.Context(), t.Context(), "", "2", time.Second, false, read("v3", time.Hour))
 		require.NoError(err)
 		assert.Equal("v2", value, "the late version-1 read did not replace the newer value")
 		assert.False(stale)

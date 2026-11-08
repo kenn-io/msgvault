@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -302,4 +303,85 @@ func TestHandleCLIAccountsDelegatedCountErrors(t *testing.T) {
 			assertions.NotContains(w.Body.String(), "synthetic count failure")
 		}
 	}
+}
+
+// slowCatalogStore leaves an expired catalog refresh in flight until released.
+type slowCatalogStore struct {
+	*store.Store
+	calls   atomic.Int32
+	release chan struct{}
+}
+
+func (s *slowCatalogStore) ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error) {
+	if s.calls.Add(1) > 1 {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return s.Store.ListVirtualAccountsContext(ctx)
+}
+
+func TestHandleCLIAccountsOptionalCatalogPreservesStrictRefresh(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	synctest.Test(t, func(t *testing.T) {
+		srv, _, sourceID := newSlowAccountsServer(t, st)
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+		slow := &slowCatalogStore{Store: st, release: make(chan struct{})}
+		srv.store = slow
+		require.NoError(t, st.AddAccountIdentity(sourceID, "work@example.org", "manual"))
+		httpSrv := httptest.NewTestServer(t, srv.Router())
+		client, err := daemonclient.New(daemonclient.Config{URL: httpSrv.URL, AllowInsecure: true, HTTPClient: httpSrv.Client(), Context: t.Context()})
+		require.NoError(t, err)
+		first, err := client.GetCLIVirtualAccounts(t.Context())
+		require.NoError(t, err)
+		require.NotEmpty(t, first[sourceID])
+		time.Sleep(3 * time.Minute)
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
+		req.Header.Set(apiprotocol.AllowPendingCountsHeader, "true")
+		w := httptest.NewRecorder()
+		started := time.Now()
+		srv.Router().ServeHTTP(w, req)
+		assert.Zero(t, time.Since(started), "optional discovery reuses expired children immediately")
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var optional cliAccountsResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &optional))
+		assert.True(t, optional.VirtualAccountsUnavailable)
+		require.Len(t, optional.Accounts, 1)
+		assert.Equal(t, first[sourceID], optional.Accounts[0].VirtualAccounts)
+
+		returned := make(chan error, 1)
+		var strict map[int64][]store.VirtualAccount
+		go func() {
+			var err error
+			strict, err = client.GetCLIVirtualAccounts(t.Context())
+			returned <- err
+		}()
+		synctest.Wait()
+		assert.Empty(t, returned, "strict catalog waits for the refresh")
+		time.Sleep(time.Second)
+		close(slow.release)
+		require.NoError(t, <-returned)
+		assert.Equal(t, first, strict)
+
+		require.NoError(t, st.AddAccountIdentity(sourceID, "alias@example.org", "manual"))
+		release := make(chan struct{})
+		slow.release = release
+		defer func() { <-release }()
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			close(release)
+		}()
+		accounts, pending, err := client.GetCLIAccounts(t.Context())
+		require.NoError(t, err)
+		assert.False(t, pending)
+		require.Len(t, accounts, 1)
+		var addresses []string
+		for _, child := range accounts[0].VirtualAccounts {
+			addresses = append(addresses, child.AccountAddress)
+		}
+		assert.Contains(t, addresses, "alias@example.org", "the next listing waits for a changed identity revision")
+	})
 }
