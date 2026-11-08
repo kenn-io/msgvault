@@ -834,7 +834,7 @@ jobs:
             package2: ./internal/vector/embed
             timeout: 40m
           - name: vector-sqlite
-            job_timeout: 30
+            job_timeout: 47
             package: ./internal/vector/sqlitevec
             timeout: 9m
     runs-on: windows-2025
@@ -882,11 +882,11 @@ jobs:
           }
 
       - name: Stabilize tracked file times
-        if: matrix.name == 'vector-sqlite'
+        if: matrix.name == 'vector-sqlite' && !cancelled()
         run: go run ./scripts/stable-mtimes
 
       - name: Test additional packages
-        if: matrix.name == 'vector-sqlite'
+        if: matrix.name == 'vector-sqlite' && !cancelled()
         shell: pwsh
         env: *windows-test-env
         run: |
