@@ -10,7 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 
-- Matrix sync archives policy-eligible images, stickers, video, audio and files. The first sync after upgrading discovers media in previously archived messages once per account and configured room scope. Temporary failures retry with a growing backoff; missing files, hash mismatches and decryption errors retry after one week. `sync-matrix --full` re-fetches complete joined-room history, repeats legacy media discovery, and retries media immediately.
+- Matrix sync archives images, stickers, video, audio and files under the shared chat media policy, including encrypted attachments. Syncs after upgrading also find media in messages archived earlier. `sync-matrix --no-media` leaves media for a later sync, and failed downloads retry on later syncs.
 
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 

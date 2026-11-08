@@ -1692,7 +1692,7 @@ msgvault sync-matrix --full
 | Flag | Default | Description |
 |---|---|---|
 | `--account` | all registered | Sync only this exact Matrix user ID |
-| `--full` | `false` | Ignore stored cursors, re-fetch complete joined-room history, repeat legacy media discovery, and retry media immediately |
+| `--full` | `false` | Re-fetch complete joined-room history, rescan archived messages for media, and retry media downloads immediately |
 | `--no-media` | `false` | Record media metadata without downloading bytes this run |
 
 Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry rules described in the [Matrix guide](usage/matrix.md). The recovered count includes messages replaced with decrypted content, excluding edits and reactions.

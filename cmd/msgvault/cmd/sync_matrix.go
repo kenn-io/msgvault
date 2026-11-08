@@ -47,7 +47,7 @@ func newSyncMatrixCmd() *cobra.Command {
 			return errors.Join(err, cacheErr)
 		},
 	}
-	cmd.Flags().BoolVar(&syncMatrixFull, "full", false, "ignore stored cursors, re-fetch complete room history, repeat legacy media discovery, and retry media immediately")
+	cmd.Flags().BoolVar(&syncMatrixFull, "full", false, "re-fetch complete room history, rescan archived messages for media, and retry media downloads immediately")
 	cmd.Flags().BoolVar(&syncMatrixNoMedia, "no-media", false, "record media as pending without downloading it")
 	cmd.Flags().StringVar(&syncMatrixAccount, "account", "", "sync only this Matrix user ID")
 	return addManualSyncCacheFlags(cmd)
