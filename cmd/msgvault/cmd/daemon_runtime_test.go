@@ -415,16 +415,23 @@ func TestListLiveDaemonRuntimeRecordsFiltersServiceAndDeadProcesses(t *testing.T
 
 func TestReportRetainedDaemonVersion(t *testing.T) {
 	withTestVersion(t, "v0.23.0-45-gabc")
+	savedResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/source build/msgvault", nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	for _, tt := range []struct {
 		name    string
 		options invocationOptions
 		restart string
 	}{
-		{name: "default archive", restart: "msgvault daemon restart"},
+		{name: "default archive", restart: map[string]string{
+			"linux":   "'/tmp/source build/msgvault' daemon restart",
+			"darwin":  "'/tmp/source build/msgvault' daemon restart",
+			"windows": "& '/tmp/source build/msgvault' 'daemon' 'restart'",
+		}[runtime.GOOS]},
 		{name: "both selections", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"}, restart: map[string]string{
-			"linux":   "msgvault --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
-			"darwin":  "msgvault --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
-			"windows": "& 'msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'",
+			"linux":   "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
+			"darwin":  "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
+			"windows": "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'",
 		}[runtime.GOOS]},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -473,6 +480,9 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 			currentVersion: "dev",
 			want:           false,
 		},
+		{name: "source replaces unprefixed release", daemonVersion: "0.23.0", currentVersion: "v0.23.0-45-gabc", want: true},
+		{name: "unprefixed source replaces release", daemonVersion: "v0.23.0", currentVersion: "0.23.0-45-gabc", want: true},
+		{name: "source keeps newer unprefixed release", daemonVersion: "0.24.0", currentVersion: "v0.23.0-45-gabc"},
 		{name: "source replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-45-gabc", want: true},
 		{name: "equal source stays", daemonVersion: "v0.23.0-45-gabc", currentVersion: "v0.23.0-45-gabc"},
 		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},

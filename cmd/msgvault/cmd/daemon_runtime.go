@@ -644,8 +644,9 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 		return false
 	}
 	if update.IsDevBuildVersion(currentVersion) || strings.HasSuffix(currentVersion, "-dirty") {
-		cli := strings.TrimSuffix(currentVersion, "-dirty")
-		return semver.IsValid(cli) && semver.IsValid(rt.Record.Version) && !update.IsNewer(rt.Record.Version, cli)
+		cli := "v" + strings.TrimPrefix(strings.TrimSuffix(currentVersion, "-dirty"), "v")
+		daemon := "v" + strings.TrimPrefix(rt.Record.Version, "v")
+		return semver.IsValid(cli) && semver.IsValid(daemon) && !update.IsNewer(daemon, cli)
 	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
 }
@@ -654,9 +655,13 @@ func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRun
 	if shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, config.DaemonAutoRestartNewer) {
 		options := optionsFromContext(ctx)
 		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-		commands, _ := agenthook.BuildCommand("msgvault", append(args, "daemon", "restart")...)
+		executable, err := daemonCLIExecutableResolver()
+		if err != nil {
+			executable = os.Args[0]
+		}
+		commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
 		restart := commands.POSIX
-		if runtime.GOOS == "windows" && len(args) > 0 {
+		if runtime.GOOS == "windows" {
 			restart = commands.PowerShell
 		}
 		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to use this version.\n", rt.Record.Version, Version, restart)
