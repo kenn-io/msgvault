@@ -1892,6 +1892,10 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 	default:
 		return false
 	}
+	// The CLI forwards the root logging flags after the command words, so
+	// every operation accepts them, as cliRunPersonEnrichmentAllowed does.
+	boolFlags["verbose"] = true
+	boolFlags["log-sql"] = true
 
 	positionals := 0
 	guardedRevoke := false
@@ -1923,6 +1927,25 @@ func cliRunPersonProviderArgsAllowed(operation string, args []string) bool {
 		}
 		nameValue := strings.TrimPrefix(argument, "--")
 		name, value, hasValue := strings.Cut(nameValue, "=")
+		// The CLI forwards these two as name=value with the root flags'
+		// own values: any string for log-level, including the empty
+		// fallback to the configured level, and any int64 for
+		// log-sql-slow-ms.
+		if name == "log-level" {
+			if !hasValue {
+				return false
+			}
+			continue
+		}
+		if name == "log-sql-slow-ms" {
+			if !hasValue {
+				return false
+			}
+			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+				return false
+			}
+			continue
+		}
 		if boolFlags[name] {
 			if hasValue {
 				if _, err := strconv.ParseBool(value); err != nil {

@@ -56,6 +56,27 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 			"person", "provider", "check", "alpha", "--if-fingerprint", strings.Repeat("a", 64),
 		}, want: true},
 		{name: "history", args: []string{"person", "provider", "history", "alpha", "--limit", "20"}, want: true},
+		// The CLI forwards root logging flags in this form after the command words.
+		{name: "status with forwarded logging flags", args: []string{
+			"person", "provider", "status", "--semantic-embeddings",
+			"--log-level=warn", "--log-sql", "--log-sql-slow-ms=250", "--verbose",
+		}, want: true},
+		{name: "consent with forwarded log level", args: []string{
+			"person", "provider", "consent", "--log-level=warn", "--semantic-embeddings", "--yes",
+		}, want: true},
+		{name: "history with forwarded slow query threshold", args: []string{
+			"person", "provider", "history", "alpha", "--limit", "20", "--log-sql-slow-ms=250",
+		}, want: true},
+		{name: "forwarded empty log level and negative slow query threshold", args: []string{
+			"person", "provider", "check", "alpha", "--log-level=", "--log-sql-slow-ms=-1",
+		}, want: true},
+		{name: "forwarded false logging switches", args: []string{
+			"person", "provider", "list", "--log-sql=false", "--verbose=false",
+		}, want: true},
+		{name: "log level without value", args: []string{"person", "provider", "status", "--log-level"}},
+		{name: "slow query threshold without value", args: []string{"person", "provider", "status", "--log-sql-slow-ms", "250"}},
+		{name: "non-integer slow query threshold", args: []string{"person", "provider", "status", "--log-sql-slow-ms=soon"}},
+		{name: "verbose with non-boolean value", args: []string{"person", "provider", "list", "--verbose=loud"}},
 		{name: "add is local", args: []string{"person", "provider", "add", "alpha"}},
 		{name: "use is local", args: []string{"person", "provider", "use", "alpha"}},
 		{name: "remove is local", args: []string{"person", "provider", "remove", "alpha"}},
