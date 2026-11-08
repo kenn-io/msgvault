@@ -45,8 +45,10 @@ func newAddressLookupCommand() *cobra.Command {
 			if err := json.MarshalWrite(cmd.OutOrStdout(), result); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout())
-			return err
+			if _, err := fmt.Fprintln(cmd.OutOrStdout()); err != nil {
+				return fmt.Errorf("write address JSON: %w", err)
+			}
+			return nil
 		},
 	}
 	lookup.Flags().StringVar(&token, "session-token", "", "Reuse a token from a previous autocomplete request")
@@ -69,8 +71,10 @@ func newAddressLookupCommand() *cobra.Command {
 			if err := json.MarshalWrite(cmd.OutOrStdout(), result); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout())
-			return err
+			if _, err := fmt.Fprintln(cmd.OutOrStdout()); err != nil {
+				return fmt.Errorf("write address JSON: %w", err)
+			}
+			return nil
 		},
 	}
 	selectCmd.Flags().StringVar(&selectToken, "session-token", "", "Autocomplete session token (required)")

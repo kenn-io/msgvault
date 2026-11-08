@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 )
 
+//nolint:gosec // This is an environment variable name, not a credential.
 const APIKeyEnv = "MSGVAULT_GOOGLE_PLACES_API_KEY"
 const endpoint = "https://places.googleapis.com/v1"
 const maxResponse = 1 << 20
@@ -155,7 +156,7 @@ func (c *Client) Select(ctx context.Context, placeID, sessionToken, language, re
 
 func (c *Client) request(ctx context.Context, method, path, query, mask string, body any, out any) error {
 	if strings.TrimSpace(c.Key) == "" {
-		return errors.New("Google Places key is not configured")
+		return errors.New("google Places key is not configured")
 	}
 	base := c.baseURL
 	if base == "" {
@@ -181,7 +182,7 @@ func (c *Client) request(ctx context.Context, method, path, query, mask string, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Goog-Api-Key", c.Key)
-	req.Header.Set("X-Goog-FieldMask", mask)
+	req.Header.Set("X-Goog-Fieldmask", mask)
 	client := http.Client{}
 	if c.HTTP != nil {
 		client = *c.HTTP
@@ -192,18 +193,18 @@ func (c *Client) request(ctx context.Context, method, path, query, mask string, 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("Google Places request failed")
+		return errors.New("google Places request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Google Places request failed (HTTP %d)", resp.StatusCode)
+		return fmt.Errorf("google Places request failed (HTTP %d)", resp.StatusCode)
 	}
 	data, err = io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil || len(data) > maxResponse {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("Google Places response unavailable")
+		return errors.New("google Places response unavailable")
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return errors.New("invalid Google Places response")

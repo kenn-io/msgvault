@@ -29,7 +29,7 @@ func TestAutocompleteAndExplicitSelection(t *testing.T) {
 		switch r.URL.Path {
 		case "/places:autocomplete":
 			assert.Equal(http.MethodPost, r.Method)
-			assert.Equal("suggestions.placePrediction.placeId,suggestions.placePrediction.text.text", r.Header.Get("X-Goog-FieldMask"))
+			assert.Equal("suggestions.placePrediction.placeId,suggestions.placePrediction.text.text", r.Header.Get("X-Goog-Fieldmask"))
 			var body map[string]any
 			if !assert.NoError(json.UnmarshalRead(r.Body, &body)) {
 				return
@@ -40,7 +40,7 @@ func TestAutocompleteAndExplicitSelection(t *testing.T) {
 		case "/places/" + longID:
 			assert.Equal(http.MethodGet, r.Method)
 			assert.Equal("session-1", r.URL.Query().Get("sessionToken"))
-			assert.Equal("formattedAddress,postalAddress,addressComponents", r.Header.Get("X-Goog-FieldMask"))
+			assert.Equal("formattedAddress,postalAddress,addressComponents", r.Header.Get("X-Goog-Fieldmask"))
 			_, _ = w.Write([]byte(`{"formattedAddress":"12 Example Street","postalAddress":{"regionCode":"CA"},"addressComponents":[]}`))
 		default:
 			assert.Fail("unexpected request path", "%s", r.URL.Path)
@@ -105,5 +105,5 @@ func TestProviderErrorsDoNotExposeBodyOrKey(t *testing.T) {
 	_, err := client.Autocomplete(t.Context(), Request{Input: "partial", SessionToken: "s", Limit: 5})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "synthetic-secret")
-	assert.True(t, strings.Contains(err.Error(), "400"))
+	assert.Contains(t, err.Error(), "400")
 }
