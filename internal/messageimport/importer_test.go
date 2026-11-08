@@ -212,7 +212,9 @@ func TestImporterMakesMessagesSearchable(t *testing.T) {
 	}
 	importer := NewImporter(st, Hooks{})
 
-	first, err := importer.Import(t.Context(), validRequest(t))
+	req := validRequest(t)
+	req.Message.URL = "https://changelog.example.net/1.2.0"
+	first, err := importer.Import(t.Context(), req)
 	require.NoError(err)
 
 	searchIDs := func(q *search.Query) []int64 {
@@ -224,7 +226,10 @@ func TestImporterMakesMessagesSearchable(t *testing.T) {
 	assertFound := func(stage string) {
 		t.Helper()
 		assert.Equal(t, []int64{first.MessageID}, searchIDs(&search.Query{TextTerms: []string{"widgetsync"}}), "%s: body", stage)
-		assert.Equal(t, []int64{first.MessageID}, searchIDs(&search.Query{TextTerms: []string{"1.2.0"}}), "%s: title and url", stage)
+		assert.Equal(t, []int64{first.MessageID}, searchIDs(&search.Query{TextTerms: []string{"Project"}}), "%s: title", stage)
+		// PostgreSQL indexes a URL's host as one lexeme, so its first label is
+		// the URL word both backends match.
+		assert.Equal(t, []int64{first.MessageID}, searchIDs(&search.Query{TextTerms: []string{"changelog"}}), "%s: url", stage)
 		assert.Equal(t, []int64{first.MessageID}, searchIDs(&search.Query{
 			TextTerms: []string{"widgetsync"}, MessageTypes: []string{"feed_item"},
 		}), "%s: type filter", stage)
@@ -238,7 +243,7 @@ func TestImporterMakesMessagesSearchable(t *testing.T) {
 	require.NoError(err)
 	assertFound("after rebuild")
 
-	replacement := validRequest(t)
+	replacement := req
 	replacement.Message.BodyMarkdown = "Now about gizmocrash."
 	_, err = importer.Import(t.Context(), replacement)
 	require.NoError(err)
