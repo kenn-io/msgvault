@@ -191,4 +191,15 @@ func TestImporterMigratesLegacyPendingOverflow(t *testing.T) {
 	assert.Len(t, recovered.TranscriptRetryUntil, 205)
 	assert.Equal(t, deadline, recovered.TranscriptRetryUntil["legacy-204"])
 	assert.Equal(t, syncStateVersion, recovered.Version)
+	imp.now = func() time.Time { return now.Add(time.Hour) }
+	opts := ImportOptions{Identifier: "work", UserID: "creator-1", SearchAccessible: &noSearch}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	recovered, err = imp.loadState(t.Context(), src.ID)
+	require.NoError(t, err)
+	assert.Len(t, recovered.PendingBacklog, 5)
+	assert.NotEqual(t, "legacy-204", recovered.PendingBacklog[4].BlockID)
+	assert.Equal(t, deadline, recovered.TranscriptRetryUntil["legacy-204"])
 }
