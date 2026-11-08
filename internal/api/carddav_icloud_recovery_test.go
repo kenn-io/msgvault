@@ -25,6 +25,41 @@ func savedICloudAccountFixture(t *testing.T) *iCloudAccountFixture {
 	return f
 }
 
+func TestICloudReconnectPreservesIdentityAcrossUsernameCase(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		name := "icloud setup"
+		if legacy {
+			name = "legacy partition setup"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newICloudAccountFixture(t)
+			req := iCloudAccountRequest()
+			req.Username = "Synthetic@Example.net"
+			if legacy {
+				req.BaseURL = "https://p42-contacts.icloud.com"
+			}
+			_, err := f.controller.Save(t.Context(), req)
+			require.NoError(err)
+			books, err := f.controller.scopedStoredBooks(t.Context())
+			require.NoError(err)
+			require.Len(books, 1)
+			personID := seedICloudOwnedPublication(t, f.controller.store, books[0])
+			_, err = f.controller.Save(t.Context(), iCloudAccountRequest())
+			require.NoError(err)
+			after, err := f.controller.scopedStoredBooks(t.Context())
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.Equal(books[0].ID, after[0].ID)
+			publication, err := f.controller.store.GetCardDAVPublicationContext(t.Context(), personID)
+			require.NoError(err)
+			require.NotNil(publication)
+			assert.Equal(books[0].ID, publication.AddressBookID)
+		})
+	}
+}
+
 func TestICloudRecoveryPreservesImportedIdentity(t *testing.T) {
 	for _, withOtherAccount := range []bool{false, true} {
 		name := "single account"
