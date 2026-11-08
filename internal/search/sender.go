@@ -21,6 +21,10 @@ func senderMatch(value string) (operator, pattern string, metadata bool) {
 
 func senderCondition(value string, lower func(string) string) (string, []any) {
 	operator, pattern, metadata := senderMatch(value)
+	if operator == "=" {
+		// Match the existing case-insensitive email index for exact mailboxes.
+		return "(LOWER(p2.email_address) = ?)", []any{pattern}
+	}
 	columns := []string{"p2.email_address"}
 	if metadata {
 		columns = append(columns, "p2.phone_number", "p2.display_name")

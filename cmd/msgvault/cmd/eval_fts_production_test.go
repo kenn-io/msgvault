@@ -147,11 +147,8 @@ func TestRankedFTS_MatchesProductionRelevanceRanking(t *testing.T) {
 	assert.Empty(t, diag.notes(), "a clean archive produces a clean run")
 }
 
-// TestRankedFTS_HonoursProductionAddressFilterSemantics pins the second
-// divergence roborev flagged. The store path resolves from: as a substring
-// match against the participant address (so `from:landlord` finds
-// landlord@example.com); query.Engine.Search requires an exact address or an
-// @domain pattern, and would have scored a flat zero for the same topic.
+// TestRankedFTS_HonoursProductionAddressFilterSemantics checks that evaluation
+// and both production search paths find the same message by sender fragment.
 func TestRankedFTS_HonoursProductionAddressFilterSemantics(t *testing.T) {
 	s := seedRankingDivergenceArchive(t)
 	ctx := t.Context()
@@ -169,9 +166,10 @@ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALU
 		"production matches the address by substring")
 
 	qeng := query.NewEngine(s.DB(), s.IsPostgreSQL())
-	legacy, err := qeng.Search(ctx, search.Parse(topic), 10, 0)
+	messages, err := qeng.Search(ctx, search.Parse(topic), 10, 0)
 	require.NoError(t, err, "query engine search")
-	require.Empty(t, legacy, "the exact-match path finds nothing for the same topic")
+	require.Equal(t, []string{"<m1@example.com>"}, keysOfSummaries(messages),
+		"query engine matches the same sender fragment")
 
 	ev, _ := newTestEvaluator(t, s, "message")
 	ev.limit = 10
