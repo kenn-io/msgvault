@@ -94,14 +94,6 @@
     deletingEmployment = undefined;
     removal.reset();
   }
-
-  async function reloadDelete(): Promise<void> {
-    const id = deletingEmployment?.id;
-    await controller.refreshEmployments();
-    if (controller.errors.employments) return;
-    deletingEmployment = controller.employments.find(item => item.id === id);
-    removal.reset();
-  }
 </script>
 
 <div class="organization-employment">
@@ -151,8 +143,8 @@
     <p>This permanently removes the job. {#if deletingEmployment.is_current}<button data-link type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
     {#snippet notice()}
       {#if removal.conflict && deletingEmployment}
-        <ConflictNotice noun="job" saved={removal.conflict.data} {...conflict(employmentFacts(removal.conflict.data, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)))} message={removal.details} actionLabel="Reload"
-          onaction={() => void reloadDelete()} />
+        <!-- Delete again removes the saved version the notice shows. -->
+        <ConflictNotice noun="job" saved={removal.conflict.data} {...conflict(employmentFacts(removal.conflict.data, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)), employmentFacts(deletingEmployment, id => controller.organizationName(id)))} message={removal.details} />
       {:else if removal.details}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => void removeEmployment()} />{/if}
     {/snippet}
   </Dialog>

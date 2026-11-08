@@ -93,15 +93,6 @@
     removal.reset();
     typeRemoval.reset();
   }
-
-  async function reloadDelete(): Promise<void> {
-    const id = deletingRelationship?.relationship.id;
-    await controller.refreshRelationships();
-    if (controller.errors.relationships) return;
-    deletingRelationship = controller.relationships.find(item => item.relationship.id === id);
-    removal.reset();
-  }
-
 </script>
 
 <section class="relationships-tab" aria-label={catalogOnly ? 'Connection types' : undefined}>
@@ -154,8 +145,8 @@
     <p class="confirm">This permanently removes the connection.</p>
     {#snippet notice()}
       {#if removal.conflict && deletingRelationship}
-        <ConflictNotice noun="connection" saved={removal.conflict.data} {...conflict(connectionFacts(removal.conflict.data), connectionFacts(deletingRelationship.relationship), connectionFacts(deletingRelationship.relationship))} message={removal.details}
-          actionLabel="Reload" onaction={() => void reloadDelete()} />
+        <!-- Delete again removes the saved version the notice shows. -->
+        <ConflictNotice noun="connection" saved={removal.conflict.data} {...conflict(connectionFacts(removal.conflict.data), connectionFacts(deletingRelationship.relationship), connectionFacts(deletingRelationship.relationship))} message={removal.details} />
       {:else if removal.details}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => void removeRelationship()} />{/if}
     {/snippet}
   </Dialog>

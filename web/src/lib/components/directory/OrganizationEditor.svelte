@@ -48,7 +48,6 @@
   let currentProfile = $state<OrganizationProfile>();
   // The version a write sends as If-Match.
   let opened: Prepared<OrganizationProfile> | undefined;
-  let deleteProfile = $state<Prepared<OrganizationProfile>>();
   let loading = $state(!!initialOrganization);
   // A failed load leaves nothing to edit, so the form and Save give way to the notice.
   const loadFailed = $derived(!!initialOrganization && !currentProfile && !loading);
@@ -130,7 +129,7 @@
 
   async function checkDeletion(): Promise<void> {
     if (!initialOrganization) return;
-    if (!confirmDelete) { attempt.reset(); deleteProfile = opened; }
+    if (!confirmDelete) attempt.reset();
     confirmDelete = true;
     checkingDelete = true;
     checkError = '';
@@ -147,8 +146,9 @@
   async function remove(): Promise<void> {
     if (!initialOrganization || submitting || deleteBlocked) return;
     let collided = false;
-    const ok = await removal.run(async () => {
-      const result = await controller.deleteOrganization(initialOrganization.id, deleteProfile);
+    const ok = await removal.run(async current => {
+      // After a conflict, Delete again removes the saved version the notice shows.
+      const result = await controller.deleteOrganization(initialOrganization.id, current ?? opened);
       collided = !result.ok && result.kind === 'error' && result.status === 409;
       return result;
     });
@@ -157,14 +157,6 @@
       removal.reset();
       await checkDeletion();
     }
-  }
-
-  async function reloadDelete(): Promise<void> {
-    await loadCurrent();
-    if (!currentProfile || attempt.details) return;
-    deleteProfile = opened;
-    removal.reset();
-    await checkDeletion();
   }
 
   async function refreshAfterUnknown(): Promise<void> {
@@ -379,7 +371,7 @@
 {#snippet deleteStart()}{#if initialOrganization && currentProfile && !confirmDelete}<Button tone="danger" label="Delete organization…" disabled={submitting} onclick={() => void checkDeletion()} />{/if}{/snippet}
 {#if confirmDelete}
   <Dialog title={`Delete ${name}?`} onclose={requestClose} onback={() => { confirmDelete = false; attempt.reset(); removal.reset(); }} backLabel={`Back to ${name}`}
-    primaryLabel={deleteBlocked ? undefined : 'Delete'} primaryDisabled={!!removal.conflict} primaryTone="danger" cancellable={false} busy={submitting} onprimary={() => void remove()}>
+    primaryLabel={deleteBlocked ? undefined : 'Delete'} primaryTone="danger" cancellable={false} busy={submitting} onprimary={() => void remove()}>
     <div class="delete-step">
       {#if checkingDelete}<p role="status">Checking jobs…</p>{/if}
       {#if checkError}<InlineNotice message="Couldn't check jobs." details={checkError} actionLabel="Check again" onaction={() => void checkDeletion()} />{/if}
@@ -396,8 +388,8 @@
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}
     </div>
-    {#snippet notice()}{#if removal.conflict && deleteProfile}
-      <ConflictNotice noun="organization" saved={removal.conflict.data.organization} {...conflict(organizationFacts(removal.conflict.data), organizationFacts(deleteProfile.data), organizationFacts(deleteProfile.data))} message={removal.details} actionLabel="Reload" onaction={() => void reloadDelete()} />
+    {#snippet notice()}{#if removal.conflict && currentProfile}
+      <ConflictNotice noun="organization" saved={removal.conflict.data.organization} {...conflict(organizationFacts(removal.conflict.data), organizationFacts(currentProfile), organizationFacts(currentProfile))} message={removal.details} />
     {:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
   </Dialog>
 {:else}

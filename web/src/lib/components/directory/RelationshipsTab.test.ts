@@ -741,8 +741,9 @@ describe('RelationshipsTab', () => {
     expect(controller.relationships).toEqual([]);
   });
 
-  it('keeps a delete conflict open, shows only changed fields, and reloads the connection', async () => {
-    let reads = 0, deletes = 0, refreshes = 0;
+  it('keeps a delete conflict open, shows only changed fields, and deletes the saved version on Delete', async () => {
+    let reads = 0;
+    const tags: (string | null)[] = [];
     const current = relationship(41, 2, { notes: 'Saved note' });
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input), path = pathOf(request);
@@ -751,13 +752,10 @@ describe('RelationshipsTab', () => {
         return Response.json(reads === 1 ? relationship() : current, { headers: { ETag: `"person-relationship-41-r${reads}"` } });
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') {
-        deletes++;
-        return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+        tags.push(request.headers.get('If-Match'));
+        return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
       }
-      if (path === '/api/v1/people/7/relationships') {
-        refreshes++;
-        return Response.json({ relationships: [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: current })] });
-      }
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     });
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer')];
@@ -769,12 +767,11 @@ describe('RelationshipsTab', () => {
     const changes = within(alert).getByRole('table', { name: 'What changed' });
     expect(within(changes).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Notes']);
     expect(changes.textContent).toContain('Saved note');
-    expect(deletes).toBe(1);
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Reload' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    expect(refreshes).toBe(1);
-    expect(controller.relationships[0].relationship.notes).toBe('Saved note');
+    expect(tags).toHaveLength(1);
     expect(screen.getByRole('dialog', { name: 'Delete connection with Synthetic Peer?' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(tags).toEqual(['"person-relationship-41-r1"', '"person-relationship-41-r2"']);
   });
 
   it('blocks an uncertain edge create until the exact collection refresh and retains the dialog draft', async () => {
@@ -1228,28 +1225,4 @@ it.each(['cleared notes', 'derived status'])('compares %s after an end-date conf
     expect(screen.getByText('Other details also changed')).toBeDefined();
     expect(screen.getByText('Notes', { selector: 'dt' }).nextElementSibling?.textContent).toBe('None');
   } else expect(screen.queryByText('Other details also changed')).toBeNull();
-});
-
-it.each([false, true])('reloads a pending connection deletion, disappeared=%s', async gone => {
-  const tags: (string | null)[] = [];
-  const saved = view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: relationship(41, 2) });
-  const { client, controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: gone ? [] : [saved] });
-    if (request.method === 'GET') return Response.json(tags.length ? saved.relationship : relationship(41, 1), { headers: { ETag: tags.length ? '"person-relationship-41-r2"' : '"person-relationship-41-r1"' } });
-    tags.push(request.headers.get('If-Match'));
-    return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
-  });
-  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer')];
-  render(RelationshipsTab, { client, controller, personID: 7 });
-  await rowAction('Delete…');
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
-  await waitFor(() => expect(screen.queryByText('This connection changed since you opened it.')).toBeNull());
-  if (gone) expect(screen.queryByRole('dialog')).toBeNull();
-  else {
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(tags).toHaveLength(2));
-    expect(tags[1]).toBe('"person-relationship-41-r2"');
-  }
 });

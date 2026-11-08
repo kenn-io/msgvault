@@ -709,7 +709,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 });
 
-it.each(['Make primary', 'Delete…'])('keeps the %s conflict until Reload succeeds', async action => {
+it('keeps the Make primary conflict until Reload succeeds', async () => {
   let refreshes = 0;
   const saved = employment(11, 2, { title: 'Concurrent title' });
   const { controller } = controllerWith(async input => {
@@ -723,8 +723,7 @@ it.each(['Make primary', 'Delete…'])('keeps the %s conflict until Reload succe
   });
   controller.employments = [employment()];
   render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await rowAction(action);
-  if (action === 'Delete…') await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await rowAction('Make primary');
   await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
   await waitFor(() => expect(controller.employmentsLoading).toBe(false));
   await tick();
@@ -758,12 +757,12 @@ it('uses the selected job version when Make primary moves to another row', async
   expect(tags).toEqual(['"employment-11-r1"', '"employment-12-r2"']);
 });
 
-it.each([false, true])('reloads a pending job deletion, disappeared=%s', async gone => {
+it('deletes the saved version a job delete conflict shows', async () => {
   const tags: (string | null)[] = [];
-  const saved = employment(11, 2);
+  const saved = employment(11, 2, { title: 'Concurrent title' });
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
-    if (pathOf(request) === '/api/v1/people/7/employments') return collection(gone ? [] : [saved]);
+    if (pathOf(request) === '/api/v1/people/7/employments') return collection([]);
     if (pathOf(request).startsWith('/api/v1/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     if (request.method === 'GET') return Response.json(tags.length ? saved : employment(), { headers: { ETag: tags.length ? '"employment-11-r2"' : '"employment-11-r1"' } });
     tags.push(request.headers.get('If-Match'));
@@ -773,12 +772,9 @@ it.each([false, true])('reloads a pending job deletion, disappeared=%s', async g
   render(OrganizationEmploymentTab, { controller, personID: 7 });
   await rowAction('Delete…');
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
-  await waitFor(() => expect(screen.queryByText('This job changed since you opened it.')).toBeNull());
-  if (gone) expect(screen.queryByRole('dialog')).toBeNull();
-  else {
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(tags).toHaveLength(2));
-    expect(tags[1]).toBe('"employment-11-r2"');
-  }
+  await screen.findByText('This job changed since you opened it.');
+  expect(screen.getByText('Concurrent title')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
 });

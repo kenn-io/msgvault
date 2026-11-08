@@ -46,11 +46,9 @@ describe('OrganizationEditor', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('New name')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+    expect(tags).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r3"']));
+    await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"']));
   });
   it('saves details, aliases, and categories with one action and retries only unsaved changes', async () => {
     let saved = organizationProfile();
@@ -483,7 +481,7 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
   await fireEvent.click(screen.getByRole('button', { name: 'Delete organization…' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(reads).toBe(2));
-  await screen.findByRole('button', { name: 'Reload' });
+  await screen.findByText('This organization changed since you opened it.');
   await fireEvent.click(screen.getByRole('button', { name: /^Back to / }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(tags).toHaveLength(1));
