@@ -64,7 +64,8 @@ func (s *Store) importantDateOccurrenceGuardedContext(ctx context.Context, key s
 	err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM important_date_occurrence_guards g
 		JOIN important_date_reconciliations r ON r.uid = g.reconciliation_uid AND r.active = 1
 		JOIN important_date_deliveries d ON d.occurrence_key = g.original_occurrence_key
-		WHERE g.resolved_subject = ? AND g.meaning = ? AND g.occurrence_year = ? AND d.state <> 'retry_issue')`, subject, meaning, year).Scan(&guarded)
+		WHERE g.resolved_subject = ? AND g.meaning = ? AND g.occurrence_year = ? AND d.state <> 'retry_issue'
+		AND (g.original_occurrence_key <> ? OR d.state <> 'issue_created'))`, subject, meaning, year, key).Scan(&guarded)
 	if err != nil {
 		return false, fmt.Errorf("check important-date occurrence guards: %w", err)
 	}
