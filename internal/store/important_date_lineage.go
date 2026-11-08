@@ -53,6 +53,10 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		return result, err
 	}
 	defer release()
+	snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	if !ok || snapshot.db != s.db.DB {
+		return result, errors.New("important-date lineage snapshot unavailable")
+	}
 	if _, err := s.GetPersonContext(ctx, personID); err != nil {
 		return result, err
 	}
@@ -98,7 +102,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		}
 		if err == nil {
 			uids[uid] = struct{}{}
-			dates, err := s.ListPersonDatesContext(ctx, id, true)
+			dates, err := s.listPersonDatesTx(ctx, snapshot.tx, id, true)
 			if err != nil {
 				return result, fmt.Errorf("read lineage dates: %w", err)
 			}
