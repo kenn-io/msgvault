@@ -23,10 +23,16 @@ type ImportantDateLineage struct {
 	PersonUIDs       []string                       `json:"person_uids"`
 	People           []ImportantDateLineagePerson   `json:"people"`
 	Aliases          []ImportantDateLineageAlias    `json:"aliases"`
+	MergeSnapshots   []ImportantDateLineageSnapshot `json:"merge_snapshots"`
 	MergeIDs         []int64                        `json:"merge_ids"`
 	SplitIDs         []int64                        `json:"split_ids"`
 	OwnedSubjects    []ImportantDateLineageSubject  `json:"owned_subjects"`
 	Deliveries       []ImportantDateLineageDelivery `json:"deliveries"`
+}
+
+type ImportantDateLineageSnapshot struct {
+	MergeID int64  `json:"merge_id"`
+	SHA256  string `json:"sha256"`
 }
 
 type ImportantDateLineageDelivery struct {
@@ -119,7 +125,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		return result, fmt.Errorf("close important-date lineage: %w", err)
 	}
 	uids := map[string]struct{}{}
-	merges := map[int64]struct{}{}
+	merges := map[int64]string{}
 	splits := map[int64]struct{}{}
 	for _, id := range result.PersonIDs {
 		var uid string
@@ -159,18 +165,18 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 		if err := rows.Close(); err != nil {
 			return result, fmt.Errorf("close lineage aliases: %w", err)
 		}
-		rows, err = s.db.QueryContext(ctx, `SELECT id, survivor_uid, absorbed_uid FROM person_merges WHERE survivor_person_id_at_merge = ? OR absorbed_person_id = ? OR current_person_id = ?`, id, id, id)
+		rows, err = s.db.QueryContext(ctx, `SELECT id, survivor_uid, absorbed_uid, snapshot_sha256 FROM person_merges WHERE survivor_person_id_at_merge = ? OR absorbed_person_id = ? OR current_person_id = ?`, id, id, id)
 		if err != nil {
 			return result, fmt.Errorf("read lineage merges: %w", err)
 		}
 		for rows.Next() {
 			var mergeID int64
-			var survivor, absorbed string
-			if err := rows.Scan(&mergeID, &survivor, &absorbed); err != nil {
+			var survivor, absorbed, snapshotDigest string
+			if err := rows.Scan(&mergeID, &survivor, &absorbed, &snapshotDigest); err != nil {
 				_ = rows.Close()
 				return result, fmt.Errorf("scan lineage merge: %w", err)
 			}
-			merges[mergeID] = struct{}{}
+			merges[mergeID] = snapshotDigest
 			uids[survivor] = struct{}{}
 			uids[absorbed] = struct{}{}
 		}
@@ -208,8 +214,9 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 			result.PersonUIDs = append(result.PersonUIDs, uid)
 		}
 	}
-	for id := range merges {
+	for id, digest := range merges {
 		result.MergeIDs = append(result.MergeIDs, id)
+		result.MergeSnapshots = append(result.MergeSnapshots, ImportantDateLineageSnapshot{MergeID: id, SHA256: digest})
 	}
 	for id := range splits {
 		result.SplitIDs = append(result.SplitIDs, id)
@@ -314,6 +321,7 @@ func (s *Store) ImportantDateLineageContext(ctx context.Context, personID int64)
 	}
 	sort.Slice(result.Deliveries, func(i, j int) bool { return result.Deliveries[i].OccurrenceKey < result.Deliveries[j].OccurrenceKey })
 	sort.Slice(result.MergeIDs, func(i, j int) bool { return result.MergeIDs[i] < result.MergeIDs[j] })
+	sort.Slice(result.MergeSnapshots, func(i, j int) bool { return result.MergeSnapshots[i].MergeID < result.MergeSnapshots[j].MergeID })
 	sort.Slice(result.SplitIDs, func(i, j int) bool { return result.SplitIDs[i] < result.SplitIDs[j] })
 	encoded, err := json.Marshal(result)
 	if err != nil {

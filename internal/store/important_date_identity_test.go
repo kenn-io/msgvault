@@ -82,6 +82,8 @@ func TestImportantDateIdentityQuarantinesMerge(t *testing.T) {
 	checks.Contains(lineage.PersonUIDs, second.VCardUID)
 	checks.Contains(lineage.PersonUIDs, split.NewPerson.VCardUID)
 	checks.Contains(lineage.MergeIDs, merged.Merge.ID)
+	must.Len(lineage.MergeSnapshots, 1)
+	checks.Equal(merged.Merge.SnapshotSHA256, lineage.MergeSnapshots[0].SHA256)
 	checks.Contains(lineage.SplitIDs, split.Split.ID)
 	var retainedDates int
 	for _, person := range lineage.People {
