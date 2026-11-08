@@ -4415,3 +4415,31 @@ CREATE TABLE IF NOT EXISTS important_date_subject_history (
  withdrawn INTEGER NOT NULL,
  PRIMARY KEY (subject_uid, revision)
 );
+
+-- Identity reconciliation retains explicit decisions and prior issue links.
+CREATE TABLE IF NOT EXISTS important_date_reconciliations (
+    uid TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    request_hash TEXT NOT NULL,
+    lineage_digest TEXT NOT NULL,
+    identity_revision BIGINT NOT NULL,
+    root_person_uid TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS important_date_identity_bindings (
+    reconciliation_uid TEXT NOT NULL REFERENCES important_date_reconciliations(uid) ON DELETE RESTRICT,
+    original_subject TEXT NOT NULL,
+    meaning TEXT NOT NULL CHECK (meaning IN ('birthday', 'anniversary')),
+    resolved_subject TEXT NOT NULL,
+    effective_owner TEXT NOT NULL,
+    PRIMARY KEY (reconciliation_uid, original_subject, meaning, resolved_subject)
+);
+CREATE TABLE IF NOT EXISTS important_date_occurrence_guards (
+    reconciliation_uid TEXT NOT NULL REFERENCES important_date_reconciliations(uid) ON DELETE RESTRICT,
+    resolved_subject TEXT NOT NULL,
+    meaning TEXT NOT NULL CHECK (meaning IN ('birthday', 'anniversary')),
+    occurrence_year INTEGER NOT NULL,
+    original_occurrence_key TEXT NOT NULL REFERENCES important_date_deliveries(occurrence_key) ON DELETE RESTRICT,
+    PRIMARY KEY (reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key)
+);
