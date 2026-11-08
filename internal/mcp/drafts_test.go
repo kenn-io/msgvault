@@ -189,6 +189,8 @@ func TestSensitiveDraftConfirmationHints(t *testing.T) {
 		name, body, labels string
 	}{
 		{"password and duplicate card", "password: hunter2abc\n4111111111111111\n4111111111111111", "a payment card number ending 1111, a password"},
+		{"quoted card", "> 4111111111111111", "a payment card number ending 1111 (in quoted text)"},
+		{"quoted and authored card", "> 4111111111111111\n4111111111111111", "a payment card number ending 1111 (in quoted text), a payment card number ending 1111"},
 		{"different cards", "4242424242424242\n4111111111111111", "a payment card number ending 4242, a payment card number ending 1111"},
 		{"IBAN", "GB82 WEST 1234 5698 7654 32", "an IBAN ending 5432"},
 		{"API key", "sk_" + "live_" + "abcdefghijklmnopqrstuvwx", "an API key or private key starts sk_l"},
@@ -281,6 +283,14 @@ func TestDraftToolResultShapes(t *testing.T) {
 		{name: "compose", command: "draft-compose", args: map[string]any{"source_id": 9, "to": []string{"to@example.com"}, "body": "4111111111111111"}, stdout: `{"status":"created","draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
 		{name: "subject only", command: "draft-compose", args: map[string]any{"source_id": 9, "to": []string{"to@example.com"}, "subject": "4111111111111111", "body": "clean"}, stdout: `{"status":"created"}`, text: `{"sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
 		{name: "get", command: "draft-get", args: map[string]any{"draft_id": "d1"}, stdout: `{"body":"4111111111111111"}`, text: `{"body":"4111111111111111"}`},
+		{name: "quote line", command: "draft-compose", args: map[string]any{"body": "> 4111111111111111", "subject": ""}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card","quoted":true}]}`},
+		{name: "authored whitespace password", command: "draft-compose", args: map[string]any{"body": "password: \"        \"", "subject": ""}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"kind":"password"}]}`},
+		{name: "quoted whitespace password", command: "draft-compose", args: map[string]any{"body": "> password: \"        \"", "subject": ""}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"kind":"password","quoted":true}]}`},
+		{name: "repeated value", command: "draft-compose", args: map[string]any{"body": "4111111111111111\n> 4111111111111111", "subject": ""}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card"},{"hint":"ending 1111","kind":"payment_card","quoted":true}]}`},
+		{name: "quoted before repeated value", command: "draft-compose", args: map[string]any{"body": "> 4111111111111111\n4111111111111111", "subject": ""}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card","quoted":true},{"hint":"ending 1111","kind":"payment_card"}]}`},
+		{name: "Outlook CRLF", command: "draft-compose", args: map[string]any{"body": "Note\r\nFrom: Example\r\nSent: Monday\r\n4111111111111111", "subject": ""}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card","quoted":true}]}`},
+		{name: "bare forward", command: "draft-compose", args: map[string]any{"body": "Forwarded message\npassword: abcDef123!", "subject": ""}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"kind":"password"}]}`},
+		{name: "subject", command: "draft-compose", args: map[string]any{"body": "> 4111111111111111", "subject": "> 4111111111111111"}, stdout: `{"draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card"},{"hint":"ending 1111","kind":"payment_card","quoted":true}]}`},
 		{name: "daemon text", command: "draft-reply", args: map[string]any{"message_id": 7, "body": "4111111111111111"}, err: &DraftCommandError{Message: "not_permitted", Stderr: "{\"status\":\"pending\"}\n"}, text: "not_permitted\n{\"status\":\"pending\"}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
