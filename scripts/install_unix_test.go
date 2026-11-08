@@ -20,32 +20,33 @@ import (
 )
 
 func TestInstallPath(t *testing.T) {
+	req := require.New(t)
 	script, err := filepath.Abs("install.sh")
-	require.NoError(t, err)
+	req.NoError(err)
 	_, err = os.ReadFile(script) // Include the child script in Go's test cache inputs.
-	require.NoError(t, err)
+	req.NoError(err)
 	bash, err := exec.LookPath("bash")
-	require.NoError(t, err)
+	req.NoError(err)
 	fixture := t.TempDir()
 	transport := filepath.Join(fixture, "transport")
-	require.NoError(t, os.Mkdir(transport, 0o700))
+	req.NoError(os.Mkdir(transport, 0o700))
 	tools := filepath.Join(fixture, "tools")
-	require.NoError(t, os.Mkdir(tools, 0o700))
+	req.NoError(os.Mkdir(tools, 0o700))
 	for _, name := range strings.Fields("uname mkdir mktemp tar gzip awk sha256sum shasum cut mv chmod grep dirname rm cp id run-parts head tr") {
 		path, err := exec.LookPath(name)
 		if err == nil {
-			require.NoError(t, os.Symlink(path, filepath.Join(tools, name)))
+			req.NoError(os.Symlink(path, filepath.Join(tools, name)))
 		}
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(fixture, "msgvault"), []byte("#!/bin/sh\nprintf 'installed sentinel\\n'\n"), 0o700))
+	req.NoError(os.WriteFile(filepath.Join(fixture, "msgvault"), []byte("#!/bin/sh\nprintf 'installed sentinel\\n'\n"), 0o700))
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	archive := filepath.Join(fixture, "release.tar.gz")
 	output, err := exec.CommandContext(ctx, "tar", "-czf", archive, "-C", fixture, "msgvault").CombinedOutput()
-	require.NoError(t, err, string(output))
+	req.NoError(err, string(output))
 	data, err := os.ReadFile(archive)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(transport, "curl"), []byte(fmt.Sprintf(`#!/bin/sh
+	req.NoError(err)
+	req.NoError(os.WriteFile(filepath.Join(transport, "curl"), []byte(fmt.Sprintf(`#!/bin/sh
 case "$1:$2" in
     -fsSLI:-o) [ "$6" = https://github.com/kenn-io/msgvault/releases/latest ] || exit 1
         printf https://github.com/kenn-io/msgvault/releases/tag/v1.0.0 ;;
@@ -71,6 +72,8 @@ esac
 		{name: "unsupported", shell: "other"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			t.Parallel()
 			shell, _ := exec.LookPath(tc.shell)
 			home := t.TempDir()
@@ -82,9 +85,9 @@ esac
 			}
 			path := tools
 			if tc.pathEntry == "exact" {
-				require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0o700))
-				require.NoError(t, os.Mkdir(filepath.Join(home, "target"), 0o700))
-				require.NoError(t, os.Symlink(filepath.Join(home, "target"), destination))
+				require.NoError(os.MkdirAll(filepath.Dir(destination), 0o700))
+				require.NoError(os.Mkdir(filepath.Join(home, "target"), 0o700))
+				require.NoError(os.Symlink(filepath.Join(home, "target"), destination))
 				path += ":" + destination
 			} else if tc.pathEntry == "sibling" {
 				path += ":" + destination + "ary"
@@ -108,8 +111,8 @@ esac
 					continue
 				}
 				file := filepath.Join(home, profile)
-				require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o700))
-				require.NoError(t, os.WriteFile(file, []byte(content), 0o600))
+				require.NoError(os.MkdirAll(filepath.Dir(file), 0o700))
+				require.NoError(os.WriteFile(file, []byte(content), 0o600))
 			}
 			env := []string{"HOME=" + home, "SHELL=/bin/" + tc.shell, "PATH=" + path, "TMPDIR=" + home,
 				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
@@ -128,30 +131,30 @@ esac
 				}
 				cmd.Dir = home
 				output, err := cmd.CombinedOutput()
-				require.NoError(t, err, string(output))
+				require.NoError(err, string(output))
 				if tc.checkChecksum && run == 0 {
-					assert.Contains(t, string(output), "Checksum verified")
+					assert.Contains(string(output), "Checksum verified")
 				}
 				if tc.optOut != "" || tc.shell == "other" {
-					assert.NotContains(t, string(output), "Open a new terminal")
+					assert.NotContains(string(output), "Open a new terminal")
 					if tc.shell == "other" {
-						assert.Contains(t, string(output), "Configure PATH manually for your shell.")
-						assert.Contains(t, string(output), destination+"'/msgvault\n")
+						assert.Contains(string(output), "Configure PATH manually for your shell.")
+						assert.Contains(string(output), destination+"'/msgvault\n")
 					} else {
-						assert.Contains(t, string(output), "Run in your current shell:")
+						assert.Contains(string(output), "Run in your current shell:")
 					}
 				}
 				for profile, original := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
-					require.NoError(t, err)
+					require.NoError(err)
 					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "other" || (tc.loginProfile && profile == ".profile") {
-						assert.Equal(t, original, string(data))
+						assert.Equal(original, string(data))
 						continue
 					}
 					if run == 0 {
-						assert.Contains(t, string(output), filepath.Join(home, profile))
+						assert.Contains(string(output), filepath.Join(home, profile))
 					}
-					assert.Regexp(t, "^"+regexp.QuoteMeta(original)+"\n[^\n]+\n$", string(data))
+					assert.Regexp("^"+regexp.QuoteMeta(original)+"\n[^\n]+\n$", string(data))
 				}
 			}
 			if tc.optOut != "" || tc.shell == "other" || tc.pathEntry == "exact" {
@@ -177,18 +180,18 @@ esac
 				cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 				cmd.Env, cmd.Dir = env, fixture
 				output, err := cmd.CombinedOutput()
-				require.NoError(t, err, string(output))
-				assert.Contains(t, string(output), destination+"/msgvault\n")
-				assert.Contains(t, string(output), "installed sentinel\n")
+				require.NoError(err, string(output))
+				assert.Contains(string(output), destination+"/msgvault\n")
+				assert.Contains(string(output), "installed sentinel\n")
 				_, value, found := strings.Cut(string(output), "\nTEST_PATH=")
-				require.True(t, found, string(output))
+				require.True(found, string(output))
 				count := 0
 				for _, entry := range strings.Split(strings.TrimSpace(value), ":") {
 					if entry == destination {
 						count++
 					}
 				}
-				assert.Equal(t, 1, count)
+				assert.Equal(1, count)
 			}
 			if shell == "" {
 				t.Skipf("%s not installed; startup not checked", tc.shell)
