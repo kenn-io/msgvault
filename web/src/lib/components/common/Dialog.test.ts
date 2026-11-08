@@ -19,3 +19,22 @@ it('leaves Escape to a child picker, then closes the dialog', async () => {
   await fireEvent.keyDown(picker, { key: 'Escape' });
   expect(onclose).toHaveBeenCalledOnce();
 });
+
+it.each([
+  { primaryDisabled: true, cancelDisabled: false },
+  { primaryDisabled: true, cancelDisabled: true }
+])('keeps cancellation independent of Save: %j', async ({ primaryDisabled, cancelDisabled }) => {
+  const onclose = vi.fn();
+  const onprimary = vi.fn();
+  render(Dialog, {
+    title: 'Describe Archive search', onclose, onprimary, primaryLabel: 'Save', primaryDisabled, cancelDisabled,
+    children: createRawSnippet(() => ({ render: () => '<p>Describe this saved view.</p>' }))
+  });
+  const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+  expect(save.disabled).toBe(primaryDisabled);
+  const cancel = screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
+  expect(cancel.disabled).toBe(cancelDisabled);
+  expect(cancel.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  cancel.click();
+  expect(onclose).toHaveBeenCalledTimes(cancelDisabled ? 0 : 1);
+});
