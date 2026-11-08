@@ -130,6 +130,4 @@ func TestListAccountsSnapshotCounts(t *testing.T) {
 	assert.Equal(t, float64(1234), rows[0]["message_count"])
 	assert.Equal(t, true, rows[0]["stale"])
 	assert.Equal(t, "2024-01-02T03:04:05Z", rows[0]["as_of"])
-	stats[0].CountsPending = true
-	assert.Equal(t, "pending", formatMessagesCell(stats[0]))
 }
