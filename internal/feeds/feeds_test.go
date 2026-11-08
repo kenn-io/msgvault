@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -75,10 +76,11 @@ const jsonFeed = `{
 
 // feedServer serves feeds by path and answers conditional requests.
 type feedServer struct {
-	mu       sync.Mutex
-	bodies   map[string]string
-	requests map[string][]http.Header
-	server   *httptest.Server
+	mu        sync.Mutex
+	bodies    map[string]string
+	requests  map[string][]http.Header
+	onRequest func(path string)
+	server    *httptest.Server
 }
 
 func newFeedServer(t *testing.T, bodies map[string]string) *feedServer {
@@ -88,7 +90,11 @@ func newFeedServer(t *testing.T, bodies map[string]string) *feedServer {
 		fs.mu.Lock()
 		body, ok := fs.bodies[r.URL.Path]
 		fs.requests[r.URL.Path] = append(fs.requests[r.URL.Path], r.Header.Clone())
+		onRequest := fs.onRequest
 		fs.mu.Unlock()
+		if onRequest != nil {
+			onRequest(r.URL.Path)
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -201,7 +207,8 @@ func TestFollowArchivesAtomItemsAsFeedMessages(t *testing.T) {
 	assert.Equal(MessageType, release.MessageType)
 	assert.Equal("Example Project 1.2.0", release.Subject)
 	assert.True(release.SentAt.Equal(time.Date(2026, time.November, 7, 15, 0, 0, 0, time.UTC)))
-	assert.Equal("Faster widgetsync.\n\nhttps://example.com/releases/1.2.0", release.Body, "relative link resolved against the site")
+	assert.Equal("Faster widgetsync.\n\n"+server.url("/releases/1.2.0"), release.Body,
+		"a relative link resolves against the feed document, not the site")
 	assert.Contains(release.BodyHTML.String, "<b>widgetsync</b>")
 	assert.Equal("Release Bot", release.Sender)
 	assert.True(strings.HasPrefix(release.SenderValue, "id:feeds:author:"), "a name-only author is scoped to its feed")
@@ -391,6 +398,86 @@ func TestSyncRecordsAFailingFeedAndSyncsTheRest(t *testing.T) {
 	assert.Contains(byURL[server.url("/a.atom")].State.LastError, "not an RSS, Atom or JSON feed")
 	assert.NotEmpty(byURL[server.url("/a.atom")].State.ETag, "a failed fetch keeps the last good validators")
 	assert.Empty(byURL[server.url("/b.rss")].State.LastError)
+}
+
+func TestRelativeLinksResolveAgainstTheFeedDocument(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/old.atom":
+			http.Redirect(w, r, server.URL+"/blog/feed.atom", http.StatusMovedPermanently)
+		case "/blog/feed.atom":
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example blog</title>
+  <link href="https://example.com/"/>
+  <id>urn:example:blog</id>
+  <updated>2026-11-07T15:00:00Z</updated>
+  <entry>
+    <title>First post</title>
+    <link href="posts/1"/>
+    <id>urn:example:post:1</id>
+    <updated>2026-11-07T15:00:00Z</updated>
+    <content type="html">Hello.</content>
+  </entry>
+</feed>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	st := testutil.NewTestStore(t)
+	summary, err := newTestSyncer(st, time.Now()).Follow(t.Context(), []string{server.URL + "/old.atom"})
+	require.NoError(err)
+	require.NoError(summary.Feeds[0].Err)
+	post := archivedItems(t, st)["urn:example:post:1"]
+	assert.Equal("Hello.\n\n"+server.URL+"/blog/posts/1", post.Body,
+		"resolved against where the document came from after the redirect")
+	assert.Equal("url:https://example.com/", post.SenderValue, "the feed's site still sends an authorless item")
+}
+
+func TestSyncFetchesTheLeastRecentlyCheckedFeedsFirst(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	server := newFeedServer(t, map[string]string{"/a.atom": atomFeed, "/b.rss": rssFeed, "/c.json": jsonFeed})
+	clock := time.Date(2026, time.November, 7, 12, 0, 0, 0, time.UTC)
+	syncer := newTestSyncer(st, clock)
+	syncer.now = func() time.Time {
+		clock = clock.Add(time.Second)
+		return clock
+	}
+	a, b, c := server.url("/a.atom"), server.url("/b.rss"), server.url("/c.json")
+	_, err := syncer.Follow(t.Context(), []string{a, b, c})
+	require.NoError(err)
+
+	// The scheduler asks the sync to yield while it fetches the first feed.
+	ctx, preempt := jobctx.WithPreemption(t.Context())
+	server.mu.Lock()
+	server.onRequest = func(string) { preempt() }
+	server.mu.Unlock()
+	summary, err := syncer.Sync(ctx, SyncOptions{})
+	require.NoError(err)
+	require.Equal([]string{a}, feedURLs(summary), "the sync yields after the first feed")
+
+	server.mu.Lock()
+	server.onRequest = nil
+	server.mu.Unlock()
+	summary, err = syncer.Sync(t.Context(), SyncOptions{})
+	require.NoError(err)
+	require.Equal([]string{b, c, a}, feedURLs(summary), "the next sync starts with the feeds the last one didn't reach")
+}
+
+func feedURLs(summary Summary) []string {
+	urls := make([]string, 0, len(summary.Feeds))
+	for _, feed := range summary.Feeds {
+		urls = append(urls, feed.URL)
+	}
+	return urls
 }
 
 func TestFeedsWithTheSameItemIDsKeepTheirOwnItems(t *testing.T) {

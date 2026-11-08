@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
-	"github.com/mmcdole/gofeed"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/store"
@@ -137,6 +137,9 @@ func (s *Syncer) Follow(ctx context.Context, urls []string) (Summary, error) {
 	})
 }
 
+// selectFeeds returns the feeds a sync fetches. Without urls that is every
+// followed feed, least recently checked first, so a sync that yields to
+// other work resumes with the feeds it didn't reach.
 func selectFeeds(feeds []Feed, urls []string) ([]Feed, error) {
 	if len(urls) == 0 {
 		followed := make([]Feed, 0, len(feeds))
@@ -145,6 +148,9 @@ func selectFeeds(feeds []Feed, urls []string) ([]Feed, error) {
 				followed = append(followed, feed)
 			}
 		}
+		slices.SortStableFunc(followed, func(a, b Feed) int {
+			return compareCheckedAt(a.State.CheckedAt, b.State.CheckedAt)
+		})
 		return followed, nil
 	}
 	byURL := make(map[string]Feed, len(feeds))
@@ -164,6 +170,20 @@ func selectFeeds(feeds []Feed, urls []string) ([]Feed, error) {
 		selected = append(selected, feed)
 	}
 	return selected, nil
+}
+
+// compareCheckedAt orders a never-checked feed first, then earlier checks.
+func compareCheckedAt(a, b *time.Time) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
+	default:
+		return a.Compare(*b)
+	}
 }
 
 // syncRun is one sync run of the feed source.
@@ -240,7 +260,7 @@ func (r *syncRun) feed(ctx context.Context, feedURL, knownTitle string, fetched 
 		return
 	}
 	result.Title = feedTitle(feedURL, fetched.Feed)
-	added, skipped, items, err := r.archive(ctx, feedURL, fetched.Feed)
+	added, skipped, items, err := r.archive(ctx, feedURL, fetched)
 	result.Added, result.Skipped, result.Items = added, skipped, items
 	if err != nil {
 		// Validators stay as they were so the next sync downloads the feed again.
@@ -269,7 +289,8 @@ func (r *syncRun) report(ctx context.Context, result FeedResult) {
 }
 
 // archive writes the feed's items that the archive does not hold yet.
-func (r *syncRun) archive(ctx context.Context, feedURL string, feed *gofeed.Feed) (added, skipped, items int, err error) {
+func (r *syncRun) archive(ctx context.Context, feedURL string, fetched *Fetched) (added, skipped, items int, err error) {
+	feed := fetched.Feed
 	firstSeen := r.syncer.now().UTC()
 	messages := make([]messageimport.ImportedMessage, 0, len(feed.Items))
 	seen := make(map[string]bool, len(feed.Items))
@@ -278,7 +299,7 @@ func (r *syncRun) archive(ctx context.Context, feedURL string, feed *gofeed.Feed
 		if item == nil {
 			continue
 		}
-		message := itemMessage(feedURL, feed, item, firstSeen)
+		message := itemMessage(feedURL, fetched.URL, feed, item, firstSeen)
 		if seen[message.ExternalID] {
 			continue
 		}

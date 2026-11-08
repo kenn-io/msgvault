@@ -38,6 +38,8 @@ Sources page offers **Sync now** for the Feeds source.
 
 - An unchanged feed isn't downloaded again. `sync-feeds --full` downloads
   every feed again.
+- Each sync fetches the least recently checked feeds first, so a scheduled
+  sync that pauses for other work picks up the feeds it didn't reach.
 - A feed that fails is recorded on the sync run, and the other feeds still
   sync. `msgvault list-feeds` shows each feed's last check and its last error.
 

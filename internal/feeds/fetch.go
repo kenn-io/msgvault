@@ -48,10 +48,13 @@ func (v Validators) empty() bool {
 	return v.ETag == "" && v.LastModified == ""
 }
 
-// Fetched is one fetch's outcome. Feed is nil when NotModified.
+// Fetched is one fetch's outcome. Feed is nil when NotModified. URL is the
+// address the document came from after redirects, the base its relative
+// links resolve against.
 type Fetched struct {
 	NotModified bool
 	Feed        *gofeed.Feed
+	URL         string
 	Validators  Validators
 }
 
@@ -130,7 +133,7 @@ func (f *Fetcher) Fetch(ctx context.Context, feedURL string, validators Validato
 	if err != nil {
 		return Fetched{}, fmt.Errorf("%w: %w", ErrNotAFeed, err)
 	}
-	return Fetched{Feed: feed, Validators: responseValidators(resp, Validators{})}, nil
+	return Fetched{Feed: feed, URL: resp.Request.URL.String(), Validators: responseValidators(resp, Validators{})}, nil
 }
 
 // client returns an HTTP client whose every connection, redirects included,

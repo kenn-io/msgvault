@@ -41,12 +41,18 @@ func itemKey(feedURL string, item *gofeed.Item, link string) string {
 	return key
 }
 
-// itemMessage maps one feed item to an import message. firstSeen dates an
-// item that carries no date; feeds archive each item once, so that date
-// stays as first recorded.
-func itemMessage(feedURL string, feed *gofeed.Feed, item *gofeed.Item, firstSeen time.Time) messageimport.ImportedMessage {
-	base := siteURL(feedURL, feed)
-	link := resolveURL(base, item.Link)
+// itemMessage maps one feed item to an import message. Relative links
+// resolve against documentURL, the address the feed document came from, as
+// RFC 4287 and RFC 3986 have it; gofeed has already applied any xml:base.
+// firstSeen dates an item that carries no date; feeds archive each item once,
+// so that date stays as first recorded.
+func itemMessage(
+	feedURL, documentURL string, feed *gofeed.Feed, item *gofeed.Item, firstSeen time.Time,
+) messageimport.ImportedMessage {
+	if documentURL == "" {
+		documentURL = feedURL
+	}
+	link := resolveURL(documentURL, item.Link)
 	sentAt := firstSeen
 	switch {
 	case item.PublishedParsed != nil:
@@ -65,12 +71,12 @@ func itemMessage(feedURL string, feed *gofeed.Feed, item *gofeed.Item, firstSeen
 			ExternalID: conversationKey(feedURL),
 			Title:      truncate(feedTitle(feedURL, feed), maxTitleChars),
 		},
-		Sender:   itemSender(feedURL, feed, item, base),
+		Sender:   itemSender(feedURL, documentURL, feed, item),
 		Title:    truncate(strings.TrimSpace(item.Title), maxTitleChars),
 		URL:      link,
 		SentAt:   sentAt.UTC().Format(time.RFC3339Nano),
 		BodyHTML: body,
-		Metadata: itemMetadata(item, base),
+		Metadata: itemMetadata(item, documentURL),
 	}
 	return message
 }
@@ -80,14 +86,14 @@ func itemMessage(feedURL string, feed *gofeed.Feed, item *gofeed.Item, firstSeen
 // "Admin" stay two people. Without an author, the feed's site sent it.
 // Author emails are ignored: feeds often publish one placeholder address for
 // every author, which would merge strangers into one participant.
-func itemSender(feedURL string, feed *gofeed.Feed, item *gofeed.Item, base string) messageimport.MessageImportSender {
+func itemSender(feedURL, documentURL string, feed *gofeed.Feed, item *gofeed.Item) messageimport.MessageImportSender {
 	author := firstAuthor(item.Authors)
 	if author == nil {
 		author = firstAuthor(feed.Authors)
 	}
 	if author != nil {
 		name := truncate(strings.TrimSpace(author.Name), maxSenderNameChars)
-		if authorURL := resolveURL(base, author.URL); authorURL != "" {
+		if authorURL := resolveURL(documentURL, author.URL); authorURL != "" {
 			return messageimport.MessageImportSender{Name: name, URL: authorURL}
 		}
 		if name != "" {
@@ -96,7 +102,7 @@ func itemSender(feedURL string, feed *gofeed.Feed, item *gofeed.Item, base strin
 	}
 	return messageimport.MessageImportSender{
 		Name: truncate(feedTitle(feedURL, feed), maxSenderNameChars),
-		URL:  base,
+		URL:  siteURL(documentURL, feed),
 	}
 }
 
@@ -158,13 +164,13 @@ func feedTitle(feedURL string, feed *gofeed.Feed) string {
 	return feedURL
 }
 
-// siteURL is the feed's website, the base for its relative links, or the
-// feed URL itself when the feed names no usable site.
-func siteURL(feedURL string, feed *gofeed.Feed) string {
-	if site := resolveURL(feedURL, feed.Link); site != "" {
+// siteURL is the feed's website, or the feed document's own address when
+// the feed names no usable site.
+func siteURL(documentURL string, feed *gofeed.Feed) string {
+	if site := resolveURL(documentURL, feed.Link); site != "" {
 		return site
 	}
-	return feedURL
+	return documentURL
 }
 
 // resolveURL resolves ref against base and keeps only absolute http and
