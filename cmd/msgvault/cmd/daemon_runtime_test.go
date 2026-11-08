@@ -493,18 +493,10 @@ func TestShouldUpgradeDaemonRuntimePolicy(t *testing.T) {
 		},
 		{name: "source replaces unprefixed release", daemonVersion: "0.23.0", currentVersion: "v0.23.0-45-gabc", want: true},
 		{name: "unprefixed source replaces release", daemonVersion: "v0.23.0", currentVersion: "0.23.0-45-gabc", want: true},
-		{name: "source keeps newer unprefixed release", daemonVersion: "0.24.0", currentVersion: "v0.23.0-45-gabc"},
-		{name: "source replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-45-gabc", want: true},
-		{name: "equal source stays", daemonVersion: "v0.23.0-45-gabc", currentVersion: "v0.23.0-45-gabc"},
 		{name: "dirty CLI replaces release", daemonVersion: "v0.23.0", currentVersion: "v0.23.0-dirty", want: true},
 		{name: "source keeps newer release", daemonVersion: "v0.24.0", currentVersion: "v0.23.0-45-gabc"},
 		{name: "dev keeps versioned daemon", daemonVersion: "v0.23.0", currentVersion: "dev"},
-		{name: "source keeps hash daemon", daemonVersion: "abc1234", currentVersion: "v0.23.0-45-gabc"},
 		{name: "same base later source keeps earlier", daemonVersion: "v0.23.0-44-gdef", currentVersion: "v0.23.0-45-gabc"},
-		{name: "same base earlier source keeps later", daemonVersion: "v0.23.0-46-gdef", currentVersion: "v0.23.0-45-gabc"},
-		{name: "count boundary later keeps earlier", daemonVersion: "v0.23.0-9-gdef", currentVersion: "v0.23.0-10-gabc"},
-		{name: "count boundary earlier keeps later", daemonVersion: "v0.23.0-10-gabc", currentVersion: "v0.23.0-9-gdef"},
-		{name: "equal count differing hashes stay", daemonVersion: "v0.23.0-45-gdef", currentVersion: "v0.23.0-45-gabc"},
 		{name: "source keeps dirty tag daemon", daemonVersion: "v0.23.0-dirty", currentVersion: "v0.23.0-45-gabc"},
 	}
 

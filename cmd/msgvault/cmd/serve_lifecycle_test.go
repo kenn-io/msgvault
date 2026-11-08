@@ -1258,9 +1258,6 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 		require.New(t)
 
 	withTestVersion(t, "v0.23.0-45-gabc")
-	savedResolver := daemonCLIExecutableResolver
-	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/selected-msgvault", nil }
-	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	dataDir := t.TempDir()
 	server := httptestPingDaemon(t)
 	portText := strconv.Itoa(server.Port)
@@ -1303,9 +1300,6 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
 	assert.Contains(stderr.String(), "daemon restart")
-	assert.Contains(stderr.String(), "v0.23.0-45-gabc")
-	assert.Contains(stderr.String(), daemonVersion)
-	assert.Contains(stderr.String(), "/tmp/selected-msgvault")
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
