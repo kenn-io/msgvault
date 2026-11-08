@@ -323,11 +323,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	refresh := state.refreshIDs(limits.KnownRefresh, dueSet)
 	processed := map[string]bool{}
+	blockedAdmissions := map[string]bool{}
 	admitted := 0
 	hydrator := NewHydrator(imp.client).WithUserSource(imp.users)
 	admissionStep := func(ctx context.Context) (bool, error) {
 		index := -1
 		for i, id := range state.Admissions {
+			if blockedAdmissions[id] {
+				continue
+			}
 			_, known := state.Known[id]
 			if processed[id] || known || opts.Limit <= 0 || admitted < opts.Limit {
 				index = i
@@ -338,6 +342,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return false, nil
 		}
 		id := state.Admissions[index]
+		beforeAdmission := state.copyDiscovery()
 		if !processed[id] {
 			_, known := state.Known[id]
 			selected, err := imp.processMeeting(ctx, scoped, &state, sum, opts, id, progress, hydrator)
@@ -355,6 +360,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			processed[id] = true
 		}
 		state.Admissions = append(state.Admissions[:index], state.Admissions[index+1:]...)
+		if len(state.Deferred) > len(beforeAdmission.Deferred) && state.validateTransientWith(limits) != nil {
+			// A failed new meeting can add a deferred entry to a full cursor.
+			// Keep the admission itself as replayable debt if it cannot fit.
+			state = beforeAdmission
+			state.Admissions = append(append(state.Admissions[:index], state.Admissions[index+1:]...), id)
+			blockedAdmissions[id] = true
+			delete(processed, id)
+		}
 		return true, nil
 	}
 	refreshStep := func(ctx context.Context) (bool, error) {

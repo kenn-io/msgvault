@@ -527,6 +527,39 @@ func TestSaturatedDeferredQueueRotatesReplayableFrontier(t *testing.T) {
 	assert.Equal(int64(1), result.MeetingsAdded)
 }
 
+func TestSaturatedDeferredQueueRetainsFailedAdmission(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := broadFixture(t)
+	source.query.Results = nil
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch}
+	state := newSyncState()
+	state.Fingerprint = scopeFingerprint("work", Identity{UserID: "creator-1", Provenance: "pat_owner", PrincipalID: "bot"}, opts)
+	state.Active = true
+	state.NextLane = 2
+	state.Admissions = []string{"missing", "meeting-1"}
+	for i := range imp.limits.Scopes {
+		task := scopeTask{Kind: "blocks", ID: fmt.Sprintf("deferred-%05d", i)}
+		state.Deferred = append(state.Deferred, deferredScope{Task: &task, Reason: "depth_limit", NextAttemptAt: imp.now().Add(time.Hour)})
+	}
+	cursor, err := state.marshal()
+	require.NoError(err)
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
+	require.NoError(err)
+	run, err := st.StartSyncContext(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, cursor))
+	result, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Equal(int64(1), result.MeetingsAdded)
+	saved, err := imp.loadState(t.Context(), src.ID)
+	require.NoError(err)
+	assert.Contains(saved.Admissions, "missing")
+	assert.NotContains(saved.Admissions, "meeting-1")
+	assert.Len(saved.Deferred, imp.limits.Scopes)
+}
+
 func TestSaturatedFailingRetriesPermitFreshQuery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
