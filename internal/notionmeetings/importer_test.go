@@ -460,7 +460,7 @@ func TestImporterHardFailureRetainsLastSuccessfulState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(before.Known, after.Known)
 	assert.Equal(before.Pending, after.Pending)
-	assert.Equal(len(before.TranscriptRetryUntil), len(after.TranscriptRetryUntil))
+	assert.Len(after.TranscriptRetryUntil, len(before.TranscriptRetryUntil))
 	for id, deadline := range before.TranscriptRetryUntil {
 		assert.Equal(deadline, after.TranscriptRetryUntil[id])
 	}

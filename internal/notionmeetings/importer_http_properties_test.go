@@ -301,7 +301,7 @@ func checkInterruptedMeetingQueue(t *testing.T, known bool, interruption string)
 	mu.Lock()
 	interrupted, headers = true, nil
 	mu.Unlock()
-	for run := 0; run < 3; run++ {
+	for run := range 3 {
 		ctx, cancel := context.WithCancel(t.Context())
 		mu.Lock()
 		cancelRun = cancel
