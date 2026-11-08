@@ -162,7 +162,10 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 // failure, not the previous run's success, and must not force a full cache
 // rebuild on every scheduled attempt.
 func TestScheduledAppleImportFailingToOpenRecordsFailedRun(t *testing.T) {
-	missing := func(t *testing.T) string { return filepath.Join(t.TempDir(), "missing.sqlite") }
+	missing := func(t *testing.T) string {
+		t.Helper()
+		return filepath.Join(t.TempDir(), "missing.sqlite")
+	}
 	for _, tc := range []struct {
 		name       string
 		sourceType string
@@ -175,6 +178,7 @@ func TestScheduledAppleImportFailingToOpenRecordsFailedRun(t *testing.T) {
 				return runScheduledIMessage(ctx, st, config.IMessageConfig{DBPath: path})
 			},
 			fixture: func(t *testing.T) string {
+				t.Helper()
 				path, chat := testutil.NewIMessageChatDB(t)
 				_, err := chat.ExecContext(t.Context(), `CREATE TABLE attachment (filename TEXT);
  CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
@@ -188,7 +192,10 @@ func TestScheduledAppleImportFailingToOpenRecordsFailedRun(t *testing.T) {
 			run: func(ctx context.Context, st *store.Store, path string) error {
 				return runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{Phone: "+15550000000", Path: path})
 			},
-			fixture: func(t *testing.T) string { return createWhatsAppIdentityFixture(t, false, false) },
+			fixture: func(t *testing.T) string {
+				t.Helper()
+				return createWhatsAppIdentityFixture(t, false, false)
+			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
