@@ -78,6 +78,8 @@ type canonicalEvidence struct {
 	Transcript string `json:"transcript,omitempty"`
 }
 
+var errArchiveEvidenceLimit = errors.New("Notion meeting exceeded archive evidence limit")
+
 func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEmail string) (meetingarchive.Snapshot, error) {
 	startedAt, endedAt := h.times()
 	if startedAt.IsZero() {
@@ -131,7 +133,7 @@ func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEma
 	// canonical text duplicate admitted blocks, so the source byte budget alone
 	// cannot guarantee a readable archive. Fail before replacing stored content.
 	if len(raw) > 64<<20 {
-		return meetingarchive.Snapshot{}, errors.New("Notion meeting exceeded archive evidence limit")
+		return meetingarchive.Snapshot{}, errArchiveEvidenceLimit
 	}
 	return meetingarchive.Snapshot{
 		SourceID: sourceID, AccountEmail: accountEmail,

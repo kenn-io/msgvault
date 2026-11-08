@@ -134,6 +134,19 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 	snapshot, err := hydrated.ArchiveSnapshot(sum.SourceID, opts.Identifier, opts.AccountEmail)
 	if err != nil {
 		sum.Errors++
+		if errors.Is(err, errArchiveEvidenceLimit) {
+			state.reason("evidence_limit", "meeting")
+			if exists {
+				previous := state.Known[id]
+				previous.LastAttemptAt = stamp
+				previous.FetchError = "evidence_limit"
+				state.Known[id] = previous
+				state.deferTranscriptAttempt(id, now)
+			} else {
+				state.deferTask(scopeTask{Kind: "meeting", ID: id}, "evidence_limit", now)
+			}
+			return true, nil
+		}
 		return false, hydrationFailure("build Notion archive snapshot", err)
 	}
 	checksum := checksumBytes(snapshot.Raw)

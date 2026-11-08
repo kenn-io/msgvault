@@ -279,7 +279,7 @@ func (s *syncState) currentCoverage(search bool) {
 	if search {
 		current["search_best_effort"] = 1
 	}
-	for _, reason := range []string{"request_budget", "discovery_budget", "unfinished_progress", "cursor_budget", "time_budget", "interrupted", "users_unavailable"} {
+	for _, reason := range []string{"request_budget", "discovery_budget", "unfinished_progress", "cursor_budget", "time_budget", "interrupted", "users_unavailable", "pending_budget"} {
 		if n := s.Coverage.Reasons[reason]; n > 0 {
 			current[reason] = n
 		}

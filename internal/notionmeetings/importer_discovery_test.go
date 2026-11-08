@@ -358,3 +358,32 @@ func TestImporterVisitsDueTranscriptOutsideKnownRefreshWindow(t *testing.T) {
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
 	assert.Equal(t, 1, count)
 }
+
+func TestOversizedEvidenceDefersOneMeetingAndContinues(t *testing.T) {
+	st, source, imp := broadFixture(t)
+	large := hydrationMeeting()
+	large.ID = "oversized"
+	installMeetingHeader(t, source.fakeHydrationSource, large)
+	text := strings.Repeat("a", 12<<20)
+	for _, id := range []string{"summary-1", "notes-1"} {
+		block := paragraph(id, text, false)
+		source.blocks[id] = &block
+	}
+	next := hydrationMeeting()
+	next.ID = "independent"
+	next.MeetingNotes.Children.SummaryBlockID = ""
+	next.MeetingNotes.Children.NotesBlockID = ""
+	installMeetingHeader(t, source.fakeHydrationSource, next)
+	source.query.Results = []MeetingNote{large, next}
+	noSearch := false
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", TokenType: "pat", SearchAccessible: &noSearch})
+	require.NoError(t, err)
+	assert.Positive(t, result.CoverageReasons["evidence_limit"])
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", next.ID).Scan(&count))
+	assert.Equal(t, 1, count)
+	state, err := imp.loadState(t.Context(), result.SourceID)
+	require.NoError(t, err)
+	require.NotEmpty(t, state.Deferred)
+	assert.Equal(t, "evidence_limit", state.Deferred[0].Reason)
+}

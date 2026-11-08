@@ -723,8 +723,7 @@ func TestSnapshotRejectsEvidenceLargerThanReaderLimit(t *testing.T) {
 	result, err := NewHydrator(NewClient(server.URL, "synthetic")).Hydrate(t.Context(), hydrationMeeting())
 	require.NoError(t, err)
 	_, err = result.ArchiveSnapshot(1, "synthetic", "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "evidence limit")
+	require.ErrorIs(t, err, errArchiveEvidenceLimit)
 }
 
 func TestV2ReaderOnlyPromotesVerifiedAttendeeEmails(t *testing.T) {
