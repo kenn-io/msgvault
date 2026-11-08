@@ -37,7 +37,9 @@ func NewWriter(st *store.Store, source *store.Source) *Writer {
 // identifierType that every source shares, instead of an id that means
 // something only inside this source. A connector uses it for the account
 // IDs its platform assigns, so one account is one participant in every
-// source that sees it. An email or phone still decides first.
+// source that sees it. An email or phone still decides first; a sender
+// with an email and an id joins the id to the email's participant, so the
+// account's messages without an email reach that participant too.
 func (w *Writer) WithSenderIdentifierType(identifierType string) *Writer {
 	w.senderIdentifierType = identifierType
 	return w

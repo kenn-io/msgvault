@@ -189,3 +189,74 @@ func TestWriterWriteFromRejectsUnusableEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestWriterJoinsAnAccountToItsMailParticipant(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	// The person's participant from their mail, archived by another source.
+	mail, err := st.EnsureParticipantContext(t.Context(), "octo@example.com", "Octo Cat", "example.com")
+	require.NoError(err)
+	writer := startWriter(t, st, "account-a").WithSenderIdentifierType("example_forge")
+	write := func(externalID string, sender MessageImportSender) int64 {
+		result, err := writer.Write(t.Context(), examplePost(externalID, sender))
+		require.NoError(err)
+		return result.MessageID
+	}
+	senderOf := func(messageID int64) int64 {
+		var senderID int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID))
+		return senderID
+	}
+
+	earlier := write("comment-1", MessageImportSender{ID: "1001", Name: "octo"})
+	accountOnly := senderOf(earlier)
+	require.NotEqual(mail, accountOnly, "without an email the account is its own participant")
+
+	withEmail := write("comment-2", MessageImportSender{ID: "1001", Name: "octo", Email: "octo@example.com"})
+	assert.Equal(mail, senderOf(withEmail), "a sender with an email is the email's participant")
+	assert.Equal(mail, senderOf(earlier), "the account's earlier participant is merged into it")
+	var remaining int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COUNT(*) FROM participants WHERE id = ?`), accountOnly).Scan(&remaining))
+	assert.Zero(remaining)
+	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "example_forge", "1001")
+	require.NoError(err)
+	assert.Equal(mail, owner)
+
+	later := write("comment-3", MessageImportSender{ID: "1001", Name: "octo"})
+	assert.Equal(mail, senderOf(later), "a later post naming the account alone reaches the same participant")
+}
+
+func TestWriterKeepsParticipantsOfDifferentPeopleApart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	mail, err := st.EnsureParticipantContext(t.Context(), "octo@example.com", "Octo Cat", "example.com")
+	require.NoError(err)
+	writer := startWriter(t, st, "account-a").WithSenderIdentifierType("example_forge")
+	earlier, err := writer.Write(t.Context(), examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"}))
+	require.NoError(err)
+	var accountOnly int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT sender_id FROM messages WHERE id = ?`), earlier.MessageID).Scan(&accountOnly))
+	// The user keeps the two participants as different people.
+	for _, participantID := range []int64{mail, accountOnly} {
+		_, _, err := st.CreatePersonFromParticipantContext(t.Context(), participantID)
+		require.NoError(err)
+	}
+
+	withEmail, err := writer.Write(t.Context(), examplePost("comment-2", MessageImportSender{ID: "1001", Name: "octo", Email: "octo@example.com"}))
+	require.NoError(err, "a merge the user's people forbid does not fail the write")
+	var earlierSender, laterSender int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT sender_id FROM messages WHERE id = ?`), earlier.MessageID).Scan(&earlierSender))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT sender_id FROM messages WHERE id = ?`), withEmail.MessageID).Scan(&laterSender))
+	assert.Equal(accountOnly, earlierSender, "the earlier participant stays as it is")
+	assert.Equal(mail, laterSender)
+	owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "example_forge", "1001")
+	require.NoError(err)
+	assert.Equal(mail, owner, "the account id moves to the sender with the email")
+}

@@ -242,7 +242,8 @@ func storedMatches(ctx context.Context, st *store.Store, prior store.MessageMeta
 // resolveSender returns the sender's participant. An email or phone is a
 // global identity shared with every other source, and so is an id of a
 // connector's shared identifier type; anything else becomes an imported
-// identifier, see senderIdentifier.
+// identifier, see senderIdentifier. A sender with both an email and an id of
+// the shared type links the two, see linkSenderIdentifier.
 func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int64, error) {
 	sender := snapshot.Sender
 	var (
@@ -258,6 +259,9 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 			// takes this sender's, as the phone and identifier paths do.
 			_, err = st.UpdateParticipantDisplayNameByEmail(ctx, sender.Email, sender.Name)
 		}
+		if err == nil && sender.ID != "" && snapshot.SenderIdentifierType != "" {
+			err = linkSenderIdentifier(ctx, st, id, snapshot.SenderIdentifierType, sender.ID)
+		}
 	case sender.Phone != "":
 		id, err = st.EnsurePhoneParticipantContext(ctx, sender.Phone, sender.Name)
 	case sender.ID != "" && snapshot.SenderIdentifierType != "":
@@ -271,6 +275,30 @@ func resolveSender(ctx context.Context, st *store.Store, snapshot Snapshot) (int
 		return 0, fmt.Errorf("resolve message sender: %w", err)
 	}
 	return id, nil
+}
+
+// linkSenderIdentifier records a sender's account id as an identifier of
+// the participant its email resolved to, so a later message that names the
+// account by id alone resolves to that participant too. A participant that
+// already owns the id is the same account seen with less metadata, such as
+// earlier messages without an email: its history is merged into this one,
+// as Slack's resolver does. Participants the user keeps as different people
+// are not merged; the id moves to this sender, as Beeper's resolver does.
+func linkSenderIdentifier(ctx context.Context, st *store.Store, participantID int64, identifierType, value string) error {
+	prev, _, err := st.ParticipantByIdentifierContext(ctx, identifierType, value)
+	if err != nil {
+		return err
+	}
+	if prev != 0 && prev != participantID {
+		if err := st.MergeParticipantsContext(ctx, prev, participantID); err != nil {
+			if !errors.Is(err, store.ErrPersonBindingConflict) {
+				return err
+			}
+			slog.WarnContext(ctx, "skipping message sender participant merge across durable persons",
+				"loser_participant_id", prev, "winner_participant_id", participantID, "error", err)
+		}
+	}
+	return st.SetParticipantIdentifierContext(ctx, participantID, identifierType, value)
 }
 
 func (i *Importer) refreshCache(ctx context.Context, label string, sourceID int64, sourceMessageID string) {
