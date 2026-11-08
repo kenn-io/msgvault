@@ -2,6 +2,7 @@ package imap
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"testing"
@@ -43,7 +44,7 @@ func archiveObservations(observations []MembershipObservation) *archivedMembersh
 }
 
 func (a *archivedMemberships) load(
-	mailbox string, uidValidity uint32, uids []uint32,
+	_ context.Context, mailbox string, uidValidity uint32, uids []uint32,
 ) (map[uint32]StoredMembership, error) {
 	a.calls = append(a.calls, storedMembershipLoadCall{
 		mailbox: mailbox, uidValidity: uidValidity, uids: append([]uint32(nil), uids...),

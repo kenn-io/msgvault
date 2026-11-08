@@ -1016,8 +1016,8 @@ func TestGetIMAPStoredMemberships_ReturnsFlagsAndArchivedIdentity(t *testing.T) 
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
-	f.createMessage(t, "[Gmail]/All Mail|1", "")
-	f.createMessage(t, "INBOX|2", "")
+	allMailID := f.createMessage(t, "[Gmail]/All Mail|1", "")
+	inboxID := f.createMessage(t, "INBOX|2", "")
 	f.createMessage(t, "INBOX|3", "")
 
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
@@ -1034,18 +1034,18 @@ func TestGetIMAPStoredMemberships_ReturnsFlagsAndArchivedIdentity(t *testing.T) 
 		},
 	}}))
 
-	stored, err := f.store.GetIMAPStoredMemberships(f.source.ID, "INBOX", 17, []uint32{1, 2, 4})
+	stored, err := f.store.GetIMAPStoredMemberships(t.Context(), f.source.ID, "INBOX", 17, []uint32{1, 2, 4})
 	require.NoError(err)
 	assert.Equal(map[uint32]store.IMAPStoredMembership{
-		1: {SourceMessageID: "[Gmail]/All Mail|1", Flags: []string{`\Answered`, `\Seen`}},
-		2: {SourceMessageID: "INBOX|2", Flags: []string{}},
+		1: {MessageID: allMailID, SourceMessageID: "[Gmail]/All Mail|1", Flags: []string{`\Answered`, `\Seen`}},
+		2: {MessageID: inboxID, SourceMessageID: "INBOX|2", Flags: []string{}},
 	}, stored, "UID 3 was not asked for and UID 4 has no row")
 
-	otherEpoch, err := f.store.GetIMAPStoredMemberships(f.source.ID, "INBOX", 18, []uint32{1, 2, 3})
+	otherEpoch, err := f.store.GetIMAPStoredMemberships(t.Context(), f.source.ID, "INBOX", 18, []uint32{1, 2, 3})
 	require.NoError(err)
 	assert.Empty(otherEpoch, "rows of another UIDVALIDITY describe different messages")
 
-	empty, err := f.store.GetIMAPStoredMemberships(f.source.ID, "INBOX", 17, nil)
+	empty, err := f.store.GetIMAPStoredMemberships(t.Context(), f.source.ID, "INBOX", 17, nil)
 	require.NoError(err)
 	assert.Empty(empty)
 }

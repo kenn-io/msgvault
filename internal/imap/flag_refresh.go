@@ -18,11 +18,12 @@ import (
 // (sync-full --noresume), whose republish diffs every row.
 const flagRefreshWindow = metadataChunkSize
 
-// StoredMembership is what the archive holds for one mailbox UID: the source
-// message ID of the archived message the membership points at, and the flags
-// saved on that membership. Nil Flags means the saved value could not be read,
-// so it never matches what the server reports.
+// StoredMembership is what the archive holds for one mailbox UID: the
+// internal ID and source message ID of the archived message the membership
+// points at, and the flags saved on that membership. Nil Flags means the saved
+// value could not be read, so it never matches what the server reports.
 type StoredMembership struct {
+	MessageID       int64
 	SourceMessageID string
 	Flags           []string
 }
@@ -32,9 +33,10 @@ type StoredMembership struct {
 // CONDSTORE a flag change moves neither UIDNEXT nor the message count, so the
 // UIDNEXT shortcut cannot see it. The loader returns the archived memberships
 // of the requested UIDs in one mailbox epoch; UIDs it leaves out are not
-// refreshed.
+// refreshed. The listing holds the client lock while the loader runs, so the
+// loader must honor ctx.
 func WithStoredMembershipLoader(
-	load func(mailbox string, uidValidity uint32, uids []uint32) (map[uint32]StoredMembership, error),
+	load func(ctx context.Context, mailbox string, uidValidity uint32, uids []uint32) (map[uint32]StoredMembership, error),
 ) Option {
 	return func(c *Client) { c.storedMembershipLoader = load }
 }
@@ -160,7 +162,7 @@ func (c *Client) refreshKnownFlagsLocked(
 		return
 	}
 
-	stored, err := c.storedMembershipLoader(mailbox, status.UIDValidity, candidates)
+	stored, err := c.storedMembershipLoader(ctx, mailbox, status.UIDValidity, candidates)
 	if err != nil {
 		warn("flag refresh skipped: loading archived flags failed", err)
 		return
@@ -210,11 +212,15 @@ func (c *Client) refreshKnownFlagsLocked(
 			if saved.Flags != nil && sameFlags(saved.Flags, result.flags) {
 				continue
 			}
-			// The archived source message ID names the message the stored row
-			// already points at, so the store resolves the observation back to
-			// that row and changes nothing but its flags.
-			c.recordMembershipLocked(
+			// The observation names the message the stored row already points
+			// at, so the store resolves it back to that row and changes nothing
+			// but its flags. The internal ID carries that identity even when
+			// this run relocates the message and its source message ID moves
+			// to another copy; the source message ID stays as a fallback.
+			observation := c.membershipObservationLocked(
 				mailbox, result.uid, saved.SourceMessageID, "", [32]byte{}, 0, result.flags)
+			observation.ArchivedMessageID = saved.MessageID
+			c.observedMemberships = append(c.observedMemberships, observation)
 			changed++
 		}
 	}

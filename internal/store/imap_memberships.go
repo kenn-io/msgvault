@@ -25,6 +25,11 @@ type IMAPMembershipObservation struct {
 	RawSHA256                [32]byte
 	RawSize                  int64
 	Flags                    []string
+	// ArchivedMessageID is the internal ID of the message a flag-only
+	// observation's stored membership points at. It takes precedence over
+	// CanonicalSourceMessageID, which relocation can move to another copy
+	// within the same run. Zero means unknown.
+	ArchivedMessageID int64
 }
 
 // IMAPMailboxDelta is the durable state change collected for one mailbox.
@@ -150,6 +155,9 @@ func (s *Store) readIMAPMessageAliases(
 
 // IMAPStoredMembership is the archived state of one mailbox UID.
 type IMAPStoredMembership struct {
+	// MessageID is the internal ID of the archived message the membership
+	// points at.
+	MessageID int64
 	// SourceMessageID is the source message ID of the archived message the
 	// membership points at.
 	SourceMessageID string
@@ -164,6 +172,7 @@ type IMAPStoredMembership struct {
 // cannot reveal. UIDs without a membership row, or whose message has no source
 // message ID, are absent from the result.
 func (s *Store) GetIMAPStoredMemberships(
+	ctx context.Context,
 	sourceID int64,
 	mailbox string,
 	uidValidity uint32,
@@ -172,7 +181,7 @@ func (s *Store) GetIMAPStoredMemberships(
 	memberships := make(map[uint32]IMAPStoredMembership, len(uids))
 	for chunk := range slices.Chunk(uids, aliasUIDChunkSize) {
 		if err := s.readIMAPStoredMemberships(
-			sourceID, mailbox, uidValidity, chunk, memberships,
+			ctx, sourceID, mailbox, uidValidity, chunk, memberships,
 		); err != nil {
 			return nil, err
 		}
@@ -183,6 +192,7 @@ func (s *Store) GetIMAPStoredMemberships(
 // readIMAPStoredMemberships adds one chunk of UIDs to memberships. It is a
 // separate function so each chunk closes its rows before the next query runs.
 func (s *Store) readIMAPStoredMemberships(
+	ctx context.Context,
 	sourceID int64,
 	mailbox string,
 	uidValidity uint32,
@@ -197,8 +207,8 @@ func (s *Store) readIMAPStoredMemberships(
 	for _, uid := range uids {
 		args = append(args, uid)
 	}
-	rows, err := s.db.Query(`
-		SELECT membership.uid, messages.source_message_id, membership.flags
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT membership.uid, membership.message_id, messages.source_message_id, membership.flags
 		FROM imap_message_memberships membership
 		JOIN messages ON messages.id = membership.message_id
 		WHERE membership.source_id = ? AND membership.mailbox = ?
@@ -217,7 +227,7 @@ func (s *Store) readIMAPStoredMemberships(
 			membership IMAPStoredMembership
 			flagsJSON  sql.NullString
 		)
-		if err := rows.Scan(&uid, &membership.SourceMessageID, &flagsJSON); err != nil {
+		if err := rows.Scan(&uid, &membership.MessageID, &membership.SourceMessageID, &flagsJSON); err != nil {
 			return fmt.Errorf("scan IMAP stored membership: %w", err)
 		}
 		// Decode rather than compare text: SQLite returns the JSON we wrote,
@@ -865,6 +875,7 @@ type imapMembershipResolver struct {
 	sqlite            bool
 	rawMessages       map[int64]map[[32]byte]int64
 	canonicalMessages map[string]int64
+	archivedMessages  map[int64]bool
 	legacyMessages    map[string]int64
 }
 
@@ -1018,8 +1029,19 @@ func (r *imapMembershipResolver) primeIdentities(
 	deltas []normalizedIMAPMailboxDelta,
 ) error {
 	r.canonicalMessages = make(map[string]int64)
+	r.archivedMessages = make(map[int64]bool)
 	for _, normalized := range deltas {
 		for _, observation := range normalized.delta.Memberships {
+			if id := observation.ArchivedMessageID; id > 0 {
+				if _, loaded := r.archivedMessages[id]; !loaded {
+					var found int64
+					err := r.tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE source_id = ? AND id = ?`, r.sourceID, id).Scan(&found)
+					if err != nil && !errors.Is(err, sql.ErrNoRows) {
+						return fmt.Errorf("snapshot archived IMAP identity: %w", err)
+					}
+					r.archivedMessages[id] = err == nil
+				}
+			}
 			if key := observation.CanonicalSourceMessageID; key != "" {
 				if _, loaded := r.canonicalMessages[key]; loaded {
 					continue
@@ -1052,6 +1074,11 @@ func (r *imapMembershipResolver) resolve(ctx context.Context, observation IMAPMe
 
 func (r *imapMembershipResolver) resolveIdentity(ctx context.Context, observation IMAPMembershipObservation, independent bool) (int64, error) {
 	var messageID int64
+	// An archived internal ID survives relocation, which rekeys the message
+	// to another copy and leaves the canonical source message ID unmatched.
+	if id := observation.ArchivedMessageID; id > 0 && r.archivedMessages[id] {
+		return id, nil
+	}
 	if observation.CanonicalSourceMessageID != "" {
 		if id := r.canonicalMessages[observation.CanonicalSourceMessageID]; id != 0 {
 			return id, nil

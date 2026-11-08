@@ -146,7 +146,7 @@ type Client struct {
 	// storedMembershipLoader reads archived flags so a listing on a server
 	// without mod-sequences can refresh flags of messages it already holds.
 	// Nil disables the refresh.
-	storedMembershipLoader func(mailbox string, uidValidity uint32, uids []uint32) (map[uint32]StoredMembership, error)
+	storedMembershipLoader func(ctx context.Context, mailbox string, uidValidity uint32, uids []uint32) (map[uint32]StoredMembership, error)
 
 	// folderFilter overrides which mailboxes are included in the sync.
 	// Zero-valued (empty include and exclude) means "all mailboxes".
