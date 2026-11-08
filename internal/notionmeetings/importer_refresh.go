@@ -45,6 +45,7 @@ func (imp *Importer) processMeeting(ctx context.Context, scoped *store.Store, st
 		if exists {
 			known.FetchError = "malformed_response"
 			state.Known[id] = known
+			state.deferTranscriptAttempt(id, now)
 		} else {
 			state.deferTask(scopeTask{Kind: "meeting", ID: id}, "malformed_response", now)
 		}
@@ -183,7 +184,6 @@ func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting
 	index := -1
 	previous := pendingTranscript{}
 	hasPrevious := false
-	fromBacklog := false
 	for i, pending := range s.Pending {
 		if pending.BlockID == id {
 			index = i
@@ -196,7 +196,6 @@ func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting
 		if pending.BlockID == id {
 			previous = pending
 			hasPrevious = true
-			fromBacklog = true
 			s.PendingBacklog = append(s.PendingBacklog[:i], s.PendingBacklog[i+1:]...)
 			break
 		}
@@ -213,9 +212,8 @@ func (s *syncState) updateTranscriptPending(id string, hydrated *HydratedMeeting
 				s.Pending[index] = pending
 			} else if len(s.Pending) < defaultDiscoveryLimits().Pending {
 				s.Pending = append(s.Pending, pending)
-			} else if fromBacklog {
-				s.PendingBacklog = append(s.PendingBacklog, pending)
 			} else {
+				s.PendingBacklog = append(s.PendingBacklog, pending)
 				s.reason("pending_budget", "transcript")
 			}
 			return

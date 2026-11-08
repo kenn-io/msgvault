@@ -94,7 +94,7 @@ func TestImporterExpiresTranscriptPendingBeforeEarlyReturn(t *testing.T) {
 }
 
 func TestImporterDefersAbandonedTranscriptRetryWithinWindow(t *testing.T) {
-	for _, outcome := range []string{"not_selected", "trash", "archived", "fetch_error_control"} {
+	for _, outcome := range []string{"not_selected", "trash", "archived", "malformed", "fetch_error_control"} {
 		t.Run(outcome, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -127,6 +127,9 @@ func TestImporterDefersAbandonedTranscriptRetryWithinWindow(t *testing.T) {
 				source.blockErrs = map[string]error{meeting.ID: &APIError{Kind: ErrProvider, Status: 404}}
 			}
 			installMeetingHeader(t, source.fakeHydrationSource, meeting)
+			if outcome == "malformed" {
+				source.blocks[meeting.ID] = &Block{Raw: json.RawMessage(`{"object":"block","id":"different-meeting","type":"meeting_notes"}`)}
+			}
 			next := NewImporter(st, source)
 			next.now = func() time.Time { return clock }
 			_, err = next.Import(t.Context(), opts)
@@ -136,13 +139,11 @@ func TestImporterDefersAbandonedTranscriptRetryWithinWindow(t *testing.T) {
 			require.Contains(after.Known, meeting.ID)
 			assert.Equal(before.Known[meeting.ID].LastSuccessAt, after.Known[meeting.ID].LastSuccessAt)
 			assert.Equal(before.Pending[0].RetryUntil, after.TranscriptRetryUntil[meeting.ID])
-			if len(after.Pending) > 0 {
-				require.Len(after.Pending, 1)
-				due, err := time.Parse(time.RFC3339, after.Pending[0].NextAttemptAt)
-				require.NoError(err)
-				assert.True(due.After(clock), "retained pending work must respect its retry cadence")
-				assert.False(due.After(deadline), "deferral must not extend the retry window")
-			}
+			require.Len(after.Pending, 1)
+			due, err := time.Parse(time.RFC3339, after.Pending[0].NextAttemptAt)
+			require.NoError(err)
+			assert.True(due.After(clock), "retained pending work must respect its retry cadence")
+			assert.False(due.After(deadline), "deferral must not extend the retry window")
 		})
 	}
 }
@@ -277,4 +278,29 @@ func TestInterruptedDueRetryDoesNotBlockNextMeeting(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE source_message_id = ?", meeting.ID).Scan(&count))
 	assert.Equal(1, count)
+}
+
+func TestNewRetryOverflowSurvivesReloadAndGetsActiveSlot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	state := newSyncState()
+	deadline := now.Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	for i := range 200 {
+		state.Pending = append(state.Pending, pendingTranscript{BlockID: fmt.Sprintf("pending-%03d", i), NextAttemptAt: now.Add(time.Hour).Format(time.RFC3339), RetryUntil: deadline})
+	}
+	state.updateTranscriptPending("meeting-1", &HydratedMeeting{Discovery: hydrationMeeting()}, true, now)
+	require.Len(state.PendingBacklog, 1)
+	overflowDeadline := state.PendingBacklog[0].RetryUntil
+	cursor, err := state.marshal()
+	require.NoError(err)
+	var recovered syncState
+	require.NoError(json.Unmarshal([]byte(cursor), &recovered))
+	require.NoError(recovered.validate())
+	recovered.Pending = recovered.Pending[1:]
+	recovered.schedulePendingBacklog(now, 200)
+	assert.Empty(recovered.PendingBacklog)
+	require.Len(recovered.Pending, 200)
+	assert.Equal("meeting-1", recovered.Pending[199].BlockID)
+	assert.Equal(overflowDeadline, recovered.TranscriptRetryUntil["meeting-1"])
 }
