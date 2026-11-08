@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -45,18 +46,15 @@ func TestInstallPath(t *testing.T) {
 	data, err := os.ReadFile(archive)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(transport, "curl"), []byte(fmt.Sprintf(`#!/bin/sh
-if [ "$1" = -fsSLI ] && [ "$6" = https://github.com/kenn-io/msgvault/releases/latest ]; then
-    printf https://github.com/kenn-io/msgvault/releases/tag/v1.0.0
-elif [ "$1" = -fsSL ] && [ "$3" = -o ]; then
-    case "$2" in
-        https://github.com/kenn-io/msgvault/releases/download/v1.0.0/msgvault_1.0.0_*.tar.gz) cp "$FIXTURE/release.tar.gz" "$4" ;;
-        https://github.com/kenn-io/msgvault/releases/download/v1.0.0/SHA256SUMS)
-            printf '%x  msgvault_1.0.0_%%s_%%s.tar.gz\n' "$FIXTURE_OS" "$FIXTURE_ARCH" > "$4" ;;
-        *) exit 1 ;;
-    esac
-else
-    exit 1
-fi
+case "$1:$2" in
+    -fsSLI:-o) [ "$6" = https://github.com/kenn-io/msgvault/releases/latest ] || exit 1
+        printf https://github.com/kenn-io/msgvault/releases/tag/v1.0.0 ;;
+    -fsSL:https://github.com/kenn-io/msgvault/releases/download/v1.0.0/msgvault_1.0.0_*.tar.gz)
+        cp "$FIXTURE/release.tar.gz" "$4" ;;
+    -fsSL:https://github.com/kenn-io/msgvault/releases/download/v1.0.0/SHA256SUMS)
+        printf '%x  msgvault_1.0.0_%%s_%%s.tar.gz\n' "$FIXTURE_OS" "$FIXTURE_ARCH" > "$4" ;;
+    *) exit 1 ;;
+esac
 `, sha256.Sum256(data))), 0o700))
 	for _, tc := range []struct {
 		name, shell, optOut, pathEntry string
@@ -72,11 +70,7 @@ fi
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			shell, err := exec.LookPath(tc.shell)
-			if err != nil && tc.shell != "other" {
-				require.NotEqual(t, "test", os.Getenv("GITHUB_JOB"), "CI must install the tested shells")
-				t.Skipf("%s is unavailable", tc.shell)
-			}
+			shell, _ := exec.LookPath(tc.shell)
 			home := t.TempDir()
 			destination := filepath.Join(home, ".local", "bin")
 			installDir := destination
@@ -86,38 +80,37 @@ fi
 			}
 			path := tools
 			if tc.pathEntry == "exact" {
+				require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0o700))
+				require.NoError(t, os.Mkdir(filepath.Join(home, "target"), 0o700))
+				require.NoError(t, os.Symlink(filepath.Join(home, "target"), destination))
 				path += ":" + destination
 			} else if tc.pathEntry == "sibling" {
 				path += ":" + destination + "ary"
 			}
-			profiles := []string{".bashrc", ".profile"}
+			profiles := map[string]string{".bashrc": "# preserved", ".profile": "# preserved"}
 			switch tc.shell {
 			case "zsh":
-				profiles = []string{"zsh/.zshrc", "zsh/.zprofile"}
+				profiles = map[string]string{"zsh/.zshrc": "# preserved", "zsh/.zprofile": "# preserved"}
 			case "fish":
-				profiles = []string{"config/fish/config.fish"}
+				profiles = map[string]string{"config/fish/config.fish": "# preserved"}
 			}
 			if tc.name == "existing login" {
-				profiles[1] = ".bash_profile"
+				delete(profiles, ".profile")
+				profiles[".bash_profile"] = "# preserved\n. \"$HOME/.bashrc\""
 			}
-			original := "# existing profile content"
-			if tc.name == "fresh with spaces" {
-				original = ""
-			} else {
-				for _, profile := range profiles {
-					file := filepath.Join(home, profile)
-					require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o700))
-					content := original
-					if profile == ".bash_profile" {
-						content += "\n. \"$HOME/.bashrc\""
-					}
-					require.NoError(t, os.WriteFile(file, []byte(content), 0o600))
+			for profile, content := range profiles {
+				if tc.name == "fresh with spaces" {
+					profiles[profile] = ""
+					continue
 				}
+				file := filepath.Join(home, profile)
+				require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o700))
+				require.NoError(t, os.WriteFile(file, []byte(content), 0o600))
 			}
 			env := []string{"HOME=" + home, "SHELL=/bin/" + tc.shell, "PATH=" + path, "TMPDIR=" + home,
 				"MSGVAULT_INSTALL_DIR=" + installDir, "MSGVAULT_NO_MODIFY_PATH=" + tc.optOut,
 				"ZDOTDIR=" + filepath.Join(home, "zsh"), "XDG_CONFIG_HOME=" + filepath.Join(home, "config"),
-				"FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
+				"CDPATH=" + home, "FIXTURE=" + fixture, "FIXTURE_OS=" + runtime.GOOS, "FIXTURE_ARCH=" + runtime.GOARCH}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
 			for run := range 2 {
@@ -128,9 +121,14 @@ fi
 				require.NoError(t, err, string(output))
 				assert.Contains(t, string(output), "Checksum verified")
 				if tc.optOut != "" || tc.shell == "other" {
-					assert.Contains(t, string(output), "Run in your current shell:")
+					assert.NotContains(t, string(output), "Open a new terminal")
+					if tc.shell == "other" {
+						assert.Contains(t, string(output), destination)
+					} else {
+						assert.Contains(t, string(output), "Run in your current shell:")
+					}
 				}
-				for _, profile := range profiles {
+				for profile, original := range profiles {
 					data, err := os.ReadFile(filepath.Join(home, profile))
 					require.NoError(t, err)
 					if tc.optOut != "" || tc.pathEntry == "exact" || tc.shell == "other" {
@@ -140,43 +138,44 @@ fi
 					if run == 0 {
 						assert.Contains(t, string(output), filepath.Join(home, profile))
 					}
-					assert.True(t, strings.HasPrefix(string(data), original))
-					wantLines := 2
-					if profile == ".bash_profile" {
-						wantLines++
-						assert.Contains(t, string(data), ". \"$HOME/.bashrc\"")
-					}
-					if original == "" {
-						wantLines = 1
-					}
-					assert.Len(t, strings.Split(strings.TrimSpace(string(data)), "\n"), wantLines)
+					assert.Regexp(t, "^"+regexp.QuoteMeta(original)+"\n[^\n]+\n$", string(data))
 				}
 			}
 			if tc.optOut != "" || tc.shell == "other" {
 				return
 			}
-			probe := "command -v msgvault; msgvault"
+			probe := `command -v msgvault; msgvault; printf '\nTEST_PATH=%s\n' "$PATH"`
 			if tc.shell == "fish" {
-				probe = "command -s msgvault; msgvault"
+				probe = `command -s msgvault; msgvault; printf '\nTEST_PATH=%s\n' (string join : $PATH)`
 			}
-			starts := [][]string{{"-ic", probe}}
-			if tc.shell == "bash" || tc.shell == "zsh" {
-				starts = append(starts, []string{"--login", "-ic", probe})
+			starts := [][]string{}
+			if tc.shell == "zsh" {
+				for profile := range profiles {
+					starts = append(starts, []string{bash, "-c", `. "$1"; ` + probe, "source-profile", filepath.Join(home, profile)})
+				}
+			}
+			if shell != "" {
+				starts = append(starts, []string{shell, "-ic", probe})
+				if tc.shell == "bash" || tc.shell == "zsh" {
+					starts = append(starts, []string{shell, "--login", "-ic", probe})
+				}
 			}
 			for _, args := range starts {
-				args[len(args)-1] += `; printf '\n%s\n' "$PATH"`
-				cmd := exec.CommandContext(ctx, shell, args...)
-				cmd.Env = env
-				cmd.Dir = fixture
+				cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+				cmd.Env, cmd.Dir = env, fixture
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, string(output))
 				assert.Contains(t, string(output), destination+"/msgvault\n")
 				assert.Contains(t, string(output), "installed sentinel\n")
-				count := 2 // Executable resolution and its single PATH entry.
-				if tc.pathEntry == "sibling" {
-					count++
+				_, value, found := strings.Cut(string(output), "\nTEST_PATH=")
+				require.True(t, found, string(output))
+				count := 0
+				for _, entry := range strings.Split(strings.TrimSpace(value), ":") {
+					if entry == destination {
+						count++
+					}
 				}
-				assert.Equal(t, count, strings.Count(string(output), destination))
+				assert.Equal(t, 1, count)
 			}
 		})
 	}

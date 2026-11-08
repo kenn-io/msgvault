@@ -38,8 +38,10 @@ detect_arch() {
 # Find install directory
 find_install_dir() {
     if [ -n "${MSGVAULT_INSTALL_DIR:-}" ]; then
-        mkdir -p "$MSGVAULT_INSTALL_DIR" || error "Could not create install directory: $MSGVAULT_INSTALL_DIR"
-        cd "$MSGVAULT_INSTALL_DIR" && pwd -P
+        local install_dir="$MSGVAULT_INSTALL_DIR"
+        case "$install_dir" in /*) ;; *) install_dir="$PWD/$install_dir" ;; esac
+        mkdir -p "$install_dir" || error "Could not create install directory: $install_dir"
+        printf '%s\n' "$install_dir"
     elif [ -w "/usr/local/bin" ]; then
         echo "/usr/local/bin"
     else
@@ -73,7 +75,11 @@ configure_path() {
             command="fish_add_path --append --path $quoted"
             profiles=("${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish")
             ;;
-        *) configured=false ;;
+        *)
+            warn "Configure PATH manually for your shell. Installed executable:"
+            printf '  %s/msgvault\n\n' "$quoted"
+            return
+            ;;
     esac
     case "${MSGVAULT_NO_MODIFY_PATH:-}" in
         1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])
