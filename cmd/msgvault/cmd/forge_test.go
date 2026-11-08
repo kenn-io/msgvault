@@ -114,6 +114,22 @@ func TestForgeSyncPicksTheAccountByLoginOrIdentifier(t *testing.T) {
 	require.Len(byIdentifier, 1)
 	_, err = fs.sources(t.Context(), st, tokens, "nobody")
 	require.ErrorContains(err, `"nobody" is not added`)
+
+	// The same login on a second server: the login alone is ambiguous, and
+	// each identifier still names its account.
+	_, err = st.GetOrCreateSourceContext(t.Context(), rotationForge, forge.SourceIdentifier("other.example.com", "1"))
+	require.NoError(err)
+	require.NoError(forge.SaveToken(tokens, rotationForge, forge.Token{
+		AccessToken: "3", BaseURL: "https://other.example.com", Instance: "other.example.com", AccountID: "1", Login: "user1",
+	}))
+	_, err = fs.sources(t.Context(), st, tokens, "user1")
+	require.ErrorContains(err, "more than one server")
+	require.ErrorContains(err, "forge.example.com:user:1")
+	require.ErrorContains(err, "other.example.com:user:1")
+	other, err := fs.sources(t.Context(), st, tokens, "other.example.com:user:1")
+	require.NoError(err)
+	require.Len(other, 1)
+	assert.Equal("other.example.com:user:1", other[0].Identifier)
 }
 
 func TestAddForgeRegistersTheTokensAccount(t *testing.T) {

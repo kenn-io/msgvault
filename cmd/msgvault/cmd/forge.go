@@ -315,8 +315,10 @@ func (fs *forgeSource) rememberLogin(ctx context.Context, s *store.Store, tokens
 	return nil
 }
 
-// sources returns the accounts to sync: the one whose login or source
-// identifier is account, or every active one.
+// sources returns the accounts to sync: the one whose source identifier
+// is account, else the one whose login is account, or every active one. A
+// login that names accounts on more than one server is refused, with the
+// identifiers that tell them apart.
 func (fs *forgeSource) sources(ctx context.Context, s *store.Store, tokensDir, account string) ([]*store.Source, error) {
 	all, err := s.ListSourcesContext(ctx, fs.name)
 	if err != nil {
@@ -329,15 +331,27 @@ func (fs *forgeSource) sources(ctx context.Context, s *store.Store, tokensDir, a
 		}
 		return active, nil
 	}
+	var byLogin []*store.Source
 	for _, source := range active {
 		if source.Identifier == account {
 			return []*store.Source{source}, nil
 		}
 		if token, err := forge.LoadToken(tokensDir, fs.name, source.Identifier); err == nil && strings.EqualFold(token.Login, account) {
-			return []*store.Source{source}, nil
+			byLogin = append(byLogin, source)
 		}
 	}
-	return nil, fmt.Errorf("%s account %q is not added (run 'add-%s' first)", fs.label, account, fs.name)
+	switch len(byLogin) {
+	case 0:
+		return nil, fmt.Errorf("%s account %q is not added (run 'add-%s' first)", fs.label, account, fs.name)
+	case 1:
+		return byLogin, nil
+	}
+	identifiers := make([]string, len(byLogin))
+	for i, source := range byLogin {
+		identifiers[i] = source.Identifier
+	}
+	return nil, fmt.Errorf("%s login %q names accounts on more than one server; name one by its identifier: %s",
+		fs.label, account, strings.Join(identifiers, ", "))
 }
 
 // runScheduled is the [<forge>] scheduler job: a sync of every added
