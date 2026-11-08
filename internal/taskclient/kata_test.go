@@ -98,3 +98,29 @@ func TestKataRequiresExplicitEndpoint(t *testing.T) {
 	require.ErrorIs(t, err, ErrInsecureEndpoint)
 	assert.Equal(t, StateDisabled, EvaluateKata(t.Context(), IntegrationConfig{}).State)
 }
+
+func TestProjectUIDRejectsChangedCachedProject(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	var projectID atomic.Int64
+	projectID.Store(1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			writeTestJSON(t, w, map[string]any{"api_schema_version": "0.21.0"})
+		case "/api/v1/projects":
+			writeTestJSON(t, w, map[string]any{"projects": []any{map[string]any{"id": projectID.Load(), "uid": "project-uid", "name": "example", "active": true}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, DefaultProject: "example", HTTPClient: server.Client()})
+	must.NoError(err)
+	uid, err := client.ProjectUID(t.Context(), "example")
+	must.NoError(err)
+	checks.Equal("project-uid", uid)
+	projectID.Store(2)
+	_, err = client.ProjectUID(t.Context(), "example")
+	must.ErrorIs(err, ErrWrongProject)
+}

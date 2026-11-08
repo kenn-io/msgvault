@@ -4372,3 +4372,77 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
 CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
  FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();
+
+-- Retained occurrence claims fence repeated or uncertain important-date writes.
+CREATE TABLE IF NOT EXISTS important_date_deliveries (
+ occurrence_key TEXT PRIMARY KEY,
+ fingerprint TEXT NOT NULL,
+ accepted_fingerprint TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK (state IN ('claimed', 'issue_in_flight', 'retry_issue', 'issue_created', 'notify_in_flight', 'delivered', 'unknown', 'cancelled')),
+ issue_uid TEXT NOT NULL DEFAULT ''
+);
+
+-- Explicitly maintained dependents and pets are not inferred from free text.
+CREATE TABLE IF NOT EXISTS important_date_subjects (
+ uid TEXT PRIMARY KEY,
+ owner_uid TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK (kind IN ('dependent', 'pet')),
+ display_name TEXT NOT NULL,
+ birth_year INTEGER,
+ birth_month INTEGER NOT NULL,
+ birth_day INTEGER NOT NULL,
+ revision INTEGER NOT NULL DEFAULT 1,
+ withdrawn INTEGER NOT NULL DEFAULT 0 CHECK (withdrawn IN (0, 1))
+);
+
+-- Consent is bound to a subject and the exact private destination.
+CREATE TABLE IF NOT EXISTS important_date_consents (
+ subject_uid TEXT NOT NULL,
+ project TEXT NOT NULL,
+ recipient TEXT NOT NULL,
+ granted INTEGER NOT NULL CHECK (granted IN (0, 1)),
+ PRIMARY KEY (subject_uid, project, recipient)
+);
+
+-- Retain the prior value of an explicitly edited or withdrawn subject.
+CREATE TABLE IF NOT EXISTS important_date_subject_history (
+ subject_uid TEXT NOT NULL,
+ revision INTEGER NOT NULL,
+ display_name TEXT NOT NULL,
+ birth_year INTEGER,
+ birth_month INTEGER NOT NULL,
+ birth_day INTEGER NOT NULL,
+ withdrawn INTEGER NOT NULL,
+ PRIMARY KEY (subject_uid, revision)
+);
+
+-- Identity reconciliation retains explicit decisions and prior issue links.
+CREATE TABLE IF NOT EXISTS important_date_reconciliations (
+    uid TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    request_hash TEXT NOT NULL,
+    lineage_digest TEXT NOT NULL,
+    topology_digest TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    identity_revision BIGINT NOT NULL,
+    root_person_uid TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS important_date_identity_bindings (
+    reconciliation_uid TEXT NOT NULL REFERENCES important_date_reconciliations(uid) ON DELETE RESTRICT,
+    original_subject TEXT NOT NULL,
+    meaning TEXT NOT NULL CHECK (meaning IN ('birthday', 'anniversary')),
+    resolved_subject TEXT NOT NULL,
+    effective_owner TEXT NOT NULL,
+    PRIMARY KEY (reconciliation_uid, original_subject, meaning, resolved_subject)
+);
+CREATE TABLE IF NOT EXISTS important_date_occurrence_guards (
+    reconciliation_uid TEXT NOT NULL REFERENCES important_date_reconciliations(uid) ON DELETE RESTRICT,
+    resolved_subject TEXT NOT NULL,
+    meaning TEXT NOT NULL CHECK (meaning IN ('birthday', 'anniversary')),
+    occurrence_year INTEGER NOT NULL,
+    original_occurrence_key TEXT NOT NULL REFERENCES important_date_deliveries(occurrence_key) ON DELETE RESTRICT,
+    accepted_fingerprint TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (reconciliation_uid, resolved_subject, meaning, occurrence_year, original_occurrence_key)
+);

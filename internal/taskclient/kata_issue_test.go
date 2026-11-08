@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,4 +92,39 @@ func TestFindActionTask(t *testing.T) {
 			assert.Empty(citing)
 		})
 	}
+}
+
+func TestCreateTaskReusedRetainsAcknowledgementWhenFetchFails(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	native := katatest.New(t)
+	handler := native.Service.Handler()
+	var failFetch atomic.Bool
+	failFetch.Store(true)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failFetch.Load() && r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/") {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
+	must.NoError(err)
+	create := KataCreate{Title: "Prepare an example"}
+	first, reused, err := client.CreateTaskReused(t.Context(), katatest.Project, "acknowledgement-example", create)
+	var acknowledged *KataCreateAcknowledgedError
+	must.ErrorAs(err, &acknowledged)
+	must.NotEmpty(first.UID)
+	checks.Equal(katatest.Project, first.Project)
+	checks.Equal("open", first.Status)
+	checks.False(reused)
+	second, reused, err := client.CreateTaskReused(t.Context(), katatest.Project, "acknowledgement-example", create)
+	must.ErrorAs(err, &acknowledged)
+	checks.True(reused)
+	checks.Equal(first.UID, second.UID)
+	failFetch.Store(false)
+	stored, err := client.GetTask(t.Context(), katatest.Project, first.UID)
+	must.NoError(err)
+	checks.Equal(first.UID, stored.UID)
 }

@@ -181,6 +181,36 @@ its timezone, and the large-audience cut uses its direct limit. After you change
 values and the commands warn until `msgvault activity build` rebuilds it. See
 [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
+## Important-date alerts
+
+The optional calendar job checks declared birthdays and anniversaries without running the people sweep. It is disabled by default. Enable it only when the configured Kata project and recipient are private and approved for the subjects. Each subject also needs consent for the exact Kata endpoint, project identity, and recipient; see [important-date commands](cli-reference.md#person-important-date).
+
+```toml
+[people.important_dates]
+enabled = false
+private_destination = false
+project = ""
+recipient = ""
+timezone = "UTC"
+schedule = "15 8 * * *"
+leap_day = "february_28"
+use_cadence_presets = false
+custom_tier = ""
+unassigned_tier = ""
+lead_a = 30
+lead_b = 21
+lead_c = 14
+lead_d = 7
+```
+
+When enabled, set `private_destination = true`, an explicit Kata project and recipient, and enable the existing [Kata integration](#integrationskata). `timezone` is UTC or an IANA zone. Leap-day choices are `february_28`, `march_1`, and `leap_years_only`. The schedule uses the shared five-field cron grammar. Lead times are calendar days from 1 through 366.
+
+`use_cadence_presets` explicitly maps contact-frequency values 21, 60, 180, and 365 days to A, B, C, and D. It does not infer importance from other intervals. Custom and unassigned values are excluded unless `custom_tier` or `unassigned_tier` explicitly names A, B, C, or D. These options do not opt preset values into the A/B/C/D mapping. The current draft has no per-subject tier override; revoking a subject's consent excludes it from delivery. Current derived, incomplete, conflicting, and non-Gregorian dates are skipped. A linked child or recorded dependent or pet inherits an eligible parent's tier, but needs its own consent. Merged and split identities are quarantined until an owner inspects and reconciles their lineage. Ambiguous mappings remain quarantined, and affected subjects require fresh consent.
+
+Changing a person's date or parent relationship requires a fresh consent grant for the affected subject. Changing the Kata endpoint or recreating the project also requires a fresh grant. Revocation clears all recorded destinations for that subject, even if Kata is unavailable.
+
+The job sends no greetings and uses no model. After consent, it creates a generic preparation issue whose metadata links the subject, and can send a generic native inbox request pointing to the issue. It retains uncertain delivery states and does not retry them automatically. The status command lists retained states. After inspecting an uncertain outcome, use `person important-date resolve` to record a delivered or cancelled result without resending. After inspecting prior issues and resolving pending attempts, approve a changed date with `person important-date accept-correction` for future occurrences.
+
 ## People sweep inference
 
 People sweeps use one named protocol profile at a time. A profile records the

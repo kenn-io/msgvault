@@ -607,6 +607,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("schedule people sweep: %w", err)
 	}
+	if err := addImportantDateJob(sched, cfg.People.ImportantDates, newImportantDateScheduledRun(cfg, s)); err != nil {
+		return fmt.Errorf("schedule important-date alerts: %w", err)
+	}
 	if err := registerPersonEnrichmentJob(
 		ctx, sched, s, cfg.People.Enrichment, personEnrichmentRuntimeCredentials{
 			Suppression: personEnrichmentEnvironmentLookup(cfg),

@@ -432,6 +432,9 @@ func (s *Store) retirePersonUIDAliasOnce(
 ) (*PersonUIDAlias, error) {
 	var alias *PersonUIDAlias
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var exists bool
 		if err := tx.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM persons WHERE vcard_uid = ?)`,
@@ -465,6 +468,10 @@ func (s *Store) retirePersonUIDAliasOnce(
 			return fmt.Errorf("insert person UID alias: %w", err)
 		}
 		alias, err = s.getPersonUIDAliasTx(ctx, tx, retiredUID)
+		if err != nil {
+			return err
+		}
+		_, err = s.bumpIdentityRevisionContext(ctx, tx)
 		return err
 	})
 	if err != nil {

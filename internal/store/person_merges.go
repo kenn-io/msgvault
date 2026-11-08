@@ -318,6 +318,9 @@ func (s *Store) mergePersonsOnce(
 			absorbed.Revision != request.ExpectedAbsorbedRevision {
 			return ErrPersonRevisionConflict
 		}
+		if err := s.revokeImportantDateChildConsentsTx(ctx, tx, survivor.ID, absorbed.ID); err != nil {
+			return err
+		}
 		if err := s.lockPersonMergeVCardEnvelopesTx(
 			ctx, tx, survivor.ID, absorbed.ID,
 		); err != nil {
@@ -440,6 +443,9 @@ func (s *Store) mergePersonsOnce(
 			return err
 		}
 		if err := s.forceInvalidatePersonEnrichmentTx(ctx, tx, absorbed.ID); err != nil {
+			return err
+		}
+		if err := s.revokeImportantDateChildConsentsTx(ctx, tx, survivor.ID, absorbed.ID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE id = ?`, absorbed.ID); err != nil {

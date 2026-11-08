@@ -1620,3 +1620,83 @@ func TestCardDAVDisplayNameOwnershipUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestCardDAVTombstoneRetainsPersonWithImportantDateSubject(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	input := remoteResource(book.CanonicalURL+"owner.vcf", "remote-owner-example", "Example Owner", "owner@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
+	})
+	must.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	must.NoError(err)
+	must.NotNil(resource.PersonID)
+	person, err := st.GetPersonContext(t.Context(), *resource.PersonID)
+	must.NoError(err)
+	subject, err := st.CreateImportantDateSubjectContext(t.Context(), store.ImportantDateSubjectInput{
+		OwnerUID: person.VCardUID, Kind: "pet", DisplayName: "Example pet",
+		Date: store.PartialDate{Month: new(10), Day: new(23)},
+	})
+	must.NoError(err)
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	must.NoError(err)
+	must.Len(books, 1)
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: books[0].SyncRevision, RemovedHrefs: []string{input.Href},
+	})
+	must.NoError(err)
+	_, err = st.GetPersonContext(t.Context(), person.ID)
+	must.NoError(err)
+	subjects, err := st.ListImportantDateSubjectsContext(t.Context(), person.VCardUID)
+	must.NoError(err)
+	must.Len(subjects, 1)
+	checks.Equal(subject.UID, subjects[0].UID)
+}
+
+func TestCardDAVUnsubscribeRetainsImportantDateEffectiveOwner(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	input := remoteResource(book.CanonicalURL+"effective-owner.vcf", "effective-owner-example", "Example Owner", "effective-owner@example.test", `"one"`)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
+	})
+	must.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, input.Href)
+	must.NoError(err)
+	must.NotNil(resource.PersonID)
+	owner, err := st.GetPersonContext(t.Context(), *resource.PersonID)
+	must.NoError(err)
+	var historicalID int64
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`), "historical-owner-example").Scan(&historicalID))
+	subject, err := st.CreateImportantDateSubjectContext(t.Context(), store.ImportantDateSubjectInput{
+		OwnerUID: "historical-owner-example", Kind: "dependent", DisplayName: "Example dependent",
+		Date: store.PartialDate{Month: new(10), Day: new(23)},
+	})
+	must.NoError(err)
+	// Seed a reviewed binding while keeping the imported owner's revision at
+	// its original baseline, so this checks the cleanup predicate itself.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO important_date_reconciliations
+		(uid, idempotency_key, request_hash, lineage_digest, topology_digest, identity_revision, root_person_uid, actor)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`), "review-example", "review-key-example", "hash", "lineage", "topology", 1, owner.VCardUID, "owner")
+	must.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO important_date_identity_bindings
+		(reconciliation_uid, original_subject, meaning, resolved_subject, effective_owner) VALUES (?, ?, ?, ?, ?)`),
+		"review-example", "owned/"+subject.UID, "birthday", "owned/"+subject.UID, "person/"+owner.VCardUID)
+	must.NoError(err)
+	visible, err := st.ListImportantDateSubjectsContext(t.Context(), owner.VCardUID)
+	must.NoError(err)
+	must.Len(visible, 1)
+	must.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{IsSubscribed: false, IsLookupSource: true}))
+	_, err = st.GetPersonContext(t.Context(), owner.ID)
+	must.NoError(err)
+	visible, err = st.ListImportantDateSubjectsContext(t.Context(), owner.VCardUID)
+	must.NoError(err)
+	must.Len(visible, 1)
+	checks.Equal(subject.UID, visible[0].UID)
+}

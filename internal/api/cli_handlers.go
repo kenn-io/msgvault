@@ -1435,7 +1435,9 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
 	if err := runner.RunCLICommand(s.withPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
-		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
+		if len(req.Args) > 1 && req.Args[0] == "person" && req.Args[1] == "important-date" {
+			s.logger.Error("important-date CLI command failed")
+		} else if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
 			s.logger.Error("failed to run CLI command", "command", req.Args[0], "error_code", coded.Code, "cause", coded.Err)
 		} else {
 			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
@@ -1746,6 +1748,11 @@ func cliRunCommandAllowed(args []string) bool {
 			return cliRunPersonEnrichmentAllowed(args[2:])
 		}
 		switch args[1] {
+		case "important-date":
+			switch args[2] {
+			case "add", "list", "lineage", "reconcile", "consent", "status", "preview", "update", "withdraw", "resolve", "accept-correction":
+				return true
+			}
 		case "provider":
 			return cliRunPersonProviderArgsAllowed(args[2], args[3:])
 		case "sweep":

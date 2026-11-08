@@ -3642,6 +3642,32 @@ shipped definitions and complete workflow.
 
 ---
 
+## person important-date
+
+Preview or maintain explicit dates without sending a greeting. These commands use the daemon and are available to the owner. They do not run an inference provider.
+
+```text
+msgvault person important-dates <person-id> [--timezone UTC] [--leap-day february_28]
+msgvault person important-date add <person-id> --kind pet --name "Example pet" --date=--10-23
+msgvault person important-date list <person-id>
+msgvault person important-date lineage <person-id>
+msgvault person important-date reconcile <person-id> --digest <digest> --identity-revision <revision> --key <unique-key> --decisions-json '<json-array>' [--inspected-snapshots] [--reviewed-split <id>]
+msgvault person important-date update <subject-uid> --revision 1 --name "Example pet" --date=--10-24
+msgvault person important-date withdraw <subject-uid> --revision 2
+msgvault person important-date consent <subject-uid> --grant
+msgvault person important-date consent <subject-uid>
+msgvault person important-date preview
+msgvault person important-date status
+msgvault person important-date resolve <occurrence-key> --resolution delivered --issue <issue-uid>
+msgvault person important-date accept-correction <subject-uid> birthday --date=--10-24
+```
+
+`add` accepts `dependent` or `pet` and returns a stable UID. For consent, prefix that UID with `owned/`; for a person use `person/` followed by the person's vCard UID. Grant consent only for data that may be shared with the exact configured private Kata project and recipient. Omitting `--grant` revokes consent for all destinations, even when Kata is unavailable. Changing a person's date or correcting or withdrawing a dependent or pet revokes the affected subject's consent and preserves the previous value. `list` returns the revision required by update and withdrawal. `lineage` inspects connected merge and split identities and retained occurrence links in one snapshot; it does not release quarantined identities. The `digest` covers the displayed view, including stored split outcomes and merge snapshot digests, but not merge snapshot contents. A nonempty `missing_split_result_ids` means some split outcomes are unavailable. If `missing_person_ids` is nonempty, dates for deleted people are not in the view. Inspect each listed merge with `person merge-show <merge-id> --snapshot` for its verified historical evidence.
+
+To reconcile a merge or split, first inspect `lineage` and any required merge snapshots. Resolve pending or uncertain deliveries before continuing. Supply one decision for each listed person UID and each of `birthday` and `anniversary`, plus one birthday decision for each listed owned subject. Each decision is an object with `original_subject`, `meaning`, and `resolved_subjects`. Person targets use `person/<live-uid>`; an owned subject maps to its own `owned/<uid>` and also requires `effective_owner` set to a live `person/<uid>`. Include every plausible target when attribution is ambiguous; those people stay quarantined until a later explicit decision narrows the mapping. Pass the inspection's `digest` and `identity_revision`, a unique idempotency key, and `--inspected-snapshots` only after reviewing required snapshots. Changed inspections are rejected. Reconciliation retains old issue links and revokes affected consent; grant consent again for the intended destination before delivery. Missing split outcomes remain quarantined. For a split with ambiguous or unrestored rows, inspect each affected split, clear all current contact-frequency values and withdraw current birthdays, anniversaries, active parent relationships, and active owned subjects touching the connected lineage. Pass each reviewed split ID with `--reviewed-split`. Historical facts remain in the archive. Record the intended facts and routes again, then grant fresh consent before delivery.
+
+The single-person preview shows declared date calculations only. The group preview lists currently due candidates and aggregate exclusion reasons; counts describe evaluation decisions and may include the same person more than once. It does not check destination consent or send notifications. `status` lists 100 retained delivery states by default; use `--limit` (up to 500) and `--offset` to inspect further pages. An `unknown` or in-flight result may mean an external write succeeded: inspect the issue and recipient inbox before taking any manual action. `resolve` records an inspected result as `delivered` or `cancelled`; it never resends. After resolving pending attempts and inspecting prior issues, `accept-correction` approves the current date for future occurrences without rewriting their history. The job does not automatically retry it. See [important-date configuration](configuration.md#important-date-alerts) for enablement and limitations.
+
 ## person agenda
 
 Read and organize a person's live Kata tasks. Configure
