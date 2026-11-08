@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -373,7 +374,7 @@ func (f *Forge) nextPage(ctx context.Context, cont *continuation) ([]forge.Post,
 		OperationName: query.name, Query: query.text(f.emails),
 		Variables: map[string]any{"id": pending.Node, "after": pending.After},
 	}, &data)
-	var errs *graphQLErrors
+	var errs *graphQLResponseError
 	switch {
 	case errors.As(err, &errs) && errs.missingAt("node"):
 		// The node was deleted since the earlier page; nothing more of it.
@@ -493,9 +494,7 @@ func (f *Forge) post(cont continuation, n node, kind string, evidence []byte, ti
 	if cont.Number > 0 {
 		metadata["number"] = cont.Number
 	}
-	for key, value := range extra {
-		metadata[key] = value
-	}
+	maps.Copy(metadata, extra)
 	return forge.Post{
 		ID: n.ID, Kind: kind, Author: author(n.Author), Title: title, Body: body,
 		URL: n.URL, CreatedAt: at, Metadata: metadata, Raw: evidence,
@@ -541,7 +540,7 @@ func raw(value jsontext.Value, drop ...string) []byte {
 // paths, the thread is gone or forbidden; missing only in optional fields,
 // the data is whole enough; otherwise the thread stays queued.
 func (f *Forge) threadError(err error, ref forge.ThreadRef, roots ...string) error {
-	var errs *graphQLErrors
+	var errs *graphQLResponseError
 	switch {
 	case err == nil:
 		return nil
@@ -555,7 +554,7 @@ func (f *Forge) threadError(err error, ref forge.ThreadRef, roots ...string) err
 }
 
 // optional reports whether every error is at a field a post may lack.
-func (e *graphQLErrors) optional() bool {
+func (e *graphQLResponseError) optional() bool {
 	for _, err := range e.errors {
 		if len(err.Path) == 0 {
 			return false

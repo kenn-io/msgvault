@@ -1801,8 +1801,9 @@ channels, including unjoined ones; broader tokens list your memberships.
 
 ### `[github]` {#github}
 
-Sync the [GitHub accounts](usage/github.md) added with `msgvault add-github`.
-One block covers every added account; tokens are per-account files.
+Sync the [GitHub accounts](usage/forges.md#github) added with
+`msgvault add-github`. One block covers every added account; tokens are
+per-account files.
 
 ```toml
 [github]
@@ -1819,8 +1820,10 @@ exclude_owners = ["my-employer"]  # never fetch these owners' repositories
 | `include_owners` | all | Organizations and users whose repositories are archived |
 | `exclude_owners` | — | Organizations and users whose repositories are never fetched (wins over `include_owners`) |
 
-Owners compare without case. After either list changes, the next sync searches
-your history again so a newly allowed owner's older threads are archived.
+Owners compare without case. A repository's current owner is checked before
+each thread is fetched. After either list changes, the next sync searches your
+history again so a newly allowed owner's older threads are archived. See
+[Code forges](usage/forges.md#choose-whose-repositories-are-archived).
 
 ### `[teams]`
 

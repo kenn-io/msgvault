@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/github"
+	"go.kenn.io/msgvault/internal/forge/github"
 )
 
 // settingMetadata is the user-facing copy for one setting. The label names
@@ -73,7 +73,7 @@ var settingsGroups = []SettingGroup{
 			{ID: sourceTypeBeeper, Label: "Beeper"},
 			{ID: sourceTypeSlack, Label: "Slack"},
 			{ID: sourceTypeInline, Label: "Inline"},
-			{ID: github.SourceType, Label: "GitHub", Description: "Add accounts with msgvault add-github."},
+			{ID: github.Name, Label: "GitHub", Description: "Add accounts with msgvault add-github."},
 			{ID: "carddav", Label: "CardDAV", Description: "Change these in the CardDAV account category."},
 		},
 	},
@@ -205,10 +205,10 @@ var settingsMetadata = map[string]settingMetadata{
 	"inline.media_scope":            {"Inline conversations", "Which Inline conversations to download attachments from.", sourceTypeInline},
 	"inline.media_max_participants": {"Inline participant limit", "Skip Inline conversations with more people than this or an unknown roster. Zero allows unknown rosters.", sourceTypeInline},
 	"inline.max_media_mb":           {"Inline maximum size", "Largest Inline attachment to download, in MiB.", sourceTypeInline},
-	"github.enabled":                {"Scheduled GitHub sync", "Sync added GitHub accounts on the schedule below.", github.SourceType},
-	"github.schedule":               {"GitHub schedule", "When GitHub sync runs.", github.SourceType},
-	"github.include_owners":         {"Included GitHub owners", "Organizations and users whose repositories are archived. Empty means every owner that is not excluded.", github.SourceType},
-	"github.exclude_owners":         {"Excluded GitHub owners", "Organizations and users whose repositories are never fetched.", github.SourceType},
+	"github.enabled":                {"Scheduled GitHub sync", "Sync added GitHub accounts on the schedule below.", github.Name},
+	"github.schedule":               {"GitHub schedule", "When GitHub sync runs.", github.Name},
+	"github.include_owners":         {"Included GitHub owners", "Organizations and users whose repositories are archived. Empty means every owner that is not excluded.", github.Name},
+	"github.exclude_owners":         {"Excluded GitHub owners", "Organizations and users whose repositories are never fetched.", github.Name},
 	"slack.enabled":                 {"Scheduled Slack sync", "Sync Slack channels on the schedule below.", sourceTypeSlack},
 	"slack.schedule":                {"Slack schedule", "When Slack sync runs.", sourceTypeSlack},
 	"slack.channels":                {"Included Slack channels", "Channel names to sync. One-to-one and group DMs follow their own settings.", sourceTypeSlack},

@@ -6,8 +6,8 @@ import (
 
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/forge/github"
 	"go.kenn.io/msgvault/internal/gcal"
-	"go.kenn.io/msgvault/internal/github"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/messageimport"
@@ -61,7 +61,7 @@ const SlackJobName = sourceTypeSlack
 const InlineJobName = sourceTypeInline
 
 // GitHubJobName drives every added GitHub account.
-const GitHubJobName = github.SourceType
+const GitHubJobName = github.Name
 
 // IMessageJobName drives the selected Apple Messages source.
 const IMessageJobName = "apple-messages"
@@ -172,7 +172,7 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return InlineJobName, true
 	case sourceTypeMatrix:
 		return MatrixJobName, true
-	case github.SourceType:
+	case github.Name:
 		// Every GitHub account's source is driven by the one "github" job.
 		return GitHubJobName, true
 	case sourceTypeSlack:

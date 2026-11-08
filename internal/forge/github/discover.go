@@ -116,7 +116,7 @@ func (f *Forge) scanNotifications(ctx context.Context, state *cursor, owners for
 			return fmt.Errorf("list GitHub notifications: %w", err)
 		}
 		if first {
-			if resp.StatusCode == http.StatusNotModified {
+			if resp.Status == http.StatusNotModified {
 				return nil
 			}
 			lastModified = resp.Header.Get("Last-Modified")

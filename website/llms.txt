@@ -55,7 +55,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
-- [GitHub](https://msgvault.io/docs/usage/github.md): issues, pull requests, reviews, discussions, and watched releases, with owner filters
+- [Code Forges](https://msgvault.io/docs/usage/forges.md): GitHub issues, pull requests, reviews, discussions, and watched releases, with owner filters
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
 - [Messages from Any Source](https://msgvault.io/docs/usage/message-import.md): archive feed items and other messages through the import API
 

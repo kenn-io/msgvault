@@ -15,7 +15,7 @@ All notable changes to msgvault, grouped by release.
   with every comment and review, and the releases of repositories you watch.
   Add an account with `msgvault add-github`, then sync with `sync-github` or
   the `[github]` schedule; `exclude_owners` keeps an organization's
-  repositories from ever being fetched. See [GitHub](usage/github.md).
+  repositories from ever being fetched. See [Code forges](usage/forges.md).
 - Archive messages from sources msgvault has no connector for, such as the
   items of the feeds you follow, with `POST /api/v1/import/message`. Each
   message keeps the type its sender chose, such as `feed_item`, for search

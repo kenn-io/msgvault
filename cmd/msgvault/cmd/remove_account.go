@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/discord"
-	"go.kenn.io/msgvault/internal/github"
+	"go.kenn.io/msgvault/internal/forge"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/inline"
 	matrixsource "go.kenn.io/msgvault/internal/matrix"
@@ -367,6 +366,11 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	}
 
 	// Remove credentials for the source type.
+	if fs, ok := forgeFor(source.SourceType); ok {
+		if err := forge.DeleteToken(cfg.TokensDir(), fs.name, source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove %s token: %v\n", fs.label, err)
+		}
+	}
 	switch source.SourceType {
 	case sourceTypeGmail:
 		remaining, listErr := s.ListSources(sourceTypeGmail)
@@ -445,12 +449,6 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	case sourceTypeMatrix:
 		// The dedicated device and local credential were revoked before the
 		// source cascade so a remote failure could abort removal safely.
-	case github.SourceType:
-		if accountID, err := strconv.ParseInt(source.Identifier, 10, 64); err == nil {
-			if err := github.DeleteToken(cfg.TokensDir(), accountID); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not remove GitHub token: %v\n", err)
-			}
-		}
 	case sourceTypeSlack:
 		if teamID, userID, ok := splitSlackIdentifier(source.Identifier); ok {
 			if err := slack.DeleteToken(cfg.TokensDir(), teamID, userID); err != nil {

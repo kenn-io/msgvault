@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -62,9 +63,7 @@ func (a *API) URL(path string, query url.Values) (string, error) {
 	}
 	if len(query) > 0 {
 		merged := target.Query()
-		for key, values := range query {
-			merged[key] = values
-		}
+		maps.Copy(merged, query)
 		target.RawQuery = merged.Encode()
 	}
 	return target.String(), nil
@@ -83,9 +82,7 @@ func (a *API) Do(ctx context.Context, method, target string, body []byte, header
 		if err != nil {
 			return nil, err
 		}
-		for key, values := range header {
-			req.Header[key] = values
-		}
+		maps.Copy(req.Header, header)
 		if a.UserAgent != "" {
 			req.Header.Set("User-Agent", a.UserAgent)
 		}
@@ -129,24 +126,30 @@ func (a *API) limited(resp *http.Response) (time.Time, bool) {
 	return a.Limited(resp)
 }
 
+// Response is what a decoded GET reports besides its body.
+type Response struct {
+	Status int
+	Header http.Header
+}
+
 // GetJSON sends a GET and decodes a 200 response into out; a 304 leaves out
-// untouched. It returns the response, closed, for its headers.
-func (a *API) GetJSON(ctx context.Context, path string, query url.Values, header http.Header, out any) (*http.Response, error) {
+// untouched.
+func (a *API) GetJSON(ctx context.Context, path string, query url.Values, header http.Header, out any) (Response, error) {
 	target, err := a.URL(path, query)
 	if err != nil {
-		return nil, err
+		return Response{}, err
 	}
 	resp, err := a.Do(ctx, http.MethodGet, target, nil, header)
 	if err != nil {
-		return nil, err
+		return Response{}, err
 	}
 	defer drain(resp)
 	if resp.StatusCode == http.StatusOK {
 		if err := json.UnmarshalRead(io.LimitReader(resp.Body, maxResponseBytes), out); err != nil {
-			return nil, fmt.Errorf("decode %s: %w", redactQuery(target), err)
+			return Response{}, fmt.Errorf("decode %s: %w", redactQuery(target), err)
 		}
 	}
-	return resp, nil
+	return Response{Status: resp.StatusCode, Header: resp.Header}, nil
 }
 
 // HTTPError is a forge API's refusal of a request. A 401 is

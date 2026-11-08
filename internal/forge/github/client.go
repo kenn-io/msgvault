@@ -142,9 +142,9 @@ func (c *client) limited(resp *http.Response) (time.Time, bool) {
 
 // getJSON sends a REST GET within the reserve. A 403 that is no rate limit
 // means the token may not read the resource.
-func (c *client) getJSON(ctx context.Context, path string, query url.Values, header http.Header, out any) (*http.Response, error) {
+func (c *client) getJSON(ctx context.Context, path string, query url.Values, header http.Header, out any) (forge.Response, error) {
 	if err := c.reserve("core"); err != nil {
-		return nil, err
+		return forge.Response{}, err
 	}
 	resp, err := c.rest.GetJSON(ctx, path, query, header, out)
 	return resp, forbiddenIsUnavailable(err)
@@ -172,21 +172,21 @@ type graphQLRequest struct {
 	Variables     map[string]any `json:"variables"`
 }
 
-// graphQLError is one entry of a GraphQL response's errors.
-type graphQLError struct {
+// graphQLProblem is one entry of a GraphQL response's errors.
+type graphQLProblem struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 	Path    []any  `json:"path"`
 }
 
-// graphQLErrors is a GraphQL response's errors, with the data that came
-// back beside them.
-type graphQLErrors struct {
+// graphQLResponseError is a GraphQL response's errors, with the data that
+// came back beside them.
+type graphQLResponseError struct {
 	operation string
-	errors    []graphQLError
+	errors    []graphQLProblem
 }
 
-func (e *graphQLErrors) Error() string {
+func (e *graphQLResponseError) Error() string {
 	messages := make([]string, 0, len(e.errors))
 	for _, err := range e.errors {
 		messages = append(messages, err.Message)
@@ -196,7 +196,7 @@ func (e *graphQLErrors) Error() string {
 
 // missingAt reports whether every error says an object at one of these
 // paths is missing or forbidden: the paths a caller may treat as gone.
-func (e *graphQLErrors) missingAt(paths ...string) bool {
+func (e *graphQLResponseError) missingAt(paths ...string) bool {
 	for _, err := range e.errors {
 		if err.Type != "NOT_FOUND" && err.Type != "FORBIDDEN" {
 			return false
@@ -220,7 +220,7 @@ func (e *graphQLErrors) missingAt(paths ...string) bool {
 }
 
 // graphQL runs a query within the reserve and decodes its data into out.
-// Errors come back as *graphQLErrors, with out decoded from whatever data
+// Errors come back as *graphQLResponseError, with out decoded from whatever data
 // arrived, so a caller decides which missing objects it can do without.
 func (c *client) graphQL(ctx context.Context, request graphQLRequest, out any) error {
 	if err := c.reserve("graphql"); err != nil {
@@ -240,8 +240,8 @@ func (c *client) graphQL(ctx context.Context, request graphQLRequest, out any) e
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var envelope struct {
-		Data   jsontext.Value `json:"data"`
-		Errors []graphQLError `json:"errors"`
+		Data   jsontext.Value   `json:"data"`
+		Errors []graphQLProblem `json:"errors"`
 	}
 	if err := json.UnmarshalRead(resp.Body, &envelope); err != nil {
 		return fmt.Errorf("decode GitHub %s response: %w", request.OperationName, err)
@@ -257,7 +257,7 @@ func (c *client) graphQL(ctx context.Context, request graphQLRequest, out any) e
 		}
 	}
 	if len(envelope.Errors) > 0 {
-		return &graphQLErrors{operation: request.OperationName, errors: envelope.Errors}
+		return &graphQLResponseError{operation: request.OperationName, errors: envelope.Errors}
 	}
 	return nil
 }

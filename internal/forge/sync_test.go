@@ -501,7 +501,7 @@ func TestParseInstance(t *testing.T) {
 	} {
 		instance, base, err := ParseInstance(tc.raw)
 		if tc.bad {
-			assert.Error(err, tc.raw)
+			require.Error(err, tc.raw)
 			continue
 		}
 		require.NoError(err, tc.raw)

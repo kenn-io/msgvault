@@ -46,7 +46,7 @@ func decodeState(blob string) (syncState, error) {
 	return state, nil
 }
 
-func (s syncState) encode() (string, error) {
+func (s *syncState) encode() (string, error) {
 	data, err := json.Marshal(s, json.Deterministic(true))
 	if err != nil {
 		return "", fmt.Errorf("encode forge sync state: %w", err)

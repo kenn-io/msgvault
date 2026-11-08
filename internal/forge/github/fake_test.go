@@ -64,6 +64,7 @@ type fakeGitHub struct {
 }
 
 func newFakeGitHub(t *testing.T) *fakeGitHub {
+	t.Helper()
 	f := &fakeGitHub{
 		t:                t,
 		scopes:           "notifications, repo",
@@ -369,10 +370,6 @@ func ts(value string) time.Time {
 
 func user(login string, id int64) map[string]any {
 	return map[string]any{"__typename": "User", "login": login, "url": "https://github.com/" + login, "databaseId": id}
-}
-
-func bot(login string, id int64) map[string]any {
-	return map[string]any{"__typename": "Bot", "login": login, "url": "https://github.com/apps/" + login, "databaseId": id}
 }
 
 func conn(nodes ...map[string]any) map[string]any {

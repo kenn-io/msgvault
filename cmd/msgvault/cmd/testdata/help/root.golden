@@ -95,7 +95,7 @@ Add and sync sources:
   sync-circleback        Sync Circleback meetings, notes, and transcripts
   sync-discord           Sync registered Discord guild history
   sync-full              Perform a full sync of Gmail accounts
-  sync-github            Archive changed GitHub issues, pull requests, discussions and releases
+  sync-github            Archive changed GitHub threads
   sync-granola           Sync Granola meeting notes and transcripts
   sync-inline            Archive Inline chats
   sync-matrix            Sync joined rooms from Matrix
