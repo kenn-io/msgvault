@@ -29,9 +29,13 @@ export type ListDirectoryPeopleParams = {
    */
   category?: string;
   /**
-   * Current organization
+   * Current canonical organization name
    */
   organization?: string;
+  /**
+   * Exact active canonical organization ID; current employment only, zero omits scope
+   */
+  organization_id?: number;
   /**
    * Primary communication channel
    */

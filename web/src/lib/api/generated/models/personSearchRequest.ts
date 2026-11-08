@@ -8,6 +8,8 @@ export interface PersonSearchRequest {
    * @maximum 100
    */
   limit?: number;
+  /** @minimum 0 */
+  organization_id?: number;
   /** @minLength 1 */
   query: string;
 }

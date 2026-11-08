@@ -2958,7 +2958,7 @@ export const getPersonMessagingRoutes = (
   );
 };
 /**
- * Searches only the curated person vector corpus and returns durable person roots in relevance order.
+ * Ranks supported current searchable non-sensitive profile fields, excluding private Notes and observations. Sends query text to the configured embedding provider under separate people consent. Optional organization_id restricts results to current employment at an active canonical organization. Ranking is not exhaustive.
  * @summary Search durable people semantically
  */
 export const searchPeople = (

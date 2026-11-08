@@ -932,7 +932,7 @@ type ListOrganizationsQuery struct {
 	// IncludeRetired Include retired organizations
 	IncludeRetired *bool `json:"include_retired,omitempty"`
 
-	// Q Normalized-name search
+	// Q Canonical name or current saved name alias prefix; wildcard characters are literal
 	Q *string `json:"q,omitempty"`
 }
 
@@ -1005,8 +1005,11 @@ type ListDirectoryPeopleQuery struct {
 	// Category Current person category
 	Category *string `json:"category,omitempty"`
 
-	// Organization Current organization
+	// Organization Current canonical organization name
 	Organization *string `json:"organization,omitempty"`
+
+	// OrganizationID Exact active canonical organization ID; current employment only, zero omits scope
+	OrganizationID *int64 `json:"organization_id,omitempty"`
 
 	// PrimaryChannel Primary communication channel
 	PrimaryChannel *string `json:"primary_channel,omitempty"`

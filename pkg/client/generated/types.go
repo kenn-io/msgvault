@@ -13547,8 +13547,9 @@ func (p PersonRelationshipsResponse) Validate() error {
 }
 
 type PersonSearchRequest struct {
-	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
-	Query string `json:"query" validate:"required,min=1"`
+	Limit          *int64 `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+	OrganizationID *int64 `json:"organization_id,omitempty" validate:"omitempty,gte=0"`
+	Query          string `json:"query" validate:"required,min=1"`
 }
 
 func (p PersonSearchRequest) Validate() error {
