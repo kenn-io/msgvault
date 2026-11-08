@@ -109,9 +109,9 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
-	// FTSFromStoredRows indexes the message from its stored rows, as a
-	// search-index rebuild does, in place of FTS, so the indexed sender
-	// follows the same rule a rebuild applies.
+	// FTSFromStoredRows indexes the message from its stored rows, in place
+	// of FTS, so the indexed sender follows the rule a search-index rebuild
+	// applies. A message too large to index is left unsearchable.
 	FTSFromStoredRows bool
 	SyncRunItem       *SyncRunItem
 	// RecomputeConversationStats refreshes the stats of the message's
@@ -2598,7 +2598,14 @@ func (s *Store) persistMessageWith(
 	switch {
 	case !s.fts5Available:
 	case data.FTSFromStoredRows:
-		if _, err := q.Exec(s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {
+		// The rebuild's fields, written through the byte-bounded upsert that
+		// marks an overflowing message unsearchable instead of failing it.
+		row, err := s.loadDerivedEmailText(q, messageID)
+		if err != nil {
+			return 0, fmt.Errorf("read stored search fields: %w", err)
+		}
+		row.fts.Body = row.body
+		if _, err := s.upsertFTSOrUnsearchable(q, row.fts); err != nil {
 			return 0, fmt.Errorf("index message from stored rows: %w", err)
 		}
 	case data.FTS != nil:

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -288,6 +289,32 @@ func TestImporterIndexesWhatARebuildIndexes(t *testing.T) {
 	_, err = st.RebuildFTS(nil)
 	require.NoError(err)
 	assert.Equal(t, indexed(), afterImport, "a rebuild changes nothing")
+}
+
+func TestImporterArchivesABodyTooDenseToIndexWhole(t *testing.T) {
+	require := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	// 300,000 distinct two-character CJK words, about 2 MB: inside the
+	// import's 16 MiB limit, but past PostgreSQL's 1 MB tsvector limit if
+	// indexed whole.
+	var body strings.Builder
+	for i := range 300_000 {
+		body.WriteRune(rune(0x4E00 + i/2000))
+		body.WriteRune(rune(0x4E00 + i%2000))
+		body.WriteByte(' ')
+	}
+	req := validRequest(t)
+	req.Message.BodyMarkdown = body.String()
+
+	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
+	require.NoError(err, "the message is archived, its index bounded")
+	ids, _, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"一丁"}}, 10)
+	require.NoError(err)
+	assert.Equal(t, []int64{result.MessageID}, ids, "the indexed part is searchable")
 }
 
 func TestImporterScopesExternalIDsBySource(t *testing.T) {
