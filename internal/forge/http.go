@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,9 +101,18 @@ func (a *API) Do(ctx context.Context, method, target string, body []byte, header
 		return resp, nil
 	}, func(resp *http.Response) bool {
 		if reset, limited := a.limited(resp); limited {
-			// A limit that resets soon is waited out; a later one pauses
-			// the run.
-			return !reset.IsZero() && reset.Sub(now()) <= maxRetryWait
+			// A limit that resets soon is waited out, until its reset; a
+			// later one pauses the run.
+			wait := reset.Sub(now())
+			if reset.IsZero() || wait > maxRetryWait {
+				return false
+			}
+			if resp.Header.Get("Retry-After") == "" {
+				// httpretry waits as long as Retry-After says; a forge that
+				// gave only its reset time waits until then.
+				resp.Header.Set("Retry-After", strconv.Itoa(int(math.Ceil(max(wait, time.Second).Seconds()))))
+			}
+			return true
 		}
 		return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError
 	})

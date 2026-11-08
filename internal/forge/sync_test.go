@@ -5,6 +5,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -35,6 +38,8 @@ type fakeForge struct {
 	failures map[string]fetchFailure
 	// afterPage runs after Discover reports a page.
 	afterPage func(index int)
+	// afterPost runs after the core took a thread's page of posts.
+	afterPost func(key string, index int)
 	// discover, when set, replaces the paged discovery.
 	discover func(ctx context.Context, known KnownThreads, page func([]ThreadRef, []byte) error) error
 
@@ -106,6 +111,9 @@ func (f *fakeForge) Fetch(_ context.Context, ref ThreadRef, continuation []byte,
 		}
 		if err := page(head, pages[i], next); err != nil {
 			return err
+		}
+		if f.afterPost != nil {
+			f.afterPost(ref.Key, i)
 		}
 	}
 	return nil
@@ -569,4 +577,141 @@ func TestSyncKeepsTheAccountsPostsItsOwnWhenItsEmailJoinsAPerson(t *testing.T) {
 	require.NoError(rows.Err())
 	assert.Equal(t, map[string]bool{"p1": false, "c1": true}, fromMe,
 		"the account's email joins it to a person; its posts stay the account's own")
+}
+
+func TestAPIWaitsUntilAShortRateLimitResets(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var calls []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls = append(calls, time.Now())
+		if len(calls) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+	base, err := url.Parse(server.URL)
+	require.NoError(err)
+	api := &API{Base: base, Client: server.Client(), Limited: func(resp *http.Response) (time.Time, bool) {
+		// The forge names only when its limit resets: two seconds from now.
+		return time.Now().Add(2 * time.Second), resp.StatusCode == http.StatusTooManyRequests
+	}}
+
+	_, err = api.GetJSON(t.Context(), "/thing", nil, nil, &struct{}{})
+	require.NoError(err)
+	require.Len(calls, 2)
+	assert.GreaterOrEqual(calls[1].Sub(calls[0]), 2*time.Second, "the retry waits for the reset, not a short backoff")
+}
+
+func TestAnEarlyFailureKeepsTheResumeStateOfTheRunBefore(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}, {post("c1", "issue_comment", ann, "", "Two.", "2026-11-02T10:00:00Z")}}
+	f.failures["i1"] = fetchFailure{page: 1, err: &RateLimitError{Resource: "api", Reset: time.Now().Add(time.Hour)}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	broken := &failingAccountForge{fakeForge: f}
+	_, err = NewSyncer(st, broken, nil).Sync(t.Context(), source.ID, Options{})
+	require.Error(err)
+
+	delete(f.failures, "i1")
+	resumed, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	assert.Equal(1, resumed.Added, "the run after the failure resumes the thread at its second page")
+	assert.Contains(f.fetches, "i1@1")
+}
+
+// failingAccountForge is a forge whose account check fails.
+type failingAccountForge struct{ *fakeForge }
+
+func (f *failingAccountForge) Account(context.Context) (Account, error) {
+	return Account{}, errors.New("GitHub is down")
+}
+
+func TestACheckpointInTheMiddleOfAThreadKeepsItsPlace(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{
+		{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")},
+		{post("c1", "issue_comment", ann, "", "Two.", "2026-11-02T10:00:00Z")},
+		{post("c2", "issue_comment", ann, "", "Three.", "2026-11-03T10:00:00Z")},
+	}
+	syncer := NewSyncer(st, f, nil)
+	// Every page is due for a checkpoint.
+	clock := time.Now()
+	syncer.now = func() time.Time { clock = clock.Add(time.Hour); return clock }
+	var midThread syncState
+	f.afterPost = func(_ string, index int) {
+		if index == 1 {
+			// What a sync that died here would resume from.
+			midThread = resumeState(t, st, source.ID)
+		}
+	}
+	_, err := syncer.Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	require.Len(midThread.Queue, 1)
+	assert.JSONEq(t, `2`, string(midThread.Queue[0].Continuation), "the checkpoint holds the page the fetch reached")
+}
+
+func TestAFullSyncFetchesQueuedThreadsFromTheirStart(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}, {post("c1", "issue_comment", ann, "", "Two.", "2026-11-02T10:00:00Z")}}
+	f.failures["i1"] = fetchFailure{page: 1, err: &RateLimitError{Resource: "api", Reset: time.Now().Add(time.Hour)}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	delete(f.failures, "i1")
+	_, err = NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{Full: true})
+	require.NoError(err)
+	assert.Equal(t, []string{"i1@", "i1@"}, f.fetches, "the full sync starts the thread over")
+}
+
+func TestASchedulerStopKeepsAnIndependentFailure(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z"), ref("i2", "acme", "2026-11-06T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Two", "Body.", "2026-11-01T10:00:00Z")}}
+	f.failures["i1"] = fetchFailure{page: 0, err: errors.New("server error")}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	// The run's budget runs out as it reaches the second thread.
+	budget := &cancelAtOwnerForge{fakeForge: f, key: "i2", cancel: func() { cancel(jobctx.ErrRunBudgetExceeded) }}
+
+	summary, err := NewSyncer(st, budget, nil).Sync(ctx, source.ID, Options{})
+	require.ErrorIs(err, ErrEveryThreadFailed, "the budget ran out, but every thread the run tried had failed")
+	assert.False(t, summary.Paused)
+	assert.Equal(t, "failed", runs(t, st, source.ID)[0].Status)
+}
+
+// cancelAtOwnerForge stops the run's context when the core asks for one
+// thread's owner, as the scheduler does when a run's budget runs out.
+type cancelAtOwnerForge struct {
+	*fakeForge
+	key    string
+	cancel func()
+}
+
+func (f *cancelAtOwnerForge) Owner(ctx context.Context, ref ThreadRef) (string, error) {
+	if ref.Key == f.key {
+		f.cancel()
+		return "", ctx.Err()
+	}
+	return f.fakeForge.Owner(ctx, ref)
 }

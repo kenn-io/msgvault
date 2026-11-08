@@ -98,6 +98,10 @@ type run struct {
 	// stoppedEarly reports that discovery or archiving stopped before it was
 	// done because it had to: the run pauses rather than completes.
 	stoppedEarly bool
+	// loaded reports that state holds the resume state this run started
+	// from. Until it does, the run publishes no state, so an early failure
+	// leaves the previous checkpoint the one the next run resumes from.
+	loaded bool
 }
 
 // Sync finds the threads that changed since the last sync and archives
@@ -134,6 +138,10 @@ func (s *Syncer) Sync(ctx context.Context, sourceID int64, opts Options) (summar
 		summary = r.summary
 	}()
 
+	if r.state, err = r.loadState(ctx); err != nil {
+		return r.summary, err
+	}
+	r.loaded = true
 	account, err := s.forge.Account(ctx)
 	if err != nil {
 		return r.summary, err
@@ -143,12 +151,15 @@ func (s *Syncer) Sync(ctx context.Context, sourceID int64, opts Options) (summar
 	}
 	r.summary.Login = account.Login
 
-	if r.state, err = r.loadState(ctx); err != nil {
-		return r.summary, err
-	}
 	if fingerprint := opts.Owners.fingerprint(); opts.Full || r.state.Owners != fingerprint {
 		r.state.Owners = fingerprint
 		r.state.Cursor = nil
+	}
+	if opts.Full {
+		// A full sync fetches every queued thread from its start too.
+		for i := range r.state.Queue {
+			r.state.Queue[i].Continuation = nil
+		}
 	}
 	// The run's first checkpoint holds the state it resumes from, so the
 	// newest checkpoint is always a whole state.
@@ -232,17 +243,14 @@ func (r *run) discover(ctx context.Context) error {
 	}
 }
 
-// archiveQueue archives queued threads, newest first, until the queue is
-// empty or the run must pause. A thread that fails stays queued, behind the
-// others, with the place its fetch reached.
+// archiveQueue archives queued threads, newest first, until each was tried
+// once or the run must pause. A thread that fails moves behind the others,
+// keeping the place its fetch reached. The queue it works on is the state's,
+// so every checkpoint, including one in the middle of a thread, records the
+// fetch's progress.
 func (r *run) archiveQueue(ctx context.Context) error {
-	queue := slices.Clone(r.state.Queue)
-	var retry []queuedThread
-	defer func() {
-		r.state.Queue = slices.Concat(queue, retry)
-		r.summary.Remaining = len(r.state.Queue)
-	}()
-	for len(queue) > 0 {
+	defer func() { r.summary.Remaining = len(r.state.Queue) }()
+	for tries := len(r.state.Queue); tries > 0 && len(r.state.Queue) > 0; tries-- {
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -250,7 +258,7 @@ func (r *run) archiveQueue(ctx context.Context) error {
 			r.stoppedEarly = true
 			return nil
 		}
-		thread := &queue[0]
+		thread := &r.state.Queue[0]
 		err := r.archive(ctx, thread)
 		switch {
 		case err == nil:
@@ -272,13 +280,12 @@ func (r *run) archiveQueue(ctx context.Context) error {
 		default:
 			r.summary.Failed++
 			r.counts.ErrorsCount++
-			retry = append(retry, *thread)
 			r.syncer.logger.WarnContext(ctx, "forge thread sync failed", "thread", thread.Ref.Name(), "error", err)
 			r.recordItem(ctx, thread.Ref, store.SyncRunItemStatusError, "forge_thread_failed", err)
+			r.state.Queue = append(r.state.Queue, *thread)
 		}
-		queue = queue[1:]
+		r.state.Queue = r.state.Queue[1:]
 		if r.syncer.now().Sub(r.lastSave) >= checkpointEvery {
-			r.state.Queue = slices.Concat(queue, retry)
 			if err := r.save(ctx); err != nil {
 				return err
 			}
@@ -404,25 +411,31 @@ func (r *run) finish(ctx context.Context, retErr error) error {
 	}
 	r.summary.Remaining = len(r.state.Queue)
 	cleanup := context.WithoutCancel(ctx)
-	cp, err := r.checkpoint()
-	if err != nil {
-		return errors.Join(retErr, err, r.scoped.FailSyncWithCheckpointContext(cleanup, r.syncID, err.Error(), &r.counts))
-	}
-	switch {
-	case retErr == nil && ctx.Err() == nil && r.stoppedEarly:
-		r.summary.Paused = true
-		return r.scoped.PauseSyncWithCheckpoint(cleanup, r.syncID, cp)
-	case ctx.Err() != nil:
-		if retErr == nil {
-			retErr = ctx.Err()
+	// A run that never loaded its resume state publishes none, so the
+	// previous checkpoint stays the one the next run resumes from.
+	var cp *store.Checkpoint
+	if r.loaded {
+		var err error
+		if cp, err = r.checkpoint(); err != nil {
+			return errors.Join(retErr, err, r.scoped.FailSyncWithCheckpointContext(cleanup, r.syncID, err.Error(), nil))
 		}
-		if budgetOrYield(ctx) {
+	}
+	if ctx.Err() != nil && budgetOrYield(ctx) {
+		// The scheduler stopped the run; an independent failure still fails it.
+		retErr = jobctx.ErrorAfterYield(ctx, retErr)
+		if retErr == nil && cp != nil {
 			r.summary.Paused = true
 			return r.scoped.PauseSyncWithCheckpoint(cleanup, r.syncID, cp)
 		}
-		return errors.Join(retErr, r.scoped.InterruptSyncWithCheckpoint(ctx, r.syncID, retErr, cp))
+	}
+	switch {
+	case retErr == nil && ctx.Err() == nil && r.stoppedEarly && cp != nil:
+		r.summary.Paused = true
+		return r.scoped.PauseSyncWithCheckpoint(cleanup, r.syncID, cp)
 	case retErr != nil:
 		return errors.Join(retErr, r.scoped.FailSyncWithCheckpointContext(cleanup, r.syncID, retErr.Error(), cp))
+	case ctx.Err() != nil:
+		return errors.Join(ctx.Err(), r.scoped.InterruptSyncWithCheckpoint(ctx, r.syncID, ctx.Err(), cp))
 	}
 	if err := r.scoped.UpdateSyncCheckpointContext(cleanup, r.syncID, cp); err != nil {
 		err = fmt.Errorf("checkpoint %s sync: %w", r.syncer.forge.Name(), err)
