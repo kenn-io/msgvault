@@ -1660,3 +1660,55 @@ func TestImporterAcceptsEmptyCompleteSummaryAndNotes(t *testing.T) {
 	assert.Empty(content.Summary.Text)
 	assert.Empty(content.Notes.Text)
 }
+
+func TestImporterClearsRemovedSectionReferences(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	meeting := hydrationMeeting()
+	meeting.LastEditedTime = "2026-08-30T10:00:00Z"
+	meeting.MeetingNotes.Children.SummaryBlockID = ""
+	meeting.MeetingNotes.Children.NotesBlockID = ""
+	source.query.Results = []MeetingNote{meeting}
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
+	require.NoError(err)
+	assert.False(result.PartialCoverage)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	content := meetingcontent.Decode(RawFormat, raw, nil)
+	assert.Empty(content.Summary.Text)
+	assert.Empty(content.Notes.Text)
+	assert.Empty(content.Actions)
+}
+
+func TestImporterPreservesNonTextEvidenceOnIncompleteRefresh(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	var image Block
+	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"notes-1","type":"image","has_children":false,"image":{"type":"external","external":{"url":"https://example.com/image.png"}}}`), &image))
+	source.blocks["notes-1"] = &image
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "work"})
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	meeting := hydrationMeeting()
+	meeting.LastEditedTime = "2026-08-30T10:00:00Z"
+	source.query.Results = []MeetingNote{meeting}
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	source.blockErrs = map[string]error{"notes-1": ErrRateLimited}
+	result, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", Full: true})
+	require.NoError(err)
+	assert.True(result.PartialCoverage)
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	var evidence rawEvidence
+	require.NoError(json.Unmarshal(raw, &evidence))
+	assert.True(evidence.Notes.Preserved)
+	assert.Contains(string(evidence.Notes.Root), "image.png")
+}

@@ -322,7 +322,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		hydrated, hydrateErr := hydrator.Hydrate(ctx, meeting)
 		if hydrateErr != nil {
 			sum.Errors++
-			hardErrors = append(hardErrors, hydrationFailure("hydrate Notion meeting", hydrateErr))
+			hardErrors = append(hardErrors, hydrationFailure("read Notion meeting", hydrateErr))
 			progress("Notion meeting: hydration failed")
 			continue
 		}
@@ -599,17 +599,22 @@ func preserveArchivedSections(meeting *HydratedMeeting, archived archivedMeeting
 	}
 	sections := []struct {
 		name      string
+		id        string
 		tree      *blockTree
 		text      *string
 		prior     rawBlockTree
 		priorText string
 	}{
-		{"summary", &meeting.SummaryTree, &meeting.Summary, old.Summary, oldTexts.Summary},
-		{"notes", &meeting.NotesTree, &meeting.Notes, old.Notes, oldTexts.Notes},
-		{"transcript", &meeting.TranscriptTree, &meeting.Transcript, old.Transcript, oldTexts.Transcript},
+		{"summary", meeting.Discovery.MeetingNotes.Children.SummaryBlockID, &meeting.SummaryTree, &meeting.Summary, old.Summary, oldTexts.Summary},
+		{"notes", meeting.Discovery.MeetingNotes.Children.NotesBlockID, &meeting.NotesTree, &meeting.Notes, old.Notes, oldTexts.Notes},
+		{"transcript", meeting.Discovery.MeetingNotes.Children.TranscriptBlockID, &meeting.TranscriptTree, &meeting.Transcript, old.Transcript, oldTexts.Transcript},
 	}
 	for _, section := range sections {
-		if strings.TrimSpace(section.priorText) == "" || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
+		if section.name != "transcript" && section.id == "" {
+			continue
+		}
+		hasPrior := strings.TrimSpace(section.priorText) != "" || (archived.HasEvidence && old.SchemaVersion == 2 && len(section.prior.Root) != 0 && len(section.prior.Blocks) != 0)
+		if !hasPrior || (section.tree.Complete && !section.tree.Filtered && (section.name != "transcript" || strings.TrimSpace(*section.text) != "")) {
 			continue
 		}
 		if !archived.HasEvidence || old.SchemaVersion != 2 {
