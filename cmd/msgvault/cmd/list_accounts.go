@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
@@ -21,7 +22,9 @@ var listAccountsCmd = &cobra.Command{
 	Long: `List every account in the archive: email, chat, meeting, and file-import
 sources. JSON rows have id, email, type (gmail, imap, mbox, slack, ...),
 display_name, and last_sync. message_count and source_deleted_count are
-included when ready; counts_pending: true replaces them while refreshing.
+included when ready; counts_pending: true replaces them before usable counts exist.
+Warm requests try fresh counts for 500 ms, then show the previous count's age.
+Cold requests wait up to two seconds. Stale JSON rows include stale and as_of.
 
 Pass email to --account or id to --source-id on other commands;
 export-messages takes --source <type>:<email>.`,
@@ -76,6 +79,8 @@ func daemonAccountsToStats(accounts []daemonclient.CLIAccount, countsPending boo
 			MessageCount:       account.MessageCount,
 			CountsPending:      countsPending,
 			SourceDeletedCount: account.SourceDeletedCount,
+			Stale:              account.Stale,
+			AsOf:               account.AsOf,
 			LastSync:           account.LastSync,
 		}
 	}
@@ -109,11 +114,14 @@ func formatMessagesCell(s accountStats) string {
 	if s.CountsPending {
 		return "pending"
 	}
+	count := formatCount(s.MessageCount)
 	if s.SourceDeletedCount > 0 {
-		return fmt.Sprintf("%s (+%s deleted from source)",
-			formatCount(s.MessageCount), formatCount(s.SourceDeletedCount))
+		count = fmt.Sprintf("%s (+%s deleted from source)", count, formatCount(s.SourceDeletedCount))
 	}
-	return formatCount(s.MessageCount)
+	if s.Stale && s.AsOf != nil {
+		count += " (counted " + humanize.Time(*s.AsOf) + ")"
+	}
+	return count
 }
 
 func outputAccountsJSON(stats []accountStats) error {
@@ -135,6 +143,10 @@ func outputAccountsJSON(stats []accountStats) error {
 		} else {
 			entry["message_count"] = s.MessageCount
 			entry["source_deleted_count"] = s.SourceDeletedCount
+			if s.Stale {
+				entry["stale"] = true
+				entry["as_of"] = s.AsOf
+			}
 		}
 		if s.LastSync != nil && !s.LastSync.IsZero() {
 			entry["last_sync"] = s.LastSync.Format(time.RFC3339)
@@ -180,6 +192,8 @@ type accountStats struct {
 	DisplayName        string
 	MessageCount       int64
 	SourceDeletedCount int64
+	Stale              bool
+	AsOf               *time.Time
 	LastSync           *time.Time
 }
 

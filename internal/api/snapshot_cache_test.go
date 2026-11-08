@@ -93,37 +93,51 @@ func TestSnapshotCacheSlowComputeServesPreviousValue(t *testing.T) {
 	})
 }
 
-func TestSnapshotCacheImmediateStalePolicy(t *testing.T) {
+func TestSnapshotCacheStaleWaitPolicy(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lifetimeCtx, cancelLifetime := context.WithCancel(t.Context())
 		defer cancelLifetime()
-		cache := snapshotCache[int]{serveStaleImmediately: true}
+		cache := snapshotCache[int]{staleWait: 500 * time.Millisecond}
+		started := time.Now()
 		value, asOf, stale, err := cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
-			func(context.Context) (int, error) { return 1, nil })
+			func(context.Context) (int, error) { time.Sleep(time.Second); return 1, nil })
 		require.NoError(t, err)
+		assert.Equal(t, time.Second, time.Since(started), "cold reads retain the original budget")
 		assert.Equal(t, 1, value)
 		assert.False(t, stale)
+		release := make(chan struct{})
 		var computes atomic.Int32
 		blocked := func(ctx context.Context) (int, error) {
 			computes.Add(1)
-			<-ctx.Done()
-			return 0, ctx.Err()
+			select {
+			case <-release:
+				return 2, nil
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
 		}
 		for range 2 {
 			started := time.Now()
 			value, previousAsOf, stale, err := cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second, blocked)
 			require.NoError(t, err)
-			assert.Zero(t, time.Since(started))
+			assert.Equal(t, 500*time.Millisecond, time.Since(started))
 			assert.Equal(t, 1, value)
 			assert.Equal(t, asOf, previousAsOf)
 			assert.True(t, stale)
 			synctest.Wait()
 		}
-		assert.Equal(t, int32(1), computes.Load(), "repeats share the blocked refresh")
+		assert.Equal(t, int32(1), computes.Load(), "repeats share the still-running refresh")
 		reqCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, _, _, err = cache.get(reqCtx, lifetimeCtx, "k", 2*time.Second, blocked)
 		require.ErrorIs(t, err, context.Canceled)
+		close(release)
+		synctest.Wait()
+		value, _, stale, err = cache.get(t.Context(), lifetimeCtx, "k", 2*time.Second,
+			func(context.Context) (int, error) { return 2, nil })
+		require.NoError(t, err)
+		assert.Equal(t, 2, value)
+		assert.False(t, stale, "a fast refresh returns fresh counts")
 	})
 }
 

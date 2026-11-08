@@ -709,10 +709,10 @@ type CLIQueryMessageSummary query.MessageSummary
 type cliAccountsResponse struct {
 	Accounts []cliAccountResponse `json:"accounts"`
 	// Stale reports message counts served from an earlier snapshot, including
-	// immediate reuse while a refresh runs. AsOf says when it was taken.
+	// reuse after a short refresh wait. AsOf says when it was taken.
 	Stale bool      `json:"stale,omitempty"`
 	AsOf  time.Time `json:"as_of,omitzero"`
-	// CountsPending reports that the first count refresh is still running, so
+	// CountsPending reports that no count for the current accounts is ready, so
 	// every count is a zero placeholder. Only callers sending
 	// apiprotocol.AllowPendingCountsHeader get it.
 	CountsPending bool `json:"counts_pending,omitempty"`
