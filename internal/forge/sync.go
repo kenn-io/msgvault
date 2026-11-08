@@ -156,6 +156,7 @@ func (s *Syncer) Sync(ctx context.Context, sourceID int64, opts Options) (summar
 		r.state.Cursor = nil
 	}
 	if opts.Full {
+		r.state.Full = true
 		// A full sync fetches every queued thread from its start too.
 		for i := range r.state.Queue {
 			r.state.Queue[i].Continuation = nil
@@ -210,11 +211,22 @@ func (r *run) loadState(ctx context.Context) (syncState, error) {
 
 // discover queues the threads that changed since the last sync, saving
 // after every page, so an interrupted discovery resumes where it stopped.
+// A thread archived at the update discovery reports is unchanged and not
+// queued: a forge's lists overlap at their boundaries, and a thread they
+// show again needs no fetch. A full sync queues every thread it finds.
 func (r *run) discover(ctx context.Context) error {
 	err := r.syncer.forge.Discover(ctx, r.state.Cursor, r.owners, r.known,
 		func(threads []ThreadRef, next []byte) error {
+			var unchanged map[string]time.Time
+			if !r.state.Full {
+				var err error
+				if unchanged, err = r.known.updates(ctx); err != nil {
+					return err
+				}
+			}
 			allowed := slices.DeleteFunc(slices.Clone(threads), func(ref ThreadRef) bool {
-				return !r.owners.Allows(ref.Owner)
+				archived, ok := unchanged[ref.Key]
+				return !r.owners.Allows(ref.Owner) || ok && !ref.UpdatedAt.IsZero() && !ref.UpdatedAt.After(archived)
 			})
 			r.summary.Found += r.state.queue(allowed)
 			r.state.Cursor = next
@@ -228,6 +240,7 @@ func (r *run) discover(ctx context.Context) error {
 		})
 	switch {
 	case err == nil:
+		r.state.Full = false
 		return nil
 	case errors.Is(err, errPause):
 		r.stoppedEarly = true

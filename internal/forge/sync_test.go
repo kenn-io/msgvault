@@ -744,3 +744,56 @@ func (f *cancelAfterFetchForge) Fetch(ctx context.Context, ref ThreadRef, contin
 	defer f.cancel()
 	return f.fakeForge.Fetch(ctx, ref, continuation, page)
 }
+
+func TestSyncFetchesNoThreadArchivedAtTheUpdateFound(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}, {ref("i2", "acme", "2026-11-06T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Two", "Body.", "2026-11-01T10:00:00Z")}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	// The forge's lists show both threads again, one changed since.
+	f.pages = append(f.pages, []ThreadRef{ref("i1", "acme", "2026-11-07T10:00:00Z"), ref("i2", "acme", "2026-11-08T10:00:00Z")})
+	again, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	assert.Equal(1, again.Found, "the unchanged thread is not queued")
+	assert.Equal(1, again.Archived)
+
+	full, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{Full: true})
+	require.NoError(err)
+	assert.Equal(2, full.Archived, "a full sync fetches every thread it finds")
+}
+
+func TestAFullSyncThatPausesStillFetchesEveryThreadWhenItResumes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source := newForgeSource(t, st)
+	f := newFakeForge()
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}, {ref("i2", "acme", "2026-11-06T10:00:00Z")}}
+	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
+	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Two", "Body.", "2026-11-01T10:00:00Z")}}
+	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+
+	ctx, preempt := jobctx.WithPreemption(t.Context())
+	f.afterPage = func(i int) {
+		if i == 0 {
+			preempt()
+		}
+	}
+	paused, err := NewSyncer(st, f, nil).Sync(ctx, source.ID, Options{Full: true})
+	require.NoError(err)
+	assert.True(paused.Paused)
+
+	f.afterPage = nil
+	resumed, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	require.NoError(err)
+	assert.Equal(2, resumed.Archived, "the full sync's discovery finishes as a full one")
+	assert.False(resumeState(t, st, source.ID).Full)
+}

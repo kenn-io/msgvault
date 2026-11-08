@@ -68,7 +68,9 @@ type knownThreads struct {
 	store    *store.Store
 	sourceID int64
 	loaded   []KnownThread
-	ready    bool
+	// updated is each archived thread's update when it was fetched, by key.
+	updated map[string]time.Time
+	ready   bool
 }
 
 func (k *knownThreads) load(ctx context.Context) error {
@@ -83,10 +85,12 @@ func (k *knownThreads) load(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read archived threads: %w", err)
 	}
+	k.updated = make(map[string]time.Time, len(ids))
 	for _, id := range ids {
 		facts, ok := decodeFacts(metadata[id])
 		if ok {
 			k.loaded = append(k.loaded, KnownThread{Ref: facts.Ref, CheckedAt: facts.CheckedAt})
+			k.updated[facts.Ref.Key] = facts.Ref.UpdatedAt
 		}
 	}
 	slices.SortStableFunc(k.loaded, func(a, b KnownThread) int {
@@ -138,4 +142,12 @@ func (k *knownThreads) Each(ctx context.Context, fn func(KnownThread) error) err
 		}
 	}
 	return nil
+}
+
+// updates returns each archived thread's update when it was fetched, by key.
+func (k *knownThreads) updates(ctx context.Context) (map[string]time.Time, error) {
+	if err := k.load(ctx); err != nil {
+		return nil, err
+	}
+	return k.updated, nil
 }

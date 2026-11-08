@@ -21,6 +21,9 @@ type syncState struct {
 	Owners string `json:"owners,omitempty"`
 	// Cursor is the forge's discovery state.
 	Cursor jsontext.Value `json:"cursor,omitempty"`
+	// Full reports a full sync's discovery in progress: until it completes,
+	// every thread it finds is fetched, archived at that update or not.
+	Full bool `json:"full,omitempty"`
 	// Queue holds the threads found and not yet archived.
 	Queue []queuedThread `json:"queue,omitempty"`
 }
