@@ -173,12 +173,14 @@ func (s *syncState) activateDeferred(now time.Time, limits discoveryLimits) {
 	}
 	s.Deferred = retained
 }
-func (s syncState) validateTransient() error {
+func (state *syncState) validateTransient() error {
+	s := *state
 	return s.validateTransientWith(defaultDiscoveryLimits())
 }
-func (s syncState) validateTransientWith(limits discoveryLimits) error {
+func (state *syncState) validateTransientWith(limits discoveryLimits) error {
+	s := *state
 	if len(s.Admissions) > limits.Pending || len(s.Frontier) > limits.Frontier || len(s.Seen) > limits.Scopes || len(s.Deferred) > limits.Scopes || len(s.Windows) > limits.Frontier || len(s.Pending) > limits.Pending || len(s.Coverage.Diagnostics) > limits.Diagnostics {
-		return errors.New("Notion discovery cursor exceeds queue limits")
+		return errors.New("notion discovery cursor exceeds queue limits")
 	}
 	s.Known = nil
 	s.TranscriptRetryUntil = nil
@@ -188,16 +190,18 @@ func (s syncState) validateTransientWith(limits discoveryLimits) error {
 		return err
 	}
 	if len(encoded) > limits.Bytes {
-		return errors.New("Notion discovery cursor exceeds transient byte limit")
+		return errors.New("notion discovery cursor exceeds transient byte limit")
 	}
 	return nil
 }
-func (s syncState) workRemaining() int {
+func (state *syncState) workRemaining() int {
+	s := *state
 	return len(s.Admissions) + len(s.Frontier) + len(s.Windows) + len(s.Pending) + len(s.PendingBacklog) + len(s.Deferred)
 }
 
 // copyDiscovery isolates a provider page until all its work fits a durable cursor.
-func (s syncState) copyDiscovery() syncState {
+func (state *syncState) copyDiscovery() syncState {
+	s := *state
 	s.Admissions = append([]string(nil), s.Admissions...)
 	s.Frontier = append([]scopeTask(nil), s.Frontier...)
 	s.Windows = append([]queryWindow(nil), s.Windows...)
@@ -209,36 +213,37 @@ func (s syncState) copyDiscovery() syncState {
 }
 func validateScopeTask(task scopeTask) error {
 	if task.Depth < 0 || task.Offset < 0 {
-		return errors.New("Notion cursor has negative scope position")
+		return errors.New("notion cursor has negative scope position")
 	}
 	switch task.Kind {
 	case "search":
 	case "blocks", "data_source", "database", "meeting":
 		if strings.TrimSpace(task.ID) == "" {
-			return errors.New("Notion cursor has blank scope ID")
+			return errors.New("notion cursor has blank scope ID")
 		}
 	default:
-		return errors.New("Notion cursor has unsupported scope kind")
+		return errors.New("notion cursor has unsupported scope kind")
 	}
 	return nil
 }
 func validateWindow(window queryWindow) error {
 	if (!window.From.IsZero() && !window.From.Equal(window.From.Truncate(time.Minute))) || (!window.To.IsZero() && !window.To.Equal(window.To.Truncate(time.Minute))) {
-		return errors.New("Notion cursor query bounds must use minute precision")
+		return errors.New("notion cursor query bounds must use minute precision")
 	}
 	if !window.From.IsZero() && !window.To.IsZero() && !window.To.After(window.From) {
-		return errors.New("Notion cursor has invalid query interval")
+		return errors.New("notion cursor has invalid query interval")
 	}
 	return nil
 }
-func (s syncState) validateDiscovery() error {
+func (state *syncState) validateDiscovery() error {
+	s := *state
 	if s.NextLane < 0 || s.NextLane > 3 {
-		return errors.New("Notion cursor has invalid scheduler lane")
+		return errors.New("notion cursor has invalid scheduler lane")
 	}
 	ids := map[string]bool{}
 	for _, id := range s.Admissions {
 		if strings.TrimSpace(id) == "" || ids[id] {
-			return errors.New("Notion cursor has blank or duplicate admission")
+			return errors.New("notion cursor has blank or duplicate admission")
 		}
 		ids[id] = true
 	}
@@ -254,7 +259,7 @@ func (s syncState) validateDiscovery() error {
 	}
 	for _, gap := range s.Deferred {
 		if (gap.Task == nil) == (gap.Window == nil) || gap.NextAttemptAt.IsZero() || gap.Reason == "" {
-			return errors.New("Notion cursor has invalid deferred scope")
+			return errors.New("notion cursor has invalid deferred scope")
 		}
 		if gap.Task != nil {
 			if err := validateScopeTask(*gap.Task); err != nil {

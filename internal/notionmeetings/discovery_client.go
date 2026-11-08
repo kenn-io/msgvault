@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -99,7 +99,7 @@ type attemptBudget struct {
 }
 type pageSizeKey struct{}
 
-var ErrRequestBudget = fmt.Errorf("Notion HTTP attempt budget exhausted")
+var ErrRequestBudget = errors.New("notion HTTP attempt budget exhausted")
 
 // WithAttemptBudget shares one HTTP attempt allowance across clients and retries.
 func WithAttemptBudget(ctx context.Context, attempts int) context.Context {

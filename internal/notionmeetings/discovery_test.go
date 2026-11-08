@@ -277,7 +277,7 @@ func TestBoundedTraversalCheckpointRoundTripPreservesAdmissions(t *testing.T) {
 			}
 		}
 		want := map[string]bool{}
-		for index := 0; index < count; index++ {
+		for index := range count {
 			want[fmt.Sprintf("meeting-%d", index)] = true
 		}
 		assert.Equal(ht, want, got)

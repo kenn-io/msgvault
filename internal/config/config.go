@@ -2198,7 +2198,7 @@ type NotionMeetingsSource struct {
 func (s NotionMeetingsSource) SearchAccessibleEnabled() bool {
 	return s.SearchAccessible == nil || *s.SearchAccessible
 }
-func (s *NotionMeetingsSource) normalizeDiscoveryScope() error {
+func normalizeNotionDiscoveryScope(s *NotionMeetingsSource) error {
 	s.TokenType = strings.ToLower(strings.TrimSpace(s.TokenType))
 	s.UserID = strings.TrimSpace(s.UserID)
 	if s.TokenType != "" && s.TokenType != "pat" {
@@ -2531,7 +2531,7 @@ func (c *Config) validateMeetingSources() error {
 		return err
 	}
 	for i := range c.NotionMeetings {
-		if err := c.NotionMeetings[i].normalizeDiscoveryScope(); err != nil {
+		if err := normalizeNotionDiscoveryScope(&c.NotionMeetings[i]); err != nil {
 			return err
 		}
 		email, err := c.NotionMeetings[i].EffectiveAccountEmail()

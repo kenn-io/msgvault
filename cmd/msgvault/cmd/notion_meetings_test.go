@@ -334,7 +334,7 @@ func TestNotionProbeErrorsArePrivate(t *testing.T) {
 	var out bytes.Buffer
 	err := runNotionMeetingsProbe(t.Context(), &out, fakeNotionProbe{err: cause}, nil, notionmeetings.ImportOptions{TokenType: "pat"})
 	require.Error(t, err)
-	assert.ErrorIs(err, cause)
+	require.ErrorIs(t, err, cause)
 	assert.NotContains(err.Error(), "PRIVATE_ID")
 	assert.NotContains(err.Error(), "PRIVATE_CURSOR")
 }
@@ -396,7 +396,7 @@ func TestNotionMeetingsSummaryReportsActualCoverage(t *testing.T) {
 			_, err := st.GetOrCreateSource(notionmeetings.SourceType, "synthetic")
 			require.NoError(err)
 			importer := notionmeetings.NewImporter(st, notionmeetings.NewClient(server.URL, "synthetic-token"))
-			summary, err := importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic", TokenType: "pat", SearchAccessible: boolPointer(false)})
+			summary, err := importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic", TokenType: "pat", SearchAccessible: new(false)})
 			require.NoError(err)
 			if tc.legacy {
 				var messageID int64
@@ -411,7 +411,7 @@ func TestNotionMeetingsSummaryReportsActualCoverage(t *testing.T) {
 				require.NoError(err)
 				require.NoError(st.UpsertMessageRawWithFormat(messageID, raw, notionmeetings.RawFormat))
 				transcript = ""
-				summary, err = importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic", TokenType: "pat", SearchAccessible: boolPointer(false)})
+				summary, err = importer.Import(t.Context(), notionmeetings.ImportOptions{Identifier: "synthetic", TokenType: "pat", SearchAccessible: new(false)})
 				require.NoError(err)
 				assert.Zero(summary.MeetingsUpdated, "the real import retained the unscoped legacy evidence")
 			}

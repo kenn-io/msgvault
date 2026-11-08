@@ -130,8 +130,6 @@ func TestNotionProbeDoesNotHydrateUnrelatedRefreshedMeeting(t *testing.T) {
 	assert.NotContains(out.String(), "private-section")
 }
 
-func boolPointer(value bool) *bool { return &value }
-
 func TestNotionProbeSkipsArchivedAndTrashedSections(t *testing.T) {
 	for _, flag := range []string{"archived", "in_trash"} {
 		t.Run(flag, func(t *testing.T) {

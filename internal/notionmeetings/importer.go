@@ -127,7 +127,8 @@ type syncState struct {
 	Coverage             Coverage                `json:"coverage"`
 }
 
-func (s syncState) marshal() (string, error) {
+func (state *syncState) marshal() (string, error) {
+	s := *state
 	sort.Slice(s.Pending, func(i, j int) bool { return s.Pending[i].BlockID < s.Pending[j].BlockID })
 	if err := s.validateTransient(); err != nil {
 		return "", err
@@ -139,7 +140,8 @@ func (s syncState) marshal() (string, error) {
 	return string(encoded), nil
 }
 
-func (s syncState) validate() error {
+func (state *syncState) validate() error {
+	s := *state
 	if s.Version != 1 && s.Version != 2 && s.Version != syncStateVersion {
 		return fmt.Errorf("unsupported Notion sync cursor version %d", s.Version)
 	}
@@ -515,7 +517,8 @@ func (imp *Importer) loadState(ctx context.Context, sourceID int64) (syncState, 
 	return state, nil
 }
 
-func (s syncState) refreshIDs(limit int) []string {
+func (state *syncState) refreshIDs(limit int) []string {
+	s := *state
 	ids := make([]string, 0, len(s.Known))
 	for id := range s.Known {
 		ids = append(ids, id)
@@ -531,7 +534,8 @@ func (s syncState) refreshIDs(limit int) []string {
 
 // Due retries have their own bounded selection, independent of archive size.
 // Oldest attempts go first; overall request and time budgets still apply.
-func (s syncState) duePendingIDs(now time.Time, limit int) []string {
+func (state *syncState) duePendingIDs(now time.Time, limit int) []string {
+	s := *state
 	pending := append([]pendingTranscript(nil), s.Pending...)
 	sort.Slice(pending, func(i, j int) bool {
 		left, _ := time.Parse(time.RFC3339, pending[i].NextAttemptAt)
@@ -551,21 +555,6 @@ func (s syncState) duePendingIDs(now time.Time, limit int) []string {
 		}
 	}
 	return ids
-}
-
-func (imp *Importer) retrieveMeeting(ctx context.Context, id string) (MeetingNote, error) {
-	block, err := imp.client.RetrieveBlock(ctx, id)
-	if err != nil {
-		return MeetingNote{}, err
-	}
-	var meeting MeetingNote
-	if err := json.Unmarshal(block.Raw, &meeting); err != nil {
-		return MeetingNote{}, fmt.Errorf("decode meeting-note block: %w", err)
-	}
-	if meeting.ID != id || meeting.Type != meetingNotesType {
-		return MeetingNote{}, errors.New("retrieved block has unexpected ID or type")
-	}
-	return meeting, nil
 }
 
 type archivedMeetingState struct {
@@ -968,23 +957,6 @@ func preserveArchivedAttendeeRelationships(
 		meeting.Warnings = append(meeting.Warnings,
 			"user directory lookup failed; preserved previously verified attendees from archived relationships")
 	}
-}
-
-func coverageFor(result *QueryResult, limited bool) Coverage {
-	coverage := Coverage{HasMore: result.HasMore, Returned: len(result.Results), Limited: limited}
-	for _, meeting := range result.Results {
-		value := meeting.LastEditedTime
-		if value == "" {
-			continue
-		}
-		if coverage.OldestEdit == "" || value < coverage.OldestEdit {
-			coverage.OldestEdit = value
-		}
-		if coverage.NewestEdit == "" || value > coverage.NewestEdit {
-			coverage.NewestEdit = value
-		}
-	}
-	return coverage
 }
 
 func candidateTime(meeting MeetingNote) time.Time {

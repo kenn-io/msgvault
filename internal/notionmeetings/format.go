@@ -78,7 +78,7 @@ type canonicalEvidence struct {
 	Transcript string `json:"transcript,omitempty"`
 }
 
-var errArchiveEvidenceLimit = errors.New("Notion meeting exceeded archive evidence limit")
+var errArchiveEvidenceLimit = errors.New("notion meeting exceeded archive evidence limit")
 
 func (h *HydratedMeeting) ArchiveSnapshot(sourceID int64, identifier, accountEmail string) (meetingarchive.Snapshot, error) {
 	startedAt, endedAt := h.times()

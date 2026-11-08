@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -67,13 +68,23 @@ func TestDiscoveryClientHTTPContracts(t *testing.T) {
 			_, _ = io.WriteString(w, `{"object":"user","id":"bot-1","type":"bot"}`)
 		case "/v1/blocks/meeting_notes/query":
 			var body map[string]any
-			require.NoError(json.NewDecoder(r.Body).Decode(&body))
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
 			assert.NotContains(body, "start_cursor")
-			assert.JSONEq(`{"operator":"and","filters":[{"property":"created_time","filter":{"operator":"date_is_on_or_after","value":{"type":"exact","value":{"type":"datetime","start_date":"2026-11-01","start_time":"00:00","time_zone":"UTC"}}}},{"property":"created_time","filter":{"operator":"date_is_before","value":{"type":"exact","value":{"type":"datetime","start_date":"2026-11-02","start_time":"00:00","time_zone":"UTC"}}}}]}`, mustJSON(t, body["filter"]))
+			filterJSON, err := json.Marshal(body["filter"])
+			if !assert.NoError(err) {
+				return
+			}
+			assert.JSONEq(`{"operator":"and","filters":[{"property":"created_time","filter":{"operator":"date_is_on_or_after","value":{"type":"exact","value":{"type":"datetime","start_date":"2026-11-01","start_time":"00:00","time_zone":"UTC"}}}},{"property":"created_time","filter":{"operator":"date_is_before","value":{"type":"exact","value":{"type":"datetime","start_date":"2026-11-02","start_time":"00:00","time_zone":"UTC"}}}}]}`, string(filterJSON))
 			_, _ = io.WriteString(w, `{"results":[],"has_more":false}`)
 		case "/v1/search", "/v1/data_sources/data-1/query":
 			var body map[string]any
-			require.NoError(json.NewDecoder(r.Body).Decode(&body))
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
 			assert.Equal("cursor-1", body["start_cursor"])
 			_, _ = io.WriteString(w, `{"object":"list","results":[{"object":"page","id":"page-1"},{"object":"data_source","id":"wiki-1"}],"has_more":true,"next_cursor":"cursor-2","request_status":{"type":"incomplete","incomplete_reason":"query_result_limit_reached"}}`)
 		case "/v1/databases/db-1":
@@ -101,13 +112,6 @@ func TestDiscoveryClientHTTPContracts(t *testing.T) {
 	require.NoError(err)
 	assert.Len(db.DataSources, 2)
 }
-func mustJSON(t *testing.T, v any) string {
-	t.Helper()
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return string(b)
-}
-
 func TestQueryWindowSplitPartitionsBoundary(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		minutes := 1 + int(hegel.Draw(ht, hegel.Integers(uint(0), ^uint(0)))%100000)
@@ -177,13 +181,13 @@ func TestDiscoveryClientRejectsMalformedPages(t *testing.T) {
 
 func TestQuerySaturationUsesRealFilteredHTTPWorld(t *testing.T) {
 	for _, count := range []int{0, 1, 49, 50, 51, 75} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 
 			instant := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
 			world := []MeetingNote{}
-			for i := 0; i < count; i++ {
+			for i := range count {
 				m := hydrationMeeting()
 				m.ID = fmt.Sprintf("tied-%d", i)
 				m.CreatedTime = instant.Format(time.RFC3339)
@@ -198,21 +202,29 @@ func TestQuerySaturationUsesRealFilteredHTTPWorld(t *testing.T) {
 					Limit  int            `json:"limit"`
 					Filter *MeetingFilter `json:"filter"`
 				}
-				require.NoError(json.NewDecoder(r.Body).Decode(&payload))
+				if !assert.NoError(json.NewDecoder(r.Body).Decode(&payload)) {
+					http.Error(w, "invalid request", http.StatusBadRequest)
+					return
+				}
 				matches := []MeetingNote{}
 				for _, m := range world {
 					at, err := time.Parse(time.RFC3339, m.CreatedTime)
-					require.NoError(err)
+					if !assert.NoError(err) {
+						return
+					}
 					include := true
 					for _, term := range payload.Filter.Filters {
 						v := term.Filter.Value.Value
 						bound, err := time.Parse("2006-01-02 15:04", v.StartDate+" "+v.StartTime)
-						require.NoError(err)
-						if term.Filter.Operator == "date_is_before" {
+						if !assert.NoError(err) {
+							return
+						}
+						switch term.Filter.Operator {
+						case "date_is_before":
 							include = include && at.Before(bound)
-						} else if term.Filter.Operator == "date_is_on_or_after" {
+						case "date_is_on_or_after":
 							include = include && !at.Before(bound)
-						} else {
+						default:
 							assert.Fail("unexpected date operator")
 						}
 					}
@@ -255,7 +267,7 @@ func TestQueryClientRejectsOversizedProviderPage(t *testing.T) {
 	meetings := make([]MeetingNote, 51)
 	for i := range meetings {
 		meetings[i] = hydrationMeeting()
-		meetings[i].ID = fmt.Sprint(i)
+		meetings[i].ID = strconv.Itoa(i)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"results": meetings, "has_more": false}))
