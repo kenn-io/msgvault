@@ -497,10 +497,18 @@ func (s *Store) seedCommunicationServices(ctx context.Context) error {
 	}
 	// A separate data seed also reaches archives that already completed v1.
 	// INSERT OR IGNORE preserves an operator's existing Inline service edits.
-	return s.seedCommunicationServiceSet(ctx, "communication_services_inline_v1", []CommunicationServiceInput{{
+	if err := s.seedCommunicationServiceSet(ctx, "communication_services_inline_v1", []CommunicationServiceInput{{
 		Slug: "inline", DisplayLabel: "Inline", ScopePolicy: ScopePolicyRequired,
 		DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1,
-	}})
+	}}); err != nil {
+		return err
+	}
+	// A forge account ID is unique only on its server, which is the scope.
+	return s.seedCommunicationServiceSet(ctx, "communication_services_forges_v1", []CommunicationServiceInput{
+		{Slug: "github", DisplayLabel: "GitHub", ScopePolicy: ScopePolicyRequired, DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1},
+		{Slug: "gitlab", DisplayLabel: "GitLab", ScopePolicy: ScopePolicyRequired, DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1},
+		{Slug: "gitea", DisplayLabel: "Gitea", ScopePolicy: ScopePolicyRequired, DefaultScopeKind: new("server"), Normalization: NormalizationNone, NormalizationVersion: 1},
+	})
 }
 
 func (s *Store) seedCommunicationServiceSet(ctx context.Context, seedName string, inputs []CommunicationServiceInput) error {

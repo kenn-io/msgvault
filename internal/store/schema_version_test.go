@@ -314,6 +314,34 @@ func TestSchemaVersionInlineServiceUpgrade(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionForgeServicesUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	ctx := t.Context()
+
+	// An archive set up by version 34 has no forge services.
+	_, err := s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_forges_v1'`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug IN ('github', 'gitlab', 'gitea')`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "34")
+	require.NoError(err)
+	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+
+	// A writer opens the archive through InitSchemaUnlessCurrentContext. Its
+	// PostgreSQL fast path for current archives applies no new seed, so the
+	// older version must send this archive through the full initializer.
+	require.NoError(s.InitSchemaUnlessCurrentContext(ctx))
+	require.NoError(s.ValidateSchemaContext(ctx))
+	for _, slug := range []string{"github", "gitlab", "gitea"} {
+		service, err := s.ResolveCommunicationServiceContext(ctx, slug)
+		require.NoError(err, slug)
+		assert.True(service.IsSystem, slug)
+		assert.Equal(store.ScopePolicyRequired, service.ScopePolicy, slug)
+	}
+}
+
 func TestSchemaVersionMalformedAndFuture(t *testing.T) {
 	req := require.New(t)
 	check := assert.New(t)
@@ -371,6 +399,7 @@ var (
 		32: "67195ce591cb53fde19ccf89d46f57a8d1cba7fcb96efd0b1d120dcde4c0dceb",
 		33: "7158a0bdc0768658194eacd650486e790f43ce0ab26f9aeffcd01843e3958ecb",
 		34: "46790542c505c944c29e50066f1875ac7cfe3ea42cccf0b0ec098ff23ca5d1eb",
+		35: "d9061b288f3784d8216891aaebcd2f840a3960b904e8726f4b28a5b20eb574fc",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -402,6 +431,7 @@ var (
 		32: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
 		33: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
 		34: "7a1753c30acf49ee4b97ec23e42228cd94f70b0f3dca308bffd0f038d5461f59",
+		35: "d2e3ec05a4704eabcaf7767367bd9aa628b808e2b568a5cd3e53f56f25ea25bb",
 	}
 )
 
