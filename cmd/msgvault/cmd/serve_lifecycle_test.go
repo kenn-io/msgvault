@@ -1248,6 +1248,7 @@ func TestRunServeStartHonorsNeverAutoRestartPolicyWhileLaunchLocked(t *testing.T
 }
 
 func testRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T, contended bool) {
+	t.Helper()
 	assert := assert.New(t)
 	require :=
 		require.New(t)

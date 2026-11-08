@@ -1264,6 +1264,7 @@ func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
 }
 
 func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVersionCase) {
+	t.Helper()
 	assert := assert.New(t)
 	require := require.New(
 		t)
