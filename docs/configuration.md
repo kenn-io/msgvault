@@ -1799,6 +1799,29 @@ what it can access. See [Slack permissions](/docs/usage/slack/#prerequisites)
 for a token restricted to public channels. A restricted token lists all public
 channels, including unjoined ones; broader tokens list your memberships.
 
+### `[github]` {#github}
+
+Sync the [GitHub accounts](usage/github.md) added with `msgvault add-github`.
+One block covers every added account; tokens are per-account files.
+
+```toml
+[github]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/15 * * * *"         # 5-field cron; empty = manual sync only
+include_owners = []               # only these owners' repositories (empty = all)
+exclude_owners = ["my-employer"]  # never fetch these owners' repositories
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules GitHub sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `include_owners` | all | Organizations and users whose repositories are archived |
+| `exclude_owners` | — | Organizations and users whose repositories are never fetched (wins over `include_owners`) |
+
+Owners compare without case. After either list changes, the next sync searches
+your history again so a newly allowed owner's older threads are archived.
+
 ### `[teams]`
 
 Media policy for [Microsoft Teams](/docs/usage/teams/) chats and channels. Teams

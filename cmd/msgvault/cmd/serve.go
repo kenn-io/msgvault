@@ -686,6 +686,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if cfg.GitHub.Enabled && cfg.GitHub.Schedule == "" {
+		logger.Warn("github is enabled but has no schedule; set [github].schedule to sync automatically")
+	}
+	if cfg.GitHub.Enabled && cfg.GitHub.Schedule != "" {
+		if err := sched.AddJob(scheduler.Job{
+			Name: api.GitHubJobName, Schedule: cfg.GitHub.Schedule, Preemptible: true,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredGitHubSync(ctx, s)
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule github sync", "error", err)
+		} else {
+			logger.Info("scheduled github sync", "schedule", cfg.GitHub.Schedule)
+		}
+	}
+
 	for _, source := range cfg.Chatwoot {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,

@@ -43,6 +43,7 @@ nav = [
     {"Chatwoot" = "guides/chatwoot.md"},
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
+    {"GitHub" = "usage/github.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
     {"Messages from Any Source" = "usage/message-import.md"},
   ]},

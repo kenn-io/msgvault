@@ -1766,6 +1766,8 @@ func cliRunCommandAllowed(args []string) bool {
 		"archive-remote-images",
 		"activity",
 		"add-beeper",
+		"add-github",
+		"sync-github",
 		"add-matrix",
 		"add-calendar",
 		"add-circleback",

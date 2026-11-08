@@ -1959,6 +1959,53 @@ failure detail from the attachment row.
 
 ---
 
+## add-github
+
+Register a [GitHub account](/docs/usage/github/) as a `github` source. Requires
+a classic personal access token with the `notifications` scope, plus `repo` to
+archive private repositories; GitHub's notifications API doesn't accept
+fine-grained tokens. The token is checked with `GET /user` and stored at
+`tokens/github_<account-id>.json`.
+
+```bash
+msgvault add-github
+msgvault add-github --token-file ~/github-token.txt
+MSGVAULT_GITHUB_TOKEN="ghp_..." msgvault add-github
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token-file` | | Read the token from a file instead of prompting |
+| `--no-default-identity` | `false` | Do not auto-confirm the account ID as the source's "me" identity |
+
+After adding, sync with `msgvault sync-github`.
+
+---
+
+## sync-github
+
+Archive the GitHub threads that changed since the last sync, for every added
+account or the one named by its login. Threads are found through the account's
+notifications and a search for threads that involve it; the first sync
+searches the whole history. Each changed thread is fetched whole, newest first.
+The `[github]` `include_owners` and `exclude_owners` lists choose whose
+repositories are archived, before any content is fetched. A sync leaves a fifth
+of each hourly rate limit for other tools and keeps the threads it could not
+reach for the next sync. One failing account does not stop the others; the
+command exits non-zero listing the failures. See [GitHub](/docs/usage/github/).
+
+```bash
+msgvault sync-github
+msgvault sync-github octocat
+msgvault sync-github --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Find and fetch every thread again, not only those changed since the last sync; unchanged posts are not rewritten |
+
+---
+
 ## add-calendar
 
 Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.
