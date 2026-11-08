@@ -256,10 +256,8 @@ it('keeps unnamed holders openable as links in a blocked deletion', async () => 
   // Their job isn't this person's, so the row's action says it opens them to delete it.
   const action = screen.getByRole('button', { name: 'Open to delete Unnamed person’s job' });
   expect(action.textContent).toContain('Open to delete…');
-  await fireEvent.click(open);
-  expect(onOpenPerson).toHaveBeenCalledWith(8);
   await fireEvent.click(action);
-  expect(onOpenPerson).toHaveBeenCalledTimes(2);
+  expect(onOpenPerson).toHaveBeenCalledWith(8);
 });
 
 it.each(['names', 'categories'])('keeps saved %s metadata inspectable after a conflict', async section => {

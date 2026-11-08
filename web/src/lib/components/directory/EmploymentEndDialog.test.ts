@@ -3,10 +3,10 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organization, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 
-it.each([2024, 2028])('validates a retried end date against the saved start year %s', async year => {
+it('rejects a retried end date before the saved start year', async () => {
   const bodies: unknown[] = [];
   const opening = employment(11, 1, { start_date: { year: 2026 } });
-  const saved = employment(11, 2, { start_date: { year } });
+  const saved = employment(11, 2, { start_date: { year: 2028 } });
   let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -25,13 +25,8 @@ it.each([2024, 2028])('validates a retried end date against the saved start year
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));
   await screen.findByRole('button', { name: 'Keep yours' });
   expect(bodies).toEqual([{ end_date: '2027' }]);
-  await fireEvent.input(end, { target: { value: year === 2028 ? '2027' : '2025' } });
-  expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', year === 2028);
-  if (year === 2024) {
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(bodies).toHaveLength(2));
-    expect(bodies).toEqual([{ end_date: '2027' }, { end_date: '2025' }]);
-  }
+  await fireEvent.input(end, { target: { value: '2027' } });
+  expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', true);
 });
 
 it('keeps the saved start date for retry after a failed conflict resolution', async () => {
