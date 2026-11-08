@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
 )
@@ -28,7 +29,7 @@ type DeliveryService struct {
 	Store DeliveryStore
 	Kata  DeliveryKata
 }
-type DeliveryInput struct{ OccurrenceKey, Fingerprint, SubjectUID, Project, Recipient string }
+type DeliveryInput struct{ OccurrenceKey, Fingerprint, SubjectUID, OwnerUID, Project, Recipient string }
 
 var errDeliveryIneligible = errors.New("important-date occurrence is no longer eligible")
 
@@ -36,7 +37,7 @@ var errDeliveryIneligible = errors.New("important-date occurrence is no longer e
 // aliases and merge collisions before calling and revalidate the exact event
 // and private destination through the supplied fenced callback on each write.
 func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, revalidate func(context.Context) (bool, error)) error {
-	if s.Store == nil || s.Kata == nil || revalidate == nil || strings.TrimSpace(input.OccurrenceKey) == "" || strings.TrimSpace(input.Fingerprint) == "" || strings.TrimSpace(input.SubjectUID) == "" || strings.TrimSpace(input.Project) == "" || strings.TrimSpace(input.Recipient) == "" {
+	if s.Store == nil || s.Kata == nil || revalidate == nil || strings.TrimSpace(input.OccurrenceKey) == "" || strings.TrimSpace(input.Fingerprint) == "" || strings.TrimSpace(input.SubjectUID) == "" || !strings.HasPrefix(input.OwnerUID, "person/") || strings.TrimPrefix(input.OwnerUID, "person/") == "" || strings.TrimSpace(input.Project) == "" || strings.TrimSpace(input.Recipient) == "" {
 		return errors.New("invalid important-date delivery request")
 	}
 	claimed, err := s.Store.ClaimImportantDateDeliveryContext(ctx, input.OccurrenceKey, input.Fingerprint)
@@ -63,7 +64,11 @@ func (s DeliveryService) Deliver(ctx context.Context, input DeliveryInput, reval
 			return err
 		}
 		if !reused {
-			issue, reused, err = s.Kata.CreateTaskReused(fenced, input.Project, marker, taskclient.KataCreate{Title: "Prepare for an upcoming date", Metadata: map[string]any{taskclient.ActionMetadataKey: marker}})
+			personUID := strings.TrimPrefix(input.OwnerUID, "person/")
+			if strings.HasPrefix(input.SubjectUID, "person/") {
+				personUID = strings.TrimPrefix(input.SubjectUID, "person/")
+			}
+			issue, reused, err = s.Kata.CreateTaskReused(fenced, input.Project, marker, taskclient.KataCreate{Title: "Prepare for an upcoming date", Metadata: map[string]any{taskclient.ActionMetadataKey: marker, personagenda.PersonMetadataKey: personUID, "msgvault.important_date.subject": input.SubjectUID}})
 		}
 		return err
 	})

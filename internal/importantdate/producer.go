@@ -45,7 +45,7 @@ func RunOnce(ctx context.Context, st ProducerStore, kata DeliveryKata, cfg Confi
 		if !active {
 			continue
 		}
-		input := DeliveryInput{OccurrenceKey: candidate.OccurrenceKey, Fingerprint: candidate.Fingerprint, SubjectUID: candidate.SubjectUID, Project: cfg.Project, Recipient: cfg.Recipient}
+		input := DeliveryInput{OccurrenceKey: candidate.OccurrenceKey, Fingerprint: candidate.Fingerprint, SubjectUID: candidate.SubjectUID, OwnerUID: candidate.OwnerUID, Project: cfg.Project, Recipient: cfg.Recipient}
 		attempts++
 		err = service.Deliver(ctx, input, func(fenced context.Context) (bool, error) {
 			current, err := Candidates(fenced, st, cfg, time.Now())
