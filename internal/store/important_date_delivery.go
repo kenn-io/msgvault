@@ -119,3 +119,31 @@ func (s *Store) ImportantDateDeliveryExistsContext(ctx context.Context, key stri
 	}
 	return exists, nil
 }
+
+// ImportantDateDelivery is a retained occurrence and its delivery status.
+type ImportantDateDelivery struct {
+	OccurrenceKey string                     `json:"occurrence_key"`
+	State         ImportantDateDeliveryState `json:"state"`
+	IssueUID      string                     `json:"issue_uid,omitempty"`
+}
+
+// ListImportantDateDeliveriesContext returns a bounded owner-only status view.
+func (s *Store) ListImportantDateDeliveriesContext(ctx context.Context) ([]ImportantDateDelivery, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT occurrence_key, state, issue_uid FROM important_date_deliveries ORDER BY occurrence_key LIMIT 100`)
+	if err != nil {
+		return nil, fmt.Errorf("list important-date deliveries: %w", err)
+	}
+	defer rows.Close()
+	var result []ImportantDateDelivery
+	for rows.Next() {
+		var item ImportantDateDelivery
+		if err := rows.Scan(&item.OccurrenceKey, &item.State, &item.IssueUID); err != nil {
+			return nil, fmt.Errorf("read important-date delivery: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list important-date deliveries: %w", err)
+	}
+	return result, nil
+}

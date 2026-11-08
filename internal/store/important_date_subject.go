@@ -12,11 +12,11 @@ import (
 
 // ImportantDateSubject is an explicitly maintained dependent or pet.
 type ImportantDateSubject struct {
-	UID         string
-	OwnerUID    string
-	Kind        string
-	DisplayName string
-	Date        PartialDate
+	UID         string      `json:"uid"`
+	OwnerUID    string      `json:"owner_uid"`
+	Kind        string      `json:"kind"`
+	DisplayName string      `json:"display_name"`
+	Date        PartialDate `json:"date"`
 }
 
 type ImportantDateSubjectInput struct {

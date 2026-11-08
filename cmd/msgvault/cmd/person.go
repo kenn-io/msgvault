@@ -775,6 +775,7 @@ func init() {
 	personCmd.AddCommand(newPersonBriefCommand())
 	personCmd.AddCommand(newPersonAgendaCommand())
 	personCmd.AddCommand(newPersonImportantDatesCommand())
+	personCmd.AddCommand(newPersonImportantDateManageCommand())
 	personCmd.AddCommand(newPersonScoringCommand())
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,
 		personSetDisplayNameCmd, personDeleteCmd, personTrackCmd, personUntrackCmd,
