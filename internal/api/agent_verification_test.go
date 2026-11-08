@@ -114,7 +114,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		tokens[mode] = token
 	}
 	for _, tc := range []struct{ name, subject, text, html, filename, url string }{
-		{"code", "Account", "Your code is 482913", "", "", ""},
+		{"code", "Account", "Your code is 482913", "<p>Your code is 482913</p>", "", ""},
 		{"read summary", "Your verification code is 482913", "Your verification code is 482913", "", "", ""},
 		{"filename", "Ordinary", "", "", "code-482913.png", ""},
 		{"ordinary", "Project update", "Project update", "<p>Project update</p>", "image.png", "https://example.test/image.png"},
