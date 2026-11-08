@@ -18,6 +18,11 @@ func TestConfigRequiresPrivateDestinationAndExplicitEnable(t *testing.T) {
 	cfg.Project = "private-example"
 	cfg.Recipient = "owner/agent"
 	checks.NoError(cfg.Validate())
+	cfg.CustomTier = "E"
+	checks.Error(cfg.Validate())
+	cfg.CustomTier = TierC
+	cfg.UnassignedTier = TierD
+	checks.NoError(cfg.Validate())
 	cfg.Timezone = "Local"
 	checks.Error(cfg.Validate())
 }

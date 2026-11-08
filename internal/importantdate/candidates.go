@@ -59,8 +59,8 @@ func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 			skipped[reason]++
 		}
 	}
-	if !cfg.Enabled || !cfg.UseCadencePresets {
-		skip("disabled_or_preset_mapping_not_enabled")
+	if !cfg.Enabled {
+		skip("disabled")
 		return nil, nil
 	}
 	if err := cfg.Validate(); err != nil {
@@ -92,17 +92,31 @@ func candidates(ctx context.Context, st CandidateStore, cfg Config, now time.Tim
 		if err != nil {
 			return nil, err
 		}
-		if len(values) == 1 && values[0].Source.IsDeclared() && !values[0].ActiveFrom.After(now) && values[0].Value.Integer != nil && *values[0].Value.Integer > 0 && *values[0].Value.Integer <= 365 {
-			if tier, ok := TierForCadence(int(*values[0].Value.Integer), mapping); ok {
-				tiers[person.ID] = tier
+		if len(values) == 0 {
+			if cfg.UnassignedTier != "" {
+				tiers[person.ID] = cfg.UnassignedTier
+			} else {
+				skip("unassigned_cadence")
 			}
-		}
-	}
-	for _, person := range people {
-		if stable[person.ID] {
-			if _, ok := tiers[person.ID]; !ok {
-				skip("unassigned_or_custom_cadence")
+		} else if len(values) == 1 && values[0].Source.IsDeclared() && !values[0].ActiveFrom.After(now) && values[0].Value.Integer != nil && *values[0].Value.Integer > 0 {
+			cadence := *values[0].Value.Integer
+			tier, preset := Tier(""), false
+			if cadence <= 365 {
+				tier, preset = TierForCadence(int(cadence), mapping)
 			}
+			if preset {
+				if cfg.UseCadencePresets {
+					tiers[person.ID] = tier
+				} else {
+					skip("preset_mapping_not_enabled")
+				}
+			} else if cfg.CustomTier != "" {
+				tiers[person.ID] = cfg.CustomTier
+			} else {
+				skip("custom_cadence")
+			}
+		} else {
+			skip("cadence_not_declared_or_ambiguous")
 		}
 	}
 	selected := make(map[string]Candidate)

@@ -59,3 +59,39 @@ func TestRelationshipStartRequiresCompletePastDate(t *testing.T) {
 	checks.False(relationshipStarted(&store.PartialDate{Year: new(2027), Month: new(10), Day: new(2)}, now, time.UTC))
 	checks.False(relationshipStarted(&store.PartialDate{Year: new(2027)}, now, time.UTC))
 }
+
+func TestCandidatesRequireExplicitCustomOrUnassignedPolicy(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	st := storetest.New(t).Store
+	ctx := t.Context()
+	id, err := st.EnsureParticipantByIdentifier("email", "policy@example.test", "Example Person")
+	must.NoError(err)
+	person, _, err := st.CreatePersonFromParticipantContext(ctx, id)
+	must.NoError(err)
+	_, err = st.AddPersonDateContext(ctx, person.ID, store.PersonDateInput{DateKind: store.PersonDateBirthday, Date: store.PartialDate{Month: new(10), Day: new(23)}, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	must.NoError(err)
+	cfg := Config{Enabled: true, PrivateDestination: true, Project: "private-example", Recipient: "owner/agent"}
+	cfg.ApplyDefaults()
+	now := time.Date(2027, 10, 10, 12, 0, 0, 0, time.UTC)
+	preview, err := PreviewCandidates(ctx, st, cfg, now)
+	must.NoError(err)
+	checks.Empty(preview.Candidates)
+	checks.Equal(1, preview.Skipped["unassigned_cadence"])
+	cfg.UnassignedTier = TierB
+	preview, err = PreviewCandidates(ctx, st, cfg, now)
+	must.NoError(err)
+	must.Len(preview.Candidates, 1)
+	checks.Equal(TierB, preview.Candidates[0].Tier)
+	_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: new(int64(45))}, Source: store.ProvenanceUser})
+	must.NoError(err)
+	preview, err = PreviewCandidates(ctx, st, cfg, now)
+	must.NoError(err)
+	checks.Empty(preview.Candidates)
+	checks.Equal(1, preview.Skipped["custom_cadence"])
+	cfg.CustomTier = TierC
+	preview, err = PreviewCandidates(ctx, st, cfg, now)
+	must.NoError(err)
+	must.Len(preview.Candidates, 1)
+	checks.Equal(TierC, preview.Candidates[0].Tier)
+}

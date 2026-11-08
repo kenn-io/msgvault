@@ -23,6 +23,8 @@ type Config struct {
 	Schedule           string        `toml:"schedule"`
 	LeapDay            LeapDayPolicy `toml:"leap_day"`
 	UseCadencePresets  bool          `toml:"use_cadence_presets"`
+	CustomTier         Tier          `toml:"custom_tier"`
+	UnassignedTier     Tier          `toml:"unassigned_tier"`
 	LeadA              int           `toml:"lead_a"`
 	LeadB              int           `toml:"lead_b"`
 	LeadC              int           `toml:"lead_c"`
@@ -71,6 +73,11 @@ func (c Config) Validate() error {
 	}
 	if c.LeapDay != LeapFebruary28 && c.LeapDay != LeapMarch1 && c.LeapDay != LeapOnly {
 		return errors.New("invalid important-date leap-day policy")
+	}
+	for _, tier := range []Tier{c.CustomTier, c.UnassignedTier} {
+		if tier != "" && tier != TierA && tier != TierB && tier != TierC && tier != TierD {
+			return errors.New("important-date custom and unassigned tiers must be empty or A, B, C, or D")
+		}
 	}
 	for _, days := range []int{c.LeadA, c.LeadB, c.LeadC, c.LeadD} {
 		if days < 1 || days > 366 {
