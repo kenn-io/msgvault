@@ -1826,3 +1826,39 @@ func TestImporterClearsExplicitlyRemovedSections(t *testing.T) {
 	assert.Empty(content.Notes.Text)
 	assert.Empty(content.Actions)
 }
+
+func TestImporterRetainsLegacyNonTextEvidenceOnIncompleteRefresh(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, source, imp := newImporterFixture(t)
+	var image Block
+	require.NoError(json.Unmarshal([]byte(`{"object":"block","id":"notes-1","type":"image","has_children":false,"image":{"type":"external","external":{"url":"https://example.com/image.png"}}}`), &image))
+	source.blocks["notes-1"] = &image
+	noSearch := false
+	opts := ImportOptions{Identifier: "work", UserID: "creator-1", SearchAccessible: &noSearch}
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='meeting-1'`).Scan(&messageID))
+	raw, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	var legacy map[string]any
+	require.NoError(json.Unmarshal(raw, &legacy))
+	legacy["schema_version"] = 1
+	legacy["page_markdown"] = map[string]any{"object": "page_markdown", "id": "page-1", "markdown": ""}
+	legacyRaw, err := json.Marshal(legacy)
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(messageID, legacyRaw, RawFormat))
+	meeting := hydrationMeeting()
+	meeting.LastEditedTime = "2026-08-30T10:00:00Z"
+	source.query.Results = []MeetingNote{meeting}
+	installMeetingHeader(t, source.fakeHydrationSource, meeting)
+	source.blockErrs = map[string]error{"notes-1": ErrRateLimited}
+	opts.Full = true
+	result, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.True(result.PartialCoverage)
+	after, err := st.GetMessageRaw(messageID)
+	require.NoError(err)
+	assert.Equal(legacyRaw, after)
+}
