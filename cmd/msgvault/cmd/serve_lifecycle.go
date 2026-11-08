@@ -851,7 +851,6 @@ func acquireBackgroundLaunchLock(dataDir string) (*flock.Flock, bool) {
 
 func reportBackgroundLaunchInProgress(cmd *cobra.Command, dataDir string) {
 	if rt := waitForBackgroundRuntime(cmd.Context(), dataDir, backgroundServeReadyTimeout); rt != nil {
-		reportRetainedDaemonVersion(cmd.ErrOrStderr(), rt)
 		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 		return
 	}

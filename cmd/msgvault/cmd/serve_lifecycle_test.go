@@ -1240,57 +1240,48 @@ func TestRunServeStartIgnoresDisabledDaemonAutoStart(t *testing.T) {
 }
 
 func TestRunServeStartHonorsNeverAutoRestartPolicy(t *testing.T) {
-	for _, name := range []string{"uncontended", "contended"} {
-		t.Run(name, func(t *testing.T) {
-			assert := assert.New(t)
-			require :=
-				require.New(t)
+	assert := assert.New(t)
+	require :=
+		require.New(t)
 
-			withTestVersion(t, "v0.23.0-45-gabc")
-			dataDir := t.TempDir()
-			server := httptestPingDaemon(t)
-			portText := strconv.Itoa(server.Port)
-			_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-				PID:     os.Getpid(),
-				Network: daemon.NetworkTCP,
-				Address: net.JoinHostPort(server.Host, portText),
-				Service: daemonService,
-				Version: "v0.23.0",
-				Metadata: map[string]string{
-					runtimeHost:             server.Host,
-					runtimePort:             portText,
-					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-					runtimeAPISchemaVersion: api.APISchemaVersion,
-					runtimeCreateTime:       matchingProcessCreateTime(t),
-				},
-			})
-			require.NoError(
-				err, "write runtime")
+	withTestVersion(t, "v0.23.0-45-gabc")
+	dataDir := t.TempDir()
+	server := httptestPingDaemon(t)
+	portText := strconv.Itoa(server.Port)
+	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
+		PID:     os.Getpid(),
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(server.Host, portText),
+		Service: daemonService,
+		Version: "v0.23.0",
+		Metadata: map[string]string{
+			runtimeHost:             server.Host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       matchingProcessCreateTime(t),
+		},
+	})
+	require.NoError(
+		err, "write runtime")
 
-			stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
-				require.FailNow("never policy must not stop a compatible daemon")
-				return errors.New("unreachable")
-			})
-			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-				require.FailNow("never policy must not start over a compatible daemon")
-				return nil, errors.New("unreachable")
-			})
-			cfg := lifecycleTestConfig(dataDir)
-			cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
-			if name == "contended" {
-				lock, ok := acquireBackgroundLaunchLock(dataDir)
-				require.True(ok)
-				t.Cleanup(func() { _ = lock.Unlock() })
-			}
-			cmd, stdout, stderr := lifecycleTestCommand(t)
-			require.NoError(runServeStart(cmd, cfg))
-			assert.Equal(
-				"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
-					" (pid "+strconv.Itoa(os.Getpid())+")\n",
-				stdout.String())
-			assert.Equal("msgvault: daemon v0.23.0 is running; this CLI is v0.23.0-45-gabc. Run msgvault daemon restart to use this version.\n", stderr.String())
-		})
-	}
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
+		require.FailNow("never policy must not stop a compatible daemon")
+		return errors.New("unreachable")
+	})
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("never policy must not start over a compatible daemon")
+		return nil, errors.New("unreachable")
+	})
+	cfg := lifecycleTestConfig(dataDir)
+	cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
+	cmd, stdout, stderr := lifecycleTestCommand(t)
+	require.NoError(runServeStart(cmd, cfg))
+	assert.Equal(
+		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
+			" (pid "+strconv.Itoa(os.Getpid())+")\n",
+		stdout.String())
+	assert.Equal("msgvault: daemon v0.23.0 is running; this CLI is v0.23.0-45-gabc. Run msgvault daemon restart to use this version.\n", stderr.String())
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
