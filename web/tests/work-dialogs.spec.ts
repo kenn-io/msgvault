@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const width of [1440, 390]) {
-  test(`work and organization flows stay contained at ${width}px`, async ({ page }) => {
+  test(`organization flows stay contained at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.getByRole('button', { name: 'Example Org', exact: true }).click();
     const editor = page.getByRole('dialog', { name: 'Example Org', exact: true });
@@ -135,7 +135,7 @@ for (const width of [1440, 390]) {
       expect(role.x).toBe(title.x);
       expect(role.width).toBe(organization.width);
     }
-    // Fields are 12 apart: the field above ends 12 above the next field's label.
+    // The field above ends 16 above the next field's label.
     const titleLabel = (await add.locator('label[for="work-title"]').boundingBox())!;
     expect(titleLabel.y - (organization.y + organization.height)).toBe(16);
     // End date holds its empty hint line, level with Start's hint, and Current sits 8 below it.

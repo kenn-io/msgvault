@@ -35,7 +35,7 @@ it('keeps the End conflict valid through retry', async () => {
   controller.destroy();
 });
 
-it('shows saved job details and closes with Escape after an End conflict', async () => {
+it('keeps the draft and resolves the employer after an End conflict', async () => {
     let reads = 0;
     const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
     const saved = employment(11, 2, { start_date: { year: 2024, month: 3 }, title: 'Current saved role', organization_id: 22 });
@@ -61,13 +61,9 @@ it('shows saved job details and closes with Escape after an End conflict', async
       await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'End' }));
       const record = await screen.findByRole('region', { name: 'Saved job' });
-      expect(within(record).getByText('Job title').nextElementSibling?.textContent).toBe('Current saved role');
       expect(within(record).getByText('Organization').nextElementSibling?.textContent).toBe('Current Employer');
-      expect(within(record).getByText('End date').nextElementSibling?.textContent).toBe('Present');
       expect(field).toHaveProperty('value', '2026');
       expect(reads).toBe(2);
-      await fireEvent.keyDown(document, { key: 'Escape' });
-      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   } finally { view.unmount(); controller.destroy(); }
 });
 

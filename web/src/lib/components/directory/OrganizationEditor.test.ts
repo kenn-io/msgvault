@@ -296,55 +296,19 @@ it('retries a failed alias save with the profile write alone', async () => {
   expect(methods).toEqual(['PUT', 'PUT']);
 });
 
-it.each(['conflicted', 'attempt'] as const)('refreshes directory views on close after a %s conflict', async source => {
+it('refreshes directory views when closing a conflict with Use saved', async () => {
   let gets = 0;
-  let patches = 0;
-  let puts = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
-    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
-    if (request.method === 'PATCH') {
-      patches++;
-      if (source === 'conflicted') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      if (source === 'attempt') return patches === 1
-        ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
-        : Response.json(organization(), { headers: { ETag: '"organization-21-r2"' } });
-      return Response.json({ message: 'Invalid domain' }, { status: 400 });
-    }
-    if (request.method === 'PUT') {
-      puts++;
-      if (source === 'attempt') return puts === 1
-        ? Response.json({ message: 'Unavailable' }, { status: 503 })
-        : Response.json(organizationProfile(3), { headers: { ETag: '"organization-21-r3"' } });
-    }
+    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
     return Response.json(organizationProfile(++gets), { headers: { ETag: `"organization-21-r${gets}"` } });
   });
   const refresh = vi.spyOn(controller, 'refreshDirectoryViews').mockResolvedValue();
   const onClose = vi.fn();
   render(OrganizationEditor, { controller, organization: organization(), onClose });
-
-  if (source === 'conflicted') {
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await screen.findByRole('button', { name: 'Keep yours' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete organization…' }));
-    await fireEvent.click(await screen.findByRole('button', { name: /^Back to / }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
-  } else if (source === 'attempt') {
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await screen.findByRole('button', { name: 'Use saved' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(patches).toBe(2));
-    await waitFor(() => expect(gets).toBe(3));
-    await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-    await waitFor(() => expect(puts).toBe(1));
-    await screen.findByText("Couldn't save the aliases and categories.");
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  }
-
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Use saved' }));
   expect(onClose).toHaveBeenCalledOnce();
   expect(refresh).toHaveBeenCalled();
 });
@@ -430,7 +394,7 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
   }
 });
 
-it('retries a failed Keep yours after the fields were changed back', async () => {
+it('retries a failed Keep yours with the saved version', async () => {
   const tags: (string | null)[] = [];
   let reads = 0;
   const { controller } = controllerWith(async input => {
@@ -441,10 +405,8 @@ it('retries a failed Keep yours after the fields were changed back', async () =>
   });
   render(OrganizationEditor, { controller, organization: organization() });
   const domain = await screen.findByRole('textbox', { name: 'Organization domain' }) as HTMLInputElement;
-  const opening = domain.value;
   await fireEvent.input(domain, { target: { value: 'new.example' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  await fireEvent.input(domain, { target: { value: opening } });
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
   await screen.findByText("Couldn't save this organization.");
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

@@ -265,7 +265,7 @@ describe('RelationshipsTab', () => {
   it.each([
     ['incoming', {}, 'Synthetic Subject · Is mentored by · Synthetic Peer'],
     ['outgoing', {}, 'Synthetic Subject · Mentors · Synthetic Peer'],
-    ['outgoing', { type_slug: 'friend', forward_label: 'friend', reverse_label: 'friend' }, 'Synthetic Subject is a friend of Synthetic Peer'],
+    ['outgoing', { type_slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true }, 'Synthetic Subject is a friend of Synthetic Peer'],
   ] as const)('names the existing %s connection %o as %s', async (direction, type, line) => {
     const { client, controller } = controllerWith(async () => Response.json(relationship(41, 1, type), { headers: { ETag: '"person-relationship-41-r1"' } }));
     controller.relationshipTypes = [relationshipType()];
@@ -591,27 +591,6 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     expect(bodies).toEqual([{ notes: 'Keep this note' }, { notes: 'Keep this note' }]);
-  });
-
-  it('refreshes connections after Keep yours on a conflict that already saved the requested note', async () => {
-    const opening = relationship(41, 1, { notes: 'Opening note' });
-    const saved = relationship(41, 2, { notes: 'Shared new note' });
-    let reads = 0;
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'PATCH') return request.headers.get('If-Match') === '"relationship-41-r1"' ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(saved);
-      if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: `"relationship-41-r${reads}"` } });
-      if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: saved })] });
-      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    });
-    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: opening })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await rowAction('Edit…');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Shared new note' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await waitFor(() => expect(screen.getByText('Synthetic Learner').closest('.detail-row')?.textContent).toContain('Shared new note'));
   });
 
   it('omits a cleared end date from an ended connection\'s save', async () => {

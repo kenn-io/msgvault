@@ -130,13 +130,13 @@ for (const width of [1440, 390]) {
       expect(type.x - (name.x + name.width)).toBeCloseTo(8, 0);
     } else {
       expect(people.width).toBeCloseTo(type.width, 0);
-      // The name on its own line, then each picker full width, 12 apart like stacked fields.
+      // The name on its own line, then each picker full width, 16 apart like stacked fields.
       expect(type.y - (name.y + name.height)).toBe(16);
       expect(people.y - (type.y + type.height)).toBe(16);
       expect([type.x, people.x]).toEqual([sentence.x, sentence.x]);
       expect(type.width).toBeCloseTo(sentence.width, 0);
     }
-    // The sentence and the dates are two groups, 16 apart, and the body never scrolls sideways.
+    // The sentence and the dates are two groups, 24 apart, and the body never scrolls sideways.
     const geometry = await dialog.evaluate(element => {
       const [who, when] = [...element.querySelectorAll('.editor > section')].map(section => section.getBoundingClientRect());
       const content = element.querySelector('.dialog-content')!;

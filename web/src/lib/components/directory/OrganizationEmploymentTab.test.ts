@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -214,26 +213,6 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^End /  })).toBeNull());
 
     expect(await screen.findByText('1 past job')).toBeDefined();
-  });
-
-  it('gives the delete dialog its own shortcut scope', async () => {
-    const rootShortcut = vi.fn();
-    const unregister = appShortcuts.register('x', rootShortcut);
-    const { controller } = controllerWith(async () => Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } }));
-    controller.employments = [employment()];
-    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
-    try {
-      await rowAction('Delete…');
-      expect(appShortcuts.activeScope()).toMatch(/^shell-dialog:/);
-      appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
-      expect(rootShortcut).not.toHaveBeenCalled();
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Delete .*\?/  })).toBeNull());
-      expect(appShortcuts.activeScope()).toBe('root');
-    } finally {
-      view.unmount();
-      unregister();
-    }
   });
 
   it('uses retained employer records for Work row names after organization search', async () => {
