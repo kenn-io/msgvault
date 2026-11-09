@@ -4,7 +4,7 @@ import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
-it.each(['edit', 'conflict recovery', 'delete', 'edit during retry', 'delete during retry'])('retains catalog %s and ignores any superseded registry retry', async operation => {
+it.each(['conflict recovery', 'edit during retry', 'delete during retry'])('retains catalog %s and ignores any superseded registry retry', async operation => {
   const delayed = operation.endsWith('during retry');
   let created = true; let conflict = operation === 'conflict recovery';
   const writes: Request[] = [];

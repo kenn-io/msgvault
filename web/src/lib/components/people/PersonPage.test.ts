@@ -216,13 +216,15 @@ it('keeps linked addresses hidden outside Details, gates initial loading, and fo
 });
 
 it.each([
-  { name: 'filtered activity failure', activity: 9, filtered: true, message: 'Filtered activity is unavailable.', retries: 1, calendar: true },
-  { name: 'draft with no messages', activity: 0, filtered: false, message: 'No messages with Synthetic contact yet', retries: 0, calendar: false }
-])('shows the observed person notice and calendar state: $name', async ({ activity, filtered, message, retries, calendar }) => {
+  { name: 'filtered activity failure', missing: false, activity: 9, filtered: true, message: 'Filtered activity is unavailable.', retries: 1, calendar: true },
+  { name: 'draft with no messages', missing: false, activity: 0, filtered: false, message: 'No messages with Synthetic contact yet', retries: 0, calendar: false },
+  { name: 'missing person', missing: true, activity: 0, filtered: false, message: 'Person or domain not found', retries: 0, calendar: false }
+])('shows the observed person notice and calendar state: $name', async ({ missing, activity, filtered, message, retries, calendar }) => {
   const predicate = filtered ? { filters: [{ dimension: 'source' as const, values: ['2'] }] } : {};
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
+    if (path === '/api/v1/participants/1' && missing) return Response.json({ error: 'participant_not_found' }, { status: 404 });
     if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Synthetic contact', identifiers: [], ...(activity ? { first_at: when, last_at: when } : {}), activity_count: activity, file_count: 0, source_counts: [] });
     if (path === '/api/v1/participants/1/summary') return Response.json({ error: 'analytical_cache_unavailable', readiness: 'stale', recovery_action: '', message: 'Filtered activity is unavailable.' }, { status: 503 });
     if (path === '/api/v1/relationships/1/calendar') return Response.json(emptyCalendar((await request.json()).year));
@@ -232,9 +234,9 @@ it.each([
   await controller.openTarget('cluster:1', predicate);
   const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByRole('heading', { name: 'Synthetic contact' });
+    if (!missing) await screen.findByRole('heading', { name: 'Synthetic contact' });
     expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(calendar);
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    if (!missing) await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByText(message)).toBeDefined();
     expect(screen.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retries);
   } finally { view.unmount(); controller.destroy(); }

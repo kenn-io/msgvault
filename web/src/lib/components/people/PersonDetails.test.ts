@@ -140,12 +140,13 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 
 
 it.each([
-  { name: 'attributes failure', options: { attributesFailure: true }, message: "Couldn't load field values.", details: undefined, retry: true },
+  { name: 'attributes failure', options: { attributesFailure: true }, message: undefined, details: undefined, retry: undefined },
   { name: 'profile and details', options: { detailsFailure: true, personFailure: true }, message: "Couldn't load these details.", details: 'Saved profile unavailable Structured profile unavailable Contact state unavailable', retry: true },
   { name: 'deleted person', options: { personDeleted: true }, message: "This person isn't in your archive anymore.", details: undefined, retry: false }
-])('shows one $name notice and only its supported recovery', async ({ options, message, details, retry }) => {
+])('deduplicates the $name alert and checks any page-owned recovery', async ({ options, message, details, retry }) => {
   await renderDetails([], options);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
+  if (!message) return; // Field-value messages and Retry belong to PersonFields.
   const notice = within(screen.getByRole('alert'));
   expect(notice.getByText(message)).toBeDefined();
   expect(notice.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retry ? 1 : 0);

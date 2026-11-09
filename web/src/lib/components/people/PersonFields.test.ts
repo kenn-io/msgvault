@@ -63,7 +63,10 @@ it('keeps a conflicted structured editor available when Cancel is clicked during
   } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
 });
 
-it('groups field labels, identifies edit and removal actions by value and service scope, and announces copied values', async () => {
+it.each([
+  { name: 'groups labels and identifies row actions by value and service scope', copy: false },
+  { name: 'copies a contact value and announces success', copy: true },
+])('$name', async ({ copy }) => {
   const initial = profile();
   initial.contact_points = [
     ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, identity_key: `email-${index}`, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
@@ -74,22 +77,28 @@ it('groups field labels, identifies edit and removal actions by value and servic
   const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
   const writeText = vi.fn(async () => undefined);
   const originalClipboard = navigator.clipboard;
-  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  if (copy) Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   const onAnnounce = vi.fn();
   const { controller, view } = harness(initial, { onAnnounce, bundle: { definitions: { definitions: [note] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }] } } });
   try {
-    expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
-    for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
-      expect(screen.getByRole('button', { name: `Edit ${label}` })).toBeDefined();
-      await fireEvent.click(screen.getByRole('button', { name: `Remove ${label}` }));
-      const confirmation = screen.getByRole('group', { name: `Confirm removing ${label}` });
-      expect(confirmation.textContent).toContain(label);
-      await fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
+    if (copy) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
+      await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
+      expect(writeText).toHaveBeenCalledWith('first@example.com');
+    } else {
+      expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
+      for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
+        expect(screen.getByRole('button', { name: `Edit ${label}` })).toBeDefined();
+        await fireEvent.click(screen.getByRole('button', { name: `Remove ${label}` }));
+        const confirmation = screen.getByRole('group', { name: `Confirm removing ${label}` });
+        expect(confirmation.textContent).toContain(label);
+        await fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
+      }
     }
-    await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
-    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
-    expect(writeText).toHaveBeenCalledWith('first@example.com');
-  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
+  } finally {
+    if (copy) Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    view.unmount(); controller.destroy();
+  }
 });
 
 it('blocks attribute additions after a failed read and routes Retry to the profile controller', async () => {
@@ -241,7 +250,11 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('orders unused additions after field rows, offers populated kinds in More fields, and removes Add birthday after refresh', async () => {
+it.each([
+  { name: 'orders unused additions after existing field rows', action: 'order' },
+  { name: 'offers populated field kinds in More fields', action: 'menu' },
+  { name: 'removes Add birthday after the profile gains a birthday', action: 'refresh' },
+])('$name', async ({ action }) => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'old@example.com'), address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
@@ -258,17 +271,21 @@ it('orders unused additions after field rows, offers populated kinds in More fie
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   const view = render(PersonFields, { controller });
   try {
-    const fields = view.container.querySelector('.fields')!;
-    const add = fields.querySelector('.add')!;
-    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
-    expect(fields.lastElementChild).toBe(add);
-    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
-    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
-    await act(async () => { await controller.reload(); });
-    expect(screen.getByText('1990-05-06')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Add birthday' })).toBeNull();
+    if (action === 'order') {
+      const fields = view.container.querySelector('.fields')!;
+      const add = fields.querySelector('.add')!;
+      expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
+      expect(fields.lastElementChild).toBe(add);
+    } else if (action === 'menu') {
+      expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+      expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
+    } else {
+      expect(screen.getByRole('button', { name: 'Add birthday' })).toBeDefined();
+      await act(async () => { await controller.reload(); });
+      expect(screen.getByText('1990-05-06')).toBeDefined();
+      expect(screen.queryByRole('button', { name: 'Add birthday' })).toBeNull();
+    }
   } finally { view.unmount(); controller.destroy(); }
 });
 

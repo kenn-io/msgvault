@@ -72,23 +72,6 @@ it.each([
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('shows the missing person state in the redesigned page', async () => {
-  const client = clientFor({
-    '/api/v1/participants/1': () => Response.json({ error: 'participant_not_found' }, { status: 404 }),
-  });
-  const controller = new RelationshipsController(client, () => 'UTC');
-  const directory = new DirectoryController(client);
-  const state = new ExploreState(null);
-  const predicate = {};
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', predicate);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate,
-    onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    expect(await screen.findByText('Person or domain not found')).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
 it('keeps the day across Details and the file filter across Files', async () => {
   const observers = new Map<Element, ResizeObserverCallback>();
   vi.stubGlobal('ResizeObserver', class {
