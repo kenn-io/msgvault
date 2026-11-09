@@ -10352,7 +10352,6 @@ type PartialDate struct {
 type ParticipantAddress struct {
 	DisplayValue           string `json:"display_value" validate:"omitempty"`
 	IdentityKey            string `json:"identity_key" validate:"required"`
-	NormalizedValue        string `json:"normalized_value" validate:"omitempty"`
 	ParticipantDisplayName string `json:"participant_display_name" validate:"omitempty"`
 	ParticipantID          int64  `json:"participant_id"`
 	ScopeKind              string `json:"scope_kind" validate:"omitempty"`
@@ -13148,14 +13147,13 @@ func (p PersonMergeProfile) Validate() error {
 }
 
 type PersonMergeRecordedContactPoint struct {
-	AddressKind     string  `json:"address_kind" validate:"required"`
-	IdentityKey     string  `json:"identity_key" validate:"required"`
-	NormalizedValue string  `json:"normalized_value" validate:"required"`
-	OriginalValue   string  `json:"original_value" validate:"required"`
-	ScopeKind       *string `json:"scope_kind,omitzero"`
-	ScopeValue      *string `json:"scope_value,omitzero"`
-	ServiceLabel    *string `json:"service_label,omitzero"`
-	ServiceSlug     *string `json:"service_slug,omitzero"`
+	AddressKind   string  `json:"address_kind" validate:"required"`
+	IdentityKey   string  `json:"identity_key" validate:"required"`
+	OriginalValue string  `json:"original_value" validate:"required"`
+	ScopeKind     *string `json:"scope_kind,omitzero"`
+	ScopeValue    *string `json:"scope_value,omitzero"`
+	ServiceLabel  *string `json:"service_label,omitzero"`
+	ServiceSlug   *string `json:"service_slug,omitzero"`
 }
 
 func (p PersonMergeRecordedContactPoint) Validate() error {
@@ -13163,10 +13161,9 @@ func (p PersonMergeRecordedContactPoint) Validate() error {
 }
 
 type PersonMergeRecordedProfile struct {
-	ContactPoints  []PersonMergeRecordedContactPoint `json:"contact_points,omitempty"`
-	DisplayName    *string                           `json:"display_name,omitzero"`
-	ID             int64                             `json:"id"`
-	ParticipantIds []int64                           `json:"participant_ids" validate:"required"`
+	ContactPoints []PersonMergeRecordedContactPoint `json:"contact_points,omitempty"`
+	DisplayName   *string                           `json:"display_name,omitzero"`
+	ID            int64                             `json:"id"`
 }
 
 func (p PersonMergeRecordedProfile) Validate() error {
@@ -13177,9 +13174,6 @@ func (p PersonMergeRecordedProfile) Validate() error {
 				errors = errors.Append(fmt.Sprintf("ContactPoints[%d]", i), err)
 			}
 		}
-	}
-	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
-		errors = errors.Append("ParticipantIds", err)
 	}
 	if len(errors) == 0 {
 		return nil

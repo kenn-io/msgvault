@@ -42,7 +42,7 @@ func TestGetParticipantIdentityContext(t *testing.T) {
 		{ParticipantID: phone, DisplayName: "Phone Example", Phone: "+15550100001"},
 	}, details.Members)
 	assert.Contains(details.Identifiers, store.ParticipantIdentifierContext{
-		ParticipantID: alias, Type: "beeper", Value: key,
+		ParticipantID: alias, Type: "beeper", Value: key, DisplayValue: key,
 		ServiceSlug: "whatsapp", ServiceLabel: "WhatsApp",
 		ScopeKind: "account", ScopeValue: "local-whatsapp_ba_example",
 	})
@@ -73,7 +73,7 @@ func TestGetParticipantIdentityContext(t *testing.T) {
 	details, err = st.GetParticipantIdentityContext(ctx, []int64{migrated})
 	require.NoError(err)
 	require.Len(details.Identifiers, 1)
-	assert.Equal(store.ParticipantIdentifierContext{ParticipantID: migrated, Type: "beeper", Value: scoped, ServiceSlug: "whatsapp", ServiceLabel: "WhatsApp", ScopeKind: "account", ScopeValue: "garden-account"}, details.Identifiers[0])
+	assert.Equal(store.ParticipantIdentifierContext{ParticipantID: migrated, Type: "beeper", Value: scoped, DisplayValue: "@legacy_member:beeper.local", ServiceSlug: "whatsapp", ServiceLabel: "WhatsApp", ScopeKind: "account", ScopeValue: "garden-account"}, details.Identifiers[0])
 
 	empty, err := st.GetParticipantIdentityContext(ctx, nil)
 	require.NoError(err)
@@ -96,7 +96,7 @@ func TestGetParticipantIdentityContextBatchesAndExcludesOutsideLinks(t *testing.
 		require.NoError(err)
 		ids[i] = id
 		wantMembers[i] = store.ParticipantIdentityMember{ParticipantID: id, DisplayName: name}
-		wantIdentifiers[i] = store.ParticipantIdentifierContext{ParticipantID: id, Type: "beeper", Value: key, NormalizedValue: key}
+		wantIdentifiers[i] = store.ParticipantIdentifierContext{ParticipantID: id, Type: "beeper", Value: key, DisplayValue: key, NormalizedValue: key}
 	}
 	outside, err := st.EnsureParticipant("outside@example.com", "Outside Example", "example.com")
 	require.NoError(err)

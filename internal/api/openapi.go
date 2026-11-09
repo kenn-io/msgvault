@@ -1035,7 +1035,6 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MessagingRoute", "provider_chat_id"},
 		{"PersonMessagingRoutesPage", "alias_reason"},
 		{"ParticipantAddress", "display_value"},
-		{"ParticipantAddress", "normalized_value"},
 		{"ParticipantAddress", "service_slug"},
 		{"ParticipantAddress", "service_label"},
 		{"ParticipantAddress", "scope_kind"},

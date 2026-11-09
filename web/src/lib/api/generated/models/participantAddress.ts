@@ -5,7 +5,6 @@
 export interface ParticipantAddress {
   display_value: string;
   identity_key: string;
-  normalized_value: string;
   participant_display_name: string;
   participant_id: number;
   scope_kind: string;

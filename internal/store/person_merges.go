@@ -222,7 +222,7 @@ type PersonMergeRow struct {
 type PersonMergeRecordedProfile struct {
 	ID             int64   `json:"id"`
 	DisplayName    *string `json:"display_name,omitzero" nullable:"false"`
-	ParticipantIDs []int64 `json:"participant_ids"`
+	ParticipantIDs []int64 `json:"-"`
 	// ContactPoints are the email and phone values the profile's editor or an import held at the merge.
 	ContactPoints []PersonMergeRecordedContactPoint `json:"contact_points,omitempty"`
 }
@@ -235,7 +235,7 @@ type PersonMergeRecordedContactPoint struct {
 	ScopeValue      *string            `json:"scope_value,omitzero" nullable:"false"`
 	AddressKind     ContactAddressKind `json:"address_kind"`
 	OriginalValue   string             `json:"original_value"`
-	NormalizedValue string             `json:"normalized_value"`
+	NormalizedValue string             `json:"-"`
 }
 
 type PersonMergeLabels struct {

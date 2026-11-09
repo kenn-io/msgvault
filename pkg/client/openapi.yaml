@@ -10622,11 +10622,6 @@ components:
           x-omitempty: false
         identity_key:
           type: string
-        normalized_value:
-          type: string
-          x-oapi-codegen-extra-tags:
-            validate: omitempty
-          x-omitempty: false
         participant_display_name:
           type: string
           x-oapi-codegen-extra-tags:
@@ -10666,7 +10661,6 @@ components:
         - type
         - value
         - display_value
-        - normalized_value
         - service_slug
         - service_label
         - scope_kind
@@ -13208,8 +13202,6 @@ components:
           type: string
         identity_key:
           type: string
-        normalized_value:
-          type: string
         original_value:
           type: string
         scope_kind:
@@ -13224,7 +13216,6 @@ components:
         - identity_key
         - address_kind
         - original_value
-        - normalized_value
       type: object
     PersonMergeRecordedProfile:
       properties:
@@ -13237,14 +13228,8 @@ components:
         id:
           format: int64
           type: integer
-        participant_ids:
-          items:
-            format: int64
-            type: integer
-          type: array
       required:
         - id
-        - participant_ids
       type: object
     PersonMergeRequiredError:
       properties:

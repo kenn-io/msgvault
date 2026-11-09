@@ -21,10 +21,10 @@ type ParticipantIdentityContext struct {
 
 // ParticipantIdentityMember describes a participant in the requested cluster.
 type ParticipantIdentityMember struct {
-	ParticipantID int64  `json:"participant_id"`
-	DisplayName   string `json:"display_name,omitempty"`
-	Email         string `json:"email,omitempty"`
-	Phone         string `json:"phone,omitempty"`
+	ParticipantID int64
+	DisplayName   string
+	Email         string
+	Phone         string
 }
 
 // ParticipantIdentifierContext gives an identifier its stored service and scope.
@@ -33,7 +33,7 @@ type ParticipantIdentifierContext struct {
 	Type            string `json:"type"`
 	Value           string `json:"value"`
 	DisplayValue    string `json:"display_value"`
-	NormalizedValue string `json:"normalized_value"`
+	NormalizedValue string `json:"-"`
 	ServiceSlug     string `json:"service_slug"`
 	ServiceLabel    string `json:"service_label"`
 	ScopeKind       string `json:"scope_kind"`
@@ -54,11 +54,7 @@ type ParticipantLinkContext struct {
 func (s *Store) GetParticipantIdentityContext(
 	ctx context.Context, participantIDs []int64,
 ) (*ParticipantIdentityContext, error) {
-	identities, err := s.getParticipantIdentityContext(ctx, ReadDBContext(ctx, s.db.DB), participantIDs, true)
-	if err == nil {
-		presentParticipantIdentifiers(identities.Identifiers)
-	}
-	return identities, err
+	return s.getParticipantIdentityContext(ctx, ReadDBContext(ctx, s.db.DB), participantIDs, true)
 }
 
 // presentParticipantIdentifiers hides opaque Beeper display text in a read copy.

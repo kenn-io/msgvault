@@ -7,6 +7,5 @@ export interface PersonMergeRecordedProfile {
   contact_points?: PersonMergeRecordedContactPoint[];
   display_name?: string;
   id: number;
-  participant_ids: number[];
   [key: string]: unknown;
 }

@@ -5,7 +5,6 @@
 export interface PersonMergeRecordedContactPoint {
   address_kind: string;
   identity_key: string;
-  normalized_value: string;
   original_value: string;
   scope_kind?: string;
   scope_value?: string;

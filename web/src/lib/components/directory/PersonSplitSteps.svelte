@@ -5,7 +5,7 @@
   import DetailRow from '../people/DetailRow.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
   import MergeProfileCards from './MergeProfileCards.svelte';
-  import { addressKey, addressText, distinctLabels, savedAddresses, workspaceLabels } from '../../directory/merge-labels';
+  import { addressText, distinctLabels, savedAddresses, workspaceLabels } from '../../directory/merge-labels';
   import type { PersonContactPoint } from '../../api/generated/models';
   import type { PersonMergeHistoryController } from '../../directory/person-merge-history-controller.svelte';
 
@@ -40,7 +40,7 @@
     const lines = savedAddresses(saved ?? [], savedKeys, workspaces).map(address => addressText(address)!);
     const linked = ids.flatMap(id => {
       const addresses = labels?.addresses.get(id) ?? [];
-      const unsaved = addresses.filter(address => !savedKeys.has(addressKey(address)));
+      const unsaved = addresses.filter(address => !savedKeys.has(address.identity_key));
       if (unsaved.length === addresses.length) return [participantLabel(id)];
       return unsaved.length ? [unsaved.map(address => addressText(address)).join(', ')] : [];
     });
@@ -62,11 +62,11 @@
   }
   /** Saved addresses by canonical service, scope, and value: a choice that matches one reads as also saved, and the rest list on their own. */
   const sourceSaved = $derived(savedAddresses(controller.sourceSaved ?? [], new Set(), workspaces));
-  const savedKeys = $derived(new Set(sourceSaved.map(addressKey)));
-  const choiceKeys = $derived(new Set(controller.eligibleParticipantIDs.flatMap(id => labels?.addresses.get(id) ?? []).map(addressKey)));
-  const savedOnly = $derived(sourceSaved.filter(address => !choiceKeys.has(addressKey(address))).map(address => addressText(address)!));
+  const savedKeys = $derived(new Set(sourceSaved.map(address => address.identity_key)));
+  const choiceKeys = $derived(new Set(controller.eligibleParticipantIDs.flatMap(id => labels?.addresses.get(id) ?? []).map(address => address.identity_key)));
+  const savedOnly = $derived(sourceSaved.filter(address => !choiceKeys.has(address.identity_key)).map(address => addressText(address)!));
   function alsoSaved(id: number): boolean {
-    return !!labels?.addresses.get(id)?.some(address => savedKeys.has(addressKey(address)));
+    return !!labels?.addresses.get(id)?.some(address => savedKeys.has(address.identity_key));
   }
   const partial = $derived(!!committed && (!committed.exact_reversal ||
     (committed.ambiguous_rows?.length ?? 0) > 0 || (committed.unrestored_rows?.length ?? 0) > 0));

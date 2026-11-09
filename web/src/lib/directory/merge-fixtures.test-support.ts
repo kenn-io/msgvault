@@ -5,6 +5,6 @@ export function identityKeyFixture(service: string, normalized: string, scopeKin
 }
 
 export function addressFixture(participant_id: number, type: string, value: string, fields: Partial<ParticipantAddress> = {}): ParticipantAddress {
-  const address = { participant_id, type, value, display_value: '', normalized_value: value, service_slug: type, service_label: ['email', 'phone'].includes(type) ? '' : type, scope_kind: '', scope_value: '', participant_display_name: '', ...fields };
-  return { ...address, identity_key: identityKeyFixture(address.service_slug, address.normalized_value, address.scope_kind, address.scope_value) };
+  const address = { participant_id, type, value, display_value: '', service_slug: type, service_label: ['email', 'phone'].includes(type) ? '' : type, scope_kind: '', scope_value: '', participant_display_name: '', ...fields };
+  return { identity_key: identityKeyFixture(address.service_slug, value, address.scope_kind, address.scope_value), ...address };
 }

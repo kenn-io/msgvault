@@ -7,7 +7,7 @@
   import { sourceTypeLabel } from '../../sources/labels';
   import { valueProvenance } from './history-format';
   import { formatDateTime, formatShortDate } from '../../util/format';
-  import { addressKey, type MergedInAddress } from '../../directory/merge-labels';
+  import type { MergedInAddress } from '../../directory/merge-labels';
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
@@ -53,16 +53,13 @@
   /** An address a merge brought in, under Email and phone: "Merged in · Nov 6", opening that merge. */
   function mergedInRows(openMerge: (mergeID: number) => void, mergedIn: MergedInAddress[]): SectionRow[] {
     // An address that is a current contact point shows once. One only seen in services, or since removed, keeps its merge link here.
-    const listed = new Set((history?.contact_points ?? []).filter(point => !ended(point.envelope) && point.normalized_value)
-      .map(point => addressKey({ ...point, title: point.original_value, service_slug: point.service_slug || point.address_kind })));
+    const listed = new Set((history?.contact_points ?? []).filter(point => !ended(point.envelope)).map(point => point.identity_key));
     return mergedIn.filter(address => {
-      if (!address.normalized_value) return true;
-      const key = addressKey({ ...address, title: address.value });
-      if (listed.has(key)) return false;
-      listed.add(key);
+      if (listed.has(address.identity_key)) return false;
+      listed.add(address.identity_key);
       return true;
     }).map(address => ({
-      id: `merged-${address.mergeID}-${address.participantID}-${addressKey({ ...address, title: address.value })}`, value: address.value,
+      id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value: address.value,
       provenance: { text: `Merged in · ${formatShortDate(address.mergedAt)}`, title: `Merged ${formatDateTime(address.mergedAt)}` },
       onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
     }));

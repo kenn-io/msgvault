@@ -1,7 +1,7 @@
 import type { PersonContactPoint, PersonMergeDetail, PersonMergeRecordedContactPoint, PersonMergeLabels, ParticipantAddress } from '../api/generated/models';
 import { identityChipText, identityScopeText } from '../relationships/identity-chip';
 
-export interface AddressIdentity { identity_key: string; normalized_value?: string; service_slug?: string; scope_kind?: string; scope_value?: string }
+export interface AddressIdentity { identity_key: string; service_slug?: string; scope_kind?: string; scope_value?: string }
 type AddressLabel = AddressIdentity & { title: string; detail: string };
 export function addressText(address: { title: string; detail?: string } | undefined): string | undefined {
   return address ? [address.title, address.detail].filter(Boolean).join(' · ') : undefined;
@@ -60,7 +60,7 @@ type MergeSides = Pick<PersonMergeDetail, 'participants'> & Partial<Pick<PersonM
 /** Adds the addresses saved on the profile itself, by its editor or an import, which the merge moved with it. */
 function withSavedAddresses(detail: MergeSides, side: 'absorbed' | 'survivor', addresses: MergeAddress[], workspaces: Map<string, string>): MergeAddress[] {
   const personID = side === 'absorbed' ? detail.merge?.absorbed_person_id : detail.merge?.survivor_person_id;
-  const seen = new Set(addresses.map(addressKey));
+  const seen = new Set(addresses.map(address => address.identity_key));
   return addresses.concat(savedAddresses(detail.labels?.profiles.find(profile => profile.id === personID)?.contact_points ?? [], seen, workspaces)
     .map((address, index) => ({ ...address, id: `saved-${personID}-${index}`, value: address.title })));
 }
@@ -76,10 +76,9 @@ export function savedAddresses(points: (PersonMergeRecordedContactPoint | Person
     const service = point.service_slug || point.address_kind, scope_kind = point.scope_kind || '', scope_value = point.scope_value || '';
     const scope = scopeText({ service_slug: service, scope_kind, scope_value }, scopes);
     const detail = [service === point.address_kind ? '' : point.service_label, scope].filter(Boolean).join(' · ') || undefined;
-    const address = { identity_key: point.identity_key, title: point.original_value, detail, normalized_value: point.normalized_value, service_slug: service, scope_kind, scope_value };
-    if (seen.has(addressKey(address))) return [];
-    seen.add(addressKey(address));
-    return [address];
+    if (seen.has(point.identity_key)) return [];
+    seen.add(point.identity_key);
+    return [{ identity_key: point.identity_key, title: point.original_value, detail, service_slug: service, scope_kind, scope_value }];
   });
 }
 
@@ -142,11 +141,6 @@ export function distinctLabels(ids: number[], label: (id: number) => string): Ma
     seen.set(text, (seen.get(text) ?? 0) + 1);
     return [id, `${text} (${seen.get(text)})`];
   }));
-}
-
-/** One address across services and scopes: the same value on two services, or in two scopes, is two addresses. */
-export function addressKey(address: AddressIdentity & { title: string; detail?: string }): string {
-  return address.identity_key;
 }
 
 interface MergedInParticipant { merge_id: number; participant_id: number; merged_at: string; addresses: ParticipantAddress[]; workspaces: Map<string, string> }
