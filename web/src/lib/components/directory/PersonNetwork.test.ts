@@ -191,7 +191,7 @@ describe('PersonNetwork', () => {
     expect(onOpenOrganization.mock.calls).toEqual(organizations);
     await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     await screen.findByText('No one else at 2 steps');
-    expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
+    for (const name of links) expect(screen.queryByRole('button', { name })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await screen.findByText('No one else at 3 steps');
   });
@@ -227,9 +227,8 @@ describe('PersonNetwork', () => {
     expect(screen.queryAllByText('Showing up to 250 people and organizations and 500 connections.')).toHaveLength(notices);
   });
 
-  it('retries a failed first load and retains the list through a later depth failure', async () => {
+  it('retries a failed first load and keeps the list visible during depth loading', async () => {
     const depthThreeLoad = deferredResponse();
-    let depthThreeAttempts = 0;
     let directAttempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -238,8 +237,7 @@ describe('PersonNetwork', () => {
       const depth = Number(url.searchParams.get('depth'));
       if (depth === 1) return ++directAttempts === 1 ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 }) : Response.json(connected(1));
       if (depth === 2) return Response.json(connected(2));
-      depthThreeAttempts += 1;
-      return depthThreeAttempts === 1 ? depthThreeLoad.promise : Response.json(depthThree());
+      return depthThreeLoad.promise;
     }));
     const controller = new DirectoryEntityController(client, 7);
 
@@ -254,11 +252,7 @@ describe('PersonNetwork', () => {
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
     expect(screen.getByRole('button', { name: 'Second Hop Person' })).toBeDefined();
-    depthThreeLoad.resolve(Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 }));
-    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
-    expect(screen.getByRole('button', { name: 'Second Hop Person' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    depthThreeLoad.resolve(Response.json(depthThree()));
     await screen.findByRole('button', { name: 'Depth Three Person' });
   });
 

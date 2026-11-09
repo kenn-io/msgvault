@@ -215,12 +215,15 @@ it('keeps linked addresses on Details, gates loading, and forwards profile value
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
-it('reports a filtered summary failure while retaining the loaded person', async () => {
-  const predicate = { filters: [{ dimension: 'source' as const, values: ['2'] }] };
+it.each([
+  { name: 'filtered activity failure', activity: 9, filtered: true, message: 'Filtered activity is unavailable.', retries: 1 },
+  { name: 'draft with no messages', activity: 0, filtered: false, message: 'No messages with Synthetic contact yet', retries: 0 }
+])('shows the observed person state: $name', async ({ activity, filtered, message, retries }) => {
+  const predicate = filtered ? { filters: [{ dimension: 'source' as const, values: ['2'] }] } : {};
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Alice Example', identifiers: [], first_at: when, last_at: when, activity_count: 9, file_count: 0, source_counts: [] });
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Synthetic contact', identifiers: [], ...(activity ? { first_at: when, last_at: when } : {}), activity_count: activity, file_count: 0, source_counts: [] });
     if (path === '/api/v1/participants/1/summary') return Response.json({ error: 'analytical_cache_unavailable', readiness: 'stale', recovery_action: '', message: 'Filtered activity is unavailable.' }, { status: 503 });
     return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
   });
@@ -228,10 +231,10 @@ it('reports a filtered summary failure while retaining the loaded person', async
   await controller.openTarget('cluster:1', predicate);
   const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
-    await screen.findByRole('heading', { name: 'Alice Example' });
+    await screen.findByRole('heading', { name: 'Synthetic contact' });
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(await screen.findByText('Filtered activity is unavailable.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
+    expect(await screen.findByText(message)).toBeDefined();
+    expect(screen.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retries);
   } finally { view.unmount(); controller.destroy(); }
 });
 

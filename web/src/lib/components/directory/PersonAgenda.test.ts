@@ -72,7 +72,10 @@ describe('PersonAgenda', () => {
     expect(screen.getAllByRole('option', { name: 'waiting' })).toHaveLength(1);
   });
 
-  it.each(['pending', 'failed'] as const)('keeps a %s create retry key across profile revisions and rotates it when the payload changes', async outcome => {
+  it.each([
+    { outcome: 'pending', replayCount: 2, changedCount: 3 },
+    { outcome: 'failed', replayCount: 3, changedCount: 4 }
+  ] as const)('keeps a $outcome create retry key across profile revisions and rotates it when the payload changes', async ({ outcome, replayCount, changedCount }) => {
     const requests: Request[] = [];
     let attempts = 0;
     let releasePost: ((response: Response) => void) | undefined;
@@ -99,6 +102,8 @@ describe('PersonAgenda', () => {
 
     await typeTask('Send notes');
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    await waitFor(() => expect(requests.filter(request => request.method === 'POST')).toHaveLength(1));
+    await expect(requests.find(request => request.method === 'POST')!.clone().json()).resolves.toMatchObject({ title: 'Send notes', list: 'agenda' });
     if (outcome === 'pending') {
       await waitFor(() => expect(releasePost).toBeDefined());
       await rerender({ client, personID: 7, refreshKey: '2' });
@@ -118,9 +123,9 @@ describe('PersonAgenda', () => {
     // The profile revision changed, but the submission stayed the same.
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(outcome === 'failed' ? 3 : 2));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(replayCount));
     const keys = requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key'));
-    expect(keys.length).toBe(outcome === 'failed' ? 3 : 2);
+    expect(keys.length).toBe(replayCount);
     expect(keys[0]).toBeTruthy();
     expect(keys.every(key => key === keys[0])).toBe(true);
 
@@ -128,9 +133,9 @@ describe('PersonAgenda', () => {
     await typeTask('Send notes tomorrow');
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(outcome === 'failed' ? 4 : 3));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(changedCount));
     const rotated = requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key'));
-    expect(rotated.length).toBe(outcome === 'failed' ? 4 : 3);
+    expect(rotated.length).toBe(changedCount);
     expect(rotated.at(-1)).not.toBe(rotated[0]);
     await waitFor(() => expect(screen.getByText('Send notes')).toBeDefined());
   });
