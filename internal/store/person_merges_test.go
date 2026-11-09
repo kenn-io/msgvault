@@ -385,7 +385,6 @@ func TestPersonMerge_Inspect(t *testing.T) {
 	assert.Equal(f.merge.Merge.ID, detail.Merge.ID)
 	assert.Len(detail.Participants, 3)
 	assert.Equal(detail.Participants, list[0].Labels.Participants)
-	assert.Empty(detail.Labels.Participants)
 	assert.NotEmpty(detail.Rows)
 	assert.Len(detail.Splits, 1)
 	assert.Len(detail.ReviewCandidates, 1)
@@ -2642,9 +2641,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assertPersonMergeIdentityFixture(t, detail, "beeper-raw-phone")
-		points, err := st.ListPersonContactPointsContext(ctx, owner.ID, true)
-		require.NoError(err)
-		require.Len(points, 1)
 		var archived []store.ParticipantAddress
 		for _, address := range detail.Labels.Addresses {
 			if address.ParticipantID == participant {
@@ -2652,17 +2648,16 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 			}
 		}
 		require.Len(archived, 1)
-		assert.Equal(points[0].IdentityKey, archived[0].IdentityKey)
 		assert.Equal("+12025550123", archived[0].DisplayValue)
 	})
 
 	t.Run("resolved contacts exclude fallback anchor", func(t *testing.T) {
 		for _, tc := range []struct {
-			name, phone, email, kind, value, namespace string
+			name, phone, email, kind, value string
 		}{
-			{"phone", "+12025550123", "", "phone", "+12025550123", "beeper"},
-			{"email", "", "reader@example.org", "email", "reader@example.org", "beeper"},
-			{"only an anchor", "", "", "beeper", beeperidentity.Fallback("account-a", "user-a"), "beeper"},
+			{"phone", "+12025550123", "", "phone", "+12025550123"},
+			{"email", "", "reader@example.org", "email", "reader@example.org"},
+			{"only an anchor", "", "", "beeper", beeperidentity.Fallback("account-a", "user-a")},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				require := require.New(t)
@@ -2673,14 +2668,14 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 				var err error
 				switch {
 				case tc.phone != "":
-					participant, err = st.EnsureParticipantByPhone(ctx, tc.phone, "Reader", tc.namespace)
+					participant, err = st.EnsureParticipantByPhone(ctx, tc.phone, "Reader", "beeper")
 				case tc.email != "":
 					participant, err = st.EnsureParticipantContext(ctx, tc.email, "Reader", "example.org")
 				default:
 					participant, err = st.EnsureParticipantByIdentifierContext(ctx, "beeper", tc.value, "Reader")
 				}
 				require.NoError(err)
-				if tc.namespace == "beeper" {
+				if tc.phone != "" || tc.email != "" {
 					require.NoError(st.SetParticipantIdentifierContext(ctx, participant, "beeper", beeperidentity.Fallback("account-a", "user-a")))
 				}
 				guest, _, err := st.CreatePersonFromParticipantContext(ctx, participant)

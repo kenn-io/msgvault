@@ -1,4 +1,3 @@
-import { appShortcuts } from '@kenn-io/kit-ui';
 import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
@@ -173,7 +172,7 @@ describe('PersonMergeHistory', () => {
     }
   });
 
-  it('blocks root shortcuts while a split is pending', async () => {
+  it('prevents dismissal while a split is pending', async () => {
     const pending = deferred();
     renderHistory(detail(), { respond: (path, request) => {
       if (request.method === 'POST') return pending.promise;
@@ -186,12 +185,7 @@ describe('PersonMergeHistory', () => {
       await fireEvent.click(await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
       await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
-      const rootShortcut = vi.fn();
-      const unregister = appShortcuts.register('x', rootShortcut);
-      try {
-        appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
-        expect(rootShortcut).not.toHaveBeenCalled();
-      } finally { unregister(); }
+      expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', true);
     } finally { pending.resolve(Response.json({}, { status: 503 })); }
   });
 

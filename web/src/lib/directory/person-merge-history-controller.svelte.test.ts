@@ -674,7 +674,7 @@ describe('PersonMergeHistoryController', () => {
     }), 12);
     try {
       await controller.loadHistory();
-      expect(controller.mergedIn.some(address => address.participantID === 701)).toBe(true);
+      expect(controller.mergedIn.map(address => address.participantID)).toEqual([701]);
     } finally { controller.destroy(); }
   });
 });
