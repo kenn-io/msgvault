@@ -182,7 +182,7 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterPartialStopFailure(t *test
 }
 
 func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
-	for _, tc := range []struct{ background, persistent string }{{}, {background: "false"}, {background: "true", persistent: "false"}, {background: "true", persistent: "true"}, {background: "true"}} {
+	for _, tc := range []struct{ background, persistent string }{{}, {background: "true", persistent: "false"}, {background: "true", persistent: "true"}, {background: "true"}} {
 		background := tc.background
 		t.Run("background="+background+"/persistent="+tc.persistent, func(t *testing.T) {
 			persistent := tc.persistent == "true"

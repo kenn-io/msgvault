@@ -1863,8 +1863,13 @@ func TestDaemonLifetimeMetadata(t *testing.T) {
 			owner, err := claimServeOwnership(t.Context(), lifecycleTestConfig(t.TempDir()), "127.0.0.1", 8123, Version)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, owner.Close()) })
-			assert.Equal(t, tc.persistent, owner.record.Metadata[runtimePersistent])
-			assert.Equal(t, tc.wantTimeout, owner.record.Metadata[runtimeIdleTimeout])
+			runtimeStore := daemonRuntimeStore(owner.dataDir)
+			path, err := runtimeStore.Path(owner.record.PID)
+			require.NoError(t, err)
+			record, err := runtimeStore.Read(path)
+			require.NoError(t, err)
+			assert.Equal(t, tc.persistent, record.Metadata[runtimePersistent])
+			assert.Equal(t, tc.wantTimeout, record.Metadata[runtimeIdleTimeout])
 		})
 	}
 }
