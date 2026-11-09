@@ -1,5 +1,5 @@
 import { openTypeahead } from '../../../test/kit-ui';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -416,120 +416,19 @@ describe('PersonAgenda', () => {
     expect(screen.queryByText('Late A item')).toBeNull();
   });
 
-  it('does not write a failed create for the prior person into the next person view', async () => {
+  it.each([
+    { operation: 'create', outcome: 'failure', method: 'POST', status: 503 },
+    { operation: 'create', outcome: 'success', method: 'POST', status: 201 },
+    { operation: 'unlink', outcome: 'failure', method: 'DELETE', status: 503 },
+    { operation: 'unlink', outcome: 'success', method: 'DELETE', status: 200 }
+  ])('keeps the next person draft, list, and notices after a prior $operation $outcome', async ({ operation, outcome, method, status }) => {
     const onAnnounce = vi.fn();
-    let releasePost: ((response: Response) => void) | null = null;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') {
-        return new Promise<Response>((resolve) => { releasePost = resolve; });
-      }
-      if (new URL(request.url).pathname === '/api/v1/people/8/agenda') {
-        return Response.json({ project: 'msgvault', items: [item('two', 'B item')] });
-      }
-      return Response.json({ project: 'msgvault', items: [] });
-    }));
-
-    const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
-    await screen.findByText('No tasks yet');
-    await typeTask('A note');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(releasePost).not.toBeNull());
-
-    await rerender({ client, personID: 8, onAnnounce });
-    await screen.findByText('B item');
-    await typeTask('B note');
-
-    // A's create fails after the switch: person B's view must not inherit
-    // the failure, and the stale mutation must still release the mutation
-    // mutex so B's form recovers.
-    releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.queryByText('Unable to add agenda item')).toBeNull();
-    expect((screen.getByLabelText('New task') as HTMLInputElement).value).toBe('B note');
-    expect(onAnnounce).not.toHaveBeenCalled();
-  });
-
-  it('does not apply a successful create from the prior person to the next person view', async () => {
-    const onAnnounce = vi.fn();
-    let releasePost: ((response: Response) => void) | null = null;
+    let releaseWrite!: (response: Response) => void;
     let personEightLists = 0;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
       if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') {
-        return new Promise<Response>((resolve) => { releasePost = resolve; });
-      }
-      if (new URL(request.url).pathname === '/api/v1/people/8/agenda') {
-        personEightLists += 1;
-        return Response.json({ project: 'msgvault', items: [item('two', 'B item')] });
-      }
-      return Response.json({ project: 'msgvault', items: [] });
-    }));
-
-    const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
-    await screen.findByText('No tasks yet');
-    await typeTask('A note');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(releasePost).not.toBeNull());
-
-    await rerender({ client, personID: 8, onAnnounce });
-    await screen.findByText('B item');
-    await typeTask('B note');
-
-    // A's create succeeds after the switch: it must not clear B's typed
-    // title, announce success, or trigger a redundant reload of B's list.
-    releasePost!(Response.json({ item: item('new', 'A note') }, { status: 201 }));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
-    expect((screen.getByLabelText('New task') as HTMLInputElement).value).toBe('B note');
-    expect(onAnnounce).not.toHaveBeenCalled();
-    expect(personEightLists).toBe(1);
-    expect(screen.getByText('B item')).toBeDefined();
-  });
-
-  it('does not write a failed unlink for the prior person into the next person view', async () => {
-    let releaseDelete: ((response: Response) => void) | null = null;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'DELETE') {
-        return new Promise<Response>((resolve) => { releaseDelete = resolve; });
-      }
-      if (new URL(request.url).pathname === '/api/v1/people/8/agenda') {
-        return Response.json({ project: 'msgvault', items: [item('two', 'B item')] });
-      }
-      return Response.json({ project: 'msgvault', items: [item('one', 'Ask about launch')] });
-    }));
-
-    const { rerender } = render(PersonAgenda, { client, personID: 7 });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink Ask about launch' }));
-    await waitFor(() => expect(releaseDelete).not.toBeNull());
-
-    await rerender({ client, personID: 8 });
-    await screen.findByText('B item');
-
-    // A's unlink fails after the switch: B's view must not inherit the
-    // error, and the stale mutation must release the mutation mutex.
-    releaseDelete!(Response.json({ error: 'task_unavailable', message: 'Unable to unlink agenda item' }, { status: 503 }));
-    await openForm();
-    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
-    expect(screen.queryByText('Unable to unlink agenda item')).toBeNull();
-    expect(screen.getByText('B item')).toBeDefined();
-  });
-
-  it('does not apply a successful unlink from the prior person to the next person view', async () => {
-    const onAnnounce = vi.fn();
-    let releaseDelete: ((response: Response) => void) | null = null;
-    let personEightLists = 0;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'DELETE') {
-        return new Promise<Response>((resolve) => { releaseDelete = resolve; });
-      }
+      if (request.method === method) return new Promise<Response>(resolve => { releaseWrite = resolve; });
       if (new URL(request.url).pathname === '/api/v1/people/8/agenda') {
         personEightLists += 1;
         return Response.json({ project: 'msgvault', items: [item('two', 'B item')] });
@@ -538,20 +437,26 @@ describe('PersonAgenda', () => {
     }));
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Unlink Ask about launch' }));
-    await waitFor(() => expect(releaseDelete).not.toBeNull());
+    await screen.findByText('Ask about launch');
+    if (operation === 'create') {
+      await typeTask('A note');
+      await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    } else await fireEvent.click(screen.getByRole('button', { name: 'Unlink Ask about launch' }));
+    await waitFor(() => expect(releaseWrite).toBeDefined());
 
     await rerender({ client, personID: 8, onAnnounce });
     await screen.findByText('B item');
-
-    // A's unlink succeeds after the switch: it must not announce success or
-    // trigger a redundant reload of B's list.
-    releaseDelete!(Response.json({ item: item('one', 'Ask about launch') }));
-    await openForm();
-    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
+    await typeTask('B note');
+    await act(async () => { releaseWrite(outcome === 'failure'
+      ? Response.json({ error: 'task_unavailable', message: `Unable to ${operation} agenda item` }, { status })
+      : Response.json({ item: item('one', 'A note') }, { status })); });
+    expect(screen.getByLabelText('New task')).toHaveProperty('disabled', false);
+    expect(screen.getByRole('button', { name: 'Add task' })).toHaveProperty('disabled', false);
+    expect(screen.getByLabelText('New task')).toHaveProperty('value', 'B note');
+    expect(screen.getByText('B item')).toBeDefined();
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(onAnnounce).not.toHaveBeenCalled();
     expect(personEightLists).toBe(1);
-    expect(screen.getByText('B item')).toBeDefined();
   });
 
   it('releases the form for the next person while the prior mutation is still in flight', async () => {

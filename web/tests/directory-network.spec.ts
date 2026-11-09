@@ -6,7 +6,7 @@ function directoryURL(personID: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: personID }))}`;
 }
 
-test('Directory network lists who is further out and opens organizations', async ({ page }) => {
+test('Directory Network keeps its section geometry and opens organizations and peers', async ({ page }) => {
   await installMixedArchive(page);
   await page.route('**/api/v1/organizations/21', (route) => route.fulfill({
     headers: { ETag: '"organization-21-r2"' },

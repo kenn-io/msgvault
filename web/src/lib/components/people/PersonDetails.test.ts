@@ -140,18 +140,16 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 
 
 it.each([
-  { name: 'attributes', options: { attributesFailure: true }, message: undefined, details: undefined, retry: undefined },
+  { name: 'attributes failure', options: { attributesFailure: true }, message: "Couldn't load field values.", details: undefined, retry: true },
   { name: 'profile and details', options: { detailsFailure: true, personFailure: true }, message: "Couldn't load these details.", details: 'Saved profile unavailable Structured profile unavailable Contact state unavailable', retry: true },
   { name: 'deleted person', options: { personDeleted: true }, message: "This person isn't in your archive anymore.", details: undefined, retry: false }
-])('shows one notice for $name with only its supported recovery', async ({ options, message, details, retry }) => {
+])('shows one $name notice and only its supported recovery', async ({ options, message, details, retry }) => {
   await renderDetails([], options);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
   const notice = within(screen.getByRole('alert'));
-  if (message) {
-    expect(notice.getByText(message)).toBeDefined();
-    expect(notice.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retry ? 1 : 0);
-  }
-  if (message && details) {
+  expect(notice.getByText(message)).toBeDefined();
+  expect(notice.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retry ? 1 : 0);
+  if (details) {
     await fireEvent.click(notice.getByText('Details'));
     expect(notice.getByText(details)).toBeDefined();
     options.attributesFailure = false; options.detailsFailure = false; options.personFailure = false;

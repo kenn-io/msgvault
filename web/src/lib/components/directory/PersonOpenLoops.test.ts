@@ -67,13 +67,13 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("shows a plus when more loops are open than the card lists", async () => {
-    const { client } = clientFor(
-      [loop(1), loop(2), loop(3), loop(4), loop(5)],
-      true,
-    );
+  it.each([
+    { items: [loop(1), loop(2)], truncated: false, expected: "2 open" },
+    { items: [loop(1), loop(2), loop(3), loop(4), loop(5)], truncated: true, expected: "5+ open" },
+  ])("shows the open count with a plus only when truncated: $expected", async ({ items, truncated, expected }) => {
+    const { client } = clientFor(items, truncated);
     render(PersonOpenLoops, { client, personID: 7 });
-    expect(await screen.findByText("5+ open")).toBeDefined();
+    expect(await screen.findByText(expected)).toBeDefined();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {
