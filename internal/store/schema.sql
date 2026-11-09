@@ -4836,13 +4836,35 @@ AFTER DELETE ON meeting_link_key FOR EACH ROW BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', OLD.message_id);
 END;
 
+-- Calendar changes refresh keys only for referenced events and their series family.
 CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_insert
-AFTER INSERT ON calendar_events FOR EACH ROW BEGIN
+AFTER INSERT ON calendar_events FOR EACH ROW
+WHEN EXISTS (
+    WITH changed(message_id, provider_event_id, series_provider_id) AS (
+        SELECT NEW.message_id, NEW.provider_event_id, NEW.series_provider_id
+    ), event_ids(id) AS (
+        SELECT provider_event_id FROM changed WHERE provider_event_id <> ''
+        UNION ALL SELECT series_provider_id FROM changed WHERE series_provider_id <> ''
+    ), affected AS (
+        SELECT message_id, provider_event_id, series_provider_id FROM changed
+        UNION ALL
+        SELECT e.message_id, e.provider_event_id, e.series_provider_id FROM calendar_events e
+        WHERE e.provider_event_id IN (SELECT id FROM event_ids)
+           OR e.series_provider_id IN (SELECT id FROM event_ids)
+    )
+    SELECT 1 FROM affected e LEFT JOIN messages m ON m.id = e.message_id
+    WHERE EXISTS (SELECT 1 FROM meeting_link_decisions d WHERE d.target_message_id = e.message_id)
+       OR EXISTS (SELECT 1 FROM meeting_link_key k
+            WHERE (k.kind = 'ical_uid' AND k.value = CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END)
+               OR (k.kind = 'google_event_id' AND (k.value IN (e.provider_event_id, NULLIF(e.series_provider_id, ''))
+                    OR (e.provider_event_id <> '' AND substr(k.value, 1, length(e.provider_event_id) + 1) = e.provider_event_id || '_')
+                    OR (e.series_provider_id <> '' AND substr(k.value, 1, length(e.series_provider_id) + 1) = e.series_provider_id || '_'))))
+) BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', NEW.message_id);
 END;
 CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_update
 AFTER UPDATE ON calendar_events FOR EACH ROW
-WHEN OLD.message_id IS NOT NEW.message_id
+WHEN (OLD.message_id IS NOT NEW.message_id
 OR OLD.provider_event_id IS NOT NEW.provider_event_id
 OR OLD.series_provider_id IS NOT NEW.series_provider_id
 OR OLD.kind IS NOT NEW.kind
@@ -4857,13 +4879,56 @@ OR OLD.end_date IS NOT NEW.end_date
 OR OLD.event_time_zone IS NOT NEW.event_time_zone
 OR OLD.calendar_time_zone IS NOT NEW.calendar_time_zone
 OR OLD.recurrence_json IS NOT NEW.recurrence_json
-OR OLD.recurrence_end_at IS NOT NEW.recurrence_end_at BEGIN
+OR OLD.recurrence_end_at IS NOT NEW.recurrence_end_at)
+AND EXISTS (
+    WITH changed(message_id, provider_event_id, series_provider_id) AS (
+        SELECT OLD.message_id, OLD.provider_event_id, OLD.series_provider_id
+        UNION ALL SELECT NEW.message_id, NEW.provider_event_id, NEW.series_provider_id
+    ), event_ids(id) AS (
+        SELECT provider_event_id FROM changed WHERE provider_event_id <> ''
+        UNION ALL SELECT series_provider_id FROM changed WHERE series_provider_id <> ''
+    ), affected AS (
+        SELECT message_id, provider_event_id, series_provider_id FROM changed
+        UNION ALL
+        SELECT e.message_id, e.provider_event_id, e.series_provider_id FROM calendar_events e
+        WHERE e.provider_event_id IN (SELECT id FROM event_ids)
+           OR e.series_provider_id IN (SELECT id FROM event_ids)
+    )
+    SELECT 1 FROM affected e LEFT JOIN messages m ON m.id = e.message_id
+    WHERE EXISTS (SELECT 1 FROM meeting_link_decisions d WHERE d.target_message_id = e.message_id)
+       OR EXISTS (SELECT 1 FROM meeting_link_key k
+            WHERE (k.kind = 'ical_uid' AND k.value = CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END)
+               OR (k.kind = 'google_event_id' AND (k.value IN (e.provider_event_id, NULLIF(e.series_provider_id, ''))
+                    OR (e.provider_event_id <> '' AND substr(k.value, 1, length(e.provider_event_id) + 1) = e.provider_event_id || '_')
+                    OR (e.series_provider_id <> '' AND substr(k.value, 1, length(e.series_provider_id) + 1) = e.series_provider_id || '_'))))
+) BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', OLD.message_id);
     INSERT INTO cache_related_change_journal (dataset, message_id)
     SELECT 'meeting_links', NEW.message_id WHERE NEW.message_id <> OLD.message_id;
 END;
 CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_events_delete
-AFTER DELETE ON calendar_events FOR EACH ROW BEGIN
+AFTER DELETE ON calendar_events FOR EACH ROW
+WHEN EXISTS (
+    WITH changed(message_id, provider_event_id, series_provider_id) AS (
+        SELECT OLD.message_id, OLD.provider_event_id, OLD.series_provider_id
+    ), event_ids(id) AS (
+        SELECT provider_event_id FROM changed WHERE provider_event_id <> ''
+        UNION ALL SELECT series_provider_id FROM changed WHERE series_provider_id <> ''
+    ), affected AS (
+        SELECT message_id, provider_event_id, series_provider_id FROM changed
+        UNION ALL
+        SELECT e.message_id, e.provider_event_id, e.series_provider_id FROM calendar_events e
+        WHERE e.provider_event_id IN (SELECT id FROM event_ids)
+           OR e.series_provider_id IN (SELECT id FROM event_ids)
+    )
+    SELECT 1 FROM affected e LEFT JOIN messages m ON m.id = e.message_id
+    WHERE EXISTS (SELECT 1 FROM meeting_link_decisions d WHERE d.target_message_id = e.message_id)
+       OR EXISTS (SELECT 1 FROM meeting_link_key k
+            WHERE (k.kind = 'ical_uid' AND k.value = CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END)
+               OR (k.kind = 'google_event_id' AND (k.value IN (e.provider_event_id, NULLIF(e.series_provider_id, ''))
+                    OR (e.provider_event_id <> '' AND substr(k.value, 1, length(e.provider_event_id) + 1) = e.provider_event_id || '_')
+                    OR (e.series_provider_id <> '' AND substr(k.value, 1, length(e.series_provider_id) + 1) = e.series_provider_id || '_'))))
+) BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', OLD.message_id);
 END;
 
@@ -4871,6 +4936,28 @@ CREATE TRIGGER IF NOT EXISTS trg_cache_meeting_uid_update
 AFTER UPDATE OF metadata ON messages FOR EACH ROW
 WHEN NEW.message_type = 'calendar_event'
 AND (CASE WHEN json_valid(OLD.metadata) THEN json_extract(OLD.metadata, '$.ical_uid') END)
- IS NOT (CASE WHEN json_valid(NEW.metadata) THEN json_extract(NEW.metadata, '$.ical_uid') END) BEGIN
+ IS NOT (CASE WHEN json_valid(NEW.metadata) THEN json_extract(NEW.metadata, '$.ical_uid') END)
+AND EXISTS (
+    WITH changed(message_id, provider_event_id, series_provider_id) AS (
+        SELECT message_id, provider_event_id, series_provider_id FROM calendar_events WHERE message_id = NEW.id
+    ), event_ids(id) AS (
+        SELECT provider_event_id FROM changed WHERE provider_event_id <> ''
+        UNION ALL SELECT series_provider_id FROM changed WHERE series_provider_id <> ''
+    ), affected AS (
+        SELECT message_id, provider_event_id, series_provider_id FROM changed
+        UNION ALL
+        SELECT e.message_id, e.provider_event_id, e.series_provider_id FROM calendar_events e
+        WHERE e.provider_event_id IN (SELECT id FROM event_ids)
+           OR e.series_provider_id IN (SELECT id FROM event_ids)
+    )
+    SELECT 1 FROM affected e LEFT JOIN messages m ON m.id = e.message_id
+    WHERE EXISTS (SELECT 1 FROM meeting_link_decisions d WHERE d.target_message_id = e.message_id)
+       OR EXISTS (SELECT 1 FROM meeting_link_key k
+            WHERE (k.kind = 'ical_uid' AND (k.value = CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END
+            OR (m.id = NEW.id AND k.value = CASE WHEN json_valid(OLD.metadata) THEN json_extract(OLD.metadata, '$.ical_uid') END)))
+               OR (k.kind = 'google_event_id' AND (k.value IN (e.provider_event_id, NULLIF(e.series_provider_id, ''))
+                    OR (e.provider_event_id <> '' AND substr(k.value, 1, length(e.provider_event_id) + 1) = e.provider_event_id || '_')
+                    OR (e.series_provider_id <> '' AND substr(k.value, 1, length(e.series_provider_id) + 1) = e.series_provider_id || '_'))))
+) BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', NEW.id);
 END;
