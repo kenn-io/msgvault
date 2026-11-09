@@ -1167,6 +1167,7 @@ jobs:
             package: ./internal/api
             followups: true
           - name: pg_extra
+            extra_packages: true
             job_timeout: 36
             test_timeout: 24m
     runs-on: ubuntu-26.04
@@ -1212,7 +1213,7 @@ jobs:
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
-        if: matrix.name != 'pg_extra'
+        if: ${{ !matrix.extra_packages }}
         id: postgres-shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
 
@@ -1226,11 +1227,11 @@ jobs:
           if-no-files-found: ignore
 
       - name: Test additional PostgreSQL packages
-        if: matrix.name == 'pg_extra'
+        if: matrix.extra_packages
         run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=${{ matrix.test_timeout }}
 
       - name: Check for additional test reruns
-        if: always() && matrix.name == 'pg_extra'
+        if: always() && matrix.extra_packages
         id: check-pg-packages-reruns
         run: |
           if [ -s gotestsum/pg-packages-reruns.txt ]; then
@@ -1238,7 +1239,7 @@ jobs:
           fi
 
       - name: Upload additional test events
-        if: ${{ matrix.name == 'pg_extra' && (failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-pg-packages-reruns.outputs.reruns == 'true') }}
+        if: ${{ matrix.extra_packages && (failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-pg-packages-reruns.outputs.reruns == 'true') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-packages-attempt-${{ github.run_attempt }}
