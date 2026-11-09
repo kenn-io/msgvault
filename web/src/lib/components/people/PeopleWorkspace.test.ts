@@ -1,4 +1,3 @@
-import { addressFixture } from '../../directory/merge-fixtures.test-support';
 import { directoryPerson, mergeResult, person as profile } from '../../directory/entity-fixtures.test-support';
 import { DirectoryReviewController } from '../../directory/review-controller.svelte';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
@@ -13,6 +12,19 @@ import { meetingAction, meetingActions, meetingFixtureResponse } from '../../mee
 import PeopleWorkspace from './PeopleWorkspace.svelte';
 import { employment, organizationProfile } from '../../directory/entity-fixtures.test-support';
 import { emptyCalendar } from './fixtures.test-support';
+
+const personPageCallbacks = vi.hoisted(() => ({
+  split: undefined as ((context: { sourcePersonID: number; newPersonID: number }) => void | Promise<void>) | undefined,
+  open: undefined as ((id: number) => void) | undefined,
+}));
+vi.mock('./PersonPage.svelte', async importOriginal => {
+  const actual = await importOriginal<typeof import('./PersonPage.svelte')>();
+  return { default: (anchor: Parameters<typeof actual.default>[0], props: Parameters<typeof actual.default>[1]) => {
+    personPageCallbacks.split = props.onSplitCommitted;
+    personPageCallbacks.open = props.onOpenDirectoryPerson;
+    return actual.default(anchor, props);
+  } };
+});
 
 const when = '2026-07-19T10:00:00Z';
 function clientFor(routes: Record<string, (request: Request) => Promise<Response> | Response>) {
@@ -798,9 +810,6 @@ it('keeps person B selected when an earlier deletion of person A completes', asy
 it.each([false, true])('refreshes duplicates and navigation after source binding changes: saved=%s', async savedEntry => {
   let split = false;
   const saved = () => profile(7, split ? 5 : 4, savedEntry ? (split ? [2] : [1, 2]) : (split ? [] : [1]));
-  const merge = mergeResult(saved()).merge;
-  const restored = { participant_id: 1, type: 'email', value: 'restored@example.org', normalized_value: 'restored@example.org', display_value: '', service_slug: 'email', service_label: 'Email', scope_kind: '', scope_value: '' };
-  const labels = { profiles: [{ id: 7, display_name: 'Synthetic One', participant_ids: savedEntry ? [2] : [] }, { id: 9, display_name: 'Synthetic Two', participant_ids: [1] }], participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }, ...(savedEntry ? [{ merge_id: 41, participant_id: 2, origin_side: 'survivor' }] : [])], participant_ids: [1, ...(savedEntry ? [2] : [])], addresses: [addressFixture(1, 'email', restored.value)], absorbed_address_count: 1, incomplete: false };
   const client = clientFor({
     '/api/v1/people/9': () => Response.json(profile(9, 1, [1]), { headers: { ETag: '"person-9-r1"' } }),
     '/api/v1/people/9/profile/history': () => Response.json({ ...emptyProfile(profile(9, 1, [1])), observations: [] }),
@@ -809,9 +818,6 @@ it.each([false, true])('refreshes duplicates and navigation after source binding
     '/api/v1/people/7/profile/history': () => Response.json({ ...emptyProfile(saved()), observations: [] }),
     '/api/v1/people/7/brief-enrollment': () => Response.json({ person_id: 7, enrolled: !split, enabled_at: split ? null : when, actor: 'api' }),
     '/api/v1/people/7/brief': () => Response.json({ error: 'person_brief_not_found', message: 'Person brief not found' }, { status: 404 }),
-    '/api/v1/people/7/merges': () => Response.json({ merges: [{ merge, labels: { ...labels, participant_ids: [], addresses: [] }, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }] }),
-    '/api/v1/person-merges/41': () => Response.json({ merge, labels: { ...labels, participants: undefined }, participants: labels.participants, rows: [], splits: [], review_candidates: [] }),
-    '/api/v1/people/7/split': () => { split = true; return Response.json({ source_person: saved(), new_person: profile(9, 1, [1]), split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'synthetic-9', source_revision_before: 4, source_revision_after: 5, exact_reversal: true, actor: 'user', created_at: when }, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }); },
     '/api/v1/participants/1': () => Response.json({ id: 1, display_label: 'Synthetic One', profile: split ? profile(9, 1, [1]) : saved(), identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] }),
     '/api/v1/relationships/1/calendar': () => Response.json(emptyCalendar(2026)),
   });
@@ -824,17 +830,12 @@ it.each([false, true])('refreshes duplicates and navigation after source binding
     await fireEvent.click(await screen.findByRole('radio', { name: 'Details' }));
     const enrollment = await screen.findByRole('switch', { name: 'Write briefs for this person' }) as HTMLInputElement;
     await waitFor(() => expect(enrollment.checked).toBe(true));
-    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'History' }));
-    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
-    await fireEvent.click(await screen.findByRole('checkbox', { name: 'restored@example.org' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
+    await act(async () => { split = true; await personPageCallbacks.split!({ sourcePersonID: 7, newPersonID: 9 }); });
     await waitFor(() => expect(onDuplicatesChanged).toHaveBeenCalled());
     await waitFor(() => expect(state.current.relationshipTarget).toBe(savedEntry ? 'cluster:2' : null));
     await waitFor(() => expect((screen.getByLabelText('Write briefs for this person') as HTMLInputElement).checked).toBe(false));
     if (savedEntry) {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Open Synthetic Two' }));
+      await act(() => personPageCallbacks.open!(9));
       expect(state.current.directoryPersonID).toBe(9);
     }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }

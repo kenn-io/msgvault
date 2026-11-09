@@ -223,8 +223,7 @@ describe('PersonMergeHistoryController', () => {
     late.resolve(answer);
     await vi.waitFor(() => expect(body).toHaveResolved());
     await first;
-    // Labels enrich in the background after selectMerge returns; let the held answer finish processing.
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(controller.labels?.names.has(19)).not.toBe(true));
     expect(requests.find(request => new URL(request.url).pathname === '/api/v1/people/19')?.signal.aborted).toBe(true);
     expect(controller.labels?.names.get(7)).toBeUndefined();
     expect(controller.labels?.names.get(19)).toBeUndefined();
@@ -706,9 +705,10 @@ describe('PersonMergeHistoryController', () => {
     const body = vi.spyOn(answer, 'text');
     saved[0]!.resolve(answer);
     await vi.waitFor(() => expect(body).toHaveResolved());
-    await new Promise(resolve => setTimeout(resolve, 0));
-    expect(controller.sourceSaved).toBeNull();
-    expect(controller.sourceSavedError).toBeNull();
+    await vi.waitFor(() => {
+      expect(controller.sourceSaved).toBeNull();
+      expect(controller.sourceSavedError).toBeNull();
+    });
     saved[1]!.resolve(Response.json({}));
     controller.destroy();
   });

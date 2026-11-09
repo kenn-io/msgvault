@@ -1,4 +1,4 @@
-import { addressFixture } from '../../directory/merge-fixtures.test-support';
+import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { mergeResult } from '../../directory/entity-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -236,7 +236,7 @@ async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
     ...(tc.otherScope ? [{ participant_id: 2, type: 'handle', value: tc.value, display_value: '', normalized_value: tc.normalized, service_slug: tc.service, service_label: tc.label, scope_kind: tc.scopeKind ?? '', scope_value: tc.otherScope }] : []),
   ];
   const recorded = identifiers;
-  const addresses = identifiers.map(a => addressFixture(a.participant_id, a.type, a.value, { ...a, identity_key: `${a.normalized_value}:${a.scope_value}` }));
+  const addresses = identifiers.map(a => addressFixture(a.participant_id, a.type, a.value, a));
   const labels = (merge: typeof first) => ({
     profiles: [{ id: merge.survivor_person_id, display_name: 'Current person', participant_ids: [20] }, { id: merge.absorbed_person_id, display_name: 'First person', participant_ids: recorded.map(item => item.participant_id) }],
     participants: [{ merge_id: merge.id, participant_id: 20, origin_side: 'survivor' }, ...recorded.map(item => ({ merge_id: merge.id, participant_id: item.participant_id, origin_side: 'absorbed' }))],
@@ -246,7 +246,7 @@ async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
     const path = new URL((input as Request).url).pathname;
     if (path.endsWith('/merges')) return Response.json({ merges: merges.map(merge => ({ merge, labels: labels(merge), participant_count: recorded.length + 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} })), limit: 100, offset: 0 });
     if (path.startsWith('/api/v1/person-merges/')) { const merge = merges.find(item => path.endsWith(`/${item.id}`))!; return Response.json({ merge, labels: { ...labels(merge), participants: undefined }, participants: labels(merge).participants, rows: [], splits: [], review_candidates: [] }); }
-    return Response.json({ ...emptyProfile(person()), contact_points: tc.original ? [{ person_id: 7, address_kind: tc.service === 'email' || tc.service === 'phone' ? tc.service : 'username', original_value: tc.original, identity_key: `${tc.normalized}:${tc.scope ?? ''}`, normalized_value: tc.observed, service_slug: tc.service, service_label: tc.label, scope_kind: tc.scopeKind ?? '', scope_value: tc.scope ?? '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }] : [] });
+    return Response.json({ ...emptyProfile(person()), contact_points: tc.original ? [{ person_id: 7, address_kind: tc.service === 'email' || tc.service === 'phone' ? tc.service : 'username', original_value: tc.original, identity_key: identityKeyFixture(tc.service, tc.normalized, tc.scopeKind ?? '', tc.scope ?? ''), normalized_value: tc.observed, service_slug: tc.service, service_label: tc.label, scope_kind: tc.scopeKind ?? '', scope_value: tc.scope ?? '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }] : [] });
   }) });
   await screen.findAllByRole('button', { name: /^Open .+ merged into .+ · / });
   const section = screen.getByRole('heading', { name: 'Email and phone' }).closest('section')!;
@@ -261,7 +261,7 @@ it.each(mergedInCases)('lists each merged-in address once: $name', async entry =
 
 
 it.each(['removed before the merge', 'only seen in services'])('keeps the merge link for an address %s', async state => {
-  const address = { identity_key: 'mira@example.org', normalized_value: 'mira@example.org', service_slug: 'email', scope_kind: '', scope_value: '' };
+  const address = { identity_key: identityKeyFixture('email', 'mira@example.org'), normalized_value: 'mira@example.org', service_slug: 'email', scope_kind: '', scope_value: '' };
   const removed = { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' };
   render(ProfileHistoryDialog, { personID: 7, onClose: vi.fn(), client: createAPIClient(async input => {
     if (new URL((input as Request).url).pathname.endsWith('/merges')) return Response.json({ merges: [{ merge: { ...mergeResult(person()).merge, id: 41, current_person_id: 7 }, participant_count: 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {}, labels: { profiles: [{ id: 7, display_name: 'Current person', participant_ids: [] }, { id: 9, display_name: 'Mira Vale', participant_ids: [1] }], participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], participant_ids: [1], addresses: [addressFixture(1, 'email', 'mira@example.org')], absorbed_address_count: 1, incomplete: false } }] });

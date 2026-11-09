@@ -1,4 +1,4 @@
-import { addressFixture } from '../../directory/merge-fixtures.test-support';
+import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -217,8 +217,8 @@ describe('PersonMergeHistory', () => {
     const value = detail();
     value.participants = value.participants.filter(participant => participant.origin_side === 'survivor');
     value.labels.profiles[1] = { ...value.labels.profiles[1], display_name: 'Curated Guest', contact_points: [
-      { identity_key: 'saved-email', address_kind: 'email', original_value: 'curated@example.org', normalized_value: 'curated@example.org' },
-      { identity_key: 'saved-phone', address_kind: 'phone', original_value: '+12025550144', normalized_value: '+12025550144' },
+      { identity_key: identityKeyFixture('email', 'curated@example.org'), address_kind: 'email', original_value: 'curated@example.org', normalized_value: 'curated@example.org' },
+      { identity_key: identityKeyFixture('phone', '+12025550144'), address_kind: 'phone', original_value: '+12025550144', normalized_value: '+12025550144' },
     ] };
     renderHistory(value);
     await fireEvent.click(await screen.findByRole('button', { name: /^Open Curated Guest merged into Alex Example/ }));
@@ -290,7 +290,7 @@ describe('PersonMergeHistory', () => {
     renderHistory(value);
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
     const line = await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').includes('split back to Alex Restored'));
-    expect(line.textContent).toMatch(/split back to Alex Restored(?: on Aug [34])? · nothing left to split/);
+    expect(line.textContent).toMatch(/split back to Alex Restored on Aug [34] · nothing left to split/);
   });
 
   it.each([false, true])('names the addresses each split took beside its destination in the summary, deleted=%s', async deleted => {
@@ -413,13 +413,13 @@ describe('PersonMergeHistory', () => {
     expect(screen.getByText('SHA-256 syntheti…').title).toBe('SHA-256 synthetic-digest');
   });
 
-  it.each(['gone', 'already split', 'split on merge day'] as const)('explains unavailable Split: %s', async reason => {
+  it.each(['gone', 'completed partial split', 'split on merge day'] as const)('explains unavailable Split: %s', async reason => {
     const value = detail(reason === 'gone' || reason === 'split on merge day' ? null : 12);
     if (reason !== 'gone') value.participants[0].split_id = 55;
     if (reason === 'split on merge day') value.splits = [{ ...value.splits![0], exact_reversal: true, created_at: value.merge.created_at }];
     renderHistory(value, { addresses: addressIdentifiers() });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
-    const expected = reason === 'gone' ? /the profile it merged into is gone$/ : reason === 'already split'
+    const expected = reason === 'gone' ? /the profile it merged into is gone$/ : reason === 'completed partial split'
       ? / · nothing left to split$/ : /^Merged by you · (Jul|Aug) \d{1,2} · split back to Alex Restored · nothing left to split$/;
     expect(await screen.findByText((_, element) => element?.tagName === 'P' && expected.test((element.textContent ?? '').replace(/\s+/g, ' ').trim()))).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();

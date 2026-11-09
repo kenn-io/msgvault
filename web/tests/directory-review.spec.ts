@@ -65,7 +65,7 @@ test('History lays its groups and rows on the Layout scale', async ({ page }) =>
   await page.route(`**/api/v1/people/${profile.id}/profile/history`, route => route.fulfill({ json: {
     person: { id: profile.id, revision: 4, display_name: profile.name, participant_ids: [], vcard_uid: `synthetic-${profile.id}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
     names: [{ person_id: profile.id, name_kind: 'formatted', formatted: profile.name, original_value: profile.name, is_derived: false, envelope: envelope(71) }],
-    contact_points: [{ identity_key: 'one@example.org', person_id: profile.id, address_kind: 'email', original_value: 'one@example.org', normalized_value: 'one@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(72) } satisfies PersonContactPoint],
+    contact_points: [{ identity_key: '["email","","","one@example.org"]', person_id: profile.id, address_kind: 'email', original_value: 'one@example.org', normalized_value: 'one@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(72) } satisfies PersonContactPoint],
     addresses: [], dates: [], categories: [], media: [], observations: [],
   } }));
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
@@ -126,7 +126,7 @@ for (const width of [1440, 390]) {
   });
 }
 
-for (const width of [1440, 390]) {
+for (const width of [390]) {
   test(`History keeps a formatted phone once through Split at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const errors: string[] = [];

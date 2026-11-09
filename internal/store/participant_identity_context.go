@@ -257,7 +257,7 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 				if matched && identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" {
 					continue
 				}
-				if !matched {
+				if !matched && (identifier.NormalizedValue == "" || identifier.ServiceSlug == "") {
 					identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
 				}
 			}

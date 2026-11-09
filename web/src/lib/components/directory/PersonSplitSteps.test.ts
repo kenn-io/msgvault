@@ -1,4 +1,4 @@
-import { addressFixture } from '../../directory/merge-fixtures.test-support';
+import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -203,7 +203,7 @@ describe('PersonSplitSteps', () => {
 
   it('splits a saved-only profile without calling it addressless', async () => {
     let posted: Request | undefined;
-    const saved = { person_id: 19, identity_key: 'saved@example.org', address_kind: 'email', original_value: 'saved@example.org', normalized_value: 'saved@example.org', normalization: 'email', normalization_version: 1, envelope: {} };
+    const saved = { person_id: 19, identity_key: identityKeyFixture('email', 'saved@example.org'), address_kind: 'email', original_value: 'saved@example.org', normalized_value: 'saved@example.org', normalization: 'email', normalization_version: 1, envelope: {} };
     const response = { ...result(true), source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [], 'Synthetic Restored') };
     const { controller } = await preparedController(async input => {
       const request = input as Request, path = new URL(request.url).pathname;
@@ -263,14 +263,14 @@ describe('PersonSplitSteps', () => {
 
 describe('saved contacts in Split', () => {
   const contact = (id: number, address_kind: string, original_value: string) => ({
-    person_id: id, address_kind, original_value, identity_key: original_value, normalized_value: original_value, normalization: address_kind, normalization_version: 1,
+    person_id: id, address_kind, original_value, identity_key: identityKeyFixture(address_kind, original_value), normalized_value: original_value, normalization: address_kind, normalization_version: 1,
     envelope: { id: id * 10, source: 'user', ordinal: 0, actor: 'user', confidence: 1, active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} },
   });
   const structured = (profile: ReturnType<typeof person>, contact_points: ReturnType<typeof contact>[]) => ({
     person: profile, contact_points, names: [], addresses: [], dates: [], categories: [], media: [],
   });
   const catalogContacts = (id: number) => [
-    { ...contact(id, 'username', 'Desk 4455'), service_slug: 'pager', service_label: 'Team hotline', normalization: 'none' },
+    { ...contact(id, 'username', 'Desk 4455'), service_slug: 'pager', service_label: 'Team hotline', identity_key: identityKeyFixture('pager', 'Desk 4455'), normalization: 'none' },
     contact(id, 'email', 'plain@example.org'),
   ];
   const savedLabels = () => ({ ...mergeDetail().labels, incomplete: false,

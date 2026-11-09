@@ -1,3 +1,4 @@
+import { addressFixture } from '../../../src/lib/directory/merge-fixtures.test-support';
 import { person, merge } from '../../../src/lib/directory/person-fixtures.test-support';
 import { stubOperationStatus } from '../../kit-ui';
 import { execFileSync } from 'node:child_process';
@@ -1148,8 +1149,8 @@ function reviewMergeSummary(splitCompleted = false): PersonMergeSummary {
       participants: reviewParticipants(splitCompleted),
       participant_ids: [701, 702, 901], absorbed_address_count: 2, incomplete: false,
       addresses: [701, 702, 901].flatMap(id => [
-        { ...reviewIdentifier(id), participant_display_name: '', identity_key: reviewIdentifier(id).value },
-        ...(id === 901 ? [{ participant_id: id, type: 'phone', value: '+1 (202) 555-0123', normalized_value: '+12025550123', display_value: '', service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '', participant_display_name: '', identity_key: 'review-phone' }] : []),
+        addressFixture(id, 'email', reviewIdentifier(id).value),
+        ...(id === 901 ? [addressFixture(id, 'phone', '+1 (202) 555-0123', { normalized_value: '+12025550123' })] : []),
       ]),
     },
     participant_count: 3,
