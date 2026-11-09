@@ -1809,10 +1809,6 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 				runtimeAPIVersion: strconv.Itoa(daemonAPIVersion), runtimeAPISchemaVersion: api.APISchemaVersion, runtimeCreateTime: matchingProcessCreateTime(t),
 				runtimeBackground: "true", runtimePersistent: tc.persistent, runtimeIdleTimeout: tc.timeout,
 			}}
-			if tc.timeout == "" {
-				delete(rec.Metadata, runtimePersistent)
-				delete(rec.Metadata, runtimeIdleTimeout)
-			}
 			path, err := daemonRuntimeStore(c.Data.DataDir).Write(rec)
 			require.NoError(err)
 			before, err := os.ReadFile(path)
