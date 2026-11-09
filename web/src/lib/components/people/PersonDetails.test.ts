@@ -13,7 +13,7 @@ it('shows one alert for an attributes failure', async () => {
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
 
-async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
+async function renderDetails(participantIDs: number[], options: { meetingRequests?: string[]; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -22,6 +22,7 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
+    if (path.startsWith('/api/v1/meetings/')) options.meetingRequests?.push(path);
     if (path === '/api/v1/integrations/kata/status' && options.taskChange) return Response.json({ state: 'ready' });
     if (path === '/api/v1/people/7/agenda' && options.taskChange) {
       const hasTask = options.taskChange === 'merge' ? person.revision > 1 : person.revision === 1;
@@ -62,8 +63,11 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
   return { person, directory };
 }
 
-it('omits the meeting panel for a person without resolved identities', async () => {
-  await renderDetails([]);
+it('shows empty Meetings without requesting an empty identity scope', async () => {
+  const meetingRequests: string[] = [];
+  await renderDetails([], { meetingRequests });
+  expect(screen.getByText('No meetings yet')).toBeDefined();
+  expect(meetingRequests).toEqual([]);
   expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
 });
 

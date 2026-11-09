@@ -6,6 +6,8 @@
   import { formatContactDate } from '../../directory/labels';
   import PersonFields from './PersonFields.svelte';
   import DetailRow from './DetailRow.svelte';
+  import DetailSection from './DetailSection.svelte';
+  import EmptyLine from '../common/EmptyLine.svelte';
   import PersonMeetings from './PersonMeetings.svelte';
   import PersonFacts from './PersonFacts.svelte';
   import OrganizationEmploymentTab from '../directory/OrganizationEmploymentTab.svelte';
@@ -52,7 +54,10 @@
     <PersonAgenda {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
     <PersonFacts {client} {personID} refreshKey={profile.person} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
     <PersonBriefCard {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
-    {#if profile.person && profile.person.participant_ids.length > 0}<PersonMeetings {client} {personID} refreshKey={String(profile.person.revision)} {onOpenMeeting} />{/if}
+    {#if profile.person}
+      {#if profile.person.participant_ids.length > 0}<PersonMeetings {client} {personID} refreshKey={String(profile.person.revision)} {onOpenMeeting} />
+      {:else}<DetailSection title="Meetings"><EmptyLine message="No meetings yet" /></DetailSection>{/if}
+    {/if}
   {/if}
 </div>
 <style>

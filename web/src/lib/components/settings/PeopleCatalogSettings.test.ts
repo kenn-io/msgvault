@@ -36,7 +36,7 @@ it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async ope
     if (operation === 'delete') {
       await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Favorite color' })).toBeNull());
+      await screen.findByText('No fields yet');
       expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
       return;
     }
@@ -102,7 +102,7 @@ it.each(['edit', 'delete'])('ignores a delayed registry retry after a catalog %s
     if (operation === 'delete') {
       await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Favorite color' })).toBeNull());
+      await screen.findByText('No fields yet');
     } else {
       await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Preferred color' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -111,7 +111,7 @@ it.each(['edit', 'delete'])('ignores a delayed registry retry after a catalog %s
 
     await act(async () => { releaseRetry(staleResponse); await retry; });
     expect(screen.queryByRole('button', { name: 'Edit Favorite color' })).toBeNull();
-    if (operation === 'delete') expect(screen.queryByText('No fields match')).toBeNull();
+    if (operation === 'delete') expect(screen.getByText('No fields yet')).toBeDefined();
     else expect(screen.getByRole('button', { name: 'Edit Preferred color' })).toBeDefined();
   } finally {
     releaseRetry(staleResponse);

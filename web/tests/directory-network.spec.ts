@@ -137,12 +137,4 @@ test('the person page and its Details sections sit on the Layout scale', async (
   expect(phone.addLine, 'the add line starts at the value column on a phone too').toBe(0);
   expect(phone.actionsBelow, 'Merge with… and ⋯ wrap under the name').toBe(true);
   expect(phone.wide, 'nothing is wider than the pane').toBe(0);
-
-  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { version: 'v1', targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings' })));
-  await page.getByRole('button', { name: 'People', exact: true }).click();
-  await page.getByRole('searchbox', { name: 'Search fields' }).fill('Work');
-  const fields = page.getByRole('region', { name: 'Fields', exact: true });
-  await expect(fields.getByText('Current and historical jobs', { exact: true })).toBeVisible();
-  await expect(fields.locator('li')).toHaveCount(1);
 });

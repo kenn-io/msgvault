@@ -18,8 +18,7 @@ function readyStatus(): Response {
 /** Opens the add form once the agenda can take a task, unless it's already open. */
 async function openForm(): Promise<void> {
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Add task' }) ?? screen.queryByLabelText('New task')).not.toBeNull());
-  const open = screen.queryByRole('button', { name: 'Add task' });
-  if (open) await fireEvent.click(open);
+  if (!screen.queryByLabelText('New task')) await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
 }
 
 /** Opens the add form when it's closed, then types a task title. */
@@ -70,7 +69,7 @@ describe('PersonAgenda', () => {
     expect(screen.getAllByRole('option', { name: 'waiting' })).toHaveLength(1);
   });
 
-  it('retries a failed create from the notice with the same payload', async () => {
+  it.each(['retry', 'cancel'])('opens the task form on request and handles a failed create with %s', async action => {
     const posts: Request[] = [];
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -85,36 +84,24 @@ describe('PersonAgenda', () => {
     });
     render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
+    expect(screen.queryByLabelText('New task')).toBeNull();
     await typeTask('Send notes');
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await screen.findByText("Couldn't add the task.");
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(posts).toHaveLength(2));
-    expect(await posts[1]!.clone().json()).toEqual({ title: 'Send notes', list: 'agenda' });
-    expect(await screen.findByText('Send notes')).toBeDefined();
-  });
-
-  it('says an empty list in one line and opens the add form only when asked', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') return Response.json({ message: 'Unable to add task' }, { status: 503 });
-      return Response.json({ project: 'msgvault', items: [] });
-    }));
-    render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No tasks yet');
-    expect(screen.queryByLabelText('New task')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    expect(screen.getByRole('button', { name: 'List: agenda' })).toBeDefined();
-    await fireEvent.input(screen.getByRole('textbox', { name: 'New task' }), { target: { value: 'Send notes' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await screen.findByText("Couldn't add the task.");
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByLabelText('New task')).toBeNull();
-    expect(screen.queryByText("Couldn't add the task.")).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-    expect(screen.getByText('No tasks yet')).toBeDefined();
+    if (action === 'retry') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(posts).toHaveLength(2));
+      expect(await posts[1]!.clone().json()).toEqual({ title: 'Send notes', list: 'agenda' });
+      expect(await screen.findByText('Send notes')).toBeDefined();
+    } else {
+      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByLabelText('New task')).toBeNull();
+      expect(screen.queryByText("Couldn't add the task.")).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+      expect(screen.getByText('No tasks yet')).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+      expect(screen.getByLabelText('New task')).toHaveProperty('value', '');
+    }
   });
 
   it.each(['pending', 'failed'] as const)('keeps a %s create retry key across profile revisions and rotates it when the payload changes', async outcome => {

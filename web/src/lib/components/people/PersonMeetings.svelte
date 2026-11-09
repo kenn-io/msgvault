@@ -25,7 +25,9 @@
   const empty = $derived(settledEmpty?.personID === personID && settledEmpty.empty && !controller.actionsError && !controller.metricsError);
 </script>
 
-{#if empty}
+{#if settledEmpty?.personID !== personID && !controller.metricsError && !controller.actionsError}
+  <DetailSection title="Meetings"><EmptyLine message="Loading meetings…" /></DetailSection>
+{:else if empty}
   <DetailSection title="Meetings"><EmptyLine message="No meetings yet" /></DetailSection>
 {:else}
   <MeetingPanel {client} {controller} scope={{ kind: 'direct', scope: { person_id: personID } }} {refreshKey} {onOpenMeeting} />

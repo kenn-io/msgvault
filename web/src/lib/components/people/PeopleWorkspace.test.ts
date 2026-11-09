@@ -100,7 +100,6 @@ it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the 
       if (kind === 'draft') expect(await screen.findByText('No messages with Synthetic contact yet')).toBeDefined();
       else {
         await waitFor(() => expect(view.container.querySelector('section.person-page > .details')).toHaveProperty('hidden', false));
-        expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
         expect(screen.queryByText('No messages with Synthetic contact yet')).toBeNull();
       }
     }

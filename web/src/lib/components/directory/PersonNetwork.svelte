@@ -73,11 +73,10 @@
         paths.set(key, path);
       }
       if (!paths.size) continue;
-      // A row's description shares its line with the name, so it names two.
       const line = [...paths.values()].map((path) => [
         path.label,
-        path.via.length ? `via ${joinNames([...new Set(path.via)], 2)}` : undefined,
-        path.with.length ? `with ${joinNames([...new Set(path.with)], 2)}` : undefined
+        path.via.length ? `via ${joinWords([...new Set(path.via)])}` : undefined,
+        path.with.length ? `with ${joinWords([...new Set(path.with)])}` : undefined
       ].filter(Boolean).join(' · ')).join('; ');
       rows.push({ node, line: line[0]!.toUpperCase() + line.slice(1) });
     }

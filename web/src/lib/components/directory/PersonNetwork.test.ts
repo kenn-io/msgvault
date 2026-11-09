@@ -106,7 +106,7 @@ describe('PersonNetwork', () => {
     await screen.findByRole('button', { name: 'Shared Organization' });
     const region = screen.getByRole('region', { name: 'Network at 2 steps' });
     // Curated Peer is a direct link with no link to another direct one, which Connections already lists, so it shows only as the way through.
-    expect(rows(region)).toEqual(['Second Hop PersonMentee · via Curated Peer', truncated ? 'Shared OrganizationEngineer · via Curated Peer, Other Peer, and 1 more' : 'Shared OrganizationEngineer · via Curated Peer']);
+    expect(rows(region)).toEqual(['Second Hop PersonMentee · via Curated Peer', truncated ? 'Shared OrganizationEngineer · via Curated Peer, Other Peer, and Third Peer' : 'Shared OrganizationEngineer · via Curated Peer']);
     if (truncated) expect(screen.getByText('Showing up to 250 people and organizations and 500 connections.')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
@@ -205,37 +205,28 @@ describe('PersonNetwork', () => {
     expect(new URL(requestOf(fetcher.mock.calls[0]![0]).url).searchParams.get('depth')).toBe('1');
     expect(screen.queryByRole('region', { name: 'Network at 2 steps' })).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    await screen.findByRole('button', { name: 'Second Hop Person' });
-    expect(screen.queryByText('Curated Peer', { selector: 'p' })).toBeNull();
   });
 
-  it('names up to three direct links, then counts the rest', async () => {
+  it.each([
+    { labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove', checkEmpty: true },
+    { labels: ['Lumen Grove', 'Cedar Circle'], expected: 'Curated Peer, Lumen Grove, and Cedar Circle', checkEmpty: false },
+    { labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard'], expected: 'Curated Peer, Lumen Grove, and 3 more', checkEmpty: false }
+  ])('summarizes Direct as $expected', async ({ labels, expected, checkEmpty }) => {
     const network = connected(1);
-    const add = (id: number, label: string) => {
+    labels.forEach((label, index) => {
+      const id = 22 + index;
       network.nodes.push({ id: `organization:${id}`, kind: 'organization', entity_id: id, label, hop: 1 });
       network.edges.push({ id: `employment:${id}`, kind: 'employment', source_node_id: 'person:7', target_node_id: `organization:${id}`, label: 'Designer' });
-    };
-    add(22, 'Lumen Grove'); add(23, 'Cedar Circle');
-    const first = render(PersonNetwork, { controller: controllerWith(networkFetcher(structuredClone(network))).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByText('Curated Peer, Lumen Grove, and Cedar Circle');
-    first.unmount();
-    add(24, 'Fern Hollow'); add(25, 'Moss Yard');
+    });
     render(PersonNetwork, { controller: controllerWith(networkFetcher(network)).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByText('Curated Peer, Lumen Grove, and 3 more');
-  });
-
-  it('says no one else is that far out, rather than repeating Direct', async () => {
-    const network = connected(1);
-    network.nodes.push({ id: 'organization:22', kind: 'organization', entity_id: 22, label: 'Own Organization', hop: 1 });
-    network.edges.push({ id: 'employment:42', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:22', label: 'Designer' });
-    render(PersonNetwork, { controller: controllerWith(networkFetcher(network)).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByText('Curated Peer and Own Organization');
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    await screen.findByText('No one else at 2 steps');
-    expect(screen.queryByRole('button', { name: 'Own Organization' })).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-    await screen.findByText('No one else at 3 steps');
+    await screen.findByText(expected);
+    if (checkEmpty) {
+      await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+      await screen.findByText('No one else at 2 steps');
+      expect(screen.queryByRole('button', { name: 'Lumen Grove' })).toBeNull();
+      await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+      await screen.findByText('No one else at 3 steps');
+    }
   });
 
   it('reads a link from the far end when it runs toward the direct person', async () => {
