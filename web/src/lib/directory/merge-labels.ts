@@ -149,12 +149,11 @@ export function addressKey(address: AddressIdentity & { title: string; detail?: 
   return address.identity_key;
 }
 
-interface MergedInParticipant { merge_id: number; participant_id: number; merged_at: string; addresses: ParticipantAddress[] }
+interface MergedInParticipant { merge_id: number; participant_id: number; merged_at: string; addresses: ParticipantAddress[]; workspaces: Map<string, string> }
 
-/** The addresses each current member brought in with its newest merge, numbering workspaces within that merge. */
+/** The addresses each current member brought in with its newest merge, numbering workspaces as that merge does. */
 export function mergedInAddresses(records: MergedInParticipant[]): MergedInAddress[] {
-  const workspaces = new Map(records.map(record => [record.merge_id, workspaceLabels(records.filter(other => other.merge_id === record.merge_id).flatMap(other => other.addresses))]));
-  return records.flatMap(record => record.addresses.map(value => participantAddress(value, workspaces.get(record.merge_id)!)).map(address => ({
+  return records.flatMap(record => record.addresses.map(value => participantAddress(value, record.workspaces)).map(address => ({
     ...address, mergeID: record.merge_id, participantID: record.participant_id,
     mergedAt: record.merged_at, value: addressText(address)!,
   })));

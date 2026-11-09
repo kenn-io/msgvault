@@ -20,7 +20,7 @@ it('renders the store’s email and formatted phone through History and merged-i
   for (const addresses of [mergeAddresses({ participants, labels }, 'absorbed'), row.addresses.get(2)!]) {
     expect(addresses.map(addressText)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
   }
-  expect(mergedInAddresses([{ ...absorbed(2), merged_at: '2026-01-03T12:00:00Z', addresses: phoneAddresses }]).map(a => a.value)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
+  expect(mergedInAddresses([{ ...absorbed(2), merged_at: '2026-01-03T12:00:00Z', addresses: phoneAddresses, workspaces: row.workspaceLabels }]).map(a => a.value)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
 });
 
 it('keeps the legacy Beeper phone readable when its saved copy matches', () => {
@@ -97,17 +97,9 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
   const row = mergeSummaryRow(value);
   expect(row.addresses.get(701)?.map(addressText)).toEqual(expected);
   expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(expected);
-  expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses }]).map(a => a.value)).toEqual(expected);
+  expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses, workspaces: row.workspaceLabels }]).map(a => a.value)).toEqual(expected);
   const point = { identity_key: identityKeyFixture('slack', 'T_TWO:U_NERI', 'workspace', 'T_TWO'), address_kind: 'username', original_value: 'Neri Bloom', normalized_value: 'T_TWO:U_NERI', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
   expect(savedAddresses([point], new Set(), row.workspaceLabels).map(addressText)).toEqual(['Neri Bloom · Slack · workspace 2']);
-});
-
-it('keeps the same workspace number between a merge and field history across merges', () => {
-  const one = addressFixture(701, 'slack', 'T_TWO:U_NERI', { participant_display_name: 'Neri Bloom', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' });
-  const other = addressFixture(702, 'slack', 'T_ONE:U_OTHER', { participant_display_name: 'Other member', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_ONE' });
-  const selected = mergeSummaryRow({ merge, participants: [absorbed(701)], labels: labelsOf([one]) }).addresses.get(701)!.map(addressText);
-  const fields = mergedInAddresses([{ merge_id: 41, participant_id: 701, merged_at: '2026-01-03T12:00:00Z', addresses: [one] }, { merge_id: 42, participant_id: 702, merged_at: '2026-01-04T12:00:00Z', addresses: [other] }]);
-  expect(fields.filter(row => row.participantID === 701).map(row => row.value)).toEqual(selected);
 });
 
 it('renders migrated opaque Beeper IDs by their readable name', () => {

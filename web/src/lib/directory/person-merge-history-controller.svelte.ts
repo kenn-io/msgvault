@@ -123,7 +123,7 @@ export class PersonMergeHistoryController {
       (labels.participants ?? []).filter(participant => participant.origin_side === 'absorbed' && participant.split_id === undefined && !seen.has(participant.participant_id)).map(participant => {
         seen.add(participant.participant_id);
         return {
-          merge_id: merge.id, participant_id: participant.participant_id, merged_at: merge.created_at,
+          merge_id: merge.id, participant_id: participant.participant_id, merged_at: merge.created_at, workspaces: this.historyRows.get(merge.id)?.workspaceLabels ?? new Map(),
           addresses: labels.addresses.filter(address => address.participant_id === participant.participant_id),
         };
       })));

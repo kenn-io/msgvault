@@ -1,3 +1,4 @@
+import { addressText } from './merge-labels';
 import { addressFixture } from './merge-fixtures.test-support';
 import { emptyProfile } from './profile-fixtures.test-support';
 import { mergeResult, person, requestOf } from './entity-fixtures.test-support';
@@ -721,5 +722,25 @@ describe('PersonMergeHistoryController', () => {
     await controller.revealSnapshot();
     expect(controller.snapshotError).toBe('The server answered 503.');
     controller.destroy();
+  });
+
+  it('keeps survivor workspace numbers in the merged-in address and selected merge', async () => {
+    const value = detail();
+    value.labels.addresses = [
+      addressFixture(702, 'slack', 'T_A:U_SURVIVOR', { participant_display_name: 'Survivor', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_A' }),
+      addressFixture(701, 'slack', 'T_B:U_ABSORBED', { participant_display_name: 'Absorbed', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_B' }),
+    ];
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path === '/api/v1/people/12/merges') return Response.json({ merges: [{ ...summary(41), merge: value.merge, labels: { ...value.labels, participants: value.participants } }], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json(value);
+      throw new Error(`Unexpected request: ${path}`);
+    }), 12);
+    try {
+      await controller.loadHistory();
+      await controller.selectMerge(41);
+      expect(controller.labels?.addresses.get(701)?.map(addressText)).toEqual(['Slack · Absorbed · workspace 2']);
+      expect(controller.mergedIn.filter(address => address.participantID === 701).map(address => address.value)).toEqual(['Slack · Absorbed · workspace 2']);
+    } finally { controller.destroy(); }
   });
 });
