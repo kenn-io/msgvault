@@ -162,7 +162,7 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('copies a contact value and announces success', async () => {
+it('orders available field additions and copies a populated contact value with feedback', async () => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'first@example.com'), address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope }];
   const writeText = vi.fn(async () => undefined);
@@ -171,6 +171,14 @@ it('copies a contact value and announces success', async () => {
   const onAnnounce = vi.fn();
   const { controller, view } = harness(initial, { onAnnounce });
   try {
+    const fields = view.container.querySelector('.fields')!;
+    const add = fields.querySelector('.add')!;
+    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
+    expect(fields.lastElementChild).toBe(add);
+    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
     await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
     expect(writeText).toHaveBeenCalledWith('first@example.com');
@@ -240,7 +248,7 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('orders additions after values, moves populated kinds into More fields, and updates them after refresh', async () => {
+it('removes Add birthday after a refreshed profile supplies it', async () => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'old@example.com'), address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
@@ -257,14 +265,7 @@ it('orders additions after values, moves populated kinds into More fields, and u
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   const view = render(PersonFields, { controller });
   try {
-    const fields = view.container.querySelector('.fields')!;
-    const add = fields.querySelector('.add')!;
-    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
-    expect(fields.lastElementChild).toBe(add);
-    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
-    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Add birthday' })).toBeDefined();
     await act(async () => { await controller.reload(); });
     expect(screen.getByText('1990-05-06')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Add birthday' })).toBeNull();

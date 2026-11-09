@@ -169,11 +169,13 @@ it('opening Files drops the selected day from the conversation reader', async ()
 });
 
 it.each([
-  { name: 'forwards loaded contact points as listed addresses', failed: false },
+  { name: 'gates and forwards loaded listed addresses, showing them only on Details', failed: false },
   { name: 'forwards an empty listed-address fallback after a failed profile read', failed: true },
 ])('$name', async ({ failed }) => {
   vi.stubEnv('TZ', 'UTC');
   const person = { id: 7, revision: 1, display_name: 'Alice Example', participant_ids: [1], vcard_uid: 'example-7', created_at: when, updated_at: when };
+  let releaseProfile!: (response: Response) => void;
+  const pendingProfile = failed ? undefined : new Promise<Response>(resolve => { releaseProfile = resolve; });
   const contactPoints = [{ person_id: 7, address_kind: 'email', original_value: 'alice@example.com', normalized_value: 'alice@example.com', normalization: 'email', normalization_version: 1, envelope: { id: 1, ordinal: 0, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } }];
   const summary = { profile: person, id: 1, display_label: 'Alice Example', identifiers: [
     { type: 'email', value: 'alice@example.com', participant_id: 1, is_primary: true, provenance: 'participant_identifiers' },
@@ -184,7 +186,7 @@ it.each([
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
-    if (path === '/api/v1/people/7/profile') return failed ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : Response.json({ ...emptyProfile(person), contact_points: contactPoints }, { headers: { ETag: '"person-7-r1"' } });
+    if (path === '/api/v1/people/7/profile') return failed ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : pendingProfile!;
     if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
     if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
     if (path === '/api/v1/participants/1') return Response.json(summary);
@@ -194,11 +196,25 @@ it.each([
   const controller = new RelationshipsController(client, () => 'UTC');
   const directory = new DirectoryController(client);
   await controller.openTarget(target, {});
-  await directory.loadSelection(7);
+  const opening = directory.loadSelection(7);
+  if (failed) await opening;
   const view = render(PersonPage, { props: { client, directory, controller, target, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    if (!failed) {
+      expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
+      await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: contactPoints }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
+    }
     expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual(failed ? [] : contactPoints);
+    if (!failed) {
+      expect(screen.getByRole('heading', { name: 'Linked addresses' }).closest('.details')).toHaveProperty('hidden', false);
+      await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
+      await view.rerender({ filesOpen: true });
+      expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
+      await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+      await view.rerender({ filesOpen: false });
+      expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
+    }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
@@ -329,24 +345,21 @@ it('keeps the current person retry pair when an earlier Retry finishes late', as
 });
 
 it.each([
-  { activity: 50, bindings: [1], name: 'starts on Messages and gates Linked addresses through profile loading and tab changes' },
-  { activity: 0, bindings: [1], name: 'starts on Details when a linked person has no activity' },
-  { activity: 0, bindings: [], name: 'starts on Details when a person has no linked identities' },
-])('$name', async ({ activity, bindings }) => {
+  { activity: 50, bindings: [1] },
+  { activity: 0, bindings: [1] },
+  { activity: 0, bindings: [] },
+])('chooses the saved person tab from unfiltered activity (activity=$activity, bindings=$bindings)', async ({ activity, bindings }) => {
   const person = { id: 7, revision: 1, display_name: 'Saved Person', participant_ids: bindings, vcard_uid: 'saved-7', created_at: when, updated_at: when };
-  let releaseProfile!: (response: Response) => void;
-  const pendingProfile = activity > 0 ? new Promise<Response>(resolve => { releaseProfile = resolve; }) : undefined;
-  const summary = { id: 1, display_label: 'Saved Person', identifiers: [{ type: 'email', value: 'saved@example.com', participant_id: 1, is_primary: true, provenance: 'participant_identifiers' }], profile: person, first_at: when, last_at: when, activity_count: activity, file_count: 0, source_counts: [], cache_revision: 'cache-1' };
+  const summary = { id: 1, display_label: 'Saved Person', identifiers: [], profile: person, first_at: when, last_at: when, activity_count: activity, file_count: 0, source_counts: [], cache_revision: 'cache-1' };
   const predicate = { filters: [{ dimension: 'source' as const, values: ['999'] }], presentation: 'table' as const };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
     if (path === '/api/v1/participants/1') return activity > 0 ? Response.json(summary) : Response.json({ error: 'participant_not_found', message: 'Participant cluster not found' }, { status: 404 });
     if (path.endsWith('/summary')) return Response.json({ error: 'participant_not_found', message: 'Participant cluster not found in the active analytical context' }, { status: 404 });
     if (path === '/api/v1/relationships/1/calendar') return Response.json({ participant_id: 1, canonical_id: 1, year: (await request.json()).year, timezone: 'UTC', days: [], annual: [], current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } }, peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1 });
-    if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
     if (path.endsWith('/timeline')) return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
-    if (path.endsWith('/profile')) return pendingProfile ?? Response.json(emptyProfile(person), { headers: { ETag: '"person-7-r1"' } });
+    if (path.endsWith('/profile')) return Response.json(emptyProfile(person), { headers: { ETag: '"person-7-r1"' } });
     if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
     if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: activity, computed_at: when, stale: false });
@@ -357,25 +370,14 @@ it.each([
   });
   const directory = new DirectoryController(client), controller = new RelationshipsController(client, () => 'UTC');
   const target = bindings.length ? 'cluster:1' : null;
+  await directory.loadSelection(7);
   if (target) await controller.openTarget(target, predicate);
-  const opening = directory.loadSelection(7);
-  if (activity === 0) await opening;
   const view = render(PersonPage, { props: { client, directory, controller, durablePersonID: 7, target, filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
     if (activity > 0) {
       expect(screen.getByRole('radio', { name: 'Messages' }).getAttribute('aria-checked')).toBe('true');
       expect(screen.getByRole('region', { name: 'Relationship activity calendar' })).toBeDefined();
       expect(await screen.findByText('No items match this view')).toBeDefined();
-      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-      expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
-      await act(async () => { releaseProfile(Response.json(emptyProfile(person), { headers: { ETag: '"person-7-r1"' } })); await opening; });
-      expect(screen.getByRole('heading', { name: 'Linked addresses' }).closest('.details')).toHaveProperty('hidden', false);
-      await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
-      await view.rerender({ filesOpen: true });
-      expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
-      await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-      await view.rerender({ filesOpen: false });
-      expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
     } else {
       expect(screen.getByRole('radio', { name: 'Details' }).getAttribute('aria-checked')).toBe('true');
       expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();

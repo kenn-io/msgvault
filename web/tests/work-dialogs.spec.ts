@@ -178,7 +178,7 @@ test('Settings field search and rows work on a phone', async ({ page }) => {
     id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_plant', label: 'Favorite plant', description: 'Garden preferences',
     value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: true, revision: 1, is_deletable: true
   };
-  await page.route('**/api/v1/attribute-definitions*', route => route.fulfill({ json: { definitions: [field, { ...field, id: 42, universal_id: '00000000-0000-4000-8000-000000000042', slug: 'location', label: 'Location', description: 'Where they live', ownership: 'system', is_sensitive: false }] } }));
+  await page.route('**/api/v1/attribute-definitions*', route => route.fulfill({ json: { definitions: [field, { ...field, id: 42, universal_id: '00000000-0000-4000-8000-000000000042', slug: 'location', label: 'Location', description: 'Where they live', ownership: 'system', is_sensitive: false, is_deletable: false }] } }));
   await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await selectWorkspace(page, 'Settings');

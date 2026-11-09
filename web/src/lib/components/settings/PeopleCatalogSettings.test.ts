@@ -92,7 +92,7 @@ it.each([
 function renderCatalog(reads: { definitions?: () => Response | Promise<Response> | undefined; targets?: () => Response | Promise<Response> } = {}) {
   const definitions: Record<string, unknown>[] = [
     { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', description: 'Garden preferences', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 2, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: true, revision: 1, is_deletable: true },
-    { id: 42, universal_id: '00000000-0000-4000-8000-000000000042', object_type: 'person', slug: 'location', label: 'Location', description: 'Where they live', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 1, ownership: 'system', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: true }
+    { id: 42, universal_id: '00000000-0000-4000-8000-000000000042', object_type: 'person', slug: 'location', label: 'Location', description: 'Where they live', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 1, ownership: 'system', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: false }
   ];
   const targets = [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }];
   const client = createAPIClient(async input => {
@@ -160,6 +160,10 @@ it.each([
         expect(fields.queryByText('Current and historical jobs')).toBeNull();
         await fireEvent.input(search, { target: { value: 'location' } });
         expect(fields.getByText('Where they live')).toBeDefined();
+        await fireEvent.input(search, { target: { value: 'work' } });
+        expect(fields.getByText('Current and historical jobs')).toBeDefined();
+        expect(fields.queryByText('Where they live')).toBeNull();
+        expect(fields.queryByText('Garden preferences')).toBeNull();
         await fireEvent.input(search, { target: { value: 'plant' } });
         expect(screen.getByText('No fields match')).toBeDefined();
       } finally { unmount(); }

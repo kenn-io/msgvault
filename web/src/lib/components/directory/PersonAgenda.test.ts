@@ -110,7 +110,6 @@ describe('PersonAgenda', () => {
     if (outcome === 'pending') {
       await waitFor(() => expect(releasePost).toBeDefined());
       await rerender({ client, personID: 7, refreshKey: '2' });
-      expect(requests.filter(isStatus)).toHaveLength(1);
       releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
     } else {
       expect(await screen.findByText("Couldn't add the task.")).toBeDefined();

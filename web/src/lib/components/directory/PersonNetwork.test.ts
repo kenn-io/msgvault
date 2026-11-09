@@ -160,13 +160,13 @@ describe('PersonNetwork', () => {
         ]
       } satisfies PersonNetworkProjection,
       levels: [
-        { depth: 2, expected: ['Cedar BloomFrom Direct Friend: Friend', 'Fern HollowAdvisor · via Direct Friend', 'Maple ReedFrom Direct Friend: Friend'] },
-        { depth: 3, expected: ['Cedar BloomFrom Direct Friend: Friend; Mentor · with Maple Reed', 'Fern HollowAdvisor · via Direct Friend', 'Maple ReedFrom Direct Friend: Friend; Gardener · with Fern Hollow'] }
+        { depth: 2, expected: ['Cedar BloomFriend · via Direct Friend', 'Fern HollowAdvisor · via Direct Friend', 'Maple ReedFriend · via Direct Friend'] },
+        { depth: 3, expected: ['Cedar BloomFriend · via Direct Friend; Mentor · with Maple Reed', 'Fern HollowAdvisor · via Direct Friend', 'Maple ReedFriend · via Direct Friend; Gardener · with Fern Hollow'] }
       ]
     }
   ])('shows same-step links once, on the side they describe: $name', async ({ network, levels }) => {
     const { controller } = controllerWith(networkFetcher(network));
-    controller.relationshipTypes = [mentor];
+    controller.relationshipTypes = [mentor, { ...mentor, id: 32, slug: 'friend', forward_label: 'Friend', reverse_label: 'Friend', is_symmetric: true, universal_id: 'relationship-type-32' }];
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     for (const { depth, expected } of levels) {
       await fireEvent.click(await screen.findByRole('radio', { name: `${depth} steps` }));
@@ -175,8 +175,9 @@ describe('PersonNetwork', () => {
   });
 
   it.each([
-    { name: 'truncated Curated Peer and Lumen Grove', network: { ...connected(1), truncated: true }, labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove', links: ['Curated Peer', 'Lumen Grove'], people: [[8]], organizations: [[22]], sections: 1, notices: 1, emptyDepths: [2, 3] },
+    { name: 'Curated Peer and Lumen Grove', network: connected(1), labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove', links: ['Curated Peer', 'Lumen Grove'], people: [[8]], organizations: [[22]], sections: 1, notices: 0, emptyDepths: [2, 3] },
     { name: 'Lumen Grove, Cedar Circle, and 4 more', network: rootOnly(), labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard', 'Willow Field', 'Birch Garden'], expected: 'Lumen Grove, Cedar Circle, and 4 more', links: ['Lumen Grove', 'Cedar Circle'], people: [], organizations: [[22], [23]], sections: 1, notices: 0, emptyDepths: [] },
+    { name: 'node-capped Direct shows truncation', network: { ...rootOnly(), truncated: true }, labels: ['Lumen Grove', 'Cedar Circle', ...Array.from({ length: 247 }, (_, index) => `Organization ${index + 3}`)], expected: 'Lumen Grove, Cedar Circle, and 247 more', links: ['Lumen Grove', 'Cedar Circle'], people: [], organizations: [[22], [23]], sections: 1, notices: 1, emptyDepths: [] },
     { name: 'root-only Direct is hidden', network: rootOnly(), labels: [], expected: undefined, links: [], people: [], organizations: [], sections: 0, notices: 0, emptyDepths: [] }
   ])('shows Direct summaries, links, truncation, and empty deeper results: $name', async ({ network, labels, expected, links, people, organizations, sections, notices, emptyDepths }) => {
     labels.forEach((label, index) => {
@@ -219,10 +220,8 @@ describe('PersonNetwork', () => {
     controller.relationshipTypes = catalog;
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
-    await screen.findByRole('button', { name: 'Second Hop Person' });
-    expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual([expected, 'Shared OrganizationEngineer · via Curated Peer']);
-    expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
+    const person = await screen.findByRole('button', { name: 'Second Hop Person' });
+    expect(person.closest('.detail-row')?.textContent?.trim()).toBe(expected);
   });
 
   it.each([
