@@ -23,3 +23,15 @@ it('reports an invalid IMAP server port', async () => {
   expect(screen.getByText('Enter a port from 1 to 65535.')).toBeDefined();
   expect(screen.queryByText(/msgvault add-imap/, { selector: 'code' })).toBeNull();
 });
+
+it('adds STARTTLS to the IMAP command when selected', async () => {
+  render(AddSourceSteps, { kind: ADD_SOURCE_KINDS.find(kind => kind.id === 'imap') as CommandSourceKind });
+  await fireEvent.input(screen.getByLabelText('Server'), { target: { value: 'imap.example.com:143' } });
+  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'reader' } });
+  const command = screen.getByText(/msgvault add-imap/, { selector: 'code' });
+  expect(command.textContent).toBe('msgvault add-imap --host imap.example.com --port 143 --username reader');
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Use STARTTLS' }));
+  expect(command.textContent).toBe('msgvault add-imap --host imap.example.com --port 143 --username reader --starttls');
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Use STARTTLS' }));
+  expect(command.textContent).toBe('msgvault add-imap --host imap.example.com --port 143 --username reader');
+});

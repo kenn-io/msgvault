@@ -55,11 +55,12 @@ export function imapServer(value: string): { host: string; port?: string } | und
   return /^\d+$/.test(match[2]!) && port >= 1 && port <= 65535 ? { host: match[1]!, port: String(port) } : undefined;
 }
 
-export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
+export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd', starttls = false): string | undefined {
   if (kind.fields.some(field => !values[field.id]?.trim())) return undefined;
   const server = kind.id === 'imap' ? imapServer(values.host!) : {};
   if (!server) return undefined;
   const filled: Record<string, string | undefined> = { ...values, ...server };
   // An option with no value, such as a server's unstated port, is left out.
-  return kind.template.replace(/ (\S+) \{(\w+)\}/g, (_, before: string, id: string) => filled[id]?.trim() ? ` ${before} ${arg(filled[id]!.trim(), shell, before.startsWith('--'))}` : '');
+  const command = kind.template.replace(/ (\S+) \{(\w+)\}/g, (_, before: string, id: string) => filled[id]?.trim() ? ` ${before} ${arg(filled[id]!.trim(), shell, before.startsWith('--'))}` : '');
+  return kind.id === 'imap' && starttls ? `${command} --starttls` : command;
 }
