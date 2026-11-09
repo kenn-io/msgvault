@@ -66,6 +66,7 @@ func TestRelationshipCalendarReturnsLocalDaysAndCachedTemperatureSummary(t *test
 	for _, day := range response.Days {
 		byDate[day.Date] = day
 	}
+	assert.Equal(RelationshipCalendarDay{Date: "2026-07-11", Level: identityindex.HeatNone}, byDate["2026-07-11"])
 	assert.Equal(int64(1), byDate["2026-07-12"].Received)
 	assert.Equal(int64(1), byDate["2026-07-12"].Email)
 	assert.Equal(identityindex.HeatFirstQuartile, byDate["2026-07-12"].Level)

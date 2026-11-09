@@ -39,66 +39,95 @@ func TestMeetingCountKeysSingleSplitAfterCalendarCancellationOrDeletion(t *testi
 }
 
 func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
+	type note struct{ format, raw string }
+	type step struct {
+		seriesRaw, exceptionRaw, splitKey string
+		want                              []string
+	}
+	const twentyRaw = `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`
+	const movedRaw = `{"id":"moved","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q}}`
+	plain := []note{{"plaud_json", `{}`}}
+	copies := []note{
+		{"granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z","scheduled_start_time":"2027-03-21T10:00:00Z"}}`},
+		{"twenty_json", twentyRaw},
+	}
+	shortened := strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)
+	unsupported := strings.Replace(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=YEARLY;BYWEEKNO=20", 1)
 	for _, tc := range []struct {
-		mode, linkedKey string
+		name      string
+		notes     []note
+		links     []string
+		exception bool
+		steps     []step
 	}{
-		{"manual", "20270314T100000Z"},
-		{"automatic", ""},
-		{"mixed removed link", "20270314T100000Z"},
-		{"mixed surviving link", "20270307T100000Z"},
+		{name: "manual", notes: plain, links: []string{"20270314T100000Z", "20270321T100000Z"}, steps: []step{
+			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+		}},
+		{name: "automatic", notes: copies, steps: []step{
+			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270321T100000Z"}},
+		}},
+		{name: "mixed removed link", notes: copies, links: []string{"20270314T100000Z"}, steps: []step{
+			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270314T100000Z"}},
+			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270314T100000Z"}},
+		}},
+		{name: "mixed surviving link", notes: copies, links: []string{"20270307T100000Z"}, steps: []step{
+			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270307T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270307T100000Z"}},
+			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270307T100000Z"}},
+		}},
+		{name: "moved exception", notes: plain, links: []string{"20270314T100000Z"}, exception: true, steps: []step{
+			{want: []string{"uid:weekly@example.org/20270314T100000Z"}},
+			{exceptionRaw: fmt.Sprintf(movedRaw, "2027-03-15T14:00:00Z", "2027-03-15T15:00:00Z"), want: []string{"uid:weekly@example.org/20270314T100000Z"}},
+		}},
+		{name: "split", notes: []note{{"twenty_json", twentyRaw}}, steps: []step{
+			{seriesRaw: shortened, splitKey: "20270307T100000Z", want: []string{"uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: shortened, splitKey: "20270321T100000Z"},
+		}},
 	} {
-		t.Run(tc.mode, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			_, master := calendarFixture(t, st, "series", linkSeriesRaw)
-			var notes []int64
-			if tc.mode == "manual" {
-				_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-				notes = append(notes, note)
-			} else {
-				_, google := projectionFixture(t, st, "google", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z","scheduled_start_time":"2027-03-21T10:00:00Z"}}`)
-				_, twenty := projectionFixture(t, st, "twenty", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
-				notes = append(notes, google, twenty)
+			var exception int64
+			if tc.exception {
+				_, exception = calendarFixture(t, st, "moved", fmt.Sprintf(movedRaw, "2027-03-14T12:00:00Z", "2027-03-14T13:00:00Z"))
 			}
-			want := []string{"uid:weekly@example.org/20270321T100000Z"}
-			if tc.mode != "automatic" {
-				want = []string{"uid:weekly@example.org/" + tc.linkedKey, "uid:weekly@example.org/20270321T100000Z"}
-				for _, note := range notes {
-					require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: tc.linkedKey}))
-					if tc.mode == "manual" {
-						require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270321T100000Z"}))
+			var notes []int64
+			for i, data := range tc.notes {
+				_, id := projectionFixture(t, st, fmt.Sprintf("note-%d", i), data.format, data.raw)
+				notes = append(notes, id)
+				for _, key := range tc.links {
+					require.NoError(st.LinkMeetingContext(t.Context(), id, OccurrenceRef{MessageID: master, Key: key}))
+				}
+			}
+			for _, change := range tc.steps {
+				for _, id := range notes {
+					if change.splitKey != "" {
+						require.NoError(st.UnlinkMeetingContext(t.Context(), id, OccurrenceRef{MessageID: master, Key: change.splitKey}))
 					}
 				}
-			}
-			for step, raw := range []string{linkSeriesRaw, strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1), strings.Replace(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=YEARLY;BYWEEKNO=20", 1)} {
-				if tc.linkedKey != "" && tc.mode != "manual" && step > 0 {
-					want = want[:1]
+				if change.seriesRaw != "" {
+					require.NoError(st.UpsertMessageRawWithFormat(master, []byte(change.seriesRaw), "gcal_json"))
 				}
-				require.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
+				if change.exceptionRaw != "" {
+					require.NoError(st.UpsertMessageRawWithFormat(exception, []byte(change.exceptionRaw), "gcal_json"))
+				}
 				keys, err := st.MeetingCountKeysContext(t.Context())
 				require.NoError(err)
-				for _, note := range notes {
-					assert.ElementsMatch(want, keys[note])
+				for _, id := range notes {
+					assert.ElementsMatch(change.want, keys[id])
+				}
+				if change.splitKey != "" {
+					require.NoError(st.UpsertMessageRawWithFormat(master, []byte(linkSeriesRaw), "gcal_json"))
 				}
 			}
 		})
 	}
-}
-func TestMeetingCountKeysMovedExceptionKeepsOccurrence(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
-	raw := `{"id":"moved","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q}}`
-	_, exception := calendarFixture(t, st, "moved", fmt.Sprintf(raw, "2027-03-14T12:00:00Z", "2027-03-14T13:00:00Z"))
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
-	before, err := st.MeetingCountKeysContext(t.Context())
-	requirements.NoError(err)
-	requirements.Equal([]string{"uid:weekly@example.org/20270314T100000Z"}, before[note])
-	requirements.NoError(st.UpsertMessageRawWithFormat(exception, []byte(fmt.Sprintf(raw, "2027-03-15T14:00:00Z", "2027-03-15T15:00:00Z")), "gcal_json"))
-	after, err := st.MeetingCountKeysContext(t.Context())
-	requirements.NoError(err)
-	assertions.Equal(before[note], after[note])
 }
 
 func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
@@ -125,25 +154,6 @@ func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
 				assert.Equal(tc.want, keys[note])
 			}
 		})
-	}
-}
-
-func TestMeetingCountKeysSplitNamesOnlyItsOccurrence(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
-	for _, key := range []string{"20270307T100000Z", "20270321T100000Z"} {
-		require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: key}))
-		require.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
-		keys, err := st.MeetingCountKeysContext(t.Context())
-		require.NoError(err)
-		if key == "20270307T100000Z" {
-			assert.Equal([]string{"uid:weekly@example.org/20270321T100000Z"}, keys[note])
-		} else {
-			assert.Empty(keys[note])
-		}
-		require.NoError(st.UpsertMessageRawWithFormat(master, []byte(linkSeriesRaw), "gcal_json"))
 	}
 }
 

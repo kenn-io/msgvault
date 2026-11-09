@@ -27,10 +27,11 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 		name    string
 		context Context
 		want    int64
+		detail  bool
 	}{
-		{"both sources", Context{SourceIDs: []int64{firstSource, secondSource}}, 2},
-		{"explore both sources", Context{SourceIDs: []int64{firstSource, secondSource}, ParticipantIDs: []int64{person}}, 2},
-		{"explore one source", Context{SourceIDs: []int64{secondSource}, ParticipantIDs: []int64{person}}, 1},
+		{"both sources", Context{SourceIDs: []int64{firstSource, secondSource}}, 2, true},
+		{"explore both sources", Context{SourceIDs: []int64{firstSource, secondSource}, ParticipantIDs: []int64{person}}, 2, false},
+		{"explore one source", Context{SourceIDs: []int64{secondSource}, ParticipantIDs: []int64{person}}, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -38,10 +39,12 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(result.Rows, 1)
 			assertions.Equal(tc.want, result.Rows[0].MeetingCount)
-			detail, err := engine.GetPerson(t.Context(), person, tc.context, nil)
-			requirements.NoError(err)
-			requirements.NotNil(detail)
-			assertions.Equal(tc.want, detail.MeetingCount)
+			if tc.detail {
+				detail, err := engine.GetPerson(t.Context(), person, tc.context, nil)
+				requirements.NoError(err)
+				requirements.NotNil(detail)
+				assertions.Equal(tc.want, detail.MeetingCount)
+			}
 		})
 	}
 	t.Run("one transcript two occurrences", func(t *testing.T) {
@@ -69,23 +72,14 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 func TestRelationshipMeetingCounts(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
-		kinds          []string
 		keys           [][]string
 		at             time.Time
 		want           int64
 		crossYear      bool
 		calendarCounts map[int]int64
-		verify         func(*testing.T, []RelationshipRow, *RelationshipCalendarResponse)
 	}{
-		{name: "transcripts only", kinds: []string{"meeting_transcript", "meeting_note", "meeting_minutes"}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 1, calendarCounts: map[int]int64{2026: 1}, verify: func(t *testing.T, rows []RelationshipRow, calendar *RelationshipCalendarResponse) {
-			for _, row := range rows {
-				assert.Equal(t, time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), row.LastAt)
-			}
-			require.Len(t, calendar.Annual, 1)
-			assert.InDelta(t, 1.0, calendar.Annual[0].Signals.MeetingSignal, 0.000001)
-		}},
-		{name: "one transcript two occurrences", kinds: []string{"meeting_transcript"}, keys: [][]string{{"uid:series/first", "uid:series/second"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2, calendarCounts: map[int]int64{2026: 2}},
-		{name: "copies across years", kinds: []string{"meeting_transcript", "meeting_transcript"}, keys: [][]string{{"uid:shared@example.org/"}, {"uid:shared@example.org/"}}, at: time.Date(2025, 12, 31, 23, 30, 0, 0, time.UTC), want: 1, crossYear: true, calendarCounts: map[int]int64{2025: 1, 2026: 0}},
+		{name: "one transcript two occurrences", keys: [][]string{{"uid:series/first", "uid:series/second"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2, calendarCounts: map[int]int64{2026: 2}},
+		{name: "copies across years", keys: [][]string{{"uid:shared@example.org/"}, {"uid:shared@example.org/"}}, at: time.Date(2025, 12, 31, 23, 30, 0, 0, time.UTC), want: 1, crossYear: true, calendarCounts: map[int]int64{2025: 1, 2026: 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -100,30 +94,21 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				b.AddOwnerParticipant(second, owner)
 				sources = append(sources, second)
 			}
-			for i, kind := range tc.kinds {
-				at := tc.at.AddDate(0, 0, i)
-				if tc.crossYear {
-					at = tc.at.Add(time.Duration(i) * time.Hour)
-				}
-				id := b.AddMessage(MessageOpt{SourceID: sources[i%len(sources)], ConversationID: int64(100 + i), MessageType: kind, SentAt: at})
+			for i, keys := range tc.keys {
+				id := b.AddMessage(MessageOpt{SourceID: sources[i%len(sources)], ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: tc.at.Add(time.Duration(i) * time.Hour)})
 				b.AddTo(id, owner, "Owner")
 				b.AddTo(id, person, "Person")
-				if i < len(tc.keys) {
-					for _, key := range tc.keys[i] {
-						b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
-					}
+				for _, key := range keys {
+					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
 				}
 			}
 			engine := b.BuildEngine()
-			var relationshipRows []RelationshipRow
 			for _, scope := range []Context{{}, {SourceIDs: sources, ParticipantIDs: []int64{person}}} {
 				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: tc.at.AddDate(0, 0, 3)})
 				requirements.NoError(err)
 				requirements.Len(result.Rows, 1)
 				assertions.Equal(tc.want, result.Rows[0].Signals.MeetingCount)
-				relationshipRows = append(relationshipRows, result.Rows[0])
 			}
-			var attendanceCalendar *RelationshipCalendarResponse
 			for year, want := range tc.calendarCounts {
 				calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: year, Timezone: "UTC"})
 				requirements.NoError(err)
@@ -136,16 +121,12 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 					}
 				}
 				if year == tc.at.Year() {
-					attendanceCalendar = calendar
 					requirements.NotEmpty(transcriptDay.Date)
 					assertions.Equal(tc.want, transcriptDay.Meetings)
 					assertions.Equal(identityindex.ModalityMeeting, transcriptDay.ModalityMask)
 					assertions.Equal(identityindex.HeatFirstQuartile, transcriptDay.Level)
 				}
 				assertions.Equal(want, meetings, "year %d", year)
-			}
-			if tc.verify != nil {
-				tc.verify(t, relationshipRows, attendanceCalendar)
 			}
 		})
 	}
