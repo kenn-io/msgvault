@@ -75,6 +75,15 @@ function networkFetcher(network: PersonNetworkProjection) {
   });
 }
 
+function networkClient(readDepth: (depth: number) => Response | Promise<Response>) {
+  return createAPIClient(async input => {
+    const request = requestOf(input);
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/api/v1/people/7/network') return readDepth(Number(url.searchParams.get('depth')));
+    throw new Error(`Unexpected ${request.method} ${request.url}`);
+  });
+}
+
 const mentor = {
   id: 31, revision: 1, slug: 'mentor', forward_label: 'Mentor', reverse_label: 'Mentee',
   is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user' as const, universal_id: 'relationship-type-31',
@@ -217,39 +226,41 @@ describe('PersonNetwork', () => {
   });
 
   it.each([
-    { name: 'shows load failure details and retries the failed read', failure: true },
-    { name: 'marks the next depth busy until its rows arrive', failure: false },
-  ])('$name', async ({ failure }) => {
-    const depthThreeLoad = failure ? undefined : deferredResponse();
-    let directAttempts = 0;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (new URL(request.url).pathname.endsWith('/relationships')) return Response.json({ relationships: [] });
-      const url = new URL(request.url);
-      const depth = Number(url.searchParams.get('depth'));
-      if (depth === 1) return ++directAttempts === 1 && failure ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 }) : Response.json(connected(1));
-      if (depth === 2) return Response.json(connected(2));
-      if (depth === 3 && depthThreeLoad) return depthThreeLoad.promise;
-      throw new Error(`Unexpected ${request.method} ${request.url}`);
-    }));
-    const controller = new DirectoryEntityController(client, 7);
-    const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    try {
-      if (failure) {
-        expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
-        expect(view.container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
-        await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-        expect(await screen.findByText('Curated Peer')).toBeDefined();
-      } else {
-        await screen.findByText('Curated Peer');
-        await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-        await screen.findByRole('button', { name: 'Second Hop Person' });
-        await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-        await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
-        depthThreeLoad!.resolve(Response.json(depthThree()));
-        expect(await screen.findByRole('button', { name: 'Depth Three Person' })).toBeDefined();
+    {
+      name: 'shows load failure details and retries the failed read',
+      run: async () => {
+        let attempts = 0;
+        const client = networkClient(() => ++attempts === 1
+          ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 })
+          : Response.json(connected(1)));
+        const controller = new DirectoryEntityController(client, 7);
+        const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+        try {
+          expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
+          expect(view.container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
+          await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+          expect(await screen.findByText('Curated Peer')).toBeDefined();
+        } finally { view.unmount(); controller.destroy(); }
       }
-    } finally { view.unmount(); controller.destroy(); }
-  });
+    },
+    {
+      name: 'marks the next depth busy until its rows arrive',
+      run: async () => {
+        const depthThreeLoad = deferredResponse();
+        const client = networkClient(depth => depth === 3 ? depthThreeLoad.promise : Response.json(connected(depth)));
+        const controller = new DirectoryEntityController(client, 7);
+        const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+        try {
+          await screen.findByText('Curated Peer');
+          await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+          await screen.findByRole('button', { name: 'Second Hop Person' });
+          await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+          await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
+          depthThreeLoad.resolve(Response.json(depthThree()));
+          expect(await screen.findByRole('button', { name: 'Depth Three Person' })).toBeDefined();
+        } finally { view.unmount(); controller.destroy(); }
+      }
+    },
+  ])('$name', async ({ run }) => run());
 
 });
