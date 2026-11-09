@@ -1,4 +1,5 @@
 ---
+last_edited: "2026-11-08"
 title: Development
 description: Build, test, lint, and code conventions.
 ---
@@ -148,6 +149,34 @@ make test-cli-e2e
 `test-cli-e2e` uses an isolated archive and a fixed synthetic embedding provider.
 Linux CI runs it against the built release binary. To reuse a binary locally,
 set `MSGVAULT_E2E_BINARY` to its absolute path.
+
+### Recording retrieval qualification
+
+The **Recording retrieval qualification** workflow runs the synthetic media corpus through real Docbank processing, vector indexes and HTTP search, then through Msgvault's HTTP client, Store and recording search route. It pins the companion Docbank commit in the feature workflow. The scripts run only in GitHub CI and create isolated fixture stores; they never open the developer's archive or audio.
+
+`python3 scripts/qualify-recording-retrieval.py --docbank <exact-checkout> --quality deterministic-contract --output <artifact-directory>` runs lexical, semantic and hybrid requests with a fresh fixture process per mode. The workflow supplies PostgreSQL when selected and separately builds Docbank with CGO enabled or disabled. `--quality real-model --encoder-python <isolated-python>` uses the pinned public MiniLM encoder through a loopback fixture service. Its report records the model revision, formatter and library versions. Deterministic vectors establish contracts, not model quality.
+
+The PostgreSQL lanes exercise Msgvault's Store. Docbank uses a separate SQLite fixture, with its CGO and pure-Go engines qualified independently. These results do not qualify a PostgreSQL Docbank vault.
+
+Artifacts record both repository SHAs, corpus digest, backend, Docbank SQLite engine, per-profile occurrence and conversation precision/recall at three, hard negatives, coverage and lifecycle outcomes. Conversation rankings are deduplicated before cutoff. Missing profile coverage is measured against the full corpus rather than hidden by merging profile runs. Irrelevant neighbors are quality errors; stale, revoked or out-of-scope results are forbidden lifecycle leaks. A run fails on missing mappings, stale presentation, unavailable required fixture setup or a failed scenario. Ordinary CI skips the explicit external-fixture test unless the runner supplies its private manifest.
+
+Qualification covers retrieval and presentation. Source capture, generic routing, ASR and conversational projection have separate evidence:
+
+| Source or format | Capture and stored-media route | Qualification boundary |
+|---|---|---|
+| Beeper voice notes | Captured attachments and source transcripts; stored WAV/MP3 route | `TestStoredMediaProviderMatrix` proves synthetic routing. The executable corpus proves supplied/generated retrieval and shared live occurrences, not a live provider account. |
+| WhatsApp, Messenger, SMS/MMS, Slack, Discord, Google Voice | Existing stored-attachment route; provider matrix includes a generic future provider | Synthetic routing and source identity only. Google Voice voicemail capture has separate Takeout fixtures. No provider-specific ASR-quality claim. |
+| Email attachments | MIME capture and generic stored WAV/MP3 route | `TestStoredMediaEmailFallback` and header recovery tests; no email account access. |
+| iMessage | Existing attachment capture; eligible stored audio uses the generic contract | No real Messages database or source-specific ASR qualification in this suite. |
+| Signal Android | Separate importer contribution | Capture readiness belongs to its existing owner; no new importer or qualified provider claim here. |
+| Matrix | Message import exists; media capture is a separate contribution | A text `[audio]` label is not retained recording bytes. Media acquisition remains a prerequisite. |
+| Calls and meetings | Existing source-specific recording and attachment paths | Eligible retained bytes use the generic contract. This suite does not qualify each provider's acquisition, meeting reader, ASR or subtitle export. |
+| MP3, WAV | Existing stored-audio inspection and canonical upload labels | ASR is a separate Docbank producer qualification; search tests use synthetic WAV and retained transcript evidence. |
+| M4A/AAC | Requires the separately owned Msgvault routing and Docbank ASR contributions | Real MP3/AAC qualification is producer evidence; this retrieval suite does not establish it. |
+| Ogg/Opus, AMR, CAF, video | No expanded support established here | Storage or a recognized filename does not qualify decoding, ASR, timing or retrieval. |
+| Loom/Cap references | Recognized links, with caller-held exact file/caption import | Automatic acquisition is unsupported even with `Acquire`; URL recognition is not URL-to-transcript completion. |
+
+The recording lane keeps embeddings in Docbank and returns visible message/conversation evidence. The separately owned conversation transcript projection intentionally extends the earlier routing-only design by placing reversible, uncertain transcript text in original conversation context. It must keep authored source recoverable; its ordinary message embeddings are not proof for this recording-specific lane.
 
 ### Build tags and assertions
 

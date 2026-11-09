@@ -1233,6 +1233,44 @@ func (l LoopItemKind) Validate() error {
 	}
 }
 
+type MediaSearchResponseActualMode string
+
+const (
+	Hybrid      MediaSearchResponseActualMode = "hybrid"
+	Lexical     MediaSearchResponseActualMode = "lexical"
+	Semantic    MediaSearchResponseActualMode = "semantic"
+	Unavailable MediaSearchResponseActualMode = "unavailable"
+)
+
+// Validate checks if the MediaSearchResponseActualMode value is valid
+func (m MediaSearchResponseActualMode) Validate() error {
+	switch m {
+	case Hybrid, Lexical, Semantic, Unavailable:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MediaSearchResponseActualMode value, got: %v", m))
+	}
+}
+
+// MediaSearchResponseRequestedMode Requested recording mode; independent of attachment mode
+type MediaSearchResponseRequestedMode string
+
+const (
+	MediaSearchResponseRequestedModeHybrid   MediaSearchResponseRequestedMode = "hybrid"
+	MediaSearchResponseRequestedModeLexical  MediaSearchResponseRequestedMode = "lexical"
+	MediaSearchResponseRequestedModeSemantic MediaSearchResponseRequestedMode = "semantic"
+)
+
+// Validate checks if the MediaSearchResponseRequestedMode value is valid
+func (m MediaSearchResponseRequestedMode) Validate() error {
+	switch m {
+	case MediaSearchResponseRequestedModeHybrid, MediaSearchResponseRequestedModeLexical, MediaSearchResponseRequestedModeSemantic:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MediaSearchResponseRequestedMode value, got: %v", m))
+	}
+}
+
 type MediaSearchResultOrigin string
 
 const (
@@ -1382,16 +1420,16 @@ func (m MessagingRouteStatus) Validate() error {
 type MuesliRemoteMeetingContactsState string
 
 const (
-	Complete                                MuesliRemoteMeetingContactsState = "complete"
-	MuesliRemoteMeetingContactsStatePartial MuesliRemoteMeetingContactsState = "partial"
-	Off                                     MuesliRemoteMeetingContactsState = "off"
-	Unavailable                             MuesliRemoteMeetingContactsState = "unavailable"
+	Complete                                    MuesliRemoteMeetingContactsState = "complete"
+	MuesliRemoteMeetingContactsStatePartial     MuesliRemoteMeetingContactsState = "partial"
+	MuesliRemoteMeetingContactsStateUnavailable MuesliRemoteMeetingContactsState = "unavailable"
+	Off                                         MuesliRemoteMeetingContactsState = "off"
 )
 
 // Validate checks if the MuesliRemoteMeetingContactsState value is valid
 func (m MuesliRemoteMeetingContactsState) Validate() error {
 	switch m {
-	case Complete, MuesliRemoteMeetingContactsStatePartial, Off, Unavailable:
+	case Complete, MuesliRemoteMeetingContactsStatePartial, MuesliRemoteMeetingContactsStateUnavailable, Off:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MuesliRemoteMeetingContactsState value, got: %v", m))

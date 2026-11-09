@@ -81,7 +81,7 @@ func TestSearchFenceAndContract(t *testing.T) {
 		mutate func(*SearchRequest)
 	}{
 		{"blank query", func(r *SearchRequest) { r.Query = " \t\n" }},
-		{"non-lexical mode", func(r *SearchRequest) { r.Mode = "semantic" }},
+		{"invalid mode", func(r *SearchRequest) { r.Mode = "invalid" }},
 		{"empty profile", func(r *SearchRequest) { r.Profile = "" }},
 		{"content first disabled", func(r *SearchRequest) { r.ContentFirst = false }},
 		{"zero limit", func(r *SearchRequest) { r.Limit = 0 }},

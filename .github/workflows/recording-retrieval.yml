@@ -1,0 +1,164 @@
+name: Recording retrieval qualification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recording-retrieval.yml'
+      - 'internal/api/**'
+      - 'internal/docbankmedia/**'
+      - 'internal/eval/**'
+      - 'scripts/qualify-recording-retrieval*'
+      - 'scripts/recording-eval-encoder.py'
+  push:
+    branches: [feat/recording-semantic-search]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: recording-retrieval-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  generated:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+      - uses: step-security/setup-bun@v2.1.3
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Generate API artifacts from implemented routes
+        run: make api-generate agent-guide web-generate
+      - name: Format and vet remotely
+        run: |
+          go fmt ./...
+          go vet -tags 'fts5 sqlite_vec' ./...
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: recording-generated-api
+          path: |
+            api/openapi.yaml
+            pkg/client/openapi.yaml
+            pkg/client/generated/
+            docs/guides/agent-quickstart.md
+            web/src/lib/api/generated/
+          retention-days: 7
+  contracts:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgvault_test
+          POSTGRES_PASSWORD: msgvault_test
+          POSTGRES_DB: msgvault_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      GOPROXY: https://proxy.golang.org|direct
+      MSGVAULT_TEST_DB: ${{ matrix.backend == 'postgres' && 'postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable' || '' }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - name: Download modules
+        run: kit-retry 3 5 go mod download
+      - name: Exercise recording modes and existing lifecycle contracts
+        run: >-
+          go test -tags 'fts5 sqlite_vec' -timeout 15m
+          ./internal/docbankmedia ./internal/api ./internal/daemonclient ./internal/mcp
+          ./cmd/msgvault/cmd ./internal/beeper ./internal/recordingref ./pkg/client
+          -run 'TestRecordingSearch|TestMediaSearch|TestMessageRecordings|TestMedia|TestSearchMedia|TestStoredMediaProviderMatrix|TestStoredMediaEmailFallback|TestStoredMediaProcessingChoice|TestRecordingReference|TestGeneratedMediaSearch'
+  evaluation:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {backend: sqlite, cgo: '1', quality: deterministic-contract}
+          - {backend: postgres, cgo: '1', quality: deterministic-contract}
+          - {backend: sqlite, cgo: '0', quality: deterministic-contract}
+          - {backend: postgres, cgo: '0', quality: deterministic-contract}
+          - {backend: sqlite, cgo: '1', quality: real-model}
+          - {backend: postgres, cgo: '1', quality: real-model}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgvault_test
+          POSTGRES_PASSWORD: msgvault_test
+          POSTGRES_DB: msgvault_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # Pin the companion implementation; the report also records both checkout SHAs.
+      DOCBANK_REVISION: 2d7d24bcc68b0e89c7fa4fdf45a8383415d932f6
+      DOCBANK_EVAL_CGO_ENABLED: ${{ matrix.cgo }}
+      MSGVAULT_TEST_DB: ${{ matrix.backend == 'postgres' && 'postgres://msgvault_test:msgvault_test@localhost:5432/msgvault_test?sslmode=disable' || '' }}
+      QUALITY: ${{ matrix.quality }}
+      GOPROXY: https://proxy.golang.org|direct
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: salmonumbrella/docbank
+          ref: ${{ env.DOCBANK_REVISION }}
+          path: .superpowers/docbank
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - name: Download modules for both exact checkouts
+        run: |
+          kit-retry 3 5 go mod download
+          cd .superpowers/docbank
+          kit-retry 3 5 go mod download
+      - name: Install the isolated public-model encoder
+        if: matrix.quality == 'real-model'
+        run: |
+          python3 -m venv .superpowers/encoder-venv
+          kit-retry 3 5 .superpowers/encoder-venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch
+          kit-retry 3 5 .superpowers/encoder-venv/bin/pip install sentence-transformers
+      - name: Execute production routes and score the corpus
+        run: >-
+          python3 scripts/qualify-recording-retrieval.py
+          --docbank .superpowers/docbank
+          --quality "$QUALITY"
+          --encoder-python "$PWD/.superpowers/encoder-venv/bin/python"
+          --output .superpowers/recording-eval
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: recording-eval-${{ matrix.backend }}-docbank-cgo-${{ matrix.cgo }}-${{ matrix.quality }}
+          path: .superpowers/recording-eval/*.json
+          retention-days: 7
+          if-no-files-found: warn

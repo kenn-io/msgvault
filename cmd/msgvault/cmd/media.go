@@ -59,9 +59,14 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		if err := writer.Flush(); err != nil {
 			return fmt.Errorf("render media search results: %w", err)
 		}
-		_, err = fmt.Fprintf(command.OutOrStdout(), "Coverage %s; pending %d; unavailable %d; attribution unavailable %d; partial %t; truncated %t\n", textutil.SanitizeTerminal(response.Coverage.State), response.PendingOccurrences, response.UnavailableOccurrences, response.AttributionUnavailable, response.Partial, response.Truncated)
+		_, err = fmt.Fprintf(command.OutOrStdout(), "Recordings requested %s; actual %s\nCoverage %s; pending %d; unavailable %d; attribution unavailable %d; partial %t; truncated %t\n", textutil.SanitizeTerminal(string(response.RequestedMode)), textutil.SanitizeTerminal(string(response.ActualMode)), textutil.SanitizeTerminal(response.Coverage.State), response.PendingOccurrences, response.UnavailableOccurrences, response.AttributionUnavailable, response.Partial, response.Truncated)
 		if err != nil {
 			return fmt.Errorf("render media search coverage: %w", err)
+		}
+		if len(response.Degradations) != 0 {
+			if _, err := fmt.Fprintln(command.OutOrStdout(), "Recording degradations: "+textutil.SanitizeTerminal(strings.Join(response.Degradations, ", "))); err != nil {
+				return fmt.Errorf("render recording search degradation: %w", err)
+			}
 		}
 		if response.Attachments != nil {
 			_, _ = fmt.Fprintln(writer, "MESSAGE\tCONVERSATION\tATTACHMENT\tFILENAME\tEXCERPT")
@@ -93,6 +98,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		return nil
 	}}
 	search.Flags().StringVar(&request.Mode, "mode", "lexical", "Search mode: lexical")
+	search.Flags().StringVar(&request.RecordingsMode, "recordings-mode", "lexical", "Recording transcript mode: lexical, semantic, or hybrid")
 	search.Flags().Int64Var(&request.PersonID, "person", 0, "Limit to one durable person")
 	search.Flags().StringSliceVar(&directions, "direction", nil, "Person relation: from_person, to_person, or group")
 	search.Flags().IntVarP(&request.Limit, "limit", "n", 20, "Maximum occurrences per list, 1 to 100")

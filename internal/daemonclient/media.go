@@ -10,18 +10,20 @@ import (
 )
 
 type MediaSearchOptions struct {
-	Query      string
-	Mode       string
-	PersonID   int64
-	Directions []personscope.Direction
-	Limit      int
+	Query          string
+	Mode           string
+	RecordingsMode string
+	PersonID       int64
+	Directions     []personscope.Direction
+	Limit          int
 }
 
 func (c *Client) SearchMedia(ctx context.Context, request MediaSearchOptions) (generated.MediaSearchResponse, error) {
 	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.SearchMediaResp, error) {
 		return client.SearchMediaWithResponse(ctx, &generated.SearchMediaRequestOptions{Query: &generated.SearchMediaQuery{
 			Q: request.Query, Mode: optionalString(request.Mode), PersonID: optionalPositiveInt64Value(request.PersonID),
-			Direction: documentDirectionStrings(request.Directions), Limit: optionalPositiveInt64(request.Limit),
+			RecordingsMode: optionalString(request.RecordingsMode),
+			Direction:      documentDirectionStrings(request.Directions), Limit: optionalPositiveInt64(request.Limit),
 		}})
 	})
 	if err != nil {

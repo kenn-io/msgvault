@@ -12,6 +12,10 @@ export type SearchMediaParams = {
    */
   mode?: string;
   /**
+   * Recording transcript mode: lexical (default), semantic, or hybrid; independent of attachment mode
+   */
+  recordings_mode?: string;
+  /**
    * Durable person ID
    */
   person_id?: number;

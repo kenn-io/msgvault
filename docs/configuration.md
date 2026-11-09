@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-08"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1602,6 +1602,7 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `api_key_file` | — | Owner-only Docbank key file, read for each request; takes priority over `api_key_env` |
 | `all_sources_upload_consent` | `false` | Allow stored audio and explicit source transcripts from every captured source, including future providers, to be sent to `url`. Without it the job only records local state |
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
+| `recording_search_profile` | — | Already configured Docbank profile for semantic/hybrid recording transcript retrieval. Requires source-selected semantic support and compatible embeddings for the exact selected transcript builds. This does not schedule processing or grant consent. Empty makes semantic unavailable and hybrid an explicit lexical downgrade. |
 | `reference_consent` | `false` | Send Loom/Cap links from every message source and native Teams recording pointers to `url` as references. This consent is separate from audio upload consent. |
 | `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
 
@@ -1612,7 +1613,7 @@ Teams recording pointers from typed attachment records.
 HTML messages use actual link destinations and surrounding text; the plain body is used when HTML is absent.
 Beeper imports and repairs retain HTML outside quoted replies, so links behind display text and changes to link targets remain discoverable.
 It submits references with acquisition disabled. Docbank records outcome
-`access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported.
+`access_required` or `unsupported`. Coverage stays `unprocessed` until media is imported. Docbank automatic Loom/Cap acquisition remains unsupported even when acquisition is explicitly requested; recognizing a URL does not supply its recording or transcript. The supported path is importing the caller-held exact recording or caption artifact as described in [Docbank's embedded media guide](https://github.com/kenn-io/docbank/blob/main/docs/embedding.md). Reference consent does not authorize scraping or provider download workarounds.
 Delivery log events include delivery state and Docbank's
 `source_id` and `occurrence_id` for `docbank media import-artifact`.
 

@@ -18,11 +18,12 @@ type MediaSearcher interface {
 
 func searchMediaDefinition() toolDefinition {
 	definition := readDefinition(ToolSearchMedia, "Find text in recording transcripts and Docbank-extracted mirrored attachments as visible messages. Recordings preserve origin, optional timing, and partial coverage. Attachments have their own results, truncation, and error.", closedObject(map[string]*jsonschema.Schema{
-		toolArgQuery:    stringSchema("Words to find"),
-		toolArgMode:     stringSchema("Search mode", "lexical"),
-		toolArgPersonID: safeIDSchema("Optional durable person ID"),
-		"directions":    {Type: schemaTypeArray, Items: stringSchema("Person relation", "from_person", "to_person", "group")},
-		toolArgLimit:    boundedIntegerSchema("Maximum occurrences per list, default 20", 1, 100),
+		toolArgQuery:      stringSchema("Words to find"),
+		toolArgMode:       stringSchema("Search mode", "lexical"),
+		"recordings_mode": stringSchema("Independent recording transcript mode", "lexical", "semantic", "hybrid"),
+		toolArgPersonID:   safeIDSchema("Optional durable person ID"),
+		"directions":      {Type: schemaTypeArray, Items: stringSchema("Person relation", "from_person", "to_person", "group")},
+		toolArgLimit:      boundedIntegerSchema("Maximum occurrences per list, default 20", 1, 100),
 	}, toolArgQuery), outputSchemaFor[generated.MediaSearchResponse](), (*handlers).searchMedia)
 	definition.availability = func(capabilities catalogCapabilities) bool { return capabilities.mediaSearch }
 	return definition
@@ -58,6 +59,10 @@ func (h *handlers) searchMedia(ctx context.Context, req toolRequest) (*toolResul
 	request := daemonclient.MediaSearchOptions{Query: query, PersonID: personID, Limit: int(limit), Mode: "lexical"}
 	if mode, exists := args[toolArgMode].(string); exists {
 		request.Mode = mode
+	}
+	request.RecordingsMode = "lexical"
+	if mode, exists := args["recordings_mode"].(string); exists {
+		request.RecordingsMode = mode
 	}
 	for _, direction := range directions {
 		request.Directions = append(request.Directions, personscope.Direction(direction))

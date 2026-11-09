@@ -40,6 +40,9 @@ func (s *Server) handleMediaSearchStatus(w http.ResponseWriter, r *http.Request)
 }
 
 type MediaSearchResponse struct {
+	RequestedMode          string                      `json:"requested_mode" enum:"lexical,semantic,hybrid" doc:"Requested recording mode; independent of attachment mode"`
+	ActualMode             string                      `json:"actual_mode" enum:"lexical,semantic,hybrid,unavailable"`
+	Degradations           []string                    `json:"degradations,omitempty"`
 	Attachments            *MediaAttachmentSearch      `json:"attachments,omitempty"`
 	RecordingsError        *ErrorResponse              `json:"recordings_error,omitempty"`
 	Coverage               docbankmedia.SearchCoverage `json:"coverage"`
@@ -83,6 +86,14 @@ func (s *Server) participantScope(
 func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	mode := r.URL.Query().Get("mode")
+	recordingsMode := r.URL.Query().Get("recordings_mode")
+	if recordingsMode == "" {
+		recordingsMode = "lexical"
+	}
+	if recordingsMode != "lexical" && recordingsMode != "semantic" && recordingsMode != "hybrid" {
+		s.rejectBadParam(w, errors.New("recordings_mode must be lexical, semantic, or hybrid"))
+		return
+	}
 	limit, found, err := queryInt(r, "limit")
 	if !found {
 		limit = 20
@@ -150,7 +161,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	var attachmentErr error
 	var searches sync.WaitGroup
 	searches.Go(func() {
-		response, err = reader.search(r.Context(), searchCtx, q, limit, scope, resolve)
+		response, err = reader.search(r.Context(), searchCtx, q, recordingsMode, limit, scope, resolve)
 	})
 	if s.docbankAttachments != nil {
 		searches.Go(func() {
@@ -186,6 +197,8 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response = MediaSearchResponse{
+			RequestedMode:   recordingsMode,
+			ActualMode:      "unavailable",
 			Attachments:     response.Attachments,
 			RecordingsError: &failure,
 			Results:         []MediaSearchResult{},
@@ -201,6 +214,8 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 func mediaSearchFailure(err error) (int, ErrorResponse) {
 	httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
 	switch {
+	case errors.Is(err, errRecordingSearchUnconfigured):
+		return http.StatusServiceUnavailable, ErrorResponse{Error: "media_search_mode_unavailable", Message: "Configure integrations.docbank.recording_search_profile with an already embedded Docbank transcript profile for semantic recording search"}
 	case errors.Is(err, errMediaSearchScope):
 		return http.StatusBadRequest, ErrorResponse{Error: "media_search_scope_limit", Message: "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"}
 	case httpError && httpErr.Status == http.StatusBadRequest:
@@ -211,6 +226,7 @@ func mediaSearchFailure(err error) (int, ErrorResponse) {
 }
 
 var errMediaSearchScope = errors.New("media search scope exceeds the supported fence")
+var errRecordingSearchUnconfigured = errors.New("recording search profile is not configured")
 
 type mediaSearchScopeError struct{ err error }
 
@@ -238,8 +254,21 @@ func mediaSearchSource(o store.MessageMediaOccurrence) docbankmedia.SearchMediaS
 	return docbankmedia.SearchMediaSource{SourceID: o.DocbankSourceID, SourceVersionID: o.SourceVersionID, ContentVersionID: o.ContentVersionID}
 }
 
-func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaSearchResponse, error) {
-	response := MediaSearchResponse{Results: []MediaSearchResult{}, Coverage: docbankmedia.SearchCoverage{State: "unknown"}}
+func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, query, mode string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaSearchResponse, error) {
+	response := MediaSearchResponse{RequestedMode: mode, ActualMode: "unavailable", Results: []MediaSearchResult{}, Coverage: docbankmedia.SearchCoverage{State: "unknown"}}
+	profile := suppliedTranscriptProfile
+	actualMode := mode
+	if mode != "lexical" {
+		profile = strings.TrimSpace(reader.SearchProfile)
+		if profile == "" {
+			if mode == "semantic" {
+				return response, errRecordingSearchUnconfigured
+			}
+			profile, actualMode = suppliedTranscriptProfile, "lexical"
+			response.Degradations = []string{"semantic_unconfigured"}
+			response.Partial = true
+		}
+	}
 	occurrences, err := reader.Store.ListMediaSearchOccurrences(ctx, reader.Destination, scope)
 	if err != nil {
 		return response, err
@@ -294,13 +323,19 @@ func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, que
 			fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
 		}
 	}
-	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", Limit: docbankmedia.MaxSearchResults, Profile: suppliedTranscriptProfile, ContentFirst: true}
+	request := docbankmedia.SearchRequest{Query: query, Mode: actualMode, Limit: docbankmedia.MaxSearchResults, Profile: profile, ContentFirst: true}
 	var report docbankmedia.SearchReport
 	if len(fence.ContentVersionIDs) == 0 {
 		if err := reader.Client.ValidateSearch(remoteCtx, request); err != nil {
 			return response, err
 		}
 		response.Coverage.State = "complete"
+		if mode == "lexical" {
+			response.ActualMode = "lexical"
+		} else {
+			response.Degradations = append(response.Degradations, "empty_recording_scope")
+			response.Partial = true
+		}
 	} else {
 		request.Fence, request.MediaSources = &fence, selectors
 		report, err = reader.Client.Search(remoteCtx, request)
@@ -308,7 +343,9 @@ func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, que
 			return response, err
 		}
 		response.Coverage, response.Truncated = report.Coverage, report.Truncated
-		response.Partial = response.Partial || report.Coverage.State != "complete"
+		response.ActualMode = report.ActualMode
+		response.Degradations = append(response.Degradations, report.Degradations...)
+		response.Partial = response.Partial || report.Coverage.State != "complete" || report.ActualMode != mode || len(response.Degradations) != 0
 	}
 	// Resolve again so an identity change during remote work cannot broaden presentation.
 	scope, err = resolve()

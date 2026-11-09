@@ -661,6 +661,9 @@ type SearchMediaQuery struct {
 	// Mode Lexical mode; semantic and hybrid are unavailable
 	Mode *string `json:"mode,omitempty"`
 
+	// RecordingsMode Recording transcript mode: lexical (default), semantic, or hybrid; independent of attachment mode
+	RecordingsMode *string `json:"recordings_mode,omitempty"`
+
 	// PersonID Durable person ID
 	PersonID *int64 `json:"person_id,omitempty"`
 

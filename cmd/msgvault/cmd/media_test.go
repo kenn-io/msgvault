@@ -32,6 +32,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		{name: "terminal", args: []string{"search", "quarterly numbers"}, status: 200, terminal: true},
 		{name: "json", args: []string{"search", "quarterly numbers", "--json"}, status: 200, want: []string{`"message_id":11`, "generated", "quarterly numbers", "report.pdf"}},
 		{name: "mode delegated", args: []string{"search", "words", "--mode", "hybrid"}, status: 503, want: []string{"media_search_mode_unavailable"}},
+		{name: "recording mode delegated", args: []string{"search", "words", "--recordings-mode", "semantic"}, status: 200, want: []string{"Recordings requested semantic; actual semantic", "Coverage complete"}},
 		{name: "upper limit delegated", args: []string{"search", "words", "--limit", "101"}, status: 400, want: []string{"invalid_limit"}},
 		{name: "person relation delegated", args: []string{"search", "words", "--direction", "from_person"}, status: 400, want: []string{"invalid_person"}},
 		{name: "direction delegated", args: []string{"search", "words", "--person", "7", "--direction", "invalid"}, status: 400, want: []string{"invalid_direction"}},
@@ -49,6 +50,9 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					assert.Equal("from_person", r.URL.Query().Get("direction"))
 				case "mode delegated":
 					assert.Equal("hybrid", r.URL.Query().Get("mode"))
+				case "recording mode delegated":
+					assert.Equal("semantic", r.URL.Query().Get("recordings_mode"))
+					assert.Equal("lexical", r.URL.Query().Get("mode"))
 				case "upper limit delegated":
 					assert.Equal("101", r.URL.Query().Get("limit"))
 				case "person relation delegated":
@@ -68,9 +72,15 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					state, excerpt = "\x1b[31mcomplete\x1b[0m\a", "quarterly\x1b[31m numbers\x1b[0m\a"
 				}
 				response := generated.MediaSearchResponse{
-					Coverage:    generated.SearchCoverage{State: state},
-					Results:     []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}},
-					Attachments: &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
+					RequestedMode: generated.MediaSearchResponseRequestedModeLexical,
+					ActualMode:    generated.Lexical,
+					Coverage:      generated.SearchCoverage{State: state},
+					Results:       []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}},
+					Attachments:   &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true},
+				}
+				if test.name == "recording mode delegated" {
+					response.RequestedMode = generated.MediaSearchResponseRequestedModeSemantic
+					response.ActualMode = generated.Semantic
 				}
 				if test.terminal {
 					response.Attachments.Results[0].Filename = "report\x1b[31m.pdf\x1b[0m\a"

@@ -766,6 +766,7 @@ func TestGeneratedMediaSearchAcceptsEmptyAttachmentMetadata(t *testing.T) {
 	requirements.NoError(json.Unmarshal([]byte(`{
 		"results":[],"coverage":{"state":"complete","binding_required":false,"complete_documents":1,"scoped_documents":1},"partial":false,"truncated":false,
 		"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,
+		"requested_mode":"lexical","actual_mode":"lexical",
 		"attachments":{"results":[{"attachment_id":1,"message_id":2,"conversation_id":3,
 			"filename":"","containing_title":"","excerpt":"matching text"}],"truncated":false}
 	}`), &response))

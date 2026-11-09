@@ -7656,23 +7656,33 @@ func (m MediaAttachmentSearch) Validate() error {
 }
 
 type MediaSearchResponse struct {
-	Attachments *MediaAttachmentSearch `json:"attachments,omitempty"`
+	ActualMode  MediaSearchResponseActualMode `json:"actual_mode" validate:"required"`
+	Attachments *MediaAttachmentSearch        `json:"attachments,omitempty"`
 
 	// AttributionUnavailable Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
 	AttributionUnavailable int64          `json:"attribution_unavailable"`
 	Coverage               SearchCoverage `json:"coverage"`
+	Degradations           []string       `json:"degradations,omitempty"`
 
 	// Partial Coverage or occurrence attribution is incomplete, even with no matching excerpts
-	Partial                bool                `json:"partial"`
-	PendingOccurrences     int64               `json:"pending_occurrences"`
-	RecordingsError        *ErrorResponse      `json:"recordings_error,omitempty"`
-	Results                []MediaSearchResult `json:"results" validate:"required"`
-	Truncated              bool                `json:"truncated"`
-	UnavailableOccurrences int64               `json:"unavailable_occurrences"`
+	Partial            bool           `json:"partial"`
+	PendingOccurrences int64          `json:"pending_occurrences"`
+	RecordingsError    *ErrorResponse `json:"recordings_error,omitempty"`
+
+	// RequestedMode Requested recording mode; independent of attachment mode
+	RequestedMode          MediaSearchResponseRequestedMode `json:"requested_mode" validate:"required"`
+	Results                []MediaSearchResult              `json:"results" validate:"required"`
+	Truncated              bool                             `json:"truncated"`
+	UnavailableOccurrences int64                            `json:"unavailable_occurrences"`
 }
 
 func (m MediaSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(m.ActualMode).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ActualMode", err)
+		}
+	}
 	if m.Attachments != nil {
 		if v, ok := any(m.Attachments).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7690,6 +7700,11 @@ func (m MediaSearchResponse) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("RecordingsError", err)
 			}
+		}
+	}
+	if v, ok := any(m.RequestedMode).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RequestedMode", err)
 		}
 	}
 	if err := typesValidator.Var(m.Results, "required"); err != nil {
