@@ -49,13 +49,11 @@ function arg(value: string, shell: 'posix' | 'cmd', optionValue: boolean): strin
 }
 
 export function imapServer(value: string): { host: string; port?: string } | undefined {
-  const match = /^(\[[^\]]+\]|[^:]+):([^:]*)$/.exec(value.trim());
+  const host = value.trim();
+  const match = /^(\[[^\]]+\]|[^:]+):([^:]*)$/.exec(host);
   if (!match) {
-    const host = value.trim();
-    if (host.includes(':')) {
-      try { new URL(`http://${host.startsWith('[') ? host : `[${host}]`}`); }
-      catch { return undefined; }
-    }
+    // A server with several colons and no port is valid only as an IPv6 address.
+    try { if (host.includes(':')) new URL(`http://${host.startsWith('[') ? host : `[${host}]`}`); } catch { return undefined; }
     return { host };
   }
   const port = Number(match[2]);

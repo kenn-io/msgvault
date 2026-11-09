@@ -137,7 +137,6 @@
     : controller.selectedMergeID !== null ? (controller.detail ? mergeTitle(controller.detail.merge) : 'Merge')
     : 'History');
   const splitDisabled = $derived(controller.splitNeedsFreshState || !controller.sourcePerson ||
-    controller.selectedParticipantIDs.some(id => !controller.canSelectParticipant(id)) ||
     (!controller.isZeroParticipantLineage && controller.selectedParticipantIDs.length === 0));
 
   /** When the merge recorded the profiles: "Nov 6, 9:37 AM", with the year only when it isn't this year. */

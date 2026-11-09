@@ -25,7 +25,7 @@
   /** An address as the person knows it, with its scope when it has one, so two alike addresses read apart. */
   function addressLabel(id: number): string {
     const addresses = labels?.addresses.get(id);
-    const ids = [...controller.eligibleParticipantIDs, ...(controller.sourcePerson?.participant_ids ?? []).filter(id => !controller.eligibleParticipantIDs.includes(id))];
+    const ids = [...new Set([...controller.eligibleParticipantIDs, ...(controller.sourcePerson?.participant_ids ?? [])])];
     return addresses ? addresses.map(address => addressText(address)).join(', ') || 'No addresses' : `Unknown address ${ids.indexOf(id) + 1}`;
   }
   /** Addresses still on the current profile, including those linked after this merge. */
@@ -137,7 +137,7 @@
               label={participantLabel(participantID)}
               ariaLabel={saved ? participantLabel(participantID) : undefined}
               ariaDescribedby={saved ? `${uid}-saved-${participantID}` : undefined}
-              disabled={controller.splitBusy || (!controller.canSelectParticipant(participantID) && !controller.selectedParticipantIDs.includes(participantID))}
+              disabled={controller.splitBusy || !controller.canSelectParticipant(participantID)}
               onchange={(checked) => controller.setParticipantSelected(participantID, checked)}
             >{#if saved}<small id={`${uid}-saved-${participantID}`}>Also saved</small>{/if}</Checkbox>
           {/each}

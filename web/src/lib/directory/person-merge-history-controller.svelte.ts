@@ -263,7 +263,7 @@ export class PersonMergeHistoryController {
     const mergeID = this.selectedMergeID, splitWasOpen = this.splitOpen, selected = this.selectedParticipantIDs;
     if (mergeID !== null) await this.selectMerge(mergeID);
     if (splitWasOpen && this.selectedMergeID === mergeID && this.detail && await this.openSplit()) {
-      this.selectedParticipantIDs = selected.filter(id => this.eligibleParticipantIDs.includes(id));
+      this.selectedParticipantIDs = selected.filter(id => this.eligibleParticipantIDs.includes(id) && this.canSelectParticipant(id));
     }
   }
   async revealSnapshot(): Promise<void> {
@@ -320,7 +320,7 @@ export class PersonMergeHistoryController {
         return false;
       }
       this.applySplitState(state);
-      this.selectedParticipantIDs = this.selectedParticipantIDs.filter(id => this.eligibleParticipantIDs.includes(id));
+      this.selectedParticipantIDs = this.selectedParticipantIDs.filter(id => this.eligibleParticipantIDs.includes(id) && this.canSelectParticipant(id));
       return true;
     } catch (cause) {
       if (this.ownsSplit(request, generation, context, mergeID)) this.sourceError = failureMessage(cause, 0);
