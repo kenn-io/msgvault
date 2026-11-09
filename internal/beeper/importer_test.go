@@ -774,9 +774,7 @@ func TestImportSecondRunIncremental(t *testing.T) {
 	f.resetRequests()
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
-	// The reconcile pass may re-upsert recent messages, so MessagesAdded can
-	// exceed 3; the DB count is the duplicate-free ground truth.
-	assert.GreaterOrEqual(sum.MessagesAdded, int64(3))
+	assert.EqualValues(3, sum.MessagesAdded, "only new rows count as added")
 
 	var total int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
@@ -1073,6 +1071,124 @@ func TestImportReconcileVisitsRecentChatWithoutNewActivity(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), "ri0").Scan(&deletedAt))
 	assert.True(deletedAt.Valid, "recent inactive chat must be reconciled despite the newer global watermark")
+}
+
+// recentChat builds a chat whose messages all sit inside the reconcile window.
+func recentChat() *fakeChat {
+	base := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!steady:beeper.local", AccountID: "signal", Network: "Signal", Title: "Steady", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+	}
+	for i := range 5 {
+		ch.Msgs = append(ch.Msgs, fakeMsg{
+			ID: "s" + strconv.Itoa(i), SortKey: i,
+			Timestamp: base.Add(time.Duration(i) * time.Minute),
+			Text:      "steady " + strconv.Itoa(i),
+			SenderID:  "@signal_ann:beeper.local", SenderName: "Ann",
+		})
+	}
+	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
+	return ch
+}
+
+func TestImportReconcileSkipsUnchangedMessages(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	first, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(5, first.MessagesAdded)
+	assert.Zero(first.MessagesUpdated)
+
+	// A scheduled run with nothing new rewrites nothing.
+	quiet, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.Zero(quiet.MessagesAdded)
+	assert.Zero(quiet.MessagesUpdated)
+	assert.Zero(quiet.MessagesProcessed)
+	assert.EqualValues(5, quiet.MessagesUnchanged, "the reconcile pass still checks every recent message")
+
+	// One message is edited, another gains a reaction, and one new message arrives.
+	ch := f.chat("!steady:beeper.local")
+	edited := time.Now().UTC().Truncate(time.Second)
+	ch.Msgs[1].Text = "steady 1, edited"
+	ch.Msgs[1].EditedTimestamp = &edited
+	ch.Msgs[3].Reactions = []map[string]any{
+		{"id": "@me:beeper.local", "reactionKey": "👍", "participantID": "@me:beeper.local", "emoji": true},
+	}
+	f.appendMsg("!steady:beeper.local", fakeMsg{
+		ID: "s5", SortKey: 5, Timestamp: edited,
+		Text: "newest", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+
+	changed, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(1, changed.MessagesAdded, "only the new message counts as added")
+	assert.EqualValues(2, changed.MessagesUpdated, "the edit and the reaction are rewritten")
+	assert.EqualValues(4, changed.MessagesUnchanged,
+		"three untouched messages and the one the incremental pass just archived are skipped")
+
+	var added, updated int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT messages_added, messages_updated FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`),
+		changed.SourceID).Scan(&added, &updated))
+	assert.EqualValues(1, added, "the sync run records only real inserts as added")
+	assert.EqualValues(2, updated)
+
+	var body string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT b.body_text FROM message_bodies b
+		JOIN messages m ON m.id = b.message_id
+		WHERE m.source_message_id = ?`), "s1").Scan(&body))
+	assert.Equal("steady 1, edited", body)
+	var reactions int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM reactions r
+		JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "s3").Scan(&reactions))
+	assert.Equal(1, reactions)
+}
+
+func TestImportReconcileRewritesMessageWithoutCompleteArchive(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// An interrupted run leaves a message row without its raw archive, which
+	// persistMessage writes last. The next re-walk must finish that message.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
+		DELETE FROM message_raw WHERE message_id = (
+			SELECT id FROM messages WHERE source_message_id = ?)`), "s2")
+	require.NoError(err)
+
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(1, sum.MessagesUpdated)
+	assert.EqualValues(4, sum.MessagesUnchanged)
+	var raws int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM message_raw r
+		JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "s2").Scan(&raws))
+	assert.Equal(1, raws)
 }
 
 func TestImportReactionTargetTransientErrorRetries(t *testing.T) {

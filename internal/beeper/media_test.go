@@ -1294,6 +1294,41 @@ func TestImportBoundsRepeatedAssetAttemptsAcrossIncrementalAndReconcile(t *testi
 	assert.Len(assetRequests(f), 3, "the incremental and reconcile passes share one retry budget")
 }
 
+func TestImportReconcileRetriesPendingMediaOnUnchangedMessage(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, `{"message":"temporary failure"}`)
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, first.AttachmentsPending)
+
+	// The message itself is unchanged, but its media still needs a download.
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	retried, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, retried.AttachmentsDownloaded)
+	assert.EqualValues(1, retried.MessagesUpdated)
+
+	// Once the media is stored, the unchanged message is left alone.
+	f.resetRequests()
+	settled, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(settled.MessagesUpdated)
+	assert.EqualValues(1, settled.MessagesUnchanged)
+	assert.Empty(assetRequests(f))
+}
+
 func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
