@@ -289,14 +289,14 @@ func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) 
 	builder.AddTo(outgoingChatID, contactAliasID, "Contact Chat")
 
 	meetingID := builder.AddMessage(MessageOpt{
-		SourceID: sourceID, MessageType: "calendar_event",
+		SourceID: sourceID, MessageType: "meeting_transcript",
 		SentAt: now.AddDate(0, 0, -1),
 	})
 	builder.AddFrom(meetingID, ownerID, "Owner")
 	builder.AddTo(meetingID, contactID, "Contact")
 
 	ownerlessMeetingID := builder.AddMessage(MessageOpt{
-		SourceID: sourceID, MessageType: "meeting_note",
+		SourceID: sourceID, MessageType: "meeting_transcript",
 		SentAt: now.Add(-12 * time.Hour),
 	})
 	builder.AddFrom(ownerlessMeetingID, contactID, "Contact")
@@ -331,7 +331,7 @@ func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) 
 		Now: now, Limit: 25, ShowAll: true,
 	})
 	requirementsForTest.Len(allRows, 2)
-	assertionsForTest.Equal(2, allRows[0].Signals.Modalities)
+	assertionsForTest.Equal(3, allRows[0].Signals.Modalities)
 	assertionsForTest.Equal(futureIDTime(builder, futureID), allRows[0].LastAt)
 	page := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Now: now, Limit: 1, Offset: 1, ShowAll: true,

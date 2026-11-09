@@ -144,10 +144,10 @@ func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			if tc.second == "" {
-				tc.second = tc.first
-			}
 			for i, raw := range []string{tc.first, tc.second} {
+				if raw == "" {
+					continue
+				}
 				_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), tc.format, raw)
 				keys, err := st.MeetingCountKeysContext(t.Context())
 				require.NoError(err)

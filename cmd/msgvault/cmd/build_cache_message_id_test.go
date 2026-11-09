@@ -39,7 +39,7 @@ func TestBuildCacheMessageIDAcrossExports(t *testing.T) {
 			assertions.False(id.Valid)
 
 			_, err = db.Exec(`INSERT INTO messages (id,source_id,source_message_id,conversation_id,subject,sent_at,rfc822_message_id, message_type)
-    VALUES (6,1,'msg6',105,'New message','2024-03-15 10:00:00','<legacy@example.test>', 'email')`)
+    VALUES (6,1,'msg6',101,'New message','2024-03-15 10:00:00','<legacy@example.test>', 'email')`)
 			requirements.NoError(err)
 			result, err := buildCache(dbPath, analytics, false)
 			requirements.NoError(err)

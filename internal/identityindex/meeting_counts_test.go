@@ -98,29 +98,35 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed, EffectiveAt: at})
 	requirements.NoError(err)
 	for _, tc := range []struct {
-		name, keys        string
-		reuse, appendCopy bool
+		name, keys           string
+		reuse, appendMessage bool
 	}{
 		{"unchanged", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, true, false},
-		{"key removed", `(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false, false},
-		{"new unrelated meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, true, false},
+		{"key removed", "", false, false},
+		{"new unrelated meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, true, true},
 		{"new copy of cached meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			staged := t.TempDir()
-			replaceRelationshipParquet(t, db, staged, "meeting_keys", `SELECT * FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)
-			b := builder{db: db, opts: BuildOptions{Mode: ModeIncremental, CommittedRoot: committed, StagedBaseRoot: staged}}
-			reuse, err := b.canReuseTemperatureContributions(t.Context(), at)
-			requirements.NoError(err)
-			assert.Equal(t, tc.reuse, reuse)
-			if tc.appendCopy {
+			keysSQL := `SELECT 0::BIGINT AS message_id, ''::VARCHAR AS meeting_key WHERE false`
+			if tc.keys != "" {
+				keysSQL = `SELECT * FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
+			}
+			replaceRelationshipParquet(t, db, staged, "meeting_keys", keysSQL)
+			if tc.appendMessage {
 				writeRelationshipParquet(t, db, staged, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
 				writeSyntheticRelationshipFanOut(t, db, staged, syntheticRelationshipFanOutOptions{
 					firstMessageID: 101, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
 					messageType: "meeting_transcript", conversationType: "meeting",
 				})
 				replaceRelationshipParquet(t, db, staged, "message_recipients", `SELECT 101::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
+			}
+			b := builder{db: db, opts: BuildOptions{Mode: ModeIncremental, CommittedRoot: committed, StagedBaseRoot: staged}}
+			reuse, err := b.canReuseTemperatureContributions(t.Context(), at)
+			requirements.NoError(err)
+			assert.Equal(t, tc.reuse, reuse)
+			if tc.appendMessage && !tc.reuse {
 				_, err = Build(t.Context(), db, BuildOptions{Mode: ModeIncremental, CommittedRoot: committed, StagedBaseRoot: staged, OutputRoot: staged, EffectiveAt: at})
 				requirements.NoError(err)
 				var count int64

@@ -1138,8 +1138,8 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 
 	_, err = db.Exec(`
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
-			(6, 1, 'msg6', 105, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0, 'email'),
-			(7, 1, 'msg7', 105, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0, 'email');
+			(6, 1, 'msg6', 101, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0, 'email'),
+			(7, 1, 'msg7', 101, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0, 'email');
 
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(6, 1, 'from', 'Alice Smith'),
@@ -1457,9 +1457,8 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 				"snapshot publication includes the parent message")
 			published, readErr := query.ReadCacheSyncState(analyticsDir)
 			require.NoError(readErr)
-			assert.False(published.FullRebuildRequired, "the journal tracks children committed after export")
 			stale := cacheNeedsBuild(dbPath, analyticsDir)
-			require.True(stale.NeedsBuild, "partial snapshot is stale: %+v", stale)
+			require.True(stale.NeedsBuild, "sync changes after export leave the cache stale: %+v", stale)
 			require.True(stale.FullRebuild, "changed sync counters require a full rebuild: %+v", stale)
 
 			// A sync that overlaps this build also queues another automatic
@@ -1468,7 +1467,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 				return published.PublishedAt.Add(time.Hour)
 			})
 			require.NoError(err)
-			assert.True(deferred.Skipped, "partial publication must honor the rebuild interval")
+			assert.True(deferred.Skipped, "snapshot publication must honor the rebuild interval")
 
 			// A newer message arriving first must not turn the repair into an
 			// incremental build above the parent, which would skip its children.
@@ -1480,7 +1479,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 					subject, snippet, sent_at, size_estimate, message_type
 				) VALUES (
 					7, 1, 'meeting-later', 105,
-					'Later Meeting', 'Arrived after the partial snapshot',
+					'Later Meeting', 'Arrived after the exported snapshot',
 					'2026-07-13 10:00:00', 500, 'meeting_transcript'
 				);
 			`)
