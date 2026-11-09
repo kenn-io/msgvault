@@ -9,6 +9,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMeetingAttendanceRequiresTranscript(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.org", "meeting_import")
+	owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
+	person := b.AddParticipant("person@example.org", "example.org", "Person")
+	b.AddOwnerParticipant(source, owner)
+	at := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	for i, kind := range []string{"meeting_transcript", "meeting_note", "meeting_minutes"} {
+		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: kind, SentAt: at.AddDate(0, 0, i)})
+		b.AddTo(id, owner, "Owner")
+		b.AddTo(id, person, "Person")
+	}
+	engine := b.BuildEngine()
+	for _, scope := range []Context{{}, {SourceIDs: []int64{source}, ParticipantIDs: []int64{person}}} {
+		result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: at.AddDate(0, 0, 3)})
+		requirements.NoError(err)
+		requirements.Len(result.Rows, 1)
+		assertions.Equal(int64(1), result.Rows[0].Signals.MeetingCount)
+		assertions.Equal(at, result.Rows[0].LastAt)
+	}
+	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: 2026, Timezone: "UTC"})
+	requirements.NoError(err)
+	var meetings int64
+	for _, day := range calendar.Days {
+		meetings += day.Meetings
+	}
+	assertions.Equal(int64(1), meetings)
+	requirements.Len(calendar.Annual, 1)
+	assertions.InDelta(1.0, calendar.Annual[0].Signals.MeetingSignal, 0.000001)
+	explore, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{Kinds: []EntryKind{EntryMeeting}}})
+	requirements.NoError(err)
+	assertions.Equal(int64(3), explore.TotalCount)
+}
+
 func TestMeetingCountsAcrossFilters(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	firstSource := b.AddSourceWithType("first@example.org", "granola")

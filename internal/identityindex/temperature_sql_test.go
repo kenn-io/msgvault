@@ -15,7 +15,9 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	root, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.Exec(`
 		CREATE TEMP TABLE synthetic_temperature_activity AS
-		SELECT *, false AS unsent FROM (VALUES
+		SELECT *, false AS unsent,
+		       CASE WHEN entry_kind = 'meeting' THEN 'meeting_transcript' ELSE 'beeper' END AS message_type
+		FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
 			-- person 2 even when the importer has no conversation roster.
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, false, true),
@@ -73,7 +75,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	root, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.Exec(`
 		CREATE TEMP TABLE synthetic_unsent_activity AS
-		SELECT * FROM (VALUES
+		SELECT *, 'beeper'::VARCHAR AS message_type FROM (VALUES
 			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
 			(8::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, true, true, false, false, true)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind,

@@ -32,7 +32,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 	r := s.meetingReader()
 
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m
- WHERE m.message_type IN ('meeting_transcript','meeting_note','meeting_minutes') AND m.deleted_at IS NULL
+ WHERE m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL
  AND `+meetingCountLinkedSQL)
 	if err != nil {
 		return nil, fmt.Errorf("read meeting count members: %w", err)

@@ -28,6 +28,7 @@ WITH message_owner AS (
 	SELECT f.message_id, f.canonical_id,
 	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
 	       bool_or(f.is_chat) AS is_chat,
+	       arg_min(f.message_type, f.occurred_at)::VARCHAR AS message_type,
 	       arg_min(f.entry_kind, f.occurred_at)::VARCHAR AS entry_kind,
 	       arg_min(f.conversation_type, f.occurred_at)::VARCHAR AS conversation_type,
 	       bool_or(f.is_from_me) AS is_from_me,

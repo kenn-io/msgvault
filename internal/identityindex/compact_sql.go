@@ -141,7 +141,7 @@ ORDER BY t.domain`
 func buildRelationshipDailySQL(meetingKeys string) string {
 	return fmt.Sprintf(`
 WITH logical_people AS (
-	SELECT entry_key, anchor_message_id, occurred_at, entry_kind, is_from_me, canonical_id,
+	SELECT entry_key, anchor_message_id, occurred_at, message_type, entry_kind, is_from_me, canonical_id,
 	       is_author, is_owner, with_owner
 	FROM `+logicalBuildRelation+`
 	WHERE relation_kind = 1
@@ -377,14 +377,15 @@ func MeetingKeysSQL(keys, messageType, messageID string) string {
 	return "CASE WHEN " + messageType + " = 'meeting_transcript' THEN coalesce(" + keys + ".meeting_keys, ['msg:' || CAST(" + messageID + " AS VARCHAR)]) ELSE []::VARCHAR[] END"
 }
 
-// DeduplicateMeetingSQL keeps one meeting row per person and occurrence.
+// DeduplicateMeetingSQL keeps transcript attendance once per person and occurrence.
 func DeduplicateMeetingSQL(relation, meetingKeys, messageID string) string {
 	return `SELECT * EXCLUDE (meeting_key, meeting_selected) FROM (SELECT p.*, ` + MeetingIdentityKeySQL("mk", "p."+messageID) + ` AS meeting_key,
 	(p.entry_kind <> 'meeting' OR row_number() OVER (
 	    PARTITION BY p.canonical_id, ` + MeetingIdentityKeySQL("mk", "p."+messageID) + `
 	    ORDER BY p.occurred_at, p.` + messageID + `) = 1) AS meeting_selected
 	FROM ` + relation + ` p
-	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID + `) WHERE meeting_selected`
+	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID + `
+	WHERE p.entry_kind <> 'meeting' OR p.message_type = 'meeting_transcript') WHERE meeting_selected`
 }
 
 // MeetingIdentityKeySQL uses an occurrence key, falling back to the message ID.
