@@ -205,9 +205,9 @@ describe('OrganizationEditor', () => {
     // One sentence carries the count and the action, followed by the people holding the jobs.
     const first = await screen.findByText(count === 1 ? "Delete its job first. Ending it isn't enough." : "Delete its 200 or more jobs first. Ending them isn't enough.");
     expect(screen.getByRole('button', { name: /^Back to / })).toBeDefined();
-    expect(first.compareDocumentPosition(screen.getByText('Example Person 1')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(first.compareDocumentPosition(screen.getAllByText('Example Person 1')[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     if (count === 200) expect(screen.getByText('and at least 196 more')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Example Person 1' }));
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Example Person 1' })[0]);
     expect(onClose).toHaveBeenCalled();
     expect(onOpenPerson).toHaveBeenCalledWith(1);
     const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
@@ -479,4 +479,36 @@ it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s
     expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
     expect(within(alert).getByText(section === 'names' ? 'legal-name-variant' : 'category-variant')).toBeDefined();
   }
+});
+
+it('names both jobs held by one person when deletion is blocked', async () => {
+  const { controller } = controllerWith(async input => {
+    const path = pathOf(requestOf(input));
+    if (path.endsWith('/employments')) return Response.json({ employments: [employment(11, 1, { person_id: 8, title: 'Engineer' }), employment(12, 1, { person_id: 8, title: 'Advisor' })] });
+    if (path === '/api/v1/people/8') return Response.json({ display_name: 'Synthetic Person' });
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    throw new Error(`unexpected ${path}`);
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  expect(await screen.findByText('Engineer')).toBeDefined();
+  expect(screen.getByText('Advisor')).toBeDefined();
+});
+
+it('shows the saved organization after a delete conflict', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path.endsWith('/employments')) return Response.json({ employments: [] });
+    if (request.method === 'GET' && path === '/api/v1/organizations/21') {
+      reads++;
+      return Response.json(organizationProfile(reads, reads < 3 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${reads}"` } });
+    }
+    if (request.method === 'DELETE') return Response.json({ error: 'organization_revision_conflict', message: 'Changed' }, { status: 409 });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  expect(await screen.findByText('New saved name')).toBeDefined();
 });

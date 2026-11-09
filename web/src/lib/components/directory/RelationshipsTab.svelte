@@ -8,6 +8,8 @@
   import { Disclosure } from '@kenn-io/kit-ui';
   import EmptyLine from '../common/EmptyLine.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
+  import ConflictNotice from '../common/ConflictNotice.svelte';
+  import { connectionFacts } from '../../directory/conflict';
   import Dialog from '../common/Dialog.svelte';
 
   import type { APIClient } from '../../api/client';
@@ -149,7 +151,8 @@
   <Dialog title={`Delete connection with ${counterpart(deletingRelationship)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationship()} busy={acting}>
     <p class="confirm">This permanently removes the connection.</p>
     {#snippet notice()}
-      {#if removal.failed}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => void removeRelationship()} />{/if}
+      {#if removal.conflict}<ConflictNotice noun="connection" saved={removal.conflict.data} record={connectionFacts(removal.conflict.data)} message={removal.details} actionLabel="Retry" onaction={() => void removeRelationship()} />
+      {:else if removal.failed}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => void removeRelationship()} />{/if}
     {/snippet}
   </Dialog>
 {/if}
@@ -157,7 +160,8 @@
   <Dialog title={`Delete ${deletingType.slug} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
     <p class="confirm">This permanently removes the connection type.</p>
     {#snippet notice()}
-      {#if typeRemoval.failed}<InlineNotice message="Couldn't delete this connection type." details={typeRemoval.details} actionLabel="Retry" onaction={() => void removeRelationshipType()} />{/if}
+      {#if typeRemoval.conflict}<ConflictNotice noun="connection type" saved={typeRemoval.conflict.data} record={{ 'Forward label': typeRemoval.conflict.data.forward_label, 'Reverse label': typeRemoval.conflict.data.reverse_label }} message={typeRemoval.details} actionLabel="Retry" onaction={() => void removeRelationshipType()} />
+      {:else if typeRemoval.failed}<InlineNotice message="Couldn't delete this connection type." details={typeRemoval.details} actionLabel="Retry" onaction={() => void removeRelationshipType()} />{/if}
     {/snippet}
   </Dialog>
 {/if}

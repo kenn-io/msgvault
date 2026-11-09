@@ -42,6 +42,7 @@
   let organizationQuery = $state('');
   let moreDetails = $state(!!(initialEmployment?.department || initialEmployment?.location || initialEmployment?.description));
   const attempt = new WriteAttempt<Prepared<Employment>>();
+  let committed = $state(false);
   // The job as the person opened it, so a conflict can tell their edits from changes made elsewhere.
   let opened = $state<Prepared<Employment>>();
   const loading = $derived(!!initialEmployment && !opened && !attempt.details);
@@ -50,8 +51,8 @@
   // A new current job can be marked primary when no current job already is.
   const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
   let datesInvalid = $state(false);
-  const locked = $derived(attempt.busy || controller.createBlocked.employments);
-  const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
+  const locked = $derived(attempt.busy || committed || controller.createBlocked.employments);
+  const saveDisabled = $derived(committed || loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
   const organizationOptions = $derived.by(() => {
     const organizations = [...controller.organizations];
@@ -131,13 +132,16 @@
       if (initialEmployment) return controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened);
       return controller.createEmployment({ ...body(), source: 'user' });
     });
-    if (ok) onDone();
+    if (ok) {
+      if (controller.errors.employments) committed = true;
+      else onDone();
+    }
   }
 
   // The list now shows whether the job was saved.
   async function refreshAfterUnknown(): Promise<void> {
     await controller.refreshEmployments();
-    if (!controller.createBlocked.employments) onDone();
+    if (!controller.createBlocked.employments && !controller.errors.employments) onDone();
   }
 
   // The picker then lists the organization if the create saved it.
@@ -194,7 +198,9 @@
   <button type="submit" hidden>Save</button>
 </form>{/if}
   {#snippet notice()}
-    {#if attempt.conflict}
+    {#if committed}
+      <InlineNotice message="The job was saved, but the list could not be refreshed." details={controller.errors.employments} actionLabel="Check again" onaction={() => void refreshAfterUnknown()} />
+    {:else if attempt.conflict}
       <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller)} message={employmentConflictDetails(attempt.conflict.data, attempt.details)} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
       <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void refreshOrganizationAfterUnknown(); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />

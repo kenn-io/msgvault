@@ -341,3 +341,21 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     expect(postedBody).toMatchObject({ person_id: 7, organization_id: employerID, title: 'Architect' });
     expect(postedBody.source_ref).toBeUndefined();
   });
+
+it('keeps a saved job open when its list refresh fails and retries only the refresh', async () => {
+  let posts = 0, reads = 0;
+  const done = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (request.method === 'POST') { posts++; return Response.json(employment()); }
+    if (path === '/api/v1/people/7/employments') return ++reads === 1 ? Response.json({ message: 'List unavailable' }, { status: 500 }) : collection([employment()]);
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.organizations = [organization()];
+  await addPrimaryChoice(controller, false, done);
+  expect(await screen.findByText('The job was saved, but the list could not be refreshed.')).toBeDefined();
+  expect(done).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(done).toHaveBeenCalledOnce());
+  expect(posts).toBe(1);
+});

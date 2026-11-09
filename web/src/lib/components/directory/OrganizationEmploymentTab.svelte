@@ -2,6 +2,8 @@
   import DetailSection from '../people/DetailSection.svelte';
   import EmptyLine from '../common/EmptyLine.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
+  import ConflictNotice from '../common/ConflictNotice.svelte';
+  import { employmentConflictDetails, employmentFacts } from '../../directory/conflict';
   import Dialog from '../common/Dialog.svelte';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, Organization, Prepared } from '../../directory/models';
@@ -100,7 +102,9 @@
     {employmentLabel(employment)} at <button type="button" data-link onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
   </DetailRow>
   {#if primary.failed && primaryTarget?.id === employment.id}
-    <InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
+    {#if primary.conflict}
+      <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
+    {:else}<InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />{/if}
   {/if}
 {/snippet}
 
@@ -119,7 +123,8 @@
   <Dialog title={`Delete ${employmentLabel(deletingEmployment)} at ${controller.organizationName(deletingEmployment.organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
     <p>This permanently removes the job. {#if deletingEmployment.is_current}<button data-link type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
     {#snippet notice()}
-      {#if removal.failed}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => void removeEmployment()} />{/if}
+      {#if removal.conflict}<ConflictNotice noun="job" saved={removal.conflict.data} record={employmentFacts(removal.conflict.data, controller)} message={employmentConflictDetails(removal.conflict.data, removal.details)} actionLabel="Retry" onaction={() => void removeEmployment()} />
+      {:else if removal.failed}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => void removeEmployment()} />{/if}
     {/snippet}
   </Dialog>
 {/if}

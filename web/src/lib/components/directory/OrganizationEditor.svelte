@@ -341,10 +341,10 @@
     {#if open && raw.length}<Disclosure variant="plain" class="fold" title="Raw values">{#each raw as item}<h5>{item.title} · {item.row.value}</h5><dl class="facts">{#each item.details.raw as fact}<div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>{/each}</dl>{/each}</Disclosure>{/if}
   </div>
 {/snippet}
-{#snippet conflictNotice(write: WriteAttempt<Prepared<OrganizationProfile>>, onaction: (() => void) | undefined)}
+{#snippet conflictNotice(write: WriteAttempt<Prepared<OrganizationProfile>>, onaction: (() => void) | undefined, actionLabel = 'Keep yours')}
   {@const saved = write.conflict!.data}
   {@const groups = profileGroups(saved, [...STRUCTURED])}
-  <ConflictNotice noun="organization" saved={saved.organization} record={organizationFacts(saved.organization)} message={write.details} actionLabel={onaction && 'Keep yours'} {onaction}>
+  <ConflictNotice noun="organization" saved={saved.organization} record={organizationFacts(saved.organization)} message={write.details} actionLabel={onaction && actionLabel} {onaction}>
     {#if groups.length}{@render profileGroupsBlock(groups, undefined)}{/if}
   </ConflictNotice>
 {/snippet}
@@ -361,11 +361,12 @@
           <DetailRow description={holder.job}>
             {#if onOpenPerson}<button type="button" data-link onclick={() => { onClose(); onOpenPerson(holder.personID); }}>{holder.name}</button>{:else}{holder.name}{/if}
           </DetailRow>{/each}</div>
-        {#if holders.peopleCount > holders.holders.length}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - holders.holders.length} more</p>{/if}
+        {@const shownPeople = new Set(holders.holders.map(holder => holder.personID)).size}
+        {#if holders.peopleCount > shownPeople}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - shownPeople} more</p>{/if}
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}
     </div>
-    {#snippet notice()}{#if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
+    {#snippet notice()}{#if removal.conflict}{@render conflictNotice(removal, () => void remove(), 'Retry')}{:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
   </Dialog>
 {:else}
 <Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save organization' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}

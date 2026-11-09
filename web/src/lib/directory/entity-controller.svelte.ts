@@ -302,12 +302,15 @@ export class DirectoryEntityController {
       if (!response.data) throw new Error(failureMessage(response.error, response.response.status));
       const records = response.data.employments;
       const ids = [...new Set(records.map(record => record.person_id))].slice(0, 3);
-      const holders = await Promise.all(ids.map(async personID => {
+      const people = await Promise.all(ids.map(async personID => {
         const person = await generatedGetPersonProfile({ id: personID }, { ...this.client, signal: abort.signal });
         if (!person.data) throw new Error(failureMessage(person.error, person.response.status));
-        const record = records.find(record => record.person_id === personID);
-        return { personID, name: person.data?.display_name?.trim() || 'Unnamed person', job: record?.title ?? record?.role ?? '' };
+        return { personID, name: person.data.display_name?.trim() || 'Unnamed person' };
       }));
+      const holders = records.flatMap(record => {
+        const person = people.find(item => item.personID === record.person_id);
+        return person ? [{ ...person, job: record.title ?? record.role ?? '' }] : [];
+      });
       if (!this.isActive(abort)) throw new Error('Request was cancelled.');
       return { count: records.length, atLeast: records.length === organizationEmploymentCheckLimit, peopleCount: new Set(records.map(record => record.person_id)).size, holders };
     } finally { this.entityRequests.delete(abort); }

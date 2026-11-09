@@ -144,26 +144,6 @@ describe('RelationshipsTab', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('closes a saved connection whose list refresh failed and shows the failure on the page', async () => {
-    let saved = false;
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-      if (request.method === 'POST') { saved = true; return Response.json(relationship()); }
-      return saved ? Response.json({ message: 'Refresh unavailable' }, { status: 503 }) : Response.json({ relationships: [] });
-    });
-    controller.relationshipTypes = [relationshipType()];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    await openTypeahead('Person');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
-    await openTypeahead('Connection type');
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByRole('alert').textContent).toContain("Couldn't load connections.");
-  });
-
   it('clears old options before debounce so Enter cannot select the wrong person', async () => {
     const { client, controller } = controllerWith(async input => {
       const q = new URL(requestOf(input).url).searchParams.get('q');
@@ -998,3 +978,47 @@ describe('RelationshipsTab', () => {
 
 });
 
+
+it('keeps a saved connection open when its list refresh fails and retries only the refresh', async () => {
+  let posts = 0, reads = 0;
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; return Response.json(relationship()); }
+    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+    if (path === '/api/v1/people/7/relationships') return ++reads === 1 ? Response.json({ message: 'List unavailable' }, { status: 500 }) : Response.json({ relationships: [] });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.relationshipTypes = [relationshipType()];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await fireEvent.click(screen.getByRole('button', { name: 'Add connection…' }));
+  await openTypeahead('Person');
+  await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+  await openTypeahead('Connection type');
+  await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+  await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+  expect(await screen.findByText('The relationship was saved, but the list could not be refreshed.')).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(posts).toBe(1);
+});
+
+it.each(['connection', 'type'])('shows the saved %s after a delete conflict', async kind => {
+  let reads = 0;
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (request.method === 'GET' && (path === '/api/v1/person-relationships/41' || path === '/api/v1/relationship-types/31')) {
+      reads++;
+      const item = kind === 'connection' ? relationship(41, reads, { notes: reads === 1 ? 'Old note' : 'New saved note' }) : relationshipType({ revision: reads, forward_label: reads === 1 ? 'mentors' : 'New saved label' });
+      return Response.json(item, { headers: { ETag: `"${kind === 'connection' ? 'relationship-41' : 'relationship-type-31'}-r${reads}"` } });
+    }
+    if (request.method === 'DELETE') return Response.json({ error: 'relationship_revision_conflict', message: 'Changed' }, { status: 409 });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.relationships = [view(41, 'incoming', 'mentors', 'Synthetic Guide')];
+  controller.relationshipTypes = [relationshipType()];
+  render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: kind === 'type' });
+  if (kind === 'connection') await rowAction('Delete…');
+  else await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(await screen.findByText(kind === 'connection' ? 'New saved note' : 'New saved label')).toBeDefined();
+});

@@ -79,8 +79,9 @@
   let endDateError = $state<string | null>(null);
   let notes = $state(initialView?.relationship.notes ?? '');
   const attempt = new WriteAttempt<Prepared<PersonRelationship>>();
+  let committed = $state(false);
   const loading = $derived(!!initialView && !opened && !attempt.details);
-  const locked = $derived(attempt.busy || controller.createBlocked.relationships);
+  const locked = $derived(attempt.busy || committed || controller.createBlocked.relationships);
 
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
@@ -160,7 +161,7 @@
   }
   async function submit(): Promise<void> {
     if (
-      attempt.busy || loading || (!!initialView && !opened) ||
+      attempt.busy || committed || loading || (!!initialView && !opened) ||
       datesInvalid || !!endDateError ||
       !relationshipTypeSlug ||
       (!initialRelationship && (counterpartID === null || counterpartID === personID))
@@ -171,7 +172,10 @@
     const ok = await attempt.run(current => initialRelationship
       ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
       : controller.createRelationship(create!));
-    if (ok) onDone();
+    if (ok) {
+      if (controller.errors.relationships) committed = true;
+      else onDone();
+    }
   }
 
   function createBody(otherID: number): CreatePersonRelationshipRequest {
@@ -207,7 +211,7 @@
 <Dialog title={initialRelationship ? 'Edit connection' : 'Add connection'} onclose={requestClose}
   primaryLabel={attempt.conflict ? 'Keep yours' : initialRelationship ? 'Save' : 'Add connection'} onprimary={() => void submit()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}
-  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || !relationshipTypeSlug || datesInvalid || !!endDateError || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  busy={attempt.busy} primaryDisabled={committed || loading || (!!initialView && !opened) || !relationshipTypeSlug || datesInvalid || !!endDateError || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
   {#if loading}<p role="status">Loading connection…</p>{:else if !initialView || opened}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="editor" aria-busy={attempt.busy}>
@@ -257,7 +261,9 @@
   <button type="submit" hidden>Save</button>
 </form>{/if}
   {#snippet notice()}
-    {#if initialView && !opened && !loading}
+    {#if committed}
+      <InlineNotice message="The relationship was saved, but the list could not be refreshed." details={controller.errors.relationships} actionLabel="Check again" onaction={() => void refreshAfterUncertainOutcome()} />
+    {:else if initialView && !opened && !loading}
       <InlineNotice message="Couldn't load this connection." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
     {:else if attempt.conflict}
       <ConflictNotice noun="connection" saved={attempt.conflict.data} record={connectionFacts(attempt.conflict.data)} message={attempt.details} />

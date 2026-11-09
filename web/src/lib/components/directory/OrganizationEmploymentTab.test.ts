@@ -280,3 +280,21 @@ it('refreshes the job version before retrying a failed Make primary write', asyn
   expect(tags).toEqual(['"employment-12-r1"', '"employment-12-r2"']);
 });
 
+
+it.each(['Delete…', 'Make primary'])('shows the saved job after a conflict on %s', async action => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') {
+      reads++;
+      return Response.json(employment(11, reads, { title: reads === 1 ? 'Engineer' : 'Newer title' }), { headers: { ETag: `"employment-11-r${reads}"` } });
+    }
+    if (request.method === 'DELETE' || path.endsWith('/primary')) return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment(11, 1, { is_primary: false })];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await rowAction(action);
+  if (action === 'Delete…') await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(await screen.findByText('Newer title')).toBeDefined();
+});
