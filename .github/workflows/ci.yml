@@ -1113,8 +1113,8 @@ jobs:
       #
       # Heavy DuckDB packages can exceed go test's 10m per-package default
       # on a contended runner. Leave time for stack output inside the job cap.
-      # test-postgres-sharded runs the large packages and the additional
-      # package group; this covers the rest.
+      # test-postgres-sharded runs the large packages and, on pull requests
+      # and manual runs, the additional package group; this covers the rest.
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m EXCLUDE_PKGS="${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && env.PG_MOVED_PKGS || '' }}"
 
@@ -1144,7 +1144,8 @@ jobs:
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
   # each with its own PostgreSQL service so four shards' connections never
-  # compete with the rest of the suite. The CLI job also runs additional packages.
+  # compete with the rest of the suite. The CLI job also runs additional
+  # packages on pull requests and manual runs.
   test-postgres-sharded:
     needs: changes
     if: *go-changed
