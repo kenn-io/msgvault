@@ -1681,7 +1681,6 @@ export const getEmployment = (
   );
 };
 /**
- * For source `user`, setting `is_primary` to true demotes the existing primary current employment. Other sources receive a conflict when a primary current employment already exists.
  * @summary Replace an employment record's mutable fields
  */
 export const patchEmployment = (

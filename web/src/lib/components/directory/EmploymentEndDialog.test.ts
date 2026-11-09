@@ -97,12 +97,10 @@ it('keeps the saved start date for retry after a failed conflict resolution', as
       await fireEvent.input(field, { target: { value: '2026' } });
       await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
       await fireEvent.click(screen.getByRole('button', { name: 'End' }));
-      // Only End date is on this form; the title changed elsewhere is summarized, its value in Details.
-      const changes = await screen.findByRole('table', { name: 'What changed' });
-      expect(within(changes).getByRole('rowheader', { name: 'End date' })).toBeDefined();
-      expect(changes.textContent).toContain('Present');
-      expect(screen.getByText('Other details also changed')).toBeDefined();
-      expect(screen.getByText('Job title', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Current saved role');
+      const record = await screen.findByRole('region', { name: 'Saved job' });
+      expect(within(record).getByText('Job title').nextElementSibling?.textContent).toBe('Current saved role');
+      expect(within(record).getByText('Organization').nextElementSibling?.textContent).toBe('Current Employer');
+      expect(within(record).getByText('End date').nextElementSibling?.textContent).toBe('Present');
       expect(field).toHaveProperty('value', '2026');
       expect(reads).toBe(2);
       await fireEvent.keyDown(document, { key: 'Escape' });

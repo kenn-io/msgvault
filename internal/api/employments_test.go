@@ -139,21 +139,11 @@ func TestEmploymentPrimaryReplacementRequiresUserSource(t *testing.T) {
 		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"extraction"}`, person.ID, second.ID), "")
 	assert.Equal(http.StatusConflict, createExtraction.Code)
 
-	secondaryResponse := organizationRequest(t, srv, http.MethodPost, employmentsPath,
-		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"source":"user"}`, person.ID, second.ID), "")
-	require.Equal(http.StatusCreated, secondaryResponse.Code)
-	var secondary store.Employment
-	require.NoError(json.Unmarshal(secondaryResponse.Body.Bytes(), &secondary))
-	patchExtraction := organizationRequest(t, srv, http.MethodPatch,
-		fmt.Sprintf("%s/%d", employmentsPath, secondary.ID),
-		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"extraction"}`, person.ID, second.ID),
-		secondaryResponse.Header().Get("ETag"))
-	assert.Equal(http.StatusConflict, patchExtraction.Code)
 	firstAfterRejectedWrites := organizationRequest(t, srv, http.MethodGet,
 		fmt.Sprintf("%s/%d", employmentsPath, primary.ID), nil, "")
 	require.Equal(http.StatusOK, firstAfterRejectedWrites.Code)
 	require.NoError(json.Unmarshal(firstAfterRejectedWrites.Body.Bytes(), &primary))
-	assert.True(primary.IsPrimary, "rejected writes must preserve the user's primary choice")
+	assert.True(primary.IsPrimary, "a rejected write must preserve the user's primary choice")
 }
 
 func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {

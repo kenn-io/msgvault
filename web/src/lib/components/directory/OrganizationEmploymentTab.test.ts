@@ -316,11 +316,9 @@ it('deletes the saved version a job delete conflict shows', async () => {
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await screen.findByText('This job changed since you opened it.');
   expect(screen.getByText('Concurrent title')).toBeDefined();
-  const changes = screen.getByRole('table', { name: 'What changed' });
-  expect(changes.textContent).toContain('Concurrent department');
-  expect(changes.textContent).toContain('Concurrent office');
-  expect(changes.textContent).toContain('Concurrent description');
-  expect(within(changes).getByRole('rowheader', { name: 'Confidence' }).parentElement?.textContent).toContain('88%');
+  const record = screen.getByRole('region', { name: 'Saved job' });
+  expect(record.textContent).toContain('Concurrent department');
+  expect(record.textContent).toContain('Confidence88%');
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 });

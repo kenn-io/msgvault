@@ -581,8 +581,8 @@ describe('RelationshipsTab', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('This connection changed since you opened it.');
     expect(screen.getByRole('alert').querySelector('details')?.open).toBe(false);
     expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLInputElement).value).toBe('Retained local draft');
-    const changes = screen.getByRole('table', { name: 'What changed' });
-    expect(within(changes).getAllByRole('row').slice(1).map(row => [...row.querySelectorAll('[role=rowheader], [role=cell]')].map(cell => cell.textContent))).toEqual([['Notes', 'Server concurrent', 'Retained local draft']]);
+    const record = screen.getByRole('region', { name: 'Saved connection' });
+    expect(within(record).getByText('Notes').nextElementSibling?.textContent).toBe('Server concurrent');
     expect(writes).toBe(1);
     expect(reads).toBe(2);
     const patch = requests.find((request) => request.method === 'PATCH')!;
@@ -616,7 +616,7 @@ describe('RelationshipsTab', () => {
     expect(within(dialog).getByRole('textbox', { name: 'Notes' }).tagName).toBe('TEXTAREA');
   });
 
-  it('lists a note changed elsewhere as a row Keep yours writes back', async () => {
+  it('shows the saved connection, and Keep yours writes the form over it', async () => {
     const requests: Request[] = [];
     let reads = 0;
     const opening = relationship(41, 1, { notes: 'Opening note', start_date: { year: 2024, month: 3 } });
@@ -649,8 +649,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByRole('button', { name: 'Keep yours' });
-    expect(screen.getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['End date', 'Notes']);
-    expect(screen.getByRole('rowheader', { name: 'Notes' }).nextElementSibling?.textContent).toBe('Concurrent note');
+    expect(within(screen.getByRole('region', { name: 'Saved connection' })).getByText('Notes').nextElementSibling?.textContent).toBe('Concurrent note');
     await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
@@ -773,9 +772,7 @@ describe('RelationshipsTab', () => {
     await rowAction('Edit…');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: '   ' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await screen.findByRole('button', { name: 'Keep yours' });
-    expect(screen.getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['End date', 'Notes']);
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     const patches = requests.filter(request => request.method === 'PATCH');
@@ -852,7 +849,7 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(deletions).toEqual(['/api/v1/person-relationships/42']));
   });
 
-  it('keeps a delete conflict open, shows only changed fields, and deletes the saved version on Delete', async () => {
+  it('keeps a delete conflict open, shows the saved connection, and deletes the saved version on Delete', async () => {
     let reads = 0;
     const tags: (string | null)[] = [];
     const current = relationship(41, 2, { notes: 'Saved note' });
@@ -876,9 +873,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('This connection changed since you opened it.');
-    const changes = within(alert).getByRole('table', { name: 'What changed' });
-    expect(within(changes).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Notes']);
-    expect(changes.textContent).toContain('Saved note');
+    expect(within(alert).getByRole('region', { name: 'Saved connection' }).textContent).toContain('Saved note');
     expect(screen.getByRole('dialog', { name: 'Delete connection with Synthetic Peer?' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -1287,24 +1282,6 @@ it.each(['failed', 'committed'])('shows the latest outcome after a %s connection
   await screen.findByText(outcome === 'failed' ? "Couldn't save this connection." : "Connection saved. Couldn't refresh connections.");
   expect(screen.queryByRole('button', { name: 'Keep yours' })).toBeNull();
   if (outcome === 'failed') expect(screen.getByText('Disk full')).toBeDefined();
-});
-
-it.each(['cleared notes', 'derived status'])('compares %s after an end-date conflict', async change => {
-  const opening = relationship(41, 1, change === 'cleared notes' ? { notes: 'Opening notes' } : {});
-  const saved = relationship(41, 2, { end_date: { year: 2025 }, status: 'ended' });
-  let reads = 0;
-  const { client, controller } = controllerWith(async input => requestOf(input).method === 'PATCH'
-    ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
-    : Response.json(reads++ === 0 ? opening : saved, { headers: { ETag: reads === 1 ? '"person-relationship-41-r1"' : '"person-relationship-41-r2"' } }));
-  controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
-  render(RelationshipsTab, { client, controller, personID: 7 });
-  await rowAction('Edit…');
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '2026' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await screen.findByRole('button', { name: 'Keep yours' });
-  expect(screen.queryByText('Other details also changed')).toBeNull();
-  if (change === 'cleared notes') expect(screen.getByRole('rowheader', { name: 'Notes' }).nextElementSibling?.textContent).toBe('None');
-  else expect(screen.queryByRole('rowheader', { name: 'Notes' })).toBeNull();
 });
 
 it.each(['cancel', 'delete'] as const)('refreshes a connection type conflict before %s', async action => {

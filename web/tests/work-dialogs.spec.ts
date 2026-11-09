@@ -235,7 +235,7 @@ for (const width of [1440, 390]) {
     const end = dialog.getByRole('textbox', { name: 'End date', exact: true });
     await end.fill('2027');
     await dialog.getByRole('button', { name: 'End', exact: true }).click();
-    await expect(dialog.getByText('Other details also changed', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('region', { name: 'Saved job', exact: true })).toBeVisible();
     expect((await dialog.boundingBox())!.width).toBe(Math.min(400, width - 32));
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath('end-conflict.png'), fullPage: true });

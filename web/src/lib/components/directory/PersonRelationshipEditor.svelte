@@ -26,7 +26,7 @@
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import { sourcePhrase } from './history-format';
   import ConflictNotice from '../common/ConflictNotice.svelte';
-  import { conflict, connectionFacts } from '../../directory/conflict';
+  import { connectionFacts } from '../../directory/conflict';
   import { WriteAttempt } from '../../directory/write-attempt.svelte';
   import { relationshipPhrase, relationshipTypeOptions, type RelationshipChoice } from '../../directory/relationship-type-options';
   const SEARCH_LIMIT = 20;
@@ -291,9 +291,7 @@
     {#if initialView && !opened && !loading}
       <InlineNotice message="Couldn't load this connection." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
     {:else if attempt.conflict}
-      {@const facts = connectionFacts(patchBody())}
-      {@const yours = Object.fromEntries(Object.keys(patchBody()).map(key => { const label = key === 'end_date' ? 'End date' : 'Notes'; return [label, facts[label]]; }))}
-      <ConflictNotice noun="connection" saved={attempt.conflict.data} {...conflict(connectionFacts(attempt.conflict.data), connectionFacts(initialRelationship!), yours)} message={attempt.details} />
+      <ConflictNotice noun="connection" saved={attempt.conflict.data} record={connectionFacts(attempt.conflict.data)} message={attempt.details} />
     {:else if attempt.details || controller.createBlocked.relationships || committed}
       <InlineNotice message={committed ? "Connection saved. Couldn't refresh connections." : controller.createBlocked.relationships ? "Couldn't confirm the connection was saved." : "Couldn't save this connection."} details={attempt.details || undefined}
         actionLabel={controller.createBlocked.relationships || committed ? 'Check again' : 'Retry'} onaction={() => { if (controller.createBlocked.relationships || committed) void refreshAfterUncertainOutcome(); else void submit(); }} />

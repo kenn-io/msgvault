@@ -382,10 +382,9 @@ it('allows closing while the job loads', async () => {
 
 
 
-it.each([
-  { name: 'a department changed elsewhere', opening: { department: 'Sales' }, saved: { department: 'Ops' }, edit: ['Job title', 'Lead'], rows: ['Job title', 'Department'], expected: { title: 'Lead', department: 'Sales' } },
-  { name: 'a current job ended elsewhere', opening: { start_date: { year: 2020 } }, saved: { start_date: { year: 2020 }, is_current: false, end_date: { year: 2022 } }, edit: ['Start date', '2024'], rows: ['Start date', 'End date'], expected: { start_date: '2024', is_current: true } },
-])('Keep yours writes the form and lists every field it overwrites, with $name', async ({ opening, saved, edit, rows, expected }) => {
+it('shows the saved job beside the form, and Keep yours writes the form', async () => {
+  const opening = { department: 'Sales' };
+  const saved = { department: 'Ops' };
   let reads = 0;
   const bodies: Record<string, unknown>[] = [];
   const job = employment(11, 1, opening);
@@ -399,15 +398,15 @@ it.each([
     return Response.json(employment(11, ++reads, reads === 1 ? opening : { ...opening, ...saved }), { headers: { ETag: `"employment-11-r${reads}"` } });
   });
   render(EmploymentEditor, { controller, personID: 7, employment: job });
-  await fireEvent.input(await screen.findByRole('textbox', { name: edit[0] }), { target: { value: edit[1] } });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  const table = await screen.findByRole('table', { name: 'What changed' });
-  expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(rows);
+  const record = await screen.findByRole('region', { name: 'Saved job' });
+  expect(record.textContent).toContain('DepartmentOps');
   const keep = screen.getByRole('button', { name: 'Keep yours' });
   expect(keep).toHaveProperty('disabled', false);
   await fireEvent.click(keep);
   await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[1]).toMatchObject(expected);
+  expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Sales' });
 });
 
   it('retains the selected employer across searches beyond fifty results', async () => {

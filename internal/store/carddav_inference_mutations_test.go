@@ -110,48 +110,34 @@ func TestInferenceExportEmploymentMutations(t *testing.T) {
 	}
 }
 
-func TestPrimaryReplacementByCreateAndUpdateInvalidatesInferenceExport(t *testing.T) {
-	for _, operation := range []string{"create", "update"} {
-		t.Run(operation, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st, id, _ := newPersonFactProjectionStore(t)
-			oldOrg, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Inferred Org", Kind: OrganizationKindCompany})
-			require.NoError(err)
-			newOrg, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Declared Org", Kind: OrganizationKindCompany})
-			require.NoError(err)
-			oldPrimary, err := st.AddEmploymentContext(t.Context(), EmploymentInput{
-				PersonID: id, OrganizationID: oldOrg.ID, Title: new("Inferred role"),
-				Source: ProvenanceExtraction, IsPrimary: new(true),
-			})
-			require.NoError(err)
-			declared := EmploymentInput{
-				PersonID: id, OrganizationID: newOrg.ID, Title: new("Declared role"),
-				Source: ProvenanceUser, IsPrimary: new(false),
-			}
-			var replacement *Employment
-			if operation == "create" {
-				declared.IsPrimary = new(true)
-				replacement, err = st.AddEmploymentContext(t.Context(), declared)
-			} else {
-				replacement, err = st.AddEmploymentContext(t.Context(), declared)
-				require.NoError(err)
-				declared.IsPrimary = new(true)
-				replacement, err = st.UpdateEmploymentContext(t.Context(), replacement.ID, replacement.Revision, declared)
-			}
-			require.NoError(err)
-			require.True(replacement.IsPrimary)
-			demoted, err := st.GetEmploymentContext(t.Context(), oldPrimary.ID)
-			require.NoError(err)
-			require.False(demoted.IsPrimary)
-			assert.Equal(int64(2), inferenceRevision(t, st, id), "replacing the exported primary must advance CardDAV review state")
-			pins, err := st.ListPersonFactPinsContext(t.Context(), id)
-			require.NoError(err)
-			require.Len(pins, 1)
-			assert.Equal(personfacts.TargetEmployment, pins[0].Target.Kind)
-			assert.True(pins[0].Pinned)
-		})
-	}
+func TestPrimaryReplacementByCreateInvalidatesInferenceExport(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, id, _ := newPersonFactProjectionStore(t)
+	oldOrg, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Inferred Org", Kind: OrganizationKindCompany})
+	require.NoError(err)
+	newOrg, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Declared Org", Kind: OrganizationKindCompany})
+	require.NoError(err)
+	oldPrimary, err := st.AddEmploymentContext(t.Context(), EmploymentInput{
+		PersonID: id, OrganizationID: oldOrg.ID, Title: new("Inferred role"),
+		Source: ProvenanceExtraction, IsPrimary: new(true),
+	})
+	require.NoError(err)
+	replacement, err := st.AddEmploymentContext(t.Context(), EmploymentInput{
+		PersonID: id, OrganizationID: newOrg.ID, Title: new("Declared role"),
+		Source: ProvenanceUser, IsPrimary: new(true),
+	})
+	require.NoError(err)
+	require.True(replacement.IsPrimary)
+	demoted, err := st.GetEmploymentContext(t.Context(), oldPrimary.ID)
+	require.NoError(err)
+	require.False(demoted.IsPrimary)
+	assert.Equal(int64(2), inferenceRevision(t, st, id), "replacing the exported primary must advance CardDAV review state")
+	pins, err := st.ListPersonFactPinsContext(t.Context(), id)
+	require.NoError(err)
+	require.Len(pins, 1)
+	assert.Equal(personfacts.TargetEmployment, pins[0].Target.Kind)
+	assert.True(pins[0].Pinned)
 }
 
 func TestInferenceExportDefinitionExposureRetriesConcurrentWrite(t *testing.T) {

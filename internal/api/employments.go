@@ -96,14 +96,12 @@ func (s *Server) registerEmploymentRoutes(api huma.API) {
 	registerRawHumaRoute(api, get, s.handleGetEmployment)
 
 	patch := rawAPIV1Operation("patchEmployment", http.MethodPatch, "/employments/{id}", "Replace an employment record's mutable fields")
-	patch.Description = "For source `user`, setting `is_primary` to true demotes the existing primary current employment. Other sources receive a conflict when a primary current employment already exists."
 	addEmploymentIDParameter(&patch)
 	addEmploymentIfMatchParameter(&patch)
 	patch.RequestBody = jsonRequestBodyFor[EmploymentBody](api)
 	patch.Responses = jsonResponsesFor[store.Employment](api)
 	addEmploymentETagHeader(patch.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, patch.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusServiceUnavailable)
-	patch.Responses[httpStatusKey(http.StatusConflict)].Description = "Conflict if this duplicates a current employment, the employment revision is stale, a non-user source tries to replace the primary, or concurrent writes prevent primary replacement."
 	registerRawHumaRoute(api, patch, s.handlePatchEmployment)
 
 	remove := rawAPIV1Operation("deleteEmployment", http.MethodDelete, "/employments/{id}", "Delete an employment record")

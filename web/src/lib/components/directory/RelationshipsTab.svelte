@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { conflict, connectionFacts } from '../../directory/conflict';
+  import { connectionFacts } from '../../directory/conflict';
   import { WriteAttempt } from '../../directory/write-attempt.svelte';
   import { latestDateKey } from '../../directory/dates';
   import { appShortcuts, Button } from '@kenn-io/kit-ui';
@@ -172,7 +172,7 @@
     {#snippet notice()}
       {#if removal.conflict && deletingRelationship}
         <!-- Delete again removes the saved version the notice shows. -->
-        <ConflictNotice noun="connection" saved={removal.conflict.data} {...conflict(connectionFacts(removal.conflict.data), connectionFacts(deletingRelationship.relationship), connectionFacts(deletingRelationship.relationship))} message={removal.details} />
+        <ConflictNotice noun="connection" saved={removal.conflict.data} record={connectionFacts(removal.conflict.data)} message={removal.details} />
       {:else if removal.details}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => { if (removal.prepared) void removeRelationship(); else void prepareDelete(); }} />{/if}
     {/snippet}
   </Dialog>
