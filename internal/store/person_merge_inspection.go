@@ -77,6 +77,7 @@ func (s *Store) ListPersonMergesPageContext(
 			return fmt.Errorf("list person merge summaries: %w", err)
 		}
 		mergeIDs := []int64{}
+		snapshotBlobs := [][]byte{}
 		for rows.Next() {
 			var summary PersonMergeSummary
 			var currentID sql.NullInt64
@@ -97,9 +98,9 @@ func (s *Store) ListPersonMergesPageContext(
 			if currentID.Valid {
 				summary.Merge.CurrentPersonID = &currentID.Int64
 			}
-			summary.Labels = personMergeRecordedLabels(snapshotBlob, summary.Merge.SnapshotSHA256, services)
 			summary.RowActionCounts = map[string]int{}
 			mergeIDs = append(mergeIDs, summary.Merge.ID)
+			snapshotBlobs = append(snapshotBlobs, snapshotBlob)
 			result = append(result, summary)
 		}
 		if err := rows.Err(); err != nil {
@@ -108,6 +109,12 @@ func (s *Store) ListPersonMergesPageContext(
 		}
 		if err := rows.Close(); err != nil {
 			return fmt.Errorf("close person merge summaries: %w", err)
+		}
+		for index, blob := range snapshotBlobs {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("iterate person merge summaries: %w", err)
+			}
+			result[index].Labels = personMergeRecordedLabels(blob, result[index].Merge.SnapshotSHA256, services)
 		}
 		if len(mergeIDs) == 0 {
 			return nil
