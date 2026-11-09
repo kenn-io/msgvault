@@ -10,7 +10,7 @@ import (
 func TestFacebookCommentsVisibleAsTextConversations(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
-	_, err := tdb.DB.Exec(`
+	_, err := tdb.DB.ExecContext(t.Context(), `
  INSERT INTO sources(id,source_type,identifier) VALUES(7,'facebook_comments','app:9:page:100');
  INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type,title) VALUES(701,7,'100_200','public_comments','Example post');
  INSERT INTO participants(id,display_name) VALUES(11,'Example Customer');

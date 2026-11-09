@@ -25,12 +25,12 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 	}
 	clock := func() int64 {
 		var seq int64
-		require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&seq))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&seq))
 		return seq
 	}
 	factsSince := func(seq int64) int {
 		var count int
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts'`, seq).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts'`, seq).Scan(&count))
 		return count
 	}
 	replay()
@@ -41,11 +41,11 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 	f.comments["100_200"][0].Message = updatedBody
 	f.comments["100_200"][0].From.Name = updatedActor
 	replay()
-	body, err := st.GetMessageBodyText(child.ID)
+	body, err := st.GetMessageBodyText(t.Context(), child.ID)
 	require.NoError(err)
 	assert.Equal(updatedBody, body)
 	var fromName string
-	require.NoError(st.DB().QueryRow(fromSnapshotSQL, child.ID).Scan(&fromName))
+	require.NoError(st.DB().QueryRowContext(t.Context(), fromSnapshotSQL, child.ID).Scan(&fromName))
 	assert.Equal(updatedActor, fromName)
 	assert.Positive(factsSince(baseline), "real provider changes must still invalidate cached facts")
 	for _, corruption := range []string{
@@ -53,16 +53,16 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 		`DELETE FROM messages_fts WHERE message_id = ?`,
 		`UPDATE message_recipients SET display_name = 'corrupted' WHERE message_id = ?`,
 	} {
-		_, err := st.DB().Exec(corruption, child.ID)
+		_, err := st.DB().ExecContext(t.Context(), corruption, child.ID)
 		require.NoError(err)
 		replay()
-		body, err = st.GetMessageBodyText(child.ID)
+		body, err = st.GetMessageBodyText(t.Context(), child.ID)
 		require.NoError(err)
 		assert.Equal(updatedBody, body)
-		require.NoError(st.DB().QueryRow(fromSnapshotSQL, child.ID).Scan(&fromName))
+		require.NoError(st.DB().QueryRowContext(t.Context(), fromSnapshotSQL, child.ID).Scan(&fromName))
 		assert.Equal(updatedActor, fromName)
 		var hits int
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE message_id = ? AND messages_fts MATCH 'cacheafter'`, child.ID).Scan(&hits))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts WHERE message_id = ? AND messages_fts MATCH 'cacheafter'`, child.ID).Scan(&hits))
 		assert.Equal(1, hits, "unchanged raw evidence cannot hide damaged body/search/recipient derivatives")
 	}
 	require.NoError(st.UpsertMessageRawWithFormat(child.ID, []byte(`{"id":"100_201","message":"wrong-evidence"}`), rawFormat))
@@ -77,10 +77,10 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 	assert.Zero(factsSince(baseline), "repaired data must settle back to a quiet replay")
 	f.comments["100_200"][0].From = nil
 	replay()
-	require.NoError(st.DB().QueryRow(fromSnapshotSQL, child.ID).Scan(&fromName))
+	require.NoError(st.DB().QueryRowContext(t.Context(), fromSnapshotSQL, child.ID).Scan(&fromName))
 	assert.Equal(updatedActor, fromName, "an omitted provider author must retain its known snapshot without requiring email")
 	var indexedName string
-	require.NoError(st.DB().QueryRow(`SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
 	assert.Equal(updatedActor, indexedName)
 	baseline = clock()
 	replay()

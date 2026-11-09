@@ -42,7 +42,7 @@ func TestPageIdentity(t *testing.T) {
 				assert.Equal(t, "Bearer synthetic-page-secret", r.Header.Get("Authorization"))
 				_, _ = fmt.Fprint(w, tt.body)
 			})
-			page, err := c.VerifyPage(context.Background(), "100")
+			page, err := c.VerifyPage(t.Context(), "100")
 			if tt.valid {
 				require.NoError(t, err)
 				assert.Equal(t, "Example Page", page.Name)
@@ -62,7 +62,7 @@ func TestPageCommentsPagination(t *testing.T) {
 		assert.Equal("opaque+/=", r.URL.Query().Get("after"))
 		_, _ = fmt.Fprint(w, `{"data":[{"id":"100_201","message":"Hello","from":{"id":"300","name":"Example"}}],"paging":{"cursors":{"after":"next-cursor"},"next":"https://evil.example/?access_token=secret"}}`)
 	})
-	got, err := c.Comments(context.Background(), "100_200", "opaque+/=")
+	got, err := c.Comments(t.Context(), "100_200", "opaque+/=")
 	require.NoError(err)
 	require.Len(got.Data, 1)
 	assert.Equal("100_201", got.Data[0].ID)
@@ -73,7 +73,7 @@ func TestFinalCursorDoesNotContinue(t *testing.T) {
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, `{"data":[],"paging":{"cursors":{"after":"final"}}}`)
 	})
-	got, err := c.Posts(context.Background(), "100", AdsPosts, "")
+	got, err := c.Posts(t.Context(), "100", AdsPosts, "")
 	require.NoError(t, err)
 	assert.Empty(t, got.After)
 }
@@ -86,12 +86,12 @@ func TestFixedPostEdges(t *testing.T) {
 				assert.Contains(t, r.URL.Query().Get("fields"), "from")
 				_, _ = fmt.Fprint(w, `{"data":[]}`)
 			})
-			_, err := c.Posts(context.Background(), "100", edge, "")
+			_, err := c.Posts(t.Context(), "100", edge, "")
 			require.NoError(t, err)
 		})
 	}
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) { assert.Fail(t, "invalid edge made an HTTP request") })
-	_, err := c.Posts(context.Background(), "100", PostEdge("../me"), "")
+	_, err := c.Posts(t.Context(), "100", PostEdge("../me"), "")
 	require.Error(t, err)
 }
 
@@ -102,7 +102,7 @@ func TestGraphTokenRedaction(t *testing.T) {
 				w.WriteHeader(code)
 				_, _ = fmt.Fprint(w, `{"error":{"message":"synthetic-page-secret"}}`)
 			})
-			_, err := c.VerifyPage(context.Background(), "100")
+			_, err := c.VerifyPage(t.Context(), "100")
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), "synthetic-page-secret")
 		})
@@ -114,7 +114,7 @@ func TestGraphRejectsRedirect(t *testing.T) {
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }))
 	defer other.Close()
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, other.URL, http.StatusFound) })
-	_, err := c.VerifyPage(context.Background(), "100")
+	_, err := c.VerifyPage(t.Context(), "100")
 	require.Error(t, err)
 	assert.False(t, reached)
 }
@@ -123,17 +123,17 @@ func TestGraphRejectsMalformedPagingAndPaths(t *testing.T) {
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, `{"data":[],"paging":{"next":"https://example.test"}}`)
 	})
-	_, err := c.Posts(context.Background(), "100", Posts, "")
+	_, err := c.Posts(t.Context(), "100", Posts, "")
 	require.Error(t, err)
 	invalid := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Fail(t, "invalid Graph ID made an HTTP request")
 		_, _ = fmt.Fprint(w, `{"data":[]}`)
 	})
 	for _, id := range []string{"../me", "100/comments?access_token=x", "100/200", ""} {
-		_, err = invalid.Comments(context.Background(), id, "")
+		_, err = invalid.Comments(t.Context(), id, "")
 		require.Error(t, err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = c.VerifyPage(ctx, "100")
 	require.ErrorIs(t, err, context.Canceled)
@@ -149,7 +149,7 @@ func TestGraphTransportErrorDoesNotReflectToken(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	c, err := newClient("synthetic-page-secret", "https://graph.facebook.com", &http.Client{Transport: graphErrorTransport{}})
 	require.NoError(err)
-	_, err = c.VerifyPage(context.Background(), "100")
+	_, err = c.VerifyPage(t.Context(), "100")
 	require.Error(err)
 	assert.NotContains(err.Error(), "synthetic-page-secret")
 	assert.NotContains(err.Error(), "access_token")

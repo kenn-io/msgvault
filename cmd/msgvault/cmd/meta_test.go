@@ -138,7 +138,7 @@ func TestFacebookManualPartialWritesContinueAcrossProfiles(t *testing.T) {
 	assert.Contains(err.Error(), "facebook profile second")
 	assert.Contains(output.String(), "Partial coverage")
 	for _, profile := range cfg.FacebookComments {
-		source, err := st.GetSourceByTypeAndIdentifier(meta.SourceType, meta.SourceIdentifier(profile.AppID, profile.PageID))
+		source, err := st.GetSourceByTypeAndIdentifier(t.Context(), meta.SourceType, meta.SourceIdentifier(profile.AppID, profile.PageID))
 		require.NoError(err)
 		ids, err := st.MessageExistsBatch(source.ID, []string{"100_201"})
 		require.NoError(err)

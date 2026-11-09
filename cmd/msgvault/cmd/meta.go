@@ -100,7 +100,7 @@ func newAddFacebookCommentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -114,7 +114,7 @@ func newAddFacebookCommentsCmd() *cobra.Command {
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Facebook Page %s for %s (source %d)\n", profile.PageID, profile.Identifier, source.ID)
 			}
-			return errors.Join(errors.Join(errs...), runPostSourceCreateMigrationsForInvocation(st, state))
+			return errors.Join(errors.Join(errs...), runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state))
 		},
 	}
 }
@@ -139,7 +139,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}

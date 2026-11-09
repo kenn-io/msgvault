@@ -109,7 +109,7 @@ func message(t *testing.T, st *store.Store, source int64, id string) *store.Mess
 	require.NoError(t, err)
 	require.NotZero(t, ids[id])
 	var got store.Message
-	require.NoError(t, st.DB().QueryRow(`SELECT id,source_id,source_message_id,conversation_id,message_type,sender_id,reply_to_message_id,is_from_me FROM messages WHERE id=?`, ids[id]).Scan(&got.ID, &got.SourceID, &got.SourceMessageID, &got.ConversationID, &got.MessageType, &got.SenderID, &got.ReplyToMessageID, &got.IsFromMe))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id,source_id,source_message_id,conversation_id,message_type,sender_id,reply_to_message_id,is_from_me FROM messages WHERE id=?`, ids[id]).Scan(&got.ID, &got.SourceID, &got.SourceMessageID, &got.ConversationID, &got.MessageType, &got.SenderID, &got.ReplyToMessageID, &got.IsFromMe))
 	return &got
 }
 
@@ -121,7 +121,7 @@ func TestImportPageComments(t *testing.T) {
 	require.NoError(err)
 	assert.False(sum.Partial)
 	got := message(t, st, src.ID, "100_201")
-	body, err := st.GetMessageBodyText(got.ID)
+	body, err := st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Equal("searchable example", body)
 	assert.Equal(SourceType, got.MessageType)
@@ -130,13 +130,13 @@ func TestImportPageComments(t *testing.T) {
 	assert.Equal(root.ID, got.ReplyToMessageID.Int64)
 	assert.True(root.IsFromMe)
 	var hits int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchable'`).Scan(&hits))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchable'`).Scan(&hits))
 	assert.Equal(1, hits)
 	f.comments["100_200"][0].Message = "edited example"
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
 	assert.Equal(got.ID, message(t, st, src.ID, "100_201").ID)
-	body, err = st.GetMessageBodyText(got.ID)
+	body, err = st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Equal("edited example", body)
 }
@@ -164,7 +164,7 @@ func TestImportResumeAfterBudget(t *testing.T) {
 		message(t, st, src.ID, strconv.Itoa(400+i))
 	}
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
 	assert.Equal(6, count)
 }
 
@@ -186,7 +186,7 @@ func TestImportOrganicAdDedup(t *testing.T) {
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
 	assert.Equal(2, count)
 	got := message(t, st, src.ID, "100_201")
 	meta, err := st.GetMessageMetadata(got.ID)
@@ -683,7 +683,7 @@ func TestFullRescanRecoversExpiredCursor(t *testing.T) {
 		message(t, st, src.ID, strconv.Itoa(700+i))
 	}
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
 	assert.Equal(5, count)
 }
 
@@ -715,7 +715,7 @@ func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
 				_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 				require.NoError(err)
 				row := message(t, st, src.ID, target)
-				originalBody, err := st.GetMessageBodyText(row.ID)
+				originalBody, err := st.GetMessageBodyText(t.Context(), row.ID)
 				require.NoError(err)
 				saved, err := st.GetMessageMetadata(row.ID)
 				require.NoError(err)
@@ -737,7 +737,7 @@ func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
 				if sum != nil {
 					assert.True(sum.Partial)
 				}
-				body, readErr := st.GetMessageBodyText(row.ID)
+				body, readErr := st.GetMessageBodyText(t.Context(), row.ID)
 				require.NoError(readErr)
 				assert.Equal(originalBody, body, "unknown metadata must be refused before changing that object")
 				after, readErr := st.GetMessageMetadata(row.ID)
@@ -882,14 +882,14 @@ func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
 				f.comments["100_201"][0].Message = "must not reparent existing child"
 			}
 			before := message(t, st, src.ID, id)
-			body, err := st.GetMessageBodyText(before.ID)
+			body, err := st.GetMessageBodyText(t.Context(), before.ID)
 			require.NoError(err)
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 			require.Error(err)
 			after := message(t, st, src.ID, id)
 			assert.Equal(before.ReplyToMessageID, after.ReplyToMessageID)
 			assert.Equal(before.ConversationID, after.ConversationID)
-			afterBody, err := st.GetMessageBodyText(before.ID)
+			afterBody, err := st.GetMessageBodyText(t.Context(), before.ID)
 			require.NoError(err)
 			assert.Equal(body, afterBody)
 		})

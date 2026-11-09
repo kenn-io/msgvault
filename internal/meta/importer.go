@@ -94,7 +94,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if !ValidAccountID(app) || !ValidAccountID(page) || opts.MaxRequests < 0 {
 		return nil, errors.New("invalid Facebook import options")
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, SourceIdentifier(app, page))
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, SourceIdentifier(app, page))
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			}
 			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, checkpoint))
 		} else if sum.Partial {
-			retErr = imp.store.PauseSyncWithCheckpoint(syncID, checkpoint)
+			retErr = imp.store.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
 		} else {
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
 		}
