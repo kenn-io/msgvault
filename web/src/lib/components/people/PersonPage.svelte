@@ -173,7 +173,9 @@
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
-      <PersonAddresses {detail} {onAnnounce} listedInDetails={savedProfile?.structuredProfile?.contact_points ?? []} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+      {#if profileID === null || !directory.detailLoading}
+        <PersonAddresses {detail} {onAnnounce} listedInDetails={savedProfile?.structuredProfile?.contact_points ?? []} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+      {/if}
       {#if controller.headerState === 'no-mail'}
         <EmptyLine message={`No messages with ${savedProfile?.person?.display_name ?? person?.display_label ?? 'this person'} yet`} />
       {:else if 'domain' in detail}

@@ -13,7 +13,7 @@ it('shows one alert for an attributes failure', async () => {
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
 
-async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; noMeetings?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
+async function renderDetails(participantIDs: number[], options: { contactPoints?: boolean; onAnnounce?: (text: string) => void; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; noMeetings?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -42,7 +42,7 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
     if (path === '/api/v1/people/7' && options.personDeleted) return Response.json({ error: 'person_profile_not_found', message: 'Person profile not found' }, { status: 404 });
     if (path === '/api/v1/people/7') return options.personFailure ? Response.json({ error: 'unavailable', message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(person, { headers: { ETag: `"person-7-r${person.revision}"` } });
-    if (path.endsWith('/profile')) return options.detailsFailure ? Response.json({ message: 'Structured profile unavailable' }, { status: 503 }) : Response.json(emptyProfile(person), { headers: { ETag: `"person-7-r${person.revision}"` } });
+    if (path.endsWith('/profile')) return options.detailsFailure ? Response.json({ message: 'Structured profile unavailable' }, { status: 503 }) : Response.json({ ...emptyProfile(person), ...(options.contactPoints ? { contact_points: ['email', 'phone'].map((kind, index) => ({ person_id: 7, address_kind: kind, original_value: kind === 'email' ? 'person@example.com' : '+1 202 555 0148', normalized_value: kind === 'email' ? 'person@example.com' : '+12025550148', normalization: kind, normalization_version: 1, envelope: { id: index + 1, ordinal: 0, source: 'user', sensitive: false, created_at: when } })) } : {}) }, { headers: { ETag: `"person-7-r${person.revision}"` } });
     if (path.endsWith('/contact-state')) return options.detailsFailure ? Response.json({ message: 'Contact state unavailable' }, { status: 503 }) : Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
     if (path.endsWith('/attributes')) return options.attributesFailure ? Response.json({ message: 'Attributes unavailable' }, { status: 503 }) : Response.json({ person_id: 7, attributes: (options.pins === 'clear' ? !pinned : pinned) ? [{ definition, current: [value], history: [] }] : [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: options.pins ? [definition] : [] });
@@ -59,20 +59,32 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
   });
   const directory = new DirectoryController(client);
   await directory.loadSelection(7);
-  const view = render(PersonDetails, { client, directory, personID: 7 });
+  const view = render(PersonDetails, { client, directory, personID: 7, onAnnounce: options.onAnnounce });
   onTestFinished(() => { view.unmount(); directory.destroy(); });
   return { person, directory };
 }
 
-it('retains a saved profile failure and recovers through section Retry', async () => {
-  const options = { personFailure: true };
-  await renderDetails([1], options);
-  const notice = within(await screen.findByRole('alert'));
-  await fireEvent.click(notice.getByText('Details'));
-  expect(notice.getByText('Saved profile unavailable')).toBeDefined();
-  options.personFailure = false;
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
+it('retains a saved profile failure, retries it, and copies its contact fields', async () => {
+  const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Clipboard unavailable'));
+  const originalClipboard = navigator.clipboard;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const onAnnounce = vi.fn();
+  try {
+    const options = { personFailure: true, contactPoints: true, onAnnounce };
+    await renderDetails([1], options);
+    const notice = within(await screen.findByRole('alert'));
+    await fireEvent.click(notice.getByText('Details'));
+    expect(notice.getByText('Saved profile unavailable')).toBeDefined();
+    options.personFailure = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy person@example.com' }));
+    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
+    expect(writeText).toHaveBeenNthCalledWith(1, 'person@example.com');
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy +1 202 555 0148' }));
+    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith("Couldn't copy."));
+    expect(writeText).toHaveBeenNthCalledWith(2, '+1 202 555 0148');
+  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); }
 });
 
 it('omits the meeting panel for a person without resolved identities', async () => {

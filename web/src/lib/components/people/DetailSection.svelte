@@ -2,26 +2,22 @@
   import { Button } from '@kenn-io/kit-ui';
   import type { Snippet } from 'svelte';
   import { Disclosure } from '@kenn-io/kit-ui';
-  import EmptyLine from '../common/EmptyLine.svelte';
   let { title, children, addLabel, onadd,
-    history, historyLabel, subgroup, subgroupTitle, setupMessage, onsetup, control }: {
+    history, historyLabel, subgroup, subgroupTitle, control }: {
     title: string; children?: Snippet; addLabel?: string; onadd?: () => void;
     history?: Snippet; historyLabel?: string;
-    subgroup?: Snippet; subgroupTitle?: string; setupMessage?: string; onsetup?: () => void;
+    subgroup?: Snippet; subgroupTitle?: string;
     /** The header's one 28 control when it isn't an add button: Network's depth, Tasks' Set up…. */
     control?: Snippet;
   } = $props();
 </script>
 
 <section aria-label={title}>
-  <header><h3>{title}</h3>{#if !setupMessage && control}{@render control()}{:else if !setupMessage && addLabel && onadd}<Button label={addLabel} onclick={onadd} />{/if}</header>
+  <header><h3>{title}</h3>{#if control}{@render control()}{:else if addLabel && onadd}<Button label={addLabel} onclick={onadd} />{/if}</header>
   <div class="section-body">
-    {#if setupMessage}<EmptyLine message={setupMessage} {onsetup} />
-    {:else}
-      {@render children?.()}
-      {#if history && historyLabel}<Disclosure variant="plain" class="fold" title={historyLabel}>{@render history()}</Disclosure>{/if}
-      {#if subgroup}<div class="subgroup">{#if subgroupTitle}<h4>{subgroupTitle}</h4>{/if}{@render subgroup()}</div>{/if}
-    {/if}
+    {@render children?.()}
+    {#if history && historyLabel}<Disclosure variant="plain" class="fold" title={historyLabel}>{@render history()}</Disclosure>{/if}
+    {#if subgroup}<div class="subgroup">{#if subgroupTitle}<h4>{subgroupTitle}</h4>{/if}{@render subgroup()}</div>{/if}
   </div>
 </section>
 <style>

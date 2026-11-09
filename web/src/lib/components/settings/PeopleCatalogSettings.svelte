@@ -20,7 +20,7 @@
   let loading = $state(true);
   const catalogAbort = new AbortController();
   const matching = (name: string, description = '') => `${name} ${description}`.toLowerCase().includes(query.trim().toLowerCase());
-  const visibleFields = $derived([...fields.definitions].sort((a, b) => a.display_order - b.display_order || a.label.localeCompare(b.label)).filter(field => matching(field.label, fieldDescription(field))));
+  const visibleFields = $derived([...fields.definitions].sort((a, b) => a.display_order - b.display_order || a.label.localeCompare(b.label)).filter(field => matching(field.label, field.description ?? '')));
   const work = $derived(targets.find(target => target.kind === 'employment'));
   const visibleWork = $derived(work && matching('Work', work.description) ? work : undefined);
   async function loadTargets(): Promise<void> {
@@ -31,9 +31,6 @@
       if (!response.data) { catalogError = true; return; }
       targets = response.data.targets;
     } catch { if (!catalogAbort.signal.aborted) catalogError = true; }
-  }
-  function fieldDescription(field: AttributeDefinition): string {
-    return field.description ?? '';
   }
   let creating = $state(false);
   let editing = $state<AttributeDefinition>();
@@ -85,7 +82,7 @@
     <ul class="list">
       {#if visibleWork}<li><span class="name">Work<small>{visibleWork.description}</small></span><small>Jobs{visibleWork.cardinality === 'multi' ? ' · several values' : ''}{visibleWork.sensitive ? ' · Sensitive' : ''}</small></li>{/if}
       {#each visibleFields as field (field.id)}
-        <li><span class="name">{field.label}<small>{fieldDescription(field)}</small></span><small>{['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : '', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ')}</small>{#if field.ownership !== 'system'}<Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} />{/if}</li>
+        <li><span class="name">{field.label}<small>{field.description ?? ''}</small></span><small>{['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : '', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ')}</small>{#if field.ownership !== 'system'}<Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} />{/if}</li>
       {/each}
     </ul>
   {:else if loading}<p class="muted">Loading fields…</p>

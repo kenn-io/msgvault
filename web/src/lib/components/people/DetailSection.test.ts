@@ -3,8 +3,8 @@ import { createRawSnippet } from 'svelte';
 import { expect, it, vi } from 'vitest';
 import DetailSection from './DetailSection.svelte';
 
-it('puts history after current rows and hides controls during setup', async () => {
-  const onadd = vi.fn(), onsetup = vi.fn();
+it('puts history after current rows', async () => {
+  const onadd = vi.fn();
   const view = render(DetailSection, { title: 'Work', addLabel: 'Add work', onadd, children: createRawSnippet(() => ({ render: () => '<p>Current job</p>' })), subgroupTitle: 'From address books', subgroup: createRawSnippet(() => ({ render: () => '<p>Imported job</p>' })), historyLabel: 'Show 2 past jobs', history: createRawSnippet(() => ({ render: () => '<p>Past jobs</p>' })) });
   const add = screen.getByRole('button', { name: 'Add work' });
   expect(add.closest('header')).not.toBeNull();
@@ -14,11 +14,6 @@ it('puts history after current rows and hides controls during setup', async () =
   await fireEvent.click(screen.getByText('Show 2 past jobs'));
   expect(view.container.querySelector('details')!.open).toBe(true);
   expect(Array.from(view.container.querySelector('.section-body')!.children, child => child.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['Current job', 'Show 2 past jobs Past jobs', 'From address booksImported job']);
-  await view.rerender({ setupMessage: 'People sweep is off.', onsetup });
-  expect(screen.queryByRole('button', { name: 'Add work' })).toBeNull();
-  expect(screen.queryByText('Current job')).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Set up…' }));
-  expect(onsetup).toHaveBeenCalledOnce();
 });
 
 

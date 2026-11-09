@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Button, IconButton, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '@kenn-io/kit-ui';
+  import { Button, IconButton, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, copyToClipboard } from '@kenn-io/kit-ui';
   import Eye from '@lucide/svelte/icons/eye';
   import EyeOff from '@lucide/svelte/icons/eye-off';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
+  import Copy from '@lucide/svelte/icons/copy';
 
   import type {
     AttributeDefinition,
@@ -20,13 +21,19 @@
 
   interface Props {
     controller: DirectoryProfileController;
+    onAnnounce?: (text: string) => void;
     /** Shown beside the contact frequency when the person is overdue. */
     overdue?: boolean;
     /** Rows shown after the values, before the add line. */
     summary?: import('svelte').Snippet;
   }
 
-  let { controller, overdue = false, summary = undefined }: Props = $props();
+  let { controller, onAnnounce, overdue = false, summary = undefined }: Props = $props();
+
+  async function copyValue(value: string): Promise<void> {
+    const copied = await copyToClipboard(value);
+    onAnnounce?.(copied ? 'Copied' : "Couldn't copy.");
+  }
 
   type Editing =
     | { kind: 'profile'; section: FieldSection; current?: FieldRecord; contactKind?: string; nameKind?: string }
@@ -237,6 +244,9 @@
         {#if scope}<small>{scope}</small>{/if}
         {#if overdue && row.kind === 'attribute' && row.definition.slug === 'contact_frequency'}<span class="overdue">Overdue</span>{/if}
         {#snippet actions()}
+          {#if point && (point.address_kind === 'email' || point.address_kind === 'phone')}
+            <IconButton size="sm" ariaLabel={`Copy ${point.original_value}`} onclick={() => void copyValue(point.original_value)}><Copy size={14} aria-hidden="true" /></IconButton>
+          {/if}
           {#if row.kind === 'attribute' && row.definition.is_sensitive}
             <IconButton
               size="sm"

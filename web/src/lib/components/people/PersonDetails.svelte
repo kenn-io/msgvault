@@ -35,7 +35,7 @@
   {/if}
   {#if profile}
     {@const contact = bundle?.contactState}
-    <PersonFields controller={profile} overdue={contact?.cadence_status === 'overdue'}>
+    <PersonFields controller={profile} {onAnnounce} overdue={contact?.cadence_status === 'overdue'}>
       {#snippet summary()}
         {#if contact && (contact.interaction_count > 0 || contact.last_contact_at)}
           <DetailRow label="Last contact">

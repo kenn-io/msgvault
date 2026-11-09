@@ -17,8 +17,7 @@
   let { controller, onOpenPerson, onOpenOrganization }: Props = $props();
   // Direct links are this person's jobs and connections, which Work and Connections already list,
   // so Direct opens as a one-line summary naming them; 2 and 3 steps list the people reached through them, and links among them.
-  const OPENING_DEPTH = '1';
-  let depth = $state(OPENING_DEPTH);
+  let depth = $state('1');
   const depthOptions = [
     { value: '1', label: 'Direct' },
     { value: '2', label: '2 steps' },
@@ -90,13 +89,13 @@
   }
 </script>
 
-{#if edges.length > 0 || depth !== OPENING_DEPTH || controller.errors.network}
+{#if edges.length > 0 || depth !== '1' || controller.errors.network}
   <DetailSection title="Network">
     {#snippet control()}<SegmentedControl ariaLabel="Network depth" value={depth} options={depthOptions} onchange={(value) => { depth = value; }} />{/snippet}
     {#if controller.errors.network}
       <InlineNotice message="Couldn't load the network." details={controller.errors.network} actionLabel="Retry" onaction={retry} />
     {/if}
-    {#if depth === OPENING_DEPTH}
+    {#if depth === '1'}
       <!-- Direct links only: name them in one line rather than repeat Work and Connections. -->
       <p class="summary">{#if controller.networkLoading}<span role="status">Loading network…</span>{:else}{reached}{/if}</p>
     {:else}
