@@ -5,54 +5,58 @@ import { requestOf, pathOf, organization, employment, organizationProfile, envel
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
-  it.each(['organization', 'profile', 'failed profile reload'] as const)('keeps the other draft after saving %s and uses the new version', async first => {
+  it.each(['organization', 'profile', 'edit elsewhere'] as const)('keeps the other draft after saving %s and sends the version it made', async first => {
     let revision = 1;
     let reads = 0;
     let profile = organizationProfile();
     const writes: Request[] = [];
     const onDone = vi.fn();
+    const etag = () => ({ ETag: `"organization-21-r${revision}"` });
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
-      if (request.method === 'GET') {
-        reads++;
-        if (first === 'failed profile reload' && reads === 2) return Response.json({ message: 'Unavailable' }, { status: 503 });
-        return Response.json(profile, { headers: { ETag: `"organization-21-r${revision}"` } });
-      }
+      if (request.method === 'GET') { reads++; return Response.json(profile, { headers: etag() }); }
       writes.push(request);
+      if (request.headers.get('If-Match') !== etag().ETag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
       revision++;
       if (request.method === 'PATCH') profile = { ...profile, organization: organization(21, revision, 'Lumen Grove Ltd') };
       else profile = { ...profile, names: [{ ...profile.names[0], name: 'LG' }] };
-      return Response.json(request.method === 'PATCH' ? profile.organization : profile);
+      return Response.json(request.method === 'PATCH' ? profile.organization : profile, { headers: etag() });
     });
     render(OrganizationEditor, { controller, organization: organization(), onDone });
     await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'LG' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Lumen Grove Ltd' } });
     await fireEvent.click(screen.getByRole('button', { name: first === 'profile' ? 'Save aliases and categories' : 'Save organization' }));
     await waitFor(() => expect(writes).toHaveLength(1));
-    await waitFor(() => expect(reads).toBe(2));
-    if (first === 'failed profile reload') {
-      await screen.findByText("Couldn't reload this organization after saving.");
-      expect(screen.getByRole('button', { name: 'Save aliases and categories' })).toHaveProperty('disabled', true);
-      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      await screen.findByRole('dialog', { name: 'Lumen Grove Ltd' });
-      expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'LG');
-      expect(screen.getByRole('button', { name: 'Save aliases and categories' })).toHaveProperty('disabled', false);
-      expect(onDone).not.toHaveBeenCalled();
-      return;
-    }
     await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
     expect(onDone).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'LG');
     expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Lumen Grove Ltd');
-    if (first === 'organization') await screen.findByRole('dialog', { name: 'Lumen Grove Ltd' });
-    await fireEvent.click(screen.getByRole('button', { name: first === 'organization' ? 'Save aliases and categories' : 'Save organization' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(writes.map(request => request.method)).toEqual(first === 'organization' ? ['PATCH', 'PUT'] : ['PUT', 'PATCH']);
+    if (first !== 'profile') await screen.findByRole('dialog', { name: 'Lumen Grove Ltd' });
+    if (first === 'edit elsewhere') revision++;
+    await fireEvent.click(screen.getByRole('button', { name: first === 'profile' ? 'Save organization' : 'Save aliases and categories' }));
+    await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes[1].headers.get('If-Match')).toBe('"organization-21-r2"');
+    if (first === 'edit elsewhere') {
+      expect(await screen.findByText('This organization changed since you opened it.')).toBeDefined();
+      expect(onDone).not.toHaveBeenCalled();
+      return;
+    }
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(reads).toBe(1);
+    expect(writes.map(request => request.method)).toEqual(first === 'organization' ? ['PATCH', 'PUT'] : ['PUT', 'PATCH']);
     const patch = writes.find(request => request.method === 'PATCH')!;
     const put = writes.find(request => request.method === 'PUT')!;
     expect(await patch.json()).toMatchObject({ name: 'Lumen Grove Ltd' });
     expect((await put.json()).names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'LG' })]));
+  });
+
+  it('can close while the organization is still loading', async () => {
+    const { controller } = controllerWith(() => new Promise<Response>(() => undefined));
+    const onClose = vi.fn();
+    render(OrganizationEditor, { controller, organization: organization(), onClose });
+    await screen.findByText('Loading organization…');
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it.each(['retired organization', 'comma alias'] as const)('renames an organization with an untouched %s', async fixture => {

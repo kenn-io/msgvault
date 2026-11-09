@@ -26,6 +26,7 @@ it('clears failures before a retry and carries the saved version into the send',
   expect(attempt.prepared).toBeUndefined();
   expect(attempt.failed).toBe(false);
   expect(attempt.details).toBe('');
+  expect(attempt.hadConflict).toBe(true);
 });
 it.each(['unknown', 'blocked'] as const)('keeps %s outcomes out of Details', async kind => {
   const attempt = new WriteAttempt();

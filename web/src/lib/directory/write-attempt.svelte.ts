@@ -4,6 +4,7 @@ export class WriteAttempt<C = never> {
   #sending = $state(false);
   failed = $state(false);
   conflict = $state<C>();
+  // Kept through reset(), so a dialog closing after any conflict still refreshes what it read.
   hadConflict = $state(false);
   details = $state('');
   prepared = $state<C>();
@@ -56,7 +57,6 @@ export class WriteAttempt<C = never> {
     this.#generation++;
     this.failed = false;
     this.conflict = undefined;
-    this.hadConflict = false;
     this.prepared = undefined;
     this.details = '';
   }

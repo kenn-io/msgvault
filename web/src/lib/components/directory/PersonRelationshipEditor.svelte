@@ -100,7 +100,12 @@
   onMount(() => {
     if (initialView) void prepare();
   });
+  // A Check again still pending when the dialog closes must not close the next one.
+  let closed = false;
+  // The person's connections before the last create, so Check again can tell whether it saved.
+  let connectionsBefore = new Set<number>();
   onDestroy(() => {
+    closed = true;
     debouncedSearch.cancel();
     searchAbort?.abort();
   });
@@ -169,6 +174,7 @@
       return;
     const patch = initialRelationship ? patchBody() : undefined;
     const create = initialRelationship ? undefined : createBody(counterpartID!);
+    if (create) connectionsBefore = new Set(controller.relationships.map(view => view.relationship.id));
     const ok = await attempt.run(current => initialRelationship
       ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
       : controller.createRelationship(create!));
@@ -192,10 +198,11 @@
   function patchBody(): PatchPersonRelationshipRequest {
     return { ...(endDate.trim() ? { end_date: endDate.trim() } : {}), notes: notes.trim() || null };
   }
-  // The list now shows whether the connection was saved.
+  // The list now shows whether the connection was saved; when a create wasn't, the form stays to send again.
   async function refreshAfterUncertainOutcome(): Promise<void> {
     await controller.refreshRelationships();
-    if (!controller.createBlocked.relationships && !controller.errors.relationships) onDone();
+    if (closed || controller.createBlocked.relationships || controller.errors.relationships) return;
+    if (committed || controller.relationships.some(view => !connectionsBefore.has(view.relationship.id))) onDone();
   }
   function requestClose(): void {
     if (!attempt.busy) { if (attempt.hadConflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }

@@ -760,7 +760,7 @@ export class DirectoryEntityController {
       if (!this.isActive(abort)) return { ok: false, kind: 'error', status: 0, message: 'Request was cancelled.' };
       if (response.data !== undefined) {
         apply(response.data);
-        return { ok: true, entity: response.data };
+        return { ok: true, entity: response.data, etag: response.response.headers.get('ETag') ?? undefined };
       }
       const status = response.response.status;
       if (status === 412 || (status === 409 && revisionConflictCodes.has(response.error?.error ?? ''))) {

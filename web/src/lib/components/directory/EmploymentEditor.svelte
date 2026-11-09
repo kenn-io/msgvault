@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Checkbox, FormField, SelectDropdown } from '@kenn-io/kit-ui';
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
 
   import { formatPartialDate as partialDate } from '../../directory/dates';
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
@@ -62,6 +62,11 @@
   onMount(() => {
     void prepare();
   });
+  // A Check again still pending when the dialog closes must not close the next one.
+  let closed = false;
+  onDestroy(() => { closed = true; });
+  // The person's jobs before the last create, so Check again can tell whether it saved.
+  let jobsBefore = new Set<number>();
 
   async function prepare(): Promise<void> {
     if (!initialEmployment) {
@@ -129,15 +134,16 @@
         creatingOrganization = false;
       }
       if (initialEmployment) return controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened);
+      jobsBefore = new Set(controller.employments.map(job => job.id));
       return controller.createEmployment({ ...body(), source: 'user' });
     });
     if (ok) onDone();
   }
 
-  // The list now shows whether the job was saved.
+  // The list now shows whether the job was saved; when it wasn't, the form stays to send again.
   async function refreshAfterUnknown(): Promise<void> {
     await controller.refreshEmployments();
-    if (!controller.createBlocked.employments) onDone();
+    if (!closed && !controller.createBlocked.employments && controller.employments.some(job => !jobsBefore.has(job.id))) onDone();
   }
 
   // The picker then lists the organization if the create saved it.
@@ -193,7 +199,7 @@
 </form>{/if}
   {#snippet notice()}
     {#if attempt.conflict}
-      <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller)} message={employmentConflictDetails(attempt.conflict.data, attempt.details)} />
+      <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller, personID)} message={employmentConflictDetails(attempt.conflict.data, attempt.details)} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
       <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void refreshOrganizationAfterUnknown(); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}

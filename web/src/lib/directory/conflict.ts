@@ -5,8 +5,10 @@ import type { Employment, Organization, PersonRelationship } from './models';
 // A saved record as a conflict shows it beside the form: label to readable value, empty when unset.
 const text = (value: unknown) => value === undefined || value === null ? '' : String(value).trim();
 
-export function employmentFacts(job: Employment, names: { organizationName(id: number): string }): Record<string, string> {
+// A job moved to someone else since it was opened says so, since Keep yours then saves it on their record.
+export function employmentFacts(job: Employment, names: { organizationName(id: number): string }, personID: number): Record<string, string> {
   return {
+    ...(job.person_id === personID ? {} : { Person: 'Someone else' }),
     Organization: names.organizationName(job.organization_id),
     'Job title': text(job.title), 'Role on the team': text(job.role), 'Start date': readablePartialDate(job.start_date),
     'End date': job.is_current ? 'Present' : readablePartialDate(job.end_date), 'Primary job': job.is_primary ? 'Yes' : 'No',

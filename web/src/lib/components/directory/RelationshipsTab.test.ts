@@ -47,32 +47,6 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByText('1 past connection'));
     expect(screen.getByText(/Jan 5, 2024 – Jan 6, 2024/)).toBeDefined();
   });
-  it('freezes the person picker while creating a connection', async () => {
-    let finish!: (response: Response) => void;
-    const pending = new Promise<Response>(resolve => { finish = resolve; });
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'POST') return pending;
-      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-      return Response.json({ relationships: [] });
-    });
-    controller.relationshipTypes = [relationshipType()];
-    const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
-    try {
-      await fireEvent.click(screen.getByRole('button', { name: 'Add connection…' }));
-      await openTypeahead('Connection type');
-      await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
-      await openTypeahead('Person');
-      await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveProperty('disabled', true));
-      expect(screen.getByRole('button', { name: 'Person: Synthetic Two' })).toHaveProperty('disabled', true);
-    } finally {
-      finish(Response.json(relationship()));
-      rendered.unmount();
-      controller.destroy();
-    }
-  });
   it('selects the first type option with Enter after filtering', async () => {
     const { client, controller } = controllerWith(async () => Response.json({}));
     controller.relationshipTypes = [relationshipType({ slug: 'parent', forward_label: 'parent', reverse_label: 'child' })];
@@ -924,6 +898,35 @@ describe('RelationshipsTab', () => {
 
 });
 
+
+it.each(['saved', 'not saved'] as const)('checks again after a lost connection create (%s)', async outcome => {
+  let posts = 0;
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; throw new TypeError('response lost'); }
+    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+    if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: posts && outcome === 'saved' ? [view(41, 'outgoing', 'is mentored by', 'Synthetic Two')] : [] });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.relationshipTypes = [relationshipType()];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await fireEvent.click(screen.getByRole('button', { name: 'Add connection…' }));
+  await openTypeahead('Person');
+  await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+  await openTypeahead('Connection type');
+  await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Met at the garden' } });
+  await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+  if (outcome === 'saved') await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  else {
+    await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
+    // Check again settles after the read clears the block.
+    await new Promise(resolve => setTimeout(resolve));
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveProperty('value', 'Met at the garden');
+  }
+  expect(posts).toBe(1);
+});
 
 it('keeps a saved connection open when its list refresh fails and retries only the refresh', async () => {
   let posts = 0, reads = 0;

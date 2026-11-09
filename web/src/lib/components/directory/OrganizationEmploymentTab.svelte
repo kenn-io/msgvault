@@ -103,7 +103,7 @@
   </DetailRow>
   {#if primary.failed && primaryTarget?.id === employment.id}
     {#if primary.conflict}
-      <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
+      <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller, personID)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
     {:else}<InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />{/if}
   {/if}
 {/snippet}
@@ -123,7 +123,7 @@
   <Dialog title={`Delete ${employmentLabel(deletingEmployment)} at ${controller.organizationName(deletingEmployment.organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
     <p>This permanently removes the job. {#if deletingEmployment.is_current}<button data-link type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
     {#snippet notice()}
-      {#if removal.conflict}<ConflictNotice noun="job" saved={removal.conflict.data} record={employmentFacts(removal.conflict.data, controller)} message={employmentConflictDetails(removal.conflict.data, removal.details)} actionLabel="Retry" onaction={() => void removeEmployment()} />
+      {#if removal.conflict}<ConflictNotice noun="job" saved={removal.conflict.data} record={employmentFacts(removal.conflict.data, controller, personID)} message={employmentConflictDetails(removal.conflict.data, removal.details)} actionLabel="Retry" onaction={() => void removeEmployment()} />
       {:else if removal.failed}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => void removeEmployment()} />{/if}
     {/snippet}
   </Dialog>
