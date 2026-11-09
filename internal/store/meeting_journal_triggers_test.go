@@ -10,28 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMeetingJournalCalendarMailboxChange(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	if st.IsPostgreSQL() {
-		t.Skip("SQLite cache journal")
-	}
-	data, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.test"))
-	_, err := st.db.Exec(`DELETE FROM cache_related_change_journal`)
-	requirements.NoError(err)
-	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"other@example.com","time_zone":"UTC"}`))
-	var count int
-	requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM cache_related_change_journal WHERE dataset='meeting_links' AND message_id=?`, event).Scan(&count))
-	assertions.Positive(count, "a mailbox-only mapping change must invalidate meeting count keys")
-}
-
 func TestMeetingJournalTriggers(t *testing.T) {
 	const uidNote = `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.test","startsAt":"2027-03-14T10:00:00Z"}}`
 	const googleNote = `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`
 	for _, tc := range []struct {
-		name, format, note, decision, query, raw, noteUpdate string
-		member, quiet                                        bool
+		name, format, note, decision, query, raw, noteUpdate, syncConfig string
+		member, quiet                                                    bool
 	}{
+		{name: "calendar mailbox change", syncConfig: `{"calendar_id":"other@example.com","time_zone":"UTC"}`},
 		{name: "decision insert", query: `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,decision) VALUES ($note, $event, 'link')`, member: true},
 		{name: "decision update", decision: "link", query: `UPDATE meeting_link_decisions SET decision='split' WHERE member_message_id=$note`, member: true},
 		{name: "decision delete", decision: "link", query: `DELETE FROM meeting_link_decisions WHERE member_message_id=$note`, member: true},
@@ -64,7 +50,7 @@ func TestMeetingJournalTriggers(t *testing.T) {
 			if tc.raw != "" {
 				raw = `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"},"attendees":[{"email":"person@example.test","responseStatus":"needsAction"}]}`
 			}
-			_, event := calendarFixture(t, st, "event", raw)
+			data, event := calendarFixture(t, st, "event", raw)
 			format, noteRaw := tc.format, tc.note
 			if format == "" {
 				format = "twenty_json"
@@ -86,7 +72,9 @@ func TestMeetingJournalTriggers(t *testing.T) {
 				requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
 			}
 			exec(`DELETE FROM cache_related_change_journal`)
-			if tc.raw != "" {
+			if tc.syncConfig != "" {
+				requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, tc.syncConfig))
+			} else if tc.raw != "" {
 				requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(tc.raw), "gcal_json"))
 			} else if tc.noteUpdate != "" {
 				requirements.NoError(st.UpsertMessageRawWithFormat(note, []byte(tc.noteUpdate), format))
