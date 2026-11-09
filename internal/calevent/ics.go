@@ -95,11 +95,14 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 			err = errors.New("malformed iCalendar parameters")
 		}
 	}()
-	// RFC 5545 text is UTF-8, and stored projections cannot hold other bytes.
+	// RFC 5545 requires UTF-8, but some producers write another charset
+	// without declaring it. Convert it as email text is; the caller still
+	// retains the original bytes.
+	text := raw
 	if !utf8.Valid(raw) {
-		return nil, errors.New("calendar is not valid UTF-8")
+		text = []byte(textutil.EnsureUTF8(string(raw)))
 	}
-	decoder := ical.NewDecoder(bytes.NewReader(raw))
+	decoder := ical.NewDecoder(bytes.NewReader(text))
 	cal, err := decoder.Decode()
 	if err != nil {
 		return nil, fmt.Errorf("decode iCalendar: %w", err)

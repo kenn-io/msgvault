@@ -2144,8 +2144,8 @@ event, identified by UID and original recurrence identity, and keeps its own
 VEVENT with the calendar's time zone definitions. A single-VEVENT file stays
 byte-identical. Re-importing updates events: higher SEQUENCE wins, equal
 sequences use DTSTAMP, and a cancellation wins an exact tie. A malformed
-component rejects the whole file. A series with unsupported recurrence stays
-archived and is reported as unexpandable by `calendar events`. The import command
+component rejects the whole file. msgvault converts text in another charset to
+UTF-8, as it does for email. A series with unsupported recurrence stays archived and is reported as unexpandable by `calendar events`. The import command
 reports updated and unchanged counts. Floating times use UTC. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
 

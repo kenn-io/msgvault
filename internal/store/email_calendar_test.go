@@ -274,8 +274,6 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 		calendar []byte
 	}{
 		{"not iCalendar", []byte("invalid calendar")},
-		{"invalid UTF-8 attendee name", calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nATTENDEE;CN=Andr\xe9:mailto:guest@example.org")},
-		{"invalid UTF-8 summary", calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Caf\xe9")},
 		{"ends after year 9999", calendarDocument("REQUEST", "DTSTART:99991231T230000Z\r\nDURATION:PT2H")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -298,6 +296,23 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 			assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
 		})
 	}
+}
+
+func TestEmailCalendarConvertsNonUTF8Text(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Caf\xe9 planning\r\nATTENDEE;CN=Andr\xe9 Example:mailto:guest@example.org"))
+	id, source := persistInviteEmail(t, st, "latin1-invite", raw)
+	stored, err := st.GetMessageRaw(id)
+	requirements.NoError(err)
+	assertions.Equal(raw, stored)
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 1)
+	rows := calendarRows(t, st, ids...)
+	requirements.Len(rows, 1)
+	assertions.Equal("Café planning", rows[0].Subject)
+	requirements.Len(rows[0].Event.Attendees, 1)
+	assertions.Equal("André Example", rows[0].Event.Attendees[0].DisplayName)
 }
 
 func TestEmailCalendarNULFields(t *testing.T) {
