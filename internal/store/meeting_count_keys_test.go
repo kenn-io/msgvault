@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,6 +9,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMeetingCountKeysSingleSplitAfterCalendarCancellationOrDeletion(t *testing.T) {
+	for _, change := range []string{"cancelled", "deleted from source"} {
+		t.Run(change, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, event := calendarFixture(t, st, "single", singleLinkRaw("single", "single@example.org"))
+			var notes []int64
+			for _, name := range []string{"first", "second"} {
+				_, note := projectionFixture(t, st, name, "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"single@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+				notes = append(notes, note)
+			}
+			before, err := st.MeetingCountKeysContext(t.Context())
+			require.NoError(err)
+			assert.Equal(map[int64][]string{notes[0]: {"uid:single@example.org/"}, notes[1]: {"uid:single@example.org/"}}, before)
+			require.NoError(st.UnlinkMeetingContext(t.Context(), notes[0], OccurrenceRef{MessageID: event}))
+			if change == "cancelled" {
+				require.NoError(st.SetMessageMetadataContext(t.Context(), event, sql.NullString{String: `{"calendar_id":"calendar@example.com","ical_uid":"single@example.org","status":"cancelled"}`, Valid: true}))
+			} else {
+				require.NoError(st.MarkMessageDeletedContext(t.Context(), data.Message.SourceID, "single"))
+			}
+			keys, err := st.MeetingCountKeysContext(t.Context())
+			require.NoError(err)
+			assert.Empty(keys[notes[0]])
+			assert.Equal([]string{"uid:single@example.org/"}, keys[notes[1]])
+		})
+	}
+}
 
 func TestMeetingCountKeysSavedLinkSuppressesUnmatchedEvidence(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
