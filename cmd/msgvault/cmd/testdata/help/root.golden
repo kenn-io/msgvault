@@ -159,23 +159,24 @@ Indexes, embeddings, and analytics cache:
   rebuild-fts Rebuild the full-text search index from scratch
 
 Maintenance and repair:
-  backup               Back up the archive to a snapshot repository
-  init-db              Initialize the database schema
-  migrate              Apply this binary's archive schema migrations offline
-  pack-attachments     Pack loose attachment files into sealed pack files
-  policy               Show room tiers and overrides
-  purge-excluded-media Reclaim locally stored media excluded by current policy
-  repack-attachments   Reclaim dead bytes from sparse attachment packs
-  repair-dates         Repair missing or implausible email sent dates
-  repair-derived       Re-derive message text and metadata from stored payloads
-  repair-encoding      Repair invalid UTF-8 encoding in message text fields
-  repair-identity      Confirm account identities and recompute is_from_me
-  repair-labels        Rebuild IMAP message labels from stored mailbox memberships
-  repair-list-ids      Repair archived email List-Id values from raw MIME
-  repair-message       Repair one Gmail message snapshot or audit stored Gmail MIME
-  repair-senders       Restore missing email senders from archived MIME
-  schema-version       Print the binary's expected archive schema version
-  unpack-attachments   Restore packed attachments to loose files
+  backup                  Back up the archive to a snapshot repository
+  init-db                 Initialize the database schema
+  migrate                 Apply this binary's archive schema migrations offline
+  pack-attachments        Pack loose attachment files into sealed pack files
+  policy                  Show room tiers and overrides
+  purge-excluded-media    Reclaim locally stored media excluded by current policy
+  repack-attachments      Reclaim dead bytes from sparse attachment packs
+  repair-attachment-roles Classify older email attachments
+  repair-dates            Repair missing or implausible email sent dates
+  repair-derived          Re-derive message text and metadata from stored payloads
+  repair-encoding         Repair invalid UTF-8 encoding in message text fields
+  repair-identity         Confirm account identities and recompute is_from_me
+  repair-labels           Rebuild IMAP message labels from stored mailbox memberships
+  repair-list-ids         Repair archived email List-Id values from raw MIME
+  repair-message          Repair one Gmail message snapshot or audit stored Gmail MIME
+  repair-senders          Restore missing email senders from archived MIME
+  schema-version          Print the binary's expected archive schema version
+  unpack-attachments      Restore packed attachments to loose files
 
 Setup, daemon, and integrations:
   agent-token  Manage restricted agent grant tokens
