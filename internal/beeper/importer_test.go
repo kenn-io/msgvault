@@ -1237,6 +1237,12 @@ func TestImportReconcileRetriesFailedAuxiliaryWrite(t *testing.T) {
 // until the returned function runs.
 func failWrites(t *testing.T, st *store.Store, table, event string) func() {
 	t.Helper()
+	return failWritesWhen(t, st, table, event, "TRUE")
+}
+
+// failWritesWhen is failWrites limited to rows matching the SQL condition when.
+func failWritesWhen(t *testing.T, st *store.Store, table, event, when string) func() {
+	t.Helper()
 	require := require.New(t)
 	name := "fail_beeper_" + table + "_" + strings.ToLower(event)
 	if st.IsPostgreSQL() {
@@ -1249,7 +1255,7 @@ func failWrites(t *testing.T, st *store.Store, table, event string) func() {
 		require.NoError(err)
 		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+`
 			BEFORE `+event+` ON `+table+`
-			FOR EACH ROW EXECUTE FUNCTION `+name+`()`)
+			FOR EACH ROW WHEN (`+when+`) EXECUTE FUNCTION `+name+`()`)
 		require.NoError(err)
 		release := func() {
 			// Cleanup runs after t.Context() is canceled.
@@ -1264,7 +1270,7 @@ func failWrites(t *testing.T, st *store.Store, table, event string) func() {
 	}
 	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+`
 		BEFORE `+event+` ON `+table+`
-		FOR EACH ROW BEGIN
+		FOR EACH ROW WHEN `+when+` BEGIN
 			SELECT RAISE(ABORT, 'forced write failure');
 		END`)
 	require.NoError(err)
@@ -1274,6 +1280,45 @@ func failWrites(t *testing.T, st *store.Store, table, event string) func() {
 	}
 	t.Cleanup(release)
 	return release
+}
+
+func TestImportReconcileRetriesFailedWriteAfterRunAborts(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// s3's reaction write fails, then the walk reaches s1, whose fatal store
+	// error aborts the run before its final checkpoint.
+	ch := f.chat("!steady:beeper.local")
+	ch.Msgs[3].Reactions = []map[string]any{
+		{"id": "@me:beeper.local", "reactionKey": "👍", "participantID": "@me:beeper.local", "emoji": true},
+	}
+	ch.Msgs[1].Text = "steady 1, edited"
+	releaseReactions := failWrites(t, st, "reactions", "INSERT")
+	releaseMessage := failWritesWhen(t, st, "messages", "UPDATE", "NEW.source_message_id = 's1'")
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.Error(err)
+	releaseReactions()
+	releaseMessage()
+
+	// A fresh importer resumes from the aborted run's checkpoint.
+	again := NewImporter(st, imp.client)
+	_, err = again.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var reactions int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM reactions r
+		JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "s3").Scan(&reactions))
+	assert.Equal(1, reactions, "the unfinished mark must survive the aborted run")
 }
 
 func TestImportReconcileLinksUnchangedReplyToLateParent(t *testing.T) {

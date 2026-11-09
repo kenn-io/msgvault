@@ -75,6 +75,7 @@ type chatScope struct {
 	sourceID           int64
 	syncID             int64
 	opts               ImportOptions
+	state              *SyncState
 	cs                 *ChatState
 	membershipComplete bool
 	budgetUsed         int
@@ -853,7 +854,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	}
 	cc := &chatScope{
 		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
-		opts: opts, cs: cs, membershipComplete: membershipComplete,
+		opts: opts, state: state, cs: cs, membershipComplete: membershipComplete,
 		tailScan: tailScan,
 	}
 	cc.opts.MediaConversation = attachmentpolicy.Conversation{
@@ -1787,12 +1788,23 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 		raw = marshaled
 	}
-	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
-		return fmt.Errorf("archive beeper message raw: %w", err)
+	unfinished := !attachmentsStored || sum.Errors-errorsBefore > attachmentErrors
+	if unfinished {
+		if err := imp.recordUnfinished(ctx, cc, m, sum); err != nil {
+			return err
+		}
 	}
-	if !attachmentsStored || sum.Errors-errorsBefore > attachmentErrors {
-		cc.cs.markUnfinished(m.ID, m.Timestamp)
-	} else {
+	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
+		err = fmt.Errorf("archive beeper message raw: %w", err)
+		if !unfinished {
+			// The writes above may already show a newer version than the
+			// archived JSON, which a later revert at the source would match.
+			// Cleanup must finish after cancellation.
+			err = errors.Join(err, imp.recordUnfinished(context.WithoutCancel(ctx), cc, m, sum))
+		}
+		return err
+	}
+	if !unfinished {
 		delete(cc.cs.Unfinished, m.ID)
 	}
 
@@ -1807,6 +1819,18 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		sum.MessagesUpdated++
 	} else {
 		sum.MessagesAdded++
+	}
+	return nil
+}
+
+// recordUnfinished marks m unfinished and checkpoints the state at once. The
+// checkpoint must land before the message's JSON is archived: otherwise an
+// interrupted run could leave current JSON with no record that the message
+// still needs work, and the reconcile pass would skip it.
+func (imp *Importer) recordUnfinished(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
+	cc.cs.markUnfinished(m.ID, m.Timestamp)
+	if err := imp.checkpointNowContext(ctx, cc.syncID, cc.state, sum); err != nil {
+		return fmt.Errorf("checkpoint unfinished Beeper message: %w", err)
 	}
 	return nil
 }
