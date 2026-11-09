@@ -299,7 +299,10 @@ it('allows closing while the job loads', async () => {
     expect(posts).toBe(1);
   });
 
-  it('closes after Check again finds an uncertain historical job on a later page', async () => {
+  it.each([
+    { inputDate: '2019', savedDate: { year: 2019 } },
+    { inputDate: '20240315', savedDate: { year: 2024, month: 3, day: 15 } },
+  ])('closes after Check again finds an uncertain historical job on a later page ($inputDate)', async ({ inputDate, savedDate }) => {
     let saved: ReturnType<typeof employment> | undefined;
     let posts = 0;
     const onDirectoryChange = vi.fn();
@@ -310,7 +313,7 @@ it('allows closing while the job loads', async () => {
       if (path === '/api/v1/employments' && request.method === 'POST') {
         posts++;
         const body = await request.json();
-        saved = employment(811, 1, { ...body, start_date: { year: 2024, month: 3, day: 15 }, end_date: { year: 2024, month: 3, day: 16 } });
+        saved = employment(811, 1, { ...body, start_date: savedDate, end_date: { year: 2024, month: 3, day: 16 } });
         throw new TypeError('response lost');
       }
       if (path === '/api/v1/people/7/employments') {
@@ -329,7 +332,7 @@ it('allows closing while the job loads', async () => {
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Garden designer' } });
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '20240315' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: inputDate } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '20240316' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
     await screen.findByText("Couldn't confirm the job was saved.");
