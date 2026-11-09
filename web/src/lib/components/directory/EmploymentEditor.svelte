@@ -177,6 +177,8 @@
               </div>
             {/snippet}
           </FieldPicker>
+          {#if creatingOrganization && !organizationName.trim()}<p class="context">Enter an organization name.</p>
+          {:else if !creatingOrganization && !organizationID}<p class="context">Choose an organization.</p>{/if}
       </div>
       {/if}
       <div class="form-pair"><FormField field={{ id: 'work-title', label: 'Job title', value: title, disabled: locked }} oninput={value => title = value} /><FormField field={{ id: 'work-role', label: 'Role on the team', value: role, disabled: locked }} oninput={value => role = value} /></div>

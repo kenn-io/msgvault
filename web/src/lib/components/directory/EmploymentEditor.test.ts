@@ -5,6 +5,16 @@ import EmploymentEditor from './EmploymentEditor.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 
+it('explains which organization is required for a job', async () => {
+  const { controller } = controllerWith(async () => Response.json({ organizations: [] }));
+  await openInlineEmployer(controller, 'New Org');
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } });
+  expect(screen.getByText('Enter an organization name.')).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Choose an existing organization instead' }));
+  expect(screen.getByText('Choose an organization.')).toBeDefined();
+});
+
 async function openInlineEmployer(controller: DirectoryEntityController, name: string, onDone = () => undefined): Promise<void> {
   render(EmploymentEditor, { controller, personID: 7, onDone });
   const query = await openTypeahead('Organization');

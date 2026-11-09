@@ -38,7 +38,7 @@ export function intervalDateError(value: string, start = ''): string | null {
   const match = YEAR_FORMS.exec(trimmed);
   if (!match) return DATE_ERROR;
   const [year, month, day] = match[1] ? [match[1], match[2], match[3]] : [match[4], match[5], match[6]];
-  if (!validParts(num(year), num(month), num(day))) return DATE_ERROR;
+  if (!validParts(num(year), num(month), num(day))) return RANGE_MESSAGE;
   if (start.trim() && !intervalDateError(start)) {
     const a = start.trim().replaceAll('-', ''), b = trimmed.replaceAll('-', '');
     const precision = Math.min(a.length, b.length);

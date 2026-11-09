@@ -13,7 +13,8 @@ describe('intervalDateError', () => {
     expect(intervalDateError(value)).toBeNull();
   });
   it.each([
-    ...['--04-12', '--04', '---12', 'spring 2019', '2019-13', '2019-02-30', '0000', '201904', '2019-4'].map(value => [value, '', 'Use 2024, 2024-03, or 2024-03-15.']),
+    ...['--04-12', '--04', '---12', 'spring 2019', '201904', '2019-4'].map(value => [value, '', 'Use 2024, 2024-03, or 2024-03-15.']),
+    ...['2019-13', '2019-02-30', '0000'].map(value => [value, '', 'This date does not exist. Check the month and day.']),
     ['2024-02', '2024-03', 'End date must be on or after start date.'],
   ])('rejects %j with start %j', (value, start, error) => {
     expect(intervalDateError(value, start)).toBe(error);
