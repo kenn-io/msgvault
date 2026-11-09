@@ -103,14 +103,13 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterInstallFailure(t *testing.
 		},
 		func(*config.Config) (updateDaemonStopResult, error) {
 			events = append(events, "stop")
-			return updateDaemonStopResult{Stopped: true, Persistent: true}, nil
+			return updateDaemonStopResult{Stopped: true}, nil
 		},
 		func(*update.UpdateInfo, func(int64, int64)) error {
 			events = append(events, "perform")
 			return installErr
 		},
-		func(_ *config.Config, result updateDaemonStopResult) error {
-			assert.True(result.Persistent)
+		func(*config.Config, updateDaemonStopResult) error {
 			events = append(events, "restart")
 			return nil
 		},

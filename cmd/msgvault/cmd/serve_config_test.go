@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,8 +17,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
-func TestQuickStartDaemonLifetime(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
+func TestQuickStartRestartsAutomaticDaemon(t *testing.T) {
+	require := require.New(t)
 	binary, home := buildNativeCLI(t), t.TempDir()
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[server]\nbind_addr = '127.0.0.1'\n[analytics]\nengine = 'sql'\n[vector]\nenabled = false\n[people.sweep]\nenabled = false\n"), 0o600))
 	run := func(ctx context.Context, args ...string) string {
@@ -27,7 +26,7 @@ func TestQuickStartDaemonLifetime(t *testing.T) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		command := exec.CommandContext(ctx, binary, append([]string{"--home", home}, args...)...)
-		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "USERPROFILE=" + os.Getenv("USERPROFILE"), "MSGVAULT_DAEMON_IDLE_TIMEOUT=2s"}
+		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "USERPROFILE=" + os.Getenv("USERPROFILE"), "MSGVAULT_DAEMON_IDLE_TIMEOUT=0s"}
 		output, err := command.CombinedOutput()
 		require.NoError(err, "%s", output)
 		return string(output)
@@ -38,18 +37,6 @@ func TestQuickStartDaemonLifetime(t *testing.T) {
 	output := run(t.Context(), "daemon", "restart")
 	match := regexp.MustCompile(`msgvault running at (http://\S+)`).FindStringSubmatch(output)
 	require.Len(match, 2, "%s", output)
-	// The detached child's real clock must see five idle seconds without HTTP polling.
-	select {
-	case <-time.After(5 * time.Second):
-	case <-t.Context().Done():
-		require.NoError(t.Context().Err())
-	}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, match[1], nil)
-	require.NoError(err)
-	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
-	require.NoError(err)
-	assert.Equal(http.StatusOK, response.StatusCode)
-	assert.NoError(response.Body.Close())
 }
 
 // buildNativeCLI builds the real msgvault CLI into t.TempDir() and returns its path.

@@ -380,7 +380,6 @@ func prepareBackgroundDaemonStart(
 			if err := stopDaemonRuntimeForUpgrade(*c, legacy, logger); err != nil {
 				return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 			}
-			prep.Persistent = prep.Persistent || legacy.Record.Metadata[runtimePersistent] == runtimeBackgroundValue
 		}
 	}
 	ownershipHeld, err = daemonOwnerLockHeld(c.Data.DataDir)
