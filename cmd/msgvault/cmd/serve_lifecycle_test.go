@@ -1663,11 +1663,9 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 		_ = proc.releaseProcessTree()
 	})
 
-	if !persistent {
-		assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
-		require.NoError(proc.releaseProcessTree())
-		assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
-	}
+	assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
+	require.NoError(proc.releaseProcessTree())
+	assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
 }
 
 func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
