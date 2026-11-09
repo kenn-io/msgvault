@@ -137,7 +137,7 @@
               label={participantLabel(participantID)}
               ariaLabel={saved ? participantLabel(participantID) : undefined}
               ariaDescribedby={saved ? `${uid}-saved-${participantID}` : undefined}
-              disabled={controller.splitBusy}
+              disabled={controller.splitBusy || (!controller.canSelectParticipant(participantID) && !controller.selectedParticipantIDs.includes(participantID))}
               onchange={(checked) => controller.setParticipantSelected(participantID, checked)}
             >{#if saved}<small id={`${uid}-saved-${participantID}`}>Also saved</small>{/if}</Checkbox>
           {/each}

@@ -20,7 +20,10 @@ it('reports an invalid IMAP server port', async () => {
   const server = screen.getByLabelText('Server');
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'reader' } });
   await fireEvent.input(server, { target: { value: 'imap.example.com:70000' } });
-  expect(screen.getByText('Enter a port from 1 to 65535.')).toBeDefined();
+  expect(screen.getByText('Enter a valid server and a port from 1 to 65535.')).toBeDefined();
+  await fireEvent.input(server, { target: { value: 'imap.example.com:993:99999' } });
+  expect(screen.getByText('Enter a valid server and a port from 1 to 65535.')).toBeDefined();
+  expect(screen.queryByText(/msgvault add-imap/, { selector: 'code' })).toBeNull();
 });
 
 it('adds STARTTLS to the IMAP command when selected', async () => {

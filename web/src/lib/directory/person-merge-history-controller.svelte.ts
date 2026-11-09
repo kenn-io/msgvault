@@ -137,6 +137,9 @@ export class PersonMergeHistoryController {
       .map((participant) => participant.participant_id)
       .sort((left, right) => left - right);
   }
+  canSelectParticipant(id: number): boolean {
+    return this.labels?.for === this.detail && this.labels.addresses.has(id);
+  }
   get isZeroParticipantLineage(): boolean {
     return this.absorbedParticipants.length === 0;
   }
@@ -338,6 +341,7 @@ export class PersonMergeHistoryController {
   setParticipantSelected(participantID: number, selected: boolean): void {
     if (
       !this.eligibleParticipantIDs.includes(participantID) ||
+      (selected && !this.canSelectParticipant(participantID)) ||
       this.splitBusy ||
       this.splitNeedsFreshState ||
       this.committedResult
@@ -364,7 +368,7 @@ export class PersonMergeHistoryController {
       this.splitError = 'Choose at least one address.';
       return false;
     }
-    if (this.selectedParticipantIDs.some((id) => !this.eligibleParticipantIDs.includes(id))) return false;
+    if (this.selectedParticipantIDs.some((id) => !this.eligibleParticipantIDs.includes(id) || !this.canSelectParticipant(id))) return false;
     const snapshot = this.currentSplitSnapshot();
     if (!snapshot) return false;
     this.confirmedSnapshot = snapshot;

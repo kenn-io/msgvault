@@ -77,6 +77,21 @@ function result(exactReversal: boolean) {
 }
 
 describe('PersonSplitSteps', () => {
+  it('prevents selection of unidentified addresses while allowing identified ones', async () => {
+    const participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
+    const { controller } = await preparedController(async input => new URL((input as Request).url).pathname.endsWith('/profile')
+      ? Response.json(emptyProfile(person(12))) : Response.json(person(12, 4, [701, 702]), { headers: { ETag: '"person-12-r4"' } }),
+    participants, () => ({ ...mergeDetail().labels, participant_ids: [701], addresses: [addressFixture(701, 'email', 'person701@example.org')] }));
+    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
+    expect(screen.getByRole('checkbox', { name: 'Unknown address 2' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('checkbox', { name: 'person701@example.org' })).toHaveProperty('disabled', false);
+    controller.setParticipantSelected(702, true);
+    expect(controller.selectedParticipantIDs).toEqual([]);
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'person701@example.org' }));
+    expect(controller.confirmSplit()).toBe(true);
+    controller.destroy();
+  });
+
   it('describes a successful subset split without calling it a partial restore', async () => {
     const response = { ...result(false), unrestored_rows: [], uid_alias_disposition: 'retired_uid_alias_unchanged', source_person: person(12, 5, [702, 999], 'Synthetic Source') };
     const participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
@@ -86,10 +101,10 @@ describe('PersonSplitSteps', () => {
       if (path === '/api/v1/people/12') return Response.json(person(12, 4, [999, 701, 702], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       if (path.endsWith('/profile')) return Response.json(emptyProfile(person(12)));
       throw new Error(`Unexpected ${request.method} ${path}`);
-    }, participants);
+    }, participants, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701, 702], addresses: [701, 702].map(id => addressFixture(id, 'email', `person${id}@example.org`)) }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unknown address 1' }));
-    expect(screen.getByRole('checkbox', { name: 'Unknown address 2' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'person701@example.org' }));
+    expect(screen.getByRole('checkbox', { name: 'person702@example.org' })).toBeDefined();
     await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
     expect(screen.queryByText('Partly restored')).toBeNull();
     expect(screen.queryByText(/fully reversed/)).toBeNull();
@@ -245,12 +260,12 @@ describe('PersonSplitSteps', () => {
       const request = input as Request;
       if (request.method !== 'GET') return new Promise<Response>(done => resolve = done);
       return new URL(request.url).pathname.endsWith('/profile') ? Response.json(emptyProfile(person(12))) : sourceResponse();
-    });
+    }, undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701], addresses: [addressFixture(701, 'email', 'person701@example.org')] }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unknown address 1' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'person701@example.org' }));
     let submitted!: Promise<void>;
     await act(() => { controller.confirmSplit(); submitted = controller.submitSplit(); });
-    expect(screen.getByRole('checkbox', { name: 'Unknown address 1' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('checkbox', { name: 'person701@example.org' })).toHaveProperty('disabled', true);
     resolve(Response.json(result(true)));
     await act(() => submitted);
     expect(await screen.findByRole('button', { name: 'Open Synthetic Restored' })).toBeDefined();

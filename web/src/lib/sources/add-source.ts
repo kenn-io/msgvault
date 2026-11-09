@@ -50,7 +50,14 @@ function arg(value: string, shell: 'posix' | 'cmd', optionValue: boolean): strin
 
 export function imapServer(value: string): { host: string; port?: string } | undefined {
   const match = /^(\[[^\]]+\]|[^:]+):([^:]*)$/.exec(value.trim());
-  if (!match) return { host: value.trim() };
+  if (!match) {
+    const host = value.trim();
+    if (host.includes(':')) {
+      try { new URL(`http://${host.startsWith('[') ? host : `[${host}]`}`); }
+      catch { return undefined; }
+    }
+    return { host };
+  }
   const port = Number(match[2]);
   return /^\d+$/.test(match[2]!) && port >= 1 && port <= 65535 ? { host: match[1]!, port: String(port) } : undefined;
 }

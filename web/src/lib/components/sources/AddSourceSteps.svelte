@@ -17,7 +17,7 @@
     <label>{field.label}<TextInput block bind:value={() => values[field.id] ?? '', value => (values[field.id] = value)} placeholder={field.placeholder} autofocus={index === 0} /></label>
   {/each}
   {#if kind.id === 'imap'}
-    {#if values.host?.trim() && !imapServer(values.host)}<p>Enter a port from 1 to 65535.</p>{/if}
+    {#if values.host?.trim() && !imapServer(values.host)}<p>Enter a valid server and a port from 1 to 65535.</p>{/if}
     <Checkbox label="Use STARTTLS" bind:checked={starttls} />
     <p>The command asks for your password.</p>
   {/if}

@@ -25,6 +25,8 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(imap, { host: 'imap.example.com:0993', username: 'reader' }, 'posix')).toBe('msgvault add-imap --host imap.example.com --port 993 --username reader');
     expect(addSourceCommand(imap, { host: 'imap.example.com:70000', username: 'reader' }, 'posix')).toBeUndefined();
     expect(addSourceCommand(imap, { host: 'imap.example.com:mail', username: 'reader' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: 'imap.example.com:993:99999', username: 'reader' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: '2001:db8::1:99999', username: 'reader' }, 'posix')).toBeUndefined();
   });
 
   it('adds STARTTLS to the IMAP command', () => {
