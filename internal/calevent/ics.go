@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	ical "github.com/emersion/go-ical"
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -94,6 +95,10 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 			err = errors.New("malformed iCalendar parameters")
 		}
 	}()
+	// RFC 5545 text is UTF-8, and stored projections cannot hold other bytes.
+	if !utf8.Valid(raw) {
+		return nil, errors.New("calendar is not valid UTF-8")
+	}
 	decoder := ical.NewDecoder(bytes.NewReader(raw))
 	cal, err := decoder.Decode()
 	if err != nil {
@@ -426,6 +431,19 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	stamp, _, err := icsTime(p.Get("DTSTAMP"), time.UTC)
 	if err != nil {
 		return ICSComponent{}, fmt.Errorf("DTSTAMP: %w", err)
+	}
+	// Stored projections encode instants as JSON, which allows years 0 to 9999.
+	instants := []time.Time{stamp}
+	if e.Start != nil {
+		instants = append(instants, *e.Start, *e.End)
+	}
+	if e.Original != nil {
+		instants = append(instants, e.Original.Instant)
+	}
+	for _, instant := range instants {
+		if year := instant.UTC().Year(); year < 0 || year > 9999 {
+			return ICSComponent{}, errors.New("event time is outside years 0 to 9999")
+		}
 	}
 	c.Event, c.Stamp = e, stamp
 	return c, nil
