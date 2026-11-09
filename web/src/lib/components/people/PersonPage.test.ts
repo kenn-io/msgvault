@@ -168,7 +168,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('shows linked addresses on Details after profile loading and preserves Copy after failure', async () => {
+it('gates linked addresses while loading and forwards profile values or an empty fallback', async () => {
   vi.stubEnv('TZ', 'UTC');
   const person = { id: 7, revision: 1, display_name: 'Alice Example', participant_ids: [1], vcard_uid: 'example-7', created_at: when, updated_at: when };
   let failProfile = false;
@@ -201,10 +201,9 @@ it('shows linked addresses on Details after profile loading and preserves Copy a
     await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: ['alice@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { id: index + 1, ordinal: index, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } })) }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
     const addresses = vi.mocked(PersonAddresses).mock.calls.at(-1)![1];
     expect(addresses.listedInDetails).toEqual(directory.profile!.structuredProfile!.contact_points);
-    expect(screen.getByRole('group', { name: 'Known addresses' })).toBeDefined();
     failProfile = true;
     await act(async () => { await directory.loadSelection(7); });
-    expect(within(screen.getByRole('group', { name: 'Known addresses' })).getByRole('button', { name: 'Copy alice@example.com' })).toBeDefined();
+    expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual([]);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 

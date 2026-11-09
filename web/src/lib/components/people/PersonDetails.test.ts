@@ -8,11 +8,6 @@ import { MeetingsController } from '../../meetings/controller.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { meetingActions, meetingAction, meetingMetrics } from '../../meetings/fixtures.test-support';
 
-it('shows one alert for an attributes failure', async () => {
-  await renderDetails([], { attributesFailure: true });
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-});
-
 async function renderDetails(participantIDs: number[], options: { meetingRequests?: string[]; emptyMeetings?: boolean; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
@@ -22,6 +17,7 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
+    if (options.personDeleted && /^\/api\/v1\/people\/7(?:\/|$)/.test(path)) return Response.json({ error: 'person_profile_not_found', message: 'Person profile not found' }, { status: 404 });
     if (path.startsWith('/api/v1/meetings/')) options.meetingRequests?.push(path);
     if (options.emptyMeetings && path === '/api/v1/meetings/metrics') return Response.json(meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: null }, first_meeting_at: null, last_meeting_at: null, duration_by_basis: [], months: [] }));
     if (options.emptyMeetings && path === '/api/v1/meetings/actions') return Response.json(meetingActions({ coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 } }));
@@ -43,7 +39,6 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
     if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
     if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
-    if (path === '/api/v1/people/7' && options.personDeleted) return Response.json({ error: 'person_profile_not_found', message: 'Person profile not found' }, { status: 404 });
     if (path === '/api/v1/people/7') return options.personFailure ? Response.json({ error: 'unavailable', message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(person, { headers: { ETag: `"person-7-r${person.revision}"` } });
     if (path.endsWith('/profile')) return options.detailsFailure ? Response.json({ message: 'Structured profile unavailable' }, { status: 503 }) : Response.json(emptyProfile(person), { headers: { ETag: `"person-7-r${person.revision}"` } });
     if (path.endsWith('/contact-state')) return options.detailsFailure ? Response.json({ message: 'Contact state unavailable' }, { status: 503 }) : Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
@@ -62,7 +57,7 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
   await directory.loadSelection(7);
   const view = render(PersonDetails, { client, directory, personID: 7 });
   onTestFinished(() => { view.unmount(); directory.destroy(); });
-  return { person, directory };
+  return { person, directory, view };
 }
 
 it.each([{ participantIDs: [], requests: [] }, { participantIDs: [5], requests: ['/api/v1/meetings/actions', '/api/v1/meetings/metrics'] }])('shows empty Meetings for the loaded identity scope: $participantIDs', async ({ participantIDs, requests }) => {
@@ -140,17 +135,13 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 });
 
 
-it.each(['profile and details', 'deleted'])('handles a failed %s read with one notice and its recovery action', async failure => {
-  const options = { detailsFailure: failure === 'profile and details', personFailure: failure === 'profile and details', personDeleted: false };
-  const { directory } = await renderDetails([], options);
-  if (failure === 'deleted') {
-    options.personDeleted = true;
-    await act(async () => { await directory.profile!.reload(); });
-    const notice = within(screen.getByText("This person isn't in your archive anymore.").closest('[role="alert"]')!);
-    expect(screen.queryByText("Couldn't load these details.")).toBeNull();
-    expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
-    return;
-  }
+it('keeps the attributes alert separate and combines failed profile reads into one retriable notice', async () => {
+  const attributes = await renderDetails([], { attributesFailure: true });
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  attributes.view.unmount();
+  attributes.directory.destroy();
+  const options = { detailsFailure: true, personFailure: true };
+  await renderDetails([], options);
   expect(screen.getAllByText("Couldn't load these details.")).toHaveLength(1);
   const notice = within(screen.getByRole('alert'));
   await fireEvent.click(notice.getByText('Details'));
@@ -158,4 +149,11 @@ it.each(['profile and details', 'deleted'])('handles a failed %s read with one n
   options.detailsFailure = false; options.personFailure = false;
   await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
+});
+
+it('shows a deleted person on initial load without offering Retry', async () => {
+  await renderDetails([], { personDeleted: true });
+  const notice = within(screen.getByText("This person isn't in your archive anymore.").closest('[role="alert"]')!);
+  expect(screen.queryByText("Couldn't load these details.")).toBeNull();
+  expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
 });

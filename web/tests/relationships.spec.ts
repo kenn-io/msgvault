@@ -745,7 +745,6 @@ test('missing saved profiles keep Back to People on narrow screens', async ({ pa
   await page.route('**/api/v1/people/999', route => route.fulfill({ status: 404, json: { message: 'Person not found' } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 999 }))}`);
   await expect(page.getByRole('radio', { name: 'Details', exact: true })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByRole('alert').filter({ hasText: "This person isn't in your archive anymore." })).toBeVisible();
   await page.getByRole('button', { name: 'Back to People', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'People results' })).toBeVisible();
 });

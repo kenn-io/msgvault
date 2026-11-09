@@ -85,7 +85,7 @@ it('identifies row actions and confirmations by value and service scope', async 
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('offers field additions and Copy, then blocks additions and routes Retry after a failed read', async () => {
+it('blocks attribute additions after a failed read and routes Retry to the profile controller', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -97,27 +97,11 @@ it('offers field additions and Copy, then blocks additions and routes Retry afte
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
-  const initial = profile();
-  initial.contact_points = [{ person_id: 7, identity_key: 'old-email-key', address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
-  const writeText = vi.fn(async () => undefined);
-  const originalClipboard = navigator.clipboard;
-  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-  const onAnnounce = vi.fn();
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
-  const view = render(PersonFields, { controller, onAnnounce });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  await controller.reload();
+  const view = render(PersonFields, { controller });
+
   try {
-    const fields = view.container.querySelector('.fields')!;
-    const add = fields.querySelector('.add')!;
-    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
-    expect(fields.lastElementChild).toBe(add);
-    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Copy old@example.com' }));
-    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
-    expect(writeText).toHaveBeenCalledWith('old@example.com');
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
-    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
-    await controller.reload();
     const reload = vi.spyOn(controller, 'reload');
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain("Couldn't load field values.");
@@ -129,7 +113,7 @@ it('offers field additions and Copy, then blocks additions and routes Retry afte
     await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     expect(reload).toHaveBeenCalledOnce();
     await reload.mock.results[0]!.value;
-  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
+  } finally { view.unmount(); controller.destroy(); }
 });
 
 it.each([false, true])('keeps removal state until its outcome settles (failure=%s)', async fail => {
@@ -169,13 +153,29 @@ it('gates media editing by available data and keeps removal available', () => {
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('displays every structured address component before its original street value', () => {
+it('displays own fields with ordered additions, More fields, and Copy feedback', async () => {
   const initial = profile();
+  initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'old@example.com'), address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
+  const writeText = vi.fn(async () => undefined);
+  const originalClipboard = navigator.clipboard;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const onAnnounce = vi.fn();
   initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: '1 Example Street', street_address: '1 Example Street', post_office_box: 'PO Box 7', extended_address: 'Suite 2', extended_components: 'Building C', locality: 'Example City', region: 'CA', postal_code: '90001', country_name: 'United States', envelope }];
-  const { view, controller } = harness(initial);
+  const { view, controller } = harness(initial, { onAnnounce });
   try {
     expect(screen.getByText('PO Box 7, Suite 2, 1 Example Street, Example City, CA, 90001, United States, Building C')).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
+    const fields = view.container.querySelector('.fields')!;
+    const add = fields.querySelector('.add')!;
+    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add birthday', 'More fields']);
+    expect(fields.lastElementChild).toBe(add);
+    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy old@example.com' }));
+    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
+    expect(writeText).toHaveBeenCalledWith('old@example.com');
+  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
 });
 
 async function refreshOpenField(refreshed: Partial<AttributeDefinition>, cardinality: 'single' | 'multi' = 'single', extraValues: string[] = []) {

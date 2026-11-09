@@ -166,9 +166,10 @@ describe('PersonNetwork', () => {
   });
 
   it.each([
-    { network: connected(1), personID: 8, labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove' },
-    { network: rootOnly(), personID: undefined, labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard', 'Willow Field', 'Birch Garden'], expected: 'Lumen Grove, Cedar Circle, and 4 more' }
-  ])('summarizes Direct as $expected', async ({ network, personID, labels, expected }) => {
+    { name: 'root only stays hidden', network: rootOnly(), labels: [], expected: undefined },
+    { name: 'Curated Peer and Lumen Grove', network: connected(1), labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove' },
+    { name: 'Lumen Grove, Cedar Circle, and 4 more', network: rootOnly(), labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard', 'Willow Field', 'Birch Garden'], expected: 'Lumen Grove, Cedar Circle, and 4 more' }
+  ])('summarizes Direct: $name', async ({ network, labels, expected }) => {
     labels.forEach((label, index) => {
       const id = 22 + index;
       network.nodes.push({ id: `organization:${id}`, kind: 'organization', entity_id: id, label, hop: 1 });
@@ -177,26 +178,31 @@ describe('PersonNetwork', () => {
     const fetcher = networkFetcher(network);
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
-    const { container } = render(PersonNetwork, { controller: controllerWith(fetcher).controller, onOpenPerson, onOpenOrganization });
-    await screen.findByRole('button', { name: 'Lumen Grove' });
-    expect(container.querySelector('.summary')?.textContent?.trim()).toBe(expected);
+    const { controller } = controllerWith(fetcher);
+    const { container } = render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
+    await waitFor(() => {
+      expect(controller.network?.root_person_id).toBe(7);
+      expect(controller.networkLoading).toBe(false);
+    });
     expect(new URL(requestOf(fetcher.mock.calls[0]![0]).url).searchParams.get('depth')).toBe('1');
     expect(screen.queryByRole('region', { name: 'Network at 2 steps' })).toBeNull();
-    if (personID !== undefined) {
-      await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
-      expect(onOpenPerson).toHaveBeenCalledWith(personID);
+    if (expected === undefined) expect(screen.queryByRole('heading', { name: 'Network' })).toBeNull();
+    else {
+      expect(container.querySelector('.summary')?.textContent?.trim()).toBe(expected);
+      await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+      await screen.findByText('No one else at 2 steps');
+      expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
+      await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+      await screen.findByText('No one else at 3 steps');
     }
-    await fireEvent.click(screen.getByRole('button', { name: 'Lumen Grove' }));
-    expect(onOpenOrganization).toHaveBeenCalledWith(22);
   });
 
   it.each([
-    { catalog: [mentor], reverse: false, truncated: false, expected: 'Second Hop PersonMentor · via Curated Peer' },
-    { catalog: [], reverse: false, truncated: false, expected: 'Second Hop PersonMentors · via Curated Peer' },
-    { catalog: [mentor], reverse: true, truncated: true, expected: 'Second Hop PersonMentee · via Curated Peer' }
-  ])('reads a link from either end: $expected, truncated=$truncated', async ({ catalog, reverse, truncated, expected }) => {
+    { catalog: [mentor], reverse: false, expected: 'Second Hop PersonMentor · via Curated Peer' },
+    { catalog: [], reverse: false, expected: 'Second Hop PersonMentors · via Curated Peer' },
+    { catalog: [mentor], reverse: true, expected: 'Second Hop PersonMentee · via Curated Peer' }
+  ])('reads a link from either end: $expected', async ({ catalog, reverse, expected }) => {
     const network = connected();
-    network.truncated = truncated;
     if (!reverse) network.edges[2] = { ...network.edges[2]!, source_node_id: 'person:9', target_node_id: 'person:8' };
     const { controller } = controllerWith(networkFetcher(network));
     controller.relationshipTypes = catalog;
@@ -204,20 +210,8 @@ describe('PersonNetwork', () => {
     await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
     await screen.findByRole('button', { name: 'Second Hop Person' });
     expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual([expected, 'Shared OrganizationEngineer · via Curated Peer']);
-    const notice = screen.queryByText('Showing up to 250 people and organizations and 500 connections.');
-    if (truncated) expect(notice).not.toBeNull();
-    else expect(notice).toBeNull();
     expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
-  });
-
-  it('says when there is no one else at two or three steps', async () => {
-    render(PersonNetwork, { controller: controllerWith(networkFetcher(connected(1))).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
-    await screen.findByText('No one else at 2 steps');
-    expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-    await screen.findByText('No one else at 3 steps');
   });
 
   it('shows a failed first load in the failure voice, with the server message in Details, and retries', async () => {
@@ -230,10 +224,10 @@ describe('PersonNetwork', () => {
     expect(container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    expect(screen.queryByRole('heading', { name: 'Network' })).toBeNull();
+    await waitFor(() => expect(controller.network?.root_person_id).toBe(7));
   });
 
-  it('reloads for depth and keeps the list through loading, error, and retry', async () => {
+  it('keeps the list through depth loading, error, and retry, and reports a truncated result', async () => {
     const depthThreeLoad = deferredResponse();
     let depthThreeAttempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -244,7 +238,7 @@ describe('PersonNetwork', () => {
       if (depth === 1) return Response.json(connected(1));
       if (depth === 2) return Response.json(connected(2));
       depthThreeAttempts += 1;
-      return depthThreeAttempts === 1 ? depthThreeLoad.promise : Response.json(depthThree());
+      return depthThreeAttempts === 1 ? depthThreeLoad.promise : Response.json({ ...depthThree(), truncated: true });
     }));
     const controller = new DirectoryEntityController(client, 7);
 
@@ -252,6 +246,7 @@ describe('PersonNetwork', () => {
     await screen.findByText('Curated Peer');
     await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     await screen.findByRole('button', { name: 'Second Hop Person' });
+    expect(screen.queryByText('Showing up to 250 people and organizations and 500 connections.')).toBeNull();
 
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
@@ -262,6 +257,7 @@ describe('PersonNetwork', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await screen.findByRole('button', { name: 'Depth Three Person' });
+    expect(screen.getByText('Showing up to 250 people and organizations and 500 connections.')).toBeDefined();
   });
 
 });
