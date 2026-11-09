@@ -12,3 +12,14 @@ it('credits the latest editor instead of an imported source', () => {
   expect(screen.getByText(/^Saved at /)).toBeDefined();
   expect(screen.queryByText(/Saved from CardDAV contacts/)).toBeNull();
 });
+
+it('shows only the save time when the record does not identify its last writer', () => {
+  render(ConflictNotice, {
+    noun: 'job',
+    record: {},
+    saved: { updated_at: new Date().toISOString(), source: 'carddav_import' },
+    message: 'Changed elsewhere'
+  });
+  expect(screen.getByText(/^Saved at /)).toBeDefined();
+  expect(screen.queryByText(/Saved from CardDAV contacts/)).toBeNull();
+});

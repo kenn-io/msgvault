@@ -317,6 +317,32 @@ it('shows the saved job before retrying Make primary', async () => {
   await waitFor(() => expect(screen.queryByText("Couldn't make this job primary.")).toBeNull());
 });
 
+it('refreshes the job version before retrying a failed Make primary write', async () => {
+  const tags: (string | null)[] = [];
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/people/7/employments') return collection([employment(11, 1, { is_primary: true }), employment(12, 1, { organization_id: 23, title: 'Other role' })]);
+    if (request.method === 'GET' && path === '/api/v1/employments/12') {
+      reads++;
+      return Response.json(employment(12, reads), { headers: { ETag: `"employment-12-r${reads}"` } });
+    }
+    if (path === '/api/v1/employments/12/primary') {
+      tags.push(request.headers.get('If-Match'));
+      return tags.length === 1 ? Response.json({ message: 'Temporary failure' }, { status: 500 }) : Response.json(employment(12, 3, { is_primary: true }));
+    }
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment(11, 1, { is_primary: true }), employment(12, 1, { organization_id: 23, title: 'Other role' })];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await fireEvent.click(screen.getByRole('button', { name: 'Actions for Other role at this organization' }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
+  await screen.findByText("Couldn't make this job primary.");
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(tags).toHaveLength(2));
+  expect(tags).toEqual(['"employment-12-r1"', '"employment-12-r2"']);
+});
+
 it.each([
   { label: 'saved fields', saved: employment(11, 2, { title: 'Concurrent title', department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', confidence: 0.88 }) },
   { label: 'reassigned owner', saved: employment(11, 2, { person_id: 8 }) },

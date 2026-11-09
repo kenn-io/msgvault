@@ -75,7 +75,7 @@
     primaryTarget = employment;
     primaryPreparing = true;
     try {
-      if (!primary.prepared && !await primary.prepare(() => controller.prepareEmploymentMutation(employment.id))) return;
+      if (!primary.conflict && !await primary.prepare(() => controller.prepareEmploymentMutation(employment.id))) return;
       await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
     } finally {
       primaryPreparing = false;

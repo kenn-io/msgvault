@@ -14,7 +14,7 @@
     actionLabel?: string;
     onaction?: () => void;
   } = $props();
-  const provenance = $derived(conflictSaved(saved.updated_at, saved.updated_by === 'user' ? undefined : saved.source));
+  const provenance = $derived(conflictSaved(saved.updated_at, saved.updated_by && saved.updated_by !== 'user' ? saved.source : undefined));
 </script>
 
 <InlineNotice tone="warning" message={`This ${noun} changed since you opened it.`} details={message || undefined} {actionLabel} {onaction}>
