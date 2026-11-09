@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-// meetingCountLinkedSQL selects members m that can resolve to an occurrence.
+// meetingCountLinkedSQL selects members m with exact evidence or saved decisions.
 const meetingCountLinkedSQL = `(EXISTS (SELECT 1 FROM meeting_link_key k WHERE k.message_id=m.id AND k.value<>'')
  OR EXISTS (SELECT 1 FROM meeting_link_decisions d WHERE d.member_message_id=m.id))`
 
@@ -57,38 +57,43 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 	keys := make(map[int64][]string)
 	for _, id := range members {
 		budget := calrecur.RequestReadBudget
-		occurrences, err := s.meetingCountOccurrences(ctx, r, id, &budget)
+		memberKeys, err := s.meetingCountOccurrences(ctx, r, id, &budget)
 		if unresolvedMeetingCount(err) {
 			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("resolve meeting count member %d: %w", id, err)
 		}
-		for _, occurrence := range occurrences {
-			keys[id] = append(keys[id], occurrence.Identity.countKey())
+		if len(memberKeys) > 0 {
+			keys[id] = memberKeys
 		}
 	}
 	return keys, nil
 }
 
-// meetingCountOccurrences adds the archived identities of saved links and
-// automatic evidence that the current series no longer expands, then removes
-// every identity a saved split names.
-func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
+// meetingCountOccurrences preserves current matches and saved choices, with
+// exact source evidence as a fallback when no occurrence or saved link matches.
+func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]string, error) {
 	r = r.withMeetingCache()
-	out, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	matches, err := s.memberAutomaticOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return nil, err
+	}
+	var out []string
+	for _, o := range matches {
+		out = append(out, o.Identity.countKey())
 	}
 	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 	if err != nil {
 		return nil, err
 	}
-	splits := map[meetingIdentity]bool{}
+	splits := map[string]bool{}
+	hasLink := false
 	for _, d := range decisions {
+		hasLink = hasLink || d.Decision == "link"
 		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
-		identity, archived := o.Identity, errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence)
-		if archived {
+		identity := o.Identity
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 			identity, err = storedMeetingIdentity(ctx, r, d.Ref, budget)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -98,55 +103,63 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 			return nil, err
 		}
 		if d.Decision == "split" {
-			splits[identity] = true
-		} else if archived {
-			out = append(out, linkOccurrence{Identity: identity})
+			splits[identity.countKey()] = true
+		} else {
+			out = append(out, identity.countKey())
 		}
 	}
-	identity, ok, err := s.removedMeetingCountIdentity(ctx, r, memberID, budget)
-	if err != nil {
-		return nil, err
+	if len(matches) == 0 && !hasLink {
+		key, err := memberLinkKey(ctx, r, memberID)
+		if err != nil {
+			return nil, err
+		}
+		fallback, err := s.unmatchedMeetingCountKey(ctx, r, key, budget)
+		if err != nil {
+			return nil, err
+		}
+		if fallback != "" {
+			out = append(out, fallback)
+		}
 	}
-	if ok {
-		out = append(out, linkOccurrence{Identity: identity})
-	}
-	out = slices.DeleteFunc(out, func(o linkOccurrence) bool { return splits[o.Identity] })
-	return uniqueMeetingOccurrences(out), nil
+	out = slices.DeleteFunc(out, func(key string) bool { return splits[key] })
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
-// removedMeetingCountIdentity returns the identity an automatic link was
-// imported with when the archived series no longer expands that occurrence.
-func (s *Store) removedMeetingCountIdentity(ctx context.Context, r reboundReader, memberID int64, budget *int) (meetingIdentity, bool, error) {
-	key, err := memberLinkKey(ctx, r, memberID)
-	if err != nil {
-		return meetingIdentity{}, false, err
-	}
-	var predicate string
+// unmatchedMeetingCountKey uses a series only to canonicalize exact evidence.
+// The transcript proves attendance even when recurrence no longer includes it.
+func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) (string, error) {
+	var predicate, fallback string
 	var args []any
 	var instance calrecur.Identity
 	switch key.Kind {
 	case "google_event_id":
-		var base string
-		var ok bool
-		base, instance, ok = calrecur.ParseInstanceID(key.Value)
-		if !ok {
-			return meetingIdentity{}, false, nil
+		if key.CalendarID == "" || key.Value == "" {
+			return "", nil
 		}
+		base, original, ok := calrecur.ParseInstanceID(key.Value)
+		if !ok {
+			if key.ScheduledAt == nil {
+				return "", nil
+			}
+			base, original = key.Value, calrecur.Identity{Instant: *key.ScheduledAt}
+		}
+		instance = original
+		fallback = fmt.Sprintf("gcal:%q/%q/%s", key.CalendarID, base, instance.Key())
 		predicate, args = `e.provider_event_id = ?`, []any{base}
 	case "ical_uid":
-		if key.ScheduledAt == nil {
-			return meetingIdentity{}, false, nil
+		if key.Value == "" || key.ScheduledAt == nil {
+			return "", nil
 		}
+		instance = calrecur.Identity{Instant: *key.ScheduledAt}
+		fallback = (meetingIdentity{ICalUID: key.Value, OccurrenceKey: instance.Key()}).countKey()
 		predicate, args = s.calendarUIDPredicate(), []any{key.Value}
 	default:
-		return meetingIdentity{}, false, nil
-	}
-	if current, err := s.automaticMeetingOccurrences(ctx, r, key, budget); err != nil || len(current) > 0 {
-		return meetingIdentity{}, false, err
+		return "", nil
 	}
 	rows, err := meetingEventRows(ctx, r, predicate+` AND e.kind = 'series'`, args, budget)
 	if err != nil {
-		return meetingIdentity{}, false, err
+		return "", err
 	}
 	var found []meetingIdentity
 	for _, row := range rows {
@@ -159,27 +172,25 @@ func (s *Store) removedMeetingCountIdentity(ctx context.Context, r reboundReader
 				continue
 			}
 			if err != nil {
-				return meetingIdentity{}, false, err
+				return "", err
 			}
 		} else if row.Event.AllDay {
 			zone, err := calendarEventZone(row.Event)
 			if err != nil {
-				return meetingIdentity{}, false, err
+				return "", err
 			}
 			original = calrecur.Identity{AllDay: true, Date: key.ScheduledAt.In(zone).Format(time.DateOnly)}
-		} else {
-			original = calrecur.Identity{Instant: *key.ScheduledAt}
 		}
 		identity := occurrenceFromRow(row, original.Key()).Identity
 		if len(found) > 0 && identity != found[0] {
-			return meetingIdentity{}, false, nil
+			return fallback, nil
 		}
 		found = append(found, identity)
 	}
 	if len(found) == 0 {
-		return meetingIdentity{}, false, nil
+		return fallback, nil
 	}
-	return found[0], true, nil
+	return found[0].countKey(), nil
 }
 
 func unresolvedMeetingCount(err error) bool {

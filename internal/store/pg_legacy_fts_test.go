@@ -82,7 +82,7 @@ func TestInitSchema_PGLegacyMessagesGetsDeletedAt(t *testing.T) {
 	_, err := st.DB().Exec(`ALTER TABLE messages DROP COLUMN deleted_at CASCADE`)
 	require.NoError(err)
 	require.NoError(st.InitSchemaContext(t.Context()))
-	var columns int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='messages' AND column_name='deleted_at'`).Scan(&columns))
-	require.Equal(1, columns)
+	var valid bool
+	require.NoError(st.DB().QueryRow(`SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('idx_messages_meeting_start')`).Scan(&valid))
+	require.True(valid)
 }

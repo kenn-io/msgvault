@@ -9,6 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMeetingCountKeysSavedLinkSuppressesUnmatchedEvidence(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270307T100000Z"}))
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(err)
+	assert.Equal([]string{"uid:weekly@example.org/20270307T100000Z"}, keys[note])
+}
+
 func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 	for _, mode := range []string{"manual", "automatic", "mixed"} {
 		t.Run(mode, func(t *testing.T) {
@@ -34,7 +45,10 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 					}
 				}
 			}
-			for _, raw := range []string{linkSeriesRaw, strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)} {
+			for step, raw := range []string{linkSeriesRaw, strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)} {
+				if mode == "mixed" && step == 1 {
+					want = want[:1]
+				}
 				require.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
 				keys, err := st.MeetingCountKeysContext(t.Context())
 				require.NoError(err)
@@ -65,51 +79,69 @@ func TestMeetingCountKeysMovedExceptionKeepsOccurrence(t *testing.T) {
 	assertions.NotContains(after, exception)
 }
 
-func TestMeetingCountKeysCalendarEdits(t *testing.T) {
-	const eventRaw = `{"id":"series","iCalUID":%q,"start":{"dateTime":"2027-03-14T10:00:00","timeZone":%q},"end":{"dateTime":"2027-03-14T11:00:00","timeZone":%q},"recurrence":%s}`
-	original := fmt.Sprintf(eventRaw, "series@example.test", "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3"]`)
-	excluded := fmt.Sprintf(eventRaw, "series@example.test", "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3","EXDATE:20270321T100000Z"]`)
-	zoned := fmt.Sprintf(eventRaw, "series@example.test", "America/New_York", "America/New_York", `["RRULE:FREQ=WEEKLY;COUNT=3"]`)
-	for _, step := range []struct {
-		name, beforeRaw, beforeKey, raw, wantKey string
+func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
+	for _, tc := range []struct {
+		name, format, first, second string
+		want                        []string
 	}{
-		{"baseline", "", "", original, "uid:series@example.test/20270321T100000Z"},
-		{"projection removed", "", "", `{}`, ""},
-		{"restored after projection removal", `{}`, "", original, "uid:series@example.test/20270321T100000Z"},
-		{"EXDATE", "", "", excluded, "uid:series@example.test/20270321T100000Z"},
-		{"restored after EXDATE", excluded, "uid:series@example.test/20270321T100000Z", original, "uid:series@example.test/20270321T100000Z"},
-		{"zone", "", "", zoned, "uid:series@example.test/20270321T100000Z"},
-		{"restored after zone", zoned, "uid:series@example.test/20270321T100000Z", original, "uid:series@example.test/20270321T100000Z"},
-		{"UID", "", "", fmt.Sprintf(eventRaw, "different@example.test", "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3"]`), ""},
+		{"UID and instant", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`, `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T06:00:00-04:00"}}`, []string{"uid:weekly@example.org/20270321T100000Z"}},
+		{"UID alone", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org"}}`, "", nil},
+		{"Google instance", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, "", []string{`gcal:"calendar@example.com"/"series"/20270321T100000Z`}},
+		{"Google series and instant", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-21T10:00:00Z"}}`, `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, []string{`gcal:"calendar@example.com"/"series"/20270321T100000Z`}},
+		{"Google series alone", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series"}}`, "", nil},
 	} {
-		t.Run(step.name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			calendarFixture(t, st, "series", original)
-			var notes []int64
-			for _, id := range []string{"first", "second"} {
-				_, note := projectionFixture(t, st, id, "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"series@example.test","startsAt":"2027-03-21T10:00:00Z"}}`)
-				notes = append(notes, note)
+			if tc.second == "" {
+				tc.second = tc.first
 			}
-			read := func(want string) {
-				t.Helper()
+			for i, raw := range []string{tc.first, tc.second} {
+				_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), tc.format, raw)
 				keys, err := st.MeetingCountKeysContext(t.Context())
 				require.NoError(err)
-				for _, note := range notes {
-					if want == "" {
-						assert.Empty(keys[note])
-					} else {
-						assert.Equal([]string{want}, keys[note])
-					}
-				}
+				assert.Equal(tc.want, keys[note])
 			}
-			read("uid:series@example.test/20270321T100000Z")
-			if step.beforeRaw != "" {
-				calendarFixture(t, st, "series", step.beforeRaw)
-				read(step.beforeKey)
-			}
-			calendarFixture(t, st, "series", step.raw)
-			read(step.wantKey)
 		})
 	}
+}
+
+func TestMeetingCountKeysSplitNamesOnlyItsOccurrence(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
+	for _, key := range []string{"20270307T100000Z", "20270321T100000Z"} {
+		require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: key}))
+		require.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
+		keys, err := st.MeetingCountKeysContext(t.Context())
+		require.NoError(err)
+		if key == "20270307T100000Z" {
+			assert.Equal([]string{"uid:weekly@example.org/20270321T100000Z"}, keys[note])
+		} else {
+			assert.Empty(keys[note])
+		}
+		require.NoError(st.UpsertMessageRawWithFormat(master, []byte(linkSeriesRaw), "gcal_json"))
+	}
+}
+
+func TestMeetingCountKeysGoogleMailboxScope(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "series", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
+	for _, mailbox := range []string{"calendar@example.com", "other@example.com"} {
+		_, note := projectionFixture(t, st, mailbox, "granola_json", fmt.Sprintf(`{"owner":{"email":%q},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-21T10:00:00Z"}}`, mailbox))
+		keys, err := st.MeetingCountKeysContext(t.Context())
+		require.NoError(err)
+		want := "uid:weekly@example.org/20270321T100000Z"
+		if mailbox == "other@example.com" {
+			want = `gcal:"other@example.com"/"series"/20270321T100000Z`
+		}
+		assert.Equal([]string{want}, keys[note])
+	}
+	calendarFixture(t, st, "single", singleLinkRaw("single", "single@example.org"))
+	_, note := projectionFixture(t, st, "single", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"single","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(err)
+	assert.Equal([]string{"uid:single@example.org/"}, keys[note])
 }

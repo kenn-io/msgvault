@@ -647,7 +647,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", sourceCount), ",")
 	meetingCount := "sum(meeting_count)::BIGINT"
 	if sourceCount > 1 {
-		meetingCount = `(SELECT count(DISTINCT CASE WHEN l.message_type = 'meeting_transcript' THEN coalesce(mk.meeting_key, 'msg:' || CAST(l.anchor_message_id AS VARCHAR)) END)
+		meetingCount = `(SELECT count(DISTINCT CASE WHEN l.message_type = 'meeting_transcript' THEN ` + identityindex.MeetingIdentityKeySQL("mk", "l.anchor_message_id") + ` END)
 		FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') l
 		LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = l.anchor_message_id
 		WHERE l.relation_kind = 1 AND l.canonical_id = selected_source_rollups.canonical_id

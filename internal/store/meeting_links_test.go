@@ -2,7 +2,9 @@ package store
 
 import (
 	"cmp"
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,6 +17,62 @@ import (
 )
 
 const linkSeriesRaw = `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`
+
+func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, id := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"metadata@example.org"}}`)
+	// Distinct calendar UIDs make an indexed lookup cheaper than scanning events.
+	for i := range 3000 {
+		key := fmt.Sprintf("history-%d", i)
+		calendarFixture(t, st, key, singleLinkRaw(key, key+"@example.org"))
+	}
+	_, err := st.db.Exec(`ANALYZE messages`)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`ANALYZE calendar_events`)
+	requirements.NoError(err)
+	var query string
+	var args []any
+	observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, q string, values []driver.NamedValue) error {
+		if strings.Contains(q, "FROM calendar_events e") && strings.Contains(q, "ical_uid") && len(values) > 0 && values[0].Value == "metadata@example.org" {
+			query = q
+			args = nil
+			for _, v := range values {
+				args = append(args, v.Value)
+			}
+		}
+		return nil
+	}})
+	assertions.Equal(fmt.Sprintf("evt:%d", id), linkedMeetingRefs(t, observed, note)[note])
+	requirements.NotEmpty(query)
+
+	explain := "EXPLAIN QUERY PLAN "
+	if st.IsPostgreSQL() {
+		explain = "EXPLAIN "
+	}
+	rows, err := st.db.QueryContext(t.Context(), explain+query, args...)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+	var plan []string
+	for rows.Next() {
+		var detail string
+		if st.IsPostgreSQL() {
+			requirements.NoError(rows.Scan(&detail))
+		} else {
+			var id, parent, unused int
+			requirements.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		}
+		plan = append(plan, detail)
+	}
+	requirements.NoError(rows.Err())
+	planText := strings.Join(plan, "\n")
+	assertions.Contains(planText, "idx_messages_calendar_ical_uid")
+	if st.IsPostgreSQL() {
+		assertions.Regexp(`Index Cond:.*ical_uid`, planText)
+	}
+}
 
 func TestMeetingLinksWindowedExceptions(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
@@ -251,6 +309,8 @@ func TestMeetingLinksOrphanDecisionAfterMasterArrives(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d,evt:%d@20270314T100000Z", automatic, master), linkedMeetingRefs(t, st, note)[note])
 	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
 	assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
+	calendarFixture(t, st, "master", strings.Replace(linkSeriesRaw, `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]`, "", 1))
+	assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note], "removing recurrence must preserve the owner's split and restore automatic matches")
 }
 
 func TestMeetingLinksActualRecurrenceBudget(t *testing.T) {

@@ -2,6 +2,8 @@ package identityindex
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -117,18 +119,22 @@ func TestMeetingContributionsDeduplicateAcrossAppend(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
-func TestValidateRejectsMeetingTotalBelowSourceCount(t *testing.T) {
-	require := require.New(t)
-	root, db := writeRelationshipBaseFixture(t, false)
-	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
-	require.NoError(err)
-	old := moveRelationshipDatasetAside(t, root, DatasetPeople)
-	writeRelationshipParquet(t, db, root, DatasetPeople, `SELECT * REPLACE (
-		0::BIGINT AS meeting_count,
-		list_transform(source_rollups, lambda item: struct_update(item, meeting_count := 1::BIGINT)) AS source_rollups
-	) FROM read_parquet('`+quoteSQLString(relationshipParquetGlob(old, DatasetPeople))+`')`)
-	err = Validate(t.Context(), db, ValidationOptions{OutputRoot: root, RequiredOutputDatasets: RequiredDatasets})
-	require.ErrorContains(err, "source rollups do not decompose identity totals")
+func TestValidateRejectsMeetingTotalsOutsideSourceBounds(t *testing.T) {
+	for _, count := range []int64{0, 100} {
+		t.Run(strconv.FormatInt(count, 10), func(t *testing.T) {
+			require := require.New(t)
+			root, db := writeRelationshipBaseFixture(t, false)
+			_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+			require.NoError(err)
+			old := moveRelationshipDatasetAside(t, root, DatasetPeople)
+			writeRelationshipParquet(t, db, root, DatasetPeople, fmt.Sprintf(`SELECT * REPLACE (
+				%d::BIGINT AS meeting_count,
+				list_transform(source_rollups, lambda item: struct_update(item, meeting_count := 1::BIGINT)) AS source_rollups
+			) FROM read_parquet('%s')`, count, quoteSQLString(relationshipParquetGlob(old, DatasetPeople))))
+			err = Validate(t.Context(), db, ValidationOptions{OutputRoot: root, RequiredOutputDatasets: RequiredDatasets})
+			require.ErrorContains(err, "source rollups do not decompose identity totals")
+		})
+	}
 }
 
 func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {

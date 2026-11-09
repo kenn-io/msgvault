@@ -282,7 +282,7 @@ promoted profile. The attendee becomes a participant, and the next activity
 update (hourly, or `msgvault activity build`) adds the meeting to the person's
 timeline, relationships, and last-contact information.
 
-Transcripts count as attended meetings. Calendar events without a transcript don't count. Transcripts linked to the same occurrence count once, including across selected sources. A transcript linked to two occurrences counts once for each. Counts update on the next scheduled cache refresh or when you run `msgvault build-cache`.
+Transcripts count as attended meetings. Calendar events without a transcript don't count. Transcript copies sharing an exact occurrence identity count once, including across selected sources. A shared iCalendar UID and scheduled start, or a shared Google calendar and occurrence ID, can identify copies even when the event was never synced. If the series remains archived, its UID connects Google instance IDs to UID-based copies after a recurrence changes. A saved link takes precedence over unmatched source evidence, and a saved split applies only to its chosen occurrence. A transcript linked to two occurrences counts once for each. Counts update on the next scheduled cache refresh or when you run `msgvault build-cache`.
 
 Some sources also know that several emails and phone numbers are the same
 human. msgvault links those identities through the source's stable identifier,

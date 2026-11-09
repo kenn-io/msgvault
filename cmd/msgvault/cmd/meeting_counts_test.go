@@ -277,5 +277,5 @@ func TestMeetingCountsAutomaticRemovedOccurrence(t *testing.T) {
 	require.NoError(f.st.UpsertMessageRawWithFormat(f.notes[1], []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"different@example.org","startsAt":"2026-03-21T10:00:00Z"}}`), "twenty_json"))
 	_, err = buildCache(f.path, f.cache, false)
 	require.NoError(err)
-	assert.Equal(map[int64][]string{f.notes[0]: {"uid:weekly@example.org/20260321T100000Z"}}, readCachedMeetingKeys(t, f.cache))
+	assert.Equal(map[int64][]string{f.notes[0]: {"uid:weekly@example.org/20260321T100000Z"}, f.notes[1]: {"uid:different@example.org/20260321T100000Z"}}, readCachedMeetingKeys(t, f.cache))
 }
