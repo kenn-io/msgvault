@@ -94,8 +94,8 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 					}
 				}
 			}
-			for step, raw := range []string{linkSeriesRaw, strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)} {
-				if mode == "mixed" && step == 1 {
+			for step, raw := range []string{linkSeriesRaw, strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1), strings.Replace(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=YEARLY;BYWEEKNO=20", 1)} {
+				if mode == "mixed" && step > 0 {
 					want = want[:1]
 				}
 				require.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
