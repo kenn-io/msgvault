@@ -102,6 +102,40 @@ func TestIndependentMeetingHTTPDecisionsRefreshPeople(t *testing.T) {
 	}
 }
 
+func TestReviewAutomaticLinksKeepCountsStable(t *testing.T) {
+	for _, change := range []string{"single_becomes_series", "series_becomes_single"} {
+		t.Run(change, func(t *testing.T) {
+			require := require.New(t)
+			f := newMeetingCountSeriesFixture(t, 2)
+			single := `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"}}`
+			series := strings.TrimSuffix(single, "}") + `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+			initial, changed, providerID := single, series, "series"
+			if change == "series_becomes_single" {
+				initial, changed, providerID = series, single, "series_20260314T100000Z"
+			}
+			require.NoError(f.st.UpsertMessageRawWithFormat(f.event, []byte(initial), "gcal_json"))
+			require.NoError(f.st.UpsertMessageRawWithFormat(f.notes[0], []byte(fmt.Sprintf(`{"owner":{"email":"calendar@example.org"},"calendar_event":{"calendar_event_id":%q,"scheduled_start_time":"2026-03-14T10:00:00Z"}}`, providerID)), "granola_json"))
+			require.NoError(f.st.UpsertMessageRawWithFormat(f.notes[1], []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2026-03-14T10:00:00Z"}}`), "twenty_json"))
+			_, err := buildCache(f.path, f.cache, true)
+			require.NoError(err)
+			engine, err := query.NewDuckDBEngine(f.cache, "", nil)
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(engine.Close()) })
+			before, err := engine.GetPerson(t.Context(), f.person, query.Context{}, nil)
+			require.NoError(err)
+			require.NotNil(before)
+			require.Equal(int64(1), before.MeetingCount)
+			require.NoError(f.st.UpsertMessageRawWithFormat(f.event, []byte(changed), "gcal_json"))
+			_, err = buildCache(f.path, f.cache, false)
+			require.NoError(err)
+			after, err := engine.GetPerson(t.Context(), f.person, query.Context{}, nil)
+			require.NoError(err)
+			require.NotNil(after)
+			assert.Equal(t, int64(1), after.MeetingCount, "one attended occurrence still has two transcripts")
+		})
+	}
+}
+
 func TestMeetingCountsCancelledSeriesKeepsLinkedCopiesTogether(t *testing.T) {
 	requirements := require.New(t)
 	f := newMeetingCountSeriesFixture(t, 2)
