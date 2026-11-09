@@ -17,6 +17,14 @@ All notable changes to msgvault, grouped by release.
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
 - Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
+- Archive messages from sources msgvault has no connector for, such as the
+  items of the feeds you follow, with `POST /api/v1/import/message`. Each
+  message keeps the type its sender chose, such as `feed_item`, for search
+  and export filters, and a retry updates it instead of adding a copy. See
+  [Messages from any source](usage/message-import.md). It needs HTTP API
+  schema 3.50.0.
+- `msgvault search --message-type` accepts any type of lowercase letters,
+  digits, and underscores, so it can filter imported types.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).

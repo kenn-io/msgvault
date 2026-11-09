@@ -186,11 +186,14 @@ describe('SourcesWorkspace', () => {
     expect(within(panel).getAllByText(title, { exact: true })).toHaveLength(1);
   });
 
-  it('presents generic meeting imports as on-demand API sources', async () => {
+  it.each([
+    ['meeting_import', 'local-meetings', 'Local Meetings', 'Meeting import'],
+    ['message_import', 'feeds', 'Feeds', 'Message import']
+  ])('presents %s sources as on-demand API sources', async (sourceType, identifier, title, label) => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
-      source_type: 'meeting_import',
-      identifier: 'local-meetings',
-      display_name: 'Local Meetings',
+      source_type: sourceType,
+      identifier,
+      display_name: title,
       can_sync: false,
       scheduled: false,
       sync_unavailable_reason: 'source_not_schedulable'
@@ -198,15 +201,15 @@ describe('SourcesWorkspace', () => {
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
     expect(await screen.findByText('On demand')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for Local Meetings' }));
-    const panel = screen.getByRole('dialog', { name: 'Local Meetings' });
+    await fireEvent.click(screen.getByRole('button', { name: `Details for ${title}` }));
+    const panel = screen.getByRole('dialog', { name: title });
     expect(within(within(panel).getByRole('region', { name: 'Schedule' })).getByText('On demand')).toBeDefined();
     expect(within(panel).getAllByText('On demand')).toHaveLength(1);
     expect(within(panel).queryByRole('region', { name: 'Sync' })).toBeNull();
-    expect(screen.getByText('Meeting import · local-meetings')).toBeDefined();
+    expect(screen.getByText(`${label} · ${identifier}`)).toBeDefined();
     expect(screen.queryByText('Not scheduled')).toBeNull();
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Sync now Local Meetings' })).toBeNull();
+    expect(screen.queryByRole('button', { name: `Sync now ${title}` })).toBeNull();
   });
 
   it('shows authoritative schedule, fresh result, and bounded item error details', async () => {

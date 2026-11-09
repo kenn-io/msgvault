@@ -397,6 +397,7 @@ var operationGateExemptPaths = map[string]bool{
 	importJobsEndpointPath:             true,
 	localEmbeddingsEndpointPath:        true,
 	meetingImportEndpointPath:          true,
+	messageImportEndpointPath:          true,
 	muesliImportEndpointPath:           true,
 	muesliRecordingEndpointPath:        true,
 	"/api/v1/cli/add-calendar/plan":    true,

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-11-07"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -324,6 +324,9 @@ Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
 `google_voice_voicemail`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column
 existed.
+Messages from the [message import API](/docs/usage/message-import/) carry the
+type their sender chose, such as `feed_item`, so `--message-type` accepts any
+type of lowercase letters, digits, and underscores and rejects other values.
 
 The same message-type scoping is available in HTTP search via the
 `message_type` query parameter. In MCP, include a `message_type:` operator in

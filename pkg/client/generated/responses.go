@@ -1731,6 +1731,12 @@ type ImportMeetingResponseJSON = MeetingImportResponse
 
 type ImportMeetingErrorResponse = ErrorResponse
 
+type ImportMessageResponse = MessageImportResponse
+
+type ImportMessageResponseJSON = MessageImportResponse
+
+type ImportMessageErrorResponse = ErrorResponse
+
 type ImportMuesliResponse = MuesliRemoteResult
 
 type ImportMuesliResponseJSON = MuesliRemoteResult
@@ -5673,6 +5679,15 @@ type ImportMeetingResp struct {
 	JSON200      *ImportMeetingResponse
 	JSON201      *ImportMeetingResponseJSON
 	JSONDefault  *ImportMeetingErrorResponse
+}
+
+type ImportMessageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportMessageResponse
+	JSON201      *ImportMessageResponseJSON
+	JSONDefault  *ImportMessageErrorResponse
 }
 
 type ImportMuesliResp struct {

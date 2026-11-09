@@ -7402,6 +7402,114 @@ components:
         - candidates
         - applied
       type: object
+    ImportedMessage:
+      additionalProperties: false
+      allOf:
+        - anyOf:
+            - properties:
+                title:
+                  minLength: 1
+                  type: string
+              required:
+                - title
+              type: object
+            - properties:
+                body_markdown:
+                  minLength: 1
+                  type: string
+              required:
+                - body_markdown
+              type: object
+            - properties:
+                body_html:
+                  minLength: 1
+                  type: string
+              required:
+                - body_html
+              type: object
+            - properties:
+                body_text:
+                  minLength: 1
+                  type: string
+              required:
+                - body_text
+              type: object
+        - not:
+            anyOf:
+              - properties:
+                  body_html:
+                    minLength: 1
+                    type: string
+                  body_markdown:
+                    minLength: 1
+                    type: string
+                required:
+                  - body_markdown
+                  - body_html
+                type: object
+              - properties:
+                  body_markdown:
+                    minLength: 1
+                    type: string
+                  body_text:
+                    minLength: 1
+                    type: string
+                required:
+                  - body_markdown
+                  - body_text
+                type: object
+              - properties:
+                  body_html:
+                    minLength: 1
+                    type: string
+                  body_text:
+                    minLength: 1
+                    type: string
+                required:
+                  - body_html
+                  - body_text
+                type: object
+      properties:
+        body_html:
+          type: string
+        body_markdown:
+          type: string
+        body_text:
+          type: string
+        conversation:
+          $ref: "#/components/schemas/MessageImportConversation"
+        external_id:
+          description: Stable ID of the message in its source; with source.identifier it is the idempotency key
+          maxLength: 256
+          type: string
+        message_type:
+          description: Caller-chosen type such as feed_item; lowercase letters, digits and underscores, starting with a letter
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9_]*$
+          type: string
+        metadata:
+          additionalProperties: {}
+          type: object
+        sender:
+          $ref: "#/components/schemas/MessageImportSender"
+        sent_at:
+          format: date-time
+          type: string
+        title:
+          maxLength: 4096
+          type: string
+        url:
+          description: Canonical URL of the message
+          format: uri
+          maxLength: 4096
+          type: string
+      required:
+        - external_id
+        - message_type
+        - conversation
+        - sender
+        - sent_at
+      type: object
     KataEvidenceLinkRequest:
       additionalProperties: false
       properties:
@@ -8466,6 +8574,126 @@ components:
         - has_attachments
         - hidden_text_present
         - size_bytes
+      type: object
+    MessageImportConversation:
+      additionalProperties: false
+      properties:
+        external_id:
+          description: Stable ID of the conversation in its source
+          maxLength: 256
+          type: string
+        title:
+          maxLength: 4096
+          type: string
+      required:
+        - external_id
+      type: object
+    MessageImportRequest:
+      additionalProperties: false
+      properties:
+        message:
+          $ref: "#/components/schemas/ImportedMessage"
+        source:
+          $ref: "#/components/schemas/MessageImportSource"
+      required:
+        - source
+        - message
+      type: object
+    MessageImportResponse:
+      additionalProperties: true
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        source_message_id:
+          type: string
+        status:
+          enum:
+            - created
+            - updated
+          type: string
+      required:
+        - status
+        - source_id
+        - message_id
+        - source_message_id
+      type: object
+    MessageImportSender:
+      additionalProperties: false
+      anyOf:
+        - properties:
+            name:
+              minLength: 1
+              type: string
+          required:
+            - name
+          type: object
+        - properties:
+            url:
+              minLength: 1
+              type: string
+          required:
+            - url
+          type: object
+        - properties:
+            email:
+              minLength: 1
+              type: string
+          required:
+            - email
+          type: object
+        - properties:
+            phone:
+              minLength: 1
+              type: string
+          required:
+            - phone
+          type: object
+        - properties:
+            id:
+              minLength: 1
+              type: string
+          required:
+            - id
+          type: object
+      properties:
+        email:
+          format: email
+          type: string
+        id:
+          description: Stable identifier for this sender in the import source
+          maxLength: 200
+          type: string
+        name:
+          maxLength: 256
+          type: string
+        phone:
+          description: International phone number starting with + or 00; normalized to E.164
+          maxLength: 64
+          type: string
+        url:
+          format: uri
+          maxLength: 4096
+          type: string
+      type: object
+    MessageImportSource:
+      additionalProperties: false
+      properties:
+        account_email:
+          format: email
+          type: string
+        display_name:
+          maxLength: 256
+          type: string
+        identifier:
+          maxLength: 128
+          type: string
+      required:
+        - identifier
+        - account_email
       type: object
     MessageListResponse:
       additionalProperties: true
@@ -17429,7 +17657,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.50.0
+  version: 3.51.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24050,6 +24278,39 @@ paths:
       security:
         - apiKey: []
       summary: Import one meeting
+      tags:
+        - API
+  /api/v1/import/message:
+    post:
+      operationId: importMessage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageImportResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageImportResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one message
       tags:
         - API
   /api/v1/import/muesli:

@@ -2763,7 +2763,7 @@ msgvault search <query> [flags]
 | `--json` | Output results as JSON |
 | `--account` | Limit results to a specific account |
 | `--collection` | Limit results to all member accounts of a collection |
-| `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `discord`, `calendar_event`, `sms` |
+| `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `discord`, `calendar_event`, `sms`, or an imported type such as `feed_item` |
 | `--deletion-scope` | Source-deletion scope: `active` (default), `deleted`, or `any`. Non-active scopes require `--mode fts`. |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |

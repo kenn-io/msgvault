@@ -1321,6 +1321,23 @@ func (m MeetingScopeRequestDeletion) Validate() error {
 	}
 }
 
+type MessageImportResponseStatus string
+
+const (
+	MessageImportResponseStatusCreated MessageImportResponseStatus = "created"
+	MessageImportResponseStatusUpdated MessageImportResponseStatus = "updated"
+)
+
+// Validate checks if the MessageImportResponseStatus value is valid
+func (m MessageImportResponseStatus) Validate() error {
+	switch m {
+	case MessageImportResponseStatusCreated, MessageImportResponseStatusUpdated:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageImportResponseStatus value, got: %v", m))
+	}
+}
+
 type MessageRecordingState string
 
 const (
