@@ -165,6 +165,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if chat.RepairActive {
 				continue
 			}
+			state.PassDone = slices.DeleteFunc(state.PassDone, func(done int64) bool { return done == id })
 			chat.RepairActive = true
 			chat.RepairBefore = 0
 			chat.RepairHead = 0
@@ -205,6 +206,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		if opts.Limit > 0 && sum.MessagesProcessed >= opts.Limit {
 			break
+		}
+		// Chats finished by an interrupted run stay done, so a pass that the
+		// scheduler cuts short every time still reaches completion.
+		if slices.Contains(state.PassDone, chatID) {
+			continue
 		}
 		// Per-message and failure checkpoints retain this rotation while each
 		// chat's existing history, scan and repair cursors retain its debt.
@@ -253,6 +259,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return sum, err
 		}
 		sum.ConversationsProcessed++
+		// A walk stopped by the message limit leaves the chat for a later run.
+		if opts.Limit == 0 || sum.MessagesProcessed < opts.Limit {
+			state.PassDone = append(state.PassDone, chatID)
+			if err = scoped.checkpoint(ctx, runID, state, sum); err != nil {
+				return sum, err
+			}
+		}
 		if opts.Progress != nil {
 			opts.Progress(fmt.Sprintf("chat:%d: %d messages archived", chatID, sum.MessagesProcessed))
 		}
@@ -271,6 +284,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	if !state.RepairPending {
 		state.RepairScope = nil
+	}
+	if !slices.ContainsFunc(opts.ChatIDs, func(id int64) bool { return !slices.Contains(state.PassDone, id) }) {
+		state.PassDone = nil
 	}
 	if err = scoped.checkpoint(ctx, runID, state, sum); err != nil {
 		return sum, err
