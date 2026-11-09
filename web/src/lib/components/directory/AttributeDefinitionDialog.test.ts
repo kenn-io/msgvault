@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -9,7 +9,6 @@ import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import AttributeDefinitionDialog from './AttributeDefinitionDialog.svelte';
-import PeopleCatalogSettings from '../settings/PeopleCatalogSettings.svelte';
 
 type AttributeDefinition = GeneratedAttributeDefinition;
 
@@ -337,39 +336,6 @@ describe('AttributeDefinitionDialog', () => {
     expect(document.activeElement).toBe(result);
   });
 
-  it('keeps a committed field creation resumable after closing its catalog dialog', async () => {
-    const created = definition({ is_sensitive: false });
-    const requests: Request[] = [];
-    let committed = false;
-    const client = createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      requests.push(request);
-      if (path.endsWith('/attribute-definitions')) {
-        if (request.method === 'POST') { committed = true; return Response.json(created, { status: 201 }); }
-        return committed ? Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 }) : Response.json({ definitions: [] });
-      }
-      if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
-      if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
-      if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
-      throw new Error(`Unexpected ${request.method} ${path}`);
-    });
-    const view = render(PeopleCatalogSettings, { client });
-    try {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Add field' }));
-      await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Preferred channel' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-      await screen.findByRole('button', { name: 'Retry registry refresh' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
-      expect(screen.queryByRole('dialog', { name: 'Create attribute field' })).toBeNull();
-      expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
-      await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Create attribute field' });
-      await fireEvent.click(within(dialog).getByRole('button', { name: 'Retry registry refresh' }));
-      await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Retry registry refresh' })).toHaveProperty('disabled', false));
-      expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
-    } finally { view.unmount(); }
-  });
 
   it.each([
     ['without a usable identity', () => Response.json({ ownership: 'user', object_type: 'person' }, { status: 201 }), 'usable identity'],

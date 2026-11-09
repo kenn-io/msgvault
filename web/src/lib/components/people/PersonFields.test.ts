@@ -63,7 +63,7 @@ it('keeps a conflicted structured editor available when Cancel is clicked during
   } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
 });
 
-it('identifies row actions by value and service scope and copies an own field with feedback', async () => {
+it('groups field labels, identifies edit and removal actions by value and service scope, and announces copied values', async () => {
   const initial = profile();
   initial.contact_points = [
     ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, identity_key: `email-${index}`, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
@@ -241,7 +241,7 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('orders unused additions, offers populated kinds in More fields, and refreshes birthday availability', async () => {
+it('orders unused additions after field rows, offers populated kinds in More fields, and removes Add birthday after refresh', async () => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'old@example.com'), address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };

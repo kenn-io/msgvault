@@ -6,9 +6,9 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import PersonDetails from './PersonDetails.svelte';
 import { MeetingsController } from '../../meetings/controller.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { meetingActions, meetingAction, meetingMetrics } from '../../meetings/fixtures.test-support';
+import { meetingActions, meetingAction } from '../../meetings/fixtures.test-support';
 
-async function renderDetails(participantIDs: number[], options: { meetingRequests?: string[]; emptyMeetings?: boolean; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
+async function renderDetails(participantIDs: number[], options: { meetingRequests?: Request[]; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -18,9 +18,7 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (options.personDeleted && /^\/api\/v1\/people\/7(?:\/|$)/.test(path)) return Response.json({ error: 'person_profile_not_found', message: 'Person profile not found' }, { status: 404 });
-    if (path.startsWith('/api/v1/meetings/')) options.meetingRequests?.push(path);
-    if (options.emptyMeetings && path === '/api/v1/meetings/metrics') return Response.json(meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: null }, first_meeting_at: null, last_meeting_at: null, duration_by_basis: [], months: [] }));
-    if (options.emptyMeetings && path === '/api/v1/meetings/actions') return Response.json(meetingActions({ coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 } }));
+    if (path.startsWith('/api/v1/meetings/')) options.meetingRequests?.push(request.clone());
     if (path === '/api/v1/integrations/kata/status' && options.taskChange) return Response.json({ state: 'ready' });
     if (path === '/api/v1/people/7/agenda' && options.taskChange) {
       const hasTask = options.taskChange === 'merge' ? person.revision > 1 : person.revision === 1;
@@ -60,12 +58,18 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
   return { person, directory };
 }
 
-it.each([{ participantIDs: [] }, { participantIDs: [5] }])('shows empty Meetings for the loaded identity scope: $participantIDs', async ({ participantIDs }) => {
-  const meetingRequests: string[] = [];
-  await renderDetails(participantIDs, { meetingRequests, emptyMeetings: true });
-  expect(await screen.findByText('No meetings yet')).toBeDefined();
-  if (!participantIDs.length) expect(meetingRequests).toEqual([]);
-  expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
+it.each([{ participantIDs: [], name: 'shows empty Meetings without requests when no identities are linked' }, { participantIDs: [5], name: 'mounts meeting activity with the saved person scope' }])('$name', async ({ participantIDs }) => {
+  const meetingRequests: Request[] = [];
+  await renderDetails(participantIDs, { meetingRequests });
+  if (!participantIDs.length) {
+    expect(await screen.findByText('No meetings yet')).toBeDefined();
+    expect(meetingRequests).toEqual([]);
+  } else {
+    await screen.findByRole('region', { name: 'Meeting activity' });
+    const request = meetingRequests.find(request => new URL(request.url).pathname.endsWith('/metrics'));
+    expect(request).toBeDefined();
+    await expect(request!.json()).resolves.toMatchObject({ scope: { person_id: 7 } });
+  }
 });
 
 it('forwards the refreshed meeting revision and ignores a superseded meeting response', async () => {

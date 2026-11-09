@@ -168,7 +168,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('keeps linked addresses on Details, gates loading, and forwards profile values or an empty fallback', async () => {
+it('keeps linked addresses hidden outside Details, gates initial loading, and forwards listed values or an empty fallback after failure', async () => {
   vi.stubEnv('TZ', 'UTC');
   const person = { id: 7, revision: 1, display_name: 'Alice Example', participant_ids: [1], vcard_uid: 'example-7', created_at: when, updated_at: when };
   let failProfile = false;
