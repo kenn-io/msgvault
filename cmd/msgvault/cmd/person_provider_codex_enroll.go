@@ -84,7 +84,7 @@ func runPersonProviderCodexEnroll(
 		return errors.New("codex enrollment requires --retention-posture, --training-posture, --source, and --allow-sensitive=true|false")
 	}
 	for _, source := range options.allowedSources {
-		if !slices.Contains([]string{"conversation_text", "meeting_text", "document_text"}, source) {
+		if !slices.Contains([]string{"conversation_text", "meeting_text"}, source) {
 			return fmt.Errorf("unsupported source class %q", source)
 		}
 	}

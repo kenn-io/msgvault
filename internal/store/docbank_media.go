@@ -732,6 +732,8 @@ func (s *Store) ListMessageMediaOccurrences(
 	return slices.Concat(occurrences, archived, uncaptured), nil
 }
 
+const containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"
+
 func (s *Store) listMessageOccurrenceRows(
 	ctx context.Context, destination string, messageID int64, scope *personscope.Scope,
 ) ([]MessageMediaOccurrence, error) {
@@ -1397,7 +1399,7 @@ func validateBeeperMediaMapping(mapping BeeperMediaMapping) error {
 	if strings.TrimSpace(mapping.SourceType) == "" {
 		return errors.New("beeper media source type is invalid")
 	}
-	if mapping.ByteLength < 1 || !isBeeperMediaSHA256(mapping.SourceSHA256) {
+	if mapping.ByteLength < 1 || !validLowerSHA256(mapping.SourceSHA256) {
 		return errors.New("beeper media source identity is invalid")
 	}
 	if err := validateBeeperMediaJSON(mapping.OccurrenceJSON); err != nil {
@@ -1544,18 +1546,6 @@ func beeperMediaScanKey(destination string) string {
 
 func newBeeperMediaOperationID() string {
 	return uuid.New().String()
-}
-
-func isBeeperMediaSHA256(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	for _, char := range value {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func validateBeeperMediaJSON(value string) error {
