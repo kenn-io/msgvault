@@ -17,10 +17,7 @@ import (
 
 type fakePersonFilesClient struct {
 	metadataRequest daemonclient.PersonFileSearchOptions
-	visualRequest   daemonclient.VisualSearchOptions
 	metadata        generated.PersonFileSearchHTTPResponse
-	visual          *visual.SearchResponse
-	visualErr       error
 }
 
 func (f *fakePersonFilesClient) SearchPersonFiles(_ context.Context, request daemonclient.PersonFileSearchOptions) (generated.PersonFileSearchHTTPResponse, error) {
@@ -32,9 +29,8 @@ func (f *fakePersonFilesClient) SuggestPersonFiles(context.Context, daemonclient
 	return generated.PersonFileSuggestionHTTPResponse{}, errors.New("unexpected filename suggestion call in ordinary file search")
 }
 
-func (f *fakePersonFilesClient) SearchVisualAttachmentsFiltered(_ context.Context, request daemonclient.VisualSearchOptions) (*visual.SearchResponse, error) {
-	f.visualRequest = request
-	return f.visual, f.visualErr
+func (f *fakePersonFilesClient) SearchVisualAttachmentsFiltered(context.Context, daemonclient.VisualSearchOptions) (*visual.SearchResponse, error) {
+	return nil, errors.New("unexpected visual search call in ordinary file search")
 }
 
 func TestPersonFilesDefaultsToMetadataAndForwardsStableFilters(t *testing.T) {
