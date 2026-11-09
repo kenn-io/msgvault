@@ -14,11 +14,7 @@ it('puts history after current rows', async () => {
   await fireEvent.click(screen.getByText('Show 2 past jobs'));
   expect(view.container.querySelector('details')!.open).toBe(true);
   expect(Array.from(view.container.querySelector('.section-body')!.children, child => child.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['Current job', 'Show 2 past jobs Past jobs', 'From address booksImported job']);
-});
-
-
-it('puts a custom control in the header in place of the add button', () => {
-  render(DetailSection, { title: 'Network', addLabel: 'Add work', onadd: vi.fn(), control: createRawSnippet(() => ({ render: () => '<button type="button">2 steps</button>' })) });
+  await view.rerender({ title: 'Network', addLabel: 'Add work', onadd: vi.fn(), control: createRawSnippet(() => ({ render: () => '<button type="button">2 steps</button>' })) });
   const header = screen.getByRole('heading', { name: 'Network' }).parentElement!;
   expect(header.querySelector('button')?.textContent).toBe('2 steps');
   expect(screen.queryByRole('button', { name: 'Add work' })).toBeNull();

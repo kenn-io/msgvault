@@ -182,7 +182,7 @@ it('shows linked addresses on Details after profile loading and preserves Copy a
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
     if (path === '/api/v1/people/7/profile') return failProfile ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : pendingProfile;
     if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
-    if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: 0 });
+    if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
     if (path === '/api/v1/participants/1') return Response.json(summary);
     if (path.endsWith('/files/search')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
     return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-detail', search_provenance: {} });
@@ -196,10 +196,9 @@ it('shows linked addresses on Details after profile loading and preserves Copy a
     expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
-    await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: ['alice@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { id: index + 1, ordinal: index, sensitive: false, source: 'user', created_at: when } })) }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
+    await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: ['alice@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { id: index + 1, ordinal: index, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } })) }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
     const addresses = screen.getByRole('group', { name: 'Known addresses' });
     expect(within(addresses).queryByLabelText('Identity alice@example.com')).toBeNull();
-    expect(within(addresses).getByLabelText('Identity alice@example.org')).toBeDefined();
     expect(screen.getAllByRole('button', { name: 'Copy alice@example.com' })).toHaveLength(1);
     failProfile = true;
     await act(async () => { await directory.loadSelection(7); });

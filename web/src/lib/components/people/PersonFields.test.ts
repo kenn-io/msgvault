@@ -185,33 +185,32 @@ async function refreshOpenField(refreshed: Partial<AttributeDefinition>, cardina
 
 it.each([
   { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' }, drafts: 1, draftKind: 'setAttribute', editLabel: 'Edit Renamed note: Private example', absent: false },
+  { name: 'sensitive field conceals values', refreshed: { label: 'Private note', is_sensitive: true }, drafts: 0, draftKind: undefined, editLabel: '', absent: true },
   { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false }, drafts: 0, draftKind: undefined, editLabel: 'Edit Private note: Private example', absent: true },
 ])('joins refreshed field settings into an open draft: $name', async ({ refreshed, drafts, draftKind, editLabel, absent }) => {
-  const { controller, view } = await refreshOpenField(refreshed);
+  const sensitive = 'is_sensitive' in refreshed;
+  const { controller, view } = await refreshOpenField(refreshed, sensitive ? 'multi' : 'single', sensitive ? ['Second private example'] : []);
   try {
     expect(screen.queryAllByDisplayValue('Unsaved local note')).toHaveLength(drafts);
     expect(controller.draft?.kind).toBe(draftKind);
-    if (absent) expect(screen.queryByRole('button', { name: editLabel })).toBeNull();
-    else expect(screen.getByRole('button', { name: editLabel })).toHaveProperty('disabled', false);
+    if (sensitive) {
+      expect(controller.draft).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Edit Private note: value 1' })).toBeNull();
+      for (const position of [1, 2]) {
+        expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
+        expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
+      }
+      expect(screen.queryByText('Private example')).toBeNull();
+      expect(screen.queryByText('Second private example')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
+      expect(screen.getByText('Private example')).toBeDefined();
+    } else if (absent) {
+      expect(screen.getByRole('button', { name: 'Remove Private note: Private example' })).toBeDefined();
+      expect(screen.queryByRole('button', { name: editLabel })).toBeNull();
+    } else expect(screen.getByRole('button', { name: editLabel })).toHaveProperty('disabled', false);
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('closes the field draft and conceals values when refreshed settings mark the field sensitive', async () => {
-  const { controller, view } = await refreshOpenField({ label: 'Private note', is_sensitive: true }, 'multi', ['Second private example']);
-  try {
-    expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
-    expect(controller.draft).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit Private note: value 1' })).toBeNull();
-    for (const position of [1, 2]) {
-      expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
-      expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
-    }
-    expect(screen.queryByText('Private example')).toBeNull();
-    expect(screen.queryByText('Second private example')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
-    expect(screen.getByText('Private example')).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
-});
 
 it.each([
   ['Website', 'Messaging address', 'Contact value', 'xmpp:example@example.com', 'Save contact point', 'contact_points', 'address_kind', 'impp'],

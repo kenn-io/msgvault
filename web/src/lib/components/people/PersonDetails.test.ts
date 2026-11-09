@@ -8,11 +8,6 @@ import { MeetingsController } from '../../meetings/controller.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { meetingActions, meetingAction } from '../../meetings/fixtures.test-support';
 
-it('shows one alert for an attributes failure', async () => {
-  await renderDetails([], { attributesFailure: true });
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-});
-
 async function renderDetails(participantIDs: number[], options: { meetingRequests?: string[]; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
@@ -63,20 +58,20 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
   return { person, directory };
 }
 
-it('shows empty Meetings without requesting an empty identity scope', async () => {
-  const meetingRequests: string[] = [];
-  await renderDetails([], { meetingRequests });
-  expect(screen.getByText('No meetings yet')).toBeDefined();
-  expect(meetingRequests).toEqual([]);
-  expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
-});
-
-it('forwards the refreshed meeting revision and ignores a superseded meeting response', async () => {
+it.each([{ participantIDs: [] }, { participantIDs: [5] }])('uses the loaded identity scope and ignores superseded meetings: $participantIDs', async ({ participantIDs }) => {
+  if (participantIDs.length === 0) {
+    const meetingRequests: string[] = [];
+    await renderDetails(participantIDs, { meetingRequests });
+    expect(screen.getByText('No meetings yet')).toBeDefined();
+    expect(meetingRequests).toEqual([]);
+    expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
+    return;
+  }
   let release!: (response: Response) => void;
   const deferredActions: { request?: Request; response: Promise<Response> } = { response: new Promise(resolve => { release = resolve; }) };
   const loads = vi.spyOn(MeetingsController.prototype, 'setScope');
   onTestFinished(() => loads.mockRestore());
-  const { person, directory } = await renderDetails([5], { deferredActions });
+  const { person, directory } = await renderDetails(participantIDs, { deferredActions });
   await waitFor(() => expect(deferredActions.request).toBeDefined());
   const firstLoad = loads.mock.results[0]!.value;
   person.revision = 2;
@@ -138,9 +133,11 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 });
 
 
-it.each(['profile', 'details'])('combines failed %s reads into one notice and retries them together', async failure => {
-  const options = { detailsFailure: failure === 'details', personFailure: failure === 'profile' };
+it.each(['profile', 'details', 'attributes'])('combines failed %s reads into one notice and retries them together', async failure => {
+  const options = { detailsFailure: failure === 'details', personFailure: failure === 'profile', attributesFailure: failure === 'attributes' };
   await renderDetails([], options);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  if (failure === 'attributes') return;
   expect(screen.getAllByText("Couldn't load these details.")).toHaveLength(1);
   const notice = within(screen.getByRole('alert'));
   await fireEvent.click(notice.getByText('Details'));

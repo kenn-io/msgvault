@@ -84,15 +84,12 @@ describe('PersonAddresses', () => {
     expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
     await view.rerender(baseProps());
     expect(screen.queryByRole('button', { name: /Unlink/ })).toBeNull();
-  });
-
-  it('filters own email and phone listed in Details while keeping linked addresses', async () => {
     const own = person();
     const listed = own.identifiers.map(identifier => ({ address_kind: identifier.type, original_value: identifier.value, normalized_value: identifier.value }));
     listed.push({ address_kind: 'phone', original_value: '+15550100002', normalized_value: '+15550100002' });
     const cluster = clusteredPerson();
     const detail = { ...cluster, identifiers: [...cluster.identifiers, own.identifiers[1]!] };
-    const view = render(PersonAddresses, baseProps({ detail, listedInDetails: listed }));
+    await view.rerender(baseProps({ detail, listedInDetails: listed }));
     expect(screen.queryByLabelText('Identity Alice')).toBeNull();
     expect(screen.queryByLabelText('Identity +15550100001')).toBeNull();
     expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();

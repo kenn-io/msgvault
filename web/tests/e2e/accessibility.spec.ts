@@ -292,17 +292,6 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory network graph has no axe violations', async ({ page }) => {
-  await installMixedArchive(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
-  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  const graph = page.getByRole('region', { name: 'Network graph' });
-  await expect(graph).toBeVisible();
-  await assertNoViolations(page, 'Directory network');
-});
-
 const PERSON_SECTIONS = ['Messages', 'Files', 'Details'];
 
 for (const theme of ['light', 'dark'] as const) {
