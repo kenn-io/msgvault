@@ -94,9 +94,9 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 	person := b.AddParticipant("person@example.org", "example.org", "Person")
 	b.AddOwnerParticipant(first, owner)
 	b.AddOwnerParticipant(second, owner)
-	at := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	at := time.Date(2025, 12, 31, 23, 30, 0, 0, time.UTC)
 	for i, source := range []int64{first, second} {
-		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: at})
+		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: at.Add(time.Duration(i) * time.Hour)})
 		b.AddTo(id, owner, "Owner")
 		b.AddTo(id, person, "Person")
 		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
@@ -108,5 +108,17 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 		require.NoError(err)
 		require.Len(result.Rows, 1)
 		assert.Equal(t, want, result.Rows[0].Signals.MeetingCount)
+	}
+	for _, tc := range []struct {
+		year int
+		want int64
+	}{{2025, 1}, {2026, 0}} {
+		calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: tc.year, Timezone: "UTC"})
+		require.NoError(err)
+		var meetings int64
+		for _, day := range calendar.Days {
+			meetings += day.Meetings
+		}
+		assert.Equal(t, tc.want, meetings, "year %d", tc.year)
 	}
 }
