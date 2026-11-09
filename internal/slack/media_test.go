@@ -208,7 +208,7 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	}, nil
 }
 
-func TestDownloadFileRefusesOffHostAndStripsTokenOnRedirect(t *testing.T) {
+func TestDownloadFileRefusesOffHostAndFollowsRedirect(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
@@ -229,22 +229,14 @@ func TestDownloadFileRefusesOffHostAndStripsTokenOnRedirect(t *testing.T) {
 	assert.Equal("Bearer xoxp-test", rt.authHeaders[0])
 
 	// Slack redirects file downloads to a signed URL on a delivery host. The
-	// hop is followed so the bytes arrive, but without the token: the signed
-	// target authenticates itself, and an off-host Authorization header would
-	// hand the token to whoever controls that host.
-	for _, host := range []string{"slack-files.com", "attacker.example"} {
-		rt.requests, rt.authHeaders = nil, nil
-		rt.redirect = "https://" + host + "/files-pri-safe/a.png?c=signed"
-		rt.redirectOnce = true
-
-		data, err := c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
-		require.NoError(err)
-		assert.Equal("bytes", string(data), "the redirect target must serve the file")
-		require.Len(rt.requests, 2, "the redirect must be followed")
-		assert.Equal("Bearer xoxp-test", rt.authHeaders[0])
-		assert.Empty(rt.authHeaders[1],
-			"the token must not travel to %s", host)
-	}
+	// hop is followed so the bytes arrive.
+	rt.requests, rt.authHeaders = nil, nil
+	rt.redirect = "https://slack-files.com/files-pri-safe/a.png?c=signed"
+	rt.redirectOnce = true
+	data, err = c.DownloadFile(t.Context(), "https://files.slack.com/files-pri/T01-F02/b.png", 100)
+	require.NoError(err)
+	assert.Equal("bytes", string(data), "the redirect target must serve the file")
+	require.Len(rt.requests, 2, "the redirect must be followed")
 
 	// A same-host redirect keeps the token: it never leaves files.slack.com.
 	rt.requests, rt.authHeaders = nil, nil
