@@ -32,7 +32,8 @@ const (
 	serveOperationDrainTimeout  = 30 * time.Minute
 	serveStopGraceTimeout       = serveAPIShutdownTimeout + serveSchedulerStopTimeout + serveOperationDrainTimeout + 5*time.Second
 	serveBackgroundChildEnv     = "MSGVAULT_BACKGROUND_DAEMON"
-	servePersistentChildEnv     = "MSGVAULT_PERSISTENT_DAEMON"
+	// servePersistentChildEnv is an internal detached-child flag.
+	servePersistentChildEnv = "MSGVAULT_PERSISTENT_DAEMON"
 )
 
 // serveStopQuietWindow is how long `daemon stop` waits silently before
@@ -301,9 +302,9 @@ func daemonLifetimeLine(rt *DaemonRuntime) string {
 }
 
 func reportReusableDaemon(cmd *cobra.Command, rt *DaemonRuntime) {
-	reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
+	reportedVersion := reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
-	if !shouldReportRetainedDaemonVersion(rt, Version) && rt.Record.Metadata[runtimePersistent] != runtimeBackgroundValue && rt.Record.Metadata[runtimeBackground] == runtimeBackgroundValue {
+	if !reportedVersion && rt.Record.Metadata[runtimePersistent] != runtimeBackgroundValue && rt.Record.Metadata[runtimeBackground] == runtimeBackgroundValue {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run `%s` to keep it running until stopped.\n", daemonRestartCommand(cmd.Context()))
 	}
 }
@@ -341,7 +342,7 @@ func prepareBackgroundDaemonStart(
 		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
-		prep.Persistent = prep.Persistent || rt.Record.Metadata[runtimePersistent] == runtimeBackgroundValue
+		prep.Persistent = rt.Record.Metadata[runtimePersistent] == runtimeBackgroundValue
 	}
 	rt, foundIncompatible, compatErr := findIncompatibleDaemonRuntime(ctx, c.Data.DataDir)
 	if compatErr != nil && !foundIncompatible {

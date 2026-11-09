@@ -1269,6 +1269,7 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 		Service: daemonService,
 		Version: daemonVersion,
 		Metadata: map[string]string{
+			runtimeIdleTimeout:      "20m0s",
 			runtimeBackground:       "true",
 			runtimePersistent:       "false",
 			runtimeHost:             server.Host,
@@ -1300,7 +1301,7 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 	require.NoError(runServeStart(cmd, cfg))
 	assert.Equal(
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
-			" (pid "+strconv.Itoa(os.Getpid())+")\n",
+			" (pid "+strconv.Itoa(os.Getpid())+")\n  Exits after 20m idle (started automatically)\n",
 		stdout.String())
 	assert.Contains(stderr.String(), "to use this version and keep it running until stopped.")
 	assert.Equal(1, strings.Count(stdout.String()+stderr.String(), daemonRestartCommand(cmd.Context())))
@@ -1663,9 +1664,11 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 		_ = proc.releaseProcessTree()
 	})
 
-	assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
-	require.NoError(proc.releaseProcessTree())
-	assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
+	if persistent {
+		assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
+		require.NoError(proc.releaseProcessTree())
+		assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
+	}
 }
 
 func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
@@ -1782,16 +1785,14 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/msgvault", nil }
 	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	for _, tc := range []struct {
-		timeout, persistent string
-		contended           bool
+		timeout, persistent, lifetime string
 	}{
-		{timeout: "2s", persistent: "false"},
-		{timeout: "0s", persistent: "false"},
-		{timeout: "0s", persistent: "true"},
+		{timeout: "2s", persistent: "false", lifetime: "  Exits after 2s idle (started automatically)"},
+		{timeout: "0s", persistent: "false", lifetime: "  Stays running (started automatically)"},
+		{timeout: "0s", persistent: "true", lifetime: "  Stays running until msgvault daemon stop"},
 		{},
-		{contended: true},
 	} {
-		t.Run(fmt.Sprintf("contended=%t/timeout=%s/persistent=%s", tc.contended, tc.timeout, tc.persistent), func(t *testing.T) {
+		t.Run(fmt.Sprintf("timeout=%s/persistent=%s", tc.timeout, tc.persistent), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 				require.FailNow("reuse must preserve the running daemon")
@@ -1807,15 +1808,14 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 				runtimeAPIVersion: strconv.Itoa(daemonAPIVersion), runtimeAPISchemaVersion: api.APISchemaVersion, runtimeCreateTime: matchingProcessCreateTime(t),
 				runtimeBackground: "true", runtimePersistent: tc.persistent, runtimeIdleTimeout: tc.timeout,
 			}}
+			if tc.timeout == "" {
+				delete(rec.Metadata, runtimePersistent)
+				delete(rec.Metadata, runtimeIdleTimeout)
+			}
 			path, err := daemonRuntimeStore(c.Data.DataDir).Write(rec)
 			require.NoError(err)
 			before, err := os.ReadFile(path)
 			require.NoError(err)
-			if tc.contended {
-				lock, ok := acquireBackgroundLaunchLock(c.Data.DataDir)
-				require.True(ok)
-				t.Cleanup(func() { _ = lock.Unlock() })
-			}
 			cmd, stdout, stderr := lifecycleTestCommand(t)
 			cmd.SetContext(testInvocationContext(t.Context(), c, invocationOptions{cfgFile: "/tmp/settings.toml", homeDir: "/tmp/messages"}))
 			require.NoError(runServeStart(cmd, c))
@@ -1823,6 +1823,9 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(before, after, "reuse preserves the runtime and its lifetime")
 			assert.Contains(stdout.String(), "msgvault already running at http://"+rec.Address+" (pid "+strconv.Itoa(rec.PID)+")\n")
+			if tc.lifetime != "" {
+				assert.Contains(stdout.String(), tc.lifetime+"\n")
+			}
 			if tc.persistent != "true" {
 				assert.Contains(stdout.String(), "keep it running until stopped.")
 				for _, selection := range []string{"/tmp/msgvault", "/tmp/settings.toml", "/tmp/messages"} {

@@ -675,14 +675,16 @@ func shouldReportRetainedDaemonVersion(rt *DaemonRuntime, currentVersion string)
 		!update.IsNewer(cli, daemon) && !update.IsNewer(daemon, cli)
 }
 
-func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
+func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) bool {
 	if shouldReportRetainedDaemonVersion(rt, Version) {
 		consequence := "use this version"
 		if rt.Record.Metadata[runtimePersistent] != runtimeBackgroundValue && rt.Record.Metadata[runtimeBackground] == runtimeBackgroundValue {
 			consequence += " and keep it running until stopped"
 		}
 		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to %s.\n", rt.Record.Version, Version, daemonRestartCommand(ctx), consequence)
+		return true
 	}
+	return false
 }
 
 func daemonRestartCommand(ctx context.Context) string {

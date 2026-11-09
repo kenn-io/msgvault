@@ -1261,6 +1261,10 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	if tt.incompatible {
 		apiVersion--
 	}
+	idleTimeout := "20m0s"
+	if tt.persistent {
+		idleTimeout = "0s"
+	}
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
 		Network: daemon.NetworkTCP,
@@ -1269,6 +1273,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 		Version: tt.daemon,
 		Metadata: map[string]string{
 			runtimePersistent:       strconv.FormatBool(tt.persistent),
+			runtimeIdleTimeout:      idleTimeout,
 			runtimeBackground:       "true",
 			runtimeHost:             host,
 			runtimePort:             strconv.Itoa(port),

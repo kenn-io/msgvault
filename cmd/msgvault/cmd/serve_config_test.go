@@ -19,7 +19,7 @@ import (
 )
 
 func TestQuickStartRestartsAutomaticDaemon(t *testing.T) {
-	require := require.New(t)
+	assert, require := assert.New(t), require.New(t)
 	binary, home := buildNativeCLI(t), t.TempDir()
 	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte("[server]\nbind_addr = '127.0.0.1'\n[analytics]\nengine = 'sql'\n[vector]\nenabled = false\n[people.sweep]\nenabled = false\n"), 0o600))
 	run := func(ctx context.Context, args ...string) string {
@@ -34,22 +34,37 @@ func TestQuickStartRestartsAutomaticDaemon(t *testing.T) {
 	}
 	// Cleanup must stop the child after the test context is canceled.
 	t.Cleanup(func() { run(context.WithoutCancel(t.Context()), "daemon", "stop") })
-	run(t.Context(), "init-db")
-	output := run(t.Context(), "daemon", "restart")
-	match := regexp.MustCompile(`msgvault running at (http://\S+)`).FindStringSubmatch(output)
-	require.Len(match, 2, "%s", output)
-	// The detached child's real clock must pass the idle window without HTTP polling.
-	select {
-	case <-time.After(5 * time.Second):
-	case <-t.Context().Done():
-		require.NoError(t.Context().Err())
+	waitForIdleWindow := func() {
+		t.Helper()
+		// The detached child's real clock must pass the idle window without HTTP polling.
+		select {
+		case <-time.After(5 * time.Second):
+		case <-t.Context().Done():
+			require.NoError(t.Context().Err())
+		}
 	}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, match[1]+"/health", nil)
-	require.NoError(err)
-	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
-	require.NoError(err)
-	assert.Equal(t, http.StatusOK, response.StatusCode)
-	assert.NoError(t, response.Body.Close())
+	assertStillAnswers := func(output string) {
+		t.Helper()
+		match := regexp.MustCompile(`msgvault running at (http://\S+)`).FindStringSubmatch(output)
+		require.Len(match, 2, "%s", output)
+		waitForIdleWindow()
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, match[1]+"/health", nil)
+		require.NoError(err)
+		response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+		require.NoError(err)
+		assert.Equal(http.StatusOK, response.StatusCode)
+		assert.NoError(response.Body.Close())
+	}
+
+	run(t.Context(), "init-db")
+	assert.Contains(run(t.Context(), "daemon", "status"), "Exits after 2s idle (started automatically)")
+	assertStillAnswers(run(t.Context(), "daemon", "restart"))
+	run(t.Context(), "daemon", "stop")
+	run(t.Context(), "search", "example")
+	assert.Contains(run(t.Context(), "daemon", "status"), "Exits after 2s idle (started automatically)")
+	waitForIdleWindow()
+	assert.Contains(run(t.Context(), "daemon", "status"), "No msgvault daemon is running.")
+	assertStillAnswers(run(t.Context(), "daemon", "start"))
 }
 
 // buildNativeCLI builds the real msgvault CLI into t.TempDir() and returns its path.
