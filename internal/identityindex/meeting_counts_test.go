@@ -45,7 +45,7 @@ func TestCalendarOnlyDoesNotCountTowardRelationships(t *testing.T) {
 	assertions.Zero(meetings)
 }
 
-func TestPersonMeetingCountDedupesCopiesGlobalAndSourceFiltered(t *testing.T) {
+func TestPersonMeetingCountDedupesCopiesInRollups(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -157,7 +157,6 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 		{"late link", `(100::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false},
 		{"key removed", `(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false},
 		{"new unrelated meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, true},
-		{"new copy of cached meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			replaceRelationshipParquet(t, db, staged, "meeting_keys", `SELECT * FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)

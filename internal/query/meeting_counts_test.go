@@ -68,16 +68,24 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 
 func TestRelationshipMeetingCounts(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		kinds     []string
-		keys      [][]string
-		at        time.Time
-		want      int64
-		crossYear bool
+		name           string
+		kinds          []string
+		keys           [][]string
+		at             time.Time
+		want           int64
+		crossYear      bool
+		calendarCounts map[int]int64
+		verify         func(*testing.T, []RelationshipRow, *RelationshipCalendarResponse)
 	}{
-		{name: "transcripts only", kinds: []string{"meeting_transcript", "meeting_note", "meeting_minutes"}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 1},
-		{name: "one transcript two occurrences", kinds: []string{"meeting_transcript"}, keys: [][]string{{"uid:series/first", "uid:series/second"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2},
-		{name: "copies across years", kinds: []string{"meeting_transcript", "meeting_transcript"}, keys: [][]string{{"uid:shared@example.org/"}, {"uid:shared@example.org/"}}, at: time.Date(2025, 12, 31, 23, 30, 0, 0, time.UTC), want: 1, crossYear: true},
+		{name: "transcripts only", kinds: []string{"meeting_transcript", "meeting_note", "meeting_minutes"}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 1, calendarCounts: map[int]int64{2026: 1}, verify: func(t *testing.T, rows []RelationshipRow, calendar *RelationshipCalendarResponse) {
+			for _, row := range rows {
+				assert.Equal(t, time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), row.LastAt)
+			}
+			require.Len(t, calendar.Annual, 1)
+			assert.InDelta(t, 1.0, calendar.Annual[0].Signals.MeetingSignal, 0.000001)
+		}},
+		{name: "one transcript two occurrences", kinds: []string{"meeting_transcript"}, keys: [][]string{{"uid:series/first", "uid:series/second"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2, calendarCounts: map[int]int64{2026: 2}},
+		{name: "copies across years", kinds: []string{"meeting_transcript", "meeting_transcript"}, keys: [][]string{{"uid:shared@example.org/"}, {"uid:shared@example.org/"}}, at: time.Date(2025, 12, 31, 23, 30, 0, 0, time.UTC), want: 1, crossYear: true, calendarCounts: map[int]int64{2025: 1, 2026: 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -107,20 +115,16 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				}
 			}
 			engine := b.BuildEngine()
+			var relationshipRows []RelationshipRow
 			for _, scope := range []Context{{}, {SourceIDs: sources, ParticipantIDs: []int64{person}}} {
 				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: tc.at.AddDate(0, 0, 3)})
 				requirements.NoError(err)
 				requirements.Len(result.Rows, 1)
 				assertions.Equal(tc.want, result.Rows[0].Signals.MeetingCount)
-				if !tc.crossYear {
-					assertions.Equal(tc.at, result.Rows[0].LastAt)
-				}
+				relationshipRows = append(relationshipRows, result.Rows[0])
 			}
-			years := []int{tc.at.Year()}
-			if tc.crossYear {
-				years = append(years, 2026)
-			}
-			for _, year := range years {
+			var attendanceCalendar *RelationshipCalendarResponse
+			for year, want := range tc.calendarCounts {
 				calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: year, Timezone: "UTC"})
 				requirements.NoError(err)
 				var meetings int64
@@ -132,20 +136,16 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 					}
 				}
 				if year == tc.at.Year() {
+					attendanceCalendar = calendar
 					requirements.NotEmpty(transcriptDay.Date)
 					assertions.Equal(tc.want, transcriptDay.Meetings)
 					assertions.Equal(identityindex.ModalityMeeting, transcriptDay.ModalityMask)
 					assertions.Equal(identityindex.HeatFirstQuartile, transcriptDay.Level)
 				}
-				want := tc.want
-				if tc.crossYear && year == 2026 {
-					want = 0
-				}
 				assertions.Equal(want, meetings, "year %d", year)
-				if tc.name == "transcripts only" {
-					requirements.Len(calendar.Annual, 1)
-					assertions.InDelta(1.0, calendar.Annual[0].Signals.MeetingSignal, 0.000001)
-				}
+			}
+			if tc.verify != nil {
+				tc.verify(t, relationshipRows, attendanceCalendar)
 			}
 		})
 	}

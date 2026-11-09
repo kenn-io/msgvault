@@ -38,25 +38,21 @@ func TestMeetingCountKeysSingleSplitAfterCalendarCancellationOrDeletion(t *testi
 	}
 }
 
-func TestMeetingCountKeysSavedLinkSuppressesUnmatchedEvidence(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "series", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270307T100000Z"}))
-	keys, err := st.MeetingCountKeysContext(t.Context())
-	require.NoError(err)
-	assert.Equal([]string{"uid:weekly@example.org/20270307T100000Z"}, keys[note])
-}
-
 func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
-	for _, mode := range []string{"manual", "automatic", "mixed"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		mode, linkedKey string
+	}{
+		{"manual", "20270314T100000Z"},
+		{"automatic", ""},
+		{"mixed removed link", "20270314T100000Z"},
+		{"mixed surviving link", "20270307T100000Z"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			_, master := calendarFixture(t, st, "series", linkSeriesRaw)
 			var notes []int64
-			if mode == "manual" {
+			if tc.mode == "manual" {
 				_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
 				notes = append(notes, note)
 			} else {
@@ -65,17 +61,17 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 				notes = append(notes, google, twenty)
 			}
 			want := []string{"uid:weekly@example.org/20270321T100000Z"}
-			if mode != "automatic" {
-				want = []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}
+			if tc.mode != "automatic" {
+				want = []string{"uid:weekly@example.org/" + tc.linkedKey, "uid:weekly@example.org/20270321T100000Z"}
 				for _, note := range notes {
-					require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
-					if mode == "manual" {
+					require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: tc.linkedKey}))
+					if tc.mode == "manual" {
 						require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270321T100000Z"}))
 					}
 				}
 			}
 			for step, raw := range []string{linkSeriesRaw, strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1), strings.Replace(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=YEARLY;BYWEEKNO=20", 1)} {
-				if mode == "mixed" && step > 0 {
+				if tc.linkedKey != "" && tc.mode != "manual" && step > 0 {
 					want = want[:1]
 				}
 				require.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))

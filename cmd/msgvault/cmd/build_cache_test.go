@@ -1402,13 +1402,22 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			tmpDir := setupTestSQLite(t)
 			dbPath := filepath.Join(tmpDir, "test.db")
 			analyticsDir := filepath.Join(tmpDir, "analytics")
-			_, err := buildCache(dbPath, analyticsDir, false)
+			// Legacy archives have no journal to repair children written after export.
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
+			require.NoError(err)
+			var dropTriggers string
+			require.NoError(db.QueryRow(`SELECT group_concat('DROP TRIGGER "' || name || '";', char(10))
+				FROM sqlite_master WHERE type='trigger' AND sql LIKE '%cache_related_change_journal%'`).Scan(&dropTriggers))
+			_, err = db.Exec(dropTriggers + `DROP TABLE cache_related_change_journal`)
+			require.NoError(err)
+			require.NoError(db.Close())
+			_, err = buildCache(dbPath, analyticsDir, false)
 			require.NoError(err)
 			stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
 			require.NoError(err)
 			filesBefore := snapshotCacheParquet(t, analyticsDir)
 
-			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
+			db, err = sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`
 				INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
@@ -1420,17 +1429,6 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 					6, 1, 'meeting-partial', 105,
 					'Partial Meeting', 'Parent persisted first',
 					'2026-07-12 10:00:00', 500, 'meeting_transcript'
-				);
-				CREATE TABLE IF NOT EXISTS sync_runs (
-					id INTEGER PRIMARY KEY,
-					source_id INTEGER,
-					started_at DATETIME,
-					completed_at DATETIME,
-					status TEXT,
-					messages_processed INTEGER,
-					messages_added INTEGER,
-					messages_updated INTEGER,
-					errors_count INTEGER
 				);
 				INSERT INTO sync_runs (
 					id, source_id, started_at, status,
@@ -1468,10 +1466,10 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 				"snapshot publication includes the parent message")
 			published, readErr := query.ReadCacheSyncState(analyticsDir)
 			require.NoError(readErr)
-			assert.False(published.FullRebuildRequired, "the journal permits a bounded repair")
+			assert.True(published.FullRebuildRequired, "partial snapshot forces the next build to be full")
 			stale := cacheNeedsBuild(dbPath, analyticsDir)
 			require.True(stale.NeedsBuild, "partial snapshot is stale: %+v", stale)
-			require.True(stale.FullRebuild, "cached facts changed along with journaled children: %+v", stale)
+			require.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
 
 			// A sync that overlaps this build also queues another automatic
 			// refresh. It must wait even though the next build must be full.
@@ -1536,17 +1534,6 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`
-				CREATE TABLE IF NOT EXISTS sync_runs (
-					id INTEGER PRIMARY KEY,
-					source_id INTEGER,
-					started_at DATETIME,
-					completed_at DATETIME,
-					status TEXT,
-					messages_processed INTEGER,
-					messages_added INTEGER,
-					messages_updated INTEGER,
-					errors_count INTEGER
-				);
 				INSERT INTO sync_runs (
 					id, source_id, started_at, status,
 					messages_processed, messages_added, messages_updated, errors_count
@@ -1596,17 +1583,6 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS sync_runs (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER,
-			started_at DATETIME,
-			completed_at DATETIME,
-			status TEXT,
-			messages_processed INTEGER,
-			messages_added INTEGER,
-			messages_updated INTEGER,
-			errors_count INTEGER
-		);
 		INSERT INTO sync_runs (
 			id, source_id, started_at, completed_at, status,
 			messages_processed, messages_added, messages_updated, errors_count
@@ -1646,17 +1622,6 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err)
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS sync_runs (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER,
-			started_at DATETIME,
-			completed_at DATETIME,
-			status TEXT,
-			messages_processed INTEGER,
-			messages_added INTEGER,
-			messages_updated INTEGER,
-			errors_count INTEGER
-		);
 		INSERT INTO sync_runs (
 			id, source_id, started_at, completed_at, status,
 			messages_processed, messages_added, messages_updated, errors_count
@@ -1710,17 +1675,6 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS sync_runs (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER,
-			started_at DATETIME,
-			completed_at DATETIME,
-			status TEXT,
-			messages_processed INTEGER,
-			messages_added INTEGER,
-			messages_updated INTEGER,
-			errors_count INTEGER
-		);
 		INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
 		VALUES (105, 1, 'thread105', 'New Thread', 'email');
 		INSERT INTO messages (
