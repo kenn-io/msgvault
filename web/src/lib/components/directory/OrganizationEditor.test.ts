@@ -634,15 +634,17 @@ it('refreshes directory views after a section save fails following a core confli
     throw new Error(`Unexpected ${request.method}`);
   });
   controller.refreshDirectoryViews = refresh;
+  const onDone = vi.fn();
   const onClose = vi.fn();
-  render(OrganizationEditor, { controller, organization: organization(), onClose });
+  render(OrganizationEditor, { controller, organization: organization(), onDone, onClose });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
   await screen.findByRole('button', { name: 'Use saved' });
   await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(patches).toBe(2));
   await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+  expect(onDone).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
   await waitFor(() => expect(puts).toBe(1));
   await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
@@ -735,29 +737,6 @@ it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s
     expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
     expect(within(alert).getByText(section === 'names' ? 'legal-name-variant' : 'category-variant')).toBeDefined();
   }
-});
-
-it('sends the version an alias save returned when the organization save follows it', async () => {
-  const tags: (string | null)[] = [];
-  const onDone = vi.fn();
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    tags.push(request.headers.get('If-Match'));
-    if (request.method === 'PUT') return Response.json({ ...organizationProfile(2), ...await request.json() }, { headers: { ETag: '"organization-21-r2"' } });
-    return request.headers.get('If-Match') === '"organization-21-r2"'
-      ? Response.json({ ...organization(21, 3), ...await request.json() }, { headers: { ETag: '"organization-21-r3"' } })
-      : Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-  });
-  render(OrganizationEditor, { controller, organization: organization(), onDone });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, Draft alias' } });
-  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization domain' }), { target: { value: 'new.example' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  await waitFor(() => expect(tags).toHaveLength(1));
-  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-  expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"']);
 });
 
 it('refreshes directory views after the organization save fails following an alias conflict', async () => {

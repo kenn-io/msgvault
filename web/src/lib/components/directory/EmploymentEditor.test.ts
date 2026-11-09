@@ -289,11 +289,52 @@ it('allows closing while the job loads', async () => {
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
     expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the job was saved.");
     expect((screen.getByRole('textbox', { name: 'Job title' }) as HTMLInputElement).value).toBe('Draft role');
+    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('disabled', true);
     expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
     expect(posts).toBe(1);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false));
+    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('disabled', false);
+    expect(posts).toBe(1);
+  });
+
+  it('closes after Check again finds an uncertain historical job on a later page', async () => {
+    let saved: ReturnType<typeof employment> | undefined;
+    let posts = 0;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      if (path === '/api/v1/employments' && request.method === 'POST') {
+        posts++;
+        const body = await request.json();
+        saved = employment(811, 1, { ...body, start_date: { year: 2019 }, end_date: { year: 2022 } });
+        throw new TypeError('response lost');
+      }
+      if (path === '/api/v1/people/7/employments') {
+        const offset = Number(new URL(request.url).searchParams.get('offset') ?? 0);
+        if (!saved) return collection([]);
+        if (offset === 0) return collection(Array.from({ length: 200 }, (_, index) => employment(900 + index)));
+        if (offset === 200) return collection([saved]);
+        return collection([]);
+      }
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    const onDone = vi.fn();
+    render(EmploymentEditor, { controller, personID: 7, onDone });
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Garden designer' } });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '2019' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2022' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    await screen.findByText("Couldn't confirm the job was saved.");
+    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(controller.employments.some(job => job.id === 811 && job.title === 'Garden designer')).toBe(true);
     expect(posts).toBe(1);
   });
 
@@ -378,6 +419,29 @@ it('allows closing while the job loads', async () => {
       expect(patches).toBe(1);
       expect(requests.some((request) => pathOf(request) === '/api/v1/people/7/employments')).toBe(true);
     }
+  });
+
+  it('shows a reassigned job owner and refuses Keep yours from the old person', async () => {
+    let patches = 0;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/employments/11' && request.method === 'GET') {
+        return Response.json(employment(11, patches ? 2 : 1, { person_id: patches ? 8 : 7, title: patches ? 'Moved job' : 'Engineer' }), { headers: { ETag: `"employment-11-r${patches ? 2 : 1}"` } });
+      }
+      if (path === '/api/v1/employments/11' && request.method === 'PATCH') { patches++; return Response.json({ message: 'Employment changed; reload and retry' }, { status: 412 }); }
+      if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+      if (path === '/api/v1/people/8') return Response.json({ id: 8, display_name: 'Synthetic Two' });
+      return Response.json({ employments: [] });
+    });
+    render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft title' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const conflict = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+    expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(screen.getByText('This job now belongs to another person. Open it from that person’s profile before editing or deleting it.')).toBeDefined());
+    expect(patches).toBe(1);
   });
 
 

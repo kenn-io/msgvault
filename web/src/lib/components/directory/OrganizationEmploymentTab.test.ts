@@ -323,6 +323,33 @@ it('deletes the saved version a job delete conflict shows', async () => {
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 });
 
+it('shows a reassigned owner and refuses to delete the job from the old person', async () => {
+  let deletes = 0;
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const path = pathOf(request);
+    if (path === '/api/v1/people/7/employments') return collection([]);
+    if (path.startsWith('/api/v1/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    if (path === '/api/v1/people/8') return Response.json({ id: 8, display_name: 'Synthetic Two' });
+    if (path === '/api/v1/employments/11' && request.method === 'GET') {
+      reads++;
+      return Response.json(employment(11, reads, { person_id: reads > 1 ? 8 : 7 }), { headers: { ETag: `"employment-11-r${reads}"` } });
+    }
+    if (path === '/api/v1/employments/11' && request.method === 'DELETE') { deletes++; return Response.json({ message: 'Changed elsewhere' }, { status: 412 }); }
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment()];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await rowAction('Delete…');
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  const conflict = (await screen.findByText('This job changed since you opened it.')).closest('.inline-notice') as HTMLElement;
+  expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await screen.findByText('This job now belongs to another person. Open it from that person’s profile before editing or deleting it.');
+  expect(deletes).toBe(1);
+});
+
 it('opens the person when multiple jobs block an organization deletion', async () => {
   const jobs = [employment(), employment(12, 1, { is_current: false })];
   const onOpenPerson = vi.fn();

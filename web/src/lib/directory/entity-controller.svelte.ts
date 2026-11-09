@@ -27,6 +27,7 @@ import {
   setPrimaryEmployment as generatedSetPrimaryEmployment,
 } from '../api/generated/api/api';
 import { SvelteMap } from 'svelte/reactivity';
+import { formatPartialDate } from './dates';
 import type { APIClient } from '../api/client';
 import type { APIErrorBody } from '../api/runtime';
 import type {
@@ -80,6 +81,7 @@ export class DirectoryEntityController {
   network = $state<PersonNetwork | null>(null);
   organizationRecords = new SvelteMap<number, OrganizationProfile>();
   employmentRecords = new SvelteMap<number, Employment>();
+  personNames = new SvelteMap<number, string>();
   relationshipRecords = new SvelteMap<number, PersonRelationship>();
   relationshipTypeRecords = new SvelteMap<number, RelationshipType>();
   loading = $state<Record<DirectoryEntityResource, boolean>>({
@@ -164,6 +166,28 @@ export class DirectoryEntityController {
   }
   async refreshEmployments(): Promise<void> {
     await Promise.all([this.loadEmployments(true), this.refreshNetwork()]);
+  }
+  async findEmploymentByBody(body: EmploymentBody): Promise<Employment | undefined> {
+    const pageSize = 200;
+    for (let offset = 0; ; offset += pageSize) {
+      const response = await generatedListPersonEmployments({ id: this.personID }, { limit: pageSize, offset }, this.client);
+      if (!response.data) throw new Error(failureMessage(response.error, response.response.status));
+      const rows = response.data.employments ?? [];
+      const found = rows.find(row => Object.entries(body).every(([key, value]) => {
+        if ((key === 'start_date' || key === 'end_date') && typeof value === 'string') {
+          return formatPartialDate(row[key] as { year?: number; month?: number; day?: number }) === value;
+        }
+        return sameValue(row[key], value);
+      }));
+      if (found) {
+        this.applyEmploymentEntity(found);
+        return found;
+      }
+      if (rows.length < pageSize) return undefined;
+    }
+  }
+  personName(id: number): string {
+    return this.personNames.get(id) ?? `Person ${id}`;
   }
   async acceptSavedEmployment(): Promise<void> {
     await Promise.all([this.refreshEmployments(), this.options.onDirectoryChange?.()]);
@@ -481,6 +505,9 @@ export class DirectoryEntityController {
     );
   }
   async deleteEmployment(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {
+    if (prepared?.data.person_id !== undefined && prepared.data.person_id !== this.personID) {
+      return { ok: false, kind: 'error', status: 409, message: 'This job now belongs to another person. Open it from that person’s profile before editing or deleting it.' };
+    }
     const result = await this.deleteExisting(
       () => this.prepareEmploymentMutation(id),
       (signal, etag) =>
@@ -500,6 +527,7 @@ export class DirectoryEntityController {
       prepared,
     );
     await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
+    await this.prepareConflictPerson(result);
     return this.afterDirectoryMutation(result, true);
   }
   async createRelationship(
@@ -665,6 +693,9 @@ export class DirectoryEntityController {
     write: (current: Employment, signal: AbortSignal, etag: string) => Promise<RequestResult<Employment>>,
     prepared?: Prepared<Employment>,
   ): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
+    if (prepared?.data.person_id !== undefined && prepared.data.person_id !== this.personID) {
+      return { ok: false, kind: 'error', status: 409, message: 'This job now belongs to another person. Open it from that person’s profile before editing or deleting it.' };
+    }
     const result = await this.writeExisting(
       () => this.prepareEmploymentMutation(id),
       write,
@@ -674,7 +705,15 @@ export class DirectoryEntityController {
       prepared,
     );
     await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
+    await this.prepareConflictPerson(result);
     return this.afterDirectoryMutation(result, true);
+  }
+  private async prepareConflictPerson(result: DirectoryEntityMutationResult<unknown, Prepared<Employment>>): Promise<void> {
+    if (result.ok || result.kind !== 'conflict' || !result.current || result.current.data.person_id === this.personID) return;
+    try {
+      const person = await generatedGetPersonProfile({ id: result.current.data.person_id }, this.client);
+      if (person.data?.display_name?.trim()) this.personNames.set(result.current.data.person_id, person.data.display_name.trim());
+    } catch { /* Keep the conflict useful with its person ID if the profile cannot load. */ }
   }
   private async prepareConflictEmployer<T>(result: DirectoryEntityMutationResult<T, Prepared<Employment>>, opened?: Employment): Promise<void> {
     if (result.ok || result.kind !== 'conflict' || !result.current || !opened || result.current.data.organization_id === opened.organization_id || this.organizationRecords.has(result.current.data.organization_id)) return;
@@ -943,6 +982,9 @@ function replaceByID<
   return items.some((item) => item.id === replacement.id)
     ? items.map((item) => (item.id === replacement.id ? replacement : item))
     : [...items, replacement];
+}
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 function failureMessage(error: unknown, status: number): string {
   if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string')

@@ -49,6 +49,8 @@
   let selectedOrganization = $state<Organization>();
   const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current));
   let datesInvalid = $state(false);
+  let uncertainBody: EmploymentBody | undefined;
+  const locked = $derived(attempt.busy || controller.createBlocked.employments);
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
@@ -129,16 +131,25 @@
         organizationID = String(created.entity!.id);
         creatingOrganization = false;
       }
-      return initialEmployment
-        ? controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened)
-        : controller.createEmployment({ ...body(), source: 'user' });
+      if (initialEmployment) return controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened);
+      uncertainBody = { ...body(), source: 'user' };
+      return controller.createEmployment(uncertainBody);
     });
     if (ok) onDone();
   }
 
   async function refreshAfterUnknown(): Promise<void> {
     await controller.refreshEmployments();
-    if (!controller.createBlocked.employments) attempt.details = '';
+    if (controller.createBlocked.employments) return;
+    try {
+      if (uncertainBody && await controller.findEmploymentByBody(uncertainBody)) {
+        onDone();
+        return;
+      }
+      attempt.details = '';
+    } catch {
+      controller.createBlocked.employments = true;
+    }
   }
 
   async function refreshOrganizationAfterUnknown(): Promise<void> {
@@ -171,24 +182,24 @@
             onselect={value => { organizationID = value.replace('organization:', ''); selectedOrganization = controller.organizations.find(item => String(item.id) === organizationID); }}
             createLabel={'Create organization “{query}”'} existingLabel="Choose an existing organization instead"
             oncreate={query => { organizationName = query; creatingOrganization = true; }} creating={creatingOrganization}
-            onexisting={() => creatingOrganization = false} disabled={attempt.busy}>
+            onexisting={() => creatingOrganization = false} disabled={locked}>
             {#snippet creation()}
-              <FormField field={{ id: 'work-org-name', label: 'Name', value: organizationName, disabled: attempt.busy }} oninput={value => organizationName = value} />
+              <FormField field={{ id: 'work-org-name', label: 'Name', value: organizationName, disabled: locked }} oninput={value => organizationName = value} />
               <div class="form-pair">
-                <label>Kind<SelectDropdown title="Organization kind" value={organizationKind} options={kindOptions} onchange={value => organizationKind = value} disabled={attempt.busy} /></label>
-                <FormField field={{ id: 'work-org-domain', label: 'Domain', value: organizationDomain, disabled: attempt.busy }} oninput={value => organizationDomain = value} />
+                <label>Kind<SelectDropdown title="Organization kind" value={organizationKind} options={kindOptions} onchange={value => organizationKind = value} disabled={locked} /></label>
+                <FormField field={{ id: 'work-org-domain', label: 'Domain', value: organizationDomain, disabled: locked }} oninput={value => organizationDomain = value} />
               </div>
             {/snippet}
           </FieldPicker>
       </div>
       {/if}
-      <div class="form-pair"><FormField field={{ id: 'work-title', label: 'Job title', value: title, disabled: attempt.busy }} oninput={value => title = value} /><FormField field={{ id: 'work-role', label: 'Role on the team', value: role, disabled: attempt.busy }} oninput={value => role = value} /></div>
-      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} bind:invalid={datesInvalid} disabled={attempt.busy} />
-      {#if showPrimary}<Checkbox label="Primary job" checked={isPrimary} onchange={value => isPrimary = value} disabled={attempt.busy} />{/if}
+      <div class="form-pair"><FormField field={{ id: 'work-title', label: 'Job title', value: title, disabled: locked }} oninput={value => title = value} /><FormField field={{ id: 'work-role', label: 'Role on the team', value: role, disabled: locked }} oninput={value => role = value} /></div>
+      <DateRange bind:start={startDate} bind:end={endDate} bind:current={isCurrent} bind:invalid={datesInvalid} disabled={locked} />
+      {#if showPrimary}<Checkbox label="Primary job" checked={isPrimary} onchange={value => isPrimary = value} disabled={locked} />{/if}
       <Disclosure variant="plain" class="fold" title="More details" bind:open={moreDetails}>
         <div class="more">
-          <div class="form-pair"><FormField field={{ id: 'work-department', label: 'Department', value: department, disabled: attempt.busy }} oninput={value => department = value} /><FormField field={{ id: 'work-location', label: 'Location', value: location, disabled: attempt.busy }} oninput={value => location = value} /></div>
-          <label>Description<textarea aria-label="Description" bind:value={description} disabled={attempt.busy}></textarea></label>
+          <div class="form-pair"><FormField field={{ id: 'work-department', label: 'Department', value: department, disabled: locked }} oninput={value => department = value} /><FormField field={{ id: 'work-location', label: 'Location', value: location, disabled: locked }} oninput={value => location = value} /></div>
+          <label>Description<textarea aria-label="Description" bind:value={description} disabled={locked}></textarea></label>
         </div>
       </Disclosure>
     {/if}
@@ -196,7 +207,7 @@
 </form>{/if}
   {#snippet notice()}
     {#if attempt.conflict}
-      <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller)} message={attempt.details} />
+      <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller, controller.personID)} message={attempt.details} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
       <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void refreshOrganizationAfterUnknown(); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}
