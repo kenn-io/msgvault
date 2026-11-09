@@ -89,27 +89,3 @@ func TestMeetingSeriesMasterNeedsOccurrenceKey(t *testing.T) {
 	requirements.Error(err)
 	assert.ErrorContains(t, err, "@<occurrence key>")
 }
-
-func TestMeetingSuggestionsKeepSplitAfterRecurrenceChange(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
-	_, copyID := calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
-	data, note := projectionFixture(t, st, "note", "circleback_json", `{"meeting":{"url":"https://meet.example.com/room"}}`)
-	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
-	_, err := st.UpsertMessage(data.Message)
-	requirements.NoError(err)
-	refs := []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: copyID, Key: "20270314T100000Z"}}
-	for _, ref := range refs {
-		page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10)
-		requirements.NoError(err)
-		requirements.NotEmpty(page.Suggestions)
-	}
-	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
-	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
-	for _, ref := range refs {
-		page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10)
-		requirements.NoError(err)
-		assert.Empty(t, page.Suggestions, "%s", ref.Kind)
-	}
-}

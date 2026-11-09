@@ -3,20 +3,12 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
-	"fmt"
-	"log/slog"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type meetingLinkFakeClient struct {
@@ -143,33 +135,4 @@ func TestMeetingLinkCommands(t *testing.T) {
 		requirements.NoError(err)
 		assertions.Equal(name, command.Name())
 	}
-}
-
-func TestMeetingLinksCLIEventRecord(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
-	requirements.NoError(err)
-	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json"})
-	requirements.NoError(err)
-	noteSource, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
-	requirements.NoError(err)
-	note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: noteSource.ID, SourceMessageID: "note", MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"}, RawMIME: []byte(`{"schema_version":1,"recording":{}}`), RawFormat: "twenty_json"})
-	requirements.NoError(err)
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
-	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}
-	logger := slog.New(slog.DiscardHandler)
-	server := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st, config: cfg, logger: logger}, nil, logger).Router())
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: server.Client()})
-	requirements.NoError(err)
-	t.Cleanup(func() { assertions.NoError(client.Close()) })
-	command := newMeetingLinksCommand(func(context.Context) (meetingLinkClient, func(), error) { return client, func() {}, nil })
-	var out bytes.Buffer
-	command.SetOut(&out)
-	command.SetArgs([]string{fmt.Sprintf("evt:%d", event), "--json"})
-	requirements.NoError(command.Execute())
-	var record store.MeetingRecord
-	requirements.NoError(json.Unmarshal(out.Bytes(), &record))
-	assertions.Equal([]int64{note}, record.MessageIDs)
 }

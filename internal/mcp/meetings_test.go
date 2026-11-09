@@ -341,11 +341,10 @@ func TestMeetingLinkToolsReportDaemonClientErrors(t *testing.T) {
 		args       map[string]any
 		code       string
 	}{
-		{"invalid ref", ToolGetMeetingRecord, map[string]any{"ref": "wrong"}, "invalid_argument"},
-		{"missing", ToolGetMeetingRecord, map[string]any{"ref": "msg:99999999"}, "meeting_not_found"},
-		{"suggest", ToolSuggestMeetingLinks, map[string]any{"ref": "wrong"}, "invalid_argument"},
-		{"link", ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "wrong"}, "invalid_argument"},
-		{"unlink", ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:1@bad"}, "invalid_argument"},
+		{"record daemon error", ToolGetMeetingRecord, map[string]any{"ref": "msg:99999999"}, "meeting_not_found"},
+		{"suggest daemon error", ToolSuggestMeetingLinks, map[string]any{"ref": "msg:73"}, "invalid_argument"},
+		{"link daemon error", ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, "invalid_argument"},
+		{"unlink daemon error", ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, "invalid_argument"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)

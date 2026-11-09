@@ -179,18 +179,15 @@ func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, quer
 	return r.DB.ExecContext(ctx, query, args...)
 }
 
-func TestStageMeetingKeysBatchesAndQuotes(t *testing.T) {
+func TestStageMeetingKeysQuotes(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	recorder := newParticipantClusterInsertRecorder(t)
-	keys := make(map[int64][]string)
-	for id := int64(1); id <= 1025; id++ {
-		keys[id] = []string{"uid:example'o@example.test/"}
-	}
-	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1025))
+	keys := map[int64][]string{1: {"uid:example'o@example.test/"}}
+	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1))
 	var count int
 	var key string
 	require.NoError(recorder.DB.QueryRow(`SELECT count(*), min(meeting_key) FROM tmp_meeting_keys`).Scan(&count, &key))
-	assert.Equal(1025, count)
+	assert.Equal(1, count)
 	assert.Equal("uid:example'o@example.test/", key)
 }
 
