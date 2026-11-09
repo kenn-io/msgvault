@@ -15,16 +15,18 @@ function readyStatus(): Response {
   return Response.json({ state: 'ready' });
 }
 
-/** Opens the add form once the agenda can take a task, unless it's already open. */
+/** Requires a closed form and opens it once the agenda can take a task. */
 async function openForm(): Promise<void> {
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Add task' }) ?? screen.queryByLabelText('New task')).not.toBeNull());
-  if (!screen.queryByLabelText('New task')) await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+  const add = await screen.findByRole('button', { name: 'Add task' });
+  expect(screen.queryByLabelText('New task')).toBeNull();
+  await fireEvent.click(add);
 }
 
-/** Opens the add form when it's closed, then types a task title. */
+/** Requires an open form and types a task title. */
 async function typeTask(value: string): Promise<void> {
-  await openForm();
-  await fireEvent.input(screen.getByLabelText('New task'), { target: { value } });
+  const input = screen.getByLabelText('New task');
+  await waitFor(() => expect(input).toHaveProperty('disabled', false));
+  await fireEvent.input(input, { target: { value } });
 }
 
 describe('PersonAgenda', () => {
@@ -54,6 +56,7 @@ describe('PersonAgenda', () => {
     expect(await screen.findByText('waiting')).toBeDefined();
     expect(screen.getByRole('link', { name: 'Send the revised budget' }).getAttribute('href')).toBe('https://tasks.example.test/one');
 
+    await openForm();
     await typeTask('Send notes');
     await openTypeahead('List');
     if (input) {
@@ -98,8 +101,8 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, refreshKey: '1' });
     await screen.findByText('No tasks yet');
-    expect(screen.queryByLabelText('New task')).toBeNull();
 
+    await openForm();
     await typeTask('Send notes');
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(requests.filter(request => request.method === 'POST')).toHaveLength(1));
@@ -160,6 +163,7 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, refreshKey: '1', onAnnounce });
     await screen.findByText('Ask about launch');
+    await openForm();
     await typeTask('Send notes');
     await openTypeahead('List');
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Follow-up' } });
@@ -207,6 +211,7 @@ describe('PersonAgenda', () => {
     const { rerender } = render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
 
+    await openForm();
     await typeTask('Send notes');
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
@@ -214,8 +219,8 @@ describe('PersonAgenda', () => {
     await rerender({ client, personID: 8 });
     await waitFor(() => expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/8/agenda')).toBe(true));
     await screen.findByText('No tasks yet');
-    expect(screen.queryByLabelText('New task')).toBeNull();
 
+    await openForm();
     await typeTask('Send notes');
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
@@ -439,6 +444,7 @@ describe('PersonAgenda', () => {
     const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
     await screen.findByText('Ask about launch');
     if (operation === 'create') {
+      await openForm();
       await typeTask('A note');
       await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     } else await fireEvent.click(screen.getByRole('button', { name: 'Unlink Ask about launch' }));
@@ -446,6 +452,7 @@ describe('PersonAgenda', () => {
 
     await rerender({ client, personID: 8, onAnnounce });
     await screen.findByText('B item');
+    await openForm();
     await typeTask('B note');
     await act(async () => { releaseWrite(outcome === 'failure'
       ? Response.json({ error: 'task_unavailable', message: `Unable to ${operation} agenda item` }, { status })
@@ -481,6 +488,7 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
+    await openForm();
     await typeTask('A note');
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(releases.length).toBe(1)); // A's create hangs.
@@ -507,7 +515,6 @@ describe('PersonAgenda', () => {
     releases[1]!(Response.json({ item: item('new', 'B note') }, { status: 201 }));
     // B's success clears the typed title, so the submit button stays disabled
     // until text is entered again; the inputs are the mutating-only signal.
-    await openForm();
     await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
   });
 

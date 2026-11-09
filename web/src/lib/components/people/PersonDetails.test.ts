@@ -58,27 +58,21 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
   return { person, directory };
 }
 
-it.each([{ participantIDs: [], name: 'shows empty Meetings without requests when no identities are linked' }, { participantIDs: [5], name: 'mounts meeting activity with the saved person scope' }])('$name', async ({ participantIDs }) => {
+it('shows empty Meetings without requests when no identities are linked', async () => {
   const meetingRequests: Request[] = [];
-  await renderDetails(participantIDs, { meetingRequests });
-  if (!participantIDs.length) {
-    expect(await screen.findByText('No meetings yet')).toBeDefined();
-    expect(meetingRequests).toEqual([]);
-  } else {
-    await screen.findByRole('region', { name: 'Meeting activity' });
-    const request = meetingRequests.find(request => new URL(request.url).pathname.endsWith('/metrics'));
-    expect(request).toBeDefined();
-    await expect(request!.json()).resolves.toMatchObject({ scope: { person_id: 7 } });
-  }
+  await renderDetails([], { meetingRequests });
+  expect(await screen.findByText('No meetings yet')).toBeDefined();
+  expect(meetingRequests).toEqual([]);
 });
 
-it('forwards the refreshed meeting revision and ignores a superseded meeting response', async () => {
+it('scopes meeting actions to the saved person, forwards revisions, and ignores superseded responses', async () => {
   let release!: (response: Response) => void;
   const deferredActions: { request?: Request; response: Promise<Response> } = { response: new Promise(resolve => { release = resolve; }) };
   const loads = vi.spyOn(MeetingsController.prototype, 'setScope');
   onTestFinished(() => loads.mockRestore());
   const { person, directory } = await renderDetails([5], { deferredActions });
   await waitFor(() => expect(deferredActions.request).toBeDefined());
+  await expect(deferredActions.request!.clone().json()).resolves.toMatchObject({ scope: { person_id: 7 } });
   const firstLoad = loads.mock.results[0]!.value;
   person.revision = 2;
   await directory.profile!.reload();

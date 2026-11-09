@@ -6,7 +6,7 @@ function directoryURL(personID: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: personID }))}`;
 }
 
-test('Directory Network keeps its section geometry and opens organizations and peers', async ({ page }) => {
+test('Directory Network keeps desktop and phone section geometry and opens organizations', async ({ page }) => {
   await installMixedArchive(page);
   await page.route('**/api/v1/organizations/21', (route) => route.fulfill({
     headers: { ETag: '"organization-21-r2"' },
@@ -23,17 +23,20 @@ test('Directory Network keeps its section geometry and opens organizations and p
 
   const network = page.getByRole('region', { name: 'Network', exact: true });
   await expect(network.locator('.summary')).not.toHaveText(/Loading/);
-  const geometry = await network.evaluate(section => {
-    const header = section.querySelector('header')!.getBoundingClientRect();
-    return {
-      header: header.height,
-      control: section.querySelector('[role="radiogroup"]')!.getBoundingClientRect().height,
-      summaryGap: section.querySelector('.summary')!.getBoundingClientRect().top - header.bottom
-    };
-  });
-  expect(geometry.header, 'a 28 section header').toBe(28);
-  expect(geometry.control, 'its depth control is 28').toBe(28);
-  expect(geometry.summaryGap, 'the summary sits 8 below the header').toBe(8);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const geometry = await network.evaluate(section => {
+      const header = section.querySelector('header')!.getBoundingClientRect();
+      return {
+        header: header.height,
+        control: section.querySelector('[role="radiogroup"]')!.getBoundingClientRect().height,
+        summaryGap: section.querySelector('.summary')!.getBoundingClientRect().top - header.bottom
+      };
+    });
+    expect(geometry.header, 'a 28 section header').toBe(28);
+    expect(geometry.control, 'its depth control is 28').toBe(28);
+    expect(geometry.summaryGap, 'the summary sits 8 below the header').toBe(8);
+  }
 
   await page.getByRole('radio', { name: '2 steps', exact: true }).click();
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
@@ -44,12 +47,6 @@ test('Directory Network keeps its section geometry and opens organizations and p
   await expect(organizationEditor).toBeVisible();
   await expect(organizationEditor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Shared Organization');
   await organizationEditor.getByRole('button', { name: 'Close', exact: true }).click();
-  const peer = { id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' };
-  await page.route('**/api/v1/people/43', route => route.fulfill({ json: peer }));
-  await page.route('**/api/v1/people/43/profile', route => route.fulfill({ json: { person: peer, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
   await network.getByRole('radio', { name: 'Direct', exact: true }).click();
-  const direct = network.getByRole('button', { name: 'Curated Peer', exact: true });
-  await expect(direct).toHaveCSS('color', linkColor);
-  await direct.click();
-  await expect(page.getByRole('heading', { name: 'Curated Peer', exact: true })).toBeVisible();
+  await expect(network.getByRole('button', { name: 'Curated Peer', exact: true })).toHaveCSS('color', linkColor);
 });

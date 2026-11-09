@@ -141,8 +141,7 @@ it('loads and retries a searchable catalog with ordered Work and fields, kind an
     await fireEvent.input(search, { target: { value: '' } });
     await fireEvent.input(search, { target: { value: 'plant' } });
     expect(screen.getByText('No fields match')).toBeDefined();
-    await fireEvent.input(search, { target: { value: '' } });
-  } finally { releaseInitial(Response.json({ definitions: [] })); releaseTargets(Response.json({ targets: [] })); view.unmount(); }
+  } finally { view.unmount(); }
 });
 
 it('keeps a committed field creation resumable after closing its catalog dialog', async () => {
