@@ -33,54 +33,46 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
-  it('keeps retry available after a failed tracking save and reopening the menu', async () => {
+  it.each(['failed', 'in flight'] as const)('keeps a %s tracking save when the menu reopens', async state => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const onAnnounce = vi.fn();
     const writes: boolean[] = [];
+    let reads = 0;
     let tracked = false;
     renderActions(async input => {
       const request = input as Request;
       if (request.method === 'PUT') {
         writes.push((await request.json()).tracked);
-        if (writes.length === 1) return Response.json({}, { status: 503 });
+        if (state === 'failed' && writes.length === 1) return Response.json({}, { status: 503 });
+        if (state === 'in flight') await held;
         tracked = true;
-      }
+      } else reads++;
       return Response.json({ person_id: 7, tracked, tracked_at: tracked ? when : null });
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
-    await waitFor(() => expect(item.textContent?.trim()).toBe('Keep this profile updated'));
-    await fireEvent.click(item);
-    await waitFor(() => expect(item.textContent).toContain("Couldn't save"));
-    await fireEvent.keyDown(item, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    const reopened = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
-    await waitFor(() => expect(reopened.textContent).toContain("Couldn't save"));
-    await fireEvent.click(reopened);
-    await waitFor(() => expect(reopened.getAttribute('aria-checked')).toBe('true'));
-    expect(writes).toEqual([true, true]);
-  });
-
-  it('keeps an in-flight tracking save when the menu closes and reopens', async () => {
-    let release!: () => void;
-    const held = new Promise<void>(resolve => { release = resolve; });
-    const onAnnounce = vi.fn();
-    renderActions(async input => {
-      const request = input as Request;
-      if (request.method !== 'PUT') return Response.json({ person_id: 7, tracked: false, tracked_at: null });
-      await held;
-      return Response.json({ person_id: 7, tracked: true, tracked_at: when });
     }, undefined, undefined, onAnnounce);
     try {
       await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
       const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
       await waitFor(() => expect(item.textContent?.trim()).toBe('Keep this profile updated'));
       await fireEvent.click(item);
+      if (state === 'failed') await waitFor(() => expect(item.textContent).toContain("Couldn't save"));
       await fireEvent.keyDown(item, { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      const readsBeforeReopen = reads;
       await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-      expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).textContent).toContain('Turning on…');
-      release();
-      await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Keeping this profile updated.'));
+      const reopened = screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+      if (state === 'failed') {
+        expect(reopened.textContent).toContain("Couldn't save");
+        await fireEvent.click(reopened);
+        await waitFor(() => expect(reopened.getAttribute('aria-checked')).toBe('true'));
+        expect(writes).toEqual([true, true]);
+      } else {
+        expect(reopened.textContent).toContain('Turning on…');
+        await tick();
+        expect(reads).toBe(readsBeforeReopen);
+        release();
+        await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Keeping this profile updated.'));
+      }
     } finally { release(); }
   });
 

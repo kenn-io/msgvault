@@ -254,7 +254,7 @@ func TestRichResolutionPersistsAcrossRuns(t *testing.T) {
 
 	for _, user := range []User{
 		{ID: "@15550100005:local-whatsapp.localhost", PhoneNumber: "+15550100005", FullName: "Gil"},
-		{ID: "user-email", Email: "reader@example.org", FullName: "Reader"},
+		{ID: "@reader:beeper.local", Email: "reader@example.org", FullName: "Reader"},
 	} {
 		// A later run must find rich metadata by the account-scoped sender ID.
 		rich, err := newParticipantResolver(st, "account-a").resolveUser(t.Context(), &user)

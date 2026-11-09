@@ -185,7 +185,7 @@ describe('PersonMergeHistory', () => {
       await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
       await fireEvent.click(await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', true));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
       const rootShortcut = vi.fn();
       const unregister = appShortcuts.register('x', rootShortcut);
       try {

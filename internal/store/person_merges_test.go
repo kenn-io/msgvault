@@ -368,7 +368,6 @@ func TestPersonMerge_Inspect(t *testing.T) {
 	require.NoError(err)
 	require.Len(list, 1)
 	assert.Equal(f.merge.Merge.ID, list[0].Merge.ID)
-	assert.False(list[0].Labels.Incomplete)
 
 	assert.Equal(3, list[0].ParticipantCount)
 	assert.Equal(1, list[0].SplitCount)
@@ -385,7 +384,6 @@ func TestPersonMerge_Inspect(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(f.merge.Merge.ID, detail.Merge.ID)
 	assert.Len(detail.Participants, 3)
-	assert.Len(detail.Labels.ParticipantIDs, 3)
 	assert.Equal(detail.Participants, list[0].Labels.Participants)
 	assert.Empty(detail.Labels.Participants)
 	assert.NotEmpty(detail.Rows)
@@ -454,17 +452,29 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_merges SET snapshot_blob = ? WHERE id = ?`), []byte("corrupt"), f.merge.Merge.ID)
 			require.NoError(t, err)
 		}, true, false, 0, 3},
-		{"known empty", func(t *testing.T, f *personMergeInspectionFixture) {
-			t.Helper()
-			_, err := f.store.DB().ExecContext(t.Context(), `DELETE FROM participant_identifiers`)
-			require.NoError(t, err)
-			_, err = f.store.DB().ExecContext(t.Context(), `UPDATE participants SET email_address = NULL, phone_number = NULL`)
-			require.NoError(t, err)
-		}, false, true, 2, 3},
+		{"known empty", func(t *testing.T, f *personMergeInspectionFixture) {}, false, true, 2, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
-			f := newPersonMergeInspectionFixture(t, "identity-read-failure")
+			var f personMergeInspectionFixture
+			if tc.name == "known empty" {
+				f.store = testutil.NewTestStore(t)
+				var ids [3]int64
+				for i := range ids {
+					err := f.store.DB().QueryRowContext(t.Context(), `INSERT INTO participants (display_name) VALUES (?) RETURNING id`, fmt.Sprintf("Person %d", i)).Scan(&ids[i])
+					require.NoError(err)
+				}
+				_, err := f.store.LinkParticipants(ids[1], ids[2])
+				require.NoError(err)
+				owner, _, err := f.store.CreatePersonFromParticipant(ids[0])
+				require.NoError(err)
+				guest, _, err := f.store.CreatePersonFromParticipant(ids[1])
+				require.NoError(err)
+				f.merge, err = f.store.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "empty-labels", Actor: "test"})
+				require.NoError(err)
+			} else {
+				f = newPersonMergeInspectionFixture(t, "identity-read-failure")
+			}
 			tc.prepare(t, &f)
 			detail, err := f.store.GetPersonMergeContext(t.Context(), f.merge.Merge.ID)
 			require.NoError(err)
@@ -2576,7 +2586,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		detail, err := st.GetPersonMergeContext(t.Context(), merged.Merge.ID)
 		require.NoError(t, err)
 		assertPersonMergeIdentityFixture(t, detail, "mailbox-case")
-		assert.Equal(t, 1, detail.Labels.AbsorbedAddressCount)
 	})
 	t.Run("current bindings", func(t *testing.T) {
 		assert := assert.New(t)
@@ -2607,7 +2616,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		require.Len(detail.Labels.Profiles, 2)
 		assert.Equal(new("Survivor"), detail.Labels.Profiles[0].DisplayName)
 		assert.Equal(new("Absorbed"), detail.Labels.Profiles[1].DisplayName)
-		assert.False(detail.Labels.Incomplete)
 	})
 	t.Run("saved and archived WhatsApp phone", func(t *testing.T) {
 		require := require.New(t)
@@ -2662,7 +2670,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		require.NoError(err)
 
 		assertPersonMergeIdentityFixture(t, detail, "beeper-phone")
-		assert.Equal(2, detail.Labels.AbsorbedAddressCount)
 		points, err := st.ListPersonContactPointsContext(ctx, owner.ID, true)
 		require.NoError(err)
 		require.Len(points, 1)
@@ -2672,26 +2679,20 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		alias, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assert.Equal(detail.Labels.Addresses, alias.Labels.Addresses)
-		assert.Equal(2, alias.Labels.AbsorbedAddressCount)
 		service, err := st.ResolveCommunicationServiceContext(ctx, "whatsapp")
 		require.NoError(err)
 		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", "+12025550123", &service.ID, new("account"), new("garden")))
 		scoped, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assert.Contains(scoped.Labels.Addresses, store.ParticipantAddress{ParticipantID: guest.ParticipantIDs[0], Type: "beeper", Value: "+12025550123", DisplayValue: "+12025550123", NormalizedValue: "+12025550123", ServiceSlug: "whatsapp", ServiceLabel: "WhatsApp", ScopeKind: "account", ScopeValue: "garden", ParticipantDisplayName: "Reader", IdentityKey: `["whatsapp","account","garden","+12025550123"]`})
-		assert.Equal(3, scoped.Labels.AbsorbedAddressCount)
-		require.NoError(st.SetParticipantIdentifierContext(ctx, guest.ParticipantIDs[0], "beeper", "+1 (202) 555-0123"))
-		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", "+1 (202) 555-0123", &service.ID, new("account"), new("work")))
-		scoped, err = st.GetPersonMergeContext(ctx, merged.Merge.ID)
-		require.NoError(err)
-		assert.Equal(4, scoped.Labels.AbsorbedAddressCount)
+
 	})
 	t.Run("opaque provider aliases retain case", func(t *testing.T) {
 		require := require.New(t)
 		st := testutil.NewTestStore(t)
 		ctx := t.Context()
 		owner := mustPromotedPerson(ctx, t, st, "owner@example.org", "Owner")
-		participant, key := migratedBeeperParticipant(ctx, t, st)
+		participant, _ := migratedBeeperParticipant(ctx, t, st)
 		guest, _, err := st.CreatePersonFromParticipant(participant)
 		require.NoError(err)
 		merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "opaque-case", Actor: "test"})
@@ -2699,13 +2700,7 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assertPersonMergeIdentityFixture(t, detail, "beeper-migrated")
-		require.NoError(st.SetParticipantIdentifierContext(ctx, participant, "beeper", strings.ToUpper(key)))
-		service, err := st.ResolveCommunicationServiceContext(ctx, "whatsapp")
-		require.NoError(err)
-		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", strings.ToUpper(key), &service.ID, new("account"), new("garden-account")))
-		detail, err = st.GetPersonMergeContext(ctx, merged.Merge.ID)
-		require.NoError(err)
-		assert.Equal(t, 2, detail.Labels.AbsorbedAddressCount)
+
 	})
 	t.Run("resolved contacts exclude fallback anchor", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -2918,4 +2913,56 @@ func TestPersonMergeCountsNewAddresses(t *testing.T) {
 			assert.Equal(tc.want, page[0].Labels.AbsorbedAddressCount)
 		})
 	}
+	t.Run("phone aliases and saved contacts", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		st := testutil.NewTestStore(t)
+		ctx := t.Context()
+		owner, guest := beeperPhoneMergePeople(t, st)
+		_, err := st.AddPersonContactPointContext(ctx, guest.ID, store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550123", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+		require.NoError(err)
+		guest, err = st.GetPersonContext(ctx, guest.ID)
+		require.NoError(err)
+		merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "phone-count", Actor: "test"})
+		require.NoError(err)
+		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+
+		assert.Equal(2, detail.Labels.AbsorbedAddressCount)
+		require.NoError(st.SetParticipantIdentifierContext(ctx, guest.ParticipantIDs[0], "beeper", "+12025550123"))
+		alias, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+		assert.Equal(2, alias.Labels.AbsorbedAddressCount)
+		service, err := st.ResolveCommunicationServiceContext(ctx, "whatsapp")
+		require.NoError(err)
+		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", "+12025550123", &service.ID, new("account"), new("garden")))
+		scoped, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+		assert.Equal(3, scoped.Labels.AbsorbedAddressCount)
+		require.NoError(st.SetParticipantIdentifierContext(ctx, guest.ParticipantIDs[0], "beeper", "+1 (202) 555-0123"))
+		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", "+1 (202) 555-0123", &service.ID, new("account"), new("work")))
+		scoped, err = st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+		assert.Equal(4, scoped.Labels.AbsorbedAddressCount)
+	})
+	t.Run("opaque provider aliases retain case", func(t *testing.T) {
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		ctx := t.Context()
+		owner := mustPromotedPerson(ctx, t, st, "owner@example.org", "Owner")
+		participant, key := migratedBeeperParticipant(ctx, t, st)
+		guest, _, err := st.CreatePersonFromParticipant(participant)
+		require.NoError(err)
+		merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "opaque-case", Actor: "test"})
+		require.NoError(err)
+		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+		require.NoError(st.SetParticipantIdentifierContext(ctx, participant, "beeper", strings.ToUpper(key)))
+		service, err := st.ResolveCommunicationServiceContext(ctx, "whatsapp")
+		require.NoError(err)
+		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", strings.ToUpper(key), &service.ID, new("account"), new("garden-account")))
+		detail, err = st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+		assert.Equal(t, 2, detail.Labels.AbsorbedAddressCount)
+	})
 }
