@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organization, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 
-it('keeps the saved start date for retry after a failed conflict resolution', async () => {
+it('keeps Keep yours disabled for an end date before the saved start, then retries a failed save', async () => {
   const opening = employment(11, 1, { start_date: { year: 2022 } });
   const saved = employment(11, 2, { start_date: { year: 2028 } });
   let reads = 0;

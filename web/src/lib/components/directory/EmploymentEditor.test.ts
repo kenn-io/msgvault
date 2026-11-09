@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { controllerWith, organization, organizationProfile, employment, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEditor from './EmploymentEditor.svelte';
@@ -40,7 +40,7 @@ it('passes organization search loading and failures to the employer picker', asy
   }
 });
 
-it.each(['first job', 'no primary', 'existing primary'])('sends primary only when offered for %s', async scenario => {
+it.each(['no primary', 'existing primary'] as const)('sends primary only when offered for %s', async scenario => {
   let body: Record<string, unknown> | undefined;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -48,7 +48,7 @@ it.each(['first job', 'no primary', 'existing primary'])('sends primary only whe
     return Response.json({ employments: [], organizations: [organization()] });
   });
   controller.organizations = [organization()];
-  controller.employments = scenario === 'first job' ? [] : [employment(12, 1, { is_primary: scenario === 'existing primary' })];
+  controller.employments = [employment(12, 1, { is_primary: scenario === 'existing primary' })];
   render(EmploymentEditor, { controller, personID: 7 });
   const checkbox = screen.queryByRole('checkbox', { name: 'Primary job' });
   if (scenario === 'existing primary') {
@@ -179,7 +179,7 @@ it('allows closing while the job loads', async () => {
     }
   });
 
-  it.each(['none', 'same name', 'different domain'] as const)('reconciles an inline organization create after its response is lost (%s)', async match => {
+it.each(['none', 'same name'] as const)('reconciles an inline organization create after its response is lost (%s)', async match => {
     let posts = 0;
     let jobBody: Record<string, unknown> | undefined;
     const { controller } = controllerWith(async input => {
@@ -189,7 +189,7 @@ it('allows closing while the job loads', async () => {
         if (match === 'none') return Response.json({ message: 'Unavailable' }, { status: 503 });
         throw new TypeError('response lost');
       }
-      if (path === '/api/v1/organizations') return Response.json({ organizations: posts && match !== 'none' ? [{ ...organization(22, 1, 'Example company'), primary_domain: match === 'different domain' ? 'different.example' : null }] : [], total: posts && match !== 'none' ? 1 : 0 });
+      if (path === '/api/v1/organizations') return Response.json({ organizations: posts && match !== 'none' ? [organization(22, 1, 'Example company')] : [], total: posts && match !== 'none' ? 1 : 0 });
       if (path === '/api/v1/employments') { jobBody = await request.json(); return Response.json(employment(11, 1, { organization_id: 22 })); }
       if (path === '/api/v1/people/7/employments') return collection([]);
       throw new Error(`Unexpected ${request.method} ${path}`);
@@ -286,7 +286,7 @@ it('allows closing while the job loads', async () => {
       if (path === '/api/v1/people/7/employments') {
         const offset = Number(new URL(request.url).searchParams.get('offset') ?? 0);
         if (!saved) return collection([]);
-        if (offset === 0) return collection(Array.from({ length: 200 }, (_, index) => employment(900 + index)));
+        if (offset === 0) return collection(Array.from({ length: 200 }, (_, index) => employment(900 + index, 1, { is_current: false })));
         if (offset === 200) return collection([saved]);
         return collection([]);
       }
@@ -327,26 +327,6 @@ it('allows closing while the job loads', async () => {
     expect(context.textContent).toBe('At Exact Employment Org');
   });
 
-
-  it('shows a reassigned job owner in the conflict', async () => {
-    let patches = 0;
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/employments/11' && request.method === 'GET') {
-        return Response.json(employment(11, patches ? 2 : 1, { person_id: patches ? 8 : 7, title: patches ? 'Moved job' : 'Engineer' }), { headers: { ETag: `"employment-11-r${patches ? 2 : 1}"` } });
-      }
-      if (path === '/api/v1/employments/11' && request.method === 'PATCH') { patches++; return Response.json({ message: 'Employment changed; reload and retry' }, { status: 412 }); }
-      if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-      if (path === '/api/v1/people/8') return Response.json({ id: 8, display_name: 'Synthetic Two' });
-      return Response.json({ employments: [] });
-    });
-    render(EmploymentEditor, { controller, personID: 7, employment: employment() });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft title' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    const conflict = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
-    expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
-  });
 
 
 

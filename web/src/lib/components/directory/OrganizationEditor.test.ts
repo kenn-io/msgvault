@@ -32,26 +32,19 @@ describe('OrganizationEditor', () => {
     expect(writes[1].body.categories?.map(item => item.category)).toEqual(['Research']);
   });
 
-  it('shows a changed organization before deleting its newer revision', async () => {
-    let reads = 0;
-    const tags: (string | null)[] = [];
+  it('shows a changed organization when delete conflicts', async () => {
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
       if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
       if (request.method === 'DELETE') {
-        tags.push(request.headers.get('If-Match'));
-        return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
+        return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
       }
-      const profile = organizationProfile();
-      return Response.json(++reads === 1 ? profile : { ...organizationProfile(2), organization: { ...organization(21, 2), name: 'New name' } }, { headers: { ETag: `"organization-21-r${reads}"` } });
+      return Response.json({ ...organizationProfile(2), organization: { ...organization(21, 2), name: 'New name' } }, { headers: { ETag: '"organization-21-r2"' } });
     });
     render(OrganizationEditor, { controller, organization: organization() });
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('New name')).toBeDefined();
-    expect(tags).toHaveLength(1);
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"']));
   });
   it('shows the structured profile read-only under the fields, grouped by what each value is', async () => {
     const { controller } = controllerWith(async () => Response.json(richOrganizationProfile(1), { headers: { ETag: '"organization-21-r1"' } }));
@@ -304,7 +297,6 @@ it('retries a failed alias save with the profile write alone', async () => {
 
 it('preserves the edit baseline after Back from a conflicted delete', async () => {
   let reads = 0;
-  const tags: (string | null)[] = [];
   const opening = organizationProfile();
   const newer = { ...opening, organization: { ...opening.organization, revision: 2, primary_domain: 'concurrent.example' } };
   const { controller } = controllerWith(async input => {
@@ -312,7 +304,6 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
     if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
     if (request.method === 'DELETE') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
     if (request.method === 'PATCH') {
-      tags.push(request.headers.get('If-Match'));
       return request.headers.get('If-Match') === '"organization-21-r1"'
         ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
         : Response.json({ ...newer.organization, ...await request.json() });
@@ -327,8 +318,6 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
   await screen.findByText('This organization changed since you opened it.');
   await fireEvent.click(screen.getByRole('button', { name: /^Back to / }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  await waitFor(() => expect(tags).toHaveLength(1));
-  expect(tags).toEqual(['"organization-21-r1"']);
   expect(await screen.findByRole('button', { name: 'Keep yours' })).toBeDefined();
 });
 

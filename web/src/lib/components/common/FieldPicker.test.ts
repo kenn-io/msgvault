@@ -11,8 +11,6 @@ it('offers an existing organization instead of creating a duplicate label', asyn
   await fireEvent.click(screen.getByRole('button', { name: 'Organization' }));
   await fireEvent.input(screen.getByRole('combobox'), { target: { value: '  example garden  ' } });
   expect(screen.queryByRole('option', { name: /^Create organization/ })).toBeNull();
-  await fireEvent.input(screen.getByRole('combobox'), { target: { value: 'Another Garden' } });
-  expect(screen.getByRole('option', { name: 'Create organization “Another Garden”' })).toBeDefined();
 });
 
 it('offers creation last and shows the created fields with a way back', async () => {

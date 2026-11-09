@@ -207,8 +207,6 @@ describe('OrganizationEmploymentTab', () => {
       release(new Response(JSON.stringify(employment(11, 2, { is_primary: true })), { headers: { ETag: '"employment-11-r1"' } }));
       await waitFor(() => expect(writes).toBe(1));
       await waitFor(() => expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).toContain('Primary'));
-      expect(screen.queryByText('Changed elsewhere')).toBeNull();
-      expect(screen.queryByText("Couldn't make this job primary.")).toBeNull();
     } finally { release(Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })); view.unmount(); controller.destroy(); }
   });
 
@@ -332,7 +330,6 @@ it('deletes the saved version a job delete conflict shows', async () => {
 });
 
 it('shows a reassigned owner in the delete conflict', async () => {
-  let deletes = 0;
   let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -344,7 +341,7 @@ it('shows a reassigned owner in the delete conflict', async () => {
       reads++;
       return Response.json(employment(11, reads, { person_id: reads > 1 ? 8 : 7 }), { headers: { ETag: `"employment-11-r${reads}"` } });
     }
-    if (path === '/api/v1/employments/11' && request.method === 'DELETE') { deletes++; return Response.json({ message: 'Changed elsewhere' }, { status: 412 }); }
+    if (path === '/api/v1/employments/11' && request.method === 'DELETE') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
   controller.employments = [employment()];

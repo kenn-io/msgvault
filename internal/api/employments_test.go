@@ -120,26 +120,6 @@ func TestPersonEmploymentsProjectionIsAbsentWithoutAPrimaryCurrentRow(t *testing
 	assert.Nil(listed.Projection, "no primary current employment means no projection")
 }
 
-func TestEmploymentPrimaryReplacementRequiresUserSource(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	srv, st := newOrganizationTestServerWithStore(t)
-	person := mustAPIPerson(t, st, "primary-source@example.test", "primary-source")
-	first := mustAPIOrganization(t, st, "First Org")
-	second := mustAPIOrganization(t, st, "Second Org")
-
-	primaryResponse := organizationRequest(t, srv, http.MethodPost, employmentsPath,
-		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"source":"user"}`, person.ID, first.ID), "")
-	require.Equal(http.StatusCreated, primaryResponse.Code)
-
-	createExtraction := organizationRequest(t, srv, http.MethodPost, employmentsPath,
-		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"extraction"}`, person.ID, second.ID), "")
-	assert.Equal(http.StatusConflict, createExtraction.Code)
-
-	assert.Contains(createExtraction.Body.String(), "employment_primary_conflict")
-}
-
 func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -201,6 +181,13 @@ func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {
 		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"title":"Engineer","source":"user"}`,
 			person.ID, organization.ID), "")
 	require.Equal(http.StatusCreated, firstResponse.Code)
+
+	otherOrganization := mustAPIOrganization(t, st, "Other Org")
+	primaryConflict := organizationRequest(t, srv, http.MethodPost, employmentsPath,
+		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"extraction"}`,
+			person.ID, otherOrganization.ID), "")
+	require.Equal(http.StatusConflict, primaryConflict.Code)
+	assert.Contains(primaryConflict.Body.String(), "employment_primary_conflict")
 
 	duplicate := organizationRequest(t, srv, http.MethodPost, employmentsPath,
 		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"title":"engineer","source":"user"}`,
