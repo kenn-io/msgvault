@@ -639,9 +639,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
-					return runConfiguredMatrixSync(ctx, s)
-				})
+				return runConfiguredMatrixSync(ctx, s, matrixMediaMutation(attachmentMaint))
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule matrix sync", "error", err)
@@ -2803,6 +2801,16 @@ func cliRunSubprocessArgs(req api.CLIRunRequest) []string {
 		at = len(req.Args)
 	}
 	return slices.Insert(slices.Clone(req.Args), at, "--"+addAccountGrantDecidedFlag+"=true")
+}
+
+// Lease each media write so downloads can proceed while packing runs.
+func matrixMediaMutation(maintenance *attachmentMaintenance) func(context.Context, func() error) error {
+	if maintenance == nil {
+		return nil
+	}
+	return func(ctx context.Context, write func() error) error {
+		return runScheduledSource(ctx, maintenance, true, func(context.Context) error { return write() })
+	}
 }
 
 func attachmentRemovalCommand(args []string) bool {
