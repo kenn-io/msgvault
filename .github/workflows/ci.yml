@@ -1210,6 +1210,8 @@ jobs:
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
+      - *stable-mtimes
+
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
