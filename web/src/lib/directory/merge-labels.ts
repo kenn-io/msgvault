@@ -111,7 +111,7 @@ function participantAddress(address: ParticipantAddress, workspaces: Map<string,
 }
 
 /** Exact workspace keys stay in identities; numbers name them within the complete merge input. */
-export function workspaceLabels(addresses: AddressIdentity[], known = new Map<string, string>()): Map<string, string> {
+export function workspaceLabels(addresses: Omit<AddressIdentity, 'identity_key'>[], known = new Map<string, string>()): Map<string, string> {
   const labels = new Map(known);
   const scopes = addresses.filter(address => address.service_slug === 'slack' && address.scope_kind === 'workspace' && address.scope_value).map(address => address.scope_value!);
   for (const scope of [...new Set(scopes)].sort()) {

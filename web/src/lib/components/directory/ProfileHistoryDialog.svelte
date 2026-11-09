@@ -7,7 +7,7 @@
   import { sourceTypeLabel } from '../../sources/labels';
   import { valueProvenance } from './history-format';
   import { formatDateTime, formatShortDate } from '../../util/format';
-  import type { MergedInAddress } from '../../directory/merge-labels';
+  import { workspaceLabels, type MergedInAddress } from '../../directory/merge-labels';
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
@@ -77,14 +77,16 @@
 
   const sections = $derived.by(() => {
     if (!history) return [];
+    const workspaces = workspaceLabels([...(history.contact_points ?? []), ...(history.observations ?? [])]);
+    const context = (point: Item) => providerContext(point, workspaces);
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
-      { title: 'Email and phone', rows: rows(history.contact_points ?? [], null, providerContext) },
+      { title: 'Email and phone', rows: rows(history.contact_points ?? [], null, context) },
       { title: 'Addresses', rows: rows(history.addresses ?? []) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },
       { title: 'Categories', rows: rows(history.categories ?? []) },
       { title: 'Media', rows: rows(history.media ?? []) },
-      { title: 'Seen in services', rows: rows(history.observations ?? [], null, providerContext) },
+      { title: 'Seen in services', rows: rows(history.observations ?? [], null, context) },
     ]
       // Email and phone stays for the addresses merges brought in, which join it when it renders.
       .filter((section) => section.rows.length > 0 || section.title === 'Email and phone')
@@ -99,12 +101,10 @@
     return { id: item.id, value: item.value, detail: item.context, provenance: valueProvenance(item.envelope, [['Seen', item.observedAt]]) };
   }
 
-  /**
-   * Where an address lives, as the person would say it: "Slack · garden-club", never "slack · workspace / garden-club".
-   * A contact point names its service as registered; an observation, which carries only the slug, reads it as a type.
-   */
-  function providerContext(point: { service_slug?: string; service_label?: string; scope_kind?: string; scope_value?: string }): string | null {
-    const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), point.scope_value ?? (point.scope_kind ? sentenceCase(point.scope_kind) : undefined)].filter(Boolean);
+  function providerContext(point: Item, workspaces: Map<string, string>): string | null {
+    const scope = point.service_slug === 'slack' && point.scope_kind === 'workspace' && point.scope_value
+      ? workspaces.get(point.scope_value) : point.scope_value ?? (point.scope_kind ? sentenceCase(point.scope_kind) : undefined);
+    const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), scope].filter(Boolean);
     return details.length ? details.join(' · ') : null;
   }
   function messageFor(value: unknown, status: number): string {

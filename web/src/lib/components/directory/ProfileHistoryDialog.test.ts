@@ -83,8 +83,8 @@ describe('ProfileHistoryDialog', () => {
           { person_id: 7, name_kind: 'formatted', original_value: 'Current Name', is_derived: false, envelope: { id: 2, ordinal: 0, source: 'user', active_from: when, created_at: when, updated_at: when, vcard: {} } },
           { person_id: 7, name_kind: 'formatted', original_value: 'Previous Name', is_derived: false, envelope: { id: 1, ordinal: 0, source: 'carddav_import', source_ref: 'synthetic-card', active_from: when, active_until: '2026-08-02T00:00:00Z', created_at: when, updated_at: when, superseded_at: '2026-08-02T00:00:00Z', vcard: {} } }
         ],
-        contact_points: [...['workspace-a', 'workspace-b'].map((scope, index) => ({
-          person_id: 7, address_kind: 'username', original_value: 'alice', normalized_value: 'alice', normalization: 'casefold', normalization_version: 1,
+        contact_points: [...['T_ALPHA', 'T_BETA'].map((scope, index) => ({
+          person_id: 7, address_kind: 'username', original_value: 'alice', identity_key: identityKeyFixture('slack', 'alice', 'workspace', scope), normalized_value: 'alice', normalization: 'casefold', normalization_version: 1,
           service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: scope,
           envelope: { id: 20 + index, ordinal: index, source: 'user', created_at: when, updated_at: when, superseded_at: '2026-08-02T00:00:00Z', vcard: {} }
         })), { person_id: 7, address_kind: 'email', original_value: 'current@example.com', normalized_value: 'current@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 30 } },
@@ -96,7 +96,7 @@ describe('ProfileHistoryDialog', () => {
           envelope: { id: 8, ordinal: 0, source: 'user', active_until: '2026-07-31T00:00:00Z', created_at: when, updated_at: when, vcard: {} }
         }],
         media: [{ person_id: 7, media_kind: 'photo', has_data: false, original_value: 'Current photo', envelope: { ...currentEnvelope, id: 34 } }],
-        observations: [{
+        observations: [{ participant_id: 71, address_kind: 'username', original_value: 'observer', normalized_value: 'observer', normalization: 'none', normalization_version: 1, service_slug: 'slack', scope_kind: 'workspace', scope_value: 'T_BETA', source_id: 12, observed_at: when, envelope: { ...currentEnvelope, id: 36, source: 'archive_observation' } }, {
           participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
           normalized_value: 'observed@example.test', normalization: 'email', normalization_version: 1,
           service_slug: 'email', source_id: 12, observed_at: '2026-07-31T12:00:00Z',
@@ -126,8 +126,10 @@ describe('ProfileHistoryDialog', () => {
       const row = screen.getByText(value).closest('.detail-row')!;
       expect(row.closest('details')).not.toBeNull();
     }
-    expect(screen.getByText(/^Slack · workspace-a · You · /)).toBeDefined();
-    expect(screen.getByText(/^Slack · workspace-b · You · /)).toBeDefined();
+    expect(screen.getByText(/^Slack · workspace 1 · You · /)).toBeDefined();
+    expect(screen.getByText(/^Slack · workspace 2 · You · /)).toBeDefined();
+    expect(screen.getByText('observer').closest('.detail-row')?.textContent).toContain('Slack · workspace 2');
+    expect(document.body.textContent).not.toMatch(/T_ALPHA|T_BETA/);
     // A registered service reads by its catalog name, not its slug.
     expect(screen.getByText('Desk 4455').closest('.detail-row')?.textContent).toMatch(/Team hotline · You · /);
     expect(document.body.textContent).not.toMatch(/Service:|Scope:|Observed:/);

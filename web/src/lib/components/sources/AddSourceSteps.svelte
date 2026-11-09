@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SegmentedControl, TextInput } from '@kenn-io/kit-ui';
-  import { addSourceCommand, type CommandSourceKind } from '../../sources/add-source';
+  import { addSourceCommand, imapServer, type CommandSourceKind } from '../../sources/add-source';
   import CommandLine from './CommandLine.svelte';
 
   let { kind }: { kind: CommandSourceKind } = $props();
@@ -15,7 +15,10 @@
   {#each kind.fields as field, index (field.id)}
     <label>{field.label}<TextInput block bind:value={() => values[field.id] ?? '', value => (values[field.id] = value)} placeholder={field.placeholder} autofocus={index === 0} /></label>
   {/each}
-  {#if kind.id === 'imap'}<p>The command asks for your password.</p>{/if}
+  {#if kind.id === 'imap'}
+    {#if values.host?.trim() && !imapServer(values.host)}<p>Enter a port from 1 to 65535.</p>{/if}
+    <p>The command asks for your password.</p>
+  {/if}
   {#if posix && cmd}
     <div class="terminal">
       {#if posix !== cmd}<SegmentedControl ariaLabel="Platform" value={shell} options={[{ value: 'posix', label: 'macOS or Linux' }, { value: 'cmd', label: 'Windows' }]} onchange={(value) => shell = value as typeof shell} />{/if}

@@ -48,7 +48,23 @@ function arg(value: string, shell: 'posix' | 'cmd', optionValue: boolean): strin
   return separator + (/^[A-Za-z0-9@._+:/-]+$/.test(value) ? value : shellQuote(value, shell));
 }
 
+export function imapServer(value: string): { host: string; port?: string } | undefined {
+  const server = value.trim();
+  if (!server) return undefined;
+  const match = /^(\[[^\]]+\]|[^:]+):([^:]*)$/.exec(server);
+  if (!match) return { host: server };
+  const port = match[2]!;
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) return undefined;
+  return { host: match[1]!, port: String(Number(port)) };
+}
+
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
   if (kind.fields.some(field => !values[field.id]?.trim())) return undefined;
+  if (kind.id === 'imap') {
+    const server = imapServer(values.host ?? '');
+    if (!server) return undefined;
+    const port = server.port ? ` --port ${server.port}` : '';
+    return `msgvault add-imap --host ${arg(server.host, shell, true)}${port} --username ${arg(values.username!.trim(), shell, true)}`;
+  }
   return kind.template.replace(/(\S+) \{(\w+)\}/g, (_, before: string, id: string) => `${before} ${arg(values[id]!.trim(), shell, before.startsWith('--'))}`);
 }

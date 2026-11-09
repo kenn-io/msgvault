@@ -17,6 +17,15 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(imap, { host: 'imap.example.com' }, 'posix')).toBeUndefined();
   });
 
+  it('passes an IMAP server port separately from its host', () => {
+    expect(addSourceCommand(imap, { host: 'imap.example.com:993', username: 'reader' }, 'posix')).toBe('msgvault add-imap --host imap.example.com --port 993 --username reader');
+    expect(addSourceCommand(imap, { host: '[2001:db8::1]:1143', username: 'reader' }, 'cmd')).toBe('msgvault add-imap --host "[2001:db8::1]" --port 1143 --username reader');
+    expect(addSourceCommand(imap, { host: '2001:db8::1', username: 'reader' }, 'posix')).toBe('msgvault add-imap --host 2001:db8::1 --username reader');
+    expect(addSourceCommand(imap, { host: 'imap.example.com:0993', username: 'reader' }, 'posix')).toBe('msgvault add-imap --host imap.example.com --port 993 --username reader');
+    expect(addSourceCommand(imap, { host: 'imap.example.com:70000', username: 'reader' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: 'imap.example.com:mail', username: 'reader' }, 'posix')).toBeUndefined();
+  });
+
   it('quotes spaces and shell characters for each platform', () => {
     expect(addSourceCommand(imap, { host: 'imap.example.org', username: 'A B' }, 'posix')).toBe("msgvault add-imap --host imap.example.org --username 'A B'");
     expect(addSourceCommand(imap, { host: 'imap.example.org', username: 'A B' }, 'cmd')).toBe('msgvault add-imap --host imap.example.org --username "A B"');
