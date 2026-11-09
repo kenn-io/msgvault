@@ -248,8 +248,8 @@ func (s *Store) setPrimaryEmploymentOnce(ctx context.Context, id, expectedRevisi
 		if !current.IsCurrent {
 			return fmt.Errorf("%w: a historical employment cannot be primary", ErrEmploymentInvalid)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND id <> ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, current.PersonID, id); err != nil {
-			return fmt.Errorf("demote primary employment: %w", err)
+		if err := s.demotePrimaryEmploymentsTx(ctx, tx, current.PersonID, id); err != nil {
+			return err
 		}
 		employment, err = scanEmployment(tx.QueryRowContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE id = ? AND revision = ? RETURNING %s`, s.dialect.Now(), employmentColumns), true, id, expectedRevision))
 		if errors.Is(err, sql.ErrNoRows) {
@@ -472,8 +472,8 @@ func (s *Store) addEmploymentTx(
 	current := employmentCurrent(input)
 	// A job the person adds as primary replaces their primary current job.
 	if input.Source == ProvenanceUser && employmentRequestsPrimary(input) && current {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, input.PersonID); err != nil {
-			return nil, fmt.Errorf("demote primary employment: %w", err)
+		if err := s.demotePrimaryEmploymentsTx(ctx, tx, input.PersonID, 0); err != nil {
+			return nil, err
 		}
 	}
 	primary, err := s.resolveEmploymentPrimaryTx(ctx, tx, input, current, 0)
@@ -732,6 +732,14 @@ func (s *Store) resolveEmploymentPrimaryTx(ctx context.Context, tx *loggedTx, in
 		return false, ErrEmploymentPrimaryConflict
 	}
 	return true, nil
+}
+
+// demotePrimaryEmploymentsTx clears the person's primary flag on every job but exceptID.
+func (s *Store) demotePrimaryEmploymentsTx(ctx context.Context, tx *loggedTx, personID, exceptID int64) error {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE employments SET is_primary = ?, revision = revision + 1, updated_at = %s WHERE person_id = ? AND id <> ? AND %s`, s.dialect.Now(), s.dialect.BoolTrueExpr("is_primary")), false, personID, exceptID); err != nil {
+		return fmt.Errorf("demote primary employment: %w", err)
+	}
+	return nil
 }
 
 func employmentRequestsPrimary(input EmploymentInput) bool {

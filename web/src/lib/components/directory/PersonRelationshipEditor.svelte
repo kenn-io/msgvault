@@ -25,6 +25,7 @@
   import InlineNotice from '../common/InlineNotice.svelte';
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import { sourcePhrase } from './history-format';
+  import { sentenceCase } from '../../explore/labels';
   import ConflictNotice from '../common/ConflictNotice.svelte';
   import { connectionFacts } from '../../directory/conflict';
   import { WriteAttempt } from '../../directory/write-attempt.svelte';
@@ -70,7 +71,9 @@
     initialRelationship.start_date?.year ? `Since ${initialRelationship.start_date.year}` : '',
     sourcePhrase(initialRelationship.source),
   ].filter(Boolean).join(' · ').replace(/^./, first => first.toUpperCase()) : '');
-  const editPhrase = $derived(initialRelationship ? relationshipPhrase(initialRelationship.type_slug, initialView?.direction === 'incoming' ? 'incoming' : 'outgoing', initialView?.direction === 'incoming' ? initialRelationship.reverse_label : initialRelationship.forward_label) : '');
+  const editLabel = $derived(initialView?.direction === 'incoming' ? initialRelationship?.reverse_label ?? '' : initialRelationship?.forward_label ?? '');
+  // A seeded type reads as a sentence; a custom or renamed label can't be put in one, so it stands apart, as in the row.
+  const editPhrase = $derived(initialRelationship ? relationshipPhrase(initialRelationship.type_slug, initialView?.direction === 'incoming' ? 'incoming' : 'outgoing', editLabel) : '');
   let startDate = $state(partialDate(initialView?.relationship.start_date));
   let endDate = $state(partialDate(initialView?.relationship.end_date));
   let datesInvalid = $state(false);
@@ -78,7 +81,6 @@
   let notes = $state(initialView?.relationship.notes ?? '');
   const attempt = new WriteAttempt<Prepared<PersonRelationship>>();
   const loading = $derived(!!initialView && !opened && !attempt.details);
-  let committed = $state(false);
   let uncertainCreate = $state<CreatePersonRelationshipRequest>();
 
   let searchAbort: AbortController | undefined;
@@ -163,7 +165,6 @@
   async function submit(): Promise<void> {
     if (
       attempt.busy || loading || (!!initialView && !opened) ||
-      committed ||
       datesInvalid || !!endDateError ||
       !relationshipTypeSlug ||
       (!initialRelationship && (counterpartID === null || counterpartID === personID))
@@ -175,12 +176,7 @@
       ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
       : controller.createRelationship(create!));
     if (!ok && create && controller.createBlocked.relationships) uncertainCreate = create;
-    if (ok) {
-      if (controller.errors.relationships) {
-        committed = true;
-        attempt.details = controller.errors.relationships;
-      } else onDone();
-    }
+    if (ok) onDone();
   }
 
   function createBody(otherID: number): CreatePersonRelationshipRequest {
@@ -198,20 +194,15 @@
     return { ...(endDate.trim() ? { end_date: endDate.trim() } : {}), notes: notes.trim() || null };
   }
   const edited = $derived(!!initialRelationship && ((!!endDate.trim() && endDate.trim() !== partialDate(initialRelationship.end_date)) || notes.trim() !== (initialRelationship.notes?.trim() ?? '')));
-  async function refreshAfterUncertainOutcome(): Promise<void> {
+  // The list refresh unblocks Add before the network refresh ends, so the whole check runs under busy.
+  const refreshAfterUncertainOutcome = () => attempt.hold(async () => {
     await controller.refreshRelationships();
-    if (!controller.createBlocked.relationships && !controller.errors.relationships) {
-      if (committed) onDone();
-      else if (uncertainCreate && controller.relationships.some(view => recoveredCreateMatches(view, uncertainCreate!))) {
-        uncertainCreate = undefined;
-        onDone();
-      }
-      else {
-        uncertainCreate = undefined;
-        attempt.details = '';
-      }
-    }
-  }
+    if (controller.createBlocked.relationships || controller.errors.relationships) return;
+    const saved = !!uncertainCreate && controller.relationships.some(view => recoveredCreateMatches(view, uncertainCreate!));
+    uncertainCreate = undefined;
+    attempt.details = '';
+    if (saved) onDone();
+  });
   function recoveredCreateMatches(view: PersonRelationshipView, draft: CreatePersonRelationshipRequest): boolean {
     const saved = view.relationship;
     const typeSlug = draft.relationship_type_slug;
@@ -241,14 +232,14 @@
 <Dialog title={initialRelationship ? 'Edit connection' : 'Add connection'} onclose={requestClose}
   primaryLabel={attempt.conflict ? 'Keep yours' : initialRelationship ? 'Save' : 'Add connection'} onprimary={() => void submit()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}
-  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || committed || !relationshipTypeSlug || datesInvalid || !!endDateError || (!!initialRelationship && !attempt.conflict && !edited) || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || !relationshipTypeSlug || datesInvalid || !!endDateError || (!!initialRelationship && !attempt.conflict && !edited) || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
   {#if loading}<p role="status">Loading connection…</p>{:else if !initialView || opened}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="editor" aria-busy={attempt.busy}>
       <section>
         {#if initialRelationship}
           <div class="connection-row">
-            <p><strong>{personName}</strong> {editPhrase} <strong>{initialView?.counterpart_display_name?.trim() || 'Unnamed person'}</strong></p>
+            <p><strong>{personName}</strong>{editPhrase === editLabel ? ` · ${sentenceCase(editLabel)} · ` : ` ${editPhrase} `}<strong>{initialView?.counterpart_display_name?.trim() || 'Unnamed person'}</strong></p>
             <span class="muted">{connectionSince}</span>
           </div>
         {:else}
@@ -292,9 +283,9 @@
       <InlineNotice message="Couldn't load this connection." details={attempt.details} actionLabel="Retry" onaction={() => void prepare()} />
     {:else if attempt.conflict}
       <ConflictNotice noun="connection" saved={attempt.conflict.data} record={connectionFacts(attempt.conflict.data)} message={attempt.details} />
-    {:else if attempt.details || controller.createBlocked.relationships || committed}
-      <InlineNotice message={committed ? "Connection saved. Couldn't refresh connections." : controller.createBlocked.relationships ? "Couldn't confirm the connection was saved." : "Couldn't save this connection."} details={attempt.details || undefined}
-        actionLabel={controller.createBlocked.relationships || committed ? 'Check again' : 'Retry'} onaction={() => { if (controller.createBlocked.relationships || committed) void refreshAfterUncertainOutcome(); else void submit(); }} />
+    {:else if attempt.details || controller.createBlocked.relationships}
+      <InlineNotice message={controller.createBlocked.relationships ? "Couldn't confirm the connection was saved." : "Couldn't save this connection."} details={attempt.details || undefined}
+        actionLabel={controller.createBlocked.relationships ? 'Check again' : 'Retry'} onaction={() => { if (controller.createBlocked.relationships) void refreshAfterUncertainOutcome(); else void submit(); }} />
     {/if}
   {/snippet}
 </Dialog>

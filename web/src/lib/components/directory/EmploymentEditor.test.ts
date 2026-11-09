@@ -266,6 +266,34 @@ it('allows closing while the job loads', async () => {
     expect(posts).toBe(1);
   });
 
+  it('keeps Add job and Close locked until Check again finishes looking for the lost job', async () => {
+    let posts = 0, listReads = 0;
+    let finishLookup: (response: Response) => void = () => undefined;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      if (path === '/api/v1/employments') { posts++; throw new TypeError('response lost'); }
+      if (path === '/api/v1/people/7/employments') return ++listReads === 1 ? collection([]) : new Promise<Response>(resolve => { finishLookup = resolve; });
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    const onClose = vi.fn();
+    render(EmploymentEditor, { controller, personID: 7, onClose });
+    await screen.findByRole('button', { name: /^Organization(:|$)/ });
+    await openTypeahead('Organization');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(listReads).toBe(2));
+    expect(controller.createBlocked.employments).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(posts).toBe(1);
+    expect(onClose).not.toHaveBeenCalled();
+    finishLookup(collection([]));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
+  });
+
   it.each([
     { inputDate: '2019', savedDate: { year: 2019 } },
     { inputDate: '20240315', savedDate: { year: 2024, month: 3, day: 15 } },

@@ -138,7 +138,8 @@
     if (ok) onDone();
   }
 
-  async function refreshAfterUnknown(): Promise<void> {
+  // The refresh unblocks Add before the lookup ends, so the whole check runs under busy.
+  const refreshAfterUnknown = () => attempt.hold(async () => {
     await controller.refreshEmployments();
     if (controller.createBlocked.employments) return;
     try {
@@ -151,7 +152,7 @@
     } catch {
       controller.createBlocked.employments = true;
     }
-  }
+  });
 
   async function refreshOrganizationAfterUnknown(): Promise<void> {
     await controller.refreshOrganizations(organizationName.trim());

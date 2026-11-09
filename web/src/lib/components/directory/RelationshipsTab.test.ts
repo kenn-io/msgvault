@@ -133,7 +133,7 @@ describe('RelationshipsTab', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('shows saved recovery once in the editor and restores it to the page on close', async () => {
+  it('closes a saved connection whose list refresh failed and shows the failure on the page', async () => {
     let saved = false;
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input);
@@ -149,11 +149,7 @@ describe('RelationshipsTab', () => {
     await openTypeahead('Connection type');
     await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
-    expect(screen.getByRole('alert').textContent?.trim()).toContain("Connection saved. Couldn't refresh connections.");
-    expect(screen.getAllByRole('button', { name: 'Check again' })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.getByRole('alert').textContent).toContain("Couldn't load connections.");
   });
 
@@ -290,14 +286,18 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('button', { name: 'Person: Synthetic Peer' })).toBeDefined();
   });
 
-  it.each(['incoming', 'outgoing'] as const)('reads the existing %s connection as a sentence', async direction => {
-    const { client, controller } = controllerWith(async () => Response.json(relationship(), { headers: { ETag: '"person-relationship-41-r1"' } }));
+  it.each([
+    ['incoming', {}, 'Synthetic Subject · Is mentored by · Synthetic Peer'],
+    ['outgoing', {}, 'Synthetic Subject · Mentors · Synthetic Peer'],
+    ['outgoing', { type_slug: 'friend', forward_label: 'friend', reverse_label: 'friend' }, 'Synthetic Subject is a friend of Synthetic Peer'],
+  ] as const)('names the existing %s connection %o as %s', async (direction, type, line) => {
+    const { client, controller } = controllerWith(async () => Response.json(relationship(41, 1, type), { headers: { ETag: '"person-relationship-41-r1"' } }));
     controller.relationshipTypes = [relationshipType()];
     controller.relationships = [view(41, direction, direction === 'incoming' ? 'is mentored by' : 'mentors', 'Synthetic Peer')];
     render(RelationshipsTab, { client, controller, personID: 7, personName: 'Synthetic Subject' });
     await rowAction('Edit…');
     await screen.findByRole('textbox', { name: 'Notes' });
-    expect(screen.getByRole('dialog').textContent).toContain(`Synthetic Subject ${direction === 'incoming' ? 'is mentored by' : 'mentors'} Synthetic Peer`);
+    expect(screen.getByRole('dialog').textContent).toContain(line);
   });
 
   it('separates suggestions from reviewed imports', async () => {
@@ -821,6 +821,39 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('keeps Add connection and Close locked until Check again finishes refreshing', async () => {
+    let posts = 0, networkReads = 0;
+    let finishNetwork: (response: Response) => void = () => undefined;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+      if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; throw new TypeError('response lost'); }
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      if (path === '/api/v1/people/7/network') return ++networkReads === 1 ? Response.json({ nodes: [], edges: [] }) : new Promise<Response>(resolve => { finishNetwork = resolve; });
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    controller.relationshipTypes = [relationshipType()];
+    await controller.loadNetwork();
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await openTypeahead('Person');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add connection' });
+    await fireEvent.click(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await fireEvent.click(await within(dialog).findByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(networkReads).toBe(2));
+    await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
+    await fireEvent.click(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(posts).toBe(1);
+    expect(screen.getByRole('dialog', { name: 'Add connection' })).toBeDefined();
+    finishNetwork(Response.json({ nodes: [], edges: [] }));
+    await waitFor(() => expect(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', false));
+  });
+
   it.each([6, 8])('matches a recovered ended connection with canonical records for counterpart %i', async counterpartID => {
     let posts = 0;
     const saved = relationship(41, 1, {
@@ -1201,7 +1234,7 @@ describe('RelationshipsTab', () => {
   });
 });
 
-it.each(['failed', 'committed'])('shows the latest outcome after a %s connection retry', async outcome => {
+it.each(['failed', 'saved'])('shows the latest outcome after a %s connection retry', async outcome => {
   let writes = 0;
   const opening = relationship(41, 1, { notes: 'Original note' });
   const { client, controller } = controllerWith(async input => {
@@ -1221,9 +1254,13 @@ it.each(['failed', 'committed'])('shows the latest outcome after a %s connection
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft note' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  await screen.findByText(outcome === 'failed' ? "Couldn't save this connection." : "Connection saved. Couldn't refresh connections.");
+  if (outcome === 'saved') {
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    return;
+  }
+  await screen.findByText("Couldn't save this connection.");
   expect(screen.queryByRole('button', { name: 'Keep yours' })).toBeNull();
-  if (outcome === 'failed') expect(screen.getByText('Disk full')).toBeDefined();
+  expect(screen.getByText('Disk full')).toBeDefined();
 });
 
 it.each(['cancel', 'delete'] as const)('refreshes a connection type conflict before %s', async action => {
