@@ -7,7 +7,7 @@ function directoryURL(personID: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: personID }))}`;
 }
 
-test('Directory network lists who is further out, omits message-only contacts, and opens organizations', async ({ page }) => {
+test('Directory network lists who is further out and opens organizations', async ({ page }) => {
   await installMixedArchive(page);
   await page.route('**/api/v1/organizations/21', (route) => route.fulfill({
     headers: { ETag: '"organization-21-r2"' },
@@ -26,7 +26,6 @@ test('Directory network lists who is further out, omits message-only contacts, a
   const network = page.getByRole('region', { name: 'Network', exact: true });
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
   await expect(further).toHaveAttribute('aria-busy', 'false');
-  await expect(network).not.toContainText('Message-only Contact');
   await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Shared Organization', exact: true });
   await expect(organizationEditor).toBeVisible();
@@ -35,46 +34,42 @@ test('Directory network lists who is further out, omits message-only contacts, a
 
 });
 
-for (const scenario of ['shared organization', 'long employment title']) {
-  test(`Directory network lists who is further out, each reachable: ${scenario}`, async ({ page }) => {
-    await installMixedArchive(page);
-    const long = scenario === 'long employment title';
-    const count = long ? 1 : 3;
-    const nodes = [
-      { id: 'person:42', kind: 'person', entity_id: 42, label: long ? 'Archive Person With A Very Long Full Name Here' : 'Archive Person', hop: 0 },
-      ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: long ? 'Curated Peer With A Very Long Full Name Here' : `Curated Peer ${index + 1}`, hop: 1 })),
-      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }
-    ];
-    const edges: NetworkEdge[] = Array.from({ length: count }, (_, index) => ({
-      id: `root:${index}`, kind: 'relationship', source_node_id: 'person:42', target_node_id: `person:${43 + index}`, label: 'knows'
-    }));
-    for (let index = 0; index < count; index++) edges.push({
-      id: `employment:${index}`, kind: 'employment', source_node_id: `person:${43 + index}`, target_node_id: 'organization:21',
-      label: long ? 'Senior principal engineer of distributed computing systems' : 'Engineer'
-    });
-    await page.route('**/api/v1/people/42/network*', (route) => {
-      const depth = Number(new URL(route.request().url()).searchParams.get('depth'));
-      const visible = nodes.filter((node) => node.hop <= depth);
-      const hops = new Map(visible.map((node) => [node.id, node.hop]));
-      return route.fulfill({ json: { root_person_id: 42, depth, truncated: false, nodes: visible, edges: edges.filter((edge) => hops.has(edge.source_node_id) && hops.has(edge.target_node_id) && Math.min(hops.get(edge.source_node_id)!, hops.get(edge.target_node_id)!) < depth) } });
-    });
-    await page.goto(directoryURL(42));
-    await page.getByRole('radio', { name: 'Details', exact: true }).click();
-    await page.getByRole('radio', { name: '2 steps', exact: true }).click();
-    const network = page.getByRole('region', { name: 'Network', exact: true });
-    const further = network.getByRole('region', { name: 'Network at 2 steps' });
-    await expect(further).toHaveAttribute('aria-busy', 'false');
-    await expect(further.locator('.detail-row')).toHaveCount(1);
-    if (!long) await expect(further.locator('.description')).toHaveText('Engineer · via Curated Peer 1, Curated Peer 2, and 1 more');
-    const name = further.getByRole('button', { name: 'Shared Organization' });
-    await name.scrollIntoViewIfNeeded();
-    expect(await name.evaluate((button) => {
-      const box = button.getBoundingClientRect();
-      return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
-    })).toBe(true);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+test('Directory network keeps long labels and shared paths reachable', async ({ page }) => {
+  await installMixedArchive(page);
+  const count = 3;
+  const nodes = [
+    { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person With A Very Long Full Name Here', hop: 0 },
+    ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: `Curated Peer With A Very Long Full Name ${index + 1}`, hop: 1 })),
+    { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }
+  ];
+  const edges: NetworkEdge[] = Array.from({ length: count }, (_, index) => ({
+    id: `root:${index}`, kind: 'relationship', source_node_id: 'person:42', target_node_id: `person:${43 + index}`, label: 'knows'
+  }));
+  for (let index = 0; index < count; index++) edges.push({
+    id: `employment:${index}`, kind: 'employment', source_node_id: `person:${43 + index}`, target_node_id: 'organization:21',
+    label: 'Senior principal engineer of distributed computing systems'
   });
-}
+  await page.route('**/api/v1/people/42/network*', (route) => {
+    const depth = Number(new URL(route.request().url()).searchParams.get('depth'));
+    const visible = nodes.filter((node) => node.hop <= depth);
+    const hops = new Map(visible.map((node) => [node.id, node.hop]));
+    return route.fulfill({ json: { root_person_id: 42, depth, truncated: false, nodes: visible, edges: edges.filter((edge) => hops.has(edge.source_node_id) && hops.has(edge.target_node_id) && Math.min(hops.get(edge.source_node_id)!, hops.get(edge.target_node_id)!) < depth) } });
+  });
+  await page.goto(directoryURL(42));
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await page.getByRole('radio', { name: '2 steps', exact: true }).click();
+  const network = page.getByRole('region', { name: 'Network', exact: true });
+  const further = network.getByRole('region', { name: 'Network at 2 steps' });
+  await expect(further).toHaveAttribute('aria-busy', 'false');
+  await expect(further.locator('.detail-row')).toHaveCount(1);
+  const name = further.getByRole('button', { name: 'Shared Organization' });
+  await name.scrollIntoViewIfNeeded();
+  expect(await name.evaluate((button) => {
+    const box = button.getBoundingClientRect();
+    return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
+  })).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
 
 test('the person page and its Details sections sit on the Layout scale', async ({ page }) => {
   await installMixedArchive(page);

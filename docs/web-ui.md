@@ -395,7 +395,7 @@ Choose **Past runs…** in the status menu to browse history. Filter by Kind, in
 
 Select a run for its timestamps, counters, error, related status, and advertised actions. **All runs** returns to the list. Related status opens Sources, Contacts settings, or live visual index counts. **Start CardDAV sync**, **Build visual index**, and **Resume visual index** appear only when the daemon advertises them. Sources keeps **Sync now** and opens filtered history through **Sync history**. Contacts settings opens filtered history through **View CardDAV operations**.
 
-Settings › People › Fields lists Work and every built-in and custom profile field, with its description, kind, value type, sensitivity, and active state. **Search fields** filters names and descriptions. Custom fields offer **Edit**.
+Settings › People › Fields lists system and custom field definitions, plus Work, with descriptions, kind, value type, sensitivity, and active state. **Search fields** filters names and descriptions. Custom fields offer **Edit**.
 
 Settings Overview shows current feature status. **Details** opens live counts for configured Document extraction, Document search, and Visual search, including features with no past run. Document extraction and document search are configured on the daemon host; see [Document indexing setup](/docs/usage/document-indexing/#configure-the-policy). Document extraction still requires the explicit CLI upload workflow in [Document Indexing](/docs/usage/document-indexing/).
 

@@ -111,7 +111,7 @@
         {/each}
       </div>
     {/if}
-    {#if controller.network?.truncated}<p class="summary truncated">Showing the first 250 people and organizations.</p>{/if}
+    {#if controller.network?.truncated}<p class="summary truncated">Showing up to 250 people and organizations and 500 connections.</p>{/if}
   </DetailSection>
 {/if}
 

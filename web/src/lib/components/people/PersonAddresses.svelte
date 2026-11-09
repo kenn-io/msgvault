@@ -17,7 +17,7 @@
       onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
       onAnnounce?: (message: string) => void;
       /** Details already lists this profile's own emails and phones, so they show once, there. */
-      listedInDetails?: Pick<import('../../api/generated/models').PersonContactPoint, 'address_kind' | 'original_value'>[];
+      listedInDetails?: Pick<import('../../api/generated/models').PersonContactPoint, 'address_kind' | 'normalized_value'>[];
     } = $props();
   type LinkMutation = { kind: 'unlink'; a: number; b: number };
 
@@ -57,9 +57,8 @@
   const identifiers = $derived.by(() => {
     if (!detail || !isPersonDetail(detail)) return [];
     const all = detail.identifiers ?? [];
-    const key = (kind: string, value: string) => `${kind}:${kind === 'phone' ? value.replace(/\D/g, '') : value.trim().toLowerCase()}`;
-    const listed = new Set(listedInDetails.map(point => key(point.address_kind, point.original_value)));
-    return all.filter(identifier => identifier.participant_id !== detail.id || !listed.has(key(identifier.type, identifier.value)));
+    const listed = new Set(listedInDetails.map(point => `${point.address_kind}:${point.normalized_value}`));
+    return all.filter(identifier => identifier.participant_id !== detail.id || !listed.has(`${identifier.type}:${identifier.value}`));
   });
   const empty = $derived(identifiers.length === 0 && unrepresentedMembers.length === 0 && staleBanner === null && unlinkError === null);
 

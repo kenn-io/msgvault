@@ -86,26 +86,21 @@ describe('PersonAddresses', () => {
     expect(screen.queryByRole('button', { name: /Unlink/ })).toBeNull();
   });
 
-  it('leaves this profile\'s own addresses to Details and keeps only the linked ones', () => {
-    render(PersonAddresses, baseProps({ detail: clusteredPerson(), listedInDetails: person().identifiers.map(identifier => ({ address_kind: identifier.type, original_value: identifier.value })) }));
-    expect(screen.getByRole('heading', { name: 'Linked addresses' })).toBeDefined();
-    expect(screen.queryByLabelText('Identity Alice')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
-  });
-
-  it('keeps a linked member detachable when Details also lists their address', async () => {
-    const props = baseProps({ detail: clusteredPerson(), listedInDetails: [{ address_kind: 'phone', original_value: '+1 (555) 010-0002' }] });
-    render(PersonAddresses, props);
-    await fireEvent.click(screen.getByRole('button', { name: 'Unlink +15550100002' }));
-    await fireEvent.click(within(screen.getByRole('group', { name: 'Confirm unlinking +15550100002' })).getByRole('button', { name: 'Unlink' }));
-    expect(props.onUnlinkParticipants.mock.calls).toEqual([[12, 34], [34, 56]]);
-  });
-
-  it('shows no section when Details already lists every address', () => {
-    render(PersonAddresses, baseProps({ listedInDetails: person().identifiers.map(identifier => ({ address_kind: identifier.type, original_value: identifier.value })) }));
-    expect(screen.queryByRole('group', { name: 'Known addresses' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: /addresses/i })).toBeNull();
+  it.each(['own addresses', 'linked address', 'all addresses', 'normalized phone'])('filters addresses already listed in Details: %s', scenario => {
+    const own = person();
+    const listed = own.identifiers.map(identifier => ({ address_kind: identifier.type, original_value: identifier.value, normalized_value: identifier.value }));
+    let detail = scenario === 'all addresses' ? own : clusteredPerson();
+    if (scenario === 'linked address') listed.push({ address_kind: 'phone', original_value: '+1 (555) 010-0002', normalized_value: '+15550100002' });
+    if (scenario === 'normalized phone') {
+      detail = { ...own, identifiers: [{ type: 'phone', value: '+12025550123', participant_id: 12, is_primary: true, provenance: 'participant_identifiers' }] };
+      listed.splice(0, listed.length, { address_kind: 'phone', original_value: '(202) 555-0123', normalized_value: '+12025550123' });
+    }
+    render(PersonAddresses, baseProps({ detail, listedInDetails: listed }));
+    if (scenario === 'own addresses' || scenario === 'linked address') {
+      expect(screen.queryByLabelText('Identity Alice')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
+    } else expect(screen.queryByRole('heading', { name: /addresses/i })).toBeNull();
   });
 
   it.each(['none', 'email', 'duplicate names'])('names member-only controls with %s evidence', evidence => {

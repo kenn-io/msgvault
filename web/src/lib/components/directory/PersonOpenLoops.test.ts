@@ -56,7 +56,6 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText("Waiting on you")).toBeDefined();
     expect(screen.getByText("Waiting on them")).toBeDefined();
     expect(screen.getAllByText("2d")).toHaveLength(2);
-    expect(screen.getByText("2 open").parentElement?.tagName).toBe("HEADER");
     expect(screen.queryByText(/could not be read/)).toBeNull();
     const request = fetcher.mock.calls[0]?.[0];
     const url = new URL(

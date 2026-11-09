@@ -2,7 +2,6 @@
   import InlineNotice from '../common/InlineNotice.svelte';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import { PERSON_NOT_FOUND_MESSAGE } from '../../directory/profile-controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { formatContactDate } from '../../directory/labels';
   import PersonFields from './PersonFields.svelte';
@@ -30,7 +29,7 @@
   {#if directory.detailLoading}<p role="status">Loading details…</p>{/if}
   {#if bundle}
     {@const errors = Object.entries(bundle.errors).filter(([section]) => section !== 'attributes' || !profile).map(([, message]) => message)}
-    {#if errors.includes(PERSON_NOT_FOUND_MESSAGE)}<InlineNotice message="This person isn't in your archive anymore." />
+    {#if bundle.personNotFound}<InlineNotice message="This person isn't in your archive anymore." />
     {:else if errors.length}<InlineNotice message="Couldn't load these details." details={errors.join('\n')} actionLabel="Retry" onaction={() => void (profile ? profile.reload() : directory.loadSelection(personID))} />{/if}
   {/if}
   {#if profile}

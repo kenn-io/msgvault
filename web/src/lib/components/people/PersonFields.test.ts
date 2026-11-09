@@ -11,7 +11,7 @@ const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: [], vcard_uid: 'example-7', created_at: when, updated_at: when };
 const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
 function profile() { return emptyProfile(person); }
-function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; bundle?: Partial<DirectoryReadBundle> } = {}) {
+function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<void>; onAnnounce?: (text: string) => void; bundle?: Partial<DirectoryReadBundle> } = {}) {
   let stored = initial;
   const writes: Request[] = [];
   const client = createAPIClient(async (input) => {
@@ -31,7 +31,7 @@ function harness(initial = profile(), options: { fail?: boolean; wait?: Promise<
     return Response.json(person, { headers: { ETag: '"person-7-r2"' } });
   });
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"person-7-r1"' }, errors: {}, ...options.bundle });
-  const view = render(PersonFields, { controller });
+  const view = render(PersonFields, { controller, onAnnounce: options.onAnnounce });
   return { controller, writes, view };
 }
 
@@ -184,14 +184,14 @@ async function refreshOpenField(refreshed: Partial<AttributeDefinition>, cardina
 }
 
 it.each([
-  { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' }, drafts: 1, draftKind: 'setAttribute', editLabel: 'Edit Renamed note: Private example', disabled: false },
-  { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false }, drafts: 0, draftKind: undefined, editLabel: 'Edit Private note: Private example', disabled: true },
-])('joins refreshed field settings into an open draft: $name', async ({ refreshed, drafts, draftKind, editLabel, disabled }) => {
+  { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' }, drafts: 1, draftKind: 'setAttribute', editLabel: 'Edit Renamed note: Private example', absent: false },
+  { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false }, drafts: 0, draftKind: undefined, editLabel: 'Edit Private note: Private example', absent: true },
+])('joins refreshed field settings into an open draft: $name', async ({ refreshed, drafts, draftKind, editLabel, absent }) => {
   const { controller, view } = await refreshOpenField(refreshed);
   try {
     expect(screen.queryAllByDisplayValue('Unsaved local note')).toHaveLength(drafts);
     expect(controller.draft?.kind).toBe(draftKind);
-    if (disabled) expect(screen.queryByRole('button', { name: editLabel })).toBeNull();
+    if (absent) expect(screen.queryByRole('button', { name: editLabel })).toBeNull();
     else expect(screen.getByRole('button', { name: editLabel })).toHaveProperty('disabled', false);
   } finally { view.unmount(); controller.destroy(); }
 });
@@ -285,18 +285,27 @@ it('conceals and discards a sensitive new-value draft when Hide is clicked durin
   }
 });
 
-it('lists values first and gathers the empty common kinds into one add line after them', async () => {
+it('lists values first, copies them, and gathers the empty common kinds after them', async () => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20, ordinal: 0 } }];
-  const { controller, view } = harness(initial);
+  const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Clipboard unavailable'));
+  const originalClipboard = navigator.clipboard;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const onAnnounce = vi.fn();
+  const { controller, view } = harness(initial, { onAnnounce });
   try {
     const fields = view.container.querySelector('.fields')!;
     const add = fields.querySelector('.add')!;
     expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
     expect(fields.lastElementChild).toBe(add);
     expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
-    // A kind that has a value can still take another, from More fields.
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
+    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
+    expect(writeText).toHaveBeenNthCalledWith(1, 'first@example.com');
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
+    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith("Couldn't copy."));
+    expect(writeText).toHaveBeenNthCalledWith(2, 'first@example.com');
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
-  } finally { view.unmount(); controller.destroy(); }
+  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
 });

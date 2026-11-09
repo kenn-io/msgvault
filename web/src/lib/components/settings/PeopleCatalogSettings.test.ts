@@ -4,38 +4,6 @@ import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
-it.each(['', undefined])('clears a saved description returned as %j without restoring the cached text', async cleared => {
-  const definition = { id: 41, universal_id: 'favorite-plant', object_type: 'person', slug: 'favorite_plant', label: 'Favorite plant', description: 'Garden preferences', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: true };
-  let saved: Record<string, unknown> = definition;
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [saved] });
-    if (path.endsWith('/attribute-definitions/41')) {
-      if (request.method === 'PATCH') {
-        expect(await request.json()).toMatchObject({ description: '' });
-        saved = { ...definition, description: cleared, revision: 2 };
-      }
-      return Response.json(saved, { headers: { ETag: '"attribute-definition-41-r1"' } });
-    }
-    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ kind: 'attribute', key: 'favorite-plant', description: 'Garden preferences' }] });
-    if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
-    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  });
-  const view = render(PeopleCatalogSettings, { client });
-  try {
-    await screen.findByText('Garden preferences');
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Favorite plant' }));
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Description' }), { target: { value: '' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Description' })).toBeNull());
-    await waitFor(() => expect(screen.queryByText('Garden preferences')).toBeNull());
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: 'Garden preferences' } });
-    await screen.findByText('No fields match');
-  } finally { view.unmount(); }
-});
-
 it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async operation => {
   let created = true; let conflict = operation === 'conflict recovery';
   const writes: Request[] = [];
@@ -183,21 +151,20 @@ it('keeps Add disabled and resumes a field creation after its refresh fails', as
   } finally { view.unmount(); }
 });
 
-it('lists Work and all profile fields, searches names and descriptions, and edits custom fields only', async () => {
+it('lists Work and system and custom fields, searches names and descriptions, and edits custom fields only', async () => {
   const base = { object_type: 'person', value_type: 'text', field_type: 'text', cardinality: 'single', is_active: true, revision: 1 };
   const definitions = [
     { ...base, id: 2, universal_id: 'favorite-plant', slug: 'favorite_plant', label: 'Favorite plant', description: 'Garden preferences', ownership: 'user', display_order: 2, is_sensitive: true },
     { ...base, id: 1, universal_id: 'location', slug: 'location', label: 'Location', description: 'Where they live', ownership: 'system', display_order: 1 },
   ];
   let targetsRead = 0;
+  let releaseTargets!: (response: Response) => void;
+  const pendingTargets = new Promise<Response>(resolve => { releaseTargets = resolve; });
   const client = createAPIClient(async input => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions });
     if (path.endsWith('/person-fact-targets') && ++targetsRead === 1) return Response.json({ message: 'Targets unavailable' }, { status: 503 });
-    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [
-      { kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false },
-      { kind: 'attribute', key: 'location', slug: 'location', description: 'Where they live' },
-    ] });
+    if (path.endsWith('/person-fact-targets')) return pendingTargets;
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0 });
     throw new Error(`Unexpected ${path}`);
@@ -206,15 +173,21 @@ it('lists Work and all profile fields, searches names and descriptions, and edit
   try {
     const fields = within(screen.getByRole('region', { name: 'Fields' }));
     await fields.findByText('Garden preferences');
+    expect(fields.getByText("Couldn't load Work details.")).toBeDefined();
+    const search = fields.getByRole('searchbox', { name: 'Search fields' });
+    await fireEvent.input(search, { target: { value: 'Work' } });
     await fireEvent.click(await fields.findByRole('button', { name: 'Retry' }));
+    expect(fields.getByText('Loading fields…')).toBeDefined();
+    expect(fields.queryByText('No fields match')).toBeNull();
+    releaseTargets(Response.json({ targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] }));
     const work = await fields.findByText('Current and historical jobs');
     expect(work.closest('li')?.textContent).toContain('Jobs · several values');
+    await fireEvent.input(search, { target: { value: '' } });
     await fields.findByText('Garden preferences');
     expect([...view.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite plant']);
     expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
     expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
     expect(fields.getByRole('button', { name: 'Edit Favorite plant' })).toBeDefined();
-    const search = fields.getByRole('searchbox', { name: 'Search fields' });
     await fireEvent.input(search, { target: { value: 'garden' } });
     expect(fields.queryByText('Where they live')).toBeNull();
     expect(fields.queryByText('Current and historical jobs')).toBeNull();

@@ -17,6 +17,7 @@
   let query = $state('');
   let targets = $state<TargetDescriptor[]>([]);
   let catalogError = $state(false);
+  let targetsLoading = $state(false);
   let loading = $state(true);
   const catalogAbort = new AbortController();
   const matching = (name: string, description = '') => `${name} ${description}`.toLowerCase().includes(query.trim().toLowerCase());
@@ -24,6 +25,8 @@
   const work = $derived(targets.find(target => target.kind === 'employment'));
   const visibleWork = $derived(work && matching('Work', work.description) ? work : undefined);
   async function loadTargets(): Promise<void> {
+    if (targetsLoading) return;
+    targetsLoading = true;
     catalogError = false;
     try {
       const response = await listPersonFactTargets({ include_sensitive: true }, { ...client, signal: catalogAbort.signal });
@@ -31,6 +34,7 @@
       if (!response.data) { catalogError = true; return; }
       targets = response.data.targets;
     } catch { if (!catalogAbort.signal.aborted) catalogError = true; }
+    finally { targetsLoading = false; }
   }
   let creating = $state(false);
   let editing = $state<AttributeDefinition>();
@@ -77,7 +81,7 @@
   {#if fields.definitionsError}<p role="alert">{fields.definitionsError}<Button label="Retry fields" onclick={() => void fields.reloadDefinitions()} /></p>{/if}
   {#if error && !editing}<p role="alert">{error}</p>{/if}
   <SearchInput value={query} ariaLabel="Search fields" placeholder="Search fields" block oninput={value => query = value} />
-  {#if catalogError}<InlineNotice message="Couldn't load fields." actionLabel="Retry" onaction={() => void loadTargets()} />{/if}
+  {#if catalogError}<InlineNotice message="Couldn't load Work details." actionLabel="Retry" onaction={() => void loadTargets()} />{/if}
   {#if visibleFields.length || visibleWork}
     <ul class="list">
       {#if visibleWork}<li><span class="name">Work<small>{visibleWork.description}</small></span><small>Jobs{visibleWork.cardinality === 'multi' ? ' · several values' : ''}{visibleWork.sensitive ? ' · Sensitive' : ''}</small></li>{/if}
@@ -85,7 +89,7 @@
         <li><span class="name">{field.label}<small>{field.description ?? ''}</small></span><small>{['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : '', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ')}</small>{#if field.ownership !== 'system'}<Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} />{/if}</li>
       {/each}
     </ul>
-  {:else if loading}<p class="muted">Loading fields…</p>
+  {:else if loading || targetsLoading}<p class="muted" role="status">Loading fields…</p>
   {:else if !fields.definitionsError && !catalogError}<p class="muted">{query.trim() ? 'No fields match' : 'No fields yet'}</p>{/if}
 </section>
 <OrganizationsSettings controller={entities} {onOpenPerson} />

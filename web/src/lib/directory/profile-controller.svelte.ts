@@ -204,7 +204,7 @@ export class DirectoryProfileController {
         this.bundle = { ...this.bundle, contactState: contactState.data };
         delete errors.contactState;
       } else errors.contactState = failureMessage(contactState.error, contactState.response?.status ?? 0);
-      this.bundle = { ...this.bundle, errors };
+      this.bundle = { ...this.bundle, personNotFound: !person.data && person.response?.status === 404, errors };
       if (resolveDraft && (this.draft?.kind !== 'createDefinition' || definitionsGeneration === this.definitionsGeneration)) this.resolveReloadDraft(
         { person, structuredProfile, attributes, definitions },
         { personReady, structuredProfileReady, attributesReady, definitionsReady },

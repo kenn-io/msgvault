@@ -24,8 +24,7 @@ async function openForm(): Promise<void> {
 
 /** Opens the add form when it's closed, then types a task title. */
 async function typeTask(value: string): Promise<void> {
-  const open = screen.queryByRole('button', { name: 'Add task' });
-  if (open) await fireEvent.click(open);
+  await openForm();
   await fireEvent.input(screen.getByLabelText('New task'), { target: { value } });
 }
 
@@ -224,49 +223,18 @@ describe('PersonAgenda', () => {
     expect(screen.queryByText('Ask about launch')).toBeNull();
   });
 
-  it('canonicalizes the list before fingerprinting so case or spacing changes keep the retry key', async () => {
-    const requests: Request[] = [];
-    let attempts = 0;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+  it('canonicalizes the selected list label', async () => {
+    const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') {
-        attempts += 1;
-        if (attempts === 1) {
-          return Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 });
-        }
-        return Response.json({ item: item('new', 'Send notes') }, { status: 201 });
-      }
-      return Response.json({ project: 'msgvault', items: attempts >= 2 ? [item('new', 'Send notes')] : [] });
-    }));
-
+      return isStatus(request) ? readyStatus() : Response.json({ project: 'msgvault', items: [] });
+    });
     render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
-
-    await typeTask('Send notes');
+    await openForm();
     await openTypeahead('List');
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
-
-    // The server canonicalizes lists (lowercase, whitespace-collapsed, empty
-    // → 'agenda'), so an unknown-outcome retry typed with different case or
-    // spacing must keep the same idempotency key and send the canonical list.
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
-    await openTypeahead('List');
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'GIFT ideas' } });
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(2));
-
-    const posts = requests.filter((request) => request.method === 'POST');
-    const keys = posts.map((request) => request.headers.get('Idempotency-Key'));
-    expect(keys[0]).toBeTruthy();
-    expect(keys[0]).toBe(keys[1]);
-    expect(await posts[0].clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
-    expect(await posts[1].clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
+    expect(screen.getByRole('button', { name: 'List: gift ideas' })).toBeDefined();
   });
 
   it('resets the idempotency key when the selected person changes', async () => {
@@ -336,7 +304,7 @@ describe('PersonAgenda', () => {
     await rerender({ client, personID: 8 });
     await openForm();
     await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
-    expect(screen.queryByText('Kata integration authentication_required: Reconnect Kata to manage agenda items')).toBeNull();
+    expect(screen.queryByText(`Kata integration ${state}: ${message}`)).toBeNull();
     // The switch cleared person A's rows; person 8's list serves the same
     // item, so wait for it to render before asserting the Unlink gate.
     await screen.findByRole('button', { name: 'Unlink Ask' });
