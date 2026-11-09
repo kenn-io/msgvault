@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
@@ -19,19 +20,6 @@ const (
 	cliStreamStdout = "stdout"
 	cliStreamStderr = "stderr"
 )
-
-// loggingPassthroughFlags are root persistent flags whose values express
-// per-invocation logging intent (verbosity, SQL tracing). Every other root
-// persistent flag is stripped from CLIRunRequest.Args because the daemon
-// re-resolves configuration from its own environment; these must instead
-// survive into the request so an explicit `msgvault --log-level debug <cmd>`
-// on the client is honored by the daemon-spawned CLI subprocess.
-var loggingPassthroughFlags = map[string]bool{
-	"log-level":       true,
-	"verbose":         true,
-	"log-sql":         true,
-	"log-sql-slow-ms": true,
-}
 
 func runDaemonCLICommandHTTPFromCobra(cmd *cobra.Command, args []string) error {
 	return runDaemonCLICommandHTTPFromCobraWithEnv(cmd, args, nil)
@@ -190,7 +178,12 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 		if flag.Name == addAccountGrantDecidedFlag {
 			return
 		}
-		if isRootPersistentFlag(cmd, flag) && !loggingPassthroughFlags[flag.Name] {
+		// Every root persistent flag except the logging flags is stripped,
+		// because the daemon re-resolves configuration from its own
+		// environment. The logging flags express per-invocation intent, so
+		// an explicit `msgvault --log-level debug <cmd>` reaches the
+		// daemon-spawned CLI subprocess.
+		if isRootPersistentFlag(cmd, flag) && !clirun.IsLoggingFlag(flag.Name) {
 			return
 		}
 		flags = append(flags, flag)

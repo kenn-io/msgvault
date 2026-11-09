@@ -1577,6 +1577,45 @@ the source message has since been deleted. See
 
 ---
 
+## source facebook-comments add
+
+Register the Page selected by a configured `[[facebook_comments]]` profile
+(unreleased). The daemon reads its named token environment variable and checks
+Page identity before writing the source or confirmed owner identity.
+
+```bash
+msgvault source facebook-comments add [identifier]
+```
+
+No identifier selects all configured profiles. An unknown explicit label fails;
+it never selects another profile or falls back to an email sync. See
+[Facebook Page comments](usage/facebook-comments.md).
+
+---
+
+## source facebook-comments sync
+
+Archive returned organic, visitor, and ad-post comments and nested replies for
+registered Facebook Pages (unreleased). No identifier selects all configured
+profiles. Partial writes are retained and included in cache refreshes even
+when another surface fails. This command does not send replies.
+
+```bash
+msgvault source facebook-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive maximum API reads per Page, including identity validation; unfinished scans resume |
+| `--full` | `false` | Explicitly restart selected source scans from fresh cursors, preserving and updating existing rows |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+See [coverage and resuming](usage/facebook-comments.md#understand-coverage-and-resuming)
+for independent surface progress, request costs, and expired-cursor recovery.
+
+---
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
@@ -5269,6 +5308,27 @@ related-copy lookups read. Missing or unreadable payloads are recorded
 as incomplete and do not block later messages. Source syncs and imports run the
 same work first, so use this command for on-demand repair, file imports you will
 not run again, or retrying an interrupted pass.
+
+Restore the missing nonempty MIME attachments of one Gmail message with:
+
+```bash
+msgvault repair-derived --attachment-message <internal-id-or-gmail-id> --source-id <source-id>
+```
+
+This mode uses retained RAW without Gmail access. It preserves original payloads,
+message fields, existing attachment rows and valid loose or packed blobs. It adds
+missing MIME occurrences and reconstructs missing loose files. Empty MIME parts
+remain omitted, as in ordinary sync. Provider-owned attachments are preserved.
+The source selector disambiguates references; omit it only for a unique reference.
+Source filters cannot be combined with this mode.
+
+Missing, empty, undecodable or diagnostically incomplete RAW, conflicting metadata,
+corrupt files and missing packs return an error without replacing existing evidence.
+Correct the reported problem and repeat the same command. Ordinary Gmail syncs
+also retry recorded materialization failures locally; a successful full scan does
+not inspect every previously archived attachment. `repair-message --audit` compares
+MIME occurrences but does not check file contents. The normal `repair-derived` and
+automatic `Heal` text passes do not reconstruct files.
 
 ## gc
 

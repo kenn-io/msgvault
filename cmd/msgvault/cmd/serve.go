@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -683,6 +684,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
 		}
 	}
 
@@ -2814,19 +2828,8 @@ func attachmentRemovalCommand(args []string) bool {
 // need no further interpretation here, but they must not be mistaken for
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			return false
-		}
-		name := strings.TrimPrefix(arg, "--")
-		if before, _, ok := strings.Cut(name, "="); ok {
-			name = before
-		}
-		if !loggingPassthroughFlags[name] {
-			return false
-		}
-	}
-	return true
+	flags := clirun.NewFlagSet()
+	return clirun.Parse(flags, args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

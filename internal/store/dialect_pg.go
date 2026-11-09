@@ -395,9 +395,9 @@ func (d *PostgreSQLDialect) InsertOrIgnoreSuffix() string {
 //     binding (see below) — the SQL LEFT char cap cannot bound multibyte input,
 //     so byte-truncating every field (not just the body) is what keeps a
 //     multibyte subject/recipient list from tripping the limit. Dense distinct
-//     tokens can still overflow inside both caps, so a message write whose
-//     input could overflow goes through upsertMessageFTS, which marks the
-//     message unsearchable instead of failing the write.
+//     tokens can still overflow inside both caps, so the message write goes
+//     through upsertFTSOrUnsearchable, which marks the message unsearchable
+//     instead of failing the write.
 //   - Backfill path (FTSBackfillBatchSQL): the body lives in the DB, so only
 //     the LEFT char cap applies; backfillFTSRowByRow skips the offending row
 //     (with a logged warning) and continues, so one pathological row never
@@ -449,7 +449,7 @@ func truncateBytesRuneSafe(s string) string {
 // otherwise still trip SQLSTATE 54000 and leave search_fts NULL — the Go
 // byte-truncation closes that gap for every field, not just the body. A
 // residual 54000 is still possible for dense distinct tokens; the message
-// write handles it in upsertMessageFTS.
+// write handles it in upsertFTSOrUnsearchable.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
