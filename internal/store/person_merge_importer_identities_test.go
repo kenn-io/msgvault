@@ -5,24 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
-
-// TestWebMergeIdentityFixturesMatchStore keeps the Web History fixtures in sync
-// with merge labels returned by the store.
-func TestWebMergeIdentityFixturesMatchStore(t *testing.T) {
-	st := storetest.New(t).Store
-	owner, guest := mailboxCaseMergePeople(t, st)
-	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "mailbox-case", Actor: "test"})
-	require.NoError(t, err)
-	detail, err := st.GetPersonMergeContext(t.Context(), merged.Merge.ID)
-	require.NoError(t, err)
-	assertPersonMergeIdentityFixture(t, detail, "mailbox-case")
-	assert.Equal(t, 1, detail.Labels.AbsorbedAddressCount)
-}
 
 func assertPersonMergeIdentityFixture(t *testing.T, detail *store.PersonMergeDetail, kind string) {
 	t.Helper()

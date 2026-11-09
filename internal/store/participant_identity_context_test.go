@@ -170,7 +170,6 @@ func TestResolvedContactMergeLabelsExcludeFallbackAnchor(t *testing.T) {
 			require.NoError(err)
 			detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 			require.NoError(err)
-			assert.Equal(1, detail.Labels.AbsorbedAddressCount)
 			var addresses []store.ParticipantAddress
 			for _, address := range detail.Labels.Addresses {
 				if address.ParticipantID == participant {

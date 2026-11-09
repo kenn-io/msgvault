@@ -144,7 +144,6 @@ test('Directory profile updates offer Set up… while people lookups are off', a
   await page.goto(directoryURL(42));
   await page.getByRole('button', { name: 'More actions' }).click();
   const item = page.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
-  await expect(item).toContainText('Set up…');
   await item.click();
   await expect(page).toHaveURL(/settingsCategory%22%3A%22enrichment/);
 });

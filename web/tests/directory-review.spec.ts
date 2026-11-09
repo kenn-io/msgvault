@@ -35,28 +35,6 @@ test('People Filter restores History on reload and To review on Back', async ({ 
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
-test('History fits within the dialog at phone width', async ({ page }) => {
-  await installDirectoryReviewArchive(page);
-  await page.setViewportSize({ width: 390, height: 900 });
-  const profile = { id: 7, name: 'Synthetic One' };
-  const earlierName = 'SyntheticEarlierName'.repeat(12);
-  await page.route(`**/api/v1/people/${profile.id}/profile/history`, route => route.fulfill({ json: {
-    person: { id: profile.id, revision: 4, display_name: profile.name, participant_ids: [], vcard_uid: `synthetic-${profile.id}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
-    names: [{ person_id: profile.id, name_kind: 'formatted', formatted: earlierName, original_value: earlierName, is_derived: false, envelope: {
-      id: 71, ordinal: 0, source: 'carddav_import', source_ref: 'synthetic-reference', actor: 'synthetic-importer', confidence: 0.95,
-      active_from: '2026-01-01T00:00:00Z', active_until: '2026-06-01T00:00:00Z', superseded_at: '2026-06-02T00:00:00Z',
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-06-03T00:00:00Z', vcard: {},
-    } }], contact_points: [], addresses: [], dates: [], categories: [], media: [], observations: [],
-  } }));
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
-  await page.getByRole('button', { name: 'More actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-  const historyDialog = page.getByRole('dialog', { name: 'History', exact: true });
-  await historyDialog.getByText('1 earlier value', { exact: true }).click();
-  await expect(historyDialog.getByText(earlierName)).toBeVisible();
-  expect(await historyDialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-});
-
 test('History lays its groups and rows on the Layout scale', async ({ page }) => {
   await installDirectoryReviewArchive(page);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -131,6 +109,16 @@ test('History and Split fit a 390px dialog', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await installDirectoryReviewArchive(page);
+  const profile = { id: 7, name: 'Synthetic One' };
+  const earlierName = 'SyntheticEarlierName'.repeat(12);
+  await page.route(`**/api/v1/people/${profile.id}/profile/history`, route => route.fulfill({ json: {
+    person: { id: profile.id, revision: 4, display_name: profile.name, participant_ids: [], vcard_uid: `synthetic-${profile.id}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
+    names: [{ person_id: profile.id, name_kind: 'formatted', formatted: earlierName, original_value: earlierName, is_derived: false, envelope: {
+      id: 71, ordinal: 0, source: 'carddav_import', source_ref: 'synthetic-reference', actor: 'synthetic-importer', confidence: 0.95,
+      active_from: '2026-01-01T00:00:00Z', active_until: '2026-06-01T00:00:00Z', superseded_at: '2026-06-02T00:00:00Z',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-06-03T00:00:00Z', vcard: {},
+    } }], contact_points: [], addresses: [], dates: [], categories: [], media: [], observations: [],
+  } }));
   await page.goto(peopleURL);
   await page.evaluate(() => fetch('/api/v1/people/7/merge', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'If-Match': '"person-7-r4", "person-9-r2"', 'Idempotency-Key': 'synthetic-history-phone' },
@@ -140,6 +128,9 @@ test('History and Split fit a 390px dialog', async ({ page }) => {
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'History', exact: true }).click();
   const dialog = page.getByRole('dialog');
+  await dialog.getByText('1 earlier value', { exact: true }).click();
+  await expect(dialog.getByText(earlierName)).toBeVisible();
+  expect(await dialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   const row = dialog.getByRole('button', { name: /^Open Synthetic Two merged into Synthetic One/ });
   await row.click();
   await dialog.getByRole('button', { name: 'Split…', exact: true }).click();

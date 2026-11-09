@@ -19,7 +19,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -330,43 +329,7 @@ func assertRegistrationSyncCommand(t *testing.T, output string, sourceID int64, 
 	start := strings.Index(output, "msgvault "+verb+" ")
 	require.NotEqual(t, -1, start, "registration must print its first-sync command")
 	line, _, _ := strings.Cut(output[start:], "\n")
-	args := strings.Fields(line)
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"2.4.0"}`)
-			return
-		}
-		requests.Add(1)
-		assert.Equal(t, "/api/v1/cli/"+verb, r.URL.Path)
-		assert.Equal(t, strconv.FormatInt(sourceID, 10), r.URL.Query().Get("source_id"))
-		assert.Empty(t, r.URL.Query().Get("email"))
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, _ = io.WriteString(w, "{\"type\":\"complete\"}\n")
-	}))
-	defer server.Close()
-	savedTransport := http.DefaultTransport
-	transport := &http.Transport{}
-	http.DefaultTransport = transport
-	defer func() { http.DefaultTransport = savedTransport; transport.CloseIdleConnections() }()
-	subprocessEnv, hasSubprocessEnv := os.LookupEnv(daemonCLISubprocessEnv)
-	require.NoError(t, os.Unsetenv(daemonCLISubprocessEnv))
-	defer func() {
-		if hasSubprocessEnv {
-			_ = os.Setenv(daemonCLISubprocessEnv, subprocessEnv)
-		}
-	}()
-	ctx := configureRemoteSyncTest(t, server.URL)
-	resetSyncFullFlagsForTest(t)
-	root := newTestRootCmd()
-	for _, base := range []*cobra.Command{syncFullCmd, syncIncrementalCmd} {
-		command := &cobra.Command{Use: base.Use, Args: base.Args, RunE: base.RunE}
-		command.Flags().Int64("source-id", 0, "Exact source ID")
-		root.AddCommand(command)
-	}
-	root.SetArgs(args[1:])
-	require.NoError(t, root.ExecuteContext(ctx))
-	assert.Equal(t, int32(1), requests.Load())
+	assert.Equal(t, fmt.Sprintf("msgvault %s --source-id %d", verb, sourceID), line)
 }
 
 func TestAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {

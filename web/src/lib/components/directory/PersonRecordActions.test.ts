@@ -50,6 +50,7 @@ describe('PersonRecordActions', () => {
     const held = new Promise<void>(resolve => { release = resolve; });
     const onAnnounce = vi.fn();
     let saved = false;
+    let failed = false;
     const methods: string[] = [];
     renderActions(async input => {
       const request = input as Request;
@@ -59,6 +60,7 @@ describe('PersonRecordActions', () => {
       }
       const { tracked } = await request.json();
       await held;
+      if (outcome === 'saved' && !failed) { failed = true; return Response.json({ message: 'Save unavailable' }, { status: 503 }); }
       saved = tracked;
       return Response.json({ person_id: 7, tracked, tracked_at: '2026-11-05T12:00:00Z' });
     }, undefined, undefined, onAnnounce);
@@ -73,8 +75,10 @@ describe('PersonRecordActions', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).textContent).toContain('Turning on…');
     expect(methods).toEqual(['GET', 'PUT']);
-    await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    if (outcome === 'destroyed after settlement') {
+      await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    }
     release();
     if (outcome === 'destroyed after settlement') {
       await waitFor(() => expect(settled).toBe(true));
@@ -83,6 +87,11 @@ describe('PersonRecordActions', () => {
       settlement?.mockRestore();
       return;
     }
+    await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith("Couldn't save profile updates."));
+    const retryItem = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+    await waitFor(() => expect(retryItem.textContent).toContain("Couldn't save · Retry"));
+    await fireEvent.click(retryItem);
+    await waitFor(() => expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).getAttribute('aria-checked')).toBe('true'));
     await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith(announcement));
     settlement?.mockRestore();
   });

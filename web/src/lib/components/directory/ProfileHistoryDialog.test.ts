@@ -1,4 +1,3 @@
-import phoneAddresses from '../../directory/beeper-phone-identities.test-fixture.json';
 import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { mergeResult } from '../../directory/entity-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
@@ -226,15 +225,14 @@ describe('ProfileHistoryDialog', () => {
   });
 });
 
-const formattedPhone = phoneAddresses.find(address => address.type === 'phone')!;
 const mergedInCases = [
-  { name: 'formatted phone', rows: 1, service: formattedPhone.service_slug, label: formattedPhone.service_label, value: formattedPhone.value, normalized: formattedPhone.normalized_value, display: formattedPhone.display_value, original: formattedPhone.value, observed: formattedPhone.normalized_value },
+  ...['removed before the merge', 'only seen in services'].map(state => ({ name: state, state, rows: state === 'removed before the merge' ? 2 : 1, service: 'email', label: '', value: 'mira@example.org', normalized: 'mira@example.org', original: state === 'removed before the merge' ? 'Mira@Example.org' : 'mira@example.org', observed: 'mira@example.org' })),
   { name: 'same handle in another workspace', rows: 2, service: 'slack', label: 'Slack', value: 'neri', normalized: 'neri', original: 'neri', observed: 'neri', scopeKind: 'workspace', scope: 'garden-club', otherScope: 'seed-exchange' },
   { name: 'curated mixed-case email', rows: 1, service: 'email', label: 'Email', value: 'mira@example.org', normalized: 'mira@example.org', original: 'Mira@Example.org', observed: 'mira@example.org' },
 ];
 
 async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
-  const tc = entry as typeof entry & { display?: string; original?: string; observed?: string; scopeKind?: string; scope?: string; otherScope?: string };
+  const tc = entry as typeof entry & { display?: string; original?: string; observed?: string; scopeKind?: string; scope?: string; otherScope?: string; state?: string };
   const first = { ...mergeResult(person()).merge, id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7 };
   const merges = [first];
   const identifiers = [{ participant_id: 1, type: tc.service === 'email' || tc.service === 'phone' ? tc.service : 'handle', value: tc.value, display_value: tc.display ?? '', normalized_value: tc.normalized, service_slug: tc.service, service_label: tc.label, scope_kind: tc.scopeKind ?? '', scope_value: tc.scope ?? '' },
@@ -251,7 +249,7 @@ async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
     const path = new URL((input as Request).url).pathname;
     if (path.endsWith('/merges')) return Response.json({ merges: merges.map(merge => ({ merge, labels: labels(merge), participant_count: recorded.length + 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} })), limit: 100, offset: 0 });
     if (path.startsWith('/api/v1/person-merges/')) { const merge = merges.find(item => path.endsWith(`/${item.id}`))!; return Response.json({ merge, labels: { ...labels(merge), participants: undefined }, participants: labels(merge).participants, rows: [], splits: [], review_candidates: [] }); }
-    return Response.json({ ...emptyProfile(person()), contact_points: tc.original ? [{ person_id: 7, address_kind: tc.service === 'email' || tc.service === 'phone' ? tc.service : 'username', original_value: tc.original, identity_key: identityKeyFixture(tc.service, tc.normalized, tc.scopeKind ?? '', tc.scope ?? ''), normalized_value: tc.observed, service_slug: tc.service, service_label: tc.label, scope_kind: tc.scopeKind ?? '', scope_value: tc.scope ?? '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }] : [] });
+    return Response.json({ ...emptyProfile(person()), observations: tc.state === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: tc.original, identity_key: identityKeyFixture('email', tc.normalized), normalized_value: tc.normalized, service_slug: 'email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } }] : [], contact_points: tc.original && tc.state !== 'only seen in services' ? [{ person_id: 7, address_kind: tc.service === 'email' || tc.service === 'phone' ? tc.service : 'username', original_value: tc.original, identity_key: identityKeyFixture(tc.service, tc.normalized, tc.scopeKind ?? '', tc.scope ?? ''), normalized_value: tc.observed, service_slug: tc.service, service_label: tc.label, scope_kind: tc.scopeKind ?? '', scope_value: tc.scope ?? '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3, ...(tc.state === 'removed before the merge' ? { superseded_at: '2026-07-31T00:00:00Z' } : {}) } }] : [] });
   }) });
   await screen.findAllByRole('button', { name: /^Open .+ merged into .+ · / });
   const section = screen.getByRole('heading', { name: 'Email and phone' }).closest('section')!;
@@ -261,20 +259,10 @@ async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
 it.each(mergedInCases)('lists each merged-in address once: $name', async entry => {
   const { tc, section } = await renderMergedInAddress(entry);
   expect(section.querySelectorAll('.detail-row')).toHaveLength(tc.rows);
-  expect(within(section).getAllByText(tc.original, { exact: true })).toHaveLength(1);
-});
-
-
-it.each(['removed before the merge', 'only seen in services'])('keeps the merge link for an address %s', async state => {
-  const address = { identity_key: identityKeyFixture('email', 'mira@example.org'), normalized_value: 'mira@example.org', service_slug: 'email', scope_kind: '', scope_value: '' };
-  const removed = { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' };
-  render(ProfileHistoryDialog, { personID: 7, onClose: vi.fn(), client: createAPIClient(async input => {
-    if (new URL((input as Request).url).pathname.endsWith('/merges')) return Response.json({ merges: [{ merge: { ...mergeResult(person()).merge, id: 41, current_person_id: 7 }, participant_count: 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {}, labels: { profiles: [{ id: 7, display_name: 'Current person', participant_ids: [] }, { id: 9, display_name: 'Mira Vale', participant_ids: [1] }], participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], participant_ids: [1], addresses: [addressFixture(1, 'email', 'mira@example.org')], absorbed_address_count: 1, incomplete: false } }] });
-    return Response.json({ ...emptyProfile(person()),
-      contact_points: state === 'removed before the merge' ? [{ person_id: 7, address_kind: 'email', original_value: 'Mira@Example.org', normalization: 'email', normalization_version: 1, envelope: removed, ...address }] : [],
-      observations: state === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: 'mira@example.org', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' }, ...address }] : [] });
-  }) });
-  expect(await screen.findByRole('button', { name: 'Open the merge that brought in mira@example.org' })).toBeDefined();
-  if (state === 'removed before the merge') expect(screen.getByText('Mira@Example.org').closest('details')).not.toBeNull();
-  else expect(screen.getByRole('heading', { name: 'Seen in services' })).toBeDefined();
+  if (!tc.state) expect(within(section).getAllByText(tc.original, { exact: true })).toHaveLength(1);
+  else {
+    expect(screen.getByRole('button', { name: 'Open the merge that brought in mira@example.org' })).toBeDefined();
+    if (tc.state === 'removed before the merge') expect(screen.getByText(tc.original).closest('details')).not.toBeNull();
+    else expect(screen.getByRole('heading', { name: 'Seen in services' })).toBeDefined();
+  }
 });

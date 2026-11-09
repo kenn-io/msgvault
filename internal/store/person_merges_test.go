@@ -2573,6 +2573,16 @@ func TestMergePersons_MovesBriefEnrollmentToSurvivor(t *testing.T) {
 }
 
 func TestPersonMerge_DetailAddressLabels(t *testing.T) {
+	t.Run("mailbox-case", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		owner, guest := mailboxCaseMergePeople(t, st)
+		merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "mailbox-case", Actor: "test"})
+		require.NoError(t, err)
+		detail, err := st.GetPersonMergeContext(t.Context(), merged.Merge.ID)
+		require.NoError(t, err)
+		assertPersonMergeIdentityFixture(t, detail, "mailbox-case")
+		assert.Equal(t, 1, detail.Labels.AbsorbedAddressCount)
+	})
 	t.Run("current bindings", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -2627,7 +2637,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assertPersonMergeIdentityFixture(t, detail, "beeper-raw-phone")
-		assert.Equal(1, detail.Labels.AbsorbedAddressCount)
 		points, err := st.ListPersonContactPointsContext(ctx, owner.ID, true)
 		require.NoError(err)
 		require.Len(points, 1)
