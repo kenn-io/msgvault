@@ -187,6 +187,7 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 		col("duration_seconds") + `, ` +
 		col("meeting_status") + `, ` +
 		col("source") + `, ` +
+		col("meeting_platform") + `, ` +
 		col("raw_transcript") + `, ` +
 		col("formatted_notes") + `, ` +
 		col("manual_notes") + `, ` +
@@ -213,19 +214,21 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 			m                                               Meeting
 			title, start                                    sql.NullString
 			end, created, status, source, transcript, notes sql.NullString
+			meetingPlatform                                 sql.NullString
 			manual, templateName, templateKind, eventID     sql.NullString
 			calendarSource, seriesID                        sql.NullString
 			recording                                       sql.NullString
 			duration                                        sql.NullFloat64
 			wordCount, folderID, followUpID                 sql.NullInt64
 		)
-		if err := rows.Scan(&m.ID, &title, &start, &end, &created, &duration, &status, &source,
+		if err := rows.Scan(&m.ID, &title, &start, &end, &created, &duration, &status, &source, &meetingPlatform,
 			&transcript, &notes, &manual, &wordCount, &templateName, &templateKind,
 			&eventID, &calendarSource, &seriesID, &folderID, &followUpID, &recording, &m.Deleted); err != nil {
 			return nil, fmt.Errorf("read Muesli meeting row: %w", err)
 		}
 		m.Title, m.StartTime, m.EndTime, m.CreatedAt = title.String, start.String, end.String, created.String
 		m.DurationSeconds, m.Status, m.Source = duration.Float64, status.String, source.String
+		m.MeetingPlatform = meetingPlatform.String
 		m.RawTranscript, m.FormattedNotes, m.ManualNotes = transcript.String, notes.String, manual.String
 		m.WordCount, m.TemplateName, m.TemplateKind = wordCount.Int64, templateName.String, templateKind.String
 		m.CalendarEventID, m.CalendarSource, m.CalendarSeriesID = eventID.String, calendarSource.String, seriesID.String

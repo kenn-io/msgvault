@@ -48,6 +48,7 @@ type Meeting struct {
 	DurationSeconds    float64
 	Status             string
 	Source             string
+	MeetingPlatform    string // detected call service; distinct from recorder and source mode
 	RawTranscript      string
 	FormattedNotes     string
 	ManualNotes        string

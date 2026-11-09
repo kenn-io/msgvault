@@ -59,6 +59,39 @@ func TestMuesliImportBoundary(t *testing.T) {
 	}
 }
 
+func TestMuesliMeetingPlatformValidationBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		status      int
+	}{
+		{"older recorder", "", http.StatusOK},
+		{"future service", `,"meeting_platform":" FutureCall.会議 "`, http.StatusOK},
+		{"rune limit", `,"meeting_platform":"` + strings.Repeat("会", 128) + `"`, http.StatusOK},
+		{"too long", `,"meeting_platform":"` + strings.Repeat("会", 129) + `"`, http.StatusUnprocessableEntity},
+		{"control", `,"meeting_platform":"private\nvalue"`, http.StatusUnprocessableEntity},
+		{"wrong type", `,"meeting_platform":123`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			body := `{"action":"upsert","source":{"identifier":"recorder","account_email":"user@example.com"},"meeting":{"contacts_state":"off","record":{"id":1,"title":"Synthetic meeting","start_time":"2026-09-01T14:00:00Z","created_at":"2026-09-01T14:00:03Z","raw_transcript":"Synthetic transcript"` + tc.field + `}}}`
+			st := &fakeMuesliImportStore{mockStore: &mockStore{stats: &StoreStats{}}}
+			server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, st, nil, testLogger())
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, muesliImportEndpointPath, strings.NewReader(body))
+			req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
+			req.Header.Set("Content-Type", "application/json")
+			out := httptest.NewRecorder()
+			server.Router().ServeHTTP(out, req)
+			assert.Equal(tc.status, out.Code)
+			assert.NotContains(out.Body.String(), "private")
+			if tc.status == http.StatusOK {
+				assert.Equal(1, st.calls)
+			} else {
+				assert.Zero(st.calls, "invalid evidence is rejected before importer entry")
+			}
+		})
+	}
+}
+
 func TestMuesliImportRejectsDelegatedToken(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

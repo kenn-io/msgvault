@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,6 +135,60 @@ func TestImportUpdatesEditedMeetingInPlace(t *testing.T) {
 	body := f.body(t, "meeting:1:20260901T140003Z")
 	assert.Contains(body, "revised words")
 	assert.Contains(body, "Attendees: Carol Example")
+}
+
+func assertStoredMeetingPlatform(t *testing.T, f *importerFixture, messageID int64, want string) {
+	t.Helper()
+	raw, err := f.st.GetMessageRaw(messageID)
+	require.NoError(t, err)
+	var evidence struct {
+		Meeting map[string]any `json:"meeting"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &evidence))
+	var stored string
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT metadata FROM messages WHERE id = ?`), messageID).Scan(&stored))
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stored), &metadata))
+	body, err := f.st.GetMessageBodyText(t.Context(), messageID)
+	require.NoError(t, err)
+	assert.Equal(t, "muesli", metadata["platform"])
+	assert.Equal(t, "meeting", metadata["source"])
+	if want == "" {
+		assert.NotContains(t, evidence.Meeting, "meeting_platform")
+		assert.NotContains(t, metadata, "meeting_platform")
+		assert.NotContains(t, body, "Platform:")
+	} else {
+		assert.Equal(t, want, evidence.Meeting["meeting_platform"])
+		assert.Equal(t, want, metadata["meeting_platform"])
+		assert.Contains(t, strings.Split(body, "\n"), "Platform: "+want)
+	}
+}
+
+func TestImportMeetingPlatformEditRefreshesArchive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	_, err := f.muesli.ExecContext(t.Context(), `ALTER TABLE meetings ADD COLUMN meeting_platform TEXT`)
+	require.NoError(err)
+	id := insertRow(t, f.muesli, "meetings", completedMeeting(nil))
+	_, err = f.run(t, ImportOptions{})
+	require.NoError(err)
+	var messageID int64
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
+	assertStoredMeetingPlatform(t, f, messageID, "")
+	for _, value := range []string{"facetime", "unknown", " FutureCall.会議 ", ""} {
+		_, err := f.muesli.ExecContext(t.Context(), `UPDATE meetings SET meeting_platform = ? WHERE id = ?`, value, id)
+		require.NoError(err)
+		summary, err := f.run(t, ImportOptions{})
+		require.NoError(err)
+		assert.Zero(summary.MeetingsAdded)
+		assert.Equal(int64(1), summary.MeetingsUpdated)
+		assert.Equal(1, f.messageCount(t))
+		assertStoredMeetingPlatform(t, f, messageID, value)
+		again, err := f.run(t, ImportOptions{})
+		require.NoError(err)
+		assert.Zero(again.MeetingsUpdated, "identical evidence is idempotent")
+	}
 }
 
 func TestImportSkipsDeletedInProgressAndEmptyMeetings(t *testing.T) {
