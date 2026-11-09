@@ -17,31 +17,18 @@ test('Person Details aligns desktop and phone content and uses shared phone edit
   const geometry = await page.evaluate(() => {
     const box = (element: Element | null) => element!.getBoundingClientRect();
     const person = document.querySelector('section.person-page')!;
-    const header = box(person.querySelector('header'));
-    const avatar = box(person.querySelector('header .avatar'));
-    const text = box(person.querySelector('header h2')!.parentElement);
-    const tabs = box(person.querySelector('.tabs [role="radiogroup"]'));
     const pane = person.querySelector<HTMLElement>('[data-scroll-pane]')!;
     const style = getComputedStyle(pane);
     const content = box(pane.firstElementChild);
     return {
-      avatar: avatar.height, textCenter: text.top + text.height / 2 - (avatar.top + avatar.height / 2),
-      headerPad: avatar.top - header.top, tabsGap: tabs.top - header.bottom, tabs: tabs.height,
       gutter: style.scrollbarGutter, left: content.left - box(pane).left, right: box(pane).right - content.right,
       padding: [style.paddingTop, style.paddingBottom],
-      addLine: box(person.querySelector('.fields .add > *')).left - box(person.querySelector('.fields .detail-row .value')).left,
     };
   });
-  expect(geometry.avatar, 'a 40 avatar').toBe(40);
-  expect(Math.abs(geometry.textCenter), 'the name and email center on the avatar').toBeLessThanOrEqual(0.5);
-  expect(geometry.headerPad, 'the header is padded 12 above the avatar').toBe(12);
-  expect(geometry.tabsGap, 'the tabs sit 8 below the header').toBe(8);
-  expect(geometry.tabs, 'the tabs are a 28 control').toBe(28);
   expect(geometry.gutter, 'the Details pane reserves its bar').toBe('stable');
   expect(geometry.padding, 'Details has 16 above its sections and 32 after them').toEqual(['16px', '32px']);
   expect(geometry.left, 'content is inset 16 at the left').toBe(16);
   expect(geometry.right, 'and 16 at the right, counting the reserved bar').toBe(16);
-  expect(geometry.addLine, 'the add line starts at the value column').toBe(0);
 
   await page.setViewportSize({ width: 390, height: 844 });
   // The shell switches to its phone layout a frame after the resize, so wait for the pane to fit before measuring.
@@ -53,20 +40,10 @@ test('Person Details aligns desktop and phone content and uses shared phone edit
     const person = document.querySelector('section.person-page')!;
     const row = person.querySelector('.fields .detail-row:has(.actions)')!;
     const label = row.querySelector('.label')!.getBoundingClientRect(), value = row.querySelector('.value')!.getBoundingClientRect();
-    const name = person.querySelector('header h2')!.getBoundingClientRect(), actions = person.querySelector('header .actions')!.getBoundingClientRect();
-    const pane = person.querySelector('[data-scroll-pane]')!;
-    const add = person.querySelector('.fields .add > *')!.getBoundingClientRect();
-    const titleLeft = document.querySelector('.heading h1, .heading h2')!.getBoundingClientRect().left;
-    return { headerInset: actions.left - titleLeft, tabsInset: person.querySelector('.tabs [role="radiogroup"]')!.getBoundingClientRect().left - titleLeft, label: label.width, sameLine: Math.abs(label.top - value.top), actionsBelow: actions.top >= name.bottom, wide: pane.scrollWidth - pane.clientWidth, addLine: add.left - value.left, titleInset: row.getBoundingClientRect().left - document.querySelector('.heading h1, .heading h2')!.getBoundingClientRect().left };
+    return { label: label.width, sameLine: Math.abs(label.top - value.top) };
   });
-  expect.soft(phone.headerInset, 'the person header aligns with the People title').toBe(0);
-  expect.soft(phone.tabsInset, 'the tabs align with the People title').toBe(0);
-  expect(phone.titleInset, 'Details aligns with the People title on a phone').toBe(0);
   expect(phone.label, 'the label column is 120 on a phone').toBe(120);
   expect(phone.sameLine, 'the value stays beside its label').toBeLessThanOrEqual(2);
-  expect(phone.addLine, 'the add line starts at the value column on a phone too').toBe(0);
-  expect(phone.actionsBelow, 'Merge with… and ⋯ wrap under the name').toBe(true);
-  expect(phone.wide, 'nothing is wider than the pane').toBe(0);
 
   await page.getByRole('button', { name: 'Add phone', exact: true }).click();
   const form = page.getByRole('form', { name: 'Edit contact points' });

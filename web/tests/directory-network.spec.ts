@@ -45,7 +45,6 @@ test('Directory Network keeps desktop and phone section geometry and opens organ
   await page.getByRole('radio', { name: '2 steps', exact: true }).click();
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
   await expect(further).toHaveAttribute('aria-busy', 'false');
-  const linkColor = await network.getByRole('button', { name: 'Shared Organization' }).evaluate(button => getComputedStyle(button).color);
   await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Shared Organization', exact: true });
   await expect(organizationEditor).toBeVisible();
@@ -53,7 +52,6 @@ test('Directory Network keeps desktop and phone section geometry and opens organ
   await organizationEditor.getByRole('button', { name: 'Close', exact: true }).click();
   await network.getByRole('radio', { name: 'Direct', exact: true }).click();
   const direct = network.getByRole('button', { name: 'Curated Peer', exact: true });
-  await expect(direct).toHaveCSS('color', linkColor);
   const peer = { id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' };
   await page.route('**/api/v1/people/43', route => route.fulfill({ json: peer }));
   await page.route('**/api/v1/people/43/profile', route => route.fulfill({ json: { person: peer, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));

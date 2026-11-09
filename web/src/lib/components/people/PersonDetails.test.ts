@@ -1,13 +1,13 @@
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, onTestFinished } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryController } from '../../directory/controller.svelte';
 import PersonDetails from './PersonDetails.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { meetingActions, meetingAction } from '../../meetings/fixtures.test-support';
+import { meetingActions, meetingAction, meetingMetrics } from '../../meetings/fixtures.test-support';
 
-async function renderDetails(participantIDs: number[], options: { meetingRequests?: Request[]; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean } = {}) {
+async function renderDetails(participantIDs: number[], options: { meetingRequests?: Request[]; meetingResponses?: { actions: Promise<Response>; metrics: Promise<Response> }; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -44,7 +44,9 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
+    if (path === '/api/v1/meetings/metrics' && options.meetingResponses && person.revision === 1) return options.meetingResponses.metrics;
     if (path === '/api/v1/meetings/actions') {
+      if (options.meetingResponses && person.revision === 1) return options.meetingResponses.actions;
       return Response.json(meetingActions({ rows: [meetingAction({ action: { ordinal: 0, locator: 'action:0', origin: 'source', title: `Revision ${person.revision} follow-up`, status: 'pending' } })] }));
     }
     return meetingFixtureResponse(path) ?? Response.json({});
@@ -63,9 +65,26 @@ it('shows empty Meetings without requests when no identities are linked', async 
   expect(meetingRequests).toEqual([]);
 });
 
-it('forwards refreshed profile revisions to meeting actions', async () => {
-  const { person, directory } = await renderDetails([5]);
-  await screen.findByText('Revision 1 follow-up');
+it('scopes Meetings to the saved person, waits for both empty reads, and refreshes actions with profile revisions', async () => {
+  let releaseActions!: (response: Response) => void;
+  let releaseMetrics!: (response: Response) => void;
+  const actions = new Promise<Response>(resolve => { releaseActions = resolve; });
+  const metrics = new Promise<Response>(resolve => { releaseMetrics = resolve; });
+  const meetingRequests: Request[] = [];
+  const { person, directory } = await renderDetails([5], { meetingRequests, meetingResponses: { actions, metrics } });
+  expect(await screen.findByText('Loading meetings…')).toBeDefined();
+  await waitFor(() => expect(meetingRequests.find(request => new URL(request.url).pathname.endsWith('/actions'))).toBeDefined());
+  await expect(meetingRequests.find(request => new URL(request.url).pathname.endsWith('/actions'))!.json()).resolves.toMatchObject({ scope: { person_id: 7 } });
+  expect(screen.getAllByRole('heading', { name: 'Meetings' })).toHaveLength(1);
+  expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
+  await act(async () => { releaseActions(Response.json(meetingActions({ coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 } }))); });
+  expect(screen.getByText('Loading meetings…')).toBeDefined();
+  expect(screen.queryByText('No meetings yet')).toBeNull();
+  await act(async () => { releaseMetrics(Response.json(meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: null }, first_meeting_at: null, last_meeting_at: null, duration_by_basis: [], months: [] }))); });
+  expect(await screen.findByText('No meetings yet')).toBeDefined();
+  expect(screen.getAllByRole('heading', { name: 'Meetings' })).toHaveLength(1);
+  expect(screen.queryByText('Loading meetings…')).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
   person.revision = 2;
   await directory.profile!.reload();
   expect(await screen.findByText('Revision 2 follow-up')).toBeDefined();

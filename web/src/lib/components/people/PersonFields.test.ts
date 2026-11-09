@@ -172,22 +172,6 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('orders available additions after values and moves populated kinds into More fields', async () => {
-  const initial = profile();
-  initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'first@example.com'), address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope }];
-  const { controller, view } = harness(initial);
-  try {
-    const fields = view.container.querySelector('.fields')!;
-    const add = fields.querySelector('.add')!;
-    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
-    expect(fields.lastElementChild).toBe(add);
-    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
-    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
-  } finally { view.unmount(); controller.destroy(); }
-});
-
 async function refreshOpenField(refreshed: Partial<AttributeDefinition>, cardinality: 'single' | 'multi' = 'single', extraValues: string[] = []) {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality, object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const value = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'note', ordinal: 0, value: { type: 'text' as const, text: 'Private example' }, active_from: when, created_at: when, source: 'user' };
@@ -248,8 +232,9 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('removes Add birthday after a refreshed profile supplies it', async () => {
+it('orders available additions after values, moves populated kinds to More fields, and refreshes Add birthday', async () => {
   const initial = profile();
+  initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'first@example.com'), address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope }];
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -264,7 +249,14 @@ it('removes Add birthday after a refreshed profile supplies it', async () => {
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   const view = render(PersonFields, { controller });
   try {
-    expect(screen.getByRole('button', { name: 'Add birthday' })).toBeDefined();
+    const fields = view.container.querySelector('.fields')!;
+    const add = fields.querySelector('.add')!;
+    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
+    expect(fields.lastElementChild).toBe(add);
+    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
     await act(async () => { await controller.reload(); });
     expect(screen.getByText('1990-05-06')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Add birthday' })).toBeNull();

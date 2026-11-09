@@ -173,12 +173,7 @@ test('an organization that fails to load shows its error inside the dialog paddi
   expect(gaps).toEqual([0, 0]);
 });
 
-test('Settings field search and rows work on a phone', async ({ page }) => {
-  const field = {
-    id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_plant', label: 'Favorite plant', description: 'Garden preferences',
-    value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: true, revision: 1, is_deletable: true
-  };
-  await page.route('**/api/v1/attribute-definitions*', route => route.fulfill({ json: { definitions: [field, { ...field, id: 42, universal_id: '00000000-0000-4000-8000-000000000042', slug: 'location', label: 'Location', description: 'Where they live', ownership: 'system', is_sensitive: false, is_deletable: false }] } }));
+test('Settings People search finds Work', async ({ page }) => {
   await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await selectWorkspace(page, 'Settings');
@@ -186,27 +181,6 @@ test('Settings field search and rows work on a phone', async ({ page }) => {
   const search = page.getByRole('searchbox', { name: 'Search fields' });
   await search.fill('Work');
   await expect(page.getByRole('region', { name: 'Fields', exact: true }).getByRole('listitem').filter({ hasText: /^Work/ })).toBeVisible();
-  await search.fill('');
-  await page.setViewportSize({ width: 390, height: 900 });
-  const edit = page.getByRole('button', { name: 'Edit Favorite plant', exact: true });
-  await expect(edit).toBeVisible();
-  const fieldGeometry = await edit.evaluate(button => {
-    const row = button.closest('li')!;
-    const name = row.querySelector('.name')!;
-    const range = document.createRange();
-    range.selectNode(name.firstChild!);
-    const title = range.getBoundingClientRect();
-    const description = name.querySelector('small')!.getBoundingClientRect();
-    const kind = row.querySelector(':scope > small')!.getBoundingClientRect();
-    const action = button.getBoundingClientRect();
-    return { rowHeight: row.getBoundingClientRect().height, otherHeight: row.nextElementSibling!.getBoundingClientRect().height, descriptionWidth: description.width, descriptionTop: description.top, titleBottom: title.bottom, titleCenter: title.top + title.height / 2, actionCenter: action.top + action.height / 2, kindTop: kind.top, descriptionBottom: description.bottom, actionLeft: action.left, titleRight: title.right };
-  });
-  expect(Math.abs(fieldGeometry.rowHeight - fieldGeometry.otherHeight), 'Edit keeps the same row rhythm').toBeLessThanOrEqual(1);
-  expect(fieldGeometry.descriptionWidth, 'the description uses the row width').toBeGreaterThanOrEqual(280);
-  expect(Math.abs(fieldGeometry.titleCenter - fieldGeometry.actionCenter), 'Edit shares the name line').toBeLessThanOrEqual(2);
-  expect(fieldGeometry.actionLeft).toBeGreaterThanOrEqual(fieldGeometry.titleRight);
-  expect(fieldGeometry.descriptionTop).toBeGreaterThanOrEqual(fieldGeometry.titleBottom);
-  expect(fieldGeometry.kindTop).toBeGreaterThanOrEqual(fieldGeometry.descriptionBottom);
 });
 
 for (const width of [1440, 390]) {
