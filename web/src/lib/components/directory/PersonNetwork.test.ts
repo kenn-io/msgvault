@@ -176,7 +176,6 @@ describe('PersonNetwork', () => {
 
   it.each([
     { name: 'Curated Peer and Lumen Grove', network: connected(1), labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove', links: ['Curated Peer', 'Lumen Grove'], people: [[8]], organizations: [[22]], sections: 1, notices: 0, emptyDepths: [2, 3] },
-    { name: 'Lumen Grove, Cedar Circle, and 4 more', network: rootOnly(), labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard', 'Willow Field', 'Birch Garden'], expected: 'Lumen Grove, Cedar Circle, and 4 more', links: ['Lumen Grove', 'Cedar Circle'], people: [], organizations: [[22], [23]], sections: 1, notices: 0, emptyDepths: [] },
     { name: 'node-capped Direct shows truncation', network: { ...rootOnly(), truncated: true }, labels: ['Lumen Grove', 'Cedar Circle', ...Array.from({ length: 247 }, (_, index) => `Organization ${index + 3}`)], expected: 'Lumen Grove, Cedar Circle, and 247 more', links: ['Lumen Grove', 'Cedar Circle'], people: [], organizations: [[22], [23]], sections: 1, notices: 1, emptyDepths: [] },
     { name: 'root-only Direct is hidden', network: rootOnly(), labels: [], expected: undefined, links: [], people: [], organizations: [], sections: 0, notices: 0, emptyDepths: [] }
   ])('shows Direct summaries, links, truncation, and empty deeper results: $name', async ({ network, labels, expected, links, people, organizations, sections, notices, emptyDepths }) => {

@@ -170,7 +170,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
 
 it.each([
   { name: 'gates and forwards loaded listed addresses, showing them only on Details', failed: false },
-  { name: 'forwards an empty listed-address fallback after a failed profile read', failed: true },
+  { name: 'keeps linked addresses visible after a failed profile read', failed: true },
 ])('$name', async ({ failed }) => {
   vi.stubEnv('TZ', 'UTC');
   const person = { id: 7, revision: 1, display_name: 'Alice Example', participant_ids: [1], vcard_uid: 'example-7', created_at: when, updated_at: when };
@@ -205,8 +205,10 @@ it.each([
       expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
       await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: contactPoints }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
     }
-    expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual(failed ? [] : contactPoints);
-    if (!failed) {
+    if (failed) {
+      expect(screen.getByLabelText('Identity alice@example.com')).toBeDefined();
+    } else {
+      expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual(contactPoints);
       expect(screen.getByRole('heading', { name: 'Linked addresses' }).closest('.details')).toHaveProperty('hidden', false);
       await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
       await view.rerender({ filesOpen: true });
