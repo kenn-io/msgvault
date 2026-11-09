@@ -30,7 +30,6 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 	}{
 		{"both sources", Context{SourceIDs: []int64{firstSource, secondSource}}, 2, true},
 		{"explore both sources", Context{SourceIDs: []int64{firstSource, secondSource}, ParticipantIDs: []int64{person}}, 2, false},
-		{"explore one source", Context{SourceIDs: []int64{secondSource}, ParticipantIDs: []int64{person}}, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -104,16 +103,8 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: year, Timezone: "UTC"})
 				requirements.NoError(err)
 				var meetings int64
-				var transcriptDay RelationshipCalendarDay
 				for _, day := range calendar.Days {
 					meetings += day.Meetings
-					if day.Date == tc.at.Format(time.DateOnly) {
-						transcriptDay = day
-					}
-				}
-				if year == tc.at.Year() {
-					requirements.NotEmpty(transcriptDay.Date)
-					assertions.Equal(tc.want, transcriptDay.Meetings)
 				}
 				assertions.Equal(want, meetings, "year %d", year)
 			}

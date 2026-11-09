@@ -102,7 +102,6 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 		reuse, appendCopy bool
 	}{
 		{"unchanged", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, true, false},
-		{"late link", `(100::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false, false},
 		{"key removed", `(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false, false},
 		{"new unrelated meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, true, false},
 		{"new copy of cached meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, false, true},

@@ -889,7 +889,7 @@ func TestScheduledCacheRefreshMinimumInterval(t *testing.T) {
 			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			requirements.NoError(err)
 			_, err = db.Exec(`
-				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (1, 1, 'thread', 'email');
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (1, 1, 'thread', 'email_thread');
 				INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at)
 				VALUES (1, 1, 'new-message', 1, 'email', ?)
 			`, now)
@@ -1669,7 +1669,7 @@ func setupScheduledRefreshFixture(t *testing.T, now, publishedAt time.Time) (str
 
 	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (1, 1, 'thread', 'email');
+	_, err = db.Exec(`INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (1, 1, 'thread', 'email_thread');
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, message_type, sent_at) VALUES (1, 1, 'new-message', 1, 'email', ?)`, now)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())

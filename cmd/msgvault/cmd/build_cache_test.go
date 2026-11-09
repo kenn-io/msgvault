@@ -1359,7 +1359,7 @@ func TestBuildCacheSQLiteMutationHelper(t *testing.T) {
 			INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type)
 			VALUES (6, 1, 'msg6', 105, 'Racing Message', 'Preview 6', '2024-03-15 10:00:00', 1200, 1, 'email');
 			INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
-			VALUES (105, 1, 'thread105', 'Racing Thread', 'email');
+			VALUES (105, 1, 'thread105', 'Racing Thread', 'email_thread');
 			INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
 			VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
 			INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
@@ -1412,7 +1412,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 			require.NoError(err)
 			_, err = db.Exec(`
 				INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
-				VALUES (105, 1, 'thread105', 'Partial Meeting', 'email');
+				VALUES (105, 1, 'thread105', 'Partial Meeting', 'meeting');
 				INSERT INTO messages (
 					id, source_id, source_message_id, conversation_id,
 					subject, snippet, sent_at, size_estimate, message_type
@@ -1667,7 +1667,7 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	defer func() { require.NoError(db.Close()) }()
 	_, err = db.Exec(`
 		INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
-		VALUES (105, 1, 'thread105', 'New Thread', 'email');
+		VALUES (105, 1, 'thread105', 'New Thread', 'email_thread');
 		INSERT INTO messages (
 			id, source_id, source_message_id, conversation_id,
 			subject, snippet, sent_at, size_estimate, message_type
