@@ -125,6 +125,7 @@ export class PersonTrackingController {
   }
   async retryTracking(): Promise<void> {
     if (this.personID === undefined || this.disposed || this.trackingLoading || this.pending) return;
+    if (this.failedSave !== null) return;
     await this.loadTracking(this.personID);
   }
   /** Saves the position a failed save didn't reach. */

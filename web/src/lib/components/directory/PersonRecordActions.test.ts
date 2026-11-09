@@ -33,6 +33,33 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
+  it('keeps retry available after a failed tracking save and reopening the menu', async () => {
+    const writes: boolean[] = [];
+    let tracked = false;
+    renderActions(async input => {
+      const request = input as Request;
+      if (request.method === 'PUT') {
+        writes.push((await request.json()).tracked);
+        if (writes.length === 1) return Response.json({}, { status: 503 });
+        tracked = true;
+      }
+      return Response.json({ person_id: 7, tracked, tracked_at: tracked ? when : null });
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+    await waitFor(() => expect(item.textContent?.trim()).toBe('Keep this profile updated'));
+    await fireEvent.click(item);
+    await waitFor(() => expect(item.textContent).toContain("Couldn't save"));
+    await fireEvent.keyDown(item, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    const reopened = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+    await waitFor(() => expect(reopened.textContent).toContain("Couldn't save"));
+    await fireEvent.click(reopened);
+    await waitFor(() => expect(reopened.getAttribute('aria-checked')).toBe('true'));
+    expect(writes).toEqual([true, true]);
+  });
+
   it('keeps an in-flight tracking save when the menu closes and reopens', async () => {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
