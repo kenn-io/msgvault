@@ -36,7 +36,7 @@ describe('Fields kept updated', () => {
     render(TrackedFieldsList, { client });
     expect(await screen.findByText('Preferred greenery')).toBeDefined();
     expect(screen.getByText('A plant')).toBeDefined();
-    expect(screen.getByText('Work · job title, organization, and dates')).toBeDefined();
+    expect(screen.getByText('Work')).toBeDefined();
     expect(screen.getByText('Current and historical employment')).toBeDefined();
     const disclosure = screen.getByText('Show sensitive fields');
     await fireEvent.click(disclosure);

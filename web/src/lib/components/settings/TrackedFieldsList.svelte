@@ -94,7 +94,7 @@
   }
 
   function label(target: PersonTrackingTarget): string {
-    return target.kind === 'employment' ? 'Work · job title, organization, and dates' : labels.get(target.slug) ?? (target.description || sentenceCase(target.slug));
+    return target.kind === 'employment' ? 'Work' : labels.get(target.slug) ?? (target.description || sentenceCase(target.slug));
   }
   const sensitive = $derived(targets.filter(target => target.sensitive));
 </script>
