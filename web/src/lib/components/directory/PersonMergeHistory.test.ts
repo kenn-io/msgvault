@@ -282,14 +282,15 @@ describe('PersonMergeHistory', () => {
     expect(row.closest('.detail-row')?.querySelector('.description')?.textContent).not.toContain('moved in');
   });
 
-  it('summarizes a whole-profile split without listing only its participant addresses', async () => {
+  it.each([false, true])('summarizes a whole-profile split without listing only its participant addresses: exact=%s', async exact => {
     const value = detail();
     for (const participant of value.participants) if (participant.origin_side === 'absorbed') participant.split_id = 55;
-    value.splits![0].exact_reversal = true;
+    value.splits![0].exact_reversal = exact;
     renderHistory(value);
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
     const line = await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').includes('split back to Alex Restored'));
-    expect(line.textContent).toMatch(/split back to Alex Restored on Aug [34] · nothing left to split/);
+    expect(line.textContent).toMatch(exact ? /split back to Alex Restored on Aug [34] · nothing left to split/ : /split back to Alex Restored on Aug [34] · partly restored · nothing left to split/);
+    expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
   });
 
   it.each([false, true])('names the addresses each split took beside its destination in the summary, deleted=%s', async deleted => {
@@ -412,14 +413,13 @@ describe('PersonMergeHistory', () => {
     expect(screen.getByText('SHA-256 syntheti…').title).toBe('SHA-256 synthetic-digest');
   });
 
-  it.each(['gone', 'completed partial split', 'split on merge day'] as const)('explains unavailable Split: %s', async reason => {
-    const value = detail(reason === 'gone' || reason === 'split on merge day' ? null : 12);
+  it.each(['gone', 'split on merge day'] as const)('explains unavailable Split: %s', async reason => {
+    const value = detail(null);
     if (reason !== 'gone') value.participants[0].split_id = 55;
     if (reason === 'split on merge day') value.splits = [{ ...value.splits![0], exact_reversal: true, created_at: value.merge.created_at }];
     renderHistory(value, { addresses: addressIdentifiers() });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
-    const expected = reason === 'gone' ? /the profile it merged into is gone$/ : reason === 'completed partial split'
-      ? / · nothing left to split$/ : /^Merged by you · (Jul|Aug) \d{1,2} · split back to Alex Restored · nothing left to split$/;
+    const expected = reason === 'gone' ? /the profile it merged into is gone$/ : /^Merged by you · (Jul|Aug) \d{1,2} · split back to Alex Restored · nothing left to split$/;
     expect(await screen.findByText((_, element) => element?.tagName === 'P' && expected.test((element.textContent ?? '').replace(/\s+/g, ' ').trim()))).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
   });

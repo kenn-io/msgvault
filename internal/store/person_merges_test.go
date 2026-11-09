@@ -2572,7 +2572,7 @@ func TestMergePersons_MovesBriefEnrollmentToSurvivor(t *testing.T) {
 	}
 }
 
-func TestPersonMerge_DetailLabelsCurrentBindings(t *testing.T) {
+func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 	t.Run("current bindings", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)

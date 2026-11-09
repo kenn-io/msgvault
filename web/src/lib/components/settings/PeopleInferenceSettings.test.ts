@@ -72,7 +72,7 @@ describe('PeopleInferenceSettings', () => {
     const controller = new PeopleInferenceController(client);
     await controller.load();
     render(PeopleInferenceSettings, { client, controller });
-    expect(await screen.findByRole('heading', { name: 'Fields kept updated' })).toBeDefined();
+    expect(await screen.findByText('Favorite plant')).toBeDefined();
   });
 
   it('checks host-managed environment profiles without offering a replacement key', async () => {

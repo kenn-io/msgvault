@@ -19,7 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestImportedPhoneMergeLabelsCountOneAddress(t *testing.T) {
+func TestImportedPhoneIdentifierShape(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -31,27 +31,14 @@ func TestImportedPhoneMergeLabelsCountOneAddress(t *testing.T) {
 	require.NoError(err)
 	var participant int64
 	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM participants WHERE phone_number = ?`), "+12025550123").Scan(&participant))
-	guest, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
-	require.NoError(err)
-	ownerID, err := st.EnsureParticipantContext(ctx, "owner@example.org", "Owner", "example.org")
-	require.NoError(err)
-	owner, _, err := st.CreatePersonFromParticipantContext(ctx, ownerID)
-	require.NoError(err)
-	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "imazing-phone", Actor: "test"})
-	require.NoError(err)
-	detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
-	require.NoError(err)
-	assert.Equal(1, detail.Labels.AbsorbedAddressCount)
-	var addresses []store.ParticipantAddress
-	for _, address := range detail.Labels.Addresses {
-		if address.ParticipantID == participant {
-			addresses = append(addresses, address)
-		}
-	}
-	require.Len(addresses, 1)
-	assert.Equal("phone", addresses[0].Type)
-	assert.Equal("+12025550123", addresses[0].Value)
-	assert.Equal(`["phone","","","+12025550123"]`, addresses[0].IdentityKey)
+	var kind, value string
+	var serviceID, scopeKind, scopeValue sql.NullString
+	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT identifier_type, identifier_value, service_id, scope_kind, scope_value FROM participant_identifiers WHERE participant_id = ?`), participant).Scan(&kind, &value, &serviceID, &scopeKind, &scopeValue))
+	assert.Equal("imazing_csv", kind)
+	assert.Equal("+12025550123", value)
+	assert.False(serviceID.Valid)
+	assert.False(scopeKind.Valid)
+	assert.False(scopeValue.Valid)
 }
 
 func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
