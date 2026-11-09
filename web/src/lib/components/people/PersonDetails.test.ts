@@ -6,9 +6,14 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import PersonDetails from './PersonDetails.svelte';
 import { MeetingsController } from '../../meetings/controller.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { meetingActions, meetingAction } from '../../meetings/fixtures.test-support';
+import { meetingActions, meetingAction, meetingMetrics } from '../../meetings/fixtures.test-support';
 
-async function renderDetails(participantIDs: number[], options: { meetingRequests?: string[]; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
+it('shows one alert for an attributes failure', async () => {
+  await renderDetails([], { attributesFailure: true });
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+});
+
+async function renderDetails(participantIDs: number[], options: { meetingRequests?: string[]; emptyMeetings?: boolean; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -18,6 +23,8 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (path.startsWith('/api/v1/meetings/')) options.meetingRequests?.push(path);
+    if (options.emptyMeetings && path === '/api/v1/meetings/metrics') return Response.json(meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: null }, first_meeting_at: null, last_meeting_at: null, duration_by_basis: [], months: [] }));
+    if (options.emptyMeetings && path === '/api/v1/meetings/actions') return Response.json(meetingActions({ coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 } }));
     if (path === '/api/v1/integrations/kata/status' && options.taskChange) return Response.json({ state: 'ready' });
     if (path === '/api/v1/people/7/agenda' && options.taskChange) {
       const hasTask = options.taskChange === 'merge' ? person.revision > 1 : person.revision === 1;
@@ -58,20 +65,20 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
   return { person, directory };
 }
 
-it.each([{ participantIDs: [] }, { participantIDs: [5] }])('uses the loaded identity scope and ignores superseded meetings: $participantIDs', async ({ participantIDs }) => {
-  if (participantIDs.length === 0) {
-    const meetingRequests: string[] = [];
-    await renderDetails(participantIDs, { meetingRequests });
-    expect(screen.getByText('No meetings yet')).toBeDefined();
-    expect(meetingRequests).toEqual([]);
-    expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
-    return;
-  }
+it.each([{ participantIDs: [], requests: [] }, { participantIDs: [5], requests: ['/api/v1/meetings/actions', '/api/v1/meetings/metrics'] }])('shows empty Meetings for the loaded identity scope: $participantIDs', async ({ participantIDs, requests }) => {
+  const meetingRequests: string[] = [];
+  await renderDetails(participantIDs, { meetingRequests, emptyMeetings: true });
+  expect(await screen.findByText('No meetings yet')).toBeDefined();
+  expect(meetingRequests.sort()).toEqual(requests);
+  expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
+});
+
+it('forwards the refreshed meeting revision and ignores a superseded meeting response', async () => {
   let release!: (response: Response) => void;
   const deferredActions: { request?: Request; response: Promise<Response> } = { response: new Promise(resolve => { release = resolve; }) };
   const loads = vi.spyOn(MeetingsController.prototype, 'setScope');
   onTestFinished(() => loads.mockRestore());
-  const { person, directory } = await renderDetails(participantIDs, { deferredActions });
+  const { person, directory } = await renderDetails([5], { deferredActions });
   await waitFor(() => expect(deferredActions.request).toBeDefined());
   const firstLoad = loads.mock.results[0]!.value;
   person.revision = 2;
@@ -133,11 +140,17 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 });
 
 
-it.each(['profile', 'details', 'attributes'])('combines failed %s reads into one notice and retries them together', async failure => {
-  const options = { detailsFailure: failure === 'details', personFailure: failure === 'profile', attributesFailure: failure === 'attributes' };
-  await renderDetails([], options);
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-  if (failure === 'attributes') return;
+it.each(['profile', 'details', 'deleted'])('handles a failed %s read with one notice and its recovery action', async failure => {
+  const options = { detailsFailure: failure === 'details', personFailure: failure === 'profile', personDeleted: false };
+  const { directory } = await renderDetails([], options);
+  if (failure === 'deleted') {
+    options.personDeleted = true;
+    await act(async () => { await directory.profile!.reload(); });
+    const notice = within(screen.getByText("This person isn't in your archive anymore.").closest('[role="alert"]')!);
+    expect(screen.queryByText("Couldn't load these details.")).toBeNull();
+    expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
+    return;
+  }
   expect(screen.getAllByText("Couldn't load these details.")).toHaveLength(1);
   const notice = within(screen.getByRole('alert'));
   await fireEvent.click(notice.getByText('Details'));
@@ -145,17 +158,4 @@ it.each(['profile', 'details', 'attributes'])('combines failed %s reads into one
   options.detailsFailure = false; options.personFailure = false;
   await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
-});
-
-
-it('shows the deleted-person notice when a loaded profile reloads after deletion', async () => {
-  const options = { personDeleted: false };
-  const { directory } = await renderDetails([], options);
-  options.personDeleted = true;
-
-  await act(async () => { await directory.profile!.reload(); });
-
-  const notice = within(screen.getByText("This person isn't in your archive anymore.").closest('[role="alert"]')!);
-  expect(screen.queryByText("Couldn't load these details.")).toBeNull();
-  expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
 });

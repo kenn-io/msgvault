@@ -7,6 +7,9 @@ import { RelationshipsController, type RelationshipsMergeContext } from '../../r
 import { emptyCalendar } from './fixtures.test-support';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PersonPage from './PersonPage.svelte';
+import PersonAddresses from './PersonAddresses.svelte';
+
+vi.mock('./PersonAddresses.svelte', { spy: true });
 import { openTypeahead } from '../../../test/kit-ui';
 
 const when = '2026-07-19T10:00:00Z';
@@ -197,9 +200,9 @@ it('shows linked addresses on Details after profile loading and preserves Copy a
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
     await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: ['alice@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { id: index + 1, ordinal: index, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } })) }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
-    const addresses = screen.getByRole('group', { name: 'Known addresses' });
-    expect(within(addresses).queryByLabelText('Identity alice@example.com')).toBeNull();
-    expect(screen.getAllByRole('button', { name: 'Copy alice@example.com' })).toHaveLength(1);
+    const addresses = vi.mocked(PersonAddresses).mock.calls.at(-1)![1];
+    expect(addresses.listedInDetails).toEqual(directory.profile!.structuredProfile!.contact_points);
+    expect(screen.getByRole('group', { name: 'Known addresses' })).toBeDefined();
     failProfile = true;
     await act(async () => { await directory.loadSelection(7); });
     expect(within(screen.getByRole('group', { name: 'Known addresses' })).getByRole('button', { name: 'Copy alice@example.com' })).toBeDefined();

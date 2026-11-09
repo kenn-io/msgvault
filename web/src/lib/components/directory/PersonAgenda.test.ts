@@ -72,41 +72,6 @@ describe('PersonAgenda', () => {
     expect(screen.getAllByRole('option', { name: 'waiting' })).toHaveLength(1);
   });
 
-  it.each(['retry', 'cancel'])('opens the task form on request and handles a failed create with %s', async action => {
-    const posts: Request[] = [];
-    const client = createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') {
-        posts.push(request);
-        return posts.length === 1
-          ? Response.json({ message: 'Unable to add task' }, { status: 503 })
-          : Response.json({ item: item('new', 'Send notes') }, { status: 201 });
-      }
-      return Response.json({ project: 'msgvault', items: posts.length === 2 ? [item('new', 'Send notes')] : [] });
-    });
-    render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No tasks yet');
-    expect(screen.queryByLabelText('New task')).toBeNull();
-    await typeTask('Send notes');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await screen.findByText("Couldn't add the task.");
-    if (action === 'retry') {
-      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      await waitFor(() => expect(posts).toHaveLength(2));
-      expect(await posts[1]!.clone().json()).toEqual({ title: 'Send notes', list: 'agenda' });
-      expect(await screen.findByText('Send notes')).toBeDefined();
-    } else {
-      await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      expect(screen.queryByLabelText('New task')).toBeNull();
-      expect(screen.queryByText("Couldn't add the task.")).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-      expect(screen.getByText('No tasks yet')).toBeDefined();
-      await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-      expect(screen.getByLabelText('New task')).toHaveProperty('value', '');
-    }
-  });
-
   it.each(['pending', 'failed'] as const)('keeps a %s create retry key across profile revisions and rotates it when the payload changes', async outcome => {
     const requests: Request[] = [];
     let attempts = 0;
@@ -130,6 +95,7 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, refreshKey: '1' });
     await screen.findByText('No tasks yet');
+    expect(screen.queryByLabelText('New task')).toBeNull();
 
     await typeTask('Send notes');
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
@@ -140,6 +106,10 @@ describe('PersonAgenda', () => {
       releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
     } else {
       expect(await screen.findByText("Couldn't add the task.")).toBeDefined();
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(requests.filter(request => request.method === 'POST')).toHaveLength(2));
+      expect(await requests.filter(request => request.method === 'POST')[1]!.clone().json()).toMatchObject({ title: 'Send notes', list: 'agenda' });
+      await screen.findByText("Couldn't add the task.");
       await rerender({ client, personID: 7, refreshKey: '2' });
     }
     await waitFor(() => expect(requests.filter(request => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7/agenda')).toHaveLength(2));
@@ -149,20 +119,20 @@ describe('PersonAgenda', () => {
     // The profile revision changed, but the submission stayed the same.
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(2));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(outcome === 'failed' ? 3 : 2));
     const keys = requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key'));
-    expect(keys.length).toBe(2);
+    expect(keys.length).toBe(outcome === 'failed' ? 3 : 2);
     expect(keys[0]).toBeTruthy();
-    expect(keys[0]).toBe(keys[1]);
+    expect(keys.every(key => key === keys[0])).toBe(true);
 
     // Changing the title mints a fresh key instead of replaying the old one.
     await typeTask('Send notes tomorrow');
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(3));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(outcome === 'failed' ? 4 : 3));
     const rotated = requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key'));
-    expect(rotated.length).toBe(3);
-    expect(rotated[2]).not.toBe(rotated[0]);
+    expect(rotated.length).toBe(outcome === 'failed' ? 4 : 3);
+    expect(rotated.at(-1)).not.toBe(rotated[0]);
     await waitFor(() => expect(screen.getByText('Send notes')).toBeDefined());
   });
 

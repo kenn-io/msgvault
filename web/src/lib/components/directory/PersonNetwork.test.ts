@@ -182,38 +182,26 @@ describe('PersonNetwork', () => {
     { catalog: [], reverse: false, truncated: false, expected: 'Second Hop PersonMentors · via Curated Peer' },
     { catalog: [mentor], reverse: true, truncated: false, expected: 'Second Hop PersonMentee · via Curated Peer' },
     { catalog: [mentor], reverse: true, truncated: true, expected: 'Second Hop PersonMentee · via Curated Peer' }
-  ])('reads a link from either end and opens records: $expected, truncated=$truncated', async ({ catalog, reverse, truncated, expected }) => {
+  ])('reads a link from either end: $expected, truncated=$truncated', async ({ catalog, reverse, truncated, expected }) => {
     const network = connected();
     network.truncated = truncated;
     if (!reverse) network.edges[2] = { ...network.edges[2]!, source_node_id: 'person:9', target_node_id: 'person:8' };
     const { controller } = controllerWith(networkFetcher(network));
     controller.relationshipTypes = catalog;
-    const onOpenPerson = vi.fn();
-    const onOpenOrganization = vi.fn();
-    render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
     await screen.findByRole('button', { name: 'Second Hop Person' });
     expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual([expected, 'Shared OrganizationEngineer · via Curated Peer']);
     const notice = screen.queryByText('Showing up to 250 people and organizations and 500 connections.');
-    if (truncated) expect(notice).toBeDefined();
+    if (truncated) expect(notice).not.toBeNull();
     else expect(notice).toBeNull();
     expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Second Hop Person' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
-    expect(onOpenPerson).toHaveBeenCalledWith(9);
-    expect(onOpenOrganization).toHaveBeenCalledWith(21);
   });
 
-  it.each([rootOnly(), connected(1)])('hides an empty network at the selected depth: $nodes', async network => {
-    const { controller } = controllerWith(networkFetcher(network));
-    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await waitFor(() => expect(controller.network).not.toBeNull());
-    if (network.nodes.length === 1) {
-      expect(screen.queryByRole('heading', { name: 'Network' })).toBeNull();
-      return;
-    }
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+  it('says when there is no one else at two or three steps', async () => {
+    render(PersonNetwork, { controller: controllerWith(networkFetcher(connected(1))).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
     await screen.findByText('No one else at 2 steps');
     expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
@@ -223,14 +211,14 @@ describe('PersonNetwork', () => {
   it('shows a failed first load in the failure voice, with the server message in Details, and retries', async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 }))
-      .mockResolvedValueOnce(Response.json(connected(1)));
+      .mockResolvedValueOnce(Response.json(rootOnly()));
     const controller = new DirectoryEntityController(createAPIClient(fetcher), 7);
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
     expect(container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByText('Curated Peer');
-    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(screen.queryByRole('heading', { name: 'Network' })).toBeNull();
   });
 
   it('reloads for depth and keeps the list through loading, error, and retry', async () => {

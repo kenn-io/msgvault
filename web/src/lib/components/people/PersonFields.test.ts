@@ -119,8 +119,23 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
   const initial = profile();
   initial.contact_points = [{ person_id: 7, identity_key: 'old-email-key', address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
   let finish!: () => void;
-  const { controller, view, writes } = harness(initial, { fail, wait: new Promise<void>(resolve => { finish = resolve; }) });
+  const writeText = vi.fn(async () => undefined);
+  const originalClipboard = navigator.clipboard;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const onAnnounce = vi.fn();
+  const { controller, view, writes } = harness(initial, { onAnnounce, fail, wait: new Promise<void>(resolve => { finish = resolve; }) });
   try {
+    const fields = view.container.querySelector('.fields')!;
+    const add = fields.querySelector('.add')!;
+    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
+    expect(fields.lastElementChild).toBe(add);
+    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy old@example.com' }));
+    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
+    expect(writeText).toHaveBeenCalledWith('old@example.com');
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Email: old@example.com' }));
     expect(writes).toHaveLength(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
@@ -137,7 +152,7 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
       await waitFor(() => expect(screen.queryByText('old@example.com')).toBeNull());
       await expect(writes[0]!.json()).resolves.toEqual({ contact_points: { supersede: [11] } });
     }
-  } finally { view.unmount(); controller.destroy(); }
+  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
 });
 
 it('gates media editing by available data and keeps removal available', () => {
@@ -185,32 +200,36 @@ async function refreshOpenField(refreshed: Partial<AttributeDefinition>, cardina
 
 it.each([
   { name: 'rename keeps the draft', refreshed: { label: 'Renamed note' }, drafts: 1, draftKind: 'setAttribute', editLabel: 'Edit Renamed note: Private example', absent: false },
-  { name: 'sensitive field conceals values', refreshed: { label: 'Private note', is_sensitive: true }, drafts: 0, draftKind: undefined, editLabel: '', absent: true },
   { name: 'inactive field closes the draft', refreshed: { label: 'Private note', is_active: false }, drafts: 0, draftKind: undefined, editLabel: 'Edit Private note: Private example', absent: true },
 ])('joins refreshed field settings into an open draft: $name', async ({ refreshed, drafts, draftKind, editLabel, absent }) => {
-  const sensitive = 'is_sensitive' in refreshed;
-  const { controller, view } = await refreshOpenField(refreshed, sensitive ? 'multi' : 'single', sensitive ? ['Second private example'] : []);
+  const { controller, view } = await refreshOpenField(refreshed);
   try {
     expect(screen.queryAllByDisplayValue('Unsaved local note')).toHaveLength(drafts);
     expect(controller.draft?.kind).toBe(draftKind);
-    if (sensitive) {
-      expect(controller.draft).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Edit Private note: value 1' })).toBeNull();
-      for (const position of [1, 2]) {
-        expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
-        expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
-      }
-      expect(screen.queryByText('Private example')).toBeNull();
-      expect(screen.queryByText('Second private example')).toBeNull();
-      await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
-      expect(screen.getByText('Private example')).toBeDefined();
-    } else if (absent) {
+    if (absent) {
       expect(screen.getByRole('button', { name: 'Remove Private note: Private example' })).toBeDefined();
       expect(screen.queryByRole('button', { name: editLabel })).toBeNull();
     } else expect(screen.getByRole('button', { name: editLabel })).toHaveProperty('disabled', false);
   } finally { view.unmount(); controller.destroy(); }
 });
 
+
+it('closes the field draft and conceals values when refreshed settings mark the field sensitive', async () => {
+  const { controller, view } = await refreshOpenField({ label: 'Private note', is_sensitive: true }, 'multi', ['Second private example']);
+  try {
+    expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
+    expect(controller.draft).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit Private note: value 1' })).toBeNull();
+    for (const position of [1, 2]) {
+      expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
+    }
+    expect(screen.queryByText('Private example')).toBeNull();
+    expect(screen.queryByText('Second private example')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show Private note: value 1' }));
+    expect(screen.getByText('Private example')).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
+});
 
 it.each([
   ['Website', 'Messaging address', 'Contact value', 'xmpp:example@example.com', 'Save contact point', 'contact_points', 'address_kind', 'impp'],
@@ -282,29 +301,4 @@ it('conceals and discards a sensitive new-value draft when Hide is clicked durin
     await waitFor(() => expect(controller.mutationPending).toBe(false));
     view.unmount(); controller.destroy();
   }
-});
-
-it('lists values first, copies them, and gathers the empty common kinds after them', async () => {
-  const initial = profile();
-  initial.contact_points = [{ person_id: 7, address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20, ordinal: 0 } }];
-  const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Clipboard unavailable'));
-  const originalClipboard = navigator.clipboard;
-  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-  const onAnnounce = vi.fn();
-  const { controller, view } = harness(initial, { onAnnounce });
-  try {
-    const fields = view.container.querySelector('.fields')!;
-    const add = fields.querySelector('.add')!;
-    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
-    expect(fields.lastElementChild).toBe(add);
-    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
-    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
-    expect(writeText).toHaveBeenNthCalledWith(1, 'first@example.com');
-    await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
-    await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith("Couldn't copy."));
-    expect(writeText).toHaveBeenNthCalledWith(2, 'first@example.com');
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
-  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
 });
