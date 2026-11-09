@@ -1303,7 +1303,8 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
 	assert.Contains(stderr.String(), "to use this version and keep it running until stopped.")
-	assert.Equal(1, strings.Count(stdout.String()+stderr.String(), "daemon restart"))
+	output := stdout.String() + stderr.String()
+	assert.Equal(1, strings.Count(output, "daemon restart")+strings.Count(output, "'daemon' 'restart'"))
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {

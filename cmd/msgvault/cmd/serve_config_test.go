@@ -44,7 +44,7 @@ func TestQuickStartRestartsAutomaticDaemon(t *testing.T) {
 	case <-t.Context().Done():
 		require.NoError(t.Context().Err())
 	}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, match[1], nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, match[1]+"/health", nil)
 	require.NoError(err)
 	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
 	require.NoError(err)
