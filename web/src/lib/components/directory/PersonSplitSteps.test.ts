@@ -77,6 +77,26 @@ function result(exactReversal: boolean) {
 }
 
 describe('PersonSplitSteps', () => {
+  it('describes a successful subset split without calling it a partial restore', async () => {
+    const response = { ...result(false), unrestored_rows: [], uid_alias_disposition: 'retired_uid_alias_unchanged', source_person: person(12, 5, [702, 999], 'Synthetic Source') };
+    const participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
+    const { controller } = await preparedController(async input => {
+      const request = input as Request, path = new URL(request.url).pathname;
+      if (request.method === 'POST') return Response.json(response);
+      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [999, 701, 702], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
+      if (path.endsWith('/profile')) return Response.json(emptyProfile(person(12)));
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    }, participants);
+    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unknown address 1' }));
+    expect(screen.getByRole('checkbox', { name: 'Unknown address 2' })).toBeDefined();
+    await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
+    expect(screen.queryByText('Partly restored')).toBeNull();
+    expect(screen.queryByText(/fully reversed/)).toBeNull();
+    expect(screen.getByText('Links to the merged-in profile still open Synthetic Source')).toBeDefined();
+    controller.destroy();
+  });
+
   it('keeps provider ordinals distinct through selection, preview, and receipt', async () => {
     const choices = ['WhatsApp · Garden member (2)', 'WhatsApp · Garden member (1)'];
     // Reverse ID order so participant collision ordinals follow identity, rather than list position.

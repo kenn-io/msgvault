@@ -25,7 +25,8 @@
   /** An address as the person knows it, with its scope when it has one, so two alike addresses read apart. */
   function addressLabel(id: number): string {
     const addresses = labels?.addresses.get(id);
-    return addresses ? addresses.map(address => addressText(address)).join(', ') || 'No addresses' : `Unknown address ${(controller.sourcePerson?.participant_ids.indexOf(id) ?? -1) + 1}`;
+    const ids = [...controller.eligibleParticipantIDs, ...(controller.sourcePerson?.participant_ids ?? []).filter(id => !controller.eligibleParticipantIDs.includes(id))];
+    return addresses ? addresses.map(address => addressText(address)).join(', ') || 'No addresses' : `Unknown address ${ids.indexOf(id) + 1}`;
   }
   /** Addresses still on the current profile, including those linked after this merge. */
   function remaining(moved: number[]): number[] {
@@ -68,7 +69,7 @@
   function alsoSaved(id: number): boolean {
     return !!labels?.addresses.get(id)?.some(address => savedKeys.has(address.identity_key));
   }
-  const partial = $derived(!!committed && (!committed.exact_reversal ||
+  const partial = $derived(!!committed && ((!committed.exact_reversal && controller.absorbedParticipants.every(participant => controller.selectedParticipantIDs.includes(participant.participant_id))) ||
     (committed.ambiguous_rows?.length ?? 0) > 0 || (committed.unrestored_rows?.length ?? 0) > 0));
 
   async function retryStaleState(): Promise<void> {
@@ -90,7 +91,7 @@
       <!-- A receipt: the two people that now exist, each with its addresses. -->
       <section class="result">
         <!-- Exact means every record the merge moved was matched. A later edit stays on its record wherever that is now, and a deleted one stays deleted. -->
-        {#if !partial}<p>The merge was fully reversed, and edits and deletions made since then were kept.</p>{/if}
+        {#if committed.exact_reversal && !partial}<p>The merge was fully reversed, and edits and deletions made since then were kept.</p>{/if}
         <div aria-label="Split result people">
           <DetailRow actionLabel={`Open ${remainingName}`} onclick={() => onOpenPerson(committed.source_person.id)} description={receiptLine(['Stays'], committed.source_person.participant_ids, controller.receiptSaved.source)}>{remainingName}</DetailRow>
           <DetailRow actionLabel={`Open ${committed.new_person.display_name?.trim() || 'new person'}`} onclick={() => onOpenPerson(committed.new_person.id)} description={receiptLine(committed.new_person.display_name?.trim() ? ['New person'] : [], committed.new_person.participant_ids, controller.receiptSaved.created)}>{committed.new_person.display_name?.trim() || 'New person'}</DetailRow>
@@ -101,9 +102,9 @@
           <!-- The split is done; Retry only reads the two profiles again. -->
           <InlineNotice tone="warning" message="The split is done, but saved addresses couldn't be loaded." actionLabel="Retry" onaction={() => void controller.retryReceiptSaved()} details={controller.receiptSavedError} />
         {/if}
-        {#if partial}
+        {#if partial || !committed.exact_reversal}
           <ul class="result-details">
-            <li>Partly restored</li>
+            {#if partial}<li>Partly restored</li>{/if}
             {#if count(committed.ambiguous_rows, 'matched')}<li>{count(committed.ambiguous_rows, 'matched')}</li>{/if}
             {#if count(committed.unrestored_rows, 'restored')}<li>{count(committed.unrestored_rows, 'restored')}</li>{/if}
             <li>{committed.uid_alias_disposition === 'retired_uid_alias_retargeted' ? 'Links to the merged-in profile now open the new person' : `Links to the merged-in profile still open ${remainingName}`}</li>

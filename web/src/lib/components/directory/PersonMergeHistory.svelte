@@ -94,6 +94,7 @@
   const absorbedTitle = $derived(controller.detail ? absorbedCardTitle(absorbedNames[0], absorbedNames[1], absorbedAddress) : '');
   const survivorAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'survivor') : []);
   const onCards = (split: { id: number }) => [...absorbedAddresses, ...survivorAddresses].some(address => address.splitID === split.id);
+  const tookAll = (split: { id: number }) => controller.absorbedParticipants.every(participant => participant.split_id === split.id);
   /** Splits the cards can't show: one that took no address listed on a card. */
   const otherSplits = $derived((controller.detail?.splits ?? []).filter(split => !onCards(split)));
   /**
@@ -105,12 +106,11 @@
     if (!detail) return [];
     const splits = (detail.splits ?? []).filter(onCards);
     const moved = (split: { id: number }) => [...absorbedAddresses, ...survivorAddresses].filter(address => address.splitID === split.id);
-    const tookAll = (split: { id: number }) => controller.absorbedParticipants.every(participant => participant.split_id === split.id);
     return splits.map(split => ({
       id: split.id, personID: split.new_person_id, name: labels?.names.get(split.new_person_id),
       addresses: splits.length > 1 || !tookAll(split) ? moved(split).map(addressText).join(', ') : '',
       by: split.actor === detail.merge.actor ? '' : ` by ${actorName(split.actor)}`,
-      rest: `${formatShortDate(split.created_at) === formatShortDate(detail.merge.created_at) ? '' : ` on ${formatShortDate(split.created_at)}`}${split.exact_reversal ? '' : ' · partly restored'}`,
+      rest: `${formatShortDate(split.created_at) === formatShortDate(detail.merge.created_at) ? '' : ` on ${formatShortDate(split.created_at)}`}${!split.exact_reversal && tookAll(split) ? ' · partly restored' : ''}`,
       title: `Split ${formatDateTime(split.created_at)}`,
     }));
   });
@@ -122,9 +122,9 @@
     if (detail.splits?.length && absorbed.every(participant => participant.split_id !== undefined)) return 'nothing left to split';
     return detail.merge.current_person_id ? 'nothing left to split' : 'the profile it merged into is gone';
   });
-  function splitLine(split: { exact_reversal: boolean; actor: string; created_at: string }) {
+  function splitLine(split: { id: number; exact_reversal: boolean; actor: string; created_at: string }) {
     const line = provenance(split.actor, split.created_at);
-    return { text: split.exact_reversal ? line.text : `${line.text} · partly restored`, title: line.title };
+    return { text: !split.exact_reversal && tookAll(split) ? `${line.text} · partly restored` : line.text, title: line.title };
   }
   function reviewRows(pending: boolean) {
     return (controller.detail?.review_candidates ?? []).filter(candidate => (candidate.state === 'pending') === pending).map(candidate => ({

@@ -330,6 +330,7 @@ describe('PersonMergeHistory', () => {
     await fireEvent.click(await screen.findByRole('button', { name: /^Open Merged Guest merged into Survivor/ }));
     const line = await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').startsWith('Merged by you'));
     await waitFor(() => expect(line.textContent).toContain('First Restored (first@example.org)'));
+    expect(line.textContent).not.toContain('partly restored');
     expect.soft(line.textContent).toMatch(new RegExp(`split back to ${deleted ? 'another profile' : 'Second Restored'} \\(Slack · @alex · workspace: garden\\)`));
     expect.soft(line.textContent).not.toContain('pending@example.org');
     expect.soft(screen.getByRole('region', { name: 'Merged Guest' }).textContent).not.toMatch(/Restored|another profile|split back/i);
@@ -352,7 +353,7 @@ describe('PersonMergeHistory', () => {
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
     if (layout === 'row') {
       await screen.findByRole('heading', { name: 'Splits' });
-      expect(screen.getByText(/^You · Aug [34] · partly restored$/)).toBeDefined();
+      expect(screen.getByText(/^You · Aug [34]$/)).toBeDefined();
     } else await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').includes('split back to another profile'));
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people/19')).toHaveLength(1);
     const name = layout === 'row' ? destination === 'literal fallback name' ? 'Open another profile' : 'Open restored profile' : 'another profile';
