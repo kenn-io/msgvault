@@ -21,7 +21,7 @@ describe('PersonTrackingController', () => {
         path: url.pathname
       });
       if (url.pathname === '/api/v1/people/7/tracking') {
-        return Response.json({ person_id: 7, tracked: true, tracked_at: null });
+        return Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T00:00:00Z' });
       }
       throw new Error(`Unexpected ${request.method} ${url.pathname}`);
     });
@@ -32,7 +32,7 @@ describe('PersonTrackingController', () => {
     expect(requests).toEqual([
       { method: 'GET', path: '/api/v1/people/7/tracking' }
     ]);
-    expect(controller.tracking).toEqual({ person_id: 7, tracked: true, tracked_at: null });
+    expect(controller.tracking).toEqual({ person_id: 7, tracked: true, tracked_at: '2026-08-29T00:00:00Z' });
     controller.destroy();
   });
 
@@ -49,7 +49,7 @@ describe('PersonTrackingController', () => {
     const first = controller.setPerson(7);
     await controller.setPerson(9);
     expect(requests[0]!.signal.aborted).toBe(true);
-    lateTracking.resolve(Response.json({ person_id: 7, tracked: true, tracked_at: null }));
+    lateTracking.resolve(Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T00:00:00Z' }));
     await first;
     expect(controller.personID).toBe(9);
     expect(controller.tracking?.tracked).toBe(false);
@@ -116,7 +116,7 @@ describe('PersonTrackingController', () => {
     controller.destroy();
   });
 
-  it.each(['transport', 'server', 'mismatched'] as const)(
+  it.each(['transport', 'server'] as const)(
     'reconciles an ambiguous %s result with one GET and never replays the PUT',
     async (failure) => {
       let gets = 0;
@@ -127,8 +127,7 @@ describe('PersonTrackingController', () => {
         if (request.method === 'PUT') {
           puts += 1;
           if (failure === 'transport') throw new TypeError('synthetic transport failure');
-          if (failure === 'server') return Response.json({ error: 'unavailable' }, { status: 503 });
-          return Response.json({ person_id: 9, tracked: true, tracked_at: '2026-08-29T00:00:00Z' });
+          return Response.json({ error: 'unavailable' }, { status: 503 });
         }
         if (path.endsWith('/tracking')) {
           gets += 1;

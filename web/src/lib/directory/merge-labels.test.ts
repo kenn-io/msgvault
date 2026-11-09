@@ -98,6 +98,12 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
   expect(row.addresses.get(701)?.map(addressText)).toEqual(expected);
   expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(expected);
   expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses, workspaces: row.workspaceLabels }]).map(a => a.value)).toEqual(expected);
+  const both = [
+    addressFixture(702, 'slack', 'T_A:U_SURVIVOR', { participant_display_name: 'Survivor', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_A' }),
+    addressFixture(701, 'slack', 'T_B:U_ABSORBED', { participant_display_name: 'Absorbed', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_B' }),
+  ];
+  const complete = { merge, participants: [{ ...absorbed(702), origin_side: 'survivor' }, absorbed(701)], labels: labelsOf(both) };
+  expect(mergeSummaryRow(complete).addresses.get(701)?.map(addressText)).toEqual(['Slack · Absorbed · workspace 2']);
   const point = { identity_key: identityKeyFixture('slack', 'T_TWO:U_NERI', 'workspace', 'T_TWO'), address_kind: 'username', original_value: 'Neri Bloom', normalized_value: 'T_TWO:U_NERI', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
   expect(savedAddresses([point], new Set(), row.workspaceLabels).map(addressText)).toEqual(['Neri Bloom · Slack · workspace 2']);
 });

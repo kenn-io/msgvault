@@ -21,7 +21,7 @@ function mergeDetail(
 ): MergeDetail {
   return {
     merge: { ...mergeResult(person(7)).merge, current_person_id: 12 },
-    labels: { profiles: [], participant_ids: [], addresses: [], absorbed_address_count: 0, incomplete: true },
+    labels: { profiles: [{ id: 7, participant_ids: [] }, { id: 9, participant_ids: [701] }], participant_ids: [], addresses: [], absorbed_address_count: 0, incomplete: true },
     participants,
     rows: [],
     splits: [],
@@ -92,7 +92,7 @@ describe('PersonSplitSteps', () => {
       if (path === '/api/v1/people/19/profile') return Response.json({ ...emptyProfile(response.new_person), contact_points: [] });
       throw new Error(`Unexpected ${request.method} ${path}`);
     });
-    const { controller } = await preparedController(fetchFn, participants, () => ({ profiles: [], participants, participant_ids: ids, addresses, absorbed_address_count: 2, incomplete: false }));
+    const { controller } = await preparedController(fetchFn, participants, () => ({ ...mergeDetail().labels, participants, participant_ids: ids, addresses, absorbed_address_count: 2, incomplete: false }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     expect(screen.getAllByRole('checkbox').map(choice => choice.getAttribute('aria-label') || choice.closest('label')?.textContent?.trim()).sort()).toEqual([...choices].sort());
     await fireEvent.click(screen.getByRole('checkbox', { name: choices[1] }));
@@ -209,7 +209,7 @@ describe('PersonSplitSteps', () => {
       if (path === '/api/v1/people/19/profile') return Response.json({ ...emptyProfile(response.new_person), contact_points: [saved] });
       if (path === '/api/v1/people/12/split' && request.method === 'POST') { posted = request; return Response.json(response); }
       throw new Error(`Unexpected ${request.method} ${path}`);
-    }, [], () => ({ profiles: [], participant_ids: [], addresses: [], absorbed_address_count: 0, incomplete: false }));
+    }, [], () => ({ ...mergeDetail().labels, profiles: [{ id: 7, participant_ids: [] }, { id: 9, participant_ids: [] }], incomplete: false }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     expect(screen.getByText('saved@example.org')).toBeDefined();
     expect(screen.getByText('Splitting restores its profile history.')).toBeDefined();

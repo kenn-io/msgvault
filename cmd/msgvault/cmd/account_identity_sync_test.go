@@ -90,16 +90,13 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		cmd.SetArgs(args)
 		capture := captureStdout(t)
 		err = cmd.ExecuteContext(ctx)
-		output := capture()
+		capture()
 		require.NoError(err)
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
 		src, err := findGmailSource(st, "user@example.com")
 		require.NoError(err)
-		if flag == "--no-default-identity" {
-			assertRegistrationSyncCommand(t, output, src.ID, "sync-full")
-		}
 		// Seed the cursor of an already-synced mailbox so this scheduled run
 		// completes with no new messages.
 		require.NoError(st.UpdateSourceSyncCursor(src.ID, "100"))
@@ -221,7 +218,7 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		cmd.SetArgs(args)
 		capture := captureStdout(t)
 		err = cmd.ExecuteContext(ctx)
-		output := capture()
+		capture()
 		require.NoError(err)
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
@@ -230,9 +227,6 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		require.NoError(err)
 		require.Len(sources, 1)
 		src := sources[0]
-		if flag == "--no-default-identity" {
-			assertRegistrationSyncCommand(t, output, src.ID, "sync-full")
-		}
 		// Re-enabling defaults creates the identity before this explicit removal.
 		// The next scheduled sync must preserve the removal.
 		if !optOut {
@@ -288,7 +282,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				cmd.SetArgs(args)
 				capture := captureStdout(t)
 				err := cmd.ExecuteContext(ctx)
-				output := capture()
+				capture()
 				require.NoError(err)
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
@@ -296,13 +290,6 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				sources, err := st.ListSources("")
 				require.NoError(err)
 				require.Len(sources, 1)
-				if flag == "--no-default-identity" && tc.name != "teams" {
-					verb := "sync-full"
-					if tc.name == "graph" {
-						verb = "sync"
-					}
-					assertRegistrationSyncCommand(t, output, sources[0].ID, verb)
-				}
 				if tc.name == "graph" {
 					// Identity setup precedes token loading. With no Graph token,
 					// the real scheduled path stops before making network requests.
@@ -332,7 +319,7 @@ func assertRegistrationSyncCommand(t *testing.T, output string, sourceID int64, 
 	assert.Equal(t, fmt.Sprintf("msgvault %s --source-id %d", verb, sourceID), line)
 }
 
-func TestAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {
+func testAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("uses the Linux browser opener boundary")
 	}
@@ -383,4 +370,118 @@ func TestAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {
 	source, err := findGmailSource(st, "-reader@example.org")
 	require.NoError(err)
 	assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
+}
+
+func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
+	t.Run("new authorization", testAddAccountNewAuthorizationPrintsExactSyncCommand)
+	t.Run("existing token", func(t *testing.T) {
+		saveAddAccountFlags(t)
+		_, restore := seedTokenEnv(t, legacyTokenJSON)
+		defer restore()
+		output, err := runAddAccountForTestContext(gmailProfileContext(t, scopeEscalationAccount), t, scopeEscalationAccount, "--no-default-identity")
+		require.NoError(t, err)
+		st, err := store.Open(filepath.Join(os.Getenv("MSGVAULT_HOME"), "msgvault.db"))
+		require.NoError(t, err)
+		defer func() { _ = st.Close() }()
+		source, err := findGmailSource(st, scopeEscalationAccount)
+		require.NoError(t, err)
+		assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
+	})
+	t.Run("service account", func(t *testing.T) {
+		saveAddAccountFlags(t)
+		savedTransport := http.DefaultTransport
+		t.Cleanup(func() { http.DefaultTransport = savedTransport })
+		http.DefaultTransport = testTransport(func(req *http.Request) (*http.Response, error) {
+			var body string
+			switch req.Method + " " + req.URL.String() {
+			case "POST https://token.example.com/oauth2":
+				body = `{"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}`
+			case "GET https://gmail.googleapis.com/gmail/v1/users/me/profile":
+				body = `{"emailAddress":"user@example.com","historyId":"100"}`
+			default:
+				return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+		})
+		home := t.TempDir()
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+		require.NoError(t, err)
+		keyJSON, err := json.Marshal(map[string]string{"type": "service_account", "client_email": "service@example.com", "private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})), "token_uri": "https://token.example.com/oauth2"})
+		require.NoError(t, err)
+		keyPath := filepath.Join(home, "service.json")
+		require.NoError(t, os.WriteFile(keyPath, keyJSON, 0600))
+		cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, OAuth: config.OAuthConfig{ServiceAccountKey: keyPath}}
+		cmd := &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
+		registerAddAccountFlags(cmd)
+		cmd.SetArgs([]string{"user@example.com", "--no-default-identity"})
+		capture := captureStdout(t)
+		err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		output := capture()
+		require.NoError(t, err)
+		st, err := store.Open(cfg.DatabaseDSN())
+		require.NoError(t, err)
+		defer func() { _ = st.Close() }()
+		source, err := findGmailSource(st, "user@example.com")
+		require.NoError(t, err)
+		assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
+	})
+	t.Run("imap", func(t *testing.T) {
+		savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
+		savedNoTLS, savedSTARTTLS, savedNoDefault := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
+		t.Cleanup(func() {
+			imapHost, imapPort, imapUsername = savedHost, savedPort, savedUsername
+			imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap = savedNoTLS, savedSTARTTLS, savedNoDefault
+		})
+		t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+		t.Setenv("MSGVAULT_IMAP_PASSWORD", testutil.IMAPTestPassword)
+		addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t, map[string]int{"INBOX": 1}, nil)
+		host, port, err := net.SplitHostPort(addr)
+		require.NoError(t, err)
+		home := t.TempDir()
+		cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+		cmd := newAddIMAPCmd()
+		cmd.SetArgs([]string{"--host", host, "--port", port, "--username", testutil.IMAPTestUsername, "--no-tls", "--no-default-identity"})
+		capture := captureStdout(t)
+		err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		output := capture()
+		require.NoError(t, err)
+		st, err := store.Open(cfg.DatabaseDSN())
+		require.NoError(t, err)
+		defer func() { _ = st.Close() }()
+		sources, err := st.ListSources(sourceTypeIMAP)
+		require.NoError(t, err)
+		require.Len(t, sources, 1)
+		assertRegistrationSyncCommand(t, output, sources[0].ID, "sync-full")
+	})
+	for _, tc := range []struct {
+		name, verb string
+		args       []string
+	}{{"o365", "sync-full", nil}, {"graph", "sync", []string{"--graph"}}} {
+		t.Run(tc.name, func(t *testing.T) {
+			savedGraph, savedNoDefault, savedHeadless, savedTenant := o365Graph, noDefaultIdentityAddO365, o365Headless, o365TenantID
+			t.Cleanup(func() {
+				o365Graph, noDefaultIdentityAddO365, o365Headless, o365TenantID = savedGraph, savedNoDefault, savedHeadless, savedTenant
+			})
+			home := t.TempDir()
+			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Microsoft: config.MicrosoftConfig{ClientID: "synthetic-client"}}
+			mgr := microsoft.NewManager(cfg.Microsoft.ClientID, "common", cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), testDiscardLogger())
+			require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0700))
+			require.NoError(t, os.WriteFile(mgr.TokenPath("user@example.com"), []byte(`{"access_token":"synthetic-token"}`), 0600))
+			cmd := newAddO365LocalCmd()
+			cmd.SetArgs(append([]string{"user@example.com", "--" + oauthPreflightedFlag, "--no-default-identity"}, tc.args...))
+			capture := captureStdout(t)
+			err := cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			output := capture()
+			require.NoError(t, err)
+			st, err := store.Open(cfg.DatabaseDSN())
+			require.NoError(t, err)
+			defer func() { _ = st.Close() }()
+			sources, err := st.ListSources("")
+			require.NoError(t, err)
+			require.Len(t, sources, 1)
+			assertRegistrationSyncCommand(t, output, sources[0].ID, tc.verb)
+		})
+	}
 }

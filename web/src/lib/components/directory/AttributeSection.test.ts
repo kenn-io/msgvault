@@ -110,6 +110,13 @@ describe('AttributeSection', () => {
     expect(screen.getByRole('heading', { name: 'Private note' }).querySelector('button')).toBeNull();
     expect(currentRow.textContent).not.toMatch(/source-card-7|synthetic-importer|0\.8|Valid from|Created/);
     expect(line.getAttribute('title')).toBe(provenance.title);
+  });
+
+  it('reveals and hides sensitive current and historical values', async () => {
+    const sensitive = definition();
+    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' });
+    const historical = personValue(sensitive, 17, { type: 'text', text: 'synthetic historical secret' }, 0, { active_until: when, superseded_at: when });
+    renderSection(vi.fn(), [{ definition: sensitive, current: [current], history: [historical] }]);
     expect(document.body.innerHTML).not.toContain('synthetic current secret');
     expect(document.body.innerHTML).not.toContain('synthetic historical secret');
 
@@ -144,6 +151,7 @@ describe('AttributeSection', () => {
     const history = screen.getByText('1 earlier value').closest('details');
     expect(history).not.toBeNull();
     expect(history?.hasAttribute('open')).toBe(false);
+    expect(history?.textContent).toContain('Two');
   });
 
 });

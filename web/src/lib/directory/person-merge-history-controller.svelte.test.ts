@@ -1,4 +1,3 @@
-import { addressText } from './merge-labels';
 import { addressFixture } from './merge-fixtures.test-support';
 import { emptyProfile } from './profile-fixtures.test-support';
 import { mergeResult, person, requestOf } from './entity-fixtures.test-support';
@@ -65,7 +64,7 @@ function splitResult(exact = true): GeneratedPersonSplitResult {
       source_revision_before: 4,
       source_revision_after: 5,
       exact_reversal: exact,
-      actor: 'web',
+      actor: 'user',
       created_at: '2026-08-04T00:00:00Z',
     },
     ambiguous_rows: exact ? [] : [{ table_name: 'person_names', original_row_key: 'concealed', action: 'ambiguous' }],
@@ -738,8 +737,6 @@ describe('PersonMergeHistoryController', () => {
     }), 12);
     try {
       await controller.loadHistory();
-      await controller.selectMerge(41);
-      expect(controller.labels?.addresses.get(701)?.map(addressText)).toEqual(['Slack · Absorbed · workspace 2']);
       expect(controller.mergedIn.filter(address => address.participantID === 701).map(address => address.value)).toEqual(['Slack · Absorbed · workspace 2']);
     } finally { controller.destroy(); }
   });

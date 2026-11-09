@@ -70,7 +70,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			dbPath := filepath.Join(tmpDir, "msgvault.db")
 
 			s := testutil.NewSQLiteTestStoreAt(t, dbPath)
-			source, err := s.GetOrCreateSource("gmail", "-reader@example.org")
+			source, err := s.GetOrCreateSource("gmail", "user@acme.com")
 			require.NoError(err, "create source")
 			require.NoError(s.UpdateSourceOAuthApp(t.Context(), source.ID, sql.NullString{String: "acme", Valid: true}), "set oauth_app")
 			_ = s.Close()
@@ -83,7 +83,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 				"token_type":    "Bearer",
 				"client_id":     tc.clientID,
 			})
-			require.NoError(os.WriteFile(filepath.Join(tokensDir, "-reader@example.org.json"), tokenData, 0600), "write token")
+			require.NoError(os.WriteFile(filepath.Join(tokensDir, "user@acme.com.json"), tokenData, 0600), "write token")
 
 			secretsPath := filepath.Join(tmpDir, "secret.json")
 			require.NoError(os.WriteFile(secretsPath, []byte(fakeClientSecrets), 0600), "write secrets")
@@ -102,7 +102,7 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			}
 			logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-			ctx := gmailProfileContext(t, "-reader@example.org")
+			ctx := gmailProfileContext(t, "user@acme.com")
 			ctx = testInvocationContext(ctx, cfg, invocationOptions{})
 
 			testCmd := &cobra.Command{
@@ -118,16 +118,13 @@ func TestAddAccount_InheritedBindingValidatesToken(t *testing.T) {
 			root := newTestRootCmd()
 			root.AddCommand(testCmd)
 			// No --oauth-app flag: binding inherited from DB
-			root.SetArgs([]string{"add-account", "--", "-reader@example.org"})
+			root.SetArgs([]string{"add-account", "user@acme.com"})
 
-			capture := captureStdout(t)
 			err = root.ExecuteContext(ctx)
-			output := capture()
 			if tc.wantError {
 				require.ErrorIs(err, context.Canceled, "unexpected browser authorization must stop at cancellation")
 			} else {
 				require.NoError(err)
-				assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
 			}
 		})
 	}

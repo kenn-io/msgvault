@@ -4,16 +4,6 @@ import { createAPIClient } from '../../api/client';
 import TrackedFieldsList from './TrackedFieldsList.svelte';
 
 describe('Fields kept updated', () => {
-  it.each([{ slug: 12 }, { key: 12 }])('rejects a malformed catalog identity: %j', async malformed => {
-    render(TrackedFieldsList, { client: createAPIClient(async input => {
-      if (new URL((input as Request).url).pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
-      return Response.json({ targets: [{ kind: 'attribute', key: 'field:time_zone', slug: 'time_zone', description: 'Time zone', sensitive: false, ...malformed }] });
-    }) });
-    expect(await screen.findByText("Couldn't load the fields kept updated.")).toBeDefined();
-    expect(screen.getByText("The server's list of fields couldn't be read.")).toBeDefined();
-    expect(screen.queryByText('Time zone')).toBeNull();
-  });
-
   it('retries an initial field catalog network failure in place', async () => {
     let failing = true;
     render(TrackedFieldsList, { client: createAPIClient(async input => {

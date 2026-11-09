@@ -1171,7 +1171,7 @@ function reviewSplit(): PersonSplit {
     source_revision_before: 5,
     source_revision_after: 6,
     exact_reversal: false,
-    actor: 'web',
+    actor: 'user',
     created_at: '2026-01-04T12:00:00Z',
   };
 }

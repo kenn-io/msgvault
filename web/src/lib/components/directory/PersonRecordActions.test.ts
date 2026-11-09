@@ -35,7 +35,7 @@ async function choose(action: string): Promise<void> {
 
 describe('PersonRecordActions', () => {
   it.each([
-    ['saved', 'Keeping this profile updated.'],
+    ['failed then retried', 'Keeping this profile updated.'],
     ['destroyed after settlement', null],
   ] as const)('handles a save started before the menu closes: %s', async (outcome, announcement) => {
     let settled = false;
@@ -60,7 +60,7 @@ describe('PersonRecordActions', () => {
       }
       const { tracked } = await request.json();
       await held;
-      if (outcome === 'saved' && !failed) { failed = true; return Response.json({ message: 'Save unavailable' }, { status: 503 }); }
+      if (outcome === 'failed then retried' && !failed) { failed = true; return Response.json({ message: 'Save unavailable' }, { status: 503 }); }
       saved = tracked;
       return Response.json({ person_id: 7, tracked, tracked_at: '2026-11-05T12:00:00Z' });
     }, undefined, undefined, onAnnounce);
@@ -124,7 +124,7 @@ describe('PersonRecordActions', () => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'GET' && ++reads === 1) return Response.json({}, { status: 503 });
       if (request.method === 'PUT') { writes.push(request); tracked = (await request.json()).tracked; }
-      return Response.json({ person_id: 7, tracked, tracked_at: null });
+      return Response.json({ person_id: 7, tracked, tracked_at: tracked ? when : null });
     }), undefined, setUp);
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });

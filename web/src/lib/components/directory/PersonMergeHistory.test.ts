@@ -1,3 +1,4 @@
+import { appShortcuts } from '@kenn-io/kit-ui';
 import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
@@ -175,6 +176,31 @@ describe('PersonMergeHistory', () => {
     }
   });
 
+  it('blocks dismissal and root shortcuts while a split is pending', async () => {
+    const pending = deferred();
+    const { onClose } = renderHistory(detail(), { respond: (path, request) => {
+      if (request.method === 'POST') return pending.promise;
+      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
+      return undefined;
+    } });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', true));
+      const rootShortcut = vi.fn();
+      const unregister = appShortcuts.register('x', rootShortcut);
+      try {
+        await fireEvent.keyDown(window, { key: 'Escape' });
+        await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
+        appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
+        expect(onClose).not.toHaveBeenCalled();
+        expect(rootShortcut).not.toHaveBeenCalled();
+      } finally { unregister(); }
+    } finally { pending.resolve(Response.json({}, { status: 503 })); }
+  });
+
   it('lets the user finish a committed split while the profiles refresh and the receipt loads', async () => {
     const reconciliation = deferred<void>(), receipt = [deferred(), deferred()];
     const onSplitCommitted = vi.fn(() => reconciliation.promise);
@@ -280,14 +306,15 @@ describe('PersonMergeHistory', () => {
     expect(row.closest('.detail-row')?.querySelector('.description')?.textContent).toContain('0 addresses moved in');
   });
 
-  it.each([false, true])('summarizes a whole-profile split without listing only its participant addresses: exact=%s', async exact => {
+  it.each([[false, false], [true, false], [true, true]])('summarizes a whole-profile split: exact=%s same day=%s', async (exact, sameDay) => {
     const value = detail();
     for (const participant of value.participants) if (participant.origin_side === 'absorbed') participant.split_id = 55;
     value.splits![0].exact_reversal = exact;
+    if (sameDay) value.splits![0].created_at = value.merge.created_at;
     renderHistory(value);
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
     const line = await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').includes('split back to Alex Restored'));
-    expect(line.textContent).toMatch(exact ? /split back to Alex Restored on Aug [34] · nothing left to split/ : /split back to Alex Restored on Aug [34] · partly restored · nothing left to split/);
+    expect(line.textContent).toMatch(sameDay ? /split back to Alex Restored · nothing left to split/ : exact ? /split back to Alex Restored on Aug [34] · nothing left to split/ : /split back to Alex Restored on Aug [34] · partly restored · nothing left to split/);
     expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
   });
 
@@ -411,14 +438,10 @@ describe('PersonMergeHistory', () => {
     expect(screen.getByText('SHA-256 syntheti…').title).toBe('SHA-256 synthetic-digest');
   });
 
-  it.each(['gone', 'split on merge day'] as const)('explains unavailable Split: %s', async reason => {
-    const value = detail(null);
-    if (reason !== 'gone') value.participants[0].split_id = 55;
-    if (reason === 'split on merge day') value.splits = [{ ...value.splits![0], exact_reversal: true, created_at: value.merge.created_at }];
-    renderHistory(value, { addresses: addressIdentifiers() });
+  it('explains when the profile it merged into is gone', async () => {
+    renderHistory(detail(null), { addresses: addressIdentifiers() });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
-    const expected = reason === 'gone' ? /the profile it merged into is gone$/ : /^Merged by you · (Jul|Aug) \d{1,2} · split back to Alex Restored · nothing left to split$/;
-    expect(await screen.findByText((_, element) => element?.tagName === 'P' && expected.test((element.textContent ?? '').replace(/\s+/g, ' ').trim()))).toBeDefined();
+    expect(await screen.findByText(/the profile it merged into is gone$/)).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
   });
 
