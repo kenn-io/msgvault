@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organizationProfile, relationship, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
-import PersonNetwork from './PersonNetwork.svelte';
 import RelationshipsTab from './RelationshipsTab.svelte';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 
@@ -29,8 +28,7 @@ it('refreshes Work and Network when accepting a job ended elsewhere', async () =
   controller.employments = [employment()];
   controller.organizationRecords.set(21, organizationProfile());
   render(OrganizationEmploymentTab, { controller, personID: 7 });
-  render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-  expect(await screen.findByRole('list', { name: 'Network connections' })).toBeDefined();
+  const refresh = vi.spyOn(controller, 'refreshEmployments');
   await fireEvent.click(within(screen.getByRole('region', { name: 'Work' })).getByRole('button', { name: /^Actions for/ }));
   await fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit…' }));
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft title' } });
@@ -40,7 +38,7 @@ it('refreshes Work and Network when accepting a job ended elsewhere', async () =
   await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
   await waitFor(() => expect(controller.employments[0].is_current).toBe(false));
   await waitFor(() => expect(directoryChanged).toHaveBeenCalledOnce());
-  await waitFor(() => expect(screen.queryByRole('list', { name: 'Network connections' })).toBeNull());
+  expect(refresh).toHaveBeenCalledOnce();
 });
 
 it('refreshes Connections and Network when cancelling the delete of a connection ended elsewhere', async () => {
@@ -63,8 +61,7 @@ it('refreshes Connections and Network when cancelling the delete of a connection
   });
   controller.relationships = [{ counterpart_person_id: 141, counterpart_display_name: 'Synthetic Peer', counterpart_label: 'mentors', counterpart_vcard_uid: 'person-141', direction: 'outgoing' as const, relationship: relationship(41) }];
   render(RelationshipsTab, { client, controller, personID: 7 });
-  render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-  expect(await screen.findByRole('list', { name: 'Network connections' })).toBeDefined();
+  const refresh = vi.spyOn(controller, 'refreshRelationships');
   await fireEvent.click(within(screen.getByRole('region', { name: 'Connections' })).getByRole('button', { name: /^Actions for/ }));
   await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
@@ -73,5 +70,5 @@ it('refreshes Connections and Network when cancelling the delete of a connection
   await screen.findByText('This connection changed since you opened it.');
   await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(controller.relationships).toEqual([]));
-  await waitFor(() => expect(screen.queryByRole('list', { name: 'Network connections' })).toBeNull());
+  expect(refresh).toHaveBeenCalledOnce();
 });

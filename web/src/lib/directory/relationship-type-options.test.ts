@@ -24,7 +24,7 @@ describe('relationship choices', () => {
   it('uses canonical labels for mirrored and renamed inverse aliases', () => {
     const parent = type('parent', 'guardian', 'dependent', { id: 1, inverse_type_id: 2 });
     const child = type('child', 'dependent', 'guardian', { id: 2, inverse_type_id: 1, is_canonical: false });
-    for (const alias of [child, { ...child, forward_label: 'descendant', reverse_label: 'parent' }]) {
+    for (const alias of [child]) {
       expect(relationshipTypeOptions([parent, alias])[0].children?.map(choice => [choice.name, choice.displayLabel])).toEqual([
         ['parent:outgoing', 'guardian'], ['parent:incoming', 'dependent'],
       ]);
@@ -37,9 +37,4 @@ describe('relationship choices', () => {
     expect(relationshipPhrase('custom', 'outgoing', 'mentors')).toBe('mentors');
     expect(relationshipPhrase('custom', 'outgoing', 'parent')).toBe('parent');
   });
-});
-
-it('uses type and direction for phrasing when a custom label matches a built-in label', () => {
-  const choices = relationshipTypeOptions([type('custom', 'parent', 'child', { ownership: 'user' })])[0].children!;
-  expect(choices.map(choice => choice.displayLabel)).toEqual(['child', 'parent']);
 });

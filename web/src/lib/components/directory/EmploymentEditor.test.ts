@@ -345,20 +345,17 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
   });
 
   it('shows the exact employer in the existing job context', async () => {
-    const requests: Request[] = [];
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+    const { controller } = controllerWith(async (input) => {
       const request = requestOf(input);
-      requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/employments/11') return new Response(JSON.stringify(employment()), { headers: { ETag: '"employment-11-r1"' } });
       if (path === '/api/v1/organizations/21') return new Response(JSON.stringify(organizationProfile(2, 'Exact Employment Org')), { headers: { ETag: '"organization-21-r2"' } });
       if (path === '/api/v1/people/7/employments') return collection([employment()]);
       throw new Error(`unexpected ${request.method} ${path}`);
-    }));
+    });
     controller.employments = [employment()];
     render(EmploymentEditor, { controller, personID: 7, employment: employment() });
-    const context = await screen.findByText('At Exact Employment Org', { selector: 'p.context' });
-    expect(context.textContent).toBe('At Exact Employment Org');
+    await screen.findByText('At Exact Employment Org', { selector: 'p.context' });
   });
 
 

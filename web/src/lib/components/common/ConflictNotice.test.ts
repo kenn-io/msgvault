@@ -6,9 +6,9 @@ it('credits the latest editor instead of an imported source', () => {
   render(ConflictNotice, {
     noun: 'connection',
     record: {},
-    saved: { updated_at: '2026-11-06T08:34:00Z', source: 'carddav_import', updated_by: 'user' },
+    saved: { updated_at: new Date().toISOString(), source: 'carddav_import', updated_by: 'user' },
     message: 'Changed elsewhere'
   });
-  expect(screen.getByText(/^Saved on /)).toBeDefined();
+  expect(screen.getByText(/^Saved at /)).toBeDefined();
   expect(screen.queryByText(/Saved from CardDAV contacts/)).toBeNull();
 });

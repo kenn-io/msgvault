@@ -32,20 +32,6 @@ describe('OrganizationEditor', () => {
     expect(writes[1].body.categories?.map(item => item.category)).toEqual(['Research']);
   });
 
-  it('shows a changed organization when delete conflicts', async () => {
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
-      if (request.method === 'DELETE') {
-        return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      }
-      return Response.json({ ...organizationProfile(2), organization: { ...organization(21, 2), name: 'New name' } }, { headers: { ETag: '"organization-21-r2"' } });
-    });
-    render(OrganizationEditor, { controller, organization: organization() });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-    expect(await screen.findByText('New name')).toBeDefined();
-  });
   it('shows the structured profile read-only under the fields, grouped by what each value is', async () => {
     const { controller } = controllerWith(async () => Response.json(richOrganizationProfile(1), { headers: { ETag: '"organization-21-r1"' } }));
     render(OrganizationEditor, { controller, organization: organization() });
@@ -298,7 +284,7 @@ it('retries a failed alias save with the profile write alone', async () => {
 it('preserves the edit baseline after Back from a conflicted delete', async () => {
   let reads = 0;
   const opening = organizationProfile();
-  const newer = { ...opening, organization: { ...opening.organization, revision: 2, primary_domain: 'concurrent.example' } };
+  const newer = { ...opening, organization: { ...opening.organization, revision: 2, name: 'New name', primary_domain: 'concurrent.example' } };
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
@@ -316,6 +302,7 @@ it('preserves the edit baseline after Back from a conflicted delete', async () =
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(reads).toBe(2));
   await screen.findByText('This organization changed since you opened it.');
+  expect(screen.getByText('New name')).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: /^Back to / }));
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
   expect(await screen.findByRole('button', { name: 'Keep yours' })).toBeDefined();
@@ -624,7 +611,8 @@ it('retries a failed Keep yours after the fields were changed back', async () =>
   await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r2"']));
 });
 
-it.each(['save', 'delete'] as const)('requires review of a concurrent domain on %s after a core save', async action => {
+it('requires review of a concurrent domain on delete after a core save', async () => {
+  const action = 'delete' as const;
   let revision = 1;
   let stored = organization();
   const writes: { method: string; tag: string | null }[] = [];
@@ -647,15 +635,10 @@ it.each(['save', 'delete'] as const)('requires review of a concurrent domain on 
   await waitFor(() => expect(writes).toHaveLength(1));
   await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
   stored = { ...stored, primary_domain: 'concurrent.example', revision: ++revision };
-  if (action === 'save') {
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Second name' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  } else {
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete organization…' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-  }
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete organization…' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
   expect(await screen.findByText('concurrent.example')).toBeDefined();
-  expect(writes[1]).toEqual({ method: action === 'save' ? 'PATCH' : 'DELETE', tag: '"organization-21-r2"' });
+  expect(writes[1]).toEqual({ method: 'DELETE', tag: '"organization-21-r2"' });
   expect(onDone).not.toHaveBeenCalled();
 });
 

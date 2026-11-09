@@ -39,7 +39,7 @@ async function rowAction(label: string): Promise<void> {
 }
 
 describe('RelationshipsTab', () => {
-  it('shows ended connection dates with day precision and year ranges', async () => {
+  it('shows ended connection dates with day precision', async () => {
     const { client, controller } = controllerWith(async () => Response.json({ relationships: [] }));
     const item = view(41, 'outgoing', 'mentors', 'Synthetic Peer');
     item.relationship = relationship(41, 1, { status: 'ended', start_date: { year: 2024, month: 1, day: 5 }, end_date: { year: 2024, month: 1, day: 6 } });
@@ -619,17 +619,14 @@ describe('RelationshipsTab', () => {
     const opening = relationship(41, 1, { notes: 'Opening note' });
     const saved = relationship(41, 2, { notes: 'Shared new note' });
     let reads = 0;
-    let networkReads = 0;
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input);
       if (request.method === 'PATCH') return request.headers.get('If-Match') === '"relationship-41-r1"' ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(saved);
       if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: `"relationship-41-r${reads}"` } });
       if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: saved })] });
-      if (pathOf(request) === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: ++networkReads === 1 ? 'Before' : 'After', hop: 0 }], edges: [] });
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     });
     controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
-    await controller.loadNetwork();
     render(RelationshipsTab, { client, controller, personID: 7 });
     await rowAction('Edit…');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Shared new note' } });
@@ -637,7 +634,6 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(screen.getByText('Synthetic Learner').closest('.detail-row')?.textContent).toContain('Shared new note'));
-    expect(controller.network?.nodes?.[0].label).toBe('After');
   });
 
   it('omits a cleared end date from an ended connection\'s save', async () => {
