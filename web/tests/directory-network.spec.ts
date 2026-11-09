@@ -22,6 +22,19 @@ test('Directory network lists who is further out and opens organizations', async
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 
   const network = page.getByRole('region', { name: 'Network', exact: true });
+  await expect(network.locator('.summary')).not.toHaveText(/Loading/);
+  const geometry = await network.evaluate(section => {
+    const header = section.querySelector('header')!.getBoundingClientRect();
+    return {
+      header: header.height,
+      control: section.querySelector('[role="radiogroup"]')!.getBoundingClientRect().height,
+      summaryGap: section.querySelector('.summary')!.getBoundingClientRect().top - header.bottom
+    };
+  });
+  expect(geometry.header, 'a 28 section header').toBe(28);
+  expect(geometry.control, 'its depth control is 28').toBe(28);
+  expect(geometry.summaryGap, 'the summary sits 8 below the header').toBe(8);
+
   await page.getByRole('radio', { name: '2 steps', exact: true }).click();
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
   await expect(further).toHaveAttribute('aria-busy', 'false');
