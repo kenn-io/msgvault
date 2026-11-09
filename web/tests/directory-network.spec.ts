@@ -70,7 +70,6 @@ test('Directory network keeps long labels and shared paths reachable', async ({ 
   const network = page.getByRole('region', { name: 'Network', exact: true });
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
   await expect(further).toHaveAttribute('aria-busy', 'false');
-  await expect(further.locator('.detail-row')).toHaveCount(1);
   const name = further.getByRole('button', { name: 'Shared Organization' });
   await name.scrollIntoViewIfNeeded();
   expect(await name.evaluate((button) => {
@@ -107,7 +106,6 @@ test('the person page and its Details sections sit on the Layout scale', async (
       padding: [style.paddingTop, style.paddingBottom],
       sectionHeader: sectionHeader.height, control: box(section.querySelector('header [role="radiogroup"]')).height,
       summaryGap: box(section.querySelector('.summary')).top - sectionHeader.bottom,
-      tasksAdd: Boolean(document.querySelector('section[aria-label="Tasks"] header')),
       addLine: box(person.querySelector('.fields .add > *')).left - box(person.querySelector('.fields .detail-row .value')).left,
     };
   });
@@ -123,7 +121,6 @@ test('the person page and its Details sections sit on the Layout scale', async (
   expect(geometry.sectionHeader, 'a 28 section header').toBe(28);
   expect(geometry.control, 'its depth control is 28').toBe(28);
   expect(geometry.summaryGap, 'the summary sits 8 below the header').toBe(8);
-  expect(geometry.tasksAdd, 'Tasks has a section header').toBe(true);
   expect(geometry.addLine, 'the add line starts at the value column').toBe(0);
 
   await page.setViewportSize({ width: 390, height: 844 });

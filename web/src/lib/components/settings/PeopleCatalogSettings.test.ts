@@ -177,8 +177,6 @@ it('lists Work and system and custom fields, searches names and descriptions, an
     const search = fields.getByRole('searchbox', { name: 'Search fields' });
     await fireEvent.input(search, { target: { value: 'Work' } });
     await fireEvent.click(await fields.findByRole('button', { name: 'Retry' }));
-    expect(fields.getByText('Loading fields…')).toBeDefined();
-    expect(fields.queryByText('No fields match')).toBeNull();
     releaseTargets(Response.json({ targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] }));
     const work = await fields.findByText('Current and historical jobs');
     expect(work.closest('li')?.textContent).toContain('Jobs · several values');
@@ -201,13 +199,16 @@ it('lists Work and system and custom fields, searches names and descriptions, an
 
 it('shows loading and failure before an empty catalog', async () => {
   let reads = 0;
+  let targetsRead = 0;
+  let releaseTargets!: (response: Response) => void;
+  const pendingTargets = new Promise<Response>(resolve => { releaseTargets = resolve; });
   let release!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { release = resolve; });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (path.endsWith('/attribute-definitions')) return ++reads === 1 ? pending : Response.json({ definitions: [] });
-    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
+    if (path.endsWith('/person-fact-targets')) return ++targetsRead === 1 ? Response.json({ message: 'Targets unavailable' }, { status: 503 }) : pendingTargets;
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${path}`);
@@ -223,8 +224,13 @@ it('shows loading and failure before an empty catalog', async () => {
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: 'plant' } });
     expect(screen.queryByText('No fields match')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry fields' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry fields' })).toBeNull());
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(screen.getByText('Loading fields…')).toBeDefined();
+    expect(screen.queryByText('No fields match')).toBeNull();
+    releaseTargets(Response.json({ targets: [] }));
     await screen.findByText('No fields match');
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: '' } });
     expect(screen.getByText('No fields yet')).toBeDefined();
-  } finally { release(Response.json({ definitions: [] })); view.unmount(); }
+  } finally { release(Response.json({ definitions: [] })); releaseTargets(Response.json({ targets: [] })); view.unmount(); }
 });

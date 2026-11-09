@@ -28,7 +28,7 @@ async function typeTask(value: string): Promise<void> {
 }
 
 describe('PersonAgenda', () => {
-  it("shows each task's list and creates into the selected list", async () => {
+  it.each([{ input: null, list: 'waiting' }, { input: 'Gift  Ideas', list: 'gift ideas' }])("shows each task's list and creates into $list", async ({ input, list }) => {
     const requests: Request[] = [];
     const createdItems: ReturnType<typeof item>[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -56,15 +56,18 @@ describe('PersonAgenda', () => {
 
     await typeTask('Send notes');
     await openTypeahead('List');
-    await fireEvent.mouseDown(screen.getByRole('option', { name: 'waiting' }));
-    await screen.findByRole('button', { name: 'List: waiting' });
+    if (input) {
+      await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: input } });
+      await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
+    } else await fireEvent.mouseDown(screen.getByRole('option', { name: 'waiting' }));
+    await screen.findByRole('button', { name: `List: ${list}` });
     expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(screen.getByText('Send notes')).toBeDefined());
 
     const post = requests.find(request => request.method === 'POST');
     expect(post).toBeDefined();
-    expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list: 'waiting' });
+    expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list });
     await openTypeahead('List');
     expect(screen.getAllByRole('option', { name: 'waiting' })).toHaveLength(1);
   });
@@ -208,20 +211,6 @@ describe('PersonAgenda', () => {
     expect(screen.getByLabelText('New task')).toHaveProperty('value', operation === 'create' ? '' : 'Send notes');
     if (operation === 'create') expect(screen.getByText('Send notes')).toBeDefined();
     expect(screen.queryByText('Ask about launch')).toBeNull();
-  });
-
-  it('canonicalizes the selected list label', async () => {
-    const client = createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      return isStatus(request) ? readyStatus() : Response.json({ project: 'msgvault', items: [] });
-    });
-    render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No tasks yet');
-    await openForm();
-    await openTypeahead('List');
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    expect(screen.getByRole('button', { name: 'List: gift ideas' })).toBeDefined();
   });
 
   it('resets the idempotency key when the selected person changes', async () => {

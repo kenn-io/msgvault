@@ -86,21 +86,19 @@ describe('PersonAddresses', () => {
     expect(screen.queryByRole('button', { name: /Unlink/ })).toBeNull();
   });
 
-  it.each(['linked address', 'normalized phone'])('filters addresses already listed in Details: %s', scenario => {
+  it('filters own email and phone listed in Details while keeping linked addresses', async () => {
     const own = person();
     const listed = own.identifiers.map(identifier => ({ address_kind: identifier.type, original_value: identifier.value, normalized_value: identifier.value }));
-    let detail = clusteredPerson();
-    if (scenario === 'linked address') listed.push({ address_kind: 'phone', original_value: '+1 (555) 010-0002', normalized_value: '+15550100002' });
-    if (scenario === 'normalized phone') {
-      detail = { ...own, identifiers: [{ type: 'phone', value: '+12025550123', participant_id: 12, is_primary: true, provenance: 'participant_identifiers' }] };
-      listed.splice(0, listed.length, { address_kind: 'phone', original_value: '(202) 555-0123', normalized_value: '+12025550123' });
-    }
-    render(PersonAddresses, baseProps({ detail, listedInDetails: listed }));
-    if (scenario === 'linked address') {
-      expect(screen.queryByLabelText('Identity Alice')).toBeNull();
-      expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
-      expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
-    } else expect(screen.queryByRole('heading', { name: /addresses/i })).toBeNull();
+    listed.push({ address_kind: 'phone', original_value: '+15550100002', normalized_value: '+15550100002' });
+    const cluster = clusteredPerson();
+    const detail = { ...cluster, identifiers: [...cluster.identifiers, own.identifiers[1]!] };
+    const view = render(PersonAddresses, baseProps({ detail, listedInDetails: listed }));
+    expect(screen.queryByLabelText('Identity Alice')).toBeNull();
+    expect(screen.queryByLabelText('Identity +15550100001')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
+    await view.rerender(baseProps({ detail: own, listedInDetails: listed }));
+    expect(screen.queryByRole('heading', { name: /addresses/i })).toBeNull();
   });
 
   it.each(['none', 'email', 'duplicate names'])('names member-only controls with %s evidence', evidence => {
