@@ -4,7 +4,11 @@ import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
-it.each(['conflict recovery', 'edit during retry', 'delete during retry'])('retains catalog %s and ignores any superseded registry retry', async operation => {
+it.each([
+  { operation: 'conflict recovery', name: 'recovers a catalog edit from a revision conflict' },
+  { operation: 'edit during retry', name: 'retains a catalog edit when an earlier registry retry finishes' },
+  { operation: 'delete during retry', name: 'retains a catalog deletion when an earlier registry retry finishes' },
+])('$name', async ({ operation }) => {
   const delayed = operation.endsWith('during retry');
   let created = true; let conflict = operation === 'conflict recovery';
   const writes: Request[] = [];
@@ -85,7 +89,7 @@ it.each(['conflict recovery', 'edit during retry', 'delete during retry'])('reta
   } finally { releaseRetry(staleResponse); view.unmount(); reloads.mockRestore(); }
 });
 
-it.each(['loading and retry gates', 'field order and labels', 'name and description search'])('shows catalog %s', async scenario => {
+it.each(['loading and retry gates', 'field order and labels with search by name and description'])('shows catalog %s', async scenario => {
   const recovery = scenario === 'loading and retry gates';
   let targetsRead = 0;
   let releaseTargets!: (response: Response) => void;
@@ -136,22 +140,19 @@ it.each(['loading and retry gates', 'field order and labels', 'name and descript
     } else {
       await fields.findByText('Current and historical jobs');
       await fields.findByText('Garden preferences');
-      if (scenario === 'field order and labels') {
-        expect([...view.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
-        expect(fields.getByText('Current and historical jobs').closest('li')?.textContent).toContain('Jobs · several values');
-        expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
-        expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
-      } else {
-        const search = screen.getByRole('searchbox', { name: 'Search fields' });
-        await fireEvent.input(search, { target: { value: 'garden' } });
-        expect(fields.getByText('Garden preferences')).toBeDefined();
-        expect(fields.queryByText('Where they live')).toBeNull();
-        expect(fields.queryByText('Current and historical jobs')).toBeNull();
-        await fireEvent.input(search, { target: { value: 'location' } });
-        expect(fields.getByText('Where they live')).toBeDefined();
-        await fireEvent.input(search, { target: { value: 'plant' } });
-        expect(screen.getByText('No fields match')).toBeDefined();
-      }
+      expect([...view.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
+      expect(fields.getByText('Current and historical jobs').closest('li')?.textContent).toContain('Jobs · several values');
+      expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
+      expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
+      const search = screen.getByRole('searchbox', { name: 'Search fields' });
+      await fireEvent.input(search, { target: { value: 'garden' } });
+      expect(fields.getByText('Garden preferences')).toBeDefined();
+      expect(fields.queryByText('Where they live')).toBeNull();
+      expect(fields.queryByText('Current and historical jobs')).toBeNull();
+      await fireEvent.input(search, { target: { value: 'location' } });
+      expect(fields.getByText('Where they live')).toBeDefined();
+      await fireEvent.input(search, { target: { value: 'plant' } });
+      expect(screen.getByText('No fields match')).toBeDefined();
     }
   } finally { view.unmount(); }
 });

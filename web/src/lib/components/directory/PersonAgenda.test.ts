@@ -235,6 +235,7 @@ describe('PersonAgenda', () => {
   it.each([
     ['authentication_required', 'Reconnect Kata to manage agenda items'],
     ['incompatible', 'Kata API is incompatible.'],
+    ['disabled', 'Kata is not configured.'],
   ] as const)('gates agenda mutations when the integration is %s', async (state, message) => {
     let ready = false;
     const requests: Request[] = [];
@@ -246,12 +247,17 @@ describe('PersonAgenda', () => {
           ? readyStatus()
           : Response.json({ state, message });
       }
-      if (!ready) return Response.json({ error: 'task_integration_unavailable', message: 'Task service is unavailable' }, { status: 503 });
+      if (!ready) {
+        if (state === 'disabled') throw new Error(`Unexpected ${request.method} ${request.url}`);
+        return Response.json({ error: 'task_integration_unavailable', message: 'Task service is unavailable' }, { status: 503 });
+      }
       return Response.json({ project: 'msgvault', items: [item('one', 'Ask')] });
     }));
 
     const { rerender } = render(PersonAgenda, { client, personID: 7 });
-    expect(await screen.findByText(`Kata integration ${state}: ${message}`)).toBeDefined();
+    const status = await screen.findByText(`Kata integration ${state}: ${message}`);
+    expect(status.getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('alert')).toBeNull();
     // The gated agenda never requests the 503-prone list route, so no item
     // rows or Unlink controls render; the status message is the only notice.
     expect(screen.queryByRole('button', { name: 'Unlink Ask' })).toBeNull();
@@ -273,21 +279,6 @@ describe('PersonAgenda', () => {
     expect(screen.getByRole('button', { name: 'List: agenda' })).toHaveProperty('disabled', false);
     expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Unlink Ask' }) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it('shows the integration status instead of the add form when the integration is disabled', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return Response.json({ state: 'disabled', message: 'Kata is not configured.' });
-      throw new Error(`Unexpected ${request.method} ${request.url}`);
-    }));
-
-    render(PersonAgenda, { client, personID: 7 });
-
-    const status = await screen.findByText('Kata integration disabled: Kata is not configured.');
-    expect(status.getAttribute('role')).toBe('status');
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
   });
 
   it('keeps the person page usable when Kata is unavailable', async () => {

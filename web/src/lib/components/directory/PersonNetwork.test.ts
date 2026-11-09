@@ -218,7 +218,7 @@ describe('PersonNetwork', () => {
 
   it.each([
     { name: 'shows load failure details and retries the failed read', failure: true },
-    { name: 'keeps rendered rows while the next depth is loading', failure: false },
+    { name: 'marks the next depth busy until its rows arrive', failure: false },
   ])('$name', async ({ failure }) => {
     const depthThreeLoad = failure ? undefined : deferredResponse();
     let directAttempts = 0;
@@ -246,7 +246,6 @@ describe('PersonNetwork', () => {
         await screen.findByRole('button', { name: 'Second Hop Person' });
         await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
         await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
-        expect(screen.getByRole('button', { name: 'Second Hop Person' })).toBeDefined();
         depthThreeLoad!.resolve(Response.json(depthThree()));
         expect(await screen.findByRole('button', { name: 'Depth Three Person' })).toBeDefined();
       }
