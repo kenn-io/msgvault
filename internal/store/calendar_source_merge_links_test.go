@@ -46,7 +46,7 @@ func TestMeetingLinksCalendarSourceMergeUniqueHistoricalEvent(t *testing.T) {
 }
 
 func TestMeetingDecisionsSurviveHiddenCalendarCopyAfterMerge(t *testing.T) {
-	for _, mode := range []string{"link", "split", "automatic"} {
+	for _, mode := range []string{"link", "split", "automatic", "converged"} {
 		t.Run(mode, func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
@@ -54,8 +54,12 @@ func TestMeetingDecisionsSurviveHiddenCalendarCopyAfterMerge(t *testing.T) {
 			if mode == "automatic" {
 				historyMailbox, liveMailbox = "calendar@example.com", "live@example.com"
 			}
-			history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", "merge@example.org"), historyMailbox)
-			liveData, live := calendarFixture(t, st, "live", singleLinkRaw("event", "merge@example.org"), liveMailbox)
+			historyUID, liveUID := "merge@example.org", "merge@example.org"
+			if mode == "converged" {
+				historyUID, liveUID = "history@example.org", "live@example.org"
+			}
+			history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", historyUID), historyMailbox)
+			liveData, live := calendarFixture(t, st, "live", singleLinkRaw("event", liveUID), liveMailbox)
 			var note int64
 			if mode == "automatic" {
 				note = granolaLinkFixture(t, st, "event")
@@ -65,11 +69,14 @@ func TestMeetingDecisionsSurviveHiddenCalendarCopyAfterMerge(t *testing.T) {
 					raw = `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"merge@example.org","startsAt":"2027-03-14T10:00:00Z"}}`
 				}
 				_, note = projectionFixture(t, st, "note", "twenty_json", raw)
-				if mode == "link" {
+				if mode == "link" || mode == "converged" {
 					requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: archived}))
 				} else {
 					requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: archived}))
 				}
+			}
+			if mode == "converged" {
+				requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: live}))
 			}
 			before := linkedMeetingRefs(t, st, note)[note]
 			if mode == "split" {
@@ -81,8 +88,13 @@ func TestMeetingDecisionsSurviveHiddenCalendarCopyAfterMerge(t *testing.T) {
 			requirements.NoError(err)
 			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
 			requirements.NoError(err)
-			if mode == "split" {
+			if mode == "split" || mode == "converged" {
 				assertions.Empty(record.Links)
+				if mode == "converged" {
+					record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: live})
+					requirements.NoError(err)
+					assertions.Empty(record.MessageIDs)
+				}
 				return
 			}
 			requirements.Len(record.Links, 1)

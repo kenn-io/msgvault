@@ -91,19 +91,41 @@ func TestMeetingSparseCancelledExceptionPreservesRecordUID(t *testing.T) {
 }
 
 func TestMeetingDecisionUsesResolvedOrphanIdentity(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, orphan := calendarFixture(t, st, "orphan", `{"id":"series_20270314T100000Z","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan}))
-	_, master := calendarFixture(t, st, "master", strings.ReplaceAll(linkSeriesRaw, "weekly@example.org", "changed@example.org"))
-	_, other := calendarFixture(t, st, "other", linkSeriesRaw, "other@example.com")
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: other, Key: "20270314T100000Z"}))
-	links, err := meetingLinksForTest(t, st, note)
-	require.NoError(err)
-	require.Len(links, 2)
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), links[0].Ref)
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", other), links[1].Ref)
+	for _, tc := range []struct {
+		name, orphanUID, masterUID string
+		converged                  bool
+	}{
+		{"distinct identities", "weekly@example.org", "changed@example.org", false},
+		{"converged split", "orphan@example.org", "weekly@example.org", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, orphan := calendarFixture(t, st, "orphan", fmt.Sprintf(`{"id":"series_20270314T100000Z","iCalUID":%q,"recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, tc.orphanUID))
+			_, other := calendarFixture(t, st, "other", linkSeriesRaw, "other@example.com")
+			_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+			require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan}))
+			if tc.converged {
+				require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: other, Key: "20270314T100000Z"}))
+				require.Equal(fmt.Sprintf("evt:%d", orphan), linkedMeetingRefs(t, st, note)[note])
+			}
+			_, master := calendarFixture(t, st, "master", strings.ReplaceAll(linkSeriesRaw, "weekly@example.org", tc.masterUID))
+			if !tc.converged {
+				require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: other, Key: "20270314T100000Z"}))
+			}
+			links, err := meetingLinksForTest(t, st, note)
+			require.NoError(err)
+			if tc.converged {
+				assert.Empty(links)
+				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: other, Key: "20270314T100000Z"})
+				require.NoError(err)
+				assert.Empty(record.MessageIDs)
+			} else {
+				require.Len(links, 2)
+				assert.ElementsMatch([]string{fmt.Sprintf("evt:%d@20270314T100000Z", master), fmt.Sprintf("evt:%d@20270314T100000Z", other)}, []string{links[0].Ref, links[1].Ref})
+			}
+		})
+	}
 }
 
 func TestMeetingGranolaRetainedExceptionAfterRecurrenceRemoval(t *testing.T) {
@@ -116,40 +138,6 @@ func TestMeetingGranolaRetainedExceptionAfterRecurrenceRemoval(t *testing.T) {
 	assert.Equal(want, linkedMeetingRefs(t, st, note)[note])
 	require.NoError(st.UpsertMessageRawWithFormat(master, []byte(singleLinkRaw("series", "weekly@example.org")), "gcal_json"))
 	assert.Equal(want, linkedMeetingRefs(t, st, note)[note])
-}
-
-func TestMeetingSplitSuppressesConvergedManualLink(t *testing.T) {
-	t.Run("master import", func(t *testing.T) {
-		require, assert := require.New(t), assert.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		_, orphan := calendarFixture(t, st, "orphan", `{"id":"series_20270314T100000Z","iCalUID":"orphan@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-		_, other := calendarFixture(t, st, "other", linkSeriesRaw, "other@example.com")
-		_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-		require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan}))
-		require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: other, Key: "20270314T100000Z"}))
-		require.Equal(fmt.Sprintf("evt:%d", orphan), linkedMeetingRefs(t, st, note)[note])
-		calendarFixture(t, st, "master", linkSeriesRaw)
-		assert.Empty(linkedMeetingRefs(t, st, note)[note])
-		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: other, Key: "20270314T100000Z"})
-		require.NoError(err)
-		assert.Empty(record.MessageIDs)
-	})
-	t.Run("source merge", func(t *testing.T) {
-		require, assert := require.New(t), assert.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		history, archived := calendarFixture(t, st, "history", singleLinkRaw("event", "history@example.org"), "history@example.com")
-		liveData, live := calendarFixture(t, st, "live", singleLinkRaw("event", "live@example.org"))
-		_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-		require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: archived}))
-		require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: live}))
-		require.Equal(fmt.Sprintf("evt:%d", archived), linkedMeetingRefs(t, st, note)[note])
-		_, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: liveData.Message.SourceID})
-		require.NoError(err)
-		assert.Empty(linkedMeetingRefs(t, st, note)[note])
-		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: live})
-		require.NoError(err)
-		assert.Empty(record.MessageIDs)
-	})
 }
 
 func TestMeetingRecordIncludesExceptionUIDFromResolvedCopy(t *testing.T) {

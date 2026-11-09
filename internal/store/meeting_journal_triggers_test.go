@@ -26,34 +26,33 @@ func TestMeetingJournalCalendarMailboxChange(t *testing.T) {
 }
 
 func TestMeetingJournalTriggers(t *testing.T) {
-	const uidKey = `INSERT INTO meeting_link_key(message_id,kind,value) VALUES ($note, 'ical_uid','meeting@example.test')`
-	const unrelatedKey = `INSERT INTO meeting_link_key(message_id,kind,value) VALUES ($note, 'ical_uid','unrelated@example.test')`
-	const savedLink = `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,decision) VALUES ($note, $event, 'link')`
+	const uidNote = `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.test","startsAt":"2027-03-14T10:00:00Z"}}`
+	const googleNote = `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`
 	for _, tc := range []struct {
-		name, setup, query, raw string
-		member, quiet           bool
+		name, format, note, decision, query, raw, noteUpdate string
+		member, quiet                                        bool
 	}{
-		{"decision insert", "", savedLink, "", true, false},
-		{"decision update", savedLink, `UPDATE meeting_link_decisions SET decision='split' WHERE member_message_id=$note`, "", true, false},
-		{"decision delete", savedLink, `DELETE FROM meeting_link_decisions WHERE member_message_id=$note`, "", true, false},
-		{"key insert", "", uidKey, "", true, false},
-		{"key update", uidKey, `UPDATE meeting_link_key SET value='other@example.test' WHERE message_id=$note`, "", true, false},
-		{"key delete", uidKey, `DELETE FROM meeting_link_key WHERE message_id=$note`, "", true, false},
-		{"projection bounds", uidKey, `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`, "", false, false},
-		{"Google event bounds", `INSERT INTO meeting_link_key(message_id,kind,value,calendar_id) VALUES ($note, 'google_event_id','event','calendar@example.com')`, `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`, "", false, false},
-		{"Google event UID update", `INSERT INTO meeting_link_key(message_id,kind,value,calendar_id) VALUES ($note, 'google_event_id','event','calendar@example.com')`, `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`, "", false, false},
-		{"Google instance bounds", `INSERT INTO meeting_link_key(message_id,kind,value,calendar_id) VALUES ($note, 'google_event_id','event_20270314T100000Z','calendar@example.com')`, `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`, "", false, false},
-		{"saved link bounds", savedLink, `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`, "", false, false},
-		{"UID update", uidKey, `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`, "", false, false},
-		{"UID becomes referenced", `INSERT INTO meeting_link_key(message_id,kind,value) VALUES ($note, 'ical_uid','other@example.test')`, `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`, "", false, false},
-		{"UID removed", uidKey, `UPDATE messages SET metadata='{}' WHERE id=$event`, "", false, false},
-		{"saved split UID update", `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,decision) VALUES ($note, $event, 'split')`, `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`, "", false, false},
-		{"projection delete", uidKey, `DELETE FROM calendar_events WHERE message_id=$event`, "", false, false},
-		{"unrelated projection bounds", unrelatedKey, `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`, "", false, true},
-		{"unrelated UID update", `INSERT INTO meeting_link_key(message_id,kind,value,calendar_id) VALUES ($note, 'google_event_id','unrelated','calendar@example.com')`, `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`, "", false, true},
-		{"unrelated projection delete", unrelatedKey, `DELETE FROM calendar_events WHERE message_id=$event`, "", false, true},
-		{"import RSVP only", savedLink, "", `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"},"attendees":[{"email":"person@example.test","responseStatus":"accepted"}]}`, false, true},
-		{"import bounds", savedLink, "", `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T12:00:00Z"}}`, false, false},
+		{name: "decision insert", query: `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,decision) VALUES ($note, $event, 'link')`, member: true},
+		{name: "decision update", decision: "link", query: `UPDATE meeting_link_decisions SET decision='split' WHERE member_message_id=$note`, member: true},
+		{name: "decision delete", decision: "link", query: `DELETE FROM meeting_link_decisions WHERE member_message_id=$note`, member: true},
+		{name: "key insert", noteUpdate: uidNote, member: true},
+		{name: "key update", note: uidNote, query: `UPDATE meeting_link_key SET value='other@example.test' WHERE message_id=$note`, member: true},
+		{name: "key delete", note: uidNote, query: `DELETE FROM meeting_link_key WHERE message_id=$note`, member: true},
+		{name: "projection bounds", note: uidNote, query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`},
+		{name: "Google event bounds", format: "granola_json", note: googleNote, query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`},
+		{name: "Google event UID update", format: "granola_json", note: googleNote, query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`},
+		{name: "Google instance bounds", format: "granola_json", note: strings.Replace(googleNote, `"event"`, `"event_20270314T100000Z"`, 1), query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`},
+		{name: "saved link bounds", decision: "link", query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`},
+		{name: "UID update", note: uidNote, query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`},
+		{name: "UID becomes referenced", note: strings.Replace(uidNote, "meeting@example.test", "other@example.test", 1), query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`},
+		{name: "UID removed", note: uidNote, query: `UPDATE messages SET metadata='{}' WHERE id=$event`},
+		{name: "saved split UID update", decision: "split", query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`},
+		{name: "projection delete", note: uidNote, query: `DELETE FROM calendar_events WHERE message_id=$event`},
+		{name: "unrelated projection bounds", note: strings.Replace(uidNote, "meeting@example.test", "unrelated@example.test", 1), query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`, quiet: true},
+		{name: "unrelated UID update", format: "granola_json", note: strings.Replace(googleNote, `"event"`, `"unrelated"`, 1), query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`, quiet: true},
+		{name: "unrelated projection delete", note: strings.Replace(uidNote, "meeting@example.test", "unrelated@example.test", 1), query: `DELETE FROM calendar_events WHERE message_id=$event`, quiet: true},
+		{name: "import RSVP only", decision: "link", raw: `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"},"attendees":[{"email":"person@example.test","responseStatus":"accepted"}]}`, quiet: true},
+		{name: "import bounds", decision: "link", raw: `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T12:00:00Z"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -66,19 +65,31 @@ func TestMeetingJournalTriggers(t *testing.T) {
 				raw = `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"},"attendees":[{"email":"person@example.test","responseStatus":"needsAction"}]}`
 			}
 			_, event := calendarFixture(t, st, "event", raw)
-			_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+			format, noteRaw := tc.format, tc.note
+			if format == "" {
+				format = "twenty_json"
+			}
+			if noteRaw == "" {
+				noteRaw = `{"schema_version":1,"recording":{}}`
+			}
+			_, note := projectionFixture(t, st, "note", format, noteRaw)
 			exec := func(query string) {
 				t.Helper()
 				query = strings.NewReplacer("$event", strconv.FormatInt(event, 10), "$note", strconv.FormatInt(note, 10)).Replace(query)
 				_, err := st.db.Exec(query)
 				requirements.NoError(err)
 			}
-			if tc.setup != "" {
-				exec(tc.setup)
+			switch tc.decision {
+			case "link":
+				requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+			case "split":
+				requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
 			}
 			exec(`DELETE FROM cache_related_change_journal`)
 			if tc.raw != "" {
 				requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(tc.raw), "gcal_json"))
+			} else if tc.noteUpdate != "" {
+				requirements.NoError(st.UpsertMessageRawWithFormat(note, []byte(tc.noteUpdate), format))
 			} else {
 				exec(tc.query)
 			}

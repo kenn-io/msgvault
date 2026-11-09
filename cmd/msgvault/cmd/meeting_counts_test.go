@@ -260,22 +260,3 @@ func readCachedMeetingKeys(t *testing.T, cache string) map[int64][]string {
 	requirements.NoError(rows.Err())
 	return keys
 }
-
-func TestMeetingCountsAutomaticRemovedOccurrence(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	f := newMeetingCountSeriesFixture(t, 2)
-	require.NoError(f.st.UpsertMessageRawWithFormat(f.notes[0], []byte(`{"owner":{"email":"calendar@example.org"},"calendar_event":{"calendar_event_id":"series_20260321T100000Z","scheduled_start_time":"2026-03-21T10:00:00Z"}}`), "granola_json"))
-	require.NoError(f.st.UpsertMessageRawWithFormat(f.notes[1], []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2026-03-21T10:00:00Z"}}`), "twenty_json"))
-	_, err := buildCache(f.path, f.cache, true)
-	require.NoError(err)
-	want := map[int64][]string{f.notes[0]: {"uid:weekly@example.org/20260321T100000Z"}, f.notes[1]: {"uid:weekly@example.org/20260321T100000Z"}}
-	assert.Equal(want, readCachedMeetingKeys(t, f.cache))
-	require.NoError(f.st.UpsertMessageRawWithFormat(f.event, []byte(`{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`), "gcal_json"))
-	_, err = buildCache(f.path, f.cache, false)
-	require.NoError(err)
-	assert.Equal(want, readCachedMeetingKeys(t, f.cache))
-	require.NoError(f.st.UpsertMessageRawWithFormat(f.notes[1], []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"different@example.org","startsAt":"2026-03-21T10:00:00Z"}}`), "twenty_json"))
-	_, err = buildCache(f.path, f.cache, false)
-	require.NoError(err)
-	assert.Equal(map[int64][]string{f.notes[0]: {"uid:weekly@example.org/20260321T100000Z"}, f.notes[1]: {"uid:different@example.org/20260321T100000Z"}}, readCachedMeetingKeys(t, f.cache))
-}

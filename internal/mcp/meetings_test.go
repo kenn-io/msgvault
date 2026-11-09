@@ -341,11 +341,11 @@ func TestMeetingLinkToolsReportDaemonClientErrors(t *testing.T) {
 		args       map[string]any
 		code       string
 	}{
-		{"invalid ref", ToolGetMeetingRecord, map[string]any{"ref": "wrong"}, "invalid_argument"},
-		{"missing", ToolGetMeetingRecord, map[string]any{"ref": "msg:99999999"}, "meeting_not_found"},
-		{"suggest", ToolSuggestMeetingLinks, map[string]any{"ref": "wrong"}, "invalid_argument"},
-		{"link", ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "wrong"}, "invalid_argument"},
-		{"unlink", ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:1@bad"}, "invalid_argument"},
+		{"get record 400", ToolGetMeetingRecord, map[string]any{"ref": "msg:73"}, "invalid_argument"},
+		{"get record 404", ToolGetMeetingRecord, map[string]any{"ref": "msg:99999999"}, "meeting_not_found"},
+		{"suggest links 400", ToolSuggestMeetingLinks, map[string]any{"ref": "msg:73"}, "invalid_argument"},
+		{"link meeting 400", ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91"}, "invalid_argument"},
+		{"unlink meeting 400", ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:91@20270314T100000Z"}, "invalid_argument"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
