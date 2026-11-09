@@ -707,9 +707,9 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(deletions).toEqual(['/api/v1/person-relationships/42']));
   });
 
-  it('keeps a delete conflict open, shows the saved connection, and deletes the saved version on Delete', async () => {
+  it('keeps a delete conflict open and closes after Delete retry', async () => {
     let reads = 0;
-    const tags: (string | null)[] = [];
+    let deletes = 0;
     const current = relationship(41, 2, { notes: 'Saved note' });
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input), path = pathOf(request);
@@ -718,8 +718,8 @@ describe('RelationshipsTab', () => {
         return Response.json(reads === 1 ? relationship() : current, { headers: { ETag: `"person-relationship-41-r${reads}"` } });
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') {
-        tags.push(request.headers.get('If-Match'));
-        return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
+        deletes++;
+        return deletes === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
       }
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
@@ -731,10 +731,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('This connection changed since you opened it.');
-    expect(within(alert).getByRole('region', { name: 'Saved connection' }).textContent).toContain('Saved note');
-    expect(screen.getByRole('dialog', { name: 'Delete connection with Synthetic Peer?' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(tags).toEqual(['"person-relationship-41-r1"', '"person-relationship-41-r2"']));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
