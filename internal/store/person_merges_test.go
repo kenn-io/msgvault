@@ -2812,3 +2812,49 @@ func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonMergeCountsNewAddresses(t *testing.T) {
+	for _, tc := range []struct {
+		name, survivorSaved, absorbedSaved string
+		laterLink                          bool
+		want                               int
+	}{
+		{name: "archived survivor", absorbedSaved: "A@Example.org", want: 1},
+		{name: "saved survivor", survivorSaved: "shared@example.org", absorbedSaved: "Shared@Example.org", want: 1},
+		{name: "zero new addresses", survivorSaved: "b@example.org", want: 0},
+		{name: "later linked survivor", absorbedSaved: "later@example.org", laterLink: true, want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			owner := mustPromotedPerson(ctx, t, st, "a@example.org", "Owner")
+			guest := mustPromotedPerson(ctx, t, st, "b@example.org", "Guest")
+			for id, value := range map[int64]string{owner.ID: tc.survivorSaved, guest.ID: tc.absorbedSaved} {
+				if value != "" {
+					_, err := st.AddPersonContactPointContext(ctx, id, store.PersonContactPointInput{AddressKind: store.ContactAddressEmail, OriginalValue: value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+					require.NoError(err)
+				}
+			}
+			owner, err := st.GetPersonContext(ctx, owner.ID)
+			require.NoError(err)
+			guest, err = st.GetPersonContext(ctx, guest.ID)
+			require.NoError(err)
+			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "new-addresses", Actor: "test"})
+			require.NoError(err)
+			if tc.laterLink {
+				later, err := st.EnsureParticipantContext(ctx, "later@example.org", "Later", "example.org")
+				require.NoError(err)
+				_, err = st.LinkParticipants(owner.ParticipantIDs[0], later)
+				require.NoError(err)
+			}
+			detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+			require.NoError(err)
+			page, err := st.ListPersonMergesPageContext(ctx, owner.ID, 100, 0)
+			require.NoError(err)
+			require.Len(page, 1)
+			assert.Equal(tc.want, detail.Labels.AbsorbedAddressCount)
+			assert.Equal(tc.want, page[0].Labels.AbsorbedAddressCount)
+		})
+	}
+}

@@ -11,19 +11,27 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	oauth2 "golang.org/x/oauth2"
 )
 
 type testTransport func(*http.Request) (*http.Response, error)
@@ -81,12 +89,18 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		require.NoError(cmd.ExecuteContext(ctx))
+		capture := captureStdout(t)
+		err = cmd.ExecuteContext(ctx)
+		output := capture()
+		require.NoError(err)
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
 		src, err := findGmailSource(st, "user@example.com")
 		require.NoError(err)
+		if flag == "--no-default-identity" {
+			assertRegistrationSyncCommand(t, output, src.ID, "sync-full")
+		}
 		// Seed the cursor of an already-synced mailbox so this scheduled run
 		// completes with no new messages.
 		require.NoError(st.UpdateSourceSyncCursor(src.ID, "100"))
@@ -206,7 +220,10 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		require.NoError(cmd.ExecuteContext(ctx))
+		capture := captureStdout(t)
+		err = cmd.ExecuteContext(ctx)
+		output := capture()
+		require.NoError(err)
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -214,6 +231,9 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		require.NoError(err)
 		require.Len(sources, 1)
 		src := sources[0]
+		if flag == "--no-default-identity" {
+			assertRegistrationSyncCommand(t, output, src.ID, "sync-full")
+		}
 		// Re-enabling defaults creates the identity before this explicit removal.
 		// The next scheduled sync must preserve the removal.
 		if !optOut {
@@ -267,13 +287,23 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 					args = append(args, flag)
 				}
 				cmd.SetArgs(args)
-				require.NoError(cmd.ExecuteContext(ctx))
+				capture := captureStdout(t)
+				err := cmd.ExecuteContext(ctx)
+				output := capture()
+				require.NoError(err)
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				t.Cleanup(func() { _ = st.Close() })
 				sources, err := st.ListSources("")
 				require.NoError(err)
 				require.Len(sources, 1)
+				if flag == "--no-default-identity" && tc.name != "teams" {
+					verb := "sync-full"
+					if tc.name == "graph" {
+						verb = "sync"
+					}
+					assertRegistrationSyncCommand(t, output, sources[0].ID, verb)
+				}
 				if tc.name == "graph" {
 					// Identity setup precedes token loading. With no Graph token,
 					// the real scheduled path stops before making network requests.
@@ -293,4 +323,101 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertRegistrationSyncCommand(t *testing.T, output string, sourceID int64, verb string) {
+	t.Helper()
+	start := strings.Index(output, "msgvault "+verb+" ")
+	require.NotEqual(t, -1, start, "registration must print its first-sync command")
+	line, _, _ := strings.Cut(output[start:], "\n")
+	args := strings.Fields(line)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"2.4.0"}`)
+			return
+		}
+		requests.Add(1)
+		assert.Equal(t, "/api/v1/cli/"+verb, r.URL.Path)
+		assert.Equal(t, strconv.FormatInt(sourceID, 10), r.URL.Query().Get("source_id"))
+		assert.Empty(t, r.URL.Query().Get("email"))
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, "{\"type\":\"complete\"}\n")
+	}))
+	defer server.Close()
+	savedTransport := http.DefaultTransport
+	transport := &http.Transport{}
+	http.DefaultTransport = transport
+	defer func() { http.DefaultTransport = savedTransport; transport.CloseIdleConnections() }()
+	subprocessEnv, hasSubprocessEnv := os.LookupEnv(daemonCLISubprocessEnv)
+	require.NoError(t, os.Unsetenv(daemonCLISubprocessEnv))
+	defer func() {
+		if hasSubprocessEnv {
+			_ = os.Setenv(daemonCLISubprocessEnv, subprocessEnv)
+		}
+	}()
+	ctx := configureRemoteSyncTest(t, server.URL)
+	resetSyncFullFlagsForTest(t)
+	root := newTestRootCmd()
+	for _, base := range []*cobra.Command{syncFullCmd, syncIncrementalCmd} {
+		command := &cobra.Command{Use: base.Use, Args: base.Args, RunE: base.RunE}
+		command.Flags().Int64("source-id", 0, "Exact source ID")
+		root.AddCommand(command)
+	}
+	root.SetArgs(args[1:])
+	require.NoError(t, root.ExecuteContext(ctx))
+	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("uses the Linux browser opener boundary")
+	}
+	require := require.New(t)
+	saveAddAccountFlags(t)
+	curl, err := exec.LookPath("curl")
+	require.NoError(err)
+	home := t.TempDir()
+	// The browser is an external boundary. Fetch its authorization URL against
+	// the local provider so the real callback and token exchange complete.
+	require.NoError(os.WriteFile(filepath.Join(home, "xdg-open"), []byte("#!/bin/sh\nexec "+curl+" -fsSL \"$1\"\n"), 0700))
+	t.Setenv("PATH", home+string(os.PathListSeparator)+os.Getenv("PATH"))
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/authorize" {
+			query := r.URL.Query()
+			http.Redirect(w, r, query.Get("redirect_uri")+"?code=synthetic&state="+url.QueryEscape(query.Get("state")), http.StatusFound)
+			return
+		}
+		assert.Equal(t, "/token", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.MarshalWrite(w, map[string]any{"access_token": "synthetic-token", "token_type": "Bearer", "expires_in": 3600, "scope": strings.Join(oauth.Scopes, " ")})
+	}))
+	defer provider.Close()
+	secrets, err := json.Marshal(map[string]any{"installed": map[string]any{"client_id": "synthetic-client", "client_secret": "synthetic-secret", "auth_uri": provider.URL + "/authorize", "token_uri": provider.URL + "/token", "redirect_uris": []string{"http://localhost"}}})
+	require.NoError(err)
+	secretPath := filepath.Join(home, "client.json")
+	require.NoError(os.WriteFile(secretPath, secrets, 0600))
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, OAuth: config.OAuthConfig{ClientSecrets: secretPath}}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "gmail.googleapis.com" {
+			return (gmailProfileTransport{email: "-reader@example.org", statusCode: http.StatusOK}).RoundTrip(r)
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})})
+	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
+	cmd := &cobra.Command{Use: addAccountUse, Args: validateAddAccountArgs, RunE: runAddAccountLocal}
+	registerAddAccountFlags(cmd)
+	cmd.SetArgs([]string{"--no-default-identity", "--", "-reader@example.org"})
+	capture := captureStdout(t)
+	err = cmd.ExecuteContext(ctx)
+	output := capture()
+	require.NoError(err)
+	st, err := store.Open(cfg.DatabaseDSN())
+	require.NoError(err)
+	defer func() { _ = st.Close() }()
+	source, err := findGmailSource(st, "-reader@example.org")
+	require.NoError(err)
+	assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
 }

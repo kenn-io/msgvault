@@ -79,9 +79,10 @@
   }
   /** "Nov 6 · 1 address moved in · split back once": what the merge brought, not both sides' total. */
   function mergeMeta(item: { merge: { id: number; created_at: string }; split_count: number; pending_candidate_count: number }) {
-    const count = controller.historyRows.get(item.merge.id)?.count;
+    const row = controller.historyRows.get(item.merge.id);
+    const count = row?.incomplete ? undefined : row?.count;
     return {
-      text: [formatShortDate(item.merge.created_at), count ? `${count} ${count === 1 ? 'address' : 'addresses'} moved in` : '',
+      text: [formatShortDate(item.merge.created_at), count !== undefined ? `${count} ${count === 1 ? 'address' : 'addresses'} moved in` : '',
         item.split_count ? `split back ${item.split_count === 1 ? 'once' : `${item.split_count} times`}` : '',
         item.pending_candidate_count ? `${item.pending_candidate_count} waiting for review` : ''].filter(Boolean).join(' · '),
       title: `Merged ${formatDateTime(item.merge.created_at)}`

@@ -231,7 +231,7 @@ func (s *Store) GetPersonMergeContext(
 			Merge:  *merge, Participants: participants, Rows: rows,
 			Splits: splits, ReviewCandidates: candidates,
 		}
-		return s.loadPersonMergeIdentities(ctx, tx, &detail.Labels, currentParticipantIDs, detail.Participants)
+		return s.loadPersonMergeIdentities(ctx, tx, &detail.Labels, currentParticipantIDs, detail.Participants, detail.Merge)
 	})
 	if err != nil {
 		return nil, err
@@ -637,7 +637,7 @@ func personMergeRecordedContactPoints(rows []personMergeSnapshotRow, personID in
 	return points
 }
 
-func (s *Store) loadPersonMergeIdentities(ctx context.Context, tx *loggedTx, label *PersonMergeLabels, currentIDs []int64, participants []PersonMergeParticipant) error {
+func (s *Store) loadPersonMergeIdentities(ctx context.Context, tx *loggedTx, label *PersonMergeLabels, currentIDs []int64, participants []PersonMergeParticipant, merge PersonMerge) error {
 	ids := append([]int64{}, currentIDs...)
 	for _, participant := range participants {
 		ids = append(ids, participant.ParticipantID)
@@ -648,7 +648,7 @@ func (s *Store) loadPersonMergeIdentities(ctx context.Context, tx *loggedTx, lab
 	} else {
 		label.Addresses, label.ParticipantIDs = participantAddresses(identities)
 	}
-	label.AbsorbedAddressCount = absorbedAddressCount(*label, participants)
+	label.AbsorbedAddressCount = absorbedAddressCount(*label, participants, merge)
 	return nil
 }
 
@@ -676,30 +676,48 @@ func (s *Store) loadPersonMergePageIdentities(ctx context.Context, tx *loggedTx,
 				labels.Addresses = append(labels.Addresses, address)
 			}
 		}
-		labels.AbsorbedAddressCount = absorbedAddressCount(*labels, labels.Participants)
+		labels.AbsorbedAddressCount = absorbedAddressCount(*labels, labels.Participants, page[index].Merge)
 	}
 	return nil
 }
 
-func absorbedAddressCount(labels PersonMergeLabels, participants []PersonMergeParticipant) int {
-	absorbed, seen := map[int64]bool{}, map[string]bool{}
+func absorbedAddressCount(labels PersonMergeLabels, participants []PersonMergeParticipant, merge PersonMerge) int {
+	absorbed, survivorIDs := map[int64]bool{}, map[int64]bool{}
+	seen, survivor := map[string]bool{}, map[string]bool{}
 	for _, participant := range participants {
 		if participant.OriginSide == "absorbed" {
 			absorbed[participant.ParticipantID] = true
+		}
+	}
+	for _, profile := range labels.Profiles {
+		var keys map[string]bool
+		switch profile.ID {
+		case merge.SurvivorPersonID:
+			keys = survivor
+			for _, id := range profile.ParticipantIDs {
+				survivorIDs[id] = true
+			}
+		case merge.AbsorbedPersonID:
+			keys = seen
+		default:
+			continue
+		}
+		for _, point := range profile.ContactPoints {
+			if point.AddressKind != ContactAddressLanguage {
+				keys[point.IdentityKey] = true
+			}
 		}
 	}
 	for _, address := range labels.Addresses {
 		if absorbed[address.ParticipantID] {
 			seen[address.IdentityKey] = true
 		}
-	}
-	// Snapshot profiles retain survivor first and absorbed second, even for saved-only profiles.
-	if len(labels.Profiles) > 1 {
-		for _, point := range labels.Profiles[1].ContactPoints {
-			if point.AddressKind != ContactAddressLanguage {
-				seen[point.IdentityKey] = true
-			}
+		if survivorIDs[address.ParticipantID] {
+			survivor[address.IdentityKey] = true
 		}
+	}
+	for key := range survivor {
+		delete(seen, key)
 	}
 	return len(seen)
 }

@@ -271,7 +271,7 @@ describe('PersonMergeHistory', () => {
     expect(within(cards[1]).getByRole('heading').textContent).toBe('Mira Vale');
   });
 
-  it('omits the moved-in count when no addresses moved', async () => {
+  it('shows a loaded zero moved-in count', async () => {
     const value = detail();
     value.splits = [];
     for (const participant of value.participants) delete participant.split_id;
@@ -279,7 +279,7 @@ describe('PersonMergeHistory', () => {
       addresses: addressIdentifiers().filter(identifier => identifier.participant_id === 702), count: 0,
     });
     const row = await screen.findByRole('button', { name: /^Open Alex Example · work merged into Alex Example · / });
-    expect(row.closest('.detail-row')?.querySelector('.description')?.textContent).not.toContain('moved in');
+    expect(row.closest('.detail-row')?.querySelector('.description')?.textContent).toContain('0 addresses moved in');
   });
 
   it.each([false, true])('summarizes a whole-profile split without listing only its participant addresses: exact=%s', async exact => {

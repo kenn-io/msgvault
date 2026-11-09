@@ -405,9 +405,10 @@ import (
 // 3.48.0 adds owner-only local message search activation and progress.
 // 3.49.0 adds verification.read for revealing detected verification content in delegated reads.
 // 3.50.0 adds provider-neutral message import.
-// 3.51.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
+// 3.51.0 adds attachment processing outcomes and worker errors.
+// 3.52.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
 // and registered service labels to current contact points.
-const APISchemaVersion = "3.51.0"
+const APISchemaVersion = "3.52.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
