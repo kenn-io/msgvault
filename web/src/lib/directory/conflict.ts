@@ -12,7 +12,7 @@ export function employmentFacts(job: Employment, names: { organizationName(id: n
     'Job title': text(job.title), 'Role on the team': text(job.role), 'Start date': readablePartialDate(job.start_date),
     'End date': job.is_current ? 'Present' : readablePartialDate(job.end_date), 'Primary job': job.is_primary ? 'Yes' : 'No',
     Department: text(job.department), Location: text(job.location), Description: text(job.description),
-    Confidence: job.confidence === undefined ? '' : `${Math.round(job.confidence * 100)}%`, 'Source reference': text(job.source_ref),
+    ...(job.confidence === undefined ? {} : { Confidence: `${Math.round(job.confidence * 100)}%` }),
   };
 }
 

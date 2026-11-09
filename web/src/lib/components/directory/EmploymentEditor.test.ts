@@ -51,7 +51,7 @@ it.each(['first job', 'no primary', 'existing primary'])('sends primary only whe
   controller.employments = scenario === 'first job' ? [] : [employment(12, 1, { is_primary: scenario === 'existing primary' })];
   render(EmploymentEditor, { controller, personID: 7 });
   const checkbox = screen.queryByRole('checkbox', { name: 'Primary job' });
-  if (scenario !== 'first job') {
+  if (scenario === 'existing primary') {
     expect(checkbox).not.toBeNull();
     await fireEvent.click(checkbox!);
   } else expect(checkbox).toBeNull();
@@ -59,7 +59,7 @@ it.each(['first job', 'no primary', 'existing primary'])('sends primary only whe
   await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
   await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
   await waitFor(() => expect(body).toBeDefined());
-  if (scenario !== 'first job') expect(body).toHaveProperty('is_primary', true);
+  if (scenario === 'existing primary') expect(body).toHaveProperty('is_primary', true);
   else expect(body).not.toHaveProperty('is_primary');
 });
 

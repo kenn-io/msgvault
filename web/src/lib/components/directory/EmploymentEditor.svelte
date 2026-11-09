@@ -47,7 +47,7 @@
   const loading = $derived(!!initialEmployment && !opened && !attempt.details);
   const loadFailed = $derived(!!initialEmployment && !opened && !!attempt.details);
   let selectedOrganization = $state<Organization>();
-  const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current));
+  const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current && job.is_primary));
   let datesInvalid = $state(false);
   let uncertainBody: EmploymentBody | undefined;
   const locked = $derived(attempt.busy || controller.createBlocked.employments);

@@ -639,6 +639,30 @@ describe('RelationshipsTab', () => {
     expect(patches[1].headers.get('If-Match')).toBe('"relationship-41-r2"');
   });
 
+  it('does not submit an unchanged ended connection when Enter submits the form', async () => {
+    const writes: Request[] = [];
+    const ended = relationship(41, 1, { status: 'ended', end_date: { year: 2025, month: 3 }, notes: 'Keep these notes.' });
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PATCH') writes.push(request);
+      if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(ended, { headers: { ETag: '"relationship-41-r1"' } });
+      if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: ended })] });
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    });
+    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: ended })];
+    controller.relationshipTypes = [relationshipType()];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByText('1 past connection'));
+    await rowAction('Edit…');
+    const date = screen.getByRole('textbox', { name: 'End date' });
+    await fireEvent.input(date, { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    await fireEvent.submit(date.closest('form')!);
+    expect(writes).toHaveLength(0);
+    expect(screen.getByRole('dialog', { name: 'Edit connection' })).toBeDefined();
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveProperty('value', 'Keep these notes.');
+  });
+
   it('saves notes changed back to their opening value after a conflict', async () => {
     const opening = relationship(41, 1, { notes: 'Opening' });
     const saved = relationship(41, 2, { notes: 'Elsewhere' });

@@ -164,7 +164,7 @@
   }
   async function submit(): Promise<void> {
     if (
-      attempt.busy || loading || (!!initialView && !opened) ||
+      attempt.busy || loading || (!!initialView && !opened) || (!!initialRelationship && !attempt.conflict && !edited) ||
       datesInvalid || !!endDateError ||
       !relationshipTypeSlug ||
       (!initialRelationship && (counterpartID === null || counterpartID === personID))
