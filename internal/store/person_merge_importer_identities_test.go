@@ -28,6 +28,18 @@ func TestWebMergeIdentityFixturesMatchStore(t *testing.T) {
 			return owner, guest
 		}},
 		{"mailbox-case", mailboxCaseMergePeople},
+		{"beeper-raw-phone", func(t *testing.T, st *store.Store) (*store.Person, *store.Person) {
+			t.Helper()
+			require := require.New(t)
+			participant, err := st.EnsureParticipantByIdentifierContext(t.Context(), "beeper", "+12025550123", "Reader")
+			require.NoError(err)
+			service, err := st.ResolveCommunicationServiceContext(t.Context(), "whatsapp")
+			require.NoError(err)
+			require.NoError(st.ClassifyParticipantIdentifierServiceContext(t.Context(), "beeper", "+12025550123", &service.ID, nil, nil))
+			guest, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
+			require.NoError(err)
+			return mustPromotedPerson(t.Context(), t, st, "owner@example.org", "Owner"), guest
+		}},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			require := require.New(t)
@@ -90,6 +102,7 @@ func mailboxCaseMergePeople(t *testing.T, st *store.Store) (*store.Person, *stor
 	}
 	_, err := st.LinkParticipants(participants[0], participants[1])
 	require.NoError(err)
+	require.NoError(st.SetParticipantIdentifierContext(t.Context(), participants[0], "beeper", "Reader@Example.org"))
 	guest, _, err := st.CreatePersonFromParticipant(participants[0])
 	require.NoError(err)
 	return mustPromotedPerson(t.Context(), t, st, "owner@example.org", "Owner"), guest

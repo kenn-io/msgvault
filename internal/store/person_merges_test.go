@@ -2638,6 +2638,7 @@ func TestPersonMerge_DetailLabelsCurrentBindings(t *testing.T) {
 		}
 		require.Len(archived, 1)
 		assert.Equal(points[0].IdentityKey, archived[0].IdentityKey)
+		assert.Equal("+12025550123", archived[0].DisplayValue)
 	})
 
 	t.Run("phone aliases and saved contacts", func(t *testing.T) {

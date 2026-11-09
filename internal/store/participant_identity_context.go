@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -64,7 +65,7 @@ func (s *Store) GetParticipantIdentityContext(
 // Raw type and value keep the stored identity.
 func presentParticipantIdentifiers(identifiers []ParticipantIdentifierContext) {
 	for i, identifier := range identifiers {
-		if identifier.Type == sourceTypeBeeper && (identifier.DisplayValue == identifier.Value ||
+		if identifier.Type == sourceTypeBeeper && !strings.HasPrefix(identifier.DisplayValue, "+") && (identifier.DisplayValue == identifier.Value ||
 			strings.HasPrefix(identifier.Value, beeperidentity.Prefix+":") && strings.HasSuffix(identifier.Value, ":"+beeperidentity.EncodePart(identifier.DisplayValue))) {
 			identifiers[i].DisplayValue = ""
 		}
@@ -215,6 +216,15 @@ func addressIdentityKey(service, scopeKind, scopeValue, normalized string) strin
 
 func participantAddresses(identities *ParticipantIdentityContext) ([]ParticipantAddress, []int64) {
 	addresses, ids := []ParticipantAddress{}, []int64{}
+	for i, identifier := range identities.Identifiers {
+		if identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" {
+			identifier = ordinaryAddress(identifier)
+		}
+		if text := cmp.Or(identifier.DisplayValue, identifier.Value); identifier.Type == sourceTypeBeeper && strings.HasPrefix(text, "+") {
+			identifier.DisplayValue = text
+		}
+		identities.Identifiers[i] = identifier
+	}
 	presentParticipantIdentifiers(identities.Identifiers)
 	byParticipant := make(map[int64][]ParticipantIdentifierContext)
 	for _, identifier := range identities.Identifiers {
@@ -223,7 +233,6 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 	for _, member := range identities.Members {
 		ids = append(ids, member.ParticipantID)
 		seen := map[string]bool{}
-		memberAddresses := memberContactAddresses(member)
 		appendAddress := func(identifier ParticipantIdentifierContext) {
 			key := addressIdentityKey(identifier.ServiceSlug, identifier.ScopeKind, identifier.ScopeValue, identifier.NormalizedValue)
 			if !seen[key] {
@@ -232,27 +241,7 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 			}
 		}
 		for _, identifier := range byParticipant[member.ParticipantID] {
-			if identifier.ServiceSlug == "" && (identifier.Type == string(ContactAddressEmail) || identifier.Type == string(ContactAddressPhone)) {
-				// An unserviced email or phone compares with the member's own address.
-				identifier.ServiceSlug = identifier.Type
-			}
-			if identifier.Type == sourceTypeBeeper {
-				matched := false
-				for _, address := range memberAddresses {
-					normalized, err := NormalizeServiceValue(nil, ContactAddressKind(address.Type), identifier.Value)
-					if err == nil && normalized == address.NormalizedValue {
-						identifier.NormalizedValue, identifier.DisplayValue, matched = normalized, identifier.Value, true
-						break
-					}
-				}
-				if matched && identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" {
-					continue
-				}
-				if !matched && (identifier.NormalizedValue == "" || identifier.ServiceSlug == "") {
-					identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
-				}
-			}
-			if identifier.NormalizedValue == "" {
+			if identifier.NormalizedValue == "" || identifier.ServiceSlug == "" {
 				identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
 			}
 			if identifier.Type != sourceTypeBeeper && identifier.DisplayValue == identifier.Value {
@@ -260,11 +249,36 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 			}
 			appendAddress(identifier)
 		}
-		for _, address := range memberAddresses {
+		for _, address := range memberContactAddresses(member) {
 			appendAddress(address)
 		}
 	}
 	return addresses, ids
+}
+
+// ordinaryAddress lists an unserviced identifier that holds an email or an
+// E.164 phone as that address, so it matches the member's own and saved ones.
+func ordinaryAddress(identifier ParticipantIdentifierContext) ParticipantIdentifierContext {
+	text := identifier.DisplayValue
+	if text == "" {
+		text = identifier.Value
+	}
+	kind := ContactAddressKind(identifier.Type)
+	if isExactMailbox(text) {
+		kind = ContactAddressEmail
+	} else if kind != ContactAddressEmail && strings.HasPrefix(text, "+") {
+		kind = ContactAddressPhone
+	}
+	if kind != ContactAddressEmail && kind != ContactAddressPhone {
+		return identifier
+	}
+	normalized, err := NormalizeServiceValue(nil, kind, text)
+	if err != nil {
+		return identifier
+	}
+	identifier.Type, identifier.Value, identifier.DisplayValue = string(kind), text, ""
+	identifier.ServiceSlug, identifier.NormalizedValue = string(kind), normalized
+	return identifier
 }
 
 // memberContactAddresses returns a member's own email and phone as addresses.

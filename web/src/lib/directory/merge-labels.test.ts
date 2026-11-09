@@ -1,6 +1,7 @@
 // These projections are emitted by TestWebMergeIdentityFixturesMatchStore.
 import migratedAddresses from './beeper-migrated-identities.test-fixture.json';
 import phoneAddresses from './beeper-phone-identities.test-fixture.json';
+import rawPhoneAddresses from './beeper-raw-phone-identities.test-fixture.json';
 import mailboxAddresses from './mailbox-case-identities.test-fixture.json';
 import { describe, expect, it } from 'vitest';
 import type { ParticipantAddress, PersonMergeDetail, PersonMergeLabels } from '../api/generated/models';
@@ -20,6 +21,17 @@ it('renders the store’s email and formatted phone through History and merged-i
     expect(addresses.map(addressText)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
   }
   expect(mergedInAddresses([{ ...absorbed(2), merged_at: '2026-01-03T12:00:00Z', addresses: phoneAddresses }]).map(a => a.value)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
+});
+
+it('keeps the legacy Beeper phone readable when its saved copy matches', () => {
+  const labels = labelsOf(rawPhoneAddresses, 1);
+  labels.profiles = [{ id: 9, participant_ids: [1], contact_points: [{
+    identity_key: '["whatsapp","","","+12025550123"]', address_kind: 'phone', original_value: '+1 (202) 555-0123', normalized_value: '+12025550123', service_slug: 'whatsapp', service_label: 'WhatsApp',
+  }] }];
+  const participants = [absorbed(1)];
+  const row = mergeSummaryRow({ merge, participants, labels });
+  expect(row.addresses.get(1)?.map(addressText)).toEqual(['WhatsApp · Reader · +12025550123']);
+  expect(mergeAddresses({ merge, participants, labels }, 'absorbed').map(addressText)).toEqual(['WhatsApp · Reader · +12025550123']);
 });
 
 describe('mergeSentence', () => {
