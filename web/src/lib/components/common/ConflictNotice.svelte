@@ -7,14 +7,14 @@
     noun: string;
     /** The saved version beside the form, label to value. */
     record: Record<string, string>;
-    saved: { updated_at: string; source?: string };
+    saved: { updated_at: string; source?: string; updated_by?: string };
     /** More of the saved version, after its rows. */
     children?: Snippet;
     message: string;
     actionLabel?: string;
     onaction?: () => void;
   } = $props();
-  const provenance = $derived(conflictSaved(saved.updated_at, saved.source));
+  const provenance = $derived(conflictSaved(saved.updated_at, saved.updated_by === 'user' ? undefined : saved.source));
 </script>
 
 <InlineNotice tone="warning" message={`This ${noun} changed since you opened it.`} details={message || undefined} {actionLabel} {onaction}>
