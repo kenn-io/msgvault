@@ -21,6 +21,7 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Use a generated Go client | `pkg/client` in the repository |
 | Build a client in another language | `/openapi.json` from the daemon or `msgvault openapi` |
 | Submit a background backfill | [Historical import jobs](#historical-import-jobs) |
+| Archive messages from a source without a connector | [Import a message](#post-apiv1importmessage) |
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
@@ -160,7 +161,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.49.0**.
+it is separate from the binary release version. The current schema is **3.50.0**.
+
+Schema 3.50.0 adds [`POST /api/v1/import/message`](#post-apiv1importmessage), which archives one message from a source msgvault has no connector for.
 
 Schema 3.49.0 adds the `verification.read` modifier for delegated archive reads.
 
@@ -2542,6 +2545,68 @@ international (a leading `+` or `00`) and is normalized to E.164. An optional
 msgvault links the person's email and phone through it, including across
 meetings. See [how meetings connect to people](usage/meetings.md#how-meetings-connect-to-people).
 Validation errors name the failing field without echoing its value.
+
+### Import a message {#post-apiv1importmessage}
+
+**Endpoint:** `POST /api/v1/import/message`
+
+Import one message from a source msgvault has no connector for, such as a feed
+item. The authenticated, on-demand endpoint accepts at most 16 MiB of JSON and
+is idempotent on `source.identifier` plus `message.external_id`. The first call
+returns `201` / `created`; retries and replacements return `200` / `updated`
+for the same archived message. An unchanged retry writes nothing.
+
+```bash
+curl http://localhost:8080/api/v1/import/message \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "source": {
+      "identifier": "feeds",
+      "display_name": "Feeds",
+      "account_email": "you@example.com"
+    },
+    "message": {
+      "external_id": "entry-12345",
+      "message_type": "feed_item",
+      "conversation": {"external_id": "feed-42", "title": "Example Project releases"},
+      "sender": {"name": "Example Project", "url": "https://example.com"},
+      "title": "Example Project 1.2.0",
+      "url": "https://example.com/releases/1.2.0",
+      "sent_at": "2026-11-07T10:00:00-05:00",
+      "body_markdown": "## Changes\n\n- Faster sync."
+    }
+  }'
+```
+
+```json
+{
+  "status": "created",
+  "source_id": 14,
+  "message_id": 902,
+  "source_message_id": "entry-12345"
+}
+```
+
+| Field | Rule |
+|---|---|
+| `source.identifier` | Required, up to 128 characters |
+| `source.account_email` | Required; becomes a confirmed identity for the source |
+| `message.external_id` | Required, up to 256 characters |
+| `message.message_type` | Required, up to 64 lowercase letters, digits, and underscores, starting with a letter |
+| `message.conversation.external_id` | Required, up to 256 characters; groups messages within the source |
+| `message.sender` | Requires at least one of `name`, `url`, `email`, `phone`, or `id` |
+| `message.title` | Up to 4096 characters |
+| `message.url`, `message.sender.url` | Absolute URLs, up to 4096 characters |
+| `message.sent_at` | Required RFC 3339 timestamp with an explicit offset |
+| `body_markdown`, `body_html`, `body_text` | At most one; the message needs a title or a body |
+| `message.metadata` | Any JSON object, stored with the message |
+
+Imported conversations have the conversation type `channel`. The
+[usage guide](usage/message-import.md) explains how a sender becomes a
+participant and how bodies are stored. Unknown fields are rejected except
+within `message.metadata`. Validation errors name the failing field without
+echoing its value.
 
 ---
 

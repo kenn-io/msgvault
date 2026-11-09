@@ -292,6 +292,41 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 	assert.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
 }
 
+func TestSearchCmd_MessageTypeFlagAcceptsImportedTypes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	defer resetSearchFlags()
+
+	var gotType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotType = r.URL.Query().Get("message_type")
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{}}), "write response")
+	}))
+	defer srv.Close()
+
+	run := func(messageType string) error {
+		resetSearchFlags()
+		cfg := &config.Config{}
+		cfg.Remote.URL = srv.URL
+		cfg.Remote.AllowInsecure = true
+		root := newTestRootCmd()
+		root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		root.AddCommand(searchCmd)
+		root.SetArgs([]string{"search", "--message-type", messageType, "release"})
+		return root.Execute()
+	}
+
+	require.NoError(run("feed_item"), "an imported type should be forwarded")
+	assert.Equal("feed_item", gotType, "message_type query")
+
+	gotType = ""
+	err := run("Feed-Item")
+	require.Error(err, "a malformed type should fail before the request")
+	assert.Contains(err.Error(), `invalid --message-type: "Feed-Item"`)
+	assert.Empty(gotType, "no request for a malformed type")
+}
+
 func TestSearchCmd_DeletionScopeForwardsToRemoteFTS(t *testing.T) {
 	cfg := testConfigValue()
 	useLocal := false

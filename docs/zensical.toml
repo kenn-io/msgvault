@@ -45,6 +45,7 @@ nav = [
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
+    {"Messages from Any Source" = "usage/message-import.md"},
   ]},
   {"People and Accounts" = [
     {"People and Profiles" = "usage/people.md"},

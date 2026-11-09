@@ -284,6 +284,30 @@ func (c *Client) ImportMeeting(
 	return nil, fmt.Errorf("import meeting: %w", err)
 }
 
+// ImportMessage accepts both documented success statuses. The generated
+// convenience method treats only 201 as success even though an idempotent
+// update returns 200.
+func (c *Client) ImportMessage(
+	ctx context.Context,
+	options *generated.ImportMessageRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.ImportMessageResponseJSON, error) {
+	resp, err := c.ImportMessageWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("import message: %w", err)
+}
+
 // ImportMuesli accepts both documented success statuses. The generated
 // convenience method treats only 201 as success; registration and idempotent
 // updates return 200.

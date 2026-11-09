@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -86,7 +87,7 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 	switch sourceType {
 	case "", sourceTypeGmail, "imap", "msmail", "teams", "discord":
 		return sourceScheduleClassification{kind: sourceScheduleAccount}
-	case meetingimport.SourceType:
+	case meetingimport.SourceType, messageimport.SourceType:
 		return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
 	default:
 		jobName, ok := SchedulerJobNameForSource(sourceType, identifier)
