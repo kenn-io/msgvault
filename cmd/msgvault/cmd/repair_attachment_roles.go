@@ -13,14 +13,12 @@ import (
 func newRepairAttachmentRolesCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "repair-attachment-roles",
-		Short: "Classify older email attachments as inline or standalone from raw MIME",
+		Short: "Classify older email attachments",
 		Long: `Classify email attachments archived before msgvault recorded attachment roles.
 
-Older email attachments have the role "unknown", so filters cannot tell a
-signature logo embedded in the message body from a document attached to it.
-This command reads each message's stored raw MIME and records the role of
-every attachment it can match to exactly one MIME part. Attachments without
-retained MIME, or with ambiguous evidence, stay unknown.
+Unknown roles prevent inline/standalone filtering. Uses each message's stored
+MIME to classify attachments only when exactly one part matches; missing MIME
+or ambiguous matches leave roles unknown.
 
 Changes are written immediately. Interrupted runs resume from saved progress;
 completed runs return at once. The command works entirely offline.`,

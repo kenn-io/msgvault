@@ -166,7 +166,7 @@ Maintenance and repair:
   policy                  Show room tiers and overrides
   purge-excluded-media    Reclaim locally stored media excluded by current policy
   repack-attachments      Reclaim dead bytes from sparse attachment packs
-  repair-attachment-roles Classify older email attachments as inline or standalone from raw MIME
+  repair-attachment-roles Classify older email attachments
   repair-dates            Repair missing or implausible email sent dates
   repair-derived          Re-derive message text and metadata from stored payloads
   repair-encoding         Repair invalid UTF-8 encoding in message text fields
