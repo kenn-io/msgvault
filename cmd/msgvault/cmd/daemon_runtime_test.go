@@ -434,6 +434,8 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 		restart    string
 		powerShell string
 		daemon     string
+		persistent string
+		suffix     string
 	}{
 		{name: "default archive", daemon: "v0.23.0",
 			restart:    "'/tmp/source build/msgvault' daemon restart",
@@ -444,12 +446,20 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 		{name: "retained same base source", daemon: "v0.23.0-46-gdef",
 			restart:    "'/tmp/source build/msgvault' daemon restart",
 			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
+		{name: "automatic daemon", daemon: "v0.23.0", persistent: "false", suffix: " and keep it running until stopped",
+			restart: "'/tmp/source build/msgvault' daemon restart", powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
+		{name: "persistent daemon", daemon: "v0.23.0", persistent: "true",
+			restart: "'/tmp/source build/msgvault' daemon restart", powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
 		{name: "equal source stays quiet", daemon: "v0.23.0-45-gabc"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var stderr bytes.Buffer
 			ctx := testInvocationContext(t.Context(), nil, tt.options)
-			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemon}})
+			record := daemon.RuntimeRecord{Version: tt.daemon}
+			if tt.persistent != "" {
+				record.Metadata = map[string]string{runtimeBackground: "true", runtimePersistent: tt.persistent}
+			}
+			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: record})
 			if runtime.GOOS == "windows" {
 				tt.restart = tt.powerShell
 			}
@@ -457,7 +467,7 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 				assert.Empty(t, stderr.String())
 				return
 			}
-			assert.Equal(t, "msgvault: daemon "+tt.daemon+" is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version.\n", stderr.String())
+			assert.Equal(t, "msgvault: daemon "+tt.daemon+" is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version"+tt.suffix+".\n", stderr.String())
 		})
 	}
 }

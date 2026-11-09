@@ -1209,7 +1209,8 @@ func TestRunServeStartIgnoresDisabledDaemonAutoStart(t *testing.T) {
 		return nil
 	})
 	waitCh := make(chan error)
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(_ *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		assert.True(opts.Persistent)
 		return &backgroundServeProcess{
 			PID:     777,
 			LogPath: "/tmp/msgvault-serve.log",
@@ -1303,7 +1304,7 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n  Exits after 20m idle (started automatically)\n",
 		stdout.String())
-	assert.Contains(stderr.String(), "to use this version and keep it running until stopped.")
+	assert.Contains(stderr.String(), "to use this version")
 	assert.Equal(1, strings.Count(stdout.String()+stderr.String(), daemonRestartCommand(cmd.Context())))
 }
 
@@ -1424,8 +1425,7 @@ func TestReportBackgroundLaunchInProgressUsesCanonicalCommand(t *testing.T) {
 func TestRunServeRestartStartsWhenNoDaemonIsRunning(t *testing.T) {
 	dataDir := t.TempDir()
 	waitCh := make(chan error)
-	stubStartServeBackgroundProcess(t, func(_ *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		assert.True(t, opts.Persistent)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		return &backgroundServeProcess{
 			PID:     778,
 			LogPath: "/tmp/msgvault-serve.log",
@@ -1664,11 +1664,9 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 		_ = proc.releaseProcessTree()
 	})
 
-	if persistent {
-		assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
-		require.NoError(proc.releaseProcessTree())
-		assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
-	}
+	assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
+	require.NoError(proc.releaseProcessTree())
+	assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
 }
 
 func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
@@ -1845,10 +1843,21 @@ func TestServeStatusLifetime(t *testing.T) {
 		{"false", "true", "20m0s", "  Exits after 20m idle (started automatically)"},
 		{"false", "true", "0s", "  Stays running (started automatically)"},
 		{"", "", "0s", "  Stays running until msgvault daemon stop"},
-		{"", "", "", "  pid:     0"},
+		{"", "", "", ""},
 	} {
-		rt := &DaemonRuntime{Record: daemon.RuntimeRecord{Metadata: map[string]string{runtimePersistent: tc.persistent, runtimeBackground: tc.background, runtimeIdleTimeout: tc.timeout}}}
-		assert.Equal(t, tc.want, serveStatusLines(rt)[1])
+		metadata := map[string]string{}
+		for key, value := range map[string]string{runtimePersistent: tc.persistent, runtimeBackground: tc.background, runtimeIdleTimeout: tc.timeout} {
+			if value != "" {
+				metadata[key] = value
+			}
+		}
+		rt := &DaemonRuntime{Host: "127.0.0.1", Port: 8123, Record: daemon.RuntimeRecord{PID: 123, Metadata: metadata}}
+		want := []string{"msgvault running at http://127.0.0.1:8123"}
+		if tc.want != "" {
+			want = append(want, tc.want)
+		}
+		want = append(want, "  pid:     123")
+		assert.Equal(t, want, serveStatusLines(rt))
 	}
 }
 
