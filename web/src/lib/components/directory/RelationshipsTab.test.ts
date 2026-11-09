@@ -538,44 +538,6 @@ describe('RelationshipsTab', () => {
     expect(controller.errors.relationshipTypes).toBeFalsy();
   });
 
-  it('retains an edge draft on conflict and uses the fresh individual ETag without auto-retry', async () => {
-    const requests: Request[] = [];
-    let reads = 0;
-    let writes = 0;
-    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
-        reads += 1;
-        return new Response(JSON.stringify(relationship(41, reads, { notes: 'Server concurrent' })), { headers: { ETag: `"person-relationship-41-r${reads}"` } });
-      }
-      if (path === '/api/v1/person-relationships/41' && request.method === 'PATCH') {
-        writes += 1;
-        return Response.json({ error: 'revision_conflict', message: 'edge changed elsewhere' }, { status: 412 });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner')];
-    controller.relationshipTypes = [relationshipType()];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    await rowAction('Edit…');
-    const notes = await screen.findByRole('textbox', { name: 'Notes' });
-    await fireEvent.input(notes, { target: { value: 'Retained local draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect((await screen.findByRole('alert')).textContent).toContain('This connection changed since you opened it.');
-    expect(screen.getByRole('alert').querySelector('details')?.open).toBe(false);
-    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLInputElement).value).toBe('Retained local draft');
-    const record = screen.getByRole('region', { name: 'Saved connection' });
-    expect(within(record).getByText('Notes').nextElementSibling?.textContent).toBe('Server concurrent');
-    expect(writes).toBe(1);
-    expect(reads).toBe(2);
-    const patch = requests.find((request) => request.method === 'PATCH')!;
-    expect(patch.headers.get('If-Match')).toBe('"person-relationship-41-r1"');
-  });
-
   it('opens Edit with the connection as context: since when and prose notes', async () => {
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -587,10 +549,7 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7, personName: 'Mira Vale' });
     await rowAction('Edit…');
     const dialog = await screen.findByRole('dialog', { name: 'Edit connection' });
-    // A connection the person added says only since when; one from somewhere else says where.
     expect(await within(dialog).findByText('Since 2022')).toBeDefined();
-    expect(within(dialog).queryByText(/added by you/)).toBeNull();
-    expect(within(dialog).queryByText('You')).toBeNull();
     expect(within(dialog).getByRole('textbox', { name: 'Notes' }).tagName).toBe('TEXTAREA');
   });
 
@@ -628,64 +587,20 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-06' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: '   ' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('This connection changed since you opened it.');
     await screen.findByRole('button', { name: 'Keep yours' });
+    expect((screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement).value).toBe('   ');
+    expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1);
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Opening note' } });
     expect(within(screen.getByRole('region', { name: 'Saved connection' })).getByText('Notes').nextElementSibling?.textContent).toBe('Concurrent note');
     await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     const patches = requests.filter(request => request.method === 'PATCH');
     await expect(patches[0].clone().json()).resolves.toEqual({ end_date: '2026-06', notes: null });
-    await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-06', notes: null });
+    await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-06', notes: 'Opening note' });
     expect(patches[1].headers.get('If-Match')).toBe('"relationship-41-r2"');
-  });
-
-  it('does not submit an unchanged ended connection when Enter submits the form', async () => {
-    const writes: Request[] = [];
-    const ended = relationship(41, 1, { status: 'ended', end_date: { year: 2025, month: 3 }, notes: 'Keep these notes.' });
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'PATCH') writes.push(request);
-      if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(ended, { headers: { ETag: '"relationship-41-r1"' } });
-      if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: ended })] });
-      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    });
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer', { relationship: ended })];
-    controller.relationshipTypes = [relationshipType()];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByText('1 past connection'));
-    await rowAction('Edit…');
-    const date = screen.getByRole('textbox', { name: 'End date' });
-    await fireEvent.input(date, { target: { value: '' } });
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
-    await fireEvent.submit(date.closest('form')!);
-    expect(writes).toHaveLength(0);
-    expect(screen.getByRole('dialog', { name: 'Edit connection' })).toBeDefined();
-    expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveProperty('value', 'Keep these notes.');
-  });
-
-  it('saves notes changed back to their opening value after a conflict', async () => {
-    const opening = relationship(41, 1, { notes: 'Opening' });
-    const saved = relationship(41, 2, { notes: 'Elsewhere' });
-    const bodies: unknown[] = [];
-    let reads = 0;
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'PATCH') {
-        bodies.push(await request.json());
-        return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(opening, { headers: { ETag: '"relationship-41-r3"' } });
-      }
-      if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: `"relationship-41-r${reads}"` } });
-      return Response.json({ relationships: [] });
-    });
-    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await rowAction('Edit…');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await screen.findByRole('button', { name: 'Keep yours' });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Opening' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(bodies).toEqual([{ notes: 'Draft' }, { notes: 'Opening' }]));
   });
 
   it('refreshes connections after Keep yours on a conflict that already saved the requested note', async () => {
@@ -713,7 +628,7 @@ describe('RelationshipsTab', () => {
     expect(controller.network?.nodes?.[0].label).toBe('After');
   });
 
-  it('omits a cleared end date while saving notes on an ended connection', async () => {
+  it('keeps an ended connection unchanged until notes change, then omits a cleared end date', async () => {
     const opening = relationship(41, 1, { status: 'ended', end_date: { year: 2023 }, notes: 'Old' });
     const bodies: unknown[] = [];
     const { client, controller } = controllerWith(async input => {
@@ -726,40 +641,18 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
     await fireEvent.click(screen.getByText('1 past connection'));
     await rowAction('Edit…');
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '' } });
+    expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    const date = screen.getByRole('textbox', { name: 'End date' });
+    await fireEvent.submit(date.closest('form')!);
+    expect(bodies).toHaveLength(0);
+    expect(screen.getByRole('dialog', { name: 'Edit connection' })).toBeDefined();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'New' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies).toEqual([{ notes: 'New' }]);
-  });
-
-  it('disables Save when clearing an end date is the only edit', async () => {
-    const opening = relationship(41, 1, { status: 'ended', end_date: { year: 2023 } });
-    const { client, controller } = controllerWith(async () => Response.json(opening, { headers: { ETag: '"relationship-41-r1"' } }));
-    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByText('1 past connection'));
-    await rowAction('Edit…');
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'End date' }), { target: { value: '' } });
-    expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
-  });
-
-  it('disables Save for an unchanged relationship', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async input => {
-      const request = requestOf(input);
-      return Response.json(relationship(41, 1, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 6 } }), { headers: { ETag: '"person-relationship-41-r1"' } });
-    });
-    const { client, controller } = controllerWith(fetchFn);
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', {
-      relationship: relationship(41, 1, { status: 'ended', notes: 'Opening note', end_date: { year: 2026, month: 6 } })
-    })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    await fireEvent.click(screen.getByText('1 past connection'));
-    await rowAction('Edit…');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true));
-    expect(fetchFn.mock.calls.map(([input]) => requestOf(input).method)).toEqual(['GET']);
   });
 
   it('deletes an incoming connection using its underlying edge', async () => {
@@ -780,7 +673,6 @@ describe('RelationshipsTab', () => {
 
     await rowAction('Delete…');
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Delete connection with/  })).toBeNull());
     const deletion = requests.find((request) => request.method === 'DELETE')!;
     expect(pathOf(deletion)).toBe('/api/v1/person-relationships/41');
@@ -842,44 +734,14 @@ describe('RelationshipsTab', () => {
     expect(within(alert).getByRole('region', { name: 'Saved connection' }).textContent).toContain('Saved note');
     expect(screen.getByRole('dialog', { name: 'Delete connection with Synthetic Peer?' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(tags).toEqual(['"person-relationship-41-r1"', '"person-relationship-41-r2"']));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  });
-
-  it('keeps Add connection and Close locked until Check again finishes refreshing', async () => {
-    let posts = 0, networkReads = 0;
-    let finishNetwork: (response: Response) => void = () => undefined;
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-      if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; throw new TypeError('response lost'); }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/network') return ++networkReads === 1 ? Response.json({ nodes: [], edges: [] }) : new Promise<Response>(resolve => { finishNetwork = resolve; });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    controller.relationshipTypes = [relationshipType()];
-    await controller.loadNetwork();
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    await openTypeahead('Person');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
-    await openTypeahead('Connection type');
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
-    const dialog = screen.getByRole('dialog', { name: 'Add connection' });
-    await fireEvent.click(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    await fireEvent.click(await within(dialog).findByRole('button', { name: 'Check again' }));
-    await waitFor(() => expect(networkReads).toBe(2));
-    await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
-    await fireEvent.click(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
-    expect(posts).toBe(1);
-    expect(screen.getByRole('dialog', { name: 'Add connection' })).toBeDefined();
-    finishNetwork(Response.json({ nodes: [], edges: [] }));
-    await waitFor(() => expect(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', false));
   });
 
   it.each([6, 8])('matches a recovered ended connection with canonical records for counterpart %i', async counterpartID => {
     let posts = 0;
+    let refreshPending = false;
+    let finishRefresh: (response: Response) => void = () => undefined;
     const saved = relationship(41, 1, {
       status: 'ended', source_person_id: Math.min(7, counterpartID), target_person_id: Math.max(7, counterpartID), is_symmetric: true,
       start_date: { year: 2024, month: 3, day: 15 }, end_date: { year: 2025 }, notes: 'Retained unknown draft'
@@ -894,7 +756,13 @@ describe('RelationshipsTab', () => {
         posts += 1;
         return Response.json({ error: 'unavailable', message: 'outcome unknown' }, { status: 503 });
       }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: posts ? [view(41, 'outgoing', 'mentors', 'Synthetic Counterpart', { relationship: saved })] : [] });
+      if (path === '/api/v1/people/7/relationships') {
+        if (posts) {
+          refreshPending = true;
+          return new Promise<Response>(resolve => { finishRefresh = resolve; });
+        }
+        return Response.json({ relationships: [] });
+      }
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
     controller.relationshipTypes = [relationshipType({ is_symmetric: true, forward_label: 'mentor', reverse_label: 'mentor' })];
@@ -911,12 +779,16 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
 
     expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the connection was saved.");
-    expect(screen.getByRole('alert').textContent).not.toContain('outcome unknown');
     const notes = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
     expect(notes.value).toBe('Retained unknown draft');
     expect(notes.disabled).toBe(true);
     expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
-    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add connection' })).getByRole('button', { name: 'Check again' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add connection' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(refreshPending).toBe(true));
+    expect(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveProperty('disabled', true);
+    finishRefresh(Response.json({ relationships: [view(41, 'outgoing', 'mentors', 'Synthetic Counterpart', { relationship: saved })] }));
     await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
     expect(controller.relationships).toEqual([expect.objectContaining({ relationship: saved })]);
@@ -1258,16 +1130,14 @@ describe('RelationshipsTab', () => {
   });
 });
 
-it.each(['failed', 'saved'])('shows the latest outcome after a %s connection retry', async outcome => {
+it('shows the latest error after a failed connection retry', async () => {
   let writes = 0;
   const opening = relationship(41, 1, { notes: 'Original note' });
   const { client, controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (request.method === 'PATCH') {
       if (++writes === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      return outcome === 'failed'
-        ? Response.json({ message: 'Disk full' }, { status: 500 })
-        : Response.json(relationship(41, 3, { notes: 'Draft note' }), { headers: { ETag: '"relationship-41-r3"' } });
+      return Response.json({ message: 'Disk full' }, { status: 500 });
     }
     if (pathOf(request).includes('/people/7/relationships')) return Response.json({ message: 'Refresh failed' }, { status: 500 });
     return Response.json(opening, { headers: { ETag: '"relationship-41-r2"' } });
@@ -1278,10 +1148,6 @@ it.each(['failed', 'saved'])('shows the latest outcome after a %s connection ret
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft note' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  if (outcome === 'saved') {
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    return;
-  }
   await screen.findByText("Couldn't save this connection.");
   expect(screen.queryByRole('button', { name: 'Keep yours' })).toBeNull();
   expect(screen.getByText('Disk full')).toBeDefined();

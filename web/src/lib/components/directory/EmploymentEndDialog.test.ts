@@ -3,34 +3,9 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organization, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 
-it('rejects a retried end date before the saved start year', async () => {
-  const bodies: unknown[] = [];
-  const opening = employment(11, 1, { start_date: { year: 2026 } });
-  const saved = employment(11, 2, { start_date: { year: 2028 } });
-  let reads = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (pathOf(request).endsWith('/end')) {
-      bodies.push(await request.json());
-      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    }
-    return ++reads === 1
-      ? Response.json(opening, { headers: { ETag: '"employment-11-r1"' } })
-      : Response.json(saved, { headers: { ETag: '"employment-11-r2"' } });
-  });
-  render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
-  const end = screen.getByRole('textbox', { name: 'End date' });
-  await fireEvent.input(end, { target: { value: '2027' } });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
-  await fireEvent.click(screen.getByRole('button', { name: 'End' }));
-  await screen.findByRole('button', { name: 'Keep yours' });
-  expect(bodies).toEqual([{ end_date: '2027' }]);
-  expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', true);
-});
-
 it('keeps the saved start date for retry after a failed conflict resolution', async () => {
   const opening = employment(11, 1, { start_date: { year: 2022 } });
-  const saved = employment(11, 2, { start_date: { year: 2020 } });
+  const saved = employment(11, 2, { start_date: { year: 2028 } });
   let reads = 0;
   let writes = 0;
   const { controller } = controllerWith(async input => {
@@ -47,7 +22,8 @@ it('keeps the saved start date for retry after a failed conflict resolution', as
   await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));
   await screen.findByRole('button', { name: 'Keep yours' });
-  await fireEvent.input(end, { target: { value: '2021' } });
+  expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', true);
+  await fireEvent.input(end, { target: { value: '2029' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
   await screen.findByText("Couldn't end this job.");
   expect(screen.getByText('Disk full')).toBeDefined();

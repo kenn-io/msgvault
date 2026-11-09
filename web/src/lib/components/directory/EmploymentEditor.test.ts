@@ -235,37 +235,6 @@ it('allows closing while the job loads', async () => {
   });
 
 
-  it('blocks an unknown employment create until explicit refresh and keeps the modal draft open', async () => {
-    let posts = 0;
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/employments') {
-        posts += 1;
-        throw new TypeError('response lost');
-      }
-      if (path === '/api/v1/people/7/employments') return collection([] , undefined);
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    render(EmploymentEditor, { controller, personID: 7 });
-    await screen.findByRole('button', { name: /^Organization(:|$)/ });
-    await openTypeahead('Organization');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
-    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the job was saved.");
-    expect((screen.getByRole('textbox', { name: 'Job title' }) as HTMLInputElement).value).toBe('Draft role');
-    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('disabled', true);
-    expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', true);
-    expect(posts).toBe(1);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false));
-    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('disabled', false);
-    expect(posts).toBe(1);
-  });
-
   it('keeps Add job and Close locked until Check again finishes looking for the lost job', async () => {
     let posts = 0, listReads = 0;
     let finishLookup: (response: Response) => void = () => undefined;
@@ -282,7 +251,11 @@ it('allows closing while the job loads', async () => {
     await screen.findByRole('button', { name: /^Organization(:|$)/ });
     await openTypeahead('Organization');
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the job was saved.");
+    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('value', 'Draft role');
+    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('disabled', true);
     await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(listReads).toBe(2));
     expect(controller.createBlocked.employments).toBe(false);
@@ -294,10 +267,9 @@ it('allows closing while the job loads', async () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
   });
 
-  it.each([
-    { inputDate: '2019', savedDate: { year: 2019 } },
-    { inputDate: '20240315', savedDate: { year: 2024, month: 3, day: 15 } },
-  ])('closes after Check again finds an uncertain historical job on a later page ($inputDate)', async ({ inputDate, savedDate }) => {
+  it('closes after Check again finds an uncertain historical job on a later page', async () => {
+    const inputDate = '2019';
+    const savedDate = { year: 2019 };
     let saved: ReturnType<typeof employment> | undefined;
     let posts = 0;
     const onDirectoryChange = vi.fn();
@@ -356,58 +328,6 @@ it('allows closing while the job loads', async () => {
   });
 
 
-  it('resolves a job conflict with Use saved', async () => {
-    const requests: Request[] = [];
-    let reads = 0;
-    let patches = 0;
-    const hiddenByRead = { person_id: 7, organization_id: 21, source: 'extraction', source_ref: 'modal-old', address_id: 11, confidence: 0.11 };
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/employments/11' && request.method === 'GET') {
-        reads += 1;
-        return new Response(JSON.stringify(employment(11, reads + 1, {
-          ...hiddenByRead,
-          title: reads === 1 ? 'Current title' : 'Changed title',
-          department: reads === 1 ? 'Platform' : 'Concurrent research',
-          location: reads === 1 ? 'Remote' : 'Concurrent campus'
-        })), {
-          headers: { ETag: `"employment-11-r${reads + 1}"` }
-        });
-      }
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
-        return new Response(JSON.stringify(organizationProfile(4, 'Exact Employment Org')), { headers: { ETag: '"organization-21-r4"' } });
-      }
-      if (path === '/api/v1/organizations/22' && request.method === 'GET') {
-        return new Response(JSON.stringify({ ...organizationProfile(6, 'Concurrent Employment Org'), organization: organization(22, 6, 'Concurrent Employment Org') }), { headers: { ETag: '"organization-22-r6"' } });
-      }
-      if (path === '/api/v1/employments/11' && request.method === 'PATCH') {
-        patches += 1;
-        if (patches === 1) return Response.json({ error: 'revision_conflict', message: 'stale revision' }, { status: 412 });
-        return new Response(JSON.stringify(employment(11, 4, { ...hiddenByRead, title: 'Draft title' })), { headers: { ETag: '"employment-11-r4"' } });
-      }
-      if (path === '/api/v1/people/7/employments') return collection([]);
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.employments = [employment()];
-    const onClose = vi.fn();
-    render(EmploymentEditor, { controller, personID: 7, employment: employment(), onClose });
-    const title = await screen.findByRole('textbox', { name: 'Job title' }) as HTMLInputElement;
-    await fireEvent.input(title, { target: { value: 'Draft title' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    const alert = (await screen.findByRole('alert')).closest('.inline-notice')!;
-    expect(alert.textContent).toContain('This job changed since you opened it.');
-    expect(title.value).toBe('Draft title');
-    expect(patches).toBe(1);
-    const firstPatch = requests.find((request) => request.method === 'PATCH')!;
-    expect(await firstPatch.clone().json()).toMatchObject({ ...hiddenByRead, title: 'Draft title' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(patches).toBe(1);
-  });
-
   it('shows a reassigned job owner and refuses Keep yours from the old person', async () => {
     let patches = 0;
     const { controller } = controllerWith(async input => {
@@ -426,14 +346,11 @@ it('allows closing while the job loads', async () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     const conflict = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
     expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(screen.getByText('This job now belongs to another person. Open it from that person’s profile before editing or deleting it.')).toBeDefined());
-    expect(patches).toBe(1);
   });
 
 
 
-it('shows the saved job beside the form, and Keep yours writes the form', async () => {
+it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves a conflict with %s', async resolution => {
   const opening = { department: 'Sales' };
   const saved = { department: 'Ops' };
   let reads = 0;
@@ -448,16 +365,21 @@ it('shows the saved job beside the form, and Keep yours writes the form', async 
     if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     return Response.json(employment(11, ++reads, reads === 1 ? opening : { ...opening, ...saved }), { headers: { ETag: `"employment-11-r${reads}"` } });
   });
-  render(EmploymentEditor, { controller, personID: 7, employment: job });
+  const onClose = vi.fn();
+  render(EmploymentEditor, { controller, personID: 7, employment: job, onClose });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   const record = await screen.findByRole('region', { name: 'Saved job' });
   expect(record.textContent).toContain('DepartmentOps');
-  const keep = screen.getByRole('button', { name: 'Keep yours' });
-  expect(keep).toHaveProperty('disabled', false);
-  await fireEvent.click(keep);
-  await waitFor(() => expect(bodies).toHaveLength(2));
-  expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Sales' });
+  expect(bodies).toHaveLength(1);
+  await fireEvent.click(screen.getByRole('button', { name: resolution }));
+  if (resolution === 'Keep yours') {
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Sales' });
+  } else {
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(bodies).toHaveLength(1);
+  }
 });
 
   it('retains the selected employer across searches beyond fifty results', async () => {

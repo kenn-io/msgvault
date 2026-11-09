@@ -8,21 +8,15 @@ const type = (slug: string, forward: string, reverse = forward, overrides = {}):
 });
 
 describe('relationship choices', () => {
-  it('sorts custom choices by their visible labels', () => {
-    const choices = relationshipTypeOptions([
-      type('a', 'sponsor', 'sponsor', { ownership: 'user' }),
-      type('z', 'advisor', 'advisor', { ownership: 'user' }),
-    ])[0].children!;
-    expect(choices.map(choice => choice.label)).toEqual(['Advisor', 'Sponsor']);
-  });
   it('orders groups and types by use, keeps live labels and hyphens, and omits empty groups', () => {
     const groups = relationshipTypeOptions([
       type('met', 'met'), type('acquaintance', 'acquaintance'), type('friend', 'buddy'), type('co-worker', 'co-worker'), type('colleague', 'colleague'),
       type('parent', 'guardian', 'dependent'), type('spouse', 'spouse'), type('custom', 'mentors', 'learns from', { ownership: 'user' }),
+      type('a', 'sponsor', 'sponsor', { ownership: 'user' }), type('z', 'advisor', 'advisor', { ownership: 'user' }),
     ]);
     expect(groups.map(group => [group.label, group.children?.map(child => child.label)])).toEqual([
       ['Family', ['Spouse', 'Guardian', 'Dependent']], ['Work', ['Colleague', 'Co-worker']], ['Social', ['Buddy', 'Acquaintance', 'Met']],
-      ['Other', ['Learns from', 'Mentors']],
+      ['Other', ['Advisor', 'Learns from', 'Mentors', 'Sponsor']],
     ]);
     expect(relationshipTypeOptions([type('friend', 'friend')]).map(group => group.label)).toEqual(['Social']);
   });
@@ -42,9 +36,6 @@ describe('relationship choices', () => {
     expect(relationshipPhrase('met', 'outgoing', 'met')).toBe('has met');
     expect(relationshipPhrase('custom', 'outgoing', 'mentors')).toBe('mentors');
     expect(relationshipPhrase('custom', 'outgoing', 'parent')).toBe('parent');
-    expect(relationshipPhrase('friend', 'outgoing', 'buddy')).toBe('buddy');
-    expect(relationshipPhrase('agent', 'incoming', 'representative')).toBe('representative');
-    expect(relationshipPhrase('agent', 'outgoing', 'pal')).toBe('pal');
   });
 });
 

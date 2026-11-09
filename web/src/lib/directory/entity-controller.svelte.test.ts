@@ -5,25 +5,31 @@ import { DirectoryEntityController } from './entity-controller.svelte';
 import type { Prepared } from './models';
 import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
-it.each(['update', 'delete'] as const)('returns non-revision refusals as errors for %s', async action => {
-  const refusal = action === 'update'
-    ? { status: 409, error: 'employment_duplicate_active', message: 'Person already has this current employment' }
-    : { status: 404, error: 'employment_not_found', message: 'Employment not found' };
+it.each([
+  { action: 'update', reassigned: false }, { action: 'delete', reassigned: false },
+  { action: 'update', reassigned: true }, { action: 'delete', reassigned: true }
+] as const)('returns employment refusals as errors for $action, reassigned=$reassigned', async ({ action, reassigned }) => {
+  const refusal = reassigned
+    ? { status: 409, error: 'employment_owner_changed', message: 'This job now belongs to another person. Open it from that person’s profile before editing or deleting it.' }
+    : action === 'update'
+      ? { status: 409, error: 'employment_duplicate_active', message: 'Person already has this current employment' }
+      : { status: 404, error: 'employment_not_found', message: 'Employment not found' };
   const requests: Request[] = [];
   const client = createAPIClient(async input => {
     const request = requestOf(input);
     requests.push(request);
     return request.method === 'GET'
-      ? Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })
+      ? Response.json(employment(11, 1, { person_id: reassigned ? 8 : 7 }), { headers: { ETag: '"employment-11-r1"' } })
       : Response.json({ error: refusal.error, message: refusal.message }, { status: refusal.status });
   });
   const controller = new DirectoryEntityController(client, 7);
   try {
+    const prepared = { data: employment(11, 1, { person_id: reassigned ? 8 : 7 }), etag: '"employment-11-r1"' };
     const result = action === 'update'
-      ? await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }))
-      : await controller.deleteEmployment(11);
+      ? await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }), reassigned ? prepared : undefined)
+      : await controller.deleteEmployment(11, reassigned ? prepared : undefined);
     expect(result).toEqual({ ok: false, kind: 'error', status: refusal.status, message: refusal.message });
-    expect(requests.map(request => request.method)).toEqual(['GET', action === 'update' ? 'PATCH' : 'DELETE']);
+    expect(requests.map(request => request.method)).toEqual(reassigned ? [] : ['GET', action === 'update' ? 'PATCH' : 'DELETE']);
   } finally { controller.destroy(); }
 });
 
