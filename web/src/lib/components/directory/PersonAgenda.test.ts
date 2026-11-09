@@ -95,41 +95,27 @@ describe('PersonAgenda', () => {
     expect(await screen.findByText('Send notes')).toBeDefined();
   });
 
-  it('clears the failed create notice when cancelling the task', async () => {
-    const client = createAPIClient(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') {
-        return Response.json({ message: 'Unable to add task' }, { status: 503 });
-      }
-      return Response.json({ project: 'msgvault', items: [] });
-    });
-    render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No tasks yet');
-    await typeTask('Send notes');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await screen.findByText("Couldn't add the task.");
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    expect(screen.queryByText("Couldn't add the task.")).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-    expect(screen.getByText('No tasks yet')).toBeDefined();
-  });
-
   it('says an empty list in one line and opens the add form only when asked', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      return isStatus(request) ? readyStatus() : Response.json({ project: 'msgvault', items: [] });
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'POST') return Response.json({ message: 'Unable to add task' }, { status: 503 });
+      return Response.json({ project: 'msgvault', items: [] });
     }));
     render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
     expect(screen.queryByLabelText('New task')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     expect(screen.getByRole('button', { name: 'List: agenda' })).toBeDefined();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'New task' }), { target: { value: 'Send notes' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    await screen.findByText("Couldn't add the task.");
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByLabelText('New task')).toBeNull();
+    expect(screen.queryByText("Couldn't add the task.")).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.getByText('No tasks yet')).toBeDefined();
   });
 
   it.each(['pending', 'failed'] as const)('keeps a %s create retry key across profile revisions and rotates it when the payload changes', async outcome => {
