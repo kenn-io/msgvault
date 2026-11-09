@@ -609,6 +609,42 @@ describe('RelationshipsTab', () => {
     expect(patches).toHaveLength(3);
   });
 
+  it('explains that Keep yours cannot reopen a connection ended elsewhere', async () => {
+    const opening = relationship(41, 1, { notes: 'Opening note' });
+    const ended = relationship(41, 2, { status: 'ended', end_date: { year: 2026, month: 7 }, notes: 'Opening note' });
+    const bodies: unknown[] = [];
+    let reads = 0;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PATCH') {
+        bodies.push(await request.json());
+        return request.headers.get('If-Match') === '"relationship-41-r1"'
+          ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
+          : Response.json(ended);
+      }
+      if (pathOf(request) === '/api/v1/person-relationships/41') {
+        const data = ++reads === 1 ? opening : ended;
+        return Response.json(data, { headers: { ETag: `"relationship-41-r${reads}"` } });
+      }
+      if (pathOf(request) === '/api/v1/people/7/relationships') {
+        return Response.json({ relationships: [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: ended })] });
+      }
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    });
+    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+
+    await rowAction('Edit…');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Keep this note' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Keep yours' });
+
+    expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
+    expect(bodies).toEqual([{ notes: 'Keep this note' }, { notes: 'Keep this note' }]);
+  });
+
   it('refreshes connections after Keep yours on a conflict that already saved the requested note', async () => {
     const opening = relationship(41, 1, { notes: 'Opening note' });
     const saved = relationship(41, 2, { notes: 'Shared new note' });
