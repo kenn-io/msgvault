@@ -1,7 +1,6 @@
 package identityindex
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -11,46 +10,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMeetingCountsMultipleOccurrences(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	root, db := writeRelationshipBaseFixture(t, true)
-	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
-		firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
-		messageType: "meeting_transcript", conversationType: "meeting",
-	})
-	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
-	replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT * FROM (VALUES
- (100::BIGINT, 'uid:weekly/first'::VARCHAR),
- (100::BIGINT, 'uid:weekly/second'::VARCHAR)) t(message_id,meeting_key)`)
-	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
-	requirements.NoError(err)
-	var meetings, activities int64
-	requirements.NoError(db.QueryRow(`SELECT meeting_count, activity_count FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings, &activities))
-	assertions.Equal(int64(2), meetings)
-	assertions.Equal(int64(1), activities)
-}
-
-func TestCalendarOnlyDoesNotCountTowardRelationships(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	root, db := writeRelationshipBaseFixture(t, true)
-	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
-		firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
-		messageType: "calendar_event", conversationType: "calendar",
-	})
-	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
-	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
-	requirements.NoError(err)
-	var meetings int64
-	requirements.NoError(db.QueryRow(`SELECT coalesce(sum(meeting_units),0) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&meetings))
-	assertions.Zero(meetings)
-}
-
-func TestPersonMeetingCountDedupesCopiesInRollups(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	root, db := writeRelationshipBaseFixture(t, false)
-	replaceRelationshipParquet(t, db, root, "messages", `
+func TestMeetingCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name, messages, recipients, keys, sources string
+		meetings, activities                      int64
+		sourceCounts                              []int64
+		dailyOnly                                 bool
+	}{
+		{name: "multiple occurrences", messages: "(100,1,'meeting_transcript')", recipients: "(100,1),(100,2)", keys: "(100,'uid:weekly/first'),(100,'uid:weekly/second')", meetings: 2, activities: 1},
+		{name: "copies across sources", messages: "(100,1,'meeting_transcript'),(101,2,'meeting_transcript'),(102,1,'meeting_transcript'),(103,2,'calendar_event'),(104,1,'meeting_transcript')", recipients: "(100,2),(101,2),(102,2),(103,2),(104,2)", keys: "(100,'uid:planning@example.org/'),(101,'uid:planning@example.org/'),(104,'uid:planning@example.org/')", sources: "(1,'owner@example.com','granola'),(2,'copy@example.org','twenty')", meetings: 2, sourceCounts: []int64{2, 1}},
+		{name: "calendar only", messages: "(100,1,'calendar_event')", recipients: "(100,1),(100,2)", dailyOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			root, db := writeRelationshipBaseFixture(t, false)
+			replaceRelationshipParquet(t, db, root, "messages", `
  SELECT id::BIGINT AS id, source_id::BIGINT AS source_id,
         'synthetic-' || id AS source_message_id, 10::BIGINT AS conversation_id,
         'Planning'::VARCHAR AS subject, ''::VARCHAR AS snippet,
@@ -60,35 +34,37 @@ func TestPersonMeetingCountDedupesCopiesInRollups(t *testing.T) {
         1::BIGINT AS sender_id, NULL::BIGINT AS owner_participant_id,
         message_type::VARCHAR AS message_type, false AS is_from_me,
         2026::INTEGER AS year, 7::INTEGER AS month
- FROM (VALUES
-    (100,1,'meeting_transcript'),
-    (101,2,'meeting_transcript'),
-    (102,1,'meeting_transcript'),
-    (103,2,'calendar_event'),
-    (104,1,'meeting_transcript')
- ) t(id,source_id,message_type)`)
-	replaceRelationshipParquet(t, db, root, "sources", `SELECT * FROM (VALUES
- (1::BIGINT,'owner@example.com'::VARCHAR,'granola'::VARCHAR),
- (2::BIGINT,'copy@example.org'::VARCHAR,'twenty'::VARCHAR)
- ) t(id,account_email,source_type)`)
-	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT id::BIGINT AS message_id,
-  2::BIGINT AS participant_id,'to'::VARCHAR AS recipient_type
-  FROM (VALUES(100),(101),(102),(103),(104)) t(id)`)
-	replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT * FROM (VALUES
- (100::BIGINT,'uid:planning@example.org/'::VARCHAR),
- (101::BIGINT,'uid:planning@example.org/'::VARCHAR),
- (104::BIGINT,'uid:planning@example.org/'::VARCHAR)) t(message_id,meeting_key)`)
-	_, err := Build(context.Background(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
-	requirements.NoError(err)
-	var count int64
-	requirements.NoError(db.QueryRow(`SELECT meeting_count FROM read_parquet('` + root + `/relationship_people/*.parquet') WHERE canonical_id=2`).Scan(&count))
-	assertions.Equal(int64(2), count)
-	var first, second int64
-	requirements.NoError(db.QueryRow(`SELECT (SELECT item.meeting_count FROM unnest(source_rollups) r(item) WHERE item.source_id=1),
+ FROM (VALUES `+tc.messages+`) t(id,source_id,message_type)`)
+			if tc.sources != "" {
+				replaceRelationshipParquet(t, db, root, "sources", `SELECT id::BIGINT AS id, account_email::VARCHAR AS account_email, source_type::VARCHAR AS source_type FROM (VALUES `+tc.sources+`) t(id,account_email,source_type)`)
+			}
+			replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT message_id::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES `+tc.recipients+`) t(message_id,participant_id)`)
+			if tc.keys != "" {
+				replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT message_id::BIGINT AS message_id, meeting_key::VARCHAR AS meeting_key FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)
+			}
+			_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+			requirements.NoError(err)
+			if tc.dailyOnly {
+				var units int64
+				requirements.NoError(db.QueryRow(`SELECT coalesce(sum(meeting_units),0) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&units))
+				assertions.Zero(units)
+				return
+			}
+			var meetings, activities int64
+			requirements.NoError(db.QueryRow(`SELECT meeting_count, activity_count FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings, &activities))
+			assertions.Equal(tc.meetings, meetings)
+			if tc.activities > 0 {
+				assertions.Equal(tc.activities, activities)
+			}
+			if len(tc.sourceCounts) > 0 {
+				var first, second int64
+				requirements.NoError(db.QueryRow(`SELECT (SELECT item.meeting_count FROM unnest(source_rollups) r(item) WHERE item.source_id=1),
  (SELECT item.meeting_count FROM unnest(source_rollups) r(item) WHERE item.source_id=2)
- FROM read_parquet('`+root+`/relationship_people/*.parquet') WHERE canonical_id=2`).Scan(&first, &second))
-	assertions.Equal(int64(2), first)
-	assertions.Equal(int64(1), second)
+ FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&first, &second))
+				assertions.Equal(tc.sourceCounts, []int64{first, second})
+			}
+		})
+	}
 }
 
 func TestMeetingContributionsDeduplicateAcrossAppend(t *testing.T) {

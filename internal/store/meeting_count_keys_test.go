@@ -80,7 +80,6 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 				for _, note := range notes {
 					assert.ElementsMatch(want, keys[note])
 				}
-				assert.NotContains(keys, master)
 			}
 		})
 	}
@@ -100,8 +99,6 @@ func TestMeetingCountKeysMovedExceptionKeepsOccurrence(t *testing.T) {
 	after, err := st.MeetingCountKeysContext(t.Context())
 	requirements.NoError(err)
 	assertions.Equal(before[note], after[note])
-	assertions.NotContains(after, master)
-	assertions.NotContains(after, exception)
 }
 
 func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {

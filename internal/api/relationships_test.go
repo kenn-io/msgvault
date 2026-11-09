@@ -130,7 +130,6 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	for i := range 3 {
 		addMessage(relOwnerID, relAliceID, true, "email", now.AddDate(0, 0, -(3-i)))
 	}
-	addMessage(relOwnerID, relAliceID, false, "calendar_event", now.AddDate(0, 0, -2))
 	addMessage(relAlice2ID, relOwnerID, false, "imessage", now.AddDate(0, 0, -1))
 	for i := range 50 {
 		addMessage(relNewsletterID, relOwnerID, false, "email", now.AddDate(0, 0, -(10+i)))
