@@ -2,7 +2,6 @@ import type { DirectoryEntityMutationResult } from './models';
 
 export class WriteAttempt<C = never> {
   #sending = $state(false);
-  #checking = $state(false);
   failed = $state(false);
   conflict = $state<C>();
   hadConflict = $state(false);
@@ -26,7 +25,7 @@ export class WriteAttempt<C = never> {
   }
 
   get busy(): boolean {
-    return this.#sending || this.#checking;
+    return this.#sending;
   }
 
   async run<T>(send: (current: C | undefined) => Promise<DirectoryEntityMutationResult<T, C>>): Promise<boolean> {
@@ -50,17 +49,6 @@ export class WriteAttempt<C = never> {
       return false;
     } finally {
       this.#sending = false;
-    }
-  }
-
-  /** Runs a check that settles an uncertain write under busy, so the form stays locked and the dialog open until it ends. */
-  async hold(check: () => Promise<void>): Promise<void> {
-    if (this.#checking) return;
-    this.#checking = true;
-    try {
-      await check();
-    } finally {
-      this.#checking = false;
     }
   }
 

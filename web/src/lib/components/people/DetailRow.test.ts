@@ -22,9 +22,3 @@ it('names its menu for the row, disables unavailable actions, and calls the sele
   expect(edit).not.toHaveBeenCalled();
 });
 
-it('shows a lone action as its own button', async () => {
-  const remove = vi.fn();
-  render(DetailRow, { children: createRawSnippet(() => ({ render: () => '<span>Mira Vale</span>' })), menu: [{ label: 'Delete job…', onselect: remove }] });
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete job…' }));
-  expect(remove).toHaveBeenCalledOnce();
-});

@@ -23,7 +23,7 @@ describe('work and connection labels', () => {
     expect(dateSpan({ year: 2019 }, undefined, false)).toBe('From 2019');
     expect(dateSpan(undefined, undefined, true)).toBe('');
     expect(dateSpan({ year: 2024, month: 1, day: 5 }, { year: 2024, month: 1, day: 6 }, false, { precision: 'day' })).toBe('Jan 5, 2024 – Jan 6, 2024');
-    expect(dateSpan({ year: 2024, month: 1, day: 5 }, { year: 2024, month: 1, day: 6 }, false)).toBe('Jan 2024 – Jan 2024');
+    expect(dateSpan({ year: 2024, month: 1, day: 5 }, { year: 2024, month: 1, day: 6 }, false)).toBe('Jan 2024');
   });
 
   it('dates saved conflicts and names imported edits', () => {

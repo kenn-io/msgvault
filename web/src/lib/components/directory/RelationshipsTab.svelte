@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { connectionFacts } from '../../directory/conflict';
   import { WriteAttempt } from '../../directory/write-attempt.svelte';
   import { latestDateKey } from '../../directory/dates';
-  import { appShortcuts, Button } from '@kenn-io/kit-ui';
+  import { Button } from '@kenn-io/kit-ui';
   import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
   import { untrack, onDestroy } from 'svelte';
   import DetailSection from '../people/DetailSection.svelte';
@@ -19,7 +18,6 @@
   import { sentenceCase } from '../../explore/labels';
   import { dateSpan } from '../../directory/labels';
   import { provenance, type ProvenanceLine } from './history-format';
-  import ConflictNotice from '../common/ConflictNotice.svelte';
   import RelationshipTypeEditor from './RelationshipTypeEditor.svelte';
 
   interface Props {
@@ -42,9 +40,6 @@
   const removal = new WriteAttempt<Prepared<PersonRelationship>>();
   const typeRemoval = new WriteAttempt<Prepared<RelationshipType>>();
   const acting = $derived(removal.busy || typeRemoval.busy);
-  $effect(() => {
-    if (deletingRelationship || deletingType) return appShortcuts.pushScope('directory-relationships');
-  });
 
   const currentConnections = $derived(controller.relationships.filter(view => view.relationship.status !== 'ended'));
   const endedConnections = $derived(controller.relationships.filter(view => view.relationship.status === 'ended').sort((a, b) => latestDateKey(b.relationship.end_date) - latestDateKey(a.relationship.end_date)));
@@ -76,44 +71,28 @@
   }
 
   async function removeRelationship(): Promise<void> {
-    if (!deletingRelationship || acting || !removal.prepared) return;
+    if (!deletingRelationship || acting) return;
     const target = deletingRelationship.relationship;
-    if (await removal.run(current => controller.deleteRelationship(target.id, current))) deletingRelationship = undefined;
-  }
-
-  async function prepareDelete(): Promise<void> {
-    if (!deletingRelationship) return;
-    const current = await removal.prepare(() => controller.prepareRelationshipMutation(deletingRelationship!.relationship.id));
-    if (current && deletingRelationship) deletingRelationship = { ...deletingRelationship, relationship: current.data };
+    if (await removal.run(() => controller.deleteRelationship(target.id))) deletingRelationship = undefined;
   }
 
   function openDelete(view: PersonRelationshipView): void {
     removal.reset();
     deletingRelationship = view;
-    void prepareDelete();
   }
 
   async function removeRelationshipType(): Promise<void> {
-    if (!deletingType || acting || !typeRemoval.prepared) return;
-    if (await typeRemoval.run(current => controller.deleteRelationshipType(deletingType!.id, current))) deletingType = undefined;
-  }
-
-  async function prepareTypeDelete(): Promise<void> {
-    if (!deletingType) return;
-    const current = await typeRemoval.prepare(() => controller.prepareRelationshipTypeMutation(deletingType!.id));
-    if (current) deletingType = current.data;
+    if (!deletingType || acting) return;
+    if (await typeRemoval.run(() => controller.deleteRelationshipType(deletingType!.id))) deletingType = undefined;
   }
 
   function openTypeDelete(type: RelationshipType): void {
     typeRemoval.reset();
     deletingType = type;
-    void prepareTypeDelete();
   }
 
   function closeDelete(): void {
     if (acting) return;
-    if (removal.hadConflict) void controller.refreshRelationships();
-    if (typeRemoval.conflict) void controller.refreshRelationshipTypes();
     deletingRelationship = undefined;
     deletingType = undefined;
     removal.reset();
@@ -167,24 +146,18 @@
     onDone={() => { relationshipTypeEditor = undefined; }} onClose={() => { relationshipTypeEditor = undefined; }} />
 {/if}
 {#if deletingRelationship}
-  <Dialog title={`Delete connection with ${counterpart(deletingRelationship)}?`} width="small" primaryLabel="Delete" primaryTone="danger" primaryDisabled={!removal.prepared} onclose={closeDelete} onprimary={() => void removeRelationship()} busy={acting}>
+  <Dialog title={`Delete connection with ${counterpart(deletingRelationship)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationship()} busy={acting}>
     <p class="confirm">This permanently removes the connection.</p>
     {#snippet notice()}
-      {#if removal.conflict && deletingRelationship}
-        <!-- Delete again removes the saved version the notice shows. -->
-        <ConflictNotice noun="connection" saved={removal.conflict.data} record={connectionFacts(removal.conflict.data)} message={removal.details} />
-      {:else if removal.details}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => { if (removal.prepared) void removeRelationship(); else void prepareDelete(); }} />{/if}
+      {#if removal.failed}<InlineNotice message="Couldn't delete this connection." details={removal.details} actionLabel="Retry" onaction={() => void removeRelationship()} />{/if}
     {/snippet}
   </Dialog>
 {/if}
 {#if deletingType}
-  <Dialog title={`Delete ${deletingType.slug} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" primaryDisabled={!typeRemoval.prepared || !typeRemoval.prepared.data.is_deletable || typeRemoval.prepared.data.ownership === 'system'} onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
+  <Dialog title={`Delete ${deletingType.slug} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
     <p class="confirm">This permanently removes the connection type.</p>
     {#snippet notice()}
-      {#if typeRemoval.conflict}
-        <!-- Delete again removes the saved version the notice shows. -->
-        <InlineNotice message="This connection type changed since you opened it." details={typeRemoval.details}><p>It now reads “{typeLabel(typeRemoval.conflict.data)}”.</p></InlineNotice>
-      {:else if typeRemoval.failed || typeRemoval.details}<InlineNotice message="Couldn't delete this connection type." details={typeRemoval.details} actionLabel="Retry" onaction={() => { if (typeRemoval.prepared) void removeRelationshipType(); else void prepareTypeDelete(); }} />{/if}
+      {#if typeRemoval.failed}<InlineNotice message="Couldn't delete this connection type." details={typeRemoval.details} actionLabel="Retry" onaction={() => void removeRelationshipType()} />{/if}
     {/snippet}
   </Dialog>
 {/if}

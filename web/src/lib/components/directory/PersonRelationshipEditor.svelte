@@ -1,13 +1,12 @@
 <script lang="ts">
   import { listDirectoryPeople as generatedListDirectoryPeople } from '../../api/generated/api/api';
   import {
-    appShortcuts,
     debounce,
     type TypeaheadOption,
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import { canonicalDate, formatPartialDate as partialDate } from '../../directory/dates';
+  import { formatPartialDate as partialDate } from '../../directory/dates';
   import { formatShortDate } from '../../util/format';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type {
@@ -81,11 +80,10 @@
   let notes = $state(initialView?.relationship.notes ?? '');
   const attempt = new WriteAttempt<Prepared<PersonRelationship>>();
   const loading = $derived(!!initialView && !opened && !attempt.details);
-  let uncertainCreate = $state<CreatePersonRelationshipRequest>();
+  const locked = $derived(attempt.busy || controller.createBlocked.relationships);
 
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
-  let releaseScope: (() => void) | undefined;
   const peopleOptions = $derived(
     people.map(
       (person): TypeaheadOption => ({
@@ -99,13 +97,11 @@
   );
   const debouncedSearch = debounce((value: string) => void searchPeople(value), SEARCH_DEBOUNCE_MS);
   onMount(() => {
-    releaseScope = appShortcuts.pushScope('directory-relationship-editor');
     if (initialView) void prepare();
   });
   onDestroy(() => {
     debouncedSearch.cancel();
     searchAbort?.abort();
-    releaseScope?.();
   });
   async function prepare(): Promise<void> {
     if (!initialView) return;
@@ -175,7 +171,6 @@
     const ok = await attempt.run(current => initialRelationship
       ? controller.updateRelationship(initialRelationship.id, patch!, current ?? opened)
       : controller.createRelationship(create!));
-    if (!ok && create && controller.createBlocked.relationships) uncertainCreate = create;
     if (ok) onDone();
   }
 
@@ -193,25 +188,10 @@
   function patchBody(): PatchPersonRelationshipRequest {
     return { ...(endDate.trim() ? { end_date: endDate.trim() } : {}), notes: notes.trim() || null };
   }
-  // The list refresh unblocks Add before the network refresh ends, so the whole check runs under busy.
-  const refreshAfterUncertainOutcome = () => attempt.hold(async () => {
+  // The list now shows whether the connection was saved.
+  async function refreshAfterUncertainOutcome(): Promise<void> {
     await controller.refreshRelationships();
-    if (controller.createBlocked.relationships || controller.errors.relationships) return;
-    const saved = !!uncertainCreate && controller.relationships.some(view => recoveredCreateMatches(view, uncertainCreate!));
-    uncertainCreate = undefined;
-    attempt.details = '';
-    if (saved) onDone();
-  });
-  function recoveredCreateMatches(view: PersonRelationshipView, draft: CreatePersonRelationshipRequest): boolean {
-    const saved = view.relationship;
-    const typeSlug = draft.relationship_type_slug;
-    let sourceID = draft.source_person_id;
-    let targetID = draft.target_person_id;
-    // The picker offers canonical types only; the store orders a symmetric pair's people.
-    if (controller.relationshipTypes.find(type => type.slug === typeSlug)?.is_symmetric && sourceID > targetID) [sourceID, targetID] = [targetID, sourceID];
-    return saved.source_person_id === sourceID && saved.target_person_id === targetID &&
-      saved.type_slug === typeSlug && partialDate(saved.start_date) === canonicalDate(draft.start_date) &&
-      partialDate(saved.end_date) === canonicalDate(draft.end_date) && (saved.notes?.trim() ?? '') === (draft.notes ?? '');
+    if (!controller.createBlocked.relationships && !controller.errors.relationships) onDone();
   }
   function requestClose(): void {
     if (!attempt.busy) { if (attempt.hadConflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }
@@ -246,13 +226,13 @@
                 highlightFirstOption panelAnchor={sentence} onquery={(query) => { typeQuery = query; }}
                 emptyLabel={controller.errors.relationshipTypes ? '' : typeQuery ? `No type matches “${typeQuery}”` : 'No connection types yet'}
                 onretry={() => void controller.refreshRelationshipTypes()}
-                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes ? "Couldn't load connection types." : ''} errorDetails={controller.errors.relationshipTypes} disabled={attempt.busy || !!uncertainCreate}
+                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes ? "Couldn't load connection types." : ''} errorDetails={controller.errors.relationshipTypes} disabled={locked}
                 onselect={(value) => { choice = value; }} />
             </span>
             </span>
             <span class="people-picker">
               <FieldPicker remote options={peopleOptions} value={counterpartID === null ? '' : String(counterpartID)}
-                panelAnchor={sentence} disabled={attempt.busy || !!uncertainCreate}
+                panelAnchor={sentence} disabled={locked}
                 fallbackLabel="Person" placeholder="Person" title="Person"
                 emptyLabel={searchError ? '' : searchText ? `No one matches “${searchText}”` : 'No other saved people'}
                 loading={searching} loadingLabel="Searching…" onquery={handleQuery} error={searchError ? "Couldn't search people." : ''} errorDetails={searchError} onretry={() => void searchPeople(searchText)}
@@ -265,10 +245,10 @@
       </section>
       <section>
         {#if initialRelationship}
-          <DateField bind:value={endDate} start={startDate} bind:error={endDateError} disabled={attempt.busy || !!uncertainCreate} />
+          <DateField bind:value={endDate} start={startDate} bind:error={endDateError} disabled={locked} />
           {#if (attempt.conflict?.data.end_date ?? initialRelationship.end_date) && !endDate.trim()}<p class="muted">To reopen it, add a new connection.</p>{/if}
-        {:else}<DateRange bind:start={startDate} bind:end={endDate} showCurrent={false} bind:invalid={datesInvalid} disabled={attempt.busy || !!uncertainCreate} />{/if}
-        <label class="notes">Notes<textarea aria-label="Notes" bind:value={notes} disabled={attempt.busy || !!uncertainCreate}></textarea></label>
+        {:else}<DateRange bind:start={startDate} bind:end={endDate} showCurrent={false} bind:invalid={datesInvalid} disabled={locked} />{/if}
+        <label class="notes">Notes<textarea aria-label="Notes" bind:value={notes} disabled={locked}></textarea></label>
       </section>
     </div>
   <button type="submit" hidden>Save</button>

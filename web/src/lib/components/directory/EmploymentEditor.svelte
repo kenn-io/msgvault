@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { appShortcuts, Checkbox, FormField, SelectDropdown } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { Checkbox, FormField, SelectDropdown } from '@kenn-io/kit-ui';
+  import { onMount, untrack } from 'svelte';
 
   import { formatPartialDate as partialDate } from '../../directory/dates';
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
@@ -50,11 +50,9 @@
   // A new current job can be marked primary when no current job already is.
   const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
   let datesInvalid = $state(false);
-  let uncertainBody: EmploymentBody | undefined;
   const locked = $derived(attempt.busy || controller.createBlocked.employments);
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
-  let releaseScope: (() => void) | undefined;
   const organizationOptions = $derived.by(() => {
     const organizations = [...controller.organizations];
     if (selectedOrganization && !organizations.some((item) => item.id === selectedOrganization?.id)) organizations.push(selectedOrganization);
@@ -62,10 +60,8 @@
   });
 
   onMount(() => {
-    releaseScope = appShortcuts.pushScope('directory-employment-editor');
     void prepare();
   });
-  onDestroy(() => releaseScope?.());
 
   async function prepare(): Promise<void> {
     if (!initialEmployment) {
@@ -133,39 +129,23 @@
         creatingOrganization = false;
       }
       if (initialEmployment) return controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened);
-      uncertainBody = { ...body(), source: 'user' };
-      return controller.createEmployment(uncertainBody);
+      return controller.createEmployment({ ...body(), source: 'user' });
     });
     if (ok) onDone();
   }
 
-  // The refresh unblocks Add before the lookup ends, so the whole check runs under busy.
+  // The list now shows whether the job was saved.
   async function refreshAfterUnknown(): Promise<void> {
-    await attempt.hold(async () => {
-      await controller.refreshEmployments();
-      if (controller.createBlocked.employments) return;
-      try {
-        const found = uncertainBody && await controller.findEmploymentByBody(uncertainBody);
-        if (found) {
-          await controller.refreshDirectoryViews();
-          onDone();
-          return;
-        }
-        attempt.details = '';
-      } catch {
-        controller.createBlocked.employments = true;
-      }
-    });
+    await controller.refreshEmployments();
+    if (!controller.createBlocked.employments) onDone();
   }
 
+  // The picker then lists the organization if the create saved it.
   async function refreshOrganizationAfterUnknown(): Promise<void> {
     await controller.refreshOrganizations(organizationName.trim());
     if (controller.createBlocked.organizations) return;
-    // The create may have saved it, so an organization of that name is the person's to choose; none means it didn't.
-    if (controller.organizations.some(item => item.name.trim().toLocaleLowerCase() === organizationName.trim().toLocaleLowerCase())) {
-      creatingOrganization = false;
-      organizationID = '';
-    }
+    creatingOrganization = false;
+    organizationID = '';
     attempt.details = '';
   }
 
@@ -213,7 +193,7 @@
 </form>{/if}
   {#snippet notice()}
     {#if attempt.conflict}
-      <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller, controller.personID)} message={employmentConflictDetails(attempt.conflict.data, attempt.details)} />
+      <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller)} message={employmentConflictDetails(attempt.conflict.data, attempt.details)} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
       <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void refreshOrganizationAfterUnknown(); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}

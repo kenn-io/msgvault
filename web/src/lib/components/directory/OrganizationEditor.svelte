@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { appShortcuts, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { onMount, untrack } from 'svelte';
 
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
@@ -24,11 +24,9 @@
     onClose?: () => void;
     /** Opens a person who holds a job here, so a blocked delete can be resolved. */
     onOpenPerson?: (personID: number) => void;
-    /** The holder's own jobs here, when they're on screen: the blocked delete opens each directly instead of the person. */
-    holderJobs?: (personID: number) => { label: string; open: () => void }[];
   }
 
-  let { controller, organization = undefined, onDone = () => undefined, onClose = () => undefined, onOpenPerson = undefined, holderJobs = undefined }: Props = $props();
+  let { controller, organization = undefined, onDone = () => undefined, onClose = () => undefined, onOpenPerson = undefined }: Props = $props();
   const initialOrganization = untrack(() => organization);
   let name = $state(initialOrganization?.name ?? '');
   let kind = $state(initialOrganization?.kind ?? 'company');
@@ -44,11 +42,9 @@
   const aliasesShown = $derived(addingAliases || baselineAliases.length > 0);
   const categoriesShown = $derived(addingCategories || baselineCategories.length > 0);
   let contactDetailsOpen = $state(false);
-  // The latest version the dialog has read or written.
-  let currentProfile = $state<OrganizationProfile>();
-  // The version each section's form was loaded or last saved from; its save sends it as If-Match.
-  let fieldsVersion = $state<Prepared<OrganizationProfile>>();
-  let listsVersion: Prepared<OrganizationProfile> | undefined;
+  // The version the dialog opened; each save sends it as If-Match, so a newer edit collides.
+  let opened = $state<Prepared<OrganizationProfile>>();
+  const currentProfile = $derived(opened?.data);
   const load = new WriteAttempt<Prepared<OrganizationProfile>>();
   const attempt = new WriteAttempt<Prepared<OrganizationProfile>>();
   const loading = $derived(!!initialOrganization && !currentProfile && !load.details);
@@ -59,33 +55,22 @@
   const removal = new WriteAttempt<Prepared<OrganizationProfile>>();
   const submitting = $derived(attempt.busy || profileAttempt.busy || removal.busy);
   let confirmDelete = $state(false);
-  // A conflict whose attempt a later save reset still refreshes the views on close.
-  let conflicted = false;
   // The jobs check: reset on Back, close, and each new check, so a late result from an earlier one is dropped.
   const check = new WriteAttempt<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
   const holders = $derived(check.prepared);
   const deleteBlocked = $derived(!holders || holders.count > 0);
-  const fieldsSaved = $derived(fieldsVersion?.data.organization);
-  const fieldsUnsaved = $derived(!!fieldsSaved && (name.trim() !== fieldsSaved.name || kind !== fieldsSaved.kind
-    || primaryDomain.trim() !== (fieldsSaved.primary_domain ?? '') || description.trim() !== (fieldsSaved.description ?? '')));
-  const listsUnsaved = $derived([valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories))].some((delta) => delta.added.length || delta.removed.size));
-  // Save organization writes only its own fields, so it waits until one of them changes; a failed write stays retryable.
-  const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations
-    || (!!currentProfile && !fieldsUnsaved && !attempt.conflict && !attempt.failed));
-  let releaseScope: (() => void) | undefined;
+  const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations);
 
   onMount(() => {
-    releaseScope = appShortcuts.pushScope('directory-organization-editor');
     if (initialOrganization) void loadCurrent();
   });
-  onDestroy(() => releaseScope?.());
 
   async function loadCurrent(): Promise<void> {
     if (!initialOrganization) return;
-    const opened = await load.prepare(() => controller.prepareOrganizationMutation(initialOrganization.id));
-    if (!opened) return;
-    fieldsVersion = listsVersion = opened;
-    const profile = (currentProfile = opened.data);
+    const loaded = await load.prepare(() => controller.prepareOrganizationMutation(initialOrganization.id));
+    if (!loaded) return;
+    opened = loaded;
+    const profile = loaded.data;
     name = profile.organization.name;
     kind = profile.organization.kind;
     primaryDomain = profile.organization.primary_domain ?? '';
@@ -99,63 +84,23 @@
   async function saveOrganization(): Promise<void> {
     if (saveDisabled || submitting) return;
     // The notice and Retry follow the latest save.
-    conflicted ||= profileAttempt.hadConflict;
     profileAttempt.reset();
-    let saved: { entity?: Organization; etag?: string } | undefined;
-    let sent: Prepared<OrganizationProfile> | undefined;
+    let saved: Organization | undefined;
     const ok = await attempt.run(async current => {
-      sent = current ?? fieldsVersion;
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
       const result = initialOrganization
-        ? await controller.updateOrganization(initialOrganization.id, body, sent)
+        ? await controller.updateOrganization(initialOrganization.id, body, current ?? opened)
         : await controller.createOrganization(body);
-      if (result.ok) saved = result;
+      if (result.ok) saved = result.entity;
       return result;
     });
-    if (!ok) return;
-    if (!currentProfile || !sent || !listsUnsaved) { onDone(saved?.entity); return; }
-    // The aliases and categories still have edits, so the dialog stays open, and the form shows what the save wrote.
-    name = saved!.entity!.name;
-    kind = saved!.entity!.kind;
-    primaryDomain = saved!.entity!.primary_domain ?? '';
-    description = saved!.entity!.description ?? '';
-    const written = { data: { ...sent.data, organization: saved!.entity! }, etag: saved!.etag ?? '' };
-    currentProfile = { ...sent.data, organization: written.data.organization };
-    listsVersion = advance(listsVersion, sent, written);
-    fieldsVersion = written;
+    if (ok) onDone(saved);
   }
 
   async function saveProfile(): Promise<void> {
     if (!initialOrganization || !currentProfile || submitting) return;
-    // The notice and Retry follow the latest save.
-    conflicted ||= attempt.hadConflict;
     attempt.reset();
-    let saved: OrganizationProfile | undefined;
-    let etag: string | undefined;
-    let sent: Prepared<OrganizationProfile> | undefined;
-    const ok = await profileAttempt.run(async current => {
-      sent = current ?? listsVersion;
-      const result = await controller.putOrganizationProfile(initialOrganization.id, listsBody, sent);
-      if (result.ok) { saved = result.entity; etag = result.etag; }
-      return result;
-    });
-    if (!ok) return;
-    if (!sent || !fieldsUnsaved) { onDone(); return; }
-    // The organization's fields still have edits, so the dialog stays open.
-    baselineAliases = (saved!.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
-    baselineCategories = (saved!.categories ?? []).map((item) => item.category);
-    aliases = baselineAliases.join(', ');
-    categories = baselineCategories.join(', ');
-    const written = { data: saved!, etag: etag ?? '' };
-    currentProfile = saved;
-    fieldsVersion = advance(fieldsVersion, sent, written);
-    listsVersion = written;
-  }
-
-  // The other section's version moves to what a save wrote only when the save sent that same version: then nothing
-  // came with it that the other section's form hasn't seen. Otherwise its save collides and shows the saved record.
-  function advance(other: Prepared<OrganizationProfile> | undefined, sent: Prepared<OrganizationProfile>, written: Prepared<OrganizationProfile>): Prepared<OrganizationProfile> | undefined {
-    return other?.etag === sent.etag ? written : other;
+    if (await profileAttempt.run(current => controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? opened))) onDone();
   }
 
   // Aliases and categories as the form shows them, over the rest of the version sent.
@@ -173,18 +118,7 @@
 
   async function remove(): Promise<void> {
     if (!initialOrganization || submitting || deleteBlocked) return;
-    let collided = false;
-    const ok = await removal.run(async current => {
-      // After a conflict, Delete again removes the saved version the notice shows.
-      const result = await controller.deleteOrganization(initialOrganization.id, current ?? fieldsVersion);
-      collided = !result.ok && result.kind === 'error' && result.status === 409;
-      return result;
-    });
-    if (ok) { onDone(); return; }
-    if (collided) {
-      removal.reset();
-      await checkDeletion();
-    }
+    if (await removal.run(() => controller.deleteOrganization(initialOrganization.id))) onDone();
   }
 
   async function refreshAfterUnknown(): Promise<void> {
@@ -193,11 +127,11 @@
   }
 
   function requestClose(): void {
-    if (!submitting) { if (conflicted || attempt.hadConflict || profileAttempt.hadConflict || removal.hadConflict) void controller.refreshDirectoryViews(); load.reset(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
+    if (!submitting) { if (attempt.hadConflict || profileAttempt.hadConflict) void controller.refreshDirectoryViews(); load.reset(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
   }
 
   function values(value: string): string[] {
-    return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
   }
 
   function present(parts: Array<string | number | undefined>): string {
@@ -406,20 +340,15 @@
       {#if check.details}<InlineNotice message="Couldn't check jobs." details={check.details} actionLabel="Check again" onaction={() => void checkDeletion()} />{/if}
       {#if holders && holders.count > 0}
         <p>{holders.count === 1 && !holders.atLeast ? "Delete its job first. Ending it isn't enough." : `Delete its ${holders.count}${holders.atLeast ? ' or more' : ''} jobs first. Ending them isn't enough.`}</p>
-        <!-- The open person's own job is deleted from here. Anyone else's is deleted on their page, so their row's
-             action opens it and says why. -->
-        <div class="holders">{#each holders.holders as holder}{@const jobs = holderJobs?.(holder.personID) ?? []}
-          <DetailRow description={holder.job} actionLabel={holder.name}
-            menu={jobs.length ? jobs.map(job => ({ label: job.label, onselect: () => { job.open(); onClose(); } })) : onOpenPerson ? [{ label: 'Open to delete…', ariaLabel: `Open to delete ${holder.name}’s job`, onselect: () => { onClose(); onOpenPerson(holder.personID); } }] : []}>
+        <div class="holders">{#each holders.holders as holder}
+          <DetailRow description={holder.job}>
             {#if onOpenPerson}<button type="button" data-link onclick={() => { onClose(); onOpenPerson(holder.personID); }}>{holder.name}</button>{:else}{holder.name}{/if}
           </DetailRow>{/each}</div>
         {#if holders.peopleCount > holders.holders.length}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - holders.holders.length} more</p>{/if}
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}
     </div>
-    {#snippet notice()}{#if removal.conflict}
-      {@render conflictNotice(removal, undefined)}
-    {:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
+    {#snippet notice()}{#if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
   </Dialog>
 {:else}
 <Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save organization' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}

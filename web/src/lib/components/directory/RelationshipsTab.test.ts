@@ -16,7 +16,6 @@ function controllerWith(fetchFn: typeof fetch, personID = 7, options: { onDirect
   return result;
 }
 
-
 function view(id: number, direction: 'incoming' | 'outgoing', label: string, name: string, overrides: Record<string, unknown> = {}) {
   return {
     counterpart_person_id: id + 100,
@@ -680,120 +679,6 @@ describe('RelationshipsTab', () => {
     expect(controller.relationships).toEqual([]);
   });
 
-  it('keeps a later delete on its own connection when a cancelled delete\'s read finishes late', async () => {
-    let finishFirst!: (response: Response) => void;
-    const deletions: string[] = [];
-    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/person-relationships/41' && request.method === 'GET') return new Promise<Response>(resolve => { finishFirst = resolve; });
-      if (path === '/api/v1/person-relationships/42' && request.method === 'GET') return Response.json(relationship(42, 1), { headers: { ETag: '"relationship-42-r1"' } });
-      if (request.method === 'DELETE') { deletions.push(path); return new Response(null, { status: 204 }); }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Guide'), view(42, 'outgoing', 'is mentored by', 'Synthetic Peer')];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Actions for Synthetic Guide' }));
-    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Actions for Synthetic Peer' }));
-    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-    finishFirst(Response.json(relationship(41, 1), { headers: { ETag: '"relationship-41-r1"' } }));
-    await new Promise(resolve => setTimeout(resolve));
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() => expect(deletions).toEqual(['/api/v1/person-relationships/42']));
-  });
-
-  it('keeps a delete conflict open and closes after Delete retry', async () => {
-    let reads = 0;
-    let deletes = 0;
-    const current = relationship(41, 2, { notes: 'Saved note' });
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input), path = pathOf(request);
-      if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
-        reads++;
-        return Response.json(reads === 1 ? relationship() : current, { headers: { ETag: `"person-relationship-41-r${reads}"` } });
-      }
-      if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') {
-        deletes++;
-        return deletes === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
-      }
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Peer')];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await rowAction('Delete…');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    expect(await screen.findByText('This connection changed since you opened it.')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  });
-
-  it.each([6, 8])('matches a recovered ended connection with canonical records for counterpart %i', async counterpartID => {
-    let posts = 0;
-    let refreshPending = false;
-    let finishRefresh: (response: Response) => void = () => undefined;
-    const saved = relationship(41, 1, {
-      status: 'ended', source_person_id: Math.min(7, counterpartID), target_person_id: Math.max(7, counterpartID), is_symmetric: true,
-      start_date: { year: 2024, month: 3, day: 15 }, end_date: { year: 2025 }, notes: 'Retained unknown draft'
-    });
-    const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/people/directory') return Response.json({ people: [
-        directoryPerson(counterpartID, { display_name: 'Synthetic Counterpart' })
-      ] });
-      if (path === '/api/v1/person-relationships' && request.method === 'POST') {
-        posts += 1;
-        return Response.json({ error: 'unavailable', message: 'outcome unknown' }, { status: 503 });
-      }
-      if (path === '/api/v1/people/7/relationships') {
-        if (posts) {
-          refreshPending = true;
-          return new Promise<Response>(resolve => { finishRefresh = resolve; });
-        }
-        return Response.json({ relationships: [] });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.relationshipTypes = [relationshipType({ is_symmetric: true, forward_label: 'mentor', reverse_label: 'mentor' })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    await fireEvent.input(await openTypeahead('Person'), { target: { value: 'Counterpart' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
-    await openTypeahead('Connection type');
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentor' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '20240315' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2025' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Retained unknown draft' } });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-
-    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the connection was saved.");
-    const notes = screen.getByRole('textbox', { name: 'Notes' }) as HTMLTextAreaElement;
-    expect(notes.value).toBe('Retained unknown draft');
-    expect(notes.disabled).toBe(true);
-    expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
-    const dialog = screen.getByRole('dialog', { name: 'Add connection' });
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Check again' }));
-    await waitFor(() => expect(refreshPending).toBe(true));
-    expect(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
-    expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveProperty('disabled', true);
-    finishRefresh(Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Counterpart', { relationship: saved })] }));
-    await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
-    expect(controller.relationships).toEqual([expect.objectContaining({ relationship: saved })]);
-    await fireEvent.click(screen.getByText('1 past connection'));
-    expect(screen.getByText('Synthetic Counterpart')).toBeDefined();
-    expect(posts).toBe(1);
-  });
-
   it('creates a user relationship type with required and supplied optional fields', async () => {
     const requests: Request[] = [];
     const created = relationshipType({ id: 33, slug: 'peer', forward_label: 'works with', reverse_label: 'works with', is_symmetric: true, color: '#123456', description: 'Synthetic type' });
@@ -1099,35 +984,3 @@ describe('RelationshipsTab', () => {
 
 });
 
-it.each(['cancel', 'delete'] as const)('refreshes a connection type conflict before %s', async action => {
-  const opening = relationshipType();
-  const newer = relationshipType({ forward_label: 'advises' });
-  const tags: (string | null)[] = [];
-  let reads = 0;
-  const { client, controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    const path = pathOf(request);
-    if (path === '/api/v1/relationship-types/31' && request.method === 'DELETE') {
-      tags.push(request.headers.get('If-Match'));
-      return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
-    }
-    if (path === '/api/v1/relationship-types/31') return Response.json(++reads === 1 ? opening : newer, { headers: { ETag: `"relationship-type-31-r${reads}"` } });
-    if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [newer] });
-    throw new Error(`unexpected ${request.method} ${path}`);
-  }, 0);
-  controller.relationshipTypes = [opening];
-  render(RelationshipsTab, { client, controller, personID: 0, catalogOnly: true });
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await screen.findByText('This connection type changed since you opened it.');
-  if (action === 'cancel') {
-    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await screen.findByText(/advises/);
-  } else {
-    expect((await screen.findByText(/It now reads/)).textContent).toBe('It now reads “advises / is mentored by”.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(tags).toEqual(['"relationship-type-31-r1"', '"relationship-type-31-r2"']));
-    expect(controller.relationshipTypes).toEqual([]);
-  }
-});

@@ -4,10 +4,10 @@ import { employmentConflictDetails, employmentFacts } from './conflict';
 
 it('formats optional confidence for job conflicts', () => {
   const job = employment(11, 1, { source_ref: 'imported-card-42', department: 'Research', location: 'North office', description: 'Leads field studies' });
-  const facts = employmentFacts(job, { organizationName: () => 'Synthetic Org', personName: () => 'Synthetic Person' }, 7);
+  const facts = employmentFacts(job, { organizationName: () => 'Synthetic Org' });
   expect(facts).not.toHaveProperty('Confidence');
 
-  const confident = employmentFacts({ ...job, confidence: 0.8 }, { organizationName: () => 'Synthetic Org', personName: () => 'Synthetic Person' }, 7);
+  const confident = employmentFacts({ ...job, source: 'carddav_import', confidence: 0.8 }, { organizationName: () => 'Synthetic Org' });
   expect(confident.Confidence).toBe('80%');
   expect(confident.Department).toBe('Research');
   expect(confident.Location).toBe('North office');

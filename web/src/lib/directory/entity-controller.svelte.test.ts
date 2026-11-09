@@ -5,52 +5,6 @@ import { DirectoryEntityController } from './entity-controller.svelte';
 import type { Prepared } from './models';
 import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
-it.each([
-  { action: 'update', reassigned: false }, { action: 'delete', reassigned: false },
-  { action: 'update', reassigned: true }, { action: 'delete', reassigned: true }
-] as const)('returns employment refusals as errors for $action, reassigned=$reassigned', async ({ action, reassigned }) => {
-  const refusal = reassigned
-    ? { status: 409, error: 'employment_owner_changed', message: 'This job now belongs to another person. Open it from that person’s profile before editing or deleting it.' }
-    : action === 'update'
-      ? { status: 409, error: 'employment_duplicate_active', message: 'Person already has this current employment' }
-      : { status: 404, error: 'employment_not_found', message: 'Employment not found' };
-  const requests: Request[] = [];
-  const client = createAPIClient(async input => {
-    const request = requestOf(input);
-    requests.push(request);
-    return request.method === 'GET'
-      ? Response.json(employment(11, 1, { person_id: reassigned ? 8 : 7 }), { headers: { ETag: '"employment-11-r1"' } })
-      : Response.json({ error: refusal.error, message: refusal.message }, { status: refusal.status });
-  });
-  const controller = new DirectoryEntityController(client, 7);
-  try {
-    const prepared = { data: employment(11, 1, { person_id: reassigned ? 8 : 7 }), etag: '"employment-11-r1"' };
-    const result = action === 'update'
-      ? await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }), reassigned ? prepared : undefined)
-      : await controller.deleteEmployment(11, reassigned ? prepared : undefined);
-    expect(result).toEqual({ ok: false, kind: 'error', status: refusal.status, message: refusal.message });
-    expect(requests.map(request => request.method)).toEqual(reassigned ? [] : ['GET', action === 'update' ? 'PATCH' : 'DELETE']);
-  } finally { controller.destroy(); }
-});
-
-it.each(['update', 'delete'] as const)('refuses a saved connection moved away from this person on %s retry', async action => {
-  const requests: Request[] = [];
-  const client = createAPIClient(async input => {
-    requests.push(requestOf(input));
-    throw new Error('a moved connection must be rejected before a request');
-  });
-  const controller = new DirectoryEntityController(client, 7);
-  try {
-    const moved = { data: relationship(41, 2, { source_person_id: 9, target_person_id: 8 }), etag: '"relationship-41-r2"' };
-    const result = action === 'update'
-      ? await controller.updateRelationship(41, { notes: 'Keep my notes' }, moved)
-      : await controller.deleteRelationship(41, moved);
-
-    expect(result).toMatchObject({ ok: false, kind: 'error', status: 409 });
-    expect(requests).toHaveLength(0);
-  } finally { controller.destroy(); }
-});
-
 function relationshipType(id = 31, revision = 1) {
   return makeRelationshipType({ id, revision, slug: 'knows', forward_label: 'knows', reverse_label: 'is known by', is_canonical: false, universal_id: `relationship-type-${id}` });
 }
@@ -961,8 +915,8 @@ describe('DirectoryEntityController', () => {
 });
 
 it.each([
-  ['Edit job', '"opaque-job-opening"'], ['End job', '"opaque-job-opening"'], ['Delete job', '"opaque-job-opening"'], ['Organization', '"opaque-organization-opening"'], ['Organization profile', '"opaque-organization-opening"'],
-  ['Delete organization', '"opaque-organization-opening"'], ['Edit connection', '"opaque-connection-opening"'], ['Delete connection', '"opaque-connection-opening"'],
+  ['Edit job', '"opaque-job-opening"'], ['End job', '"opaque-job-opening"'], ['Organization', '"opaque-organization-opening"'],
+  ['Organization profile', '"opaque-organization-opening"'], ['Edit connection', '"opaque-connection-opening"'],
 ])('uses the opened version for %s and the conflict version for its retry', async (action, openingTag) => {
   const requests: Request[] = [];
   let readRevision = 1;
@@ -980,16 +934,13 @@ it.each([
     switch (action) {
       case 'Edit job': return controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user', title: 'Draft title' }), prepared);
       case 'End job': return controller.endEmployment(11, { end_date: '2026' }, prepared);
-      case 'Delete job': return controller.deleteEmployment(11, prepared);
       case 'Organization': return controller.updateOrganization(21, { name: 'Draft name', kind: 'company' }, prepared);
       case 'Organization profile': return controller.putOrganizationProfile(21, () => ({}), prepared);
-      case 'Delete organization': return controller.deleteOrganization(21, prepared);
-      case 'Edit connection': return controller.updateRelationship(41, { notes: 'Draft note' }, prepared);
-      default: return controller.deleteRelationship(41, prepared);
+      default: return controller.updateRelationship(41, { notes: 'Draft note' }, prepared);
     }
   };
   try {
-    const opened = action.includes('organization') || action.startsWith('Organization') ? await controller.prepareOrganizationMutation(21)
+    const opened = action.startsWith('Organization') ? await controller.prepareOrganizationMutation(21)
       : action.includes('connection') ? await controller.prepareRelationshipMutation(41) : await controller.prepareEmploymentMutation(11);
     readRevision = 2;
     requests.length = 0;

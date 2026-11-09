@@ -12,7 +12,6 @@ async function openInlineEmployer(controller: DirectoryEntityController, name: s
   await fireEvent.mouseDown(await screen.findByRole('option', { name: `Create organization “${name}”` }));
 }
 
-
 it('passes organization search loading and failures to the employer picker', async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>(resolve => { finish = resolve; });
@@ -90,7 +89,6 @@ it('ends a primary job from Edit without overriding the stored primary rule', as
   expect(body).toHaveProperty('is_current', false);
   expect(body).not.toHaveProperty('is_primary');
 });
-
 
 it('allows editing a job after an unrelated organization create became uncertain', async () => {
   const { controller } = controllerWith(async input => {
@@ -220,7 +218,6 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     expect(posts).toBe(1);
   });
 
-
   it('keeps Add job disabled while the year-less date is invalid', async () => {
     const requests: Request[] = [];
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
@@ -242,86 +239,6 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
   });
 
-
-  it('keeps an uncertain job create blocked while its check is pending', async () => {
-    let posts = 0, listReads = 0;
-    let finishLookup: (response: Response) => void = () => undefined;
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/employments') { posts++; throw new TypeError('response lost'); }
-      if (path === '/api/v1/people/7/employments') return ++listReads === 1 ? collection([]) : new Promise<Response>(resolve => { finishLookup = resolve; });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    const onClose = vi.fn();
-    const firstView = render(EmploymentEditor, { controller, personID: 7, onClose });
-    await screen.findByRole('button', { name: /^Organization(:|$)/ });
-    await openTypeahead('Organization');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
-    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm the job was saved.");
-    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('value', 'Draft role');
-    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('disabled', true);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
-    await waitFor(() => expect(listReads).toBe(2));
-    expect(controller.createBlocked.employments).toBe(false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(posts).toBe(1);
-    expect(onClose).not.toHaveBeenCalled();
-    finishLookup(collection([]));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
-    firstView.unmount();
-    controller.destroy();
-  });
-
-  it('finds an uncertain job create in later employment pages', async () => {
-    const inputDate = '2019';
-    const savedDate = { year: 2019 };
-    let saved: ReturnType<typeof employment> | undefined;
-    let posts = 0;
-    const onDirectoryChange = vi.fn();
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
-      if (path === '/api/v1/employments' && request.method === 'POST') {
-        posts++;
-        const body = await request.json();
-        saved = employment(811, 1, { ...body, start_date: savedDate, end_date: { year: 2024, month: 3, day: 16 } });
-        throw new TypeError('response lost');
-      }
-      if (path === '/api/v1/people/7/employments') {
-        const offset = Number(new URL(request.url).searchParams.get('offset') ?? 0);
-        if (!saved) return collection([]);
-        if (offset === 0) return collection(Array.from({ length: 200 }, (_, index) => employment(900 + index, 1, { is_current: false })));
-        if (offset === 200) return collection([saved]);
-        return collection([]);
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }, 7, { onDirectoryChange });
-    const onDone = vi.fn();
-    const secondView = render(EmploymentEditor, { controller, personID: 7, onDone });
-    await screen.findByRole('button', { name: /^Organization(:|$)/ });
-    await openTypeahead('Organization');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Garden designer' } });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: inputDate } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '20240316' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
-    await screen.findByText("Couldn't confirm the job was saved.");
-    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(onDirectoryChange).toHaveBeenCalledOnce();
-    expect(controller.employments.some(job => job.id === 811 && job.title === 'Garden designer')).toBe(true);
-    expect(posts).toBe(1);
-    secondView.unmount();
-    controller.destroy();
-  });
-
   it('shows the exact employer in the existing job context', async () => {
     const { controller } = controllerWith(async (input) => {
       const request = requestOf(input);
@@ -335,9 +252,6 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     render(EmploymentEditor, { controller, personID: 7, employment: employment() });
     await screen.findByText('At Exact Employment Org', { selector: 'p.context' });
   });
-
-
-
 
 it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves a conflict with %s', async resolution => {
   const opening = { department: 'Sales' };
