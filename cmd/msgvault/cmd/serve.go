@@ -1843,9 +1843,9 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
-func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
-	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
-		return nil
+func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue {
+		return 0
 	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
@@ -1860,11 +1860,16 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 			timeout = parsed
 		}
 	}
+	return max(timeout, 0)
+}
+
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
+	timeout := effectiveDaemonIdleTimeout(c, logger)
 	if timeout <= 0 {
 		return nil
 	}
 	return api.NewIdleTracker(timeout, func() {
-		logger.Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
+		repairLogger(logger).Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
 		stop()
 	})
 }
@@ -2302,6 +2307,12 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
 ) ([]api.APIMessage, int64, error) {
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
+}
+
+var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	return a.store.PopulateMessageBodiesContext(ctx, messages)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {

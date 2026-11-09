@@ -63,6 +63,8 @@ type GetAttachmentContentErrorResponse = ErrorResponse
 
 type GetAttachmentContentErrorResponseJSON = ErrorResponse
 
+type GetAttachmentContentErrorResponseJSON403 = ErrorResponse
+
 type GetAttachmentContentErrorResponseJSON404 = ErrorResponse
 
 type GetAttachmentContentErrorResponseJSON500 = ErrorResponse
@@ -446,6 +448,8 @@ type GetCLIAttachmentResponse = runtime.File
 type GetCLIAttachmentErrorResponse = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON = ErrorResponse
+
+type GetCLIAttachmentErrorResponseJSON403 = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON404 = ErrorResponse
 
@@ -4252,6 +4256,7 @@ type GetAttachmentContentResp struct {
 	StatusCode   int
 	JSON400      *GetAttachmentContentErrorResponse
 	JSON401      *GetAttachmentContentErrorResponseJSON
+	JSON403      *GetAttachmentContentErrorResponseJSON403
 	JSON404      *GetAttachmentContentErrorResponseJSON404
 	JSON500      *GetAttachmentContentErrorResponseJSON500
 	JSON503      *GetAttachmentContentErrorResponseJSON503
@@ -4753,6 +4758,7 @@ type GetCLIAttachmentResp struct {
 	StatusCode   int
 	JSON400      *GetCLIAttachmentErrorResponse
 	JSON401      *GetCLIAttachmentErrorResponseJSON
+	JSON403      *GetCLIAttachmentErrorResponseJSON403
 	JSON404      *GetCLIAttachmentErrorResponseJSON404
 	JSON413      *GetCLIAttachmentErrorResponseJSON413
 	JSON500      *GetCLIAttachmentErrorResponseJSON500

@@ -1,7 +1,7 @@
 ---
 title: Agent quickstart
 description: Connect an agent to msgvault and work safely with an archive.
-last_edited: "2026-11-04"
+last_edited: "2026-11-08"
 ---
 
 Use msgvault's MCP server to find and read conversations, analyze archive
@@ -44,6 +44,7 @@ Choose the connection the owner has authorized:
   grant's permissions and source scope on every call. Scoped archive reads
   require daemon API schema 3.9.0 or newer. The owner can set an expiry and
   select permissions and sources when [issuing a grant](../cli-reference.md#agent-token-issue).
+  Withholding detected verification content from delegated reads requires daemon API schema 3.49.0 or newer. The `verification.read` modifier allows that content and grants no reads alone. See [detection rules and limits](../api-server.md#verification-content).
 
 Use the client's MCP `tools/list` capability to discover the tools and input
 schemas available in this session. Availability depends on the daemon version,
@@ -69,6 +70,13 @@ ambiguity, then pass the selected `person_uid` to
 `get_person_messaging_routes`. Routes and suggestions have different evidence
 and status; an archived route does not prove current reachability or authorize
 sending. These contact tools require daemon API schema 3.20.0 or newer.
+
+To see who is waiting on a reply, and whose reply the owner awaits, use
+`list_open_loops`, optionally with a `person_id`. Each item names the message
+that started the wait. Marking a loop done or snoozing it changes the archive,
+so it needs `--allow-loop-writes` and the owner's approval for each call; see
+[Open loops](../usage/chat.md#open-loops). Owner clients only; on unreleased
+`main`, requires daemon API schema 3.44.0 or newer.
 
 Use `list_thread` with exactly one of `id`, `source_message_id`, or `thread_id`
 to list messages oldest first, paging with `offset` and `limit`. Use

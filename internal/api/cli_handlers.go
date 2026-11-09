@@ -2521,15 +2521,11 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	resp.Results = results
-	if len(results) == 0 && offset == 0 {
-		if matcher, ok := s.queryEngineForContext(r.Context()).(query.SenderNameMatcher); ok {
-			resp.Hints = matcher.MatchSenderName(r.Context(), parsed)
-			if s.writeIfContextError(w, r.Context().Err()) {
-				return
-			}
-		}
+	if !s.maskQuerySummaries(w, r, results) {
+		return
 	}
+	// Search leaves summary BodyText empty; /cli/message serves full bodies.
+	resp.Results = results
 	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {
@@ -3571,6 +3567,7 @@ func (s *Server) handleCLIMessage(w http.ResponseWriter, r *http.Request) {
 		from = msg.From[0].Email
 	}
 	msg.SenderAuth = s.senderAuth(r.Context(), msg.ID, msg.SourceID, msg.MessageType, from)
+	s.maskMessageDetail(r, msg)
 	writeJSON(w, http.StatusOK, cliMessageResponseFromQuery(msg))
 }
 
@@ -3645,16 +3642,18 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_content_hash", err.Error())
 		return
 	}
+	var attachments []query.AttachmentInfo
 	if s.requestAuthentication(r).Grant != nil {
-		if _, apiErr := s.attachmentCandidatesForRequest(r, contentHash); apiErr != nil {
+		var apiErr *apiHTTPError
+		attachments, apiErr = s.attachmentCandidatesForRequest(r, contentHash)
+		if apiErr != nil {
 			writeAPIHTTPError(w, apiErr)
 			return
 		}
 	}
 
-	releaseReadSnapshot(r)
 	if s.blobStore != nil {
-		rc, size, err := s.blobStore.OpenStream(r.Context(), contentHash)
+		rc, size, err := s.blobStore.OpenStream(store.WithoutReadSnapshotContext(r.Context()), contentHash)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
@@ -3669,11 +3668,20 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "remote_attachment_too_large", "Attachment exceeds the remote client byte limit")
 			return
 		}
+		reader, _, apiErr := s.textAttachmentReader(w, r, rc, attachments)
+		if reader == nil {
+			_ = rc.Close()
+			if apiErr != nil {
+				writeAPIHTTPError(w, apiErr)
+			}
+			return
+		}
+		releaseReadSnapshot(r)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.Header().Set("X-Msgvault-Content-Hash", contentHash)
 		w.WriteHeader(http.StatusOK)
-		_, copyErr := io.Copy(w, rc)
+		_, copyErr := io.Copy(w, reader)
 		if err := errors.Join(copyErr, rc.Close()); err != nil {
 			s.logger.Error("failed to write CLI attachment", "content_hash", contentHash, "error", err)
 		}
@@ -3714,10 +3722,19 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	reader, _, apiErr := s.textAttachmentReader(w, r, f, attachments)
+	if reader == nil {
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+		}
+		return
+	}
+	releaseReadSnapshot(r)
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Msgvault-Content-Hash", contentHash)
 	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, f); err != nil {
+	if _, err := io.Copy(w, reader); err != nil {
 		s.logger.Error("failed to write CLI attachment", "content_hash", contentHash, "error", err)
 	}
 }

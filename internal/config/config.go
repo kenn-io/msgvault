@@ -260,7 +260,7 @@ type ServerConfig struct {
 	CORSCredentials         bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge              int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
 	TrustedProxies          []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
-	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
+	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Automatically started daemon idle timeout (0 disables)
 	DaemonAutoRestart       string        `toml:"daemon_auto_restart"` // never, newer, or always
 	DaemonAutoStart         *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 
