@@ -3,7 +3,6 @@
 package sqlitevec
 
 import (
-	"context"
 	"math"
 	"path/filepath"
 	"testing"
@@ -15,9 +14,9 @@ import (
 )
 
 func TestMessageCosinesScoresAnyVectorLength(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	main := openMainDBWithOneMessage(t)
-	_, err := main.Exec(`INSERT INTO messages (id) VALUES (2), (3), (4)`)
+	_, err := main.ExecContext(ctx, `INSERT INTO messages (id) VALUES (2), (3), (4)`)
 	require.NoError(t, err)
 	b, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 768, MainDB: main})
 	require.NoError(t, err)

@@ -19,7 +19,7 @@ import (
 const (
 	whoKnowsCitationWidth = 80
 	// whoKnowsMinAPISchemaVersion is the first schema with GET /people/who-knows.
-	whoKnowsMinAPISchemaVersion = "3.49.0"
+	whoKnowsMinAPISchemaVersion = "3.50.0"
 )
 
 func newPersonWhoKnowsCommand() *cobra.Command {

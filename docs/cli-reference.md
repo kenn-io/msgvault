@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-08"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -31,36 +31,35 @@ appear in full under Inherited Flags.
 
 ## loops
 
-Show the conversations waiting on a reply, and clear them, through the
-selected daemon. Requires API schema 3.44.0. See [Open loops](usage/open-loops.md)
-for the rules.
+On unreleased `main`, list the conversations waiting on a reply, and mark
+them done, snooze them, or reopen them, through the selected daemon. The
+daemon needs API schema 3.44.0 or newer. See [Open loops](usage/open-loops.md)
+for what counts as a loop.
 
 ```bash
 msgvault loops list
 msgvault loops list --limit 10 --json
 msgvault loops list --person 42
 msgvault loops done 4521
+msgvault loops done 4521 --questions 4521,4530
 msgvault loops snooze 4521 --until 48h
 msgvault loops reopen 4521
 ```
 
-| Command | Flags and behavior |
+| Command | What it does |
 |---|---|
-| `list` | `--limit` 1..200 (default 50), `--json`, `--person <positive id>` to show one person's loops |
-| `done` | One message ID; marks that loop done. `--questions <ids>` marks only the `question_message_ids` from `list --json`. A distinct question can list again |
-| `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions; `--questions <ids>` marks only the listed questions |
-| `reopen` | One message ID; clears the done or snooze decision on that exact question |
+| `list` | Lists loops. `--limit` from 1 to 200 (default 50), `--person <id>` for one saved person, `--json` for machine-readable output. |
+| `done <message-id>` | Marks the loop done. `--questions <ids>` marks only those questions: the item's `question_message_ids` from `list --json`. |
+| `snooze <message-id> --until <when>` | Hides the loop until a duration such as `48h`, a date (`YYYY-MM-DD`, midnight local time), or an RFC3339 time. Takes `--questions` like `done`. |
+| `reopen <message-id>` | Clears the done or snooze decision on one question. |
 
-`list` prints a "Waiting on you" section and a "Waiting on them" section,
-oldest first, with the age, person, subject, and message ID of each loop. A
-section with no loops is left out. When `--limit` cuts the list, a line says
-so. A line also
-says how many stored messages could not be read, when there are any. If the
-scan needs more than 1,000 uncached message classifications,
-the command returns completed conversations and warns that more loops may be
-missing; JSON sets `coverage_incomplete`. An empty complete list prints
-`No open loops.` A message that is not an open loop, such as one you already
-answered, fails with `<id> isn't an open loop.`
+`list` prints a **Waiting on you** and a **Waiting on them** section, oldest
+first, with the age, person, subject, and message ID of each loop. It adds a
+line when `--limit` cuts the list, when stored messages couldn't be read, or
+when more history remains. Run it again to continue; JSON sets
+`coverage_incomplete`. With nothing open, it prints `No open loops.` Acting on
+a message that doesn't start an open loop, such as one you already answered,
+fails with `<id> isn't an open loop.`
 
 ## meetings
 
@@ -1575,6 +1574,45 @@ Backfill re-fetches each selected source message that has pending attachments
 to obtain fresh signed CDN URLs. An incomplete attachment is unrecoverable if
 the source message has since been deleted. See
 [Discord](/docs/usage/discord/#attachment-backfill-and-limits).
+
+---
+
+## source facebook-comments add
+
+Register the Page selected by a configured `[[facebook_comments]]` profile
+(unreleased). The daemon reads its named token environment variable and checks
+Page identity before writing the source or confirmed owner identity.
+
+```bash
+msgvault source facebook-comments add [identifier]
+```
+
+No identifier selects all configured profiles. An unknown explicit label fails;
+it never selects another profile or falls back to an email sync. See
+[Facebook Page comments](usage/facebook-comments.md).
+
+---
+
+## source facebook-comments sync
+
+Archive returned organic, visitor, and ad-post comments and nested replies for
+registered Facebook Pages (unreleased). No identifier selects all configured
+profiles. Partial writes are retained and included in cache refreshes even
+when another surface fails. This command does not send replies.
+
+```bash
+msgvault source facebook-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive maximum API reads per Page, including identity validation; unfinished scans resume |
+| `--full` | `false` | Explicitly restart selected source scans from fresh cursors, preserving and updating existing rows |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+See [coverage and resuming](usage/facebook-comments.md#understand-coverage-and-resuming)
+for independent surface progress, request costs, and expired-cursor recovery.
 
 ---
 
@@ -3307,7 +3345,7 @@ and the [API contract](api-server.md#filename-suggestions).
 
 ### person who-knows
 
-On unreleased `main`, find the people who wrote about a topic. Search operators in the topic are refused. Matched declared topics print as `declared: ...`. Needs a daemon with API schema 3.49.0 or newer.
+On unreleased `main`, find the people who wrote about a topic. Search operators in the topic are refused. Matched declared topics print as `declared: ...`. Needs a daemon with API schema 3.50.0 or newer.
 
 ```bash
 msgvault person who-knows <topic words...> [flags]
@@ -4585,6 +4623,8 @@ msgvault mcp [flags]
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--confirm-sensitive-drafts` | `false` | On unreleased `main`, require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
@@ -4655,11 +4695,11 @@ msgvault daemon stop
 msgvault daemon restart
 ```
 
-`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Incompatible running daemons are reported with a prompt to stop them first.
+`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime and lifetime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Incompatible running daemons are reported with a prompt to stop them first.
 
 The lifecycle commands have no command-specific flags. Configuration comes from `config.toml` with the [runtime environment overrides](configuration.md#environment-variables). See [Web UI & API Server](/docs/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/docs/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/docs/configuration/#vectorembedschedule).
 
-Background daemons started by `daemon start` or auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for a lifecycle-managed background daemon.
+Daemons auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for an automatically started daemon. `daemon start` and `daemon restart` launch daemons that stay running until stopped. If `daemon start` reuses an automatic daemon, it preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 
 `[server].daemon_auto_restart` controls local daemon replacement when the CLI and recorded daemon versions differ. The default `newer` restarts older compatible daemons. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves lifecycle to the operator or supervisor, and `always` restarts on any version mismatch that is safe for the current API schema. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
@@ -4700,6 +4740,8 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 | `--mcp-allow-carddav-writes` | `false` | Enable confirmed CardDAV publication and sync. |
 | `--mcp-allow-calendar-writes` | `false` | Enable calendar mutations. |
 | `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
+| `--mcp-allow-loop-writes` | `false` | On unreleased `main`, enable approved open-loop done, snooze, and reopen decisions. |
+| `--mcp-confirm-sensitive-drafts` | `false` | On unreleased `main`, require client confirmation before creating or editing drafts with detected sensitive content. Writes still require `--mcp-allow-writes`. |
 | `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
 
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
@@ -5279,9 +5321,33 @@ are kept. Beeper and Discord sources also recompute their provider-derived
 text and metadata, and email retained under those labels is repaired from its
 MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
-them. Source syncs and imports run the same work first, so use this command
-for on-demand repair, file imports you will not run again, or retrying an
-interrupted pass.
+them. Every source also indexes the Message-ID, In-Reply-To, References and
+attached-original identifiers of emails still pending it, which
+related-copy lookups read. Missing or unreadable payloads are recorded
+as incomplete and do not block later messages. Source syncs and imports run the
+same work first, so use this command for on-demand repair, file imports you will
+not run again, or retrying an interrupted pass.
+
+Restore the missing nonempty MIME attachments of one Gmail message with:
+
+```bash
+msgvault repair-derived --attachment-message <internal-id-or-gmail-id> --source-id <source-id>
+```
+
+This mode uses retained RAW without Gmail access. It preserves original payloads,
+message fields, existing attachment rows and valid loose or packed blobs. It adds
+missing MIME occurrences and reconstructs missing loose files. Empty MIME parts
+remain omitted, as in ordinary sync. Provider-owned attachments are preserved.
+The source selector disambiguates references; omit it only for a unique reference.
+Source filters cannot be combined with this mode.
+
+Missing, empty, undecodable or diagnostically incomplete RAW, conflicting metadata,
+corrupt files and missing packs return an error without replacing existing evidence.
+Correct the reported problem and repeat the same command. Ordinary Gmail syncs
+also retry recorded materialization failures locally; a successful full scan does
+not inspect every previously archived attachment. `repair-message --audit` compares
+MIME occurrences but does not check file contents. The normal `repair-derived` and
+automatic `Heal` text passes do not reconstruct files.
 
 ## gc
 
@@ -5540,6 +5606,9 @@ msgvault --agent-url https://archive.example.test \
 | `message.read` | Message bodies and metadata, and containing threads |
 | `attachment.read` | Attachment metadata and stored bytes; message access alone does not grant bytes |
 | `stats.read` | Statistics within the granted sources; global database size is omitted |
+| `verification.read` | Reveals detected verification content alongside an existing read permission; grants no reads alone |
+
+See [detection rules and limits](api-server.md#verification-content).
 
 Unscoped reads select the grant's live sources. Explicit accounts, collections,
 and source sets must fit entirely inside that grant. Collection membership is
@@ -5585,7 +5654,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |

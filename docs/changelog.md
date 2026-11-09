@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-08"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,21 +8,27 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- [Topic search](usage/people.md#find-who-knows-about-a-topic) lists the people who wrote about a topic, with dated message citations. Available as `person who-knows` and the owner-only `GET /api/v1/people/who-knows`, in schema 3.49.0.
+- [Topic search](usage/people.md#find-who-knows-about-a-topic) lists the people who wrote about a topic, with dated message citations. Available as `person who-knows` and the owner-only `GET /api/v1/people/who-knows`.
+- `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
+  nested replies on organic, visitor, and ad posts returned for a selected Page.
+  Search the archive and link commenters through existing people tools. This
+  does not send messages or include Instagram or ad-creative discovery.
+
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
+- Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
 - CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
-- Empty sender searches suggest matching addresses and a query you can retry, including incomplete addresses such as `from:alex@exam`. CLI hints stay on stderr, and MCP metadata results carry structured retry hints. Counts keep your search filters and account scope.
+- `from:` now finds messages by sender name, address, or phone number across CLI, MCP, and web search, replacing address retry hints. Full addresses match exactly, and domains match by suffix. Repeated `from:` values must all match, including in CLI searches that previously matched any value.
 
-- [Open loops](usage/open-loops.md) list conversations waiting on your reply
-  and replies you are waiting on, with separate results for each person and
-  decisions on exact questions. `msgvault loops list`, `done`, `snooze`, and
-  `reopen` manage them, and the HTTP API has matching routes. Each request
-  computes evidence for up to 1,000 uncached messages; repeated requests
-  continue using retained evidence. They need HTTP API schema 3.44.0.
+- See who is waiting on a reply from you, and whose reply you are waiting on,
+  with [open loops](usage/open-loops.md). `msgvault loops list` shows them, and
+  `done`, `snooze`, and `reopen` clear them; the HTTP API has matching routes.
+  A large archive is checked over several requests, up to 1,000 new messages
+  each. Needs HTTP API schema 3.44.0.
 - Keep Apple WhatsApp and iMessage archives current with daemon schedules,
   run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
 - Resumed Gmail full syncs preserve their starting History point so the next
@@ -36,9 +42,16 @@ All notable changes to msgvault, grouped by release.
   fails and keeps its History position, so the next sync retries the change
   instead of skipping it.
 - [`import-imessage`](usage/text-messages.md#import-imessage) keeps the full text of messages of 256 bytes or more that macOS stores only in `attributedBody`. Before, it archived just part of that text. Rerun the import to repair messages still in `chat.db`. The import summary counts messages whose text can't be decoded under `Unreadable text`; their archived text is kept.
-- MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
-- A saved person's Details tab in People shows that person's open loops in a
-  read-only card, with a Check more action when coverage is incomplete.
+- Operators can require client approval before sensitive draft content reaches a provider with `msgvault mcp --confirm-sensitive-drafts` or `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. The option is off by default and grants no tools.
+- MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Findings in recognized quoted or forwarded history carry `quoted: true`. Drafts are still written unchanged.
+- See a saved person's open loops on their **Details** tab in People. When
+  more history remains, **Check more** continues the scan.
+- Let an MCP assistant list open loops. With `--allow-loop-writes`, it can
+  also mark loops done, snooze them, or reopen them, with your approval for
+  each call. Over HTTP, decisions also need `--http-allow-writes` and protocol
+  `2026-07-28` or newer.
+
+- Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
 
 ## 0.23.0
 <small>2026-11-04</small>

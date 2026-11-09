@@ -24,7 +24,7 @@ import (
 
 func whoKnowsGet(t *testing.T, srv *api.Server, query string) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/people/who-knows?"+query, nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/who-knows?"+query, nil)
 	request.RemoteAddr = "127.0.0.1:12345"
 	got := httptest.NewRecorder()
 	srv.Router().ServeHTTP(got, request)
@@ -49,7 +49,7 @@ func TestWhoKnowsNeedsVectorSearch(t *testing.T) {
 	srv := api.NewServerWithOptions(api.ServerOptions{
 		Config: &config.Config{}, Store: testutil.NewTestStore(t), Logger: slog.New(slog.DiscardHandler),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	got := whoKnowsGet(t, srv, "topic=cloud")
 	assert.Equal(t, http.StatusServiceUnavailable, got.Code)
 	assert.Contains(t, got.Body.String(), "vector_not_enabled")
@@ -92,7 +92,7 @@ func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder wh
 		KPerSignal: 100, RRFK: 60, BuildScope: options.VectorCfg.Embed.Scope.BuildScope(),
 	})
 	srv := api.NewServerWithOptions(options)
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
 		return vector.EmbeddingStatus{}, nil
 	}, 0)
@@ -111,7 +111,7 @@ func TestWhoKnowsNeedsTheArchiveReads(t *testing.T) {
 	backend.generation = vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: cfg.GenerationFingerprint()}
 	options.HybridEngine = hybrid.NewEngine(backend, st.DB(), whoKnowsEmbedder{}, hybrid.Config{KPerSignal: 100, RRFK: 60})
 	srv := api.NewServerWithOptions(options)
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
 		return vector.EmbeddingStatus{}, nil
 	}, 0)

@@ -114,7 +114,7 @@ func TestTopicAuthorsReadLegacyEmailWithNullType(t *testing.T) {
 		MessageType: store.MessageTypeEmail, SenderID: sql.NullInt64{Int64: ana, Valid: true},
 	})
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE messages SET message_type = NULL WHERE id = ?`, legacy)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = NULL WHERE id = ?`, legacy)
 	require.NoError(err)
 
 	got, err := st.TopicAuthorsContext(t.Context(), []int64{legacy}, nil)
@@ -135,7 +135,7 @@ func TestCountUnembeddedLegacyEmailCountsLiveUnstampedUntypedRows(t *testing.T) 
 			SourceMessageID: name, MessageType: store.MessageTypeEmail,
 		})
 		require.NoError(err, name)
-		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`),
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`),
 			sql.NullString{String: messageType, Valid: messageType != "null"}, id)
 		require.NoError(err, name)
 		return id
@@ -145,9 +145,9 @@ func TestCountUnembeddedLegacyEmailCountsLiveUnstampedUntypedRows(t *testing.T) 
 	stamped := add("stamped", "")
 	deleted := add("deleted", "")
 	add("typed", store.MessageTypeEmail)
-	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET embed_gen = 7 WHERE id = ?`), stamped)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET embed_gen = 7 WHERE id = ?`), stamped)
 	require.NoError(err, "stamp one legacy row")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), whoKnowsSentAt, deleted)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), whoKnowsSentAt, deleted)
 	require.NoError(err, "delete one legacy row")
 
 	got, err := st.CountUnembeddedLegacyEmail(t.Context(), 7)
@@ -442,7 +442,7 @@ func TestTopicContactsReportWhomTheOwnerWroteTo(t *testing.T) {
 	// A draft to the drafted contact was never sent.
 	draft := send(f, "draft-to-drafted", owner)
 	require.NoError(f.Store.ReplaceMessageRecipients(draft, "to", []int64{drafted}, []string{"Drafted"}))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET is_sent = FALSE WHERE id = ?`), draft)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET is_sent = FALSE WHERE id = ?`), draft)
 	require.NoError(err, "mark the draft unsent")
 
 	got := contactsOf(f, ana, cc, vendor, drafted)

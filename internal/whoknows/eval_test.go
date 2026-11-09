@@ -174,7 +174,7 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	} else {
 		var seq int
 		var name, mainPath string
-		require.NoError(t, st.DB().QueryRow("PRAGMA database_list").Scan(&seq, &name, &mainPath))
+		require.NoError(t, st.DB().QueryRowContext(ctx, "PRAGMA database_list").Scan(&seq, &name, &mainPath))
 		b, err := sqlitevec.Open(ctx, sqlitevec.Options{
 			Path: filepath.Join(t.TempDir(), "vectors.db"), MainPath: mainPath,
 			MainDB: st.DB(), Dimension: embedDimension,

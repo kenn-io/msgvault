@@ -38,7 +38,7 @@ func TestImportSlackdumpPersistsSlackSemantics(t *testing.T) {
 	assert.Equal(7, summary.MessagesAdded)
 	assert.Zero(summary.MessagesUpdated)
 	var botSender int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		summary.SourceID, "C001:1704240000.000001").Scan(&botSender))
 	botParticipant, _, err := st.ParticipantByIdentifierContext(t.Context(), "slack", "T_TEST:bot:UBOT")

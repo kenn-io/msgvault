@@ -28,6 +28,7 @@ var mcpNoSQLiteScanner bool
 var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
+var mcpConfirmSensitiveDrafts bool
 var mcpAllowProfileWrites bool
 var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
@@ -37,6 +38,7 @@ var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
+var mcpAllowLoopWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -617,6 +619,8 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		}
 		return new(bool)
 	}
+	flags.BoolVar(bind(&mcpConfirmSensitiveDrafts), prefix+"confirm-sensitive-drafts", false,
+		"Require MCP client confirmation before creating or editing drafts with likely sensitive content.")
 	flags.BoolVar(bind(&mcpAllowProfileWrites), prefix+"allow-profile-writes", false,
 		"Expose person promotion, display-name editing, and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
@@ -633,11 +637,14 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
+	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
+		"Allow approved open-loop done, snooze, and reopen decisions")
 	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires the general write opt-in.")
 }
 
 func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.ServeOptions) {
+	opts.ConfirmSensitiveDrafts, _ = cmd.Flags().GetBool(prefix + "confirm-sensitive-drafts")
 	opts.AllowProfileWrites, _ = cmd.Flags().GetBool(prefix + "allow-profile-writes")
 	opts.AllowIdentityDecisions, _ = cmd.Flags().GetBool(prefix + "allow-identity-decisions")
 	opts.AllowIdentityScoring, _ = cmd.Flags().GetBool(prefix + "allow-identity-scoring")
@@ -647,6 +654,9 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	opts.AllowCalendarWrites, _ = cmd.Flags().GetBool(prefix + "allow-calendar-writes")
 	if opts.AllowProfileWrites {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-loop-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-source-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)

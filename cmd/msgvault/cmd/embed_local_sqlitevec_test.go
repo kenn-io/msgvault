@@ -53,11 +53,19 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 
 	ping := daemon.NewPingHandler(daemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/embeddings" {
+		switch r.URL.Path {
+		case "/api/ping":
+			ping.ServeHTTP(w, r)
+		case "/v1/models":
+			// Discovery only selects a kennembed server that lists the text model.
+			assert.Equal(http.MethodGet, r.Method)
+			_, err := io.WriteString(w, `{"models":["`+embedlocal.TextModel+`"]}`)
+			assert.NoError(err)
+		case "/v1/embeddings":
 			assert.Empty(r.Header.Get("Authorization"))
 			oldServer.Config.Handler.ServeHTTP(w, r)
-		} else {
-			ping.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)

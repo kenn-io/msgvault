@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -682,6 +683,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
 		}
 	}
 
@@ -1588,6 +1602,16 @@ func openDaemonAnalyticsEngine(
 	s *store.Store,
 	intent startupCacheBuildIntent,
 ) (query.Engine, string, startupCacheBuildOutcome, error) {
+	return openDaemonAnalyticsEngineWithRebuild(ctx, c, s, intent, nil)
+}
+
+func openDaemonAnalyticsEngineWithRebuild(
+	ctx context.Context,
+	c *config.Config,
+	s *store.Store,
+	intent startupCacheBuildIntent,
+	onFullRebuild func(),
+) (query.Engine, string, startupCacheBuildOutcome, error) {
 	if c == nil || s == nil {
 		return nil, "", startupCacheBuildOutcomeNone,
 			errors.New("daemon analytics engine unavailable")
@@ -1644,11 +1668,8 @@ func openDaemonAnalyticsEngine(
 	shouldBuild := intent != startupCacheBuildIntentNone || automaticBuild
 	var automaticBuildErr error
 	if shouldBuild {
-		// Build the cache before serving rather than starting on live-SQL
-		// fallback: incremental rebuilds take seconds, and startup progress
-		// already streams to the CLI that auto-started the daemon. A failed
-		// build is fatal for engine="duckdb" (documented to never fall back)
-		// and falls back to live SQL for engine="auto".
+		// Incremental builds keep the brief cache wait. Full builds let auto
+		// mode serve live entries until the replacement cache opens.
 		fullBuild := staleness.FullRebuild
 		reason := staleness.Reason
 		if intent == startupCacheBuildIntentFull {
@@ -1659,6 +1680,10 @@ func openDaemonAnalyticsEngine(
 			"step", "build_analytics_cache",
 			"reason", reason,
 			"full_rebuild", fullBuild)
+
+		if fullBuild && engineMode == config.AnalyticsEngineAuto && onFullRebuild != nil {
+			onFullRebuild()
+		}
 
 		var buildErr error
 		if intent != startupCacheBuildIntentNone {
@@ -1824,9 +1849,9 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
-func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
-	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
-		return nil
+func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue {
+		return 0
 	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
@@ -1841,11 +1866,16 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 			timeout = parsed
 		}
 	}
+	return max(timeout, 0)
+}
+
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
+	timeout := effectiveDaemonIdleTimeout(c, logger)
 	if timeout <= 0 {
 		return nil
 	}
 	return api.NewIdleTracker(timeout, func() {
-		logger.Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
+		repairLogger(logger).Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
 		stop()
 	})
 }
@@ -2271,6 +2301,12 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
 ) ([]api.APIMessage, int64, error) {
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
+}
+
+var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	return a.store.PopulateMessageBodiesContext(ctx, messages)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
@@ -2772,19 +2808,8 @@ func attachmentRemovalCommand(args []string) bool {
 // need no further interpretation here, but they must not be mistaken for
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			return false
-		}
-		name := strings.TrimPrefix(arg, "--")
-		if before, _, ok := strings.Cut(name, "="); ok {
-			name = before
-		}
-		if !loggingPassthroughFlags[name] {
-			return false
-		}
-	}
-	return true
+	flags := clirun.NewFlagSet()
+	return clirun.Parse(flags, args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

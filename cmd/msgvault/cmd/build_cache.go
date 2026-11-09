@@ -298,6 +298,8 @@ func readCacheSyncCountersContext(ctx context.Context, db contextSQLRowQuerier) 
 
 // Cancelled attempts can commit messages before yielding. Like failed runs,
 // they may stop before counting every write, so track interruptions as well.
+// Not-started runs wrote nothing, so they do not count. The sync type is
+// inlined because callers may pass a raw PostgreSQL *sql.DB, which rejects '?'.
 func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cacheSyncCounters, error) {
 	var counters cacheSyncCounters
 	err := queryRow(`
@@ -310,6 +312,7 @@ func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cache
 		JOIN sources src ON src.id = sr.source_id
 		WHERE sr.status IN ('completed', 'failed', 'cancelled', 'paused')
 		  AND sr.completed_at IS NOT NULL
+		  AND sr.sync_type <> '`+store.SyncTypeNotStarted+`'
 	`).Scan(
 		&counters.additions,
 		&counters.updates,

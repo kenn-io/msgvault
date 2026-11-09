@@ -327,7 +327,7 @@ func TestFindReportsPartialIndexForUnembeddedLegacyEmail(t *testing.T) {
 	message := f.NewMessage().WithSourceMessageID("legacy-unembedded-email").Build()
 	messageID, err := f.Store.UpsertMessage(message)
 	require.NoError(err, "create legacy email")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = '' WHERE id = ?`), messageID)
 	require.NoError(err, "restore the legacy empty message type")
 

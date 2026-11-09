@@ -15,7 +15,7 @@ func TestMessageCosinesScoresStoredChunks(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	b, ctx, db := newBackendForTest(t)
-	_, err := db.Exec(`INSERT INTO messages (id) VALUES (2), (3), (4), (5)`)
+	_, err := db.ExecContext(ctx, `INSERT INTO messages (id) VALUES (2), (3), (4), (5)`)
 	require.NoError(err)
 	gen, err := b.CreateGeneration(ctx, "model", 768, "")
 	require.NoError(err)
