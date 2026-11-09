@@ -1270,6 +1270,8 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 		Service: daemonService,
 		Version: daemonVersion,
 		Metadata: map[string]string{
+			runtimeBackground:       "true",
+			runtimePersistent:       "false",
 			runtimeHost:             server.Host,
 			runtimePort:             portText,
 			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
@@ -1301,7 +1303,8 @@ func testRunServeStartReportsRetainedDaemon(t *testing.T, contended bool, daemon
 		"msgvault already running at http://"+net.JoinHostPort(server.Host, portText)+
 			" (pid "+strconv.Itoa(os.Getpid())+")\n",
 		stdout.String())
-	assert.Contains(stderr.String(), "to use this version.")
+	assert.Contains(stderr.String(), "to use this version and keep it running until stopped.")
+	assert.Equal(1, strings.Count(stdout.String()+stderr.String(), "daemon restart"))
 }
 
 func TestRunServeStartUpgradesOlderIncompatibleDaemon(t *testing.T) {
@@ -1857,19 +1860,21 @@ func TestServeStatusLifetime(t *testing.T) {
 func TestDaemonLifetimeMetadata(t *testing.T) {
 	for _, tc := range []struct{ persistent, timeout, wantTimeout string }{{"false", "2s", "2s"}, {"false", "0s", "0s"}, {"true", "2s", "0s"}} {
 		t.Run("persistent="+tc.persistent+"/timeout="+tc.timeout, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			t.Setenv(serveBackgroundChildEnv, "1")
 			t.Setenv(servePersistentChildEnv, tc.persistent)
 			t.Setenv(daemonIdleTimeoutEnv, tc.timeout)
 			owner, err := claimServeOwnership(t.Context(), lifecycleTestConfig(t.TempDir()), "127.0.0.1", 8123, Version)
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(owner.Close()) })
 			runtimeStore := daemonRuntimeStore(owner.dataDir)
 			path, err := runtimeStore.Path(owner.record.PID)
-			require.NoError(t, err)
+			require.NoError(err)
 			record, err := runtimeStore.Read(path)
-			require.NoError(t, err)
-			assert.Equal(t, tc.persistent, record.Metadata[runtimePersistent])
-			assert.Equal(t, tc.wantTimeout, record.Metadata[runtimeIdleTimeout])
+			require.NoError(err)
+			assert.Equal(tc.persistent, record.Metadata[runtimePersistent])
+			assert.Equal(tc.wantTimeout, record.Metadata[runtimeIdleTimeout])
 		})
 	}
 }
