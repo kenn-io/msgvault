@@ -66,14 +66,22 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PersonAddresses', () => {
-  it('shows address sources and filters own Details values while retaining linked addresses', async () => {
-    const view = render(PersonAddresses, baseProps());
+  it('shows each address and its source once when expanded', async () => {
+    render(PersonAddresses, baseProps());
     const email = screen.getByLabelText('Identity Alice');
     await fireEvent.click(within(email).getByText('Alice'));
     expect(email.querySelector('p')?.textContent).toBe('this profile · alice@example.com · email · primary · stored identifier');
     const phone = screen.getByLabelText('Identity +15550100001');
     await fireEvent.click(within(phone).getByText('+15550100001'));
     expect(phone.querySelector('p')?.textContent).toBe('this profile · phone · secondary · stored identifier');
+  });
+
+  it('filters own listed addresses while keeping linked members and their unlink controls', async () => {
+    const view = render(PersonAddresses, baseProps({ detail: clusteredPerson() }));
+    expect(screen.getByLabelText('Identity Alice').textContent).toContain('this profile');
+    expect(screen.queryByRole('button', { name: /Unlink alice@example.com|Unlink Alice/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
     const own = person();
     const listed = own.identifiers.map(identifier => ({ address_kind: identifier.type, original_value: identifier.value, normalized_value: identifier.value }));
     listed.push({ address_kind: 'phone', original_value: '+15550100002', normalized_value: '+15550100002' });
@@ -86,16 +94,6 @@ describe('PersonAddresses', () => {
     expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
     await view.rerender(baseProps({ detail: own, listedInDetails: listed }));
     expect(screen.queryByRole('heading', { name: /addresses/i })).toBeNull();
-  });
-
-  it('offers unlink only for another clustered member', async () => {
-    const view = render(PersonAddresses, baseProps({ detail: clusteredPerson() }));
-    expect(screen.getByLabelText('Identity Alice').textContent).toContain('this profile');
-    expect(screen.queryByRole('button', { name: /Unlink alice@example.com|Unlink Alice/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Unlink carol@example.com' })).toBeDefined();
-    await view.rerender(baseProps());
-    expect(screen.queryByRole('button', { name: /Unlink/ })).toBeNull();
   });
 
   it.each(['none', 'email', 'duplicate names'])('names member-only controls with %s evidence', evidence => {

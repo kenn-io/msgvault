@@ -57,7 +57,7 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
   await directory.loadSelection(7);
   const view = render(PersonDetails, { client, directory, personID: 7 });
   onTestFinished(() => { view.unmount(); directory.destroy(); });
-  return { person, directory, view };
+  return { person, directory };
 }
 
 it.each([{ participantIDs: [], requests: [] }, { participantIDs: [5], requests: ['/api/v1/meetings/actions', '/api/v1/meetings/metrics'] }])('shows empty Meetings for the loaded identity scope: $participantIDs', async ({ participantIDs, requests }) => {
@@ -135,25 +135,21 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 });
 
 
-it('keeps the attributes alert separate and combines failed profile reads into one retriable notice', async () => {
-  const attributes = await renderDetails([], { attributesFailure: true });
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-  attributes.view.unmount();
-  attributes.directory.destroy();
-  const options = { detailsFailure: true, personFailure: true };
+it.each([
+  { name: 'attributes', options: { attributesFailure: true }, message: "Couldn't load field values.", details: 'Attributes unavailable', retry: true },
+  { name: 'profile and details', options: { detailsFailure: true, personFailure: true }, message: "Couldn't load these details.", details: 'Saved profile unavailable Structured profile unavailable Contact state unavailable', retry: true },
+  { name: 'deleted person', options: { personDeleted: true }, message: "This person isn't in your archive anymore.", details: undefined, retry: false }
+])('shows one notice for $name with only its supported recovery', async ({ options, message, details, retry }) => {
   await renderDetails([], options);
-  expect(screen.getAllByText("Couldn't load these details.")).toHaveLength(1);
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
   const notice = within(screen.getByRole('alert'));
-  await fireEvent.click(notice.getByText('Details'));
-  expect(notice.getByText('Saved profile unavailable Structured profile unavailable Contact state unavailable')).toBeDefined();
-  options.detailsFailure = false; options.personFailure = false;
-  await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
-  await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
-});
-
-it('shows a deleted person on initial load without offering Retry', async () => {
-  await renderDetails([], { personDeleted: true });
-  const notice = within(screen.getByText("This person isn't in your archive anymore.").closest('[role="alert"]')!);
-  expect(screen.queryByText("Couldn't load these details.")).toBeNull();
-  expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
+  expect(notice.getByText(message)).toBeDefined();
+  expect(notice.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retry ? 1 : 0);
+  if (details) {
+    await fireEvent.click(notice.getByText('Details'));
+    expect(notice.getByText(details)).toBeDefined();
+    options.attributesFailure = false; options.detailsFailure = false; options.personFailure = false;
+    await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(message)).toBeNull());
+  }
 });

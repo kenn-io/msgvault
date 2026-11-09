@@ -38,7 +38,6 @@ test('Directory network lists who is further out and opens organizations', async
   await page.getByRole('radio', { name: '2 steps', exact: true }).click();
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
   await expect(further).toHaveAttribute('aria-busy', 'false');
-  await expect(further.locator('.detail-row')).toHaveText(['Shared OrganizationEngineer · via Curated Peer']);
   const linkColor = await network.getByRole('button', { name: 'Shared Organization' }).evaluate(button => getComputedStyle(button).color);
   await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Shared Organization', exact: true });

@@ -166,10 +166,9 @@ describe('PersonNetwork', () => {
   });
 
   it.each([
-    { name: 'root only stays hidden', network: rootOnly(), labels: [], expected: undefined },
-    { name: 'Curated Peer and Lumen Grove', network: connected(1), labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove' },
-    { name: 'Lumen Grove, Cedar Circle, and 4 more', network: rootOnly(), labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard', 'Willow Field', 'Birch Garden'], expected: 'Lumen Grove, Cedar Circle, and 4 more' }
-  ])('summarizes Direct: $name', async ({ network, labels, expected }) => {
+    { name: 'Curated Peer and Lumen Grove', network: connected(1), labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove', links: ['Curated Peer', 'Lumen Grove'], people: [[8]], organizations: [[22]] },
+    { name: 'Lumen Grove, Cedar Circle, and 4 more', network: rootOnly(), labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard', 'Willow Field', 'Birch Garden'], expected: 'Lumen Grove, Cedar Circle, and 4 more', links: ['Lumen Grove', 'Cedar Circle'], people: [], organizations: [[22], [23]] }
+  ])('summarizes Direct: $name', async ({ network, labels, expected, links, people, organizations }) => {
     labels.forEach((label, index) => {
       const id = 22 + index;
       network.nodes.push({ id: `organization:${id}`, kind: 'organization', entity_id: id, label, hop: 1 });
@@ -186,15 +185,15 @@ describe('PersonNetwork', () => {
     });
     expect(new URL(requestOf(fetcher.mock.calls[0]![0]).url).searchParams.get('depth')).toBe('1');
     expect(screen.queryByRole('region', { name: 'Network at 2 steps' })).toBeNull();
-    if (expected === undefined) expect(screen.queryByRole('heading', { name: 'Network' })).toBeNull();
-    else {
-      expect(container.querySelector('.summary')?.textContent?.trim()).toBe(expected);
-      await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-      await screen.findByText('No one else at 2 steps');
-      expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
-      await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-      await screen.findByText('No one else at 3 steps');
-    }
+    expect(container.querySelector('.summary')?.textContent?.trim()).toBe(expected);
+    for (const name of links) await fireEvent.click(screen.getByRole('button', { name }));
+    expect(onOpenPerson.mock.calls).toEqual(people);
+    expect(onOpenOrganization.mock.calls).toEqual(organizations);
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+    await screen.findByText('No one else at 2 steps');
+    expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
+    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+    await screen.findByText('No one else at 3 steps');
   });
 
   it.each([
@@ -214,39 +213,43 @@ describe('PersonNetwork', () => {
     expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
   });
 
-  it('shows a failed first load in the failure voice, with the server message in Details, and retries', async () => {
-    const fetcher = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 }))
-      .mockResolvedValueOnce(Response.json(rootOnly()));
-    const controller = new DirectoryEntityController(createAPIClient(fetcher), 7);
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
-    expect(container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    await waitFor(() => expect(controller.network?.root_person_id).toBe(7));
+  it.each([
+    { name: 'root-only Direct is hidden', network: rootOnly(), sections: 0, notices: 0 },
+    { name: 'a truncated Direct result is reported', network: { ...connected(1), truncated: true }, sections: 1, notices: 1 }
+  ])('shows network result state: $name', async ({ network, sections, notices }) => {
+    const { controller } = controllerWith(networkFetcher(network));
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await waitFor(() => {
+      expect(controller.network?.root_person_id).toBe(7);
+      expect(controller.networkLoading).toBe(false);
+    });
+    expect(screen.queryAllByRole('heading', { name: 'Network' })).toHaveLength(sections);
+    expect(screen.queryAllByText('Showing up to 250 people and organizations and 500 connections.')).toHaveLength(notices);
   });
 
-  it('keeps the list through depth loading, error, and retry, and reports a truncated result', async () => {
+  it('retries a failed first load and retains the list through a later depth failure', async () => {
     const depthThreeLoad = deferredResponse();
     let depthThreeAttempts = 0;
+    let directAttempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (new URL(request.url).pathname.endsWith('/relationships')) return Response.json({ relationships: [] });
       const url = new URL(request.url);
       const depth = Number(url.searchParams.get('depth'));
-      if (depth === 1) return Response.json(connected(1));
+      if (depth === 1) return ++directAttempts === 1 ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 }) : Response.json(connected(1));
       if (depth === 2) return Response.json(connected(2));
       depthThreeAttempts += 1;
-      return depthThreeAttempts === 1 ? depthThreeLoad.promise : Response.json({ ...depthThree(), truncated: true });
+      return depthThreeAttempts === 1 ? depthThreeLoad.promise : Response.json(depthThree());
     }));
     const controller = new DirectoryEntityController(client, 7);
 
-    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
+    expect(container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await screen.findByText('Curated Peer');
     await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
     await screen.findByRole('button', { name: 'Second Hop Person' });
-    expect(screen.queryByText('Showing up to 250 people and organizations and 500 connections.')).toBeNull();
 
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
@@ -257,7 +260,6 @@ describe('PersonNetwork', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await screen.findByRole('button', { name: 'Depth Three Person' });
-    expect(screen.getByText('Showing up to 250 people and organizations and 500 connections.')).toBeDefined();
   });
 
 });

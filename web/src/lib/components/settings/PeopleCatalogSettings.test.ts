@@ -61,7 +61,67 @@ it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async ope
   } finally { catalog.unmount(); }
 });
 
-it.each(['edit', 'delete'])('ignores a delayed registry retry after a catalog %s', async operation => {
+it.each(['search', 'edit', 'delete'])('keeps catalog reads current during %s', async operation => {
+  if (operation === 'search') {
+    let targetsRead = 0;
+    let releaseTargets!: (response: Response) => void;
+    const pendingTargets = new Promise<Response>(resolve => { releaseTargets = resolve; });
+    let initialRead = true;
+    let releaseInitial!: (response: Response) => void;
+    const pendingInitial = new Promise<Response>(resolve => { releaseInitial = resolve; });
+    const definitions: Record<string, unknown>[] = [
+      { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', description: 'Garden preferences', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 2, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: true, revision: 1, is_deletable: true },
+      { id: 42, universal_id: '00000000-0000-4000-8000-000000000042', object_type: 'person', slug: 'location', label: 'Location', description: 'Where they live', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 1, ownership: 'system', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: true }
+    ];
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
+      if (path.endsWith('/attribute-definitions')) {
+        if (initialRead) { initialRead = false; return pendingInitial; }
+        return Response.json({ definitions });
+      }
+      if (path.endsWith('/person-fact-targets')) return ++targetsRead === 1 ? Response.json({ message: 'Targets unavailable' }, { status: 503 }) : pendingTargets;
+      if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
+      if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const view = render(PeopleCatalogSettings, { client });
+    try {
+      const fields = within(screen.getByRole('region', { name: 'Fields' }));
+      expect(screen.getByText('Loading fields…')).toBeDefined();
+      const search = screen.getByRole('searchbox', { name: 'Search fields' });
+      await fireEvent.input(search, { target: { value: 'plant' } });
+      expect(screen.queryByText('No fields match')).toBeNull();
+      releaseInitial(Response.json({ message: 'Fields unavailable' }, { status: 503 }));
+      await screen.findByRole('button', { name: 'Retry fields' });
+      expect(screen.queryByText('No fields match')).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry fields' }));
+      await fireEvent.input(search, { target: { value: '' } });
+      await fields.findByText('Garden preferences');
+      expect(fields.getByText("Couldn't load Work details.")).toBeDefined();
+      await fireEvent.input(search, { target: { value: 'Work' } });
+      await fireEvent.click(fields.getByRole('button', { name: 'Retry' }));
+      expect(fields.getByText('Loading fields…')).toBeDefined();
+      expect(fields.queryByText('No fields match')).toBeNull();
+      releaseTargets(Response.json({ targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] }));
+      const work = await fields.findByText('Current and historical jobs');
+      expect(work.closest('li')?.textContent).toContain('Jobs · several values');
+      await fireEvent.input(search, { target: { value: '' } });
+      expect([...view.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
+      expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
+      expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
+      await fireEvent.input(search, { target: { value: 'garden' } });
+      expect(fields.getByText('Garden preferences')).toBeDefined();
+      expect(fields.queryByText('Where they live')).toBeNull();
+      expect(fields.queryByText('Current and historical jobs')).toBeNull();
+      await fireEvent.input(search, { target: { value: 'location' } });
+      expect(fields.getByText('Where they live')).toBeDefined();
+      await fireEvent.input(search, { target: { value: '' } });
+      await fireEvent.input(search, { target: { value: 'plant' } });
+      expect(screen.getByText('No fields match')).toBeDefined();
+      await fireEvent.input(search, { target: { value: '' } });
+    } finally { releaseInitial(Response.json({ definitions: [] })); releaseTargets(Response.json({ targets: [] })); view.unmount(); }
+    return;
+  }
   const definition = { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: true };
   let definitions = [definition];
   let reads = 0;
@@ -120,69 +180,26 @@ it.each(['edit', 'delete'])('ignores a delayed registry retry after a catalog %s
   }
 });
 
-it('searches and lists fields through loading and Retry, and resumes creation after a failed refresh', async () => {
-  let targetsRead = 0;
-  let releaseTargets!: (response: Response) => void;
-  const pendingTargets = new Promise<Response>(resolve => { releaseTargets = resolve; });
-  let initialRead = true;
-  let releaseInitial!: (response: Response) => void;
-  const pendingInitial = new Promise<Response>(resolve => { releaseInitial = resolve; });
-  let failRefresh = false; const definitions: Record<string, unknown>[] = [
-    { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', description: 'Garden preferences', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 2, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: true, revision: 1, is_deletable: true },
-    { id: 42, universal_id: '00000000-0000-4000-8000-000000000042', object_type: 'person', slug: 'location', label: 'Location', description: 'Where they live', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 1, ownership: 'system', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: true }
-  ];
+it('keeps Add disabled and resumes a field creation after its refresh fails', async () => {
+  let failRefresh = false; const definitions: Record<string, unknown>[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); const path = new URL(request.url).pathname;
     if (path.endsWith('/attribute-definitions')) {
       if (request.method === 'POST') {
-        const definition = { ...(await request.json()), id: 43, universal_id: '00000000-0000-4000-8000-000000000043', slug: 'first_field', ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_deletable: true, is_active: true, revision: 1 };
+        const definition = { ...(await request.json()), id: 41, universal_id: '00000000-0000-4000-8000-000000000041', slug: 'first_field', ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, revision: 1 };
         definitions.push(definition); failRefresh = true;
         return Response.json(definition, { status: 201 });
       }
-      if (initialRead) { initialRead = false; return pendingInitial; }
       if (failRefresh) { failRefresh = false; return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 }); }
       return Response.json({ definitions });
     }
-    if (path.endsWith('/person-fact-targets')) return ++targetsRead === 1 ? Response.json({ message: 'Targets unavailable' }, { status: 503 }) : pendingTargets;
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const view = render(PeopleCatalogSettings, { client });
   try {
-    const fields = within(screen.getByRole('region', { name: 'Fields' }));
-    expect(screen.getByText('Loading fields…')).toBeDefined();
-    const search = screen.getByRole('searchbox', { name: 'Search fields' });
-    await fireEvent.input(search, { target: { value: 'plant' } });
-    expect(screen.queryByText('No fields match')).toBeNull();
-    releaseInitial(Response.json({ message: 'Fields unavailable' }, { status: 503 }));
-    await screen.findByRole('button', { name: 'Retry fields' });
-    expect(screen.queryByText('No fields match')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry fields' }));
-    await fireEvent.input(search, { target: { value: '' } });
-    await fields.findByText('Garden preferences');
-    expect(fields.getByText("Couldn't load Work details.")).toBeDefined();
-    await fireEvent.input(search, { target: { value: 'Work' } });
-    await fireEvent.click(fields.getByRole('button', { name: 'Retry' }));
-    expect(fields.getByText('Loading fields…')).toBeDefined();
-    expect(fields.queryByText('No fields match')).toBeNull();
-    releaseTargets(Response.json({ targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] }));
-    const work = await fields.findByText('Current and historical jobs');
-    expect(work.closest('li')?.textContent).toContain('Jobs · several values');
-    await fireEvent.input(search, { target: { value: '' } });
-    expect([...view.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
-    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
-    expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
-    await fireEvent.input(search, { target: { value: 'garden' } });
-    expect(fields.getByText('Garden preferences')).toBeDefined();
-    expect(fields.queryByText('Where they live')).toBeNull();
-    expect(fields.queryByText('Current and historical jobs')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'location' } });
-    expect(fields.getByText('Where they live')).toBeDefined();
-    await fireEvent.input(search, { target: { value: '' } });
-    await fireEvent.input(search, { target: { value: 'plant' } });
-    expect(screen.getByText('No fields match')).toBeDefined();
-    await fireEvent.input(search, { target: { value: '' } });
     await fireEvent.click(await screen.findByRole('button', { name: 'Add field' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Label' }), { target: { value: 'First field' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
@@ -191,5 +208,5 @@ it('searches and lists fields through loading and Retry, and resumes creation af
     expect(screen.getByRole('button', { name: 'Add field' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
     expect(await screen.findByRole('dialog', { name: 'Create attribute field' })).toBeDefined();
-  } finally { releaseInitial(Response.json({ definitions: [] })); releaseTargets(Response.json({ targets: [] })); view.unmount(); }
+  } finally { view.unmount(); }
 });

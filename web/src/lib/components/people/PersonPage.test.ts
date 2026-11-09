@@ -168,7 +168,7 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('gates linked addresses while loading and forwards profile values or an empty fallback', async () => {
+it('keeps linked addresses on Details, gates loading, and forwards profile values or an empty fallback', async () => {
   vi.stubEnv('TZ', 'UTC');
   const person = { id: 7, revision: 1, display_name: 'Alice Example', participant_ids: [1], vcard_uid: 'example-7', created_at: when, updated_at: when };
   let failProfile = false;
@@ -204,6 +204,14 @@ it('gates linked addresses while loading and forwards profile values or an empty
     failProfile = true;
     await act(async () => { await directory.loadSelection(7); });
     expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual([]);
+    const heading = screen.getByRole('heading', { name: 'Linked addresses' });
+    expect(heading.closest('.details')).toHaveProperty('hidden', false);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
+    await view.rerender({ filesOpen: true });
+    expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+    await view.rerender({ filesOpen: false });
+    expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 

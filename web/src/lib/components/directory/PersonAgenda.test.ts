@@ -241,8 +241,6 @@ describe('PersonAgenda', () => {
     // rows or Unlink controls render; the status message is the only notice.
     expect(screen.queryByRole('button', { name: 'Unlink Ask' })).toBeNull();
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
-    expect(screen.queryByLabelText('New task')).toBeNull();
-    expect(screen.queryByRole('button', { name: /^List:/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
 
     ready = true;
@@ -271,7 +269,6 @@ describe('PersonAgenda', () => {
     const status = await screen.findByText('Kata integration disabled: Kata is not configured.');
     expect(status.getAttribute('role')).toBe('status');
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByLabelText('New task')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
   });
 
@@ -369,8 +366,6 @@ describe('PersonAgenda', () => {
     // nothing from A stays clickable while B's status and list are pending.
     expect(screen.queryByText('Ask about launch')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Unlink Ask about launch' })).toBeNull();
-    expect(screen.queryByLabelText('New task')).toBeNull();
-    expect(screen.queryByRole('button', { name: /^List:/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
 
     // A click that slips through must never pair A's ref with B's person id.

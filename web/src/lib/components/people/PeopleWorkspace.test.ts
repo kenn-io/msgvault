@@ -96,8 +96,10 @@ it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the 
     } else {
       expect(await screen.findByRole('heading', { name: 'Synthetic contact' })).toBeDefined();
       expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(kind === 'filtered');
-      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-      if (kind === 'draft') expect(await screen.findByText('No messages with Synthetic contact yet')).toBeDefined();
+      if (kind === 'draft') {
+        await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+        expect(await screen.findByText('No messages with Synthetic contact yet')).toBeDefined();
+      }
     }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
