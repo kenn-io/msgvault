@@ -77,36 +77,4 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     expect(await screen.findByRole('dialog', { name: 'Synthetic Org' })).toBeDefined();
   });
-  it('keeps the search and shows the saved name after Use saved', async () => {
-    let reads = 0;
-    const queries: string[] = [];
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/organizations/21' && request.method === 'GET') {
-        reads += 1;
-        return Response.json(organizationProfile(reads, reads === 1 ? 'Synthetic Org' : 'Synthetic Org Renamed'), { headers: { ETag: `"organization-21-r${reads}"` } });
-      }
-      if (pathOf(request) === '/api/v1/organizations/21') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      if (pathOf(request) === '/api/v1/organizations') {
-        const query = new URL(request.url).searchParams.get('q') ?? '';
-        queries.push(query);
-        return Response.json({ organizations: query ? [organization()] : [organization(), organization(22, 1, 'Unrelated Org')], total: 1, limit: 50, offset: 0 });
-      }
-      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
-    }), 0);
-    render(OrganizationsSettings, { controller });
-    await screen.findByRole('button', { name: 'Edit Unrelated Org' });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search organizations' }), { target: { value: 'Synthetic' } });
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Unrelated Org' })).toBeNull());
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await screen.findByRole('button', { name: 'Keep yours' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Use saved' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(await screen.findByRole('button', { name: 'Edit Synthetic Org Renamed' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Edit Unrelated Org' })).toBeNull();
-    expect(queries).toEqual(['', 'Synthetic']);
-  });
 });

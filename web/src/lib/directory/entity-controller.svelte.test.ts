@@ -284,6 +284,7 @@ describe('DirectoryEntityController', () => {
     expect(organizationRead).toBe(1);
     expect(patchRequest?.headers.get('If-Match')).toBe('"organization-21-r2"');
     expect(controller.organizationRecords.get(21)?.organization.revision).toBe(3);
+    expect(controller.organizations.find(item => item.id === 21)?.name).toBe(organizationProfile(3).organization.name);
     expect(directoryChanged).toHaveBeenCalledOnce();
   });
 

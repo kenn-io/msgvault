@@ -21,7 +21,7 @@ it('renders a date error under its field', async () => {
   expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
 });
 
-it('shows one shared date hint under the field being edited', async () => {
+it('shows one shared date hint under the field being edited when Current is on', async () => {
   const hint = () => screen.queryByText('2024, 2024-03, or 2024-03-15');
   const initial = render(DateRange, { start: '', current: true });
   expect(hint()).not.toBeNull();
@@ -40,6 +40,9 @@ it('shows one shared date hint under the field being edited', async () => {
   await fireEvent.input(end, { target: { value: '2024-13' } });
   expect(hint()).toBeNull();
   initial.unmount();
+});
+
+it('shows one shared date hint when Current is hidden', async () => {
   const first = render(DateRange, { start: '', end: '', showCurrent: false });
   const hints = () => screen.queryAllByText('2024, 2024-03, or 2024-03-15');
   // Two empty fields share one hint, under the field being typed.

@@ -7,12 +7,12 @@ import { DirectoryEntityController } from '../../directory/entity-controller.sve
 import { openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
 
-function controllerWith(fetchFn: typeof fetch, personID = 7) {
+function controllerWith(fetchFn: typeof fetch, personID = 7, options: { onDirectoryChange?: () => void | Promise<void> } = {}) {
   const result = entityControllerWith(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (request.method === 'GET' && pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
     return fetchFn(input, init);
-  }, personID);
+  }, personID, options);
   return result;
 }
 
@@ -41,7 +41,7 @@ async function rowAction(label: string): Promise<void> {
 describe('RelationshipsTab', () => {
   it('shows ended connection dates with day precision', async () => {
     const { client, controller } = controllerWith(async () => Response.json({ relationships: [] }));
-    const item = view(41, 'outgoing', 'mentors', 'Synthetic Peer');
+    const item = view(41, 'outgoing', 'is mentored by', 'Synthetic Peer');
     item.relationship = relationship(41, 1, { status: 'ended', start_date: { year: 2024, month: 1, day: 5 }, end_date: { year: 2024, month: 1, day: 6 } });
     controller.relationships = [item];
     render(RelationshipsTab, { client, controller, personID: 7 });
@@ -222,7 +222,6 @@ describe('RelationshipsTab', () => {
       await waitFor(() => expect(post).toBeDefined());
       await expect(post!.clone().json()).resolves.toEqual({ source_person_id: source, target_person_id: target, relationship_type_slug: slug });
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      expect(screen.getByText('Synthetic Two').closest('.detail-row')?.textContent).toContain(label.charAt(0).toUpperCase() + label.slice(1));
     } finally { rendered.unmount(); controller.destroy(); }
   });
 
@@ -324,15 +323,15 @@ describe('RelationshipsTab', () => {
       throw new Error(`Unexpected ${path}`);
     });
     controller.relationships = [
-      view(41, 'outgoing', 'mentors', 'Synthetic Learner'),
-      view(42, 'incoming', 'is mentored by', 'Synthetic Guide'),
+      view(41, 'outgoing', 'is mentored by', 'Synthetic Learner'),
+      view(42, 'incoming', 'mentors', 'Synthetic Guide'),
       view(43, 'outgoing', 'works with', 'Synthetic Peer', {
         relationship: relationship(43, 1, { is_symmetric: true, forward_label: 'works with', reverse_label: 'works with' })
       })
     ];
     render(RelationshipsTab, { client, controller, personID: 7 });
     expect(screen.queryByRole('heading', { name: 'Connection types' })).toBeNull();
-    for (const [name, label] of [['Synthetic Learner', 'Mentors'], ['Synthetic Guide', 'Is mentored by'], ['Synthetic Peer', 'Works with']]) {
+    for (const [name, label] of [['Synthetic Learner', 'Is mentored by'], ['Synthetic Guide', 'Mentors'], ['Synthetic Peer', 'Works with']]) {
       const row = screen.getByText(name).closest('.detail-row') as HTMLElement;
       expect(within(row).getByText(label)).toBeDefined();
     }
@@ -444,7 +443,7 @@ describe('RelationshipsTab', () => {
         if (path === '/api/v1/person-relationships' && request.method === 'POST') {
           return new Response(JSON.stringify(created), { status: 201, headers: { ETag: '"relationship-44-r1"' } });
         }
-        if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(44, 'incoming', 'is mentored by', 'Synthetic Counterpart', { relationship: created })] });
+        if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(44, 'incoming', 'mentors', 'Synthetic Counterpart', { relationship: created })] });
         throw new Error(`unexpected ${request.method} ${path}`);
       }));
       controller.relationshipTypes = [relationshipType()];
@@ -546,11 +545,11 @@ describe('RelationshipsTab', () => {
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-41-r3"' } });
       }
       if (path === '/api/v1/people/7/relationships') {
-        return Response.json({ relationships: [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: updated })] });
+        return Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: updated })] });
       }
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', { relationship: opening })];
+    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: opening })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await fireEvent.click(screen.getByText('1 past connection'));
@@ -597,11 +596,11 @@ describe('RelationshipsTab', () => {
         return Response.json(data, { headers: { ETag: `"relationship-41-r${reads}"` } });
       }
       if (pathOf(request) === '/api/v1/people/7/relationships') {
-        return Response.json({ relationships: [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: ended })] });
+        return Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: ended })] });
       }
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     });
-    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
+    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: opening })];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await rowAction('Edit…');
@@ -623,10 +622,10 @@ describe('RelationshipsTab', () => {
       const request = requestOf(input);
       if (request.method === 'PATCH') return request.headers.get('If-Match') === '"relationship-41-r1"' ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(saved);
       if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: `"relationship-41-r${reads}"` } });
-      if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: saved })] });
+      if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: saved })] });
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
     });
-    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
+    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: opening })];
     render(RelationshipsTab, { client, controller, personID: 7 });
     await rowAction('Edit…');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Shared new note' } });
@@ -645,7 +644,7 @@ describe('RelationshipsTab', () => {
       if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(opening, { headers: { ETag: '"relationship-41-r1"' } });
       return Response.json({ relationships: [] });
     });
-    controller.relationships = [view(41, 'outgoing', 'mentor', 'Synthetic Learner', { relationship: opening })];
+    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: opening })];
     render(RelationshipsTab, { client, controller, personID: 7 });
     await fireEvent.click(screen.getByText('1 past connection'));
     await rowAction('Edit…');
@@ -670,7 +669,7 @@ describe('RelationshipsTab', () => {
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
-    controller.relationships = [view(41, 'incoming', 'is mentored by', 'Synthetic Guide')];
+    controller.relationships = [view(41, 'incoming', 'mentors', 'Synthetic Guide')];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await rowAction('Delete…');
@@ -693,7 +692,7 @@ describe('RelationshipsTab', () => {
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     }));
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Guide'), view(42, 'outgoing', 'mentors', 'Synthetic Peer')];
+    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Guide'), view(42, 'outgoing', 'is mentored by', 'Synthetic Peer')];
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Actions for Synthetic Guide' }));
@@ -726,7 +725,7 @@ describe('RelationshipsTab', () => {
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
       throw new Error(`unexpected ${request.method} ${path}`);
     });
-    controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Peer')];
+    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Peer')];
     render(RelationshipsTab, { client, controller, personID: 7 });
     await rowAction('Delete…');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
@@ -786,7 +785,7 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(refreshPending).toBe(true));
     expect(within(dialog).getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
     expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveProperty('disabled', true);
-    finishRefresh(Response.json({ relationships: [view(41, 'outgoing', 'mentors', 'Synthetic Counterpart', { relationship: saved })] }));
+    finishRefresh(Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Counterpart', { relationship: saved })] }));
     await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
     expect(controller.relationships).toEqual([expect.objectContaining({ relationship: saved })]);

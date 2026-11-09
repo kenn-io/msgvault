@@ -5,7 +5,7 @@ import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 import RelationshipsTab from './RelationshipsTab.svelte';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 
-it('refreshes Work and Network when accepting a job ended elsewhere', async () => {
+it('refreshes Work when accepting a job ended elsewhere', async () => {
   let endedElsewhere = false;
   const { client } = controllerWith(async input => {
     const request = requestOf(input);
@@ -15,12 +15,6 @@ it('refreshes Work and Network when accepting a job ended elsewhere', async () =
     if (path === '/api/v1/employments/11' && request.method === 'PATCH') return Response.json({ error: 'employment_revision_conflict', message: 'Employment changed; reload and retry' }, { status: 409 });
     if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     if (path === '/api/v1/people/7/employments') return Response.json({ employments: [job] });
-    if (path === '/api/v1/people/7/network') return Response.json({
-      root_person_id: 7, depth: 1, truncated: false,
-      nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: 'Example Person', hop: 0 },
-        ...(endedElsewhere ? [] : [{ id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Synthetic Org', hop: 1 }])],
-      edges: endedElsewhere ? [] : [{ id: 'employment:11', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:21', label: 'Engineer' }],
-    });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const directoryChanged = vi.fn();
@@ -41,7 +35,7 @@ it('refreshes Work and Network when accepting a job ended elsewhere', async () =
   expect(refresh).toHaveBeenCalledOnce();
 });
 
-it('refreshes Connections and Network when cancelling the delete of a connection ended elsewhere', async () => {
+it('refreshes Connections when cancelling the delete of a connection ended elsewhere', async () => {
   let endedElsewhere = false;
   const { client, controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -51,12 +45,6 @@ it('refreshes Connections and Network when cancelling the delete of a connection
     if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
     if (path === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
     if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-    if (path === '/api/v1/people/7/network') return Response.json({
-      root_person_id: 7, depth: 1, truncated: false,
-      nodes: [{ id: 'person:7', kind: 'person', entity_id: 7, label: 'Example Person', hop: 0 },
-        ...(endedElsewhere ? [] : [{ id: 'person:141', kind: 'person', entity_id: 141, label: 'Synthetic Peer', hop: 1 }])],
-      edges: endedElsewhere ? [] : [{ id: 'relationship:41', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:141', relationship_type_slug: 'mentor', label: 'mentors' }],
-    });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   controller.relationships = [{ counterpart_person_id: 141, counterpart_display_name: 'Synthetic Peer', counterpart_label: 'mentors', counterpart_vcard_uid: 'person-141', direction: 'outgoing' as const, relationship: relationship(41) }];

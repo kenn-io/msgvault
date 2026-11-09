@@ -21,14 +21,12 @@ describe('relationship choices', () => {
     expect(relationshipTypeOptions([type('friend', 'friend')]).map(group => group.label)).toEqual(['Social']);
   });
 
-  it('uses canonical labels for mirrored and renamed inverse aliases', () => {
+  it('uses canonical labels when an inverse type is mirrored', () => {
     const parent = type('parent', 'guardian', 'dependent', { id: 1, inverse_type_id: 2 });
     const child = type('child', 'dependent', 'guardian', { id: 2, inverse_type_id: 1, is_canonical: false });
-    for (const alias of [child]) {
-      expect(relationshipTypeOptions([parent, alias])[0].children?.map(choice => [choice.name, choice.displayLabel])).toEqual([
-        ['parent:outgoing', 'guardian'], ['parent:incoming', 'dependent'],
-      ]);
-    }
+    expect(relationshipTypeOptions([parent, child])[0].children?.map(choice => [choice.name, choice.displayLabel])).toEqual([
+      ['parent:outgoing', 'guardian'], ['parent:incoming', 'dependent'],
+    ]);
   });
 
   it('uses current label text for connecting words, including custom labels', () => {

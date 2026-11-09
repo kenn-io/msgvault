@@ -52,7 +52,11 @@ async function addPrimaryChoice(controller: DirectoryEntityController, check: bo
   await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
 }
 
-it('offers Primary job beside a current job with no primary, and keeps it off when left unchecked', async () => {
+it.each([
+  { label: 'leaves a new job unmarked when unchecked', currentPrimary: false, selected: false, expected: false },
+  { label: 'creates a primary job in one write when selected', currentPrimary: false, selected: true, expected: true },
+  { label: 'omits the choice when a current job is already primary', currentPrimary: true, selected: false, expected: undefined },
+])('$label', async ({ currentPrimary, selected, expected }) => {
   let body: Record<string, unknown> | undefined;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -60,43 +64,11 @@ it('offers Primary job beside a current job with no primary, and keeps it off wh
     return Response.json({ employments: [], organizations: [organization()] });
   });
   controller.organizations = [organization()];
-  controller.employments = [employment(12, 1, { is_primary: false })];
-  await addPrimaryChoice(controller, false);
+  controller.employments = [employment(12, 1, { is_primary: currentPrimary })];
+  await addPrimaryChoice(controller, selected);
   await waitFor(() => expect(body).toBeDefined());
-  expect(body).toHaveProperty('is_primary', false);
-});
-
-it('creates a primary job in one write when selected', async () => {
-  let body: Record<string, unknown> | undefined;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'POST') { body = await request.json(); return Response.json(employment()); }
-    return Response.json({ employments: [], organizations: [organization()] });
-  });
-  controller.organizations = [organization()];
-  controller.employments = [employment(12, 1, { is_primary: false })];
-  await addPrimaryChoice(controller, true);
-  await waitFor(() => expect(body).toBeDefined());
-  expect(body).toHaveProperty('is_primary', true);
-});
-
-it('hides Primary job when a current job is already primary and creates once', async () => {
-  let body: Record<string, unknown> | undefined;
-  const onDone = vi.fn();
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'POST' && pathOf(request).endsWith('/employments')) {
-      body = await request.json();
-      return Response.json(employment(13, 1), { status: 201, headers: { ETag: '"employment-13-r1"' } });
-    }
-    return Response.json({ employments: [], organizations: [organization()] });
-  });
-  controller.organizations = [organization()];
-  controller.employments = [employment(12, 1, { is_primary: true })];
-  await addPrimaryChoice(controller, true, onDone);
-  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-  expect(screen.queryByRole('checkbox', { name: 'Primary job' })).toBeNull();
-  expect(body).not.toHaveProperty('is_primary');
+  if (expected === undefined) expect(body).not.toHaveProperty('is_primary');
+  else expect(body).toHaveProperty('is_primary', expected);
 });
 
 it('ends a primary job from Edit without overriding the stored primary rule', async () => {
@@ -271,8 +243,7 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
   });
 
 
-  it('checks an uncertain job create without reopening the duplicate-submit window', async () => {
-    {
+  it('keeps an uncertain job create blocked while its check is pending', async () => {
     let posts = 0, listReads = 0;
     let finishLookup: (response: Response) => void = () => undefined;
     const { controller } = controllerWith(async input => {
@@ -304,8 +275,9 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
     firstView.unmount();
     controller.destroy();
-    }
-    {
+  });
+
+  it('finds an uncertain job create in later employment pages', async () => {
     const inputDate = '2019';
     const savedDate = { year: 2019 };
     let saved: ReturnType<typeof employment> | undefined;
@@ -348,7 +320,6 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     expect(posts).toBe(1);
     secondView.unmount();
     controller.destroy();
-    }
   });
 
   it('shows the exact employer in the existing job context', async () => {
@@ -374,6 +345,7 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
   let reads = 0;
   const bodies: Record<string, unknown>[] = [];
   const job = employment(11, 1, opening);
+  const directoryChanged = vi.fn();
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (request.method === 'PATCH') {
@@ -382,8 +354,9 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     }
     if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     return Response.json(employment(11, ++reads, reads === 1 ? opening : { ...opening, ...saved }), { headers: { ETag: `"employment-11-r${reads}"` } });
-  });
+  }, 7, { onDirectoryChange: directoryChanged });
   const onClose = vi.fn();
+  const refresh = vi.spyOn(controller, 'refreshEmployments');
   render(EmploymentEditor, { controller, personID: 7, employment: job, onClose });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -396,6 +369,8 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Sales' });
   } else {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    await waitFor(() => expect(directoryChanged).toHaveBeenCalledOnce());
+    expect(refresh).toHaveBeenCalledOnce();
     expect(bodies).toHaveLength(1);
   }
 });

@@ -396,8 +396,7 @@ it('shows a failed holder profile read as a failed check and retries it', async 
   expect(await screen.findByText('Synthetic Person')).toBeDefined();
 });
 
-it('handles conflicts after either organization or alias saves', async () => {
-  {
+it('keeps the latest contact details through an organization and alias conflict', async () => {
   const onDone = vi.fn();
   let revision = 1;
   const contacts = richOrganizationProfile().contact_points;
@@ -432,8 +431,9 @@ it('handles conflicts after either organization or alias saves', async () => {
   expect(savedContacts).toEqual(['concurrent@example.test']);
   firstView.unmount();
   controller.destroy();
-  }
-  {
+});
+
+it('keeps the opened profile while retrying alias changes after a concurrent edit', async () => {
   const onDone = vi.fn();
   let revision = 1;
   const writes: { method: string; body: { primary_domain?: string; name?: string; names?: { name: string; name_kind: string; source: string }[] } }[] = [];
@@ -482,7 +482,6 @@ it('handles conflicts after either organization or alias saves', async () => {
   expect(writes[2]).toMatchObject({ method: 'PATCH', body: { name: 'New name', primary_domain: 'synthetic.example' } });
   secondView.unmount();
   controller.destroy();
-  }
 });
 
 it('keeps the dialog open while the other section still has unsaved edits', async () => {
@@ -594,7 +593,6 @@ it('retries a failed Keep yours after the fields were changed back', async () =>
 });
 
 it('requires review of a concurrent domain on delete after a core save', async () => {
-  const action = 'delete' as const;
   let revision = 1;
   let stored = organization();
   const writes: { method: string; tag: string | null }[] = [];

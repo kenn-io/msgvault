@@ -3,8 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organization, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 
-it('keeps the End conflict valid through retry and saved-detail dismissal', async () => {
-  {
+it('keeps the End conflict valid through retry', async () => {
   const opening = employment(11, 1, { start_date: { year: 2022 } });
   const saved = employment(11, 2, { start_date: { year: 2028 } });
   let reads = 0;
@@ -34,8 +33,9 @@ it('keeps the End conflict valid through retry and saved-detail dismissal', asyn
   await waitFor(() => expect(writes).toBe(3));
   rendered.unmount();
   controller.destroy();
-  }
-  {
+});
+
+it('shows saved job details and closes with Escape after an End conflict', async () => {
     let reads = 0;
     const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
     const saved = employment(11, 2, { start_date: { year: 2024, month: 3 }, title: 'Current saved role', organization_id: 22 });
@@ -68,8 +68,7 @@ it('keeps the End conflict valid through retry and saved-detail dismissal', asyn
       expect(reads).toBe(2);
       await fireEvent.keyDown(document, { key: 'Escape' });
       await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    } finally { view.unmount(); controller.destroy(); }
-  }
+  } finally { view.unmount(); controller.destroy(); }
 });
 
   it('prefills the local day across UTC midnight', async () => {
