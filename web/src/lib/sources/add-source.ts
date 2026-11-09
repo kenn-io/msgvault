@@ -61,6 +61,5 @@ export function addSourceCommand(kind: CommandSourceKind, values: Record<string,
   if (!server) return undefined;
   const filled: Record<string, string | undefined> = { ...values, ...server };
   // An option with no value, such as a server's unstated port, is left out.
-  const command = kind.template.replace(/ (\S+) \{(\w+)\}/g, (_, before: string, id: string) => filled[id]?.trim() ? ` ${before} ${arg(filled[id]!.trim(), shell, before.startsWith('--'))}` : '');
-  return kind.id === 'imap' && starttls ? `${command} --starttls` : command;
+  return kind.template.replace(/ (\S+) \{(\w+)\}/g, (_, before: string, id: string) => filled[id]?.trim() ? ` ${before} ${arg(filled[id]!.trim(), shell, before.startsWith('--'))}` : '') + (starttls ? ' --starttls' : '');
 }
