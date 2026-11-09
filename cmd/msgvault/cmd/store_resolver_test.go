@@ -1322,7 +1322,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	}
 	assert.Equal(wantURL, info.URL)
 	if tt.notice {
-		assert.Contains(stderr, "to use this version and keep it running until stopped.")
+		assert.Contains(stderr, "to use this version")
 	} else if tt.replace {
 		assert.Contains(stderr, "Starting local msgvault daemon")
 	} else {

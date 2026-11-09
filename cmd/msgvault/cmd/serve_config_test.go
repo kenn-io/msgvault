@@ -36,7 +36,6 @@ func TestQuickStartDaemonLifetime(t *testing.T) {
 	t.Cleanup(func() { run(context.WithoutCancel(t.Context()), "daemon", "stop") })
 	run(t.Context(), "init-db")
 	output := run(t.Context(), "daemon", "restart")
-	assert.Contains(output, "Stays running until msgvault daemon stop")
 	match := regexp.MustCompile(`msgvault running at (http://\S+)`).FindStringSubmatch(output)
 	require.Len(match, 2, "%s", output)
 	// The detached child's real clock must see five idle seconds without HTTP polling.

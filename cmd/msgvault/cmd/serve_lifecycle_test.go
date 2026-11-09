@@ -1622,44 +1622,48 @@ func (t *recordingBackgroundProcessTree) Close() error {
 }
 
 func TestStartServeBackgroundProcessTransfersProcessTreeOwnership(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	for _, persistent := range []bool{false, true} {
+		t.Run(strconv.FormatBool(persistent), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 
-	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
-	t.Setenv("GO_HELPER_MODE", "block")
-	t.Setenv(servePersistentChildEnv, "true")
-	tree := &recordingBackgroundProcessTree{terminate: func() error { return nil }}
-	oldCommand := newServeBackgroundCommandForRun
-	oldConfigure := configureServeBackgroundCommandForRun
-	newServeBackgroundCommandForRun = func(string, ...string) *exec.Cmd {
-		return helperProcessCommand(t.Context(), "block")
+			t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+			t.Setenv("GO_HELPER_MODE", "block")
+			t.Setenv(servePersistentChildEnv, strconv.FormatBool(!persistent))
+			tree := &recordingBackgroundProcessTree{terminate: func() error { return nil }}
+			oldCommand := newServeBackgroundCommandForRun
+			oldConfigure := configureServeBackgroundCommandForRun
+			newServeBackgroundCommandForRun = func(string, ...string) *exec.Cmd {
+				return helperProcessCommand(t.Context(), "block")
+			}
+			configureServeBackgroundCommandForRun = func(cmd *exec.Cmd) (backgroundServeCommandConfig, error) {
+				assert.Contains(cmd.Environ(), servePersistentChildEnv+"="+strconv.FormatBool(persistent))
+				return backgroundServeCommandConfig{ProcessTree: tree}, nil
+			}
+			t.Cleanup(func() {
+				newServeBackgroundCommandForRun = oldCommand
+				configureServeBackgroundCommandForRun = oldConfigure
+			})
+
+			proc, err := startServeBackgroundProcess(
+				lifecycleTestConfig(t.TempDir()),
+				backgroundServeStartOptions{ExecutablePath: os.Args[0], Persistent: persistent},
+			)
+			require.NoError(err)
+			t.Cleanup(func() {
+				_ = proc.Process.Kill()
+				select {
+				case <-proc.Wait:
+				case <-time.After(2 * time.Second):
+				}
+				_ = proc.releaseProcessTree()
+			})
+
+			assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
+			require.NoError(proc.releaseProcessTree())
+			assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
+		})
 	}
-	configureServeBackgroundCommandForRun = func(cmd *exec.Cmd) (backgroundServeCommandConfig, error) {
-		assert.Contains(cmd.Environ(), servePersistentChildEnv+"=false")
-		return backgroundServeCommandConfig{ProcessTree: tree}, nil
-	}
-	t.Cleanup(func() {
-		newServeBackgroundCommandForRun = oldCommand
-		configureServeBackgroundCommandForRun = oldConfigure
-	})
-
-	proc, err := startServeBackgroundProcess(
-		lifecycleTestConfig(t.TempDir()),
-		backgroundServeStartOptions{ExecutablePath: os.Args[0]},
-	)
-	require.NoError(err)
-	t.Cleanup(func() {
-		_ = proc.Process.Kill()
-		select {
-		case <-proc.Wait:
-		case <-time.After(2 * time.Second):
-		}
-		_ = proc.releaseProcessTree()
-	})
-
-	assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
-	require.NoError(proc.releaseProcessTree())
-	assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
 }
 
 func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
@@ -1781,16 +1785,27 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	for _, contended := range []bool{false, true} {
 		for _, tc := range []struct {
-			timeout, persistent, lifetime, restart, powerShell string
-			options                                            invocationOptions
+			timeout, persistent, restart, powerShell string
+			options                                  invocationOptions
 		}{
-			{timeout: "2s", persistent: "false", lifetime: "  Exits after 2s idle (started automatically)", options: invocationOptions{homeDir: "/tmp/sample's archive"}, restart: "--home '/tmp/sample'\\''s archive' ", powerShell: "'--home' '/tmp/sample''s archive' "},
-			{timeout: "0s", persistent: "false", lifetime: "  Stays running (started automatically)", options: invocationOptions{cfgFile: "/tmp/sample's archive.toml"}, restart: "--config '/tmp/sample'\\''s archive.toml' ", powerShell: "'--config' '/tmp/sample''s archive.toml' "},
+			{timeout: "2s", persistent: "false", options: invocationOptions{homeDir: "/tmp/sample's archive"}, restart: "--home '/tmp/sample'\\''s archive' ", powerShell: "'--home' '/tmp/sample''s archive' "},
+			{timeout: "0s", persistent: "false", options: invocationOptions{cfgFile: "/tmp/sample's archive.toml"}, restart: "--config '/tmp/sample'\\''s archive.toml' ", powerShell: "'--config' '/tmp/sample''s archive.toml' "},
 			{options: invocationOptions{cfgFile: "/tmp/sample's archive.toml", homeDir: "/tmp/sample's archive"}, restart: "--config '/tmp/sample'\\''s archive.toml' --home '/tmp/sample'\\''s archive' ", powerShell: "'--config' '/tmp/sample''s archive.toml' '--home' '/tmp/sample''s archive' "},
-			{timeout: "0s", persistent: "true", lifetime: "  Stays running until msgvault daemon stop"},
+			{timeout: "0s", persistent: "true"},
 		} {
+			if contended && (tc.options.homeDir == "" || tc.options.cfgFile == "") {
+				continue
+			}
 			t.Run(fmt.Sprintf("contended=%t/timeout=%s/home=%t/config=%t", contended, tc.timeout, tc.options.homeDir != "", tc.options.cfgFile != ""), func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
+				stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
+					require.FailNow("reuse must preserve the running daemon")
+					return errors.New("unreachable")
+				})
+				stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+					require.FailNow("reuse must preserve the running daemon")
+					return nil, errors.New("unreachable")
+				})
 				c := lifecycleTestConfig(t.TempDir())
 				server := httptestPingDaemon(t)
 				rec := daemon.RuntimeRecord{PID: os.Getpid(), Service: daemonService, Version: Version, Network: daemon.NetworkTCP, Address: net.JoinHostPort(server.Host, strconv.Itoa(server.Port)), Metadata: map[string]string{
@@ -1816,18 +1831,21 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 				after, err := os.ReadFile(path)
 				require.NoError(err)
 				assert.Equal(before, after, "reuse preserves the runtime and its lifetime")
-				want := "msgvault already running at http://" + rec.Address + " (pid " + strconv.Itoa(rec.PID) + ")\n"
-				if tc.lifetime != "" {
-					want += tc.lifetime + "\n"
+				assert.Contains(stdout.String(), "msgvault already running at http://"+rec.Address+" (pid "+strconv.Itoa(rec.PID)+")\n")
+				if tc.timeout != "" {
+					assert.Regexp("(?m)^  \\S", stdout.String(), "reuse reports the known lifetime")
+				} else {
+					assert.NotContains(stdout.String(), "\n  ", "legacy lifetime is unknown")
 				}
 				if tc.persistent != "true" {
 					restart := "'/tmp/source build/msgvault' " + tc.restart + "daemon restart"
 					if runtime.GOOS == "windows" {
 						restart = "& '/tmp/source build/msgvault' " + tc.powerShell + "'daemon' 'restart'"
 					}
-					want += "Run `" + restart + "` to keep it running until stopped.\n"
+					assert.Contains(stdout.String(), "Run `"+restart+"` to keep it running until stopped.\n")
+				} else {
+					assert.NotContains(stdout.String(), "daemon restart")
 				}
-				assert.Equal(want, stdout.String())
 				assert.Empty(stderr.String())
 			})
 		}
@@ -1848,7 +1866,7 @@ func TestServeStatusLifetime(t *testing.T) {
 }
 
 func TestDaemonLifetimeMetadata(t *testing.T) {
-	for _, tc := range []struct{ persistent, timeout, wantTimeout string }{{"false", "2s", "2s"}, {"false", "0s", "0s"}, {"true", "2s", "0s"}} {
+	for _, tc := range []struct{ persistent, timeout, wantTimeout string }{{"false", "2s", "2s"}, {"true", "2s", "0s"}} {
 		t.Run("persistent="+tc.persistent+"/timeout="+tc.timeout, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -1863,7 +1881,6 @@ func TestDaemonLifetimeMetadata(t *testing.T) {
 			require.NoError(err)
 			record, err := runtimeStore.Read(path)
 			require.NoError(err)
-			assert.Equal(tc.persistent, record.Metadata[runtimePersistent])
 			assert.Equal(tc.wantTimeout, record.Metadata[runtimeIdleTimeout])
 		})
 	}

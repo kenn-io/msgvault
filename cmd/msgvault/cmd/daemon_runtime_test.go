@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,11 +96,18 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	assert.NotContains(rec.Metadata, runtimePersistent)
 
 	t.Setenv(serveBackgroundChildEnv, "1")
-	_, _, err = writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key", 0)
-	require.NoError(err, "write background daemon runtime")
-	rec, err = daemon.RuntimeStore{Dir: dataDir}.Read(path)
-	require.NoError(err, "read background runtime record")
-	assert.Equal("true", rec.Metadata[runtimeBackground])
+	for _, tc := range []struct{ persistent, timeout string }{{"false", "2s"}, {"true", "0s"}} {
+		t.Setenv(servePersistentChildEnv, tc.persistent)
+		timeout, err := time.ParseDuration(tc.timeout)
+		require.NoError(err)
+		_, _, err = writeDaemonRuntime(dataDir, "127.0.0.1", 8123, "v-test", "test-api-key", timeout)
+		require.NoError(err, "write background daemon runtime")
+		rec, err = daemon.RuntimeStore{Dir: dataDir}.Read(path)
+		require.NoError(err, "read background runtime record")
+		assert.Equal("true", rec.Metadata[runtimeBackground])
+		assert.Equal(tc.persistent, rec.Metadata[runtimePersistent])
+		assert.Equal(tc.timeout, rec.Metadata[runtimeIdleTimeout])
+	}
 }
 
 func TestWriteDaemonRuntimeAcceptsSymlinkedDataDir(t *testing.T) {
