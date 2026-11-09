@@ -2132,7 +2132,8 @@ receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ## import-ics
 
-Import a local iCalendar file as separate calendar event messages:
+On unreleased `main`, import a local iCalendar file as separate calendar event
+messages:
 
 ```bash
 msgvault import-ics calendar.ics --identifier personal-calendar
@@ -2149,12 +2150,12 @@ reports updated and unchanged counts. Floating times use UTC. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
 
 A cancellation keeps the event's last accepted title, times, participants, and
-raw, and only marks it cancelled.
+raw iCalendar data, and only marks it cancelled.
 
 ### Invitations in email
 
-Archiving email extracts decoded `text/calendar` MIME parts into event messages
-in the same source. Attached forwarded emails and iTIP messages with the ADD,
+On unreleased `main`, archiving email extracts decoded `text/calendar` MIME
+parts into event messages in the same source. Attached forwarded emails and iTIP messages with the ADD,
 REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
 
 An invitation, its updates, and its cancellation share one event. Every
@@ -2162,8 +2163,9 @@ contributing email keeps its full MIME and attachments, and the event survives
 deletion of any of them. A later email applies only when its `ORGANIZER`
 address matches the organizer of the email that created the event, ignoring
 case. An event with no organizer accepts a revision that sets its organizer.
-An organizer mismatch leaves the event unchanged and logs a warning with the email message ID. Organizer addresses are unauthenticated: a
-sender who copies the `ORGANIZER` address can update or cancel the event.
+An organizer mismatch leaves the event unchanged and logs a warning with the
+email message ID. Organizer addresses are unauthenticated: a sender who copies
+the `ORGANIZER` address can update or cancel the event.
 Invalid calendar parts leave the email intact and log a warning with its message ID.
 
 The next email re-derivation extracts invites from archived MIME automatically
@@ -3188,8 +3190,9 @@ msgvault export-token <email> [flags]
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The provider-message counts used by `verify` and `remove-account` exclude calendar events extracted from invitations.
-The command streams the daemon's stdout/stderr back to the terminal.
+local daemon. The provider-message counts used by `verify` and
+`remove-account` exclude calendar events extracted from invitations. The
+command streams the daemon's stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]
