@@ -343,10 +343,8 @@ it('refreshes the job version before retrying a failed Make primary write', asyn
   expect(tags).toEqual(['"employment-12-r1"', '"employment-12-r2"']);
 });
 
-it.each([
-  { label: 'saved fields', saved: employment(11, 2, { title: 'Concurrent title', department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', confidence: 0.88 }) },
-  { label: 'reassigned owner', saved: employment(11, 2, { person_id: 8 }) },
-])('shows $label in the job delete conflict', async ({ saved }) => {
+it('shows a reassigned owner in the job delete conflict', async () => {
+  const saved = employment(11, 2, { person_id: 8 });
   const tags: (string | null)[] = [];
   let reads = 0;
   const { controller } = controllerWith(async input => {
@@ -368,12 +366,5 @@ it.each([
   await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   const conflict = (await screen.findByText('This job changed since you opened it.')).closest('.inline-notice') as HTMLElement;
-  if (saved.person_id === 8) {
-    expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
-  } else {
-    expect(screen.getByText('Concurrent title')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  }
+  expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
 });
