@@ -419,7 +419,8 @@ it('shows a failed holder profile read as a failed check and retries it', async 
   expect(await screen.findByText('Synthetic Person')).toBeDefined();
 });
 
-it('shows the newer profile before an alias save that follows Keep yours, and keeps its contact', async () => {
+it('handles conflicts after either organization or alias saves', async () => {
+  {
   const onDone = vi.fn();
   let revision = 1;
   const contacts = richOrganizationProfile().contact_points;
@@ -435,7 +436,7 @@ it('shows the newer profile before an alias save that follows Keep yours, and ke
     savedContacts = body.contact_points.map((item: { original_value: string }) => item.original_value);
     return Response.json({ ...organizationProfile(revision), ...body }, { headers: { ETag: `"organization-21-r${revision}"` } });
   });
-  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  const firstView = render(OrganizationEditor, { controller, organization: organization(), onDone });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Synthetic Works, New alias' } });
   await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
   revision++;
@@ -452,6 +453,59 @@ it('shows the newer profile before an alias save that follows Keep yours, and ke
   await fireEvent.click(within(alert).getByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   expect(savedContacts).toEqual(['concurrent@example.test']);
+  firstView.unmount();
+  controller.destroy();
+  }
+  {
+  const onDone = vi.fn();
+  let revision = 1;
+  const writes: { method: string; body: { primary_domain?: string; name?: string; names?: { name: string; name_kind: string; source: string }[] } }[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const tag = `"organization-21-r${revision}"`;
+    // Elsewhere, at r2: a new domain and a new alias.
+    const elsewhere = revision > 1
+      ? { organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: [{ ...organizationProfile().names[0], envelope: envelope(31, { source: 'vcard_import', source_ref: 'resource-current' }) }, { organization_id: 21, name_kind: 'alias', name: 'Other alias', name_normalized: 'other alias', envelope: envelope(33) }] }
+      : {};
+    if (request.method === 'GET') return Response.json({ ...organizationProfile(revision), ...elsewhere }, { headers: { ETag: tag } });
+    if (request.headers.get('If-Match') !== tag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    const body = await request.json();
+    writes.push({ method: request.method, body });
+    revision++;
+    if (request.method === 'PATCH') return Response.json({ ...organization(21, revision), ...body }, { headers: { ETag: `"organization-21-r${revision}"` } });
+    return Response.json({ ...organizationProfile(revision), ...elsewhere, organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: body.names.map((item: object, index: number) => ({ ...item, organization_id: 21, envelope: envelope(40 + index) })) }, { headers: { ETag: `"organization-21-r${revision}"` } });
+  });
+  const secondView = render(OrganizationEditor, { controller, organization: organization(), onDone });
+  const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
+  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Draft alias' } });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
+  revision++;
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  let alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
+  expect(within(alert).getByText('Other alias')).toBeDefined();
+  await fireEvent.click(within(alert).getByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  // The aliases the form showed, with the saved one keeping its provenance; the other writer's alias is gone.
+  expect(writes[0].body.names?.filter(item => item.name_kind === 'alias')).toEqual([expect.objectContaining({ name: 'Synthetic Works', source: 'vcard_import' }), expect.objectContaining({ name: 'Draft alias', source: 'user' })]);
+  expect(aliases).toHaveProperty('value', 'Synthetic Works, Draft alias');
+  expect(onDone).not.toHaveBeenCalled();
+  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Draft alias, Second alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await waitFor(() => expect(writes).toHaveLength(2));
+  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+  // The untouched domain still reads as opened, so the organization save shows the newer one before writing.
+  expect(screen.getByRole('textbox', { name: 'Organization domain' })).toHaveProperty('value', 'synthetic.example');
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
+  expect(within(alert).getByText('Domain', { selector: 'dt' }).nextElementSibling?.textContent).toBe('other.example');
+  expect(writes).toHaveLength(2);
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(writes[2]).toMatchObject({ method: 'PATCH', body: { name: 'New name', primary_domain: 'synthetic.example' } });
+  secondView.unmount();
+  controller.destroy();
+  }
 });
 
 it('keeps the dialog open while the other section still has unsaved edits', async () => {
@@ -530,55 +584,6 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(methods).toEqual(['PUT', 'PATCH', 'PATCH']));
   }
-});
-
-it("writes the aliases as shown on Keep yours, then shows another writer's domain before the organization save, after a second alias save too", async () => {
-  const onDone = vi.fn();
-  let revision = 1;
-  const writes: { method: string; body: { primary_domain?: string; name?: string; names?: { name: string; name_kind: string; source: string }[] } }[] = [];
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    const tag = `"organization-21-r${revision}"`;
-    // Elsewhere, at r2: a new domain and a new alias.
-    const elsewhere = revision > 1
-      ? { organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: [{ ...organizationProfile().names[0], envelope: envelope(31, { source: 'vcard_import', source_ref: 'resource-current' }) }, { organization_id: 21, name_kind: 'alias', name: 'Other alias', name_normalized: 'other alias', envelope: envelope(33) }] }
-      : {};
-    if (request.method === 'GET') return Response.json({ ...organizationProfile(revision), ...elsewhere }, { headers: { ETag: tag } });
-    if (request.headers.get('If-Match') !== tag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    const body = await request.json();
-    writes.push({ method: request.method, body });
-    revision++;
-    if (request.method === 'PATCH') return Response.json({ ...organization(21, revision), ...body }, { headers: { ETag: `"organization-21-r${revision}"` } });
-    return Response.json({ ...organizationProfile(revision), ...elsewhere, organization: { ...organization(21, revision), primary_domain: 'other.example' }, names: body.names.map((item: object, index: number) => ({ ...item, organization_id: 21, envelope: envelope(40 + index) })) }, { headers: { ETag: `"organization-21-r${revision}"` } });
-  });
-  render(OrganizationEditor, { controller, organization: organization(), onDone });
-  const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
-  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Draft alias' } });
-  await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
-  revision++;
-  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  let alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
-  expect(within(alert).getByText('Other alias')).toBeDefined();
-  await fireEvent.click(within(alert).getByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(writes).toHaveLength(1));
-  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-  // The aliases the form showed, with the saved one keeping its provenance; the other writer's alias is gone.
-  expect(writes[0].body.names?.filter(item => item.name_kind === 'alias')).toEqual([expect.objectContaining({ name: 'Synthetic Works', source: 'vcard_import' }), expect.objectContaining({ name: 'Draft alias', source: 'user' })]);
-  expect(aliases).toHaveProperty('value', 'Synthetic Works, Draft alias');
-  expect(onDone).not.toHaveBeenCalled();
-  await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Draft alias, Second alias' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  await waitFor(() => expect(writes).toHaveLength(2));
-  await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-  // The untouched domain still reads as opened, so the organization save shows the newer one before writing.
-  expect(screen.getByRole('textbox', { name: 'Organization domain' })).toHaveProperty('value', 'synthetic.example');
-  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
-  expect(within(alert).getByText('Domain', { selector: 'dt' }).nextElementSibling?.textContent).toBe('other.example');
-  expect(writes).toHaveLength(2);
-  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
-  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-  expect(writes[2]).toMatchObject({ method: 'PATCH', body: { name: 'New name', primary_domain: 'synthetic.example' } });
 });
 
 it('waits to save the organization until one of its fields changes', async () => {

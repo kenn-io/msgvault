@@ -269,7 +269,8 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
   });
 
 
-  it('keeps Add job and Close locked until Check again finishes looking for the lost job', async () => {
+  it('checks an uncertain job create without reopening the duplicate-submit window', async () => {
+    {
     let posts = 0, listReads = 0;
     let finishLookup: (response: Response) => void = () => undefined;
     const { controller } = controllerWith(async input => {
@@ -281,7 +282,7 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
       throw new Error(`unexpected ${request.method} ${path}`);
     });
     const onClose = vi.fn();
-    render(EmploymentEditor, { controller, personID: 7, onClose });
+    const firstView = render(EmploymentEditor, { controller, personID: 7, onClose });
     await screen.findByRole('button', { name: /^Organization(:|$)/ });
     await openTypeahead('Organization');
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
@@ -299,9 +300,10 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     expect(onClose).not.toHaveBeenCalled();
     finishLookup(collection([]));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
-  });
-
-  it('closes after Check again finds an uncertain historical job on a later page', async () => {
+    firstView.unmount();
+    controller.destroy();
+    }
+    {
     const inputDate = '2019';
     const savedDate = { year: 2019 };
     let saved: ReturnType<typeof employment> | undefined;
@@ -327,7 +329,7 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
       throw new Error(`unexpected ${request.method} ${path}`);
     }, 7, { onDirectoryChange });
     const onDone = vi.fn();
-    render(EmploymentEditor, { controller, personID: 7, onDone });
+    const secondView = render(EmploymentEditor, { controller, personID: 7, onDone });
     await screen.findByRole('button', { name: /^Organization(:|$)/ });
     await openTypeahead('Organization');
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
@@ -342,6 +344,9 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     expect(onDirectoryChange).toHaveBeenCalledOnce();
     expect(controller.employments.some(job => job.id === 811 && job.title === 'Garden designer')).toBe(true);
     expect(posts).toBe(1);
+    secondView.unmount();
+    controller.destroy();
+    }
   });
 
   it('shows the exact employer in the existing job context', async () => {

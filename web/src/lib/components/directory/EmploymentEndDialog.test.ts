@@ -3,7 +3,8 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organization, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 
-it('keeps Keep yours disabled for an end date before the saved start, then retries a failed save', async () => {
+it('keeps the End conflict valid through retry and saved-detail dismissal', async () => {
+  {
   const opening = employment(11, 1, { start_date: { year: 2022 } });
   const saved = employment(11, 2, { start_date: { year: 2028 } });
   let reads = 0;
@@ -16,7 +17,7 @@ it('keeps Keep yours disabled for an end date before the saved start, then retri
     }
     return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: reads === 1 ? '"employment-11-r1"' : '"employment-11-r2"' } });
   });
-  render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
+  const rendered = render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
   const end = screen.getByRole('textbox', { name: 'End date' });
   await fireEvent.input(end, { target: { value: '2024' } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
@@ -31,24 +32,10 @@ it('keeps Keep yours disabled for an end date before the saved start, then retri
   expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false);
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(writes).toBe(3));
-});
-
-  it('prefills the local day across UTC midnight', async () => {
-    vi.stubEnv('TZ', 'America/New_York');
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-05T04:30:00Z'));
-    const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
-    const { controller } = controllerWith(async () => Response.json(opening, { headers: { ETag: '"employment-11-r1"' } }));
-    const onClose = vi.fn();
-    const view = render(EmploymentEndDialog, { controller, employment: opening, onClose });
-    try {
-      const field = await screen.findByRole('textbox', { name: 'End date' });
-      await waitFor(() => expect(field).toHaveProperty('disabled', false));
-      expect(field).toHaveProperty('value', '2026-11-04');
-    } finally { vi.useRealTimers(); vi.unstubAllEnvs(); view.unmount(); controller.destroy(); }
-  });
-
-  it('retains an End conflict and displays saved details', async () => {
+  rendered.unmount();
+  controller.destroy();
+  }
+  {
     let reads = 0;
     const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
     const saved = employment(11, 2, { start_date: { year: 2024, month: 3 }, title: 'Current saved role', organization_id: 22 });
@@ -82,4 +69,20 @@ it('keeps Keep yours disabled for an end date before the saved start, then retri
       await fireEvent.keyDown(document, { key: 'Escape' });
       await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     } finally { view.unmount(); controller.destroy(); }
+  }
+});
+
+  it('prefills the local day across UTC midnight', async () => {
+    vi.stubEnv('TZ', 'America/New_York');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-05T04:30:00Z'));
+    const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
+    const { controller } = controllerWith(async () => Response.json(opening, { headers: { ETag: '"employment-11-r1"' } }));
+    const onClose = vi.fn();
+    const view = render(EmploymentEndDialog, { controller, employment: opening, onClose });
+    try {
+      const field = await screen.findByRole('textbox', { name: 'End date' });
+      await waitFor(() => expect(field).toHaveProperty('disabled', false));
+      expect(field).toHaveProperty('value', '2026-11-04');
+    } finally { vi.useRealTimers(); vi.unstubAllEnvs(); view.unmount(); controller.destroy(); }
   });

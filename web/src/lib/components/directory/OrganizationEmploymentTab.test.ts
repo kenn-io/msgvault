@@ -93,54 +93,43 @@ describe('OrganizationEmploymentTab', () => {
     } finally { view.unmount(); controller.destroy(); }
   });
 
-  it('leads a blocked organization delete to the job blocking it, without returning to the organization', async () => {
-    let jobs = [employment()];
+  it.each([
+    { label: 'one job', jobs: [employment()], blocked: "Delete its job first. Ending it isn't enough.", action: 'Delete job…', dialog: 'Delete Engineer at Synthetic Org?' },
+    { label: 'multiple jobs', jobs: [employment(), employment(12, 1, { title: 'Advisor', is_current: false, is_primary: false })], blocked: "Delete its 2 jobs first. Ending them isn't enough.", action: 'Delete Advisor…', dialog: 'Delete Advisor at Synthetic Org?' },
+  ])('opens a job delete from a blocked organization with $label', async ({ jobs, blocked, action, dialog }) => {
+    let currentJobs = jobs;
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-      if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: jobs });
+      if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: currentJobs });
+      if (path === '/api/v1/people/7/employments') return collection(currentJobs);
       if (path === '/api/v1/people/7') return Response.json({ display_name: 'Example Person' });
-      if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } });
-      if (path === '/api/v1/employments/11' && request.method === 'DELETE') { jobs = []; return new Response(null, { status: 204 }); }
-      if (path === '/api/v1/people/7/employments') return collection(jobs);
+      if (path.startsWith('/api/v1/employments/')) {
+        const id = Number(path.split('/').at(-1));
+        if (request.method === 'DELETE') { currentJobs = []; return new Response(null, { status: 204 }); }
+        const job = jobs.find(item => item.id === id);
+        return Response.json(job, { headers: { ETag: `"employment-${id}-r1"` } });
+      }
       throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    controller.employments = [employment()];
-    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
-    try {
-      await fireEvent.click(screen.getByRole('button', { name: 'this organization' }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-      await screen.findByText("Delete its job first. Ending it isn't enough.");
-      await fireEvent.click(screen.getByRole('button', { name: 'Delete job…' }));
-      const confirm = await screen.findByRole('dialog', { name: 'Delete Engineer at Synthetic Org?' });
-      await waitFor(() => expect(within(confirm).getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
-      await fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' }));
-      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      expect(controller.employments).toEqual([]);
-    } finally { view.unmount(); controller.destroy(); }
-  });
-
-  it('offers a delete for each of the open person’s jobs at a blocked organization', async () => {
-    const jobs = [employment(), employment(12, 1, { title: 'Advisor', is_current: false, is_primary: false })];
-    const { controller } = controllerWith(async input => {
-      const path = pathOf(requestOf(input));
-      if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-      if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: jobs });
-      if (path === '/api/v1/people/7') return Response.json({ display_name: 'Example Person' });
-      if (path === '/api/v1/employments/12') return Response.json(jobs[1], { headers: { ETag: '"employment-12-r1"' } });
-      throw new Error(`unexpected ${path}`);
     });
     controller.employments = jobs;
     const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
     try {
       await fireEvent.click(screen.getAllByRole('button', { name: 'this organization' })[0]);
       await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-      await screen.findByText("Delete its 2 jobs first. Ending them isn't enough.");
-      await fireEvent.click(screen.getByRole('button', { name: 'Actions for Example Person' }));
-      expect(screen.getByRole('menuitem', { name: 'Delete Engineer…' })).toBeDefined();
-      await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete Advisor…' }));
-      expect(await screen.findByRole('dialog', { name: 'Delete Advisor at Synthetic Org?' })).toBeDefined();
+      await screen.findByText(blocked);
+      if (jobs.length === 1) {
+        await fireEvent.click(screen.getByRole('button', { name: action }));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
+        await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        expect(controller.employments).toEqual([]);
+      } else {
+        await fireEvent.click(screen.getByRole('button', { name: 'Actions for Example Person' }));
+        await fireEvent.click(screen.getByRole('menuitem', { name: action }));
+      }
+      if (jobs.length > 1) expect(await screen.findByRole('dialog', { name: dialog })).toBeDefined();
     } finally { view.unmount(); controller.destroy(); }
   });
 
@@ -328,15 +317,22 @@ it('shows the saved job before retrying Make primary', async () => {
   await waitFor(() => expect(screen.queryByText("Couldn't make this job primary.")).toBeNull());
 });
 
-it('deletes the saved version a job delete conflict shows', async () => {
+it.each([
+  { label: 'saved fields', saved: employment(11, 2, { title: 'Concurrent title', department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', confidence: 0.88 }) },
+  { label: 'reassigned owner', saved: employment(11, 2, { person_id: 8 }) },
+])('shows $label in the job delete conflict', async ({ saved }) => {
   const tags: (string | null)[] = [];
   let reads = 0;
-  const saved = employment(11, 2, { title: 'Concurrent title', department: 'Concurrent department', location: 'Concurrent office', description: 'Concurrent description', confidence: 0.88 });
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
-    if (pathOf(request) === '/api/v1/people/7/employments') return collection([]);
-    if (pathOf(request).startsWith('/api/v1/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    if (request.method === 'GET') { reads++; return Response.json(tags.length ? saved : employment(), { headers: { ETag: tags.length ? '"employment-11-r2"' : '"employment-11-r1"' } }); }
+    const path = pathOf(request);
+    if (path === '/api/v1/people/7/employments') return collection([]);
+    if (path.startsWith('/api/v1/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    if (path === '/api/v1/people/8') return Response.json({ id: 8, display_name: 'Synthetic Two' });
+    if (request.method === 'GET') {
+      reads++;
+      return Response.json(reads === 1 ? employment() : saved, { headers: { ETag: `"employment-11-r${reads}"` } });
+    }
     tags.push(request.headers.get('If-Match'));
     return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : new Response(null, { status: 204 });
   });
@@ -345,32 +341,13 @@ it('deletes the saved version a job delete conflict shows', async () => {
   await rowAction('Delete…');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await screen.findByText('This job changed since you opened it.');
-  expect(screen.getByText('Concurrent title')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await waitFor(() => expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']));
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-});
-
-it('shows a reassigned owner in the delete conflict', async () => {
-  let reads = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    const path = pathOf(request);
-    if (path === '/api/v1/people/7/employments') return collection([]);
-    if (path.startsWith('/api/v1/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    if (path === '/api/v1/people/8') return Response.json({ id: 8, display_name: 'Synthetic Two' });
-    if (path === '/api/v1/employments/11' && request.method === 'GET') {
-      reads++;
-      return Response.json(employment(11, reads, { person_id: reads > 1 ? 8 : 7 }), { headers: { ETag: `"employment-11-r${reads}"` } });
-    }
-    if (path === '/api/v1/employments/11' && request.method === 'DELETE') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    throw new Error(`unexpected ${request.method} ${path}`);
-  });
-  controller.employments = [employment()];
-  render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await rowAction('Delete…');
-  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
   const conflict = (await screen.findByText('This job changed since you opened it.')).closest('.inline-notice') as HTMLElement;
-  expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
+  if (saved.person_id === 8) {
+    expect(within(conflict).getByText('Person', { selector: 'dt' }).nextElementSibling?.textContent).toBe('Synthetic Two');
+  } else {
+    expect(screen.getByText('Concurrent title')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  }
 });
