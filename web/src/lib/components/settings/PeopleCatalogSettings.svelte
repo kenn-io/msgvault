@@ -126,4 +126,12 @@
   small, .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   label { display: grid; gap: var(--label-gap); }
   [role="alert"] { color: var(--text-danger); }
+  @media (max-width: 600px) {
+    .list { display: block; }
+    .list li { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-1); padding-block: var(--pane-pad-x); }
+    .name { display: contents; }
+    .name > small { grid-column: 1 / -1; grid-row: 2; }
+    .list li > small { grid-column: 1 / -1; grid-row: 3; justify-self: start; text-align: start; }
+    .list li > :global(button) { grid-column: 2; grid-row: 1; }
+  }
 </style>
