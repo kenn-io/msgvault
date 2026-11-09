@@ -237,13 +237,16 @@ describe('PersonAgenda', () => {
     ['incompatible', 'Kata API is incompatible.'],
   ] as const)('gates agenda mutations when the integration is %s', async (state, message) => {
     let ready = false;
+    const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
       if (isStatus(request)) {
         return ready
           ? readyStatus()
           : Response.json({ state, message });
       }
+      if (!ready) return Response.json({ error: 'task_integration_unavailable', message: 'Task service is unavailable' }, { status: 503 });
       return Response.json({ project: 'msgvault', items: [item('one', 'Ask')] });
     }));
 
@@ -254,6 +257,9 @@ describe('PersonAgenda', () => {
     expect(screen.queryByRole('button', { name: 'Unlink Ask' })).toBeNull();
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(screen.queryByText('No tasks yet')).toBeNull();
+    expect(requests.some(request => new URL(request.url).pathname === '/api/v1/people/7/agenda')).toBe(false);
 
     ready = true;
     await rerender({ client, personID: 8 });
@@ -282,49 +288,6 @@ describe('PersonAgenda', () => {
     expect(status.getAttribute('role')).toBe('status');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
-  });
-
-  it('does not request the agenda while the task integration is not ready', async () => {
-    const requests: Request[] = [];
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      if (isStatus(request)) {
-        return Response.json({ state: 'authentication_required', message: 'Reconnect Kata to manage agenda items' });
-      }
-      return Response.json({ error: 'task_integration_unavailable', message: 'Task service is unavailable' }, { status: 503 });
-    }));
-
-    render(PersonAgenda, { client, personID: 7 });
-
-    expect(await screen.findByText('Kata integration authentication_required: Reconnect Kata to manage agenda items')).toBeDefined();
-    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
-    // The status message is the single explanation: the list route 503s for
-    // a gated integration, so calling it would only add a redundant error
-    // next to the notice and claim an emptiness it never checked.
-    expect(screen.queryByText('Task service is unavailable')).toBeNull();
-    expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/7/agenda')).toBe(false);
-    expect(screen.queryByText('No tasks yet')).toBeNull();
-  });
-
-  it('does not request the agenda when the Kata service is incompatible', async () => {
-    const requests: Request[] = [];
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      if (isStatus(request)) {
-        return Response.json({ state: 'incompatible', message: 'Kata API is incompatible.' });
-      }
-      return Response.json({ error: 'task_integration_unavailable', message: 'Task service is unavailable' }, { status: 503 });
-    }));
-
-    render(PersonAgenda, { client, personID: 7 });
-
-    expect(await screen.findByText('Kata integration incompatible: Kata API is incompatible.')).toBeDefined();
-    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
-    expect(screen.queryByText('Task service is unavailable')).toBeNull();
-    expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/7/agenda')).toBe(false);
-    expect(screen.queryByText('No tasks yet')).toBeNull();
   });
 
   it('keeps the person page usable when Kata is unavailable', async () => {
@@ -426,13 +389,16 @@ describe('PersonAgenda', () => {
     { operation: 'create', outcome: 'success', method: 'POST', status: 201 },
     { operation: 'unlink', outcome: 'failure', method: 'DELETE', status: 503 },
     { operation: 'unlink', outcome: 'success', method: 'DELETE', status: 200 }
-  ])('keeps the next person draft, list, and notices after a prior $operation $outcome', async ({ operation, outcome, method, status }) => {
+  ])('keeps the next person draft or pending create, list, and notices after a prior $operation $outcome', async ({ operation, outcome, method, status }) => {
     const onAnnounce = vi.fn();
+    const pendingNextCreate = operation === 'create' && outcome === 'failure';
+    let releaseNextWrite!: (response: Response) => void;
     let releaseWrite!: (response: Response) => void;
     let personEightLists = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
       if (isStatus(request)) return readyStatus();
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/v1/people/8/agenda') return new Promise<Response>(resolve => { releaseNextWrite = resolve; });
       if (request.method === method) return new Promise<Response>(resolve => { releaseWrite = resolve; });
       if (new URL(request.url).pathname === '/api/v1/people/8/agenda') {
         personEightLists += 1;
@@ -454,68 +420,26 @@ describe('PersonAgenda', () => {
     await screen.findByText('B item');
     await openForm();
     await typeTask('B note');
+    if (pendingNextCreate) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+      await waitFor(() => expect(releaseNextWrite).toBeDefined());
+      expect(screen.getByLabelText('New task')).toHaveProperty('disabled', true);
+    }
     await act(async () => { releaseWrite(outcome === 'failure'
       ? Response.json({ error: 'task_unavailable', message: `Unable to ${operation} agenda item` }, { status })
       : Response.json({ item: item('one', 'A note') }, { status })); });
-    expect(screen.getByLabelText('New task')).toHaveProperty('disabled', false);
-    expect(screen.getByRole('button', { name: 'Add task' })).toHaveProperty('disabled', false);
+    expect(screen.getByLabelText('New task')).toHaveProperty('disabled', pendingNextCreate);
+    expect(screen.getByRole('button', { name: 'Add task' })).toHaveProperty('disabled', pendingNextCreate);
     expect(screen.getByLabelText('New task')).toHaveProperty('value', 'B note');
     expect(screen.getByText('B item')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(onAnnounce).not.toHaveBeenCalled();
     expect(personEightLists).toBe(1);
-  });
-
-  it('releases the form for the next person while the prior mutation is still in flight', async () => {
-    const releases: Array<(response: Response) => void> = [];
-    let released = 0;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') {
-        return new Promise<Response>((resolve) => {
-          releases.push((response) => {
-            released += 1;
-            resolve(response);
-          });
-        });
-      }
-      if (new URL(request.url).pathname === '/api/v1/people/8/agenda') {
-        return Response.json({ project: 'msgvault', items: [item('two', 'B item')] });
-      }
-      return Response.json({ project: 'msgvault', items: [] });
-    }));
-
-    const { rerender } = render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('No tasks yet');
-    await openForm();
-    await typeTask('A note');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(releases.length).toBe(1)); // A's create hangs.
-
-    // Person B is selected while A's create still hangs: B's form must be
-    // usable immediately, not locked behind a request that may never settle.
-    await rerender({ client, personID: 8 });
-    await screen.findByText('B item');
-    await openForm();
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
-
-    // B starts a create; A's hung create then fails. The stale completion
-    // must leave B's in-flight mutation alone instead of unlocking the form
-    // while B's own request is still pending.
-    await typeTask('B note');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-    await waitFor(() => expect(releases.length).toBe(2));
-    expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(true);
-
-    releases[0]!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
-    await waitFor(() => expect(released).toBe(1));
-    expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(true);
-
-    releases[1]!(Response.json({ item: item('new', 'B note') }, { status: 201 }));
-    // B's success clears the typed title, so the submit button stays disabled
-    // until text is entered again; the inputs are the mutating-only signal.
-    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
+    if (pendingNextCreate) {
+      await act(async () => { releaseNextWrite(Response.json({ item: item('new', 'B note') }, { status: 201 })); });
+      await waitFor(() => expect(screen.getByLabelText('New task')).toHaveProperty('disabled', false));
+      expect(screen.getByLabelText('New task')).toHaveProperty('value', '');
+    }
   });
 
   it('unlinks by Kata ref and then reloads the live agenda', async () => {

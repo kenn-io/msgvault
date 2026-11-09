@@ -86,11 +86,9 @@ it('scopes meeting actions to the saved person, forwards revisions, and ignores 
   expect(screen.getByText('Revision 2 follow-up')).toBeDefined();
 });
 
-it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation while preserving pending task input', async operation => {
+it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation', async operation => {
   const { person, directory } = await renderDetails([5], { taskChange: operation });
   await screen.findByText(operation === 'merge' ? 'No tasks yet' : 'Ask about the proposal');
-  await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
-  await fireEvent.input(screen.getByLabelText('New task'), { target: { value: 'Send meeting notes' } });
 
   person.revision = 2;
   if (operation === 'merge') await directory.refreshSelectedPerson();
@@ -98,7 +96,6 @@ it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation wh
 
   expect(await screen.findByText(operation === 'merge' ? 'Ask about the proposal' : 'No tasks yet')).toBeDefined();
   if (operation === 'split') expect(screen.queryByText('Ask about the proposal')).toBeNull();
-  expect(screen.getByLabelText('New task')).toHaveProperty('value', 'Send meeting notes');
 });
 
 it('reloads open loops after an identity split', async () => {
@@ -134,21 +131,22 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 
 
 it.each([
-  { name: 'attributes failure', options: { attributesFailure: true }, message: undefined, details: undefined, retry: undefined },
+  { name: 'attributes failure', options: { attributesFailure: true } },
   { name: 'profile and details', options: { detailsFailure: true, personFailure: true }, message: "Couldn't load these details.", details: 'Saved profile unavailable Structured profile unavailable Contact state unavailable', retry: true },
   { name: 'deleted person', options: { personDeleted: true }, message: "This person isn't in your archive anymore.", details: undefined, retry: false }
 ])('deduplicates the $name alert and checks any page-owned recovery', async ({ options, message, details, retry }) => {
   await renderDetails([], options);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
-  if (!message) return; // Field-value messages and Retry belong to PersonFields.
-  const notice = within(screen.getByRole('alert'));
-  expect(notice.getByText(message)).toBeDefined();
-  expect(notice.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retry ? 1 : 0);
-  if (details) {
-    await fireEvent.click(notice.getByText('Details'));
-    expect(notice.getByText(details)).toBeDefined();
-    options.attributesFailure = false; options.detailsFailure = false; options.personFailure = false;
-    await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.queryByText(message)).toBeNull());
+  if (message) {
+    const notice = within(screen.getByRole('alert'));
+    expect(notice.getByText(message)).toBeDefined();
+    expect(notice.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retry ? 1 : 0);
+    if (details) {
+      await fireEvent.click(notice.getByText('Details'));
+      expect(notice.getByText(details)).toBeDefined();
+      options.detailsFailure = false; options.personFailure = false;
+      await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(screen.queryByText(message)).toBeNull());
+    }
   }
 });

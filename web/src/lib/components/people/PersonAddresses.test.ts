@@ -68,7 +68,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 describe('PersonAddresses', () => {
   it('shows each address and its source once when expanded', async () => {
     render(PersonAddresses, baseProps());
-    expect(screen.queryByRole('button', { name: /^Unlink / })).toBeNull();
     const email = screen.getByLabelText('Identity Alice');
     await fireEvent.click(within(email).getByText('Alice'));
     expect(email.querySelector('p')?.textContent).toBe('this profile · alice@example.com · email · primary · stored identifier');
@@ -78,7 +77,9 @@ describe('PersonAddresses', () => {
   });
 
   it('filters own listed addresses while keeping linked members and their unlink controls', async () => {
-    const view = render(PersonAddresses, baseProps({ detail: clusteredPerson() }));
+    const view = render(PersonAddresses, baseProps());
+    expect(screen.queryByRole('button', { name: /^Unlink / })).toBeNull();
+    await view.rerender(baseProps({ detail: clusteredPerson() }));
     expect(screen.getByLabelText('Identity Alice').textContent).toContain('this profile');
     expect(screen.queryByRole('button', { name: /Unlink alice@example.com|Unlink Alice/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Unlink +15550100002' })).toBeDefined();
