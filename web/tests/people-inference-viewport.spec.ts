@@ -111,8 +111,10 @@ test('Kept fields use the same text color after revealing sensitive fields', asy
   await page.getByRole('button', { name: 'People lookups', exact: true }).click();
   const ordinary = page.getByText('Favorite plant', { exact: true });
   await expect(ordinary).toBeVisible();
+  await expect(page.getByText('A plant', { exact: true })).toBeVisible();
   await page.getByText('Show sensitive fields', { exact: true }).click();
   const sensitive = page.getByText('Private note', { exact: true });
   await expect(sensitive).toBeVisible();
+  await expect(page.getByText('A note', { exact: true })).toBeVisible();
   await expect(sensitive).toHaveCSS('color', await ordinary.evaluate(node => getComputedStyle(node).color));
 });

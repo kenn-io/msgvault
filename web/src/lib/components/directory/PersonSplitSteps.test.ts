@@ -92,7 +92,7 @@ describe('PersonSplitSteps', () => {
       if (path === '/api/v1/people/19/profile') return Response.json({ ...emptyProfile(response.new_person), contact_points: [] });
       throw new Error(`Unexpected ${request.method} ${path}`);
     });
-    const { controller } = await preparedController(fetchFn, participants, () => ({ ...mergeDetail().labels, participants, participant_ids: ids, addresses, absorbed_address_count: 2, incomplete: false }));
+    const { controller } = await preparedController(fetchFn, participants, () => ({ ...mergeDetail().labels, participant_ids: ids, addresses, absorbed_address_count: 2, incomplete: false }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     expect(screen.getAllByRole('checkbox').map(choice => choice.getAttribute('aria-label') || choice.closest('label')?.textContent?.trim()).sort()).toEqual([...choices].sort());
     await fireEvent.click(screen.getByRole('checkbox', { name: choices[1] }));

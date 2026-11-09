@@ -35,7 +35,9 @@ describe('Fields kept updated', () => {
     });
     render(TrackedFieldsList, { client });
     expect(await screen.findByText('Preferred greenery')).toBeDefined();
+    expect(screen.getByText('A plant')).toBeDefined();
     expect(screen.getByText('Work · job title, organization, and dates')).toBeDefined();
+    expect(screen.getByText('Current and historical employment')).toBeDefined();
     const disclosure = screen.getByText('Show sensitive fields');
     await fireEvent.click(disclosure);
     const error = await screen.findByText("Couldn't load sensitive fields.");
@@ -43,6 +45,7 @@ describe('Fields kept updated', () => {
     expect(screen.getByText('Preferred greenery')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     const sensitive = await screen.findByText('Private note');
+    expect(screen.getByText('A note').closest('details')?.open).toBe(true);
     expect(sensitive.closest('details')?.open).toBe(true);
     expect(queries).toEqual(['?include_sensitive=false', '?include_sensitive=true', '?include_sensitive=true']);
     await fireEvent.click(disclosure);

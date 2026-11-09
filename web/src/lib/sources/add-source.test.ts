@@ -27,6 +27,10 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(imap, { host: 'imap.example.com:mail', username: 'reader' }, 'posix')).toBeUndefined();
   });
 
+  it('adds STARTTLS to the IMAP command', () => {
+    expect(addSourceCommand(imap, { host: 'imap.example.com:143', username: 'reader' }, 'posix', true)).toBe('msgvault add-imap --host imap.example.com --port 143 --username reader --starttls');
+  });
+
   it('quotes spaces and shell characters for each platform', () => {
     expect(addSourceCommand(imap, { host: 'imap.example.org', username: 'A B' }, 'posix')).toBe("msgvault add-imap --host imap.example.org --username 'A B'");
     expect(addSourceCommand(imap, { host: 'imap.example.org', username: 'A B' }, 'cmd')).toBe('msgvault add-imap --host imap.example.org --username "A B"');
