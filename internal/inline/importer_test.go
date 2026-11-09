@@ -781,6 +781,66 @@ func TestFullRepairRevisitsChatsFinishedEarlierInThePass(t *testing.T) {
 	assertions.Equal("refreshed", body)
 }
 
+func TestLimitedRunsIgnoreProgressOfAnInterruptedPass(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = []int64{1, 2}
+	client.chats[2] = Conversation{ID: 2, Type: "dm"}
+	client.messages[1] = []Message{syntheticMessage(1, 1, "original")}
+	for id := int64(1); id <= 6; id++ {
+		client.messages[2] = append(client.messages[2], syntheticMessage(2, id, "busy chat"))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client.beforePage = func(_ context.Context, chatID, _ int64) error {
+		if chatID == 2 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	sum, err := imp.Import(ctx, opts)
+	requires.ErrorIs(err, context.Canceled)
+	requires.Equal([]int64{1}, storedState(t, imp, sum.SourceID, opts.Account.Identifier()).PassDone)
+
+	client.beforePage = nil
+	client.messages[1] = append(client.messages[1], syntheticMessage(1, 2, "arrival"))
+	opts.Limit = 1
+	for range 2 {
+		_, err = imp.Import(t.Context(), opts)
+		requires.NoError(err)
+	}
+	archivedMessage(t, imp.store, sum.SourceID, 1, 2)
+	assertions.Equal([]int64{1}, storedState(t, imp, sum.SourceID, opts.Account.Identifier()).PassDone, "the interrupted unlimited pass resumes later")
+}
+
+func TestFailedChatDoesNotStarveChatsFinishedEarlier(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = []int64{1, 2}
+	client.chats[2] = Conversation{ID: 2, Type: "dm"}
+	client.messages[1] = []Message{syntheticMessage(1, 1, "original")}
+	client.messages[2] = []Message{syntheticMessage(2, 1, "unreachable")}
+	unavailable := errors.New("synthetic provider failure")
+	client.beforePage = func(_ context.Context, chatID, _ int64) error {
+		if chatID == 2 {
+			return unavailable
+		}
+		return nil
+	}
+	var sourceID int64
+	for run := range int64(2) {
+		client.messages[1] = append(client.messages[1], syntheticMessage(1, run+2, "arrival"))
+		sum, err := imp.Import(t.Context(), opts)
+		requires.ErrorIs(err, unavailable)
+		sourceID = sum.SourceID
+		archivedMessage(t, imp.store, sourceID, 1, run+2)
+	}
+	assertions.Empty(storedState(t, imp, sourceID, opts.Account.Identifier()).PassDone)
+}
+
 func TestLimitedImportFinishesHistoryDespiteOngoingArrivals(t *testing.T) {
 	assertions := assert.New(t)
 	requires := require.New(t)
