@@ -1114,7 +1114,7 @@ jobs:
       # Heavy DuckDB packages can exceed go test's 10m per-package default
       # on a contended runner. Leave time for stack output inside the job cap.
       # test-postgres-sharded runs the large packages and the additional
-      # package group against separate servers; this covers the rest.
+      # package group; this covers the rest.
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m EXCLUDE_PKGS="${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && env.PG_MOVED_PKGS || '' }}"
 
@@ -1144,7 +1144,7 @@ jobs:
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
   # each with its own PostgreSQL service so four shards' connections never
-  # compete with the rest of the suite. One job runs additional packages.
+  # compete with the rest of the suite. The CLI job also runs additional packages.
   test-postgres-sharded:
     needs: changes
     if: *go-changed
@@ -1157,6 +1157,7 @@ jobs:
             job_timeout: 36
             test_timeout: 18m
             package: ./cmd/msgvault/cmd
+            extra_packages: true
           - name: store
             job_timeout: 84
             test_timeout: 71m
@@ -1166,10 +1167,6 @@ jobs:
             test_timeout: 8m
             package: ./internal/api
             followups: true
-          - name: pg_extra
-            extra_packages: true
-            job_timeout: 36
-            test_timeout: 24m
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     services:
@@ -1217,7 +1214,6 @@ jobs:
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
-        if: ${{ !matrix.extra_packages }}
         id: postgres-shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
 
@@ -1231,8 +1227,8 @@ jobs:
           if-no-files-found: ignore
 
       - name: Test additional PostgreSQL packages
-        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
-        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=${{ matrix.test_timeout }}
+        if: ${{ !cancelled() && steps.postgres-shards.outcome != 'skipped' && matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=10m
 
       - name: Check for additional test reruns
         if: always() && matrix.extra_packages
