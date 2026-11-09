@@ -381,6 +381,7 @@ func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
 		assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
 	})
 	t.Run("service account", func(t *testing.T) {
+		require := require.New(t)
 		saveAddAccountFlags(t)
 		savedTransport := http.DefaultTransport
 		t.Cleanup(func() { http.DefaultTransport = savedTransport })
@@ -398,13 +399,13 @@ func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
 		})
 		home := t.TempDir()
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		require.NoError(t, err)
+		require.NoError(err)
 		keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-		require.NoError(t, err)
+		require.NoError(err)
 		keyJSON, err := json.Marshal(map[string]string{"type": "service_account", "client_email": "service@example.com", "private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})), "token_uri": "https://token.example.com/oauth2"})
-		require.NoError(t, err)
+		require.NoError(err)
 		keyPath := filepath.Join(home, "service.json")
-		require.NoError(t, os.WriteFile(keyPath, keyJSON, 0600))
+		require.NoError(os.WriteFile(keyPath, keyJSON, 0600))
 		cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, OAuth: config.OAuthConfig{ServiceAccountKey: keyPath}}
 		cmd := &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
 		registerAddAccountFlags(cmd)
@@ -412,15 +413,16 @@ func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
 		capture := captureStdout(t)
 		err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 		output := capture()
-		require.NoError(t, err)
+		require.NoError(err)
 		st, err := store.Open(cfg.DatabaseDSN())
-		require.NoError(t, err)
+		require.NoError(err)
 		defer func() { _ = st.Close() }()
 		source, err := findGmailSource(st, "user@example.com")
-		require.NoError(t, err)
+		require.NoError(err)
 		assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
 	})
 	t.Run("imap", func(t *testing.T) {
+		require := require.New(t)
 		savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
 		savedNoTLS, savedSTARTTLS, savedNoDefault := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
 		t.Cleanup(func() {
@@ -431,7 +433,7 @@ func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
 		t.Setenv("MSGVAULT_IMAP_PASSWORD", testutil.IMAPTestPassword)
 		addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t, map[string]int{"INBOX": 1}, nil)
 		host, port, err := net.SplitHostPort(addr)
-		require.NoError(t, err)
+		require.NoError(err)
 		home := t.TempDir()
 		cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
 		cmd := newAddIMAPCmd()
@@ -439,13 +441,13 @@ func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
 		capture := captureStdout(t)
 		err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 		output := capture()
-		require.NoError(t, err)
+		require.NoError(err)
 		st, err := store.Open(cfg.DatabaseDSN())
-		require.NoError(t, err)
+		require.NoError(err)
 		defer func() { _ = st.Close() }()
 		sources, err := st.ListSources(sourceTypeIMAP)
-		require.NoError(t, err)
-		require.Len(t, sources, 1)
+		require.NoError(err)
+		require.Len(sources, 1)
 		assertRegistrationSyncCommand(t, output, sources[0].ID, "sync-full")
 	})
 	for _, tc := range []struct {
@@ -453,6 +455,7 @@ func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
 		args       []string
 	}{{"o365", "sync-full", nil}, {"graph", "sync", []string{"--graph"}}} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
 			savedGraph, savedNoDefault, savedHeadless, savedTenant := o365Graph, noDefaultIdentityAddO365, o365Headless, o365TenantID
 			t.Cleanup(func() {
 				o365Graph, noDefaultIdentityAddO365, o365Headless, o365TenantID = savedGraph, savedNoDefault, savedHeadless, savedTenant
@@ -460,20 +463,20 @@ func TestRegistrationPrintsExactSyncCommand(t *testing.T) {
 			home := t.TempDir()
 			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Microsoft: config.MicrosoftConfig{ClientID: "synthetic-client"}}
 			mgr := microsoft.NewManager(cfg.Microsoft.ClientID, "common", cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), testDiscardLogger())
-			require.NoError(t, os.MkdirAll(cfg.TokensDir(), 0700))
-			require.NoError(t, os.WriteFile(mgr.TokenPath("user@example.com"), []byte(`{"access_token":"synthetic-token"}`), 0600))
+			require.NoError(os.MkdirAll(cfg.TokensDir(), 0700))
+			require.NoError(os.WriteFile(mgr.TokenPath("user@example.com"), []byte(`{"access_token":"synthetic-token"}`), 0600))
 			cmd := newAddO365LocalCmd()
 			cmd.SetArgs(append([]string{"user@example.com", "--" + oauthPreflightedFlag, "--no-default-identity"}, tc.args...))
 			capture := captureStdout(t)
 			err := cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			output := capture()
-			require.NoError(t, err)
+			require.NoError(err)
 			st, err := store.Open(cfg.DatabaseDSN())
-			require.NoError(t, err)
+			require.NoError(err)
 			defer func() { _ = st.Close() }()
 			sources, err := st.ListSources("")
-			require.NoError(t, err)
-			require.Len(t, sources, 1)
+			require.NoError(err)
+			require.Len(sources, 1)
 			assertRegistrationSyncCommand(t, output, sources[0].ID, tc.verb)
 		})
 	}
