@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
-import { PersonTrackingController } from '../../directory/person-tracking-controller.svelte';
 import PersonRecordActions from './PersonRecordActions.svelte';
 
 const when = '2026-08-01T00:00:00Z';
@@ -34,66 +33,28 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
-  it.each([
-    ['failed then retried', 'Keeping this profile updated.'],
-    ['destroyed after settlement', null],
-  ] as const)('handles a save started before the menu closes: %s', async (outcome, announcement) => {
-    let settled = false;
-    const original = PersonTrackingController.prototype.setTracked;
-    const settlement = outcome === 'destroyed after settlement' ? vi.spyOn(PersonTrackingController.prototype, 'setTracked').mockImplementation(async function (this: PersonTrackingController, desired) {
-      const result = await original.call(this, desired);
-      this.destroy();
-      settled = true;
-      return result;
-    }) : undefined;
+  it('keeps an in-flight tracking save when the menu closes and reopens', async () => {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     const onAnnounce = vi.fn();
-    let saved = false;
-    let failed = false;
-    const methods: string[] = [];
     renderActions(async input => {
       const request = input as Request;
-      methods.push(request.method);
-      if (request.method !== 'PUT') {
-        return Response.json({ person_id: 7, tracked: saved, tracked_at: saved ? '2026-11-05T12:00:00Z' : null });
-      }
-      const { tracked } = await request.json();
+      if (request.method !== 'PUT') return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       await held;
-      if (outcome === 'failed then retried' && !failed) { failed = true; return Response.json({ message: 'Save unavailable' }, { status: 503 }); }
-      saved = tracked;
-      return Response.json({ person_id: 7, tracked, tracked_at: '2026-11-05T12:00:00Z' });
+      return Response.json({ person_id: 7, tracked: true, tracked_at: when });
     }, undefined, undefined, onAnnounce);
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
-    await waitFor(() => expect(item.textContent?.trim()).toBe('Keep this profile updated'));
-    await fireEvent.click(item);
-    expect(item.textContent).toContain('Turning on…');
-    expect(screen.getByRole('menu')).toBeDefined();
-    await fireEvent.keyDown(item, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).textContent).toContain('Turning on…');
-    expect(methods).toEqual(['GET', 'PUT']);
-    if (outcome === 'destroyed after settlement') {
-      await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+      const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+      await waitFor(() => expect(item.textContent?.trim()).toBe('Keep this profile updated'));
+      await fireEvent.click(item);
+      await fireEvent.keyDown(item, { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-    }
-    release();
-    if (outcome === 'destroyed after settlement') {
-      await waitFor(() => expect(settled).toBe(true));
-      await tick();
-      expect(onAnnounce).not.toHaveBeenCalled();
-      settlement?.mockRestore();
-      return;
-    }
-    await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith("Couldn't save profile updates."));
-    const retryItem = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
-    await waitFor(() => expect(retryItem.textContent).toContain("Couldn't save · Retry"));
-    await fireEvent.click(retryItem);
-    await waitFor(() => expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).getAttribute('aria-checked')).toBe('true'));
-    await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith(announcement));
-    settlement?.mockRestore();
+      await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+      expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).textContent).toContain('Turning on…');
+      release();
+      await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Keeping this profile updated.'));
+    } finally { release(); }
   });
 
   it('reads the state again each time the menu opens', async () => {

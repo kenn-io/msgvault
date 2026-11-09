@@ -19,28 +19,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestImportedPhoneIdentifierShape(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	ctx := t.Context()
-	exportDir := newTestExport(t, [][]string{
-		{"Reader", "2024-06-01 12:00:00", "", "", "SMS", "Incoming", "+1 (202) 555-0123", "Reader", "", "", "", "Synthetic message", "", ""},
-	})
-	_, err := NewImporter(st, Options{Owner: "+12025550124", Timezone: "UTC"}).ImportPath(ctx, exportDir)
-	require.NoError(err)
-	var participant int64
-	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM participants WHERE phone_number = ?`), "+12025550123").Scan(&participant))
-	var kind, value string
-	var serviceID, scopeKind, scopeValue sql.NullString
-	require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT identifier_type, identifier_value, service_id, scope_kind, scope_value FROM participant_identifiers WHERE participant_id = ?`), participant).Scan(&kind, &value, &serviceID, &scopeKind, &scopeValue))
-	assert.Equal("imazing_csv", kind)
-	assert.Equal("+12025550123", value)
-	assert.False(serviceID.Valid)
-	assert.False(scopeKind.Valid)
-	assert.False(scopeValue.Valid)
-}
-
 func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

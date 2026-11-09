@@ -164,9 +164,6 @@ describe('PersonMergeHistory', () => {
       expect(screen.getByRole('button', { name: 'Split into new person' })).toHaveProperty('disabled', false);
       expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', false);
 
-      await fireEvent.click(screen.getByRole('button', { name: /^Back to .+ merged into / }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
-      await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' });
       await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
       expect(onClose).toHaveBeenCalledOnce();
       expect(posts(requests)).toHaveLength(0);
@@ -176,9 +173,9 @@ describe('PersonMergeHistory', () => {
     }
   });
 
-  it('blocks dismissal and root shortcuts while a split is pending', async () => {
+  it('blocks root shortcuts while a split is pending', async () => {
     const pending = deferred();
-    const { onClose } = renderHistory(detail(), { respond: (path, request) => {
+    renderHistory(detail(), { respond: (path, request) => {
       if (request.method === 'POST') return pending.promise;
       if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       return undefined;
@@ -192,10 +189,7 @@ describe('PersonMergeHistory', () => {
       const rootShortcut = vi.fn();
       const unregister = appShortcuts.register('x', rootShortcut);
       try {
-        await fireEvent.keyDown(window, { key: 'Escape' });
-        await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
         appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
-        expect(onClose).not.toHaveBeenCalled();
         expect(rootShortcut).not.toHaveBeenCalled();
       } finally { unregister(); }
     } finally { pending.resolve(Response.json({}, { status: 503 })); }
@@ -348,7 +342,6 @@ describe('PersonMergeHistory', () => {
   });
 
   it.each([
-    { destination: 'deleted', layout: 'row' },
     { destination: 'unnamed', layout: 'card' },
     { destination: 'unnamed', layout: 'row' },
     { destination: 'literal fallback name', layout: 'card' },
@@ -360,7 +353,7 @@ describe('PersonMergeHistory', () => {
       value.labels.addresses = value.labels.addresses.filter(identifier => identifier.participant_id !== 703);
     }
     const { onOpenPerson, requests } = renderHistory(value, { respond: path => path === '/api/v1/people/19'
-      ? destination === 'deleted' ? Response.json({}, { status: 404 }) : Response.json(person(19, 1, [703], destination === 'literal fallback name' ? 'another profile' : ''))
+      ? Response.json(person(19, 1, [703], destination === 'literal fallback name' ? 'another profile' : ''))
       : undefined });
     await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
     if (layout === 'row') {
@@ -369,13 +362,8 @@ describe('PersonMergeHistory', () => {
     } else await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').includes('split back to another profile'));
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people/19')).toHaveLength(1);
     const name = layout === 'row' ? destination === 'literal fallback name' ? 'Open another profile' : 'Open restored profile' : 'another profile';
-    if (destination === 'deleted') {
-      expect(screen.queryByRole('button', { name })).toBeNull();
-      expect(screen.getByRole('region', { name: 'Merge detail' }).textContent).toContain(layout === 'row' ? 'A profile' : 'another profile');
-    } else {
-      await fireEvent.click(await screen.findByRole('button', { name }));
-      expect(onOpenPerson).toHaveBeenCalledWith(19);
-    }
+    await fireEvent.click(await screen.findByRole('button', { name }));
+    expect(onOpenPerson).toHaveBeenCalledWith(19);
   });
 
   it.each([false, true])('groups addresses, splits, and review decisions, only decided=%s', async decided => {

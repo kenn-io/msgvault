@@ -67,7 +67,7 @@ func TestResolveUserIdentifierFallback(t *testing.T) {
 		`SELECT identifier_type, identifier_value FROM participant_identifiers WHERE participant_id = ?`), pid,
 	).Scan(&identifierType, &identifierValue))
 	assert.Equal("beeper", identifierType)
-	assert.Equal("beeper:9:account-a:25:@signal_uuid:beeper.local", identifierValue)
+	assert.Equal(beeperidentity.Fallback("account-a", "@signal_uuid:beeper.local"), identifierValue)
 }
 
 func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {

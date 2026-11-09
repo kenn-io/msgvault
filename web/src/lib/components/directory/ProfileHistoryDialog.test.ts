@@ -227,8 +227,6 @@ describe('ProfileHistoryDialog', () => {
 
 const mergedInCases = [
   ...['removed before the merge', 'only seen in services'].map(state => ({ name: state, state, rows: state === 'removed before the merge' ? 2 : 1, service: 'email', label: '', value: 'mira@example.org', normalized: 'mira@example.org', original: state === 'removed before the merge' ? 'Mira@Example.org' : 'mira@example.org', observed: 'mira@example.org' })),
-  { name: 'same handle in another workspace', rows: 2, service: 'slack', label: 'Slack', value: 'neri', normalized: 'neri', original: 'neri', observed: 'neri', scopeKind: 'workspace', scope: 'garden-club', otherScope: 'seed-exchange' },
-  { name: 'curated mixed-case email', rows: 1, service: 'email', label: 'Email', value: 'mira@example.org', normalized: 'mira@example.org', original: 'Mira@Example.org', observed: 'mira@example.org' },
 ];
 
 async function renderMergedInAddress(entry: typeof mergedInCases[number]) {

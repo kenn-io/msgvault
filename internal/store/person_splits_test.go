@@ -2995,65 +2995,59 @@ func TestSplitPersonMerge_ExactReversalPreservesReplacedBriefEnrollment(t *testi
 }
 
 func TestSplitPersonMerge_SavedContactPlacement(t *testing.T) {
-	for _, mode := range []string{"all", "subset", "edited", "scoped service"} {
-		t.Run(mode, func(t *testing.T) {
+	phone := store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport}}
+	for _, tc := range []struct {
+		name                  string
+		input                 store.PersonContactPointInput
+		subset, edited, exact bool
+		kept, restored        string
+	}{
+		{"all", phone, false, false, true, "", "+12025550144"},
+		{"subset", phone, true, false, false, "+12025550144", ""},
+		{"edited", phone, false, true, true, "+12025550199", ""},
+		{"scoped service", store.PersonContactPointInput{AddressKind: store.ContactAddressUsername, OriginalValue: "alex", ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("garden"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}}, false, false, true, "", "alex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			ctx := t.Context()
-			var phoneID int64
+			var pointID int64
 			f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, absorbed *store.Person) {
-				input := store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport}}
-				if mode == "scoped service" {
-					input = store.PersonContactPointInput{AddressKind: store.ContactAddressUsername, OriginalValue: "alex", ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("garden"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}}
-				}
-				point, err := st.AddPersonContactPointContext(ctx, absorbed.ID, input)
+				point, err := st.AddPersonContactPointContext(ctx, absorbed.ID, tc.input)
 				require.NoError(err)
-				phoneID = point.Envelope.ID
+				pointID = point.Envelope.ID
 			})
 			selected := f.absorbedParticipants
-			if mode == "subset" {
+			if tc.subset {
 				selected = selected[:1]
 			}
-			if mode == "edited" {
-				require.NoError(f.store.SupersedePersonContactPointContext(ctx, f.survivor.ID, phoneID, nil))
-				_, err := f.store.AddPersonContactPointContext(ctx, f.survivor.ID, store.PersonContactPointInput{
-					AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550199", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-				})
+			if tc.edited {
+				require.NoError(f.store.SupersedePersonContactPointContext(ctx, f.survivor.ID, pointID, nil))
+				_, err := f.store.AddPersonContactPointContext(ctx, f.survivor.ID, store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550199", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
 				require.NoError(err)
 			}
 			source, err := f.store.GetPersonContext(ctx, f.survivor.ID)
 			require.NoError(err)
-			result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
-				SourcePersonID: source.ID, MergeID: f.merge.Merge.ID, ParticipantIDs: selected,
-				ExpectedSourceRevision: source.Revision, IdempotencyKey: "saved-contact-" + mode, Actor: "test",
-			})
+			result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: source.ID, MergeID: f.merge.Merge.ID, ParticipantIDs: selected, ExpectedSourceRevision: source.Revision, IdempotencyKey: "saved-contact-" + tc.name, Actor: "test"})
 			require.NoError(err)
 			kept, err := f.store.GetPersonProfileContext(ctx, source.ID)
 			require.NoError(err)
 			restored, err := f.store.GetPersonProfileContext(ctx, result.NewPerson.ID)
 			require.NoError(err)
-			if mode == "all" || mode == "scoped service" {
-				assert.True(result.ExactReversal)
-				require.Len(restored.ContactPoints, 1)
-				if mode == "scoped service" {
-					assert.Equal("alex", restored.ContactPoints[0].OriginalValue)
-					assert.Equal(new("slack"), restored.ContactPoints[0].ServiceSlug)
-					assert.Equal(new("workspace"), restored.ContactPoints[0].ScopeKind)
-					assert.Equal(new("garden"), restored.ContactPoints[0].ScopeValue)
-				} else {
-					assert.Equal("+12025550144", restored.ContactPoints[0].OriginalValue)
-				}
+			assert.Equal(tc.exact, result.ExactReversal)
+			if tc.kept == "" {
 				assert.Empty(kept.ContactPoints)
 			} else {
-				assert.Empty(restored.ContactPoints)
 				require.Len(kept.ContactPoints, 1)
-				want := "+12025550144"
-				if mode == "edited" {
-					want = "+12025550199"
-					assert.True(result.ExactReversal)
-				} else {
-					assert.False(result.ExactReversal)
-				}
-				assert.Equal(want, kept.ContactPoints[0].OriginalValue)
+				assert.Equal(tc.kept, kept.ContactPoints[0].OriginalValue)
+			}
+			if tc.restored == "" {
+				assert.Empty(restored.ContactPoints)
+			} else {
+				require.Len(restored.ContactPoints, 1)
+				assert.Equal(tc.restored, restored.ContactPoints[0].OriginalValue)
+				assert.Equal(tc.input.ServiceSlug, restored.ContactPoints[0].ServiceSlug)
+				assert.Equal(tc.input.ScopeKind, restored.ContactPoints[0].ScopeKind)
+				assert.Equal(tc.input.ScopeValue, restored.ContactPoints[0].ScopeValue)
 			}
 		})
 	}

@@ -55,7 +55,7 @@ function operationAuthorityResponse(path: string): Response | undefined {
 }
 
 describe('AppShell', () => {
-  it('opens source setup from an archive with no sources', async () => {
+  it('opens sources from an archive with no sources', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const client = createAPIClient(async input => {

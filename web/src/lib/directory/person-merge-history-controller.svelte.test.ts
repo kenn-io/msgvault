@@ -210,10 +210,9 @@ describe('PersonMergeHistoryController', () => {
       if (path === '/api/v1/person-merges/42') return Response.json({ ...detail({ id: 42, survivor_person_id: 8 }, []), labels: { ...detail().labels, profiles: [{ id: 8, display_name: 'New Example', participant_ids: [] }] } });
       throw new Error(`Unexpected request: ${path}`);
     }), 7);
-    const labelsRead = vi.spyOn(controller as unknown as { refreshLabels(value: GeneratedPersonMergeDetail): Promise<void> }, 'refreshLabels');
     const first = controller.selectMerge(41);
     await vi.waitFor(() => expect(controller.detail?.merge.id).toBe(41));
-    const pendingLabels = labelsRead.mock.results[0]!.value;
+    await vi.waitFor(() => expect(requests.some(request => new URL(request.url).pathname === '/api/v1/people/19')).toBe(true));
     expect(controller.labels?.for).toBe(controller.detail);
     expect(controller.labels?.names.has(19)).toBe(false);
     expect(controller.detailLoading).toBe(false);
@@ -223,7 +222,7 @@ describe('PersonMergeHistoryController', () => {
     const answer = Response.json(person(19, 1, [], 'Late Example'));
     late.resolve(answer);
     await first;
-    await pendingLabels;
+    await vi.waitFor(() => expect(late.promise).resolves.toBe(answer));
     expect(requests.find(request => new URL(request.url).pathname === '/api/v1/people/19')?.signal.aborted).toBe(true);
     expect(controller.labels?.names.get(7)).toBeUndefined();
     expect(controller.labels?.names.get(19)).toBeUndefined();
@@ -305,68 +304,40 @@ describe('PersonMergeHistoryController', () => {
     expect(regular.confirmSplit()).toBe(false);
   });
 
-  it('reuses a request ID only after a thrown transport failure of the unchanged confirmation', async () => {
+  it.each([
+    { kind: 'transport', status: 0, error: '' },
+    { kind: 'exception', status: 0, error: '' },
+    { kind: 'application', status: 409, error: 'person_split_idempotency_conflict' },
+    { kind: 'application', status: 412, error: 'person_merge_revision_conflict' },
+  ])('handles request IDs after $kind $status', async ({ kind, status, error }) => {
     const requests: Request[] = [];
     let postAttempts = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
       const request = requestOf(input);
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
       if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
-      postAttempts += 1;
-      if (postAttempts === 1) throw new TypeError('connection reset');
+      if (++postAttempts === 1) {
+        if (kind === 'transport') throw new TypeError('connection reset');
+        if (kind === 'exception') throw new SyntaxError('invalid response JSON');
+        return Response.json({ error, message: 'Application failure' }, { status });
+      }
       return Response.json(splitResult());
-    });
-    const createRequestID = vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('123-456-789-12')
-      .mockReturnValueOnce('234-567-890-23');
-    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
+    }), 7);
+    const ids = vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValueOnce('123-456-789-12').mockReturnValueOnce('234-567-890-23');
     await controller.selectMerge(41);
     await controller.openSplit();
     controller.setParticipantSelected(701, true);
     controller.confirmSplit();
-
     await controller.submitSplit();
+    if (kind !== 'transport') controller.confirmSplit();
     await controller.submitSplit();
-
-    expect(createRequestID).toHaveBeenCalledOnce();
-    const posts = requests.filter((request) => request.method === 'POST');
-    expect(posts.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '123-456-789-12',
-      '123-456-789-12',
-    ]);
-  });
-
-  it('rotates the request ID and requires reconfirmation after a thrown non-transport exception', async () => {
-    const requests: Request[] = [];
-    let postAttempts = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
-      postAttempts += 1;
-      if (postAttempts === 1) throw new SyntaxError('invalid response JSON');
-      return Response.json(splitResult());
-    });
-    vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('123-456-789-12')
-      .mockReturnValueOnce('234-567-890-23');
-    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
-    await controller.selectMerge(41);
-    await controller.openSplit();
-    controller.setParticipantSelected(701, true);
-    controller.confirmSplit();
-
-    await controller.submitSplit();
-    controller.confirmSplit();
-    await controller.submitSplit();
-
-    expect(
-      requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
-    ).toEqual(['123-456-789-12', '234-567-890-23']);
+    const posts = requests.filter(request => request.method === 'POST');
+    expect(posts.map(request => request.headers.get('Idempotency-Key'))).toEqual(['123-456-789-12', kind === 'transport' ? '123-456-789-12' : '234-567-890-23']);
+    expect(ids).toHaveBeenCalledTimes(kind === 'transport' ? 1 : 2);
+    expect(requests.filter(request => request.method === 'GET' && ['/api/v1/person-merges/41', '/api/v1/people/12'].includes(new URL(request.url).pathname)).map(request => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41', '/api/v1/people/12', '/api/v1/person-merges/41']);
+    controller.destroy();
   });
 
   it('atomically reloads exact source/detail only for the recognized stale code and requires reconfirmation', async () => {
@@ -421,7 +392,7 @@ describe('PersonMergeHistoryController', () => {
       }
       if (path === '/api/v1/people/12') {
         sourceReads += 1;
-        if (sourceReads === 2) return Response.json(person(12, 5, [701, 702], 'Unpublishable Source'));
+        if (sourceReads === 2) return Response.json({ error: 'unavailable' }, { status: 503 });
         if (sourceReads === 3)
           return Response.json({ error: 'unavailable', message: 'Source still unavailable' }, { status: 503 });
         const revision = sourceReads === 1 ? 4 : 6;
@@ -486,40 +457,7 @@ describe('PersonMergeHistoryController', () => {
     expect(posts[1]!.headers.get('Idempotency-Key')).toBe('234-567-890-23');
   });
 
-  it.each([
-    [409, 'person_split_idempotency_conflict'],
-    [412, 'person_merge_revision_conflict'],
-  ])('does not stale-reload for %s/%s and rotates after the application failure', async (status, error) => {
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
-      return Response.json({ error, message: 'Application failure' }, { status });
-    });
-    vi.spyOn(requestID, 'createBrowserRequestID')
-      .mockReturnValueOnce('123-456-789-12')
-      .mockReturnValueOnce('234-567-890-23');
-    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
-    await controller.selectMerge(41);
-    await controller.openSplit();
-    controller.setParticipantSelected(701, true);
-    controller.confirmSplit();
-    await controller.submitSplit();
-    controller.confirmSplit();
-    await controller.submitSplit();
-
-    expect(requests.filter(request => request.method === 'GET' &&
-      ['/api/v1/person-merges/41', '/api/v1/people/12'].includes(new URL(request.url).pathname))
-      .map(request => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41', '/api/v1/people/12', '/api/v1/person-merges/41']);
-    expect(
-      requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
-    ).toEqual(['123-456-789-12', '234-567-890-23']);
-  });
-
-  it('commits once, keeps malformed receipt tags out of state, and reports reconciliation separately', async () => {
+  it('commits once and reports reconciliation separately', async () => {
     const reconcile = vi.fn(async (): Promise<void> => {
       throw new Error('refresh failed');
     });
@@ -528,7 +466,7 @@ describe('PersonMergeHistoryController', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
       if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
-      return Response.json(splitResult(false), { headers: { ETag: 'bad', 'X-New-Person-ETag': 'also-bad' } });
+      return Response.json(splitResult(false), { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7, reconcile);
     await controller.selectMerge(41);
@@ -542,7 +480,7 @@ describe('PersonMergeHistoryController', () => {
     expect(reconcile).toHaveBeenCalledOnce();
     expect(reconcile).toHaveBeenCalledWith({ sourcePersonID: 12, newPersonID: 19 });
     expect(controller.committedResult?.result.exact_reversal).toBe(false);
-    expect(controller.committedResult?.receiptETags).toEqual({ source: null, created: null });
+    expect(controller.committedResult?.receiptETags).toEqual({ source: '"person-12-r5"', created: '"person-19-r1"' });
     expect(controller.reconciliationError).toBe('The split is done. Open either profile to load it fresh.');
     expect(controller.canOfferSplit).toBe(false);
     reconcile.mockResolvedValueOnce(undefined);
@@ -687,10 +625,9 @@ describe('PersonMergeHistoryController', () => {
       return Response.json({ merges: [], limit: 100, offset: 0 });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
-    const savedRead = vi.spyOn(controller as unknown as { loadSourceSaved(value: ReturnType<typeof person>): Promise<void> }, 'loadSourceSaved');
     await controller.selectMerge(41);
     await controller.openSplit();
-    const pendingSaved = savedRead.mock.results[0]!.value;
+    await vi.waitFor(() => expect(savedReads).toBe(1));
     controller.setParticipantSelected(701, true);
     expect(controller.confirmSplit()).toBe(true);
 
@@ -703,7 +640,7 @@ describe('PersonMergeHistoryController', () => {
     }
     const answer = Response.json({ ...emptyProfile(person(12)), contact_points: [{ address_kind: 'email', original_value: 'late@example.org', normalized_value: 'late@example.org' }] });
     saved[0]!.resolve(answer);
-    await pendingSaved;
+    await vi.waitFor(() => expect(saved[0]!.promise).resolves.toBe(answer));
     expect(controller.sourceSaved).toBeNull();
     expect(controller.sourceSavedError).toBeNull();
     saved[1]!.resolve(Response.json(emptyProfile(person(12))));

@@ -530,12 +530,11 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
-  it.each(['messages', 'contacts', 'sources first', 'contacts first'] as const)('consumes a retained Add source request after initial archive loading, %s', async state => {
+  it.each([{ state: 'messages', empty: false }, { state: 'contacts', empty: false }, { state: 'sources first', empty: true }, { state: 'contacts first', empty: true }] as const)('handles an Add source request during initial archive loading, $state', async ({ state, empty }) => {
     let releaseStatus!: (response: Response) => void, releaseContacts!: (response: Response) => void;
     const status = new Promise<Response>(resolve => { releaseStatus = resolve; });
     const contacts = new Promise<Response>(resolve => { releaseContacts = resolve; });
     let statusReads = 0, contactReads = 0;
-    const empty = state === 'sources first' || state === 'contacts first';
     const view = render(SourcesWorkspace, { client: createCaptureClient(api([], url => {
       if (url.pathname.endsWith('/sources/status')) return ++statusReads === 1 ? status : Response.json({ sources: [source()] });
       if (url.pathname.endsWith('/carddav/connections')) return ++contactReads === 1 ? contacts : Response.json({ connections: [] });

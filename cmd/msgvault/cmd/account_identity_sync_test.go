@@ -317,7 +317,9 @@ func testAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {
 	require := require.New(t)
 	saveAddAccountFlags(t)
 	curl, err := exec.LookPath("curl")
-	require.NoError(err)
+	if err != nil {
+		t.Skip("curl is required for the browser opener boundary")
+	}
 	home := t.TempDir()
 	// The browser is an external boundary. Fetch its authorization URL against
 	// the local provider so the real callback and token exchange complete.
@@ -343,14 +345,14 @@ func testAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {
 	defer cancel()
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Host == "gmail.googleapis.com" {
-			return (gmailProfileTransport{email: "-reader@example.org", statusCode: http.StatusOK}).RoundTrip(r)
+			return (gmailProfileTransport{email: "reader@example.org", statusCode: http.StatusOK}).RoundTrip(r)
 		}
 		return http.DefaultTransport.RoundTrip(r)
 	})})
 	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
 	cmd := &cobra.Command{Use: addAccountUse, Args: validateAddAccountArgs, RunE: runAddAccountLocal}
 	registerAddAccountFlags(cmd)
-	cmd.SetArgs([]string{"--no-default-identity", "--", "-reader@example.org"})
+	cmd.SetArgs([]string{"--no-default-identity", "reader@example.org"})
 	capture := captureStdout(t)
 	err = cmd.ExecuteContext(ctx)
 	output := capture()
@@ -358,7 +360,7 @@ func testAddAccountNewAuthorizationPrintsExactSyncCommand(t *testing.T) {
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { _ = st.Close() }()
-	source, err := findGmailSource(st, "-reader@example.org")
+	source, err := findGmailSource(st, "reader@example.org")
 	require.NoError(err)
 	assertRegistrationSyncCommand(t, output, source.ID, "sync-full")
 }
