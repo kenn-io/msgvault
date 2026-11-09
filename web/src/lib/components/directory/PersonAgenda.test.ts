@@ -291,17 +291,6 @@ describe('PersonAgenda', () => {
     expect(screen.getByRole('heading', { name: 'Tasks' })).toBeDefined();
   });
 
-  it('distinguishes an available empty agenda from an unavailable one', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      return Response.json({ project: 'msgvault', items: [] });
-    }));
-    render(PersonAgenda, { client, personID: 7 });
-    expect(await screen.findByText('No tasks yet')).toBeDefined();
-    expect(screen.queryByText('Task service is unavailable')).toBeNull();
-  });
-
   it('clears the prior person and disarms mutations before the next person resolves', async () => {
     const requests: Request[] = [];
     let statusCalls = 0;

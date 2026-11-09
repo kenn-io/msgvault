@@ -240,9 +240,10 @@ it.each([
   const view = render(PersonPage, { props: { client, directory: new DirectoryController(client), controller, onReconcilePersonMerge: (context: RelationshipsMergeContext) => controller.reconcilePersonMerge(context), target: 'cluster:1', filesOpen: false, predicate, onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     if (!missing) await screen.findByRole('heading', { name: 'Synthetic contact' });
-    expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(calendar);
-    if (!missing) await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    if (!missing && !calendar) await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(await screen.findByText(message)).toBeDefined();
+    expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(calendar);
+    if (calendar) await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(screen.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retries);
   } finally { view.unmount(); controller.destroy(); }
 });

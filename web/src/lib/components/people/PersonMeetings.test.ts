@@ -4,7 +4,8 @@ import { createAPIClient } from '../../api/client';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import PersonMeetings from './PersonMeetings.svelte';
 
-it('keeps first-load Meetings in one section until both reads settle, then collapses an empty result', async () => {
+it('scopes Meetings to the saved person and keeps one section until both empty reads settle', async () => {
+  let actionRequest: Request | undefined;
   let releaseActions!: (response: Response) => void;
   let releaseMetrics!: (response: Response) => void;
   const actions = new Promise<Response>(resolve => { releaseActions = resolve; });
@@ -12,13 +13,15 @@ it('keeps first-load Meetings in one section until both reads settle, then colla
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/meetings/actions') return actions;
+    if (path === '/api/v1/meetings/actions') { actionRequest = request.clone(); return actions; }
     if (path === '/api/v1/meetings/metrics') return metrics;
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const view = render(PersonMeetings, { client, personID: 7 });
   try {
     expect(await screen.findByText('Loading meetings…')).toBeDefined();
+    await waitFor(() => expect(actionRequest).toBeDefined());
+    await expect(actionRequest!.json()).resolves.toMatchObject({ scope: { person_id: 7 } });
     expect(screen.getAllByRole('heading', { name: 'Meetings' })).toHaveLength(1);
     expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
     await act(async () => { releaseActions(Response.json(meetingActions({ coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 } }))); });

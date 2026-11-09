@@ -63,12 +63,9 @@ it('shows empty Meetings without requests when no identities are linked', async 
   expect(meetingRequests).toEqual([]);
 });
 
-it('scopes meeting actions to the saved person and forwards refreshed revisions', async () => {
-  const meetingRequests: Request[] = [];
-  const { person, directory } = await renderDetails([5], { meetingRequests });
+it('forwards refreshed profile revisions to meeting actions', async () => {
+  const { person, directory } = await renderDetails([5]);
   await screen.findByText('Revision 1 follow-up');
-  const actions = meetingRequests.find(request => new URL(request.url).pathname === '/api/v1/meetings/actions')!;
-  await expect(actions.json()).resolves.toMatchObject({ scope: { person_id: 7 } });
   person.revision = 2;
   await directory.profile!.reload();
   expect(await screen.findByText('Revision 2 follow-up')).toBeDefined();
