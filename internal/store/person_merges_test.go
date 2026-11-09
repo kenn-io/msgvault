@@ -452,7 +452,7 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_merges SET snapshot_blob = ? WHERE id = ?`), []byte("corrupt"), f.merge.Merge.ID)
 			require.NoError(t, err)
 		}, true, false, 0, 3},
-		{"known empty", func(t *testing.T, f *personMergeInspectionFixture) {}, false, true, 2, 3},
+		{"known empty", nil, false, true, 2, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
@@ -475,7 +475,9 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 			} else {
 				f = newPersonMergeInspectionFixture(t, "identity-read-failure")
 			}
-			tc.prepare(t, &f)
+			if tc.prepare != nil {
+				tc.prepare(t, &f)
+			}
 			detail, err := f.store.GetPersonMergeContext(t.Context(), f.merge.Merge.ID)
 			require.NoError(err)
 			listed, err := f.store.ListPersonMergesContext(t.Context(), f.merge.Person.ID)
@@ -2685,7 +2687,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		scoped, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assert.Contains(scoped.Labels.Addresses, store.ParticipantAddress{ParticipantID: guest.ParticipantIDs[0], Type: "beeper", Value: "+12025550123", DisplayValue: "+12025550123", NormalizedValue: "+12025550123", ServiceSlug: "whatsapp", ServiceLabel: "WhatsApp", ScopeKind: "account", ScopeValue: "garden", ParticipantDisplayName: "Reader", IdentityKey: `["whatsapp","account","garden","+12025550123"]`})
-
 	})
 	t.Run("opaque provider aliases retain case", func(t *testing.T) {
 		require := require.New(t)
@@ -2700,7 +2701,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assertPersonMergeIdentityFixture(t, detail, "beeper-migrated")
-
 	})
 	t.Run("resolved contacts exclude fallback anchor", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -2955,13 +2955,11 @@ func TestPersonMergeCountsNewAddresses(t *testing.T) {
 		require.NoError(err)
 		merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "opaque-case", Actor: "test"})
 		require.NoError(err)
-		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
-		require.NoError(err)
 		require.NoError(st.SetParticipantIdentifierContext(ctx, participant, "beeper", strings.ToUpper(key)))
 		service, err := st.ResolveCommunicationServiceContext(ctx, "whatsapp")
 		require.NoError(err)
 		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", strings.ToUpper(key), &service.ID, new("account"), new("garden-account")))
-		detail, err = st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assert.Equal(t, 2, detail.Labels.AbsorbedAddressCount)
 	})
