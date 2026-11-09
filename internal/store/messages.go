@@ -2559,11 +2559,30 @@ func (s *Store) persistMessageWith(
 	if data.FTS != nil && s.fts5Available {
 		fts := *data.FTS
 		fts.MessageID = messageID
-		if err := s.dialect.FTSUpsert(q, fts); err != nil {
+		if err := s.upsertMessageFTS(q, fts); err != nil {
 			return 0, fmt.Errorf("upsert fts: %w", err)
 		}
 	}
 	return messageID, nil
+}
+
+// maxTSVectorBytes is PostgreSQL's limit on the lexeme and position data of
+// one tsvector (MAXSTRPOS).
+const maxTSVectorBytes = 1<<20 - 1
+
+// upsertMessageFTS writes a message's search entry inside its write. A
+// distinct lexeme costs its bytes, padded to even length, plus two bytes of
+// position count and two per position, so a tsvector holds at most three
+// bytes per input byte. A document whose bound reaches the limit takes the
+// savepoint path, which marks an overflowing message unsearchable instead of
+// failing the write and every retry of it.
+func (s *Store) upsertMessageFTS(q querier, doc FTSDoc) error {
+	inputBytes := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs)
+	if 3*inputBytes < maxTSVectorBytes {
+		return s.dialect.FTSUpsert(q, doc)
+	}
+	_, err := s.upsertFTSOrUnsearchable(q, doc)
+	return err
 }
 
 func setMessageDeliveryEvidenceWith(q querier, messageID int64, evidence MessageDeliveryEvidence) error {
