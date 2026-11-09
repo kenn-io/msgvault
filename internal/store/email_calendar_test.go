@@ -169,12 +169,15 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 		sourceType string
 		identifier string
 		confirmed  bool
-		want       string
+		// confirmLater confirms the mailbox after the invitation is archived.
+		confirmLater bool
+		want         string
 	}{
 		{name: "confirmed Microsoft", sourceType: "msmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
 		{name: "confirmed Gmail", sourceType: "gmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
 		{name: "confirmed IMAP", sourceType: "imap", identifier: "imap://owner%40example.com@mail.example.com:143", confirmed: true, want: "owner@example.com"},
 		{name: "unconfirmed Gmail", sourceType: "gmail", identifier: "owner@example.com"},
+		{name: "Gmail confirmed after archival", sourceType: "gmail", identifier: "owner@example.com", confirmLater: true, want: "owner@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -186,6 +189,9 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 				requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 			}
 			persistInviteEmailForSource(t, st, source.ID, "calendar-account-scope", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
+			if tc.confirmLater {
+				requirements.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, "owner@example.com", "manual"))
+			}
 			eventIDs := emailEvents(t, st, source.ID)
 			requirements.Len(eventIDs, 1)
 

@@ -663,14 +663,19 @@ func calendarMailbox(syncConfig sql.NullString) string {
 	return NormalizeIdentifierForCompare(address)
 }
 
+// calendarEventMailbox returns the mailbox a source's calendar events belong
+// to, or "". Email invitations inherit the mailbox of their mail source.
+func calendarEventMailbox(sourceType, identifier string, syncConfig sql.NullString) string {
+	if sourceType != "gcal" && sourceType != rawFormatICS {
+		return accountSink(sourceType, identifier)
+	}
+	return calendarMailbox(syncConfig)
+}
+
 func (s *Store) calendarAccountAddressTx(
 	ctx context.Context, tx *loggedTx, sourceID int64, sourceType, identifier string, syncConfig sql.NullString,
 ) (string, error) {
-	address := calendarMailbox(syncConfig)
-	if sourceType != "gcal" && sourceType != rawFormatICS {
-		// Email invitations inherit the confirmed mailbox of their mail source.
-		address = accountSink(sourceType, identifier)
-	}
+	address := calendarEventMailbox(sourceType, identifier, syncConfig)
 	if address == "" {
 		return "", nil
 	}
@@ -1199,7 +1204,7 @@ func (s *Store) markAccountAttributionPendingForAddressesTx(
 			return nil, err
 		}
 	}
-	if mailbox := calendarMailbox(syncConfig); mailbox != "" && slices.Contains(normalized, mailbox) {
+	if mailbox := calendarEventMailbox(sourceType, identifier, syncConfig); mailbox != "" && slices.Contains(normalized, mailbox) {
 		if err := scanIDsTx(ctx, tx, scan,
 			`SELECT id FROM messages WHERE source_id = ? AND message_type = 'calendar_event'`, sourceID); err != nil {
 			return nil, err
