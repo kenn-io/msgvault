@@ -20,6 +20,10 @@ const (
 	// searchWindow is the most results one GitHub search returns; a longer
 	// history is read in windows of update time.
 	searchWindow = 1000
+	// searchOverlap is how far before its latest read update a search
+	// starts again: GitHub's search index can show an update after a newer
+	// one it already showed.
+	searchOverlap = 5 * time.Minute
 )
 
 // cursor is how far each discovery stream came.
@@ -27,8 +31,9 @@ type cursor struct {
 	// Notifications advance only after a scan read every page.
 	Notifications notificationCursor `json:"notifications,omitzero"`
 	// Each search's through is the latest update it has read. Results come
-	// oldest first, so everything older was read too, and the next page or
-	// sync continues from there.
+	// oldest first, so everything older was read too, except an update the
+	// index shows late: the next page continues from there, and the next
+	// sync from searchOverlap before it.
 	IssuesThrough          time.Time `json:"issues_through,omitzero"`
 	DiscussionsThrough     time.Time `json:"discussions_through,omitzero"`
 	ReviewedThrough        time.Time `json:"reviewed_through,omitzero"`
@@ -292,15 +297,20 @@ type searchPage struct {
 }
 
 // searchThreads finds the threads of kind that match query, updated at or
-// after *through, oldest first. GitHub returns at most 1,000 results per
-// search, so a longer history is read in windows, each starting at the last
-// update the previous one read. *through advances after every page.
+// after searchOverlap before *through, oldest first. A thread read again
+// unchanged is already archived, and the core skips it. GitHub returns at
+// most 1,000 results per search, so a longer history is read in windows,
+// each starting at the last update the previous one read. *through
+// advances after every page.
 func (f *Forge) searchThreads(ctx context.Context, kind searchKind, query string, state *cursor, through *time.Time,
 	owners forge.OwnerFilter, page func([]forge.ThreadRef, []byte) error,
 ) error {
 	base := query + ownerQualifiers(owners)
-	for {
-		windowStart := *through
+	windowStart := *through
+	if !windowStart.IsZero() {
+		windowStart = windowStart.Add(-searchOverlap)
+	}
+	for ; ; windowStart = *through {
 		q := base + " sort:updated-asc"
 		if !windowStart.IsZero() {
 			q += " updated:>=" + windowStart.UTC().Format(time.RFC3339)

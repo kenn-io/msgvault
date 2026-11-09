@@ -380,6 +380,30 @@ func TestSearchReadsALongHistoryInWindows(t *testing.T) {
 	assert.Contains(windows[1], "updated:>=2020-02-11T15:00:00Z", "the second window starts at the first one's last update")
 }
 
+func TestSearchReadsBackForAnUpdateTheIndexShowsLate(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFakeGitHub(t)
+	f.issueSearch = []searchNode{found("Issue", "acme", "widgets", 2, "2026-11-07T10:03:00Z")}
+	var through time.Time
+	search := func() []string {
+		var refs []forge.ThreadRef
+		err := f.forge().searchThreads(t.Context(), searchIssues, "involves:octo", &cursor{}, &through, forge.NewOwnerFilter(nil, nil),
+			func(page []forge.ThreadRef, _ []byte) error {
+				refs = append(refs, page...)
+				return nil
+			})
+		require.NoError(err)
+		return uniqueKeys(refs)
+	}
+	assert.Equal([]string{"acme/widgets#2"}, search())
+
+	// The index shows an update older than the one it showed already.
+	f.issueSearch = append(f.issueSearch, found("Issue", "acme", "widgets", 1, "2026-11-07T10:00:00Z"))
+	assert.Contains(search(), "acme/widgets#1", "the next search reads back past the latest update it read")
+	assert.Equal(ts("2026-11-07T10:03:00Z"), through)
+}
+
 func TestSearchReadsASecondHoldingMoreThanAWindow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
