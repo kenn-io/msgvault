@@ -57,6 +57,9 @@ func TestWebMergeIdentityFixturesMatchStore(t *testing.T) {
 			require.Len(page, 1)
 			assert.Equal(t, detail.Labels.Addresses, page[0].Labels.Addresses)
 			assert.Equal(t, detail.Labels.AbsorbedAddressCount, page[0].Labels.AbsorbedAddressCount)
+			if tc.kind == "mailbox-case" {
+				assert.Equal(t, 1, detail.Labels.AbsorbedAddressCount)
+			}
 		})
 	}
 }

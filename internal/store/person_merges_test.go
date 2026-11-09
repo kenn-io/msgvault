@@ -2630,23 +2630,16 @@ func TestPersonMerge_DetailLabelsCurrentBindings(t *testing.T) {
 		points, err := st.ListPersonContactPointsContext(ctx, owner.ID, true)
 		require.NoError(err)
 		require.Len(points, 1)
+		var archived []store.ParticipantAddress
 		for _, address := range detail.Labels.Addresses {
 			if address.ParticipantID == participant {
-				assert.Equal(points[0].IdentityKey, address.IdentityKey)
+				archived = append(archived, address)
 			}
 		}
+		require.Len(archived, 1)
+		assert.Equal(points[0].IdentityKey, archived[0].IdentityKey)
 	})
 
-	t.Run("linked mailbox variants", func(t *testing.T) {
-		require := require.New(t)
-		st := testutil.NewTestStore(t)
-		owner, guest := mailboxCaseMergePeople(t, st)
-		merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "mailbox-count", Actor: "test"})
-		require.NoError(err)
-		detail, err := st.GetPersonMergeContext(t.Context(), merged.Merge.ID)
-		require.NoError(err)
-		assert.Equal(t, 1, detail.Labels.AbsorbedAddressCount)
-	})
 	t.Run("phone aliases and saved contacts", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)

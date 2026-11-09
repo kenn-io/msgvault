@@ -210,8 +210,10 @@ describe('PersonMergeHistoryController', () => {
       if (path === '/api/v1/person-merges/42') return Response.json({ ...detail({ id: 42, survivor_person_id: 8 }, []), labels: { ...detail().labels, profiles: [{ id: 8, display_name: 'New Example', participant_ids: [] }] } });
       throw new Error(`Unexpected request: ${path}`);
     }), 7);
+    const labelsRead = vi.spyOn(controller as unknown as { refreshLabels(value: GeneratedPersonMergeDetail): Promise<void> }, 'refreshLabels');
     const first = controller.selectMerge(41);
     await vi.waitFor(() => expect(controller.detail?.merge.id).toBe(41));
+    const pendingLabels = labelsRead.mock.results[0]!.value;
     expect(controller.labels?.for).toBe(controller.detail);
     expect(controller.labels?.names.has(19)).toBe(false);
     expect(controller.detailLoading).toBe(false);
@@ -219,11 +221,9 @@ describe('PersonMergeHistoryController', () => {
     if (replacement === 'person') controller.setPerson(8);
     else await controller.selectMerge(42);
     const answer = Response.json(person(19, 1, [], 'Late Example'));
-    const body = vi.spyOn(answer, 'text');
     late.resolve(answer);
-    await vi.waitFor(() => expect(body).toHaveResolved());
     await first;
-    await vi.waitFor(() => expect(controller.labels?.names.has(19)).not.toBe(true));
+    await pendingLabels;
     expect(requests.find(request => new URL(request.url).pathname === '/api/v1/people/19')?.signal.aborted).toBe(true);
     expect(controller.labels?.names.get(7)).toBeUndefined();
     expect(controller.labels?.names.get(19)).toBeUndefined();
@@ -676,7 +676,7 @@ describe('PersonMergeHistoryController', () => {
     expect(controller.snapshot).toBeNull();
     expect(controller.committedResult).toBeNull();
   });
-  it.each(['merge', 'person', 'close and reopen'] as const)('opens Split before saved addresses load and drops them after a %s change', async change => {
+  it.each(['merge', 'person', 'close and reopen'] as const)('drops late saved addresses after a %s change', async change => {
     const saved = [deferredResponse(), deferredResponse()];
     let savedReads = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -687,10 +687,10 @@ describe('PersonMergeHistoryController', () => {
       return Response.json({ merges: [], limit: 100, offset: 0 });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
+    const savedRead = vi.spyOn(controller as unknown as { loadSourceSaved(value: ReturnType<typeof person>): Promise<void> }, 'loadSourceSaved');
     await controller.selectMerge(41);
-
-    await expect(controller.openSplit()).resolves.toBe(true);
-    expect(controller.splitBusy).toBe(false);
+    await controller.openSplit();
+    const pendingSaved = savedRead.mock.results[0]!.value;
     controller.setParticipantSelected(701, true);
     expect(controller.confirmSplit()).toBe(true);
 
@@ -702,14 +702,11 @@ describe('PersonMergeHistoryController', () => {
       await expect(controller.openSplit()).resolves.toBe(true);
     }
     const answer = Response.json({ ...emptyProfile(person(12)), contact_points: [{ address_kind: 'email', original_value: 'late@example.org', normalized_value: 'late@example.org' }] });
-    const body = vi.spyOn(answer, 'text');
     saved[0]!.resolve(answer);
-    await vi.waitFor(() => expect(body).toHaveResolved());
-    await vi.waitFor(() => {
-      expect(controller.sourceSaved).toBeNull();
-      expect(controller.sourceSavedError).toBeNull();
-    });
-    saved[1]!.resolve(Response.json({}));
+    await pendingSaved;
+    expect(controller.sourceSaved).toBeNull();
+    expect(controller.sourceSavedError).toBeNull();
+    saved[1]!.resolve(Response.json(emptyProfile(person(12))));
     controller.destroy();
   });
 

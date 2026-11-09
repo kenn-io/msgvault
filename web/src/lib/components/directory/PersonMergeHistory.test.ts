@@ -249,8 +249,11 @@ describe('PersonMergeHistory', () => {
     renderHistory(12, { respond: path => path.endsWith('/merges') ? pending : undefined });
     expect(await screen.findByText('Loading merges…')).toBeDefined();
     expect(screen.queryByText('Merged-in profile merged into this profile')).toBeNull();
-    resolve(Response.json({ merges: [summary(detail())], limit: 100, offset: 0 }));
+    const item = summary(detail());
+    item.labels.absorbed_address_count = 2;
+    resolve(Response.json({ merges: [item], limit: 100, offset: 0 }));
     expect(await screen.findByText('address701@example.org merged into Alex Example')).toBeDefined();
+    expect(screen.getByText('2 addresses moved in', { exact: false })).toBeDefined();
   });
 
   it('keeps each merge’s recorded survivor even after that profile was merged away', async () => {

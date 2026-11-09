@@ -1,6 +1,6 @@
 import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
+import { envelope, mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -203,7 +203,7 @@ describe('PersonSplitSteps', () => {
 
   it('splits a saved-only profile without calling it addressless', async () => {
     let posted: Request | undefined;
-    const saved = { person_id: 19, identity_key: identityKeyFixture('email', 'saved@example.org'), address_kind: 'email', original_value: 'saved@example.org', normalized_value: 'saved@example.org', normalization: 'email', normalization_version: 1, envelope: {} };
+    const saved = { person_id: 19, identity_key: identityKeyFixture('email', 'saved@example.org'), address_kind: 'email', original_value: 'saved@example.org', normalized_value: 'saved@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(190) };
     const response = { ...result(true), source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [], 'Synthetic Restored') };
     const { controller } = await preparedController(async input => {
       const request = input as Request, path = new URL(request.url).pathname;
@@ -224,7 +224,11 @@ describe('PersonSplitSteps', () => {
 
   it('disables the address selection while the split is submitted', async () => {
     let resolve!: (response: Response) => void;
-    const { controller } = await preparedController(async input => (input as Request).method === 'GET' ? sourceResponse() : new Promise<Response>(done => resolve = done));
+    const { controller } = await preparedController(async input => {
+      const request = input as Request;
+      if (request.method !== 'GET') return new Promise<Response>(done => resolve = done);
+      return new URL(request.url).pathname.endsWith('/profile') ? Response.json(emptyProfile(person(12))) : sourceResponse();
+    });
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Unknown address 1' }));
     let submitted!: Promise<void>;
@@ -278,29 +282,41 @@ describe('saved contacts in Split', () => {
     participant_ids: [701], addresses: [addressFixture(701, 'email', 'guest@example.org')],
   });
 
-  it('shows the saved contacts actually present on both profiles in the exact receipt', async () => {
+  it.each([false, true])('shows saved contacts in the exact receipt, matching archived address=%s', async matching => {
+    const number = '+12025550144';
+    const scope = { service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '' };
+    const points = matching ? [
+      { ...contact(19, 'phone', number), ...scope, original_value: '+1 (202) 555-0144' },
+      ...catalogContacts(19),
+    ] : [contact(19, 'phone', number)];
+    const kept = matching ? [] : [contact(12, 'email', 'kept@example.org')];
     let committed = false;
     const source = person(12, 4, [701], 'Synthetic Source');
     const splitResult = result(true);
-    const { controller } = await preparedController(async (input) => {
-      const request = input as Request;
-      const path = new URL(request.url).pathname;
+    const { controller } = await preparedController(async input => {
+      const request = input as Request, path = new URL(request.url).pathname;
       if (path === '/api/v1/people/12/split' && request.method === 'POST') { committed = true; return Response.json(splitResult); }
-      if (path === '/api/v1/people/12/profile') return Response.json(structured(committed ? splitResult.source_person : source, [contact(12, 'email', 'kept@example.org'), ...(!committed ? [contact(12, 'phone', '+12025550144')] : [])]));
-      if (path === '/api/v1/people/19/profile') return Response.json(structured(splitResult.new_person, [contact(19, 'phone', '+12025550144')]));
-      if (path === '/api/v1/people/12') return Response.json(source, { headers: { ETag: '"person-12-r4"' } });
-      if (path === '/api/v1/people/19') return Response.json(splitResult.new_person);
+      if (path === '/api/v1/people/12/profile') return Response.json(structured(committed ? splitResult.source_person : source, [...kept, ...(!committed ? points.map(point => ({ ...point, person_id: 12 })) : [])]));
+      if (path === '/api/v1/people/19/profile') return Response.json(structured(splitResult.new_person, points));
+      if (path === '/api/v1/people/12') return sourceResponse();
       throw new Error(`Unexpected request: ${path}`);
-    }, mergeDetail().participants, savedLabels);
+    }, mergeDetail().participants, () => matching ? { ...savedLabels(), addresses: [addressFixture(701, 'phone', number, scope)] } : savedLabels());
     controller.setParticipantSelected(701, true);
     expect(controller.confirmSplit()).toBe(true);
     await controller.submitSplit();
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     const stayed = screen.getByRole('button', { name: 'Open Synthetic Source' }).closest('.detail-row')!;
     const moved = screen.getByRole('button', { name: 'Open Synthetic Restored' }).closest('.detail-row')!;
-    expect.soft(stayed.textContent).toContain('kept@example.org');
-    expect.soft(moved.textContent).toContain('+12025550144');
-    expect.soft(stayed.textContent).not.toContain('+12025550144');
+    if (matching) {
+      expect.soft(moved.textContent?.match(/\+1(?:[ ()-]*\d){10}/g)).toHaveLength(1);
+      expect.soft(moved.textContent).toContain('Saved:');
+      expect.soft(moved.textContent).toContain('Desk 4455 · Team hotline');
+      expect.soft(moved.textContent).toContain('plain@example.org');
+    } else {
+      expect.soft(stayed.textContent).toContain('kept@example.org');
+      expect.soft(moved.textContent).toContain(number);
+      expect.soft(stayed.textContent).not.toContain(number);
+    }
     controller.destroy();
   });
 
@@ -329,34 +345,6 @@ describe('saved contacts in Split', () => {
     const saved = screen.getByRole('region', { name: 'Saved on Synthetic Source' });
     expect(within(saved).getByText('Saved on Synthetic Source now. The result shows where each one ends up.')).toBeDefined();
     expect(within(saved).getAllByRole('listitem').map(item => item.textContent)).toEqual(alsoSaved ? ['+12025550144'] : ['kept@example.org', '+12025550144', ...(choice === 'some' ? ['Desk 4455 · Team hotline', 'plain@example.org'] : [])]);
-    controller.destroy();
-  });
-
-  it('marks a matching receipt address as saved once alongside catalog labels', async () => {
-    const number = '+12025550144';
-    const scope = { service_slug: 'phone', service_label: 'Phone', scope_kind: '', scope_value: '' };
-    const points = [
-      { ...contact(19, 'phone', number), ...scope, original_value: '+1 (202) 555-0144' },
-      ...catalogContacts(19),
-    ];
-    let committed = false;
-    const { controller } = await preparedController(async input => {
-      const request = input as Request, path = new URL(request.url).pathname;
-      if (path === '/api/v1/people/12/split' && request.method === 'POST') { committed = true; return Response.json(result(true)); }
-      if (path === '/api/v1/people/12/profile') return Response.json(structured(committed ? result(true).source_person : person(12, 4, [701], 'Synthetic Source'), committed ? [] : points.map(point => ({ ...point, person_id: 12 }))));
-      if (path === '/api/v1/people/19/profile') return Response.json(structured(result(true).new_person, points));
-      if (path === '/api/v1/people/12') return sourceResponse();
-      throw new Error(`Unexpected request: ${path}`);
-    }, undefined, () => ({ ...savedLabels(), participant_ids: [701], addresses: [addressFixture(701, 'phone', number, scope)] }));
-    controller.setParticipantSelected(701, true);
-    expect(controller.confirmSplit()).toBe(true);
-    await controller.submitSplit();
-    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    const receipt = screen.getByRole('button', { name: 'Open Synthetic Restored' }).closest('.detail-row')!;
-    expect.soft(receipt.textContent?.match(/\+1(?:[ ()-]*\d){10}/g)).toHaveLength(1);
-    expect.soft(receipt.textContent).toContain('Saved:');
-    expect.soft(receipt.textContent).toContain('Desk 4455 · Team hotline');
-    expect.soft(receipt.textContent).toContain('plain@example.org');
     controller.destroy();
   });
 
