@@ -292,6 +292,29 @@ describe('DirectoryEntityController', () => {
     expect(individualRead).toBe(2);
   });
 
+  it('refreshes a cached employer when a conflict moves a job there', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/employments/11' && request.method === 'GET')
+        return Response.json(employment(11, 2, { organization_id: 22 }), { headers: { ETag: '"employment-11-r2"' } });
+      if (path === '/api/v1/employments/11' && request.method === 'PATCH')
+        return Response.json({ error: 'revision_conflict', message: 'changed elsewhere' }, { status: 412 });
+      if (path === '/api/v1/organizations/22')
+        return Response.json(organizationProfile(2, 'Current Employer'), { headers: { ETag: '"organization-22-r2"' } });
+      return defaultResponse(request);
+    }));
+    const controller = new DirectoryEntityController(client, 7);
+    controller.employments = [employment(11, 1, { organization_id: 21 })];
+    controller.organizationRecords.set(22, organizationProfile(1, 'Old Employer'));
+
+    const result = await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }));
+
+    expect(result).toMatchObject({ ok: false, kind: 'conflict', current: { data: employment(11, 2, { organization_id: 22 }) } });
+    expect(controller.organizationName(22)).toBe('Current Employer');
+    controller.destroy();
+  });
+
   it('blocks a duplicate create after a lost response until the matching collection refresh succeeds', async () => {
     let postCount = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {

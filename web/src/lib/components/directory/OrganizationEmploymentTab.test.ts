@@ -201,6 +201,34 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).toContain('Primary'));
   });
 
+  it('locks Make primary while its preparation read is pending', async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    let reads = 0;
+    let writes = 0;
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/employments/11' && request.method === 'GET') { reads++; return pending; }
+      if (path === '/api/v1/employments/11/primary') { writes++; return Response.json(employment(11, 2, { is_primary: true })); }
+      if (path === '/api/v1/people/7/employments') return collection([employment(11, 2, { is_primary: true })]);
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    controller.employments = [employment()];
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await rowAction('Make primary');
+      await waitFor(() => expect(reads).toBe(1));
+      await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for / })[0]);
+      await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
+      expect(reads).toBe(1);
+      release(new Response(JSON.stringify(employment()), { headers: { ETag: '"employment-11-r1"' } }));
+      await waitFor(() => expect(writes).toBe(1));
+      expect(screen.queryByText('Changed elsewhere')).toBeNull();
+      expect(screen.queryByText("Couldn't make this job primary.")).toBeNull();
+    } finally { release(Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })); view.unmount(); controller.destroy(); }
+  });
+
   it('moves an ended job to Past', async () => {
     const requests: Request[] = [];
     let revision = 1;

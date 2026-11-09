@@ -717,7 +717,7 @@ export class DirectoryEntityController {
     } catch { /* Keep the conflict useful with its person ID if the profile cannot load. */ }
   }
   private async prepareConflictEmployer<T>(result: DirectoryEntityMutationResult<T, Prepared<Employment>>, opened?: Employment): Promise<void> {
-    if (result.ok || result.kind !== 'conflict' || !result.current || !opened || result.current.data.organization_id === opened.organization_id || this.organizationRecords.has(result.current.data.organization_id)) return;
+    if (result.ok || result.kind !== 'conflict' || !result.current || !opened || result.current.data.organization_id === opened.organization_id) return;
     try {
       await this.prepareOrganizationMutation(result.current.data.organization_id);
     } catch { /* Keep the job conflict actionable when its employer cannot load. */ }

@@ -34,7 +34,8 @@
   const removal = new WriteAttempt<Prepared<Employment>>();
   const primary = new WriteAttempt<Prepared<Employment>>();
   let primaryTarget = $state<Employment>();
-  const acting = $derived(removal.busy || primary.busy);
+  let primaryPreparing = $state(false);
+  const acting = $derived(removal.busy || primary.busy || primaryPreparing);
   let openedOrganizationRequestKey = $state(0);
   function holderJob(organizationID: number, holderID: number): { label: string; open: () => void } | undefined {
     const jobs = holderID === personID ? controller.employments.filter(item => item.organization_id === organizationID) : [];
@@ -73,8 +74,13 @@
     if (acting) return;
     if (primaryTarget?.id !== employment.id) primary.reset();
     primaryTarget = employment;
-    if (!primary.prepared && !await primary.prepare(() => controller.prepareEmploymentMutation(employment.id))) return;
-    await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
+    primaryPreparing = true;
+    try {
+      if (!primary.prepared && !await primary.prepare(() => controller.prepareEmploymentMutation(employment.id))) return;
+      await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
+    } finally {
+      primaryPreparing = false;
+    }
   }
 
   async function removeEmployment(): Promise<void> {
