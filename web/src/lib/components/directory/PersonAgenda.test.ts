@@ -15,6 +15,20 @@ function readyStatus(): Response {
   return Response.json({ state: 'ready' });
 }
 
+/** Opens the add form once the agenda can take a task, unless it's already open. */
+async function openForm(): Promise<void> {
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Add task' }) ?? screen.queryByLabelText('New task')).not.toBeNull());
+  const open = screen.queryByRole('button', { name: 'Add task' });
+  if (open) await fireEvent.click(open);
+}
+
+/** Opens the add form when it's closed, then types a task title. */
+async function typeTask(value: string): Promise<void> {
+  const open = screen.queryByRole('button', { name: 'Add task' });
+  if (open) await fireEvent.click(open);
+  await fireEvent.input(screen.getByLabelText('New task'), { target: { value } });
+}
+
 describe('PersonAgenda', () => {
   it("shows each task's list and creates into the selected list", async () => {
     const requests: Request[] = [];
@@ -42,12 +56,12 @@ describe('PersonAgenda', () => {
     expect(await screen.findByText('waiting')).toBeDefined();
     expect(screen.getByRole('link', { name: 'Send the revised budget' }).getAttribute('href')).toBe('https://tasks.example.test/one');
 
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
+    await typeTask('Send notes');
     await openTypeahead('List');
     await fireEvent.mouseDown(screen.getByRole('option', { name: 'waiting' }));
     await screen.findByRole('button', { name: 'List: waiting' });
     expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(screen.getByText('Send notes')).toBeDefined());
 
     const post = requests.find(request => request.method === 'POST');
@@ -55,6 +69,67 @@ describe('PersonAgenda', () => {
     expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list: 'waiting' });
     await openTypeahead('List');
     expect(screen.getAllByRole('option', { name: 'waiting' })).toHaveLength(1);
+  });
+
+  it('retries a failed create from the notice with the same payload', async () => {
+    const posts: Request[] = [];
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'POST') {
+        posts.push(request);
+        return posts.length === 1
+          ? Response.json({ message: 'Unable to add task' }, { status: 503 })
+          : Response.json({ item: item('new', 'Send notes') }, { status: 201 });
+      }
+      return Response.json({ project: 'msgvault', items: posts.length === 2 ? [item('new', 'Send notes')] : [] });
+    });
+    render(PersonAgenda, { client, personID: 7 });
+    await screen.findByText('No tasks yet');
+    await typeTask('Send notes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    await screen.findByText("Couldn't add the task.");
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(await posts[1]!.clone().json()).toEqual({ title: 'Send notes', list: 'agenda' });
+    expect(await screen.findByText('Send notes')).toBeDefined();
+  });
+
+  it('clears the failed create notice when cancelling the task', async () => {
+    const client = createAPIClient(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'POST') {
+        return Response.json({ message: 'Unable to add task' }, { status: 503 });
+      }
+      return Response.json({ project: 'msgvault', items: [] });
+    });
+    render(PersonAgenda, { client, personID: 7 });
+    await screen.findByText('No tasks yet');
+    await typeTask('Send notes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    await screen.findByText("Couldn't add the task.");
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByText("Couldn't add the task.")).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.getByText('No tasks yet')).toBeDefined();
+  });
+
+  it('says an empty list in one line and opens the add form only when asked', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      return isStatus(request) ? readyStatus() : Response.json({ project: 'msgvault', items: [] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await screen.findByText('No tasks yet');
+    expect(screen.queryByLabelText('New task')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    expect(screen.getByRole('button', { name: 'List: agenda' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('New task')).toBeNull();
   });
 
   it.each(['pending', 'failed'] as const)('keeps a %s create retry key across profile revisions and rotates it when the payload changes', async outcome => {
@@ -81,25 +156,24 @@ describe('PersonAgenda', () => {
     const { rerender } = render(PersonAgenda, { client, personID: 7, refreshKey: '1' });
     await screen.findByText('No tasks yet');
 
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(await requests.find(request => request.method === 'POST')!.clone().json()).toMatchObject({ title: 'Send notes', list: 'agenda' });
+    await typeTask('Send notes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     if (outcome === 'pending') {
       await waitFor(() => expect(releasePost).toBeDefined());
       await rerender({ client, personID: 7, refreshKey: '2' });
       expect(requests.filter(isStatus)).toHaveLength(1);
       releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
     } else {
-      expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
+      expect(await screen.findByText("Couldn't add the task.")).toBeDefined();
       await rerender({ client, personID: 7, refreshKey: '2' });
     }
     await waitFor(() => expect(requests.filter(request => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7/agenda')).toHaveLength(2));
     await screen.findByText('No tasks yet');
-    expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', 'Send notes');
+    expect(screen.getByLabelText('New task')).toHaveProperty('value', 'Send notes');
 
     // The profile revision changed, but the submission stayed the same.
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(2));
     const keys = requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key'));
     expect(keys.length).toBe(2);
@@ -107,9 +181,9 @@ describe('PersonAgenda', () => {
     expect(keys[0]).toBe(keys[1]);
 
     // Changing the title mints a fresh key instead of replaying the old one.
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes tomorrow' } });
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await typeTask('Send notes tomorrow');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(3));
     const rotated = requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key'));
     expect(rotated.length).toBe(3);
@@ -137,57 +211,76 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, refreshKey: '1', onAnnounce });
     await screen.findByText('Ask about launch');
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
+    await typeTask('Send notes');
     await openTypeahead('List');
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Follow-up' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    await fireEvent.click(screen.getByRole('button', { name: operation === 'create' ? 'Add' : 'Unlink Ask about launch' }));
+    await fireEvent.click(screen.getByRole('button', { name: operation === 'create' ? 'Add task' : 'Unlink Ask about launch' }));
     await waitFor(() => expect(releaseWrite).toBeDefined());
 
     await rerender({ client, personID: 7, refreshKey: '2', onAnnounce });
     await rerender({ client, personID: 7, refreshKey: '3', onAnnounce });
     expect(requests.filter(isStatus)).toHaveLength(1);
-    expect(screen.getByLabelText('New agenda item')).toHaveProperty('disabled', true);
+    expect(screen.getByLabelText('New task')).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'List: follow-up' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Add' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Add task' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'Unlink Ask about launch' })).toHaveProperty('disabled', true);
     expect(onAnnounce).not.toHaveBeenCalled();
 
     settled = true;
     releaseWrite(Response.json({ item: operation === 'create' ? item('new', 'Send notes') : item('one', 'Ask about launch') }));
     await screen.findByText('Merged task');
-    await waitFor(() => expect(screen.getByLabelText('New agenda item')).toHaveProperty('disabled', false));
+    await waitFor(() => expect(screen.getByLabelText('New task')).toHaveProperty('disabled', false));
     expect(screen.getByRole('button', { name: 'List: follow-up' })).toBeDefined();
-    expect(onAnnounce).toHaveBeenCalledExactlyOnceWith(operation === 'create' ? 'Agenda item added.' : 'Agenda item unlinked.');
-    expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', operation === 'create' ? '' : 'Send notes');
+    expect(onAnnounce).toHaveBeenCalledExactlyOnceWith(operation === 'create' ? 'Task added.' : 'Task unlinked.');
+    expect(screen.getByLabelText('New task')).toHaveProperty('value', operation === 'create' ? '' : 'Send notes');
     if (operation === 'create') expect(screen.getByText('Send notes')).toBeDefined();
     expect(screen.queryByText('Ask about launch')).toBeNull();
   });
 
-  it('canonicalizes the list when the picker selects a case or spacing variant', async () => {
+  it('canonicalizes the list before fingerprinting so case or spacing changes keep the retry key', async () => {
     const requests: Request[] = [];
+    let attempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       if (isStatus(request)) return readyStatus();
       if (request.method === 'POST') {
-        return Response.json({ item: { ...item('new', 'Send notes'), list: 'gift ideas' } }, { status: 201 });
+        attempts += 1;
+        if (attempts === 1) {
+          return Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 });
+        }
+        return Response.json({ item: item('new', 'Send notes') }, { status: 201 });
       }
-      return Response.json({ project: 'msgvault', items: [] });
+      return Response.json({ project: 'msgvault', items: attempts >= 2 ? [item('new', 'Send notes')] : [] });
     }));
 
     render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
 
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
+    await typeTask('Send notes');
     await openTypeahead('List');
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    expect(screen.getByRole('button', { name: 'List: gift ideas' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    await waitFor(() => expect(requests.filter(request => request.method === 'POST')).toHaveLength(1));
-    const post = requests.find(request => request.method === 'POST');
-    expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
+
+    // The server canonicalizes lists (lowercase, whitespace-collapsed, empty
+    // → 'agenda'), so an unknown-outcome retry typed with different case or
+    // spacing must keep the same idempotency key and send the canonical list.
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
+    await openTypeahead('List');
+    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'GIFT ideas' } });
+    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(2));
+
+    const posts = requests.filter((request) => request.method === 'POST');
+    const keys = posts.map((request) => request.headers.get('Idempotency-Key'));
+    expect(keys[0]).toBeTruthy();
+    expect(keys[0]).toBe(keys[1]);
+    expect(await posts[0].clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
+    expect(await posts[1].clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
   });
 
   it('resets the idempotency key when the selected person changes', async () => {
@@ -210,16 +303,16 @@ describe('PersonAgenda', () => {
     const { rerender } = render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
 
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await typeTask('Send notes');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
 
     await rerender({ client, personID: 8 });
     await waitFor(() => expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/8/agenda')).toBe(true));
 
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await typeTask('Send notes');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(2));
 
     const posts = requests.filter((request) => request.method === 'POST');
@@ -249,20 +342,21 @@ describe('PersonAgenda', () => {
     // rows or Unlink controls render; the status message is the only notice.
     expect(screen.queryByRole('button', { name: 'Unlink Ask' })).toBeNull();
     expect(screen.queryByText('Task service is unavailable')).toBeNull();
-    expect(screen.queryByLabelText('New agenda item')).toBeNull();
+    expect(screen.queryByLabelText('New task')).toBeNull();
     expect(screen.queryByRole('button', { name: /^List:/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
 
     ready = true;
     await rerender({ client, personID: 8 });
-    await waitFor(() => expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(false));
-    expect(screen.queryByText(`Kata integration ${state}: ${message}`)).toBeNull();
+    await openForm();
+    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
+    expect(screen.queryByText('Kata integration authentication_required: Reconnect Kata to manage agenda items')).toBeNull();
     // The switch cleared person A's rows; person 8's list serves the same
     // item, so wait for it to render before asserting the Unlink gate.
     await screen.findByRole('button', { name: 'Unlink Ask' });
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
-    expect((screen.getByRole('button', { name: 'List: agenda' }) as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false);
+    await typeTask('Send notes');
+    expect(screen.getByRole('button', { name: 'List: agenda' })).toHaveProperty('disabled', false);
+    expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Unlink Ask' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -278,7 +372,8 @@ describe('PersonAgenda', () => {
     const status = await screen.findByText('Kata integration disabled: Kata is not configured.');
     expect(status.getAttribute('role')).toBe('status');
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByLabelText('New agenda item')).toBeNull();
+    expect(screen.queryByLabelText('New task')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
   });
 
   it('does not request the agenda while the task integration is not ready', async () => {
@@ -375,9 +470,9 @@ describe('PersonAgenda', () => {
     // nothing from A stays clickable while B's status and list are pending.
     expect(screen.queryByText('Ask about launch')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Unlink Ask about launch' })).toBeNull();
-    expect(screen.queryByLabelText('New agenda item')).toBeNull();
+    expect(screen.queryByLabelText('New task')).toBeNull();
     expect(screen.queryByRole('button', { name: /^List:/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add task' })).toBeNull();
 
     // A click that slips through must never pair A's ref with B's person id.
     await fireEvent.click(staleUnlink);
@@ -388,7 +483,8 @@ describe('PersonAgenda', () => {
     await waitFor(() => expect(releaseList).not.toBeNull());
     releaseList!(Response.json({ project: 'msgvault', items: [] }));
     await screen.findByText('No tasks yet');
-    await waitFor(() => expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(false));
+    await openForm();
+    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
     expect(requests.some((request) => request.method === 'DELETE')).toBe(false);
   });
 
@@ -436,22 +532,22 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
     await screen.findByText('No tasks yet');
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'A note' } });
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await typeTask('A note');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(releasePost).not.toBeNull());
 
     await rerender({ client, personID: 8, onAnnounce });
     await screen.findByText('B item');
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'B note' } });
+    await typeTask('B note');
 
     // A's create fails after the switch: person B's view must not inherit
     // the failure, and the stale mutation must still release the mutation
     // mutex so B's form recovers.
     releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.queryByText('Unable to add agenda item')).toBeNull();
-    expect((screen.getByLabelText('New agenda item') as HTMLInputElement).value).toBe('B note');
+    expect((screen.getByLabelText('New task') as HTMLInputElement).value).toBe('B note');
     expect(onAnnounce).not.toHaveBeenCalled();
   });
 
@@ -474,20 +570,20 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7, onAnnounce });
     await screen.findByText('No tasks yet');
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'A note' } });
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await typeTask('A note');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(releasePost).not.toBeNull());
 
     await rerender({ client, personID: 8, onAnnounce });
     await screen.findByText('B item');
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'B note' } });
+    await typeTask('B note');
 
     // A's create succeeds after the switch: it must not clear B's typed
     // title, announce success, or trigger a redundant reload of B's list.
     releasePost!(Response.json({ item: item('new', 'A note') }, { status: 201 }));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    expect((screen.getByLabelText('New agenda item') as HTMLInputElement).value).toBe('B note');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByLabelText('New task') as HTMLInputElement).value).toBe('B note');
     expect(onAnnounce).not.toHaveBeenCalled();
     expect(personEightLists).toBe(1);
     expect(screen.getByText('B item')).toBeDefined();
@@ -517,7 +613,8 @@ describe('PersonAgenda', () => {
     // A's unlink fails after the switch: B's view must not inherit the
     // error, and the stale mutation must release the mutation mutex.
     releaseDelete!(Response.json({ error: 'task_unavailable', message: 'Unable to unlink agenda item' }, { status: 503 }));
-    await waitFor(() => expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(false));
+    await openForm();
+    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
     expect(screen.queryByText('Unable to unlink agenda item')).toBeNull();
     expect(screen.getByText('B item')).toBeDefined();
   });
@@ -549,7 +646,8 @@ describe('PersonAgenda', () => {
     // A's unlink succeeds after the switch: it must not announce success or
     // trigger a redundant reload of B's list.
     releaseDelete!(Response.json({ item: item('one', 'Ask about launch') }));
-    await waitFor(() => expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(false));
+    await openForm();
+    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
     expect(onAnnounce).not.toHaveBeenCalled();
     expect(personEightLists).toBe(1);
     expect(screen.getByText('B item')).toBeDefined();
@@ -577,31 +675,34 @@ describe('PersonAgenda', () => {
 
     const { rerender } = render(PersonAgenda, { client, personID: 7 });
     await screen.findByText('No tasks yet');
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'A note' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await typeTask('A note');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(releases.length).toBe(1)); // A's create hangs.
 
     // Person B is selected while A's create still hangs: B's form must be
     // usable immediately, not locked behind a request that may never settle.
     await rerender({ client, personID: 8 });
     await screen.findByText('B item');
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
+    await openForm();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));
 
     // B starts a create; A's hung create then fails. The stale completion
     // must leave B's in-flight mutation alone instead of unlocking the form
     // while B's own request is still pending.
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'B note' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await typeTask('B note');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await waitFor(() => expect(releases.length).toBe(2));
+    expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(true);
 
     releases[0]!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
     await waitFor(() => expect(released).toBe(1));
-    expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(true);
 
     releases[1]!(Response.json({ item: item('new', 'B note') }, { status: 201 }));
     // B's success clears the typed title, so the submit button stays disabled
     // until text is entered again; the inputs are the mutating-only signal.
-    await waitFor(() => expect((screen.getByLabelText('New agenda item') as HTMLInputElement).disabled).toBe(false));
+    await openForm();
+    await waitFor(() => expect((screen.getByLabelText('New task') as HTMLInputElement).disabled).toBe(false));
   });
 
   it('unlinks by Kata ref and then reloads the live agenda', async () => {

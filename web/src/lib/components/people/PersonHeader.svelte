@@ -15,12 +15,21 @@
 </header>
 
 <style>
-  header { display: flex; gap: var(--control-gap); align-items: center; padding: var(--pane-pad-y) var(--page-gutter); border-bottom: 1px solid var(--border-muted); }
+  /* Padded 12/16. The 40 avatar, then 12, then the name (Title) over the email (Meta), centered as a block on
+   * the avatar; Merge with… and ⋯ are 28, 8 apart, centered on it too. */
+  header { display: flex; flex: none; gap: var(--space-box); align-items: center; padding: var(--space-box) var(--space-pane); border-bottom: 1px solid var(--border-muted); }
   header > div { display: flex; min-width: 0; flex-direction: column; gap: 0; }
-  h2 { margin: 0; font-size: var(--font-size-lg); }
+  h2 { margin: 0; font-size: var(--type-title-size); font-weight: 600; line-height: var(--type-title-line); }
   button { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   h2 button:hover { text-decoration: underline; }
-  .avatar { display: flex; }
-  .actions { flex-direction: row; align-items: center; margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--control-gap); }
-  span { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  .avatar { display: flex; flex: none; }
+  .actions { flex-direction: row; align-items: center; margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--space-group); }
+  span { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); overflow-wrap: anywhere; }
+  /* On a phone the name keeps the row, and Merge with… and ⋯ wrap together as one group under it, 8 below, at
+   * the header's left inset. */
+  @media (max-width: 640px) {
+    header { flex-wrap: wrap; row-gap: var(--space-group); }
+    header > div { flex: 1 1 0; }
+    .actions { flex-basis: 100%; flex-wrap: nowrap; margin-left: 0; }
+  }
 </style>

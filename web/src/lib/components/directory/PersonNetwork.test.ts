@@ -75,83 +75,169 @@ function networkFetcher(network: PersonNetworkProjection) {
   });
 }
 
+const mentor = {
+  id: 31, revision: 1, slug: 'mentor', forward_label: 'Mentor', reverse_label: 'Mentee',
+  is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user' as const, universal_id: 'relationship-type-31',
+  created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+};
+
+function rows(region: HTMLElement): string[] {
+  return [...region.querySelectorAll('.detail-row')].map((row) => row.textContent!.trim());
+}
+
 describe('PersonNetwork', () => {
-  it('draws every connection with a chip and opens records', async () => {
+  it('lists only the people reached through the direct links, each with how, and opens records', async () => {
     const { controller } = controllerWith(networkFetcher(connected()));
+    controller.relationshipTypes = [mentor];
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
-    const { container } = render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
+    render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
 
     await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
     await screen.findByRole('button', { name: 'Shared Organization' });
-    const list = screen.getByRole('list', { name: 'Network connections' });
-    expect([...list.querySelectorAll('li')].map((item) => item.textContent)).toEqual([
-      'Selected Person · works with · Curated Peer',
-      'Curated Peer · Engineer · Shared Organization',
-      'Curated Peer · mentors · Second Hop Person'
-    ]);
-    const paths = container.querySelectorAll('path');
-    expect(paths).toHaveLength(3);
-    expect(container.querySelectorAll('.edge-label')).toHaveLength(3);
-    const cross = paths[0]!.getAttribute('d')!.split(' ');
-    const chip = [...container.querySelectorAll<HTMLElement>('.edge-label')].find((chip) => chip.textContent === 'works with')!;
-    expect(parseFloat(chip.style.left)).toBe((Number(cross[1]) + Number(cross[4])) / 2);
-    expect(parseFloat(chip.style.top)).toBe((Number(cross[2]) + Number(cross[5])) / 2);
-    expect([...container.querySelectorAll('.edge-label')].find((chip) => chip.textContent === 'Engineer')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
-    expect(onOpenPerson).toHaveBeenCalledWith(8);
-    expect(onOpenOrganization).toHaveBeenCalledWith(21);
+    const region = screen.getByRole('region', { name: 'Network at 2 steps' });
+    // Curated Peer is a direct link with no link to another direct one, which Connections already lists, so it shows only as the way through.
+    expect(rows(region)).toEqual(['Second Hop PersonMentee · via Curated Peer', 'Shared OrganizationEngineer · via Curated Peer']);
+    expect(screen.queryByRole('button', { name: 'Curated Peer' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
-    expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
+    await fireEvent.click(screen.getByRole('button', { name: 'Second Hop Person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
+    expect(onOpenPerson).toHaveBeenCalledWith(9);
+    expect(onOpenOrganization).toHaveBeenCalledWith(21);
   });
 
-  it('uses the reverse type label when the root is the target', async () => {
-    const network = connected();
-    network.nodes = network.nodes.slice(0, 2);
-    network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' }];
-    const { controller } = controllerWith(networkFetcher(network));
-    controller.relationshipTypes = [{
-      id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'mentored by',
-      is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
-      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-    }];
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByRole('button', { name: 'Curated Peer' });
-    expect(container.querySelector('.edge-label')?.textContent).toBe('mentored by');
-  });
-
-  it('marks an upward same-column relationship label bottom to top', async () => {
+  it('names a person reached through an organization by their job there', async () => {
     const network: PersonNetworkProjection = {
       root_person_id: 7, depth: 2, truncated: false,
       nodes: [
         { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
-        { id: 'person:8', kind: 'person', entity_id: 8, label: 'Alpha', hop: 1 },
-        { id: 'person:9', kind: 'person', entity_id: 9, label: 'Beta', hop: 1 }
+        { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Cedar Circle', hop: 1 },
+        { id: 'organization:22', kind: 'organization', entity_id: 22, label: 'Lumen Grove', hop: 1 },
+        { id: 'person:9', kind: 'person', entity_id: 9, label: 'Sela Moss', hop: 2 }
       ],
       edges: [
-        { id: 'relationship:31', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', relationship_type_slug: 'knows', label: 'knows' },
-        { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:9', relationship_type_slug: 'knows', label: 'knows' },
-        { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'mentors' }
+        { id: 'employment:1', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:21', label: 'Workshop volunteer' },
+        { id: 'employment:2', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:22', label: 'Garden designer' },
+        { id: 'employment:3', kind: 'employment', source_node_id: 'person:9', target_node_id: 'organization:21', label: 'Workshop lead' },
+        { id: 'employment:4', kind: 'employment', source_node_id: 'person:9', target_node_id: 'organization:22', label: 'Advisor' }
+      ]
+    };
+    render(PersonNetwork, { controller: controllerWith(networkFetcher(network)).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
+    await screen.findByRole('button', { name: 'Sela Moss' });
+    expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual(['Sela MossWorkshop lead · via Cedar Circle; Advisor · via Lumen Grove']);
+  });
+
+  it('keeps links between direct contacts at two steps', async () => {
+    const network = connected();
+    network.nodes.push({ id: 'person:11', kind: 'person', entity_id: 11, label: 'Other Peer', hop: 1 }, { id: 'organization:22', kind: 'organization', entity_id: 22, label: 'Own Organization', hop: 1 });
+    network.edges.push(
+      { id: 'relationship:34', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:11', relationship_type_slug: 'friend', label: 'Friend' },
+      { id: 'employment:42', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:22', label: 'Designer' },
+      { id: 'relationship:35', kind: 'relationship', source_node_id: 'person:11', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'Mentor' },
+      { id: 'employment:43', kind: 'employment', source_node_id: 'person:8', target_node_id: 'organization:22', label: 'Advisor' }
+    );
+    const { controller } = controllerWith(networkFetcher(network));
+    controller.relationshipTypes = [mentor];
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
+    await screen.findByRole('button', { name: 'Second Hop Person' });
+    expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual([
+      'Curated PeerAdvisor · with Own Organization',
+      'Other PeerMentor · with Curated Peer',
+      'Second Hop PersonMentee · via Curated Peer',
+      'Shared OrganizationEngineer · via Curated Peer'
+    ]);
+  });
+
+  it('says a link between two at the same step once, on the side it describes', async () => {
+    const network: PersonNetworkProjection = {
+      root_person_id: 7, depth: 3, truncated: false,
+      nodes: [
+        { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
+        { id: 'person:8', kind: 'person', entity_id: 8, label: 'Direct Friend', hop: 1 },
+        { id: 'person:9', kind: 'person', entity_id: 9, label: 'Cedar Bloom', hop: 2 },
+        { id: 'person:10', kind: 'person', entity_id: 10, label: 'Maple Reed', hop: 2 },
+        { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Fern Hollow', hop: 2 }
+      ],
+      edges: [
+        { id: 'relationship:1', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', relationship_type_slug: 'friend', label: 'Friend' },
+        { id: 'relationship:2', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:9', relationship_type_slug: 'friend', label: 'Friend' },
+        { id: 'relationship:3', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:10', relationship_type_slug: 'friend', label: 'Friend' },
+        { id: 'employment:1', kind: 'employment', source_node_id: 'person:8', target_node_id: 'organization:21', label: 'Advisor' },
+        { id: 'relationship:4', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:10', relationship_type_slug: 'mentor', label: 'Mentor' },
+        { id: 'employment:2', kind: 'employment', source_node_id: 'person:10', target_node_id: 'organization:21', label: 'Gardener' }
       ]
     };
     const { controller } = controllerWith(networkFetcher(network));
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    controller.relationshipTypes = [mentor];
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
-    await waitFor(() => expect([...container.querySelectorAll('.edge-label')].map((chip) => chip.textContent)).toContain('↑ mentors'));
+    await screen.findByRole('button', { name: 'Maple Reed' });
+    // At 2 steps the links among the second step are past the edge of what was loaded.
+    expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual([
+      'Cedar BloomFrom Direct Friend: Friend',
+      'Fern HollowAdvisor · via Direct Friend',
+      'Maple ReedFrom Direct Friend: Friend'
+    ]);
+    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+    await waitFor(() => expect(rows(screen.getByRole('region', { name: 'Network at 3 steps' }))).toEqual([
+      'Cedar BloomFrom Direct Friend: Friend; Mentor · with Maple Reed',
+      'Fern HollowAdvisor · via Direct Friend',
+      'Maple ReedFrom Direct Friend: Friend; Gardener · with Fern Hollow'
+    ]));
   });
 
-  it('joins three relations between direct people in reading order', async () => {
+  it('opens on Direct as one line naming the people reached directly', async () => {
+    const fetcher = networkFetcher(connected());
+    render(PersonNetwork, { controller: controllerWith(fetcher).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByText('Curated Peer');
+    expect(new URL(requestOf(fetcher.mock.calls[0]![0]).url).searchParams.get('depth')).toBe('1');
+    expect(screen.queryByRole('region', { name: 'Network at 2 steps' })).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+    await screen.findByRole('button', { name: 'Second Hop Person' });
+    expect(screen.queryByText('Curated Peer', { selector: 'p' })).toBeNull();
+  });
+
+  it('names up to three direct links, then counts the rest', async () => {
+    const network = connected(1);
+    const add = (id: number, label: string) => {
+      network.nodes.push({ id: `organization:${id}`, kind: 'organization', entity_id: id, label, hop: 1 });
+      network.edges.push({ id: `employment:${id}`, kind: 'employment', source_node_id: 'person:7', target_node_id: `organization:${id}`, label: 'Designer' });
+    };
+    add(22, 'Lumen Grove'); add(23, 'Cedar Circle');
+    const first = render(PersonNetwork, { controller: controllerWith(networkFetcher(structuredClone(network))).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByText('Curated Peer, Lumen Grove, and Cedar Circle');
+    first.unmount();
+    add(24, 'Fern Hollow'); add(25, 'Moss Yard');
+    render(PersonNetwork, { controller: controllerWith(networkFetcher(network)).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByText('Curated Peer, Lumen Grove, and 3 more');
+  });
+
+  it('says no one else is that far out, rather than repeating Direct', async () => {
+    const network = connected(1);
+    network.nodes.push({ id: 'organization:22', kind: 'organization', entity_id: 22, label: 'Own Organization', hop: 1 });
+    network.edges.push({ id: 'employment:42', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:22', label: 'Designer' });
+    render(PersonNetwork, { controller: controllerWith(networkFetcher(network)).controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByText('Curated Peer and Own Organization');
+    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+    await screen.findByText('No one else at 2 steps');
+    expect(screen.queryByRole('button', { name: 'Own Organization' })).toBeNull();
+    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+    await screen.findByText('No one else at 3 steps');
+  });
+
+  it('reads a link from the far end when it runs toward the direct person', async () => {
     const network = connected();
-    network.nodes = network.nodes.slice(0, 2);
-    network.edges = [network.edges[0]!, { id: 'relationship:35', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', label: 'knows' }];
-    network.edges.push({ id: 'relationship:34', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' });
+    network.nodes = [network.nodes[0]!, network.nodes[1]!, network.nodes[3]!];
+    network.edges = [network.edges[0]!, { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'Mentor' }];
     const { controller } = controllerWith(networkFetcher(network));
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByRole('button', { name: 'Curated Peer' });
-    expect(container.querySelector('.edge-label')?.textContent).toBe('works with · knows · ← mentors');
-    expect(container.querySelectorAll('.edge-label')).toHaveLength(1);
-    expect(screen.getByRole('list', { name: 'Network connections' }).querySelectorAll('li')).toHaveLength(3);
+    controller.relationshipTypes = [mentor];
+    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
+    await screen.findByRole('button', { name: 'Second Hop Person' });
+    expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual(['Second Hop PersonMentor · via Curated Peer']);
   });
 
   it('hides a root-only direct network', async () => {
@@ -162,22 +248,23 @@ describe('PersonNetwork', () => {
     expect(screen.queryByRole('heading', { name: 'Network' })).toBeNull();
   });
 
-  it('shows a failed first load and retries even without an earlier graph', async () => {
+  it('shows a failed first load in the failure voice, with the server message in Details, and retries', async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 }))
       .mockResolvedValueOnce(Response.json(connected(1)));
     const controller = new DirectoryEntityController(createAPIClient(fetcher), 7);
-    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));
-    await screen.findByRole('button', { name: 'Curated Peer' });
+    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
+    expect(container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByText('Curated Peer');
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('reloads for depth and retains the graph through loading, error, and retry', async () => {
-    const depthTwo = deferredResponse();
+  it('reloads for depth, keeps ended connections out, and keeps the list through loading, error, and retry', async () => {
+    const depthThreeLoad = deferredResponse();
     const requests: Request[] = [];
-    let depthTwoAttempts = 0;
+    let depthThreeAttempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (new URL(request.url).pathname.endsWith('/relationships')) return Response.json({ relationships: [] });
@@ -185,37 +272,44 @@ describe('PersonNetwork', () => {
       const url = new URL(request.url);
       const depth = Number(url.searchParams.get('depth'));
       if (depth === 1) return Response.json(connected(1));
-      if (depth === 2) {
-        depthTwoAttempts += 1;
-        if (depthTwoAttempts === 1) return depthTwo.promise;
-        return depthTwoAttempts === 2
-          ? Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 })
-          : Response.json(connected(2));
-      }
-      return Response.json(depthThree());
+      if (depth === 2) return Response.json(connected(2));
+      depthThreeAttempts += 1;
+      return depthThreeAttempts === 1 ? depthThreeLoad.promise : Response.json(depthThree());
     }));
     const controller = new DirectoryEntityController(client, 7);
 
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    expect((await screen.findAllByText('Curated Peer')).length).toBeGreaterThan(0);
-
+    await screen.findByText('Curated Peer');
     await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    expect((await screen.findByRole('status')).textContent).toContain('Loading network');
-    expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
-    depthTwo.resolve(Response.json(connected(2)));
-    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
-
-    await fireEvent.click(screen.getByRole('radio', { name: 'Direct' }));
-    await waitFor(() => expect(requests.filter(request => new URL(request.url).searchParams.get('depth') === '1')).toHaveLength(2));
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
-    expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    await screen.findByRole('button', { name: 'Second Hop Person' });
 
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-    await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '3')).toBe(true));
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
+    expect(screen.getByRole('button', { name: 'Second Hop Person' })).toBeDefined();
+    depthThreeLoad.resolve(Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 }));
+    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
+    expect(screen.getByRole('button', { name: 'Second Hop Person' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(requests.every((request) => new URL(request.url).searchParams.get('include_ended') === 'false')).toBe(true);
     await screen.findByRole('button', { name: 'Depth Three Person' });
-    expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain('Depth Three Person');
+    expect(rows(screen.getByRole('region', { name: 'Network at 3 steps' }))).toEqual(['Second Hop PersonFrom Curated Peer: mentors', 'Depth Three PersonFrom Second Hop Person: knows']);
   });
+});
+
+
+it.each([false, true])('network-keeps-edge-label-when-catalog-unavailable, source row=%s', async sourceRow => {
+  const network = connected();
+  // The farther person is the source, so the supplied forward label is known.
+  if (sourceRow) network.edges[2] = { ...network.edges[2]!, source_node_id: 'person:9', target_node_id: 'person:8' };
+  const { controller } = controllerWith(networkFetcher(network));
+  controller.errors.relationshipTypes = 'Unavailable';
+  render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+  try {
+    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
+    await screen.findByRole('button', { name: 'Second Hop Person' });
+    expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toContain(sourceRow
+      ? 'Second Hop PersonMentors · via Curated Peer'
+      : 'Second Hop PersonFrom Curated Peer: mentors');
+  } finally { controller.destroy(); }
 });

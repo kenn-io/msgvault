@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
+  import InlineNotice from '../common/InlineNotice.svelte';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import { PERSON_NOT_FOUND_MESSAGE } from '../../directory/profile-controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { formatContactDate } from '../../directory/labels';
   import PersonFields from './PersonFields.svelte';
   import DetailRow from './DetailRow.svelte';
-  import MeetingPanel from '../meetings/MeetingPanel.svelte';
+  import PersonMeetings from './PersonMeetings.svelte';
   import PersonFacts from './PersonFacts.svelte';
   import OrganizationEmploymentTab from '../directory/OrganizationEmploymentTab.svelte';
   import RelationshipsTab from '../directory/RelationshipsTab.svelte';
@@ -28,9 +29,9 @@
 <div class="details">
   {#if directory.detailLoading}<p role="status">Loading details…</p>{/if}
   {#if bundle}
-    {#each Object.entries(bundle.errors).filter(([section]) => section !== 'attributes' || !profile) as [, message]}
-      <div role="alert">{message}<Button label="Retry" onclick={() => void (profile ? profile.reload() : directory.loadSelection(personID))} /></div>
-    {/each}
+    {@const errors = Object.entries(bundle.errors).filter(([section]) => section !== 'attributes' || !profile).map(([, message]) => message)}
+    {#if errors.includes(PERSON_NOT_FOUND_MESSAGE)}<InlineNotice message="This person isn't in your archive anymore." />
+    {:else if errors.length}<InlineNotice message="Couldn't load these details." details={errors.join('\n')} actionLabel="Retry" onaction={() => void (profile ? profile.reload() : directory.loadSelection(personID))} />{/if}
   {/if}
   {#if profile}
     {@const contact = bundle?.contactState}
@@ -38,7 +39,7 @@
       {#snippet summary()}
         {#if contact && (contact.interaction_count > 0 || contact.last_contact_at)}
           <DetailRow label="Last contact">
-            <span>{#if contact.last_contact_at}{formatContactDate(contact.last_contact_at)} · {/if}{contact.interaction_count.toLocaleString()} {contact.interaction_count === 1 ? 'interaction' : 'interactions'}</span>
+            <span>{#if contact.last_contact_at}{formatContactDate(contact.last_contact_at)}{' · '}{/if}{contact.interaction_count.toLocaleString()} {contact.interaction_count === 1 ? 'interaction' : 'interactions'}</span>
           </DetailRow>
         {/if}
       {/snippet}
@@ -52,9 +53,11 @@
     <PersonAgenda {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
     <PersonFacts {client} {personID} refreshKey={profile.person} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
     <PersonBriefCard {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
-    {#if profile.person && profile.person.participant_ids.length > 0}<MeetingPanel {client} scope={{ kind: 'direct', scope: { person_id: personID } }} refreshKey={String(profile.person.revision)} {onOpenMeeting} />{/if}
+    {#if profile.person && profile.person.participant_ids.length > 0}<PersonMeetings {client} {personID} refreshKey={String(profile.person.revision)} {onOpenMeeting} />{/if}
   {/if}
 </div>
 <style>
-  .details { display: flex; max-width: 720px; min-width: 0; flex-direction: column; gap: var(--space-7); }
+  /* L2: sections 24 apart; the pane around them fills to 880 and ends 32 below the last one. */
+  .details { display: flex; min-width: 0; flex-direction: column; gap: var(--space-section); }
+  .details > p { margin: 0; color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
 </style>

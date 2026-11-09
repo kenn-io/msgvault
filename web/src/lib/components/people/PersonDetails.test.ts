@@ -6,14 +6,14 @@ import { DirectoryController } from '../../directory/controller.svelte';
 import PersonDetails from './PersonDetails.svelte';
 import { MeetingsController } from '../../meetings/controller.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { meetingActions, meetingAction } from '../../meetings/fixtures.test-support';
+import { meetingActions, meetingAction, meetingMetrics } from '../../meetings/fixtures.test-support';
 
 it('shows one alert for an attributes failure', async () => {
   await renderDetails([], { attributesFailure: true });
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
 
-async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
+async function renderDetails(participantIDs: number[], options: { attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; noMeetings?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean; deferredActions?: { request?: Request; response: Promise<Response> } } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
   let pinned = false;
@@ -40,14 +40,17 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
     if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
     if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
+    if (path === '/api/v1/people/7' && options.personDeleted) return Response.json({ error: 'person_profile_not_found', message: 'Person profile not found' }, { status: 404 });
     if (path === '/api/v1/people/7') return options.personFailure ? Response.json({ error: 'unavailable', message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(person, { headers: { ETag: `"person-7-r${person.revision}"` } });
-    if (path.endsWith('/profile')) return Response.json(emptyProfile(person), { headers: { ETag: `"person-7-r${person.revision}"` } });
-    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+    if (path.endsWith('/profile')) return options.detailsFailure ? Response.json({ message: 'Structured profile unavailable' }, { status: 503 }) : Response.json(emptyProfile(person), { headers: { ETag: `"person-7-r${person.revision}"` } });
+    if (path.endsWith('/contact-state')) return options.detailsFailure ? Response.json({ message: 'Contact state unavailable' }, { status: 503 }) : Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
     if (path.endsWith('/attributes')) return options.attributesFailure ? Response.json({ message: 'Attributes unavailable' }, { status: 503 }) : Response.json({ person_id: 7, attributes: (options.pins === 'clear' ? !pinned : pinned) ? [{ definition, current: [value], history: [] }] : [] });
     if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: options.pins ? [definition] : [] });
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
+    if (options.noMeetings && path === '/api/v1/meetings/metrics') return Response.json(meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 }, duration_by_basis: [], months: [] }));
+    if (options.noMeetings && path === '/api/v1/meetings/actions') return Response.json(meetingActions());
     if (path === '/api/v1/meetings/actions') {
       if (options.deferredActions && person.revision === 1) { options.deferredActions.request = request; return options.deferredActions.response; }
       return Response.json(meetingActions({ rows: [meetingAction({ action: { ordinal: 0, locator: 'action:0', origin: 'source', title: `Revision ${person.revision} follow-up`, status: 'pending' } })] }));
@@ -64,10 +67,12 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
 it('retains a saved profile failure and recovers through section Retry', async () => {
   const options = { personFailure: true };
   await renderDetails([1], options);
-  expect(await screen.findByText('Saved profile unavailable')).toBeDefined();
+  const notice = within(await screen.findByRole('alert'));
+  await fireEvent.click(notice.getByText('Details'));
+  expect(notice.getByText('Saved profile unavailable')).toBeDefined();
   options.personFailure = false;
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  await waitFor(() => expect(screen.queryByText('Saved profile unavailable')).toBeNull());
+  await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
 });
 
 it('omits the meeting panel for a person without resolved identities', async () => {
@@ -98,7 +103,8 @@ it('forwards the refreshed meeting revision and ignores a superseded meeting res
 it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation while preserving pending task input', async operation => {
   const { person, directory } = await renderDetails([5], { taskChange: operation });
   await screen.findByText(operation === 'merge' ? 'No tasks yet' : 'Ask about the proposal');
-  await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send meeting notes' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+  await fireEvent.input(screen.getByLabelText('New task'), { target: { value: 'Send meeting notes' } });
 
   person.revision = 2;
   if (operation === 'merge') await directory.refreshSelectedPerson();
@@ -106,7 +112,7 @@ it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation wh
 
   expect(await screen.findByText(operation === 'merge' ? 'Ask about the proposal' : 'No tasks yet')).toBeDefined();
   if (operation === 'split') expect(screen.queryByText('Ask about the proposal')).toBeNull();
-  expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', 'Send meeting notes');
+  expect(screen.getByLabelText('New task')).toHaveProperty('value', 'Send meeting notes');
 });
 
 it('reloads open loops after an identity split', async () => {
@@ -130,12 +136,46 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Location' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Location' }), { target: { value: 'Example City' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Example City');
   } else {
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Location: Example City' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
   }
   expect(await screen.findByText('attribute · Pinned')).toBeDefined();
   expect(screen.getByRole('radio', { name: 'Pins' }).getAttribute('aria-checked')).toBe('true');
+});
+
+
+it('combines failed detail reads into one notice and retries them together', async () => {
+  const options = { detailsFailure: true };
+  await renderDetails([], options);
+  expect(screen.getAllByText("Couldn't load these details.")).toHaveLength(1);
+  const notice = within(screen.getByRole('alert'));
+  await fireEvent.click(notice.getByText('Details'));
+  expect(notice.getByText('Structured profile unavailable Contact state unavailable')).toBeDefined();
+  options.detailsFailure = false;
+  await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
+});
+
+
+it('shows the deleted-person notice when a loaded profile reloads after deletion', async () => {
+  const options = { personDeleted: false };
+  const { directory } = await renderDetails([], options);
+  options.personDeleted = true;
+
+  await act(async () => { await directory.profile!.reload(); });
+
+  const notice = within(screen.getByText("This person isn't in your archive anymore.").closest('[role="alert"]')!);
+  expect(screen.queryByText("Couldn't load these details.")).toBeNull();
+  expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
+});
+
+
+it('shows the empty Meetings section once metrics and follow-ups are empty', async () => {
+  await renderDetails([5], { noMeetings: true });
+  expect(await screen.findByText('No meetings yet')).toBeDefined();
+  expect(screen.getByRole('region', { name: 'Meetings' }).querySelector('header h3')?.textContent).toBe('Meetings');
+  expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
 });

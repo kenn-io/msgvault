@@ -103,11 +103,13 @@ it('blocks attribute additions after a failed read and routes Retry to the profi
   const view = render(PersonFields, { controller });
   try {
     const alert = screen.getByRole('alert');
-    expect(alert.textContent).toContain('Attributes unavailable');
+    expect(alert.textContent).toContain("Couldn't load field values.");
+    // The server's message waits in the notice's Details.
+    expect(view.container.querySelector('details pre')?.textContent).toBe('Attributes unavailable');
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
     await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry attributes' }));
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     expect(reload).toHaveBeenCalledOnce();
     await reload.mock.results[0]!.value;
   } finally { view.unmount(); controller.destroy(); }
@@ -121,7 +123,7 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Email: old@example.com' }));
     expect(writes).toHaveLength(0);
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     if (!fail) {
       expect(screen.getByText('old@example.com')).toBeDefined();
       expect(screen.getByRole('button', { name: 'Add phone' })).toHaveProperty('disabled', true);
@@ -144,8 +146,8 @@ it('gates media editing by available data and keeps removal available', () => {
   const { view, controller } = harness(initial);
   try {
     expect(screen.getByText('Portrait')).toBeDefined(); expect(screen.getByText('Stored logo')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Edit Photo: Portrait' })).toHaveProperty('disabled', false);
-    expect(screen.getByRole('button', { name: 'Edit Logo: Stored logo' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Edit Photo: Portrait' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Edit Logo: Stored logo' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Remove Logo: Stored logo' })).toHaveProperty('disabled', false);
   } finally { view.unmount(); controller.destroy(); }
 });
@@ -174,7 +176,7 @@ async function refreshOpenField(refreshed: Partial<AttributeDefinition>, cardina
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Note: Private example' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Unsaved local note' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(controller.draft?.kind).toBe('setAttribute'));
     await act(() => controller.reloadDefinitions());
     return { controller, view };
@@ -189,7 +191,8 @@ it.each([
   try {
     expect(screen.queryAllByDisplayValue('Unsaved local note')).toHaveLength(drafts);
     expect(controller.draft?.kind).toBe(draftKind);
-    expect(screen.getByRole('button', { name: editLabel })).toHaveProperty('disabled', disabled);
+    if (disabled) expect(screen.queryByRole('button', { name: editLabel })).toBeNull();
+    else expect(screen.getByRole('button', { name: editLabel })).toHaveProperty('disabled', false);
   } finally { view.unmount(); controller.destroy(); }
 });
 
@@ -198,7 +201,7 @@ it('closes the field draft and conceals values when refreshed settings mark the 
   try {
     expect(screen.queryByDisplayValue('Unsaved local note')).toBeNull();
     expect(controller.draft).toBeNull();
-    expect(screen.getByRole('button', { name: 'Edit Private note: value 1' })).toHaveProperty('disabled', true);
+    expect(screen.queryByRole('button', { name: 'Edit Private note: value 1' })).toBeNull();
     for (const position of [1, 2]) {
       expect(screen.getByRole('button', { name: `Remove Private note: value ${position}` })).toHaveProperty('disabled', true);
       expect(screen.getByRole('button', { name: `Show Private note: value ${position}` })).toBeDefined();
@@ -268,7 +271,7 @@ it('conceals and discards a sensitive new-value draft when Hide is clicked durin
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Religion' }));
     await fireEvent.input(await screen.findByRole('textbox', { name: 'Religion' }), { target: { value: 'Private new value' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Hide Religion' }));
@@ -280,4 +283,20 @@ it('conceals and discards a sensitive new-value draft when Hide is clicked durin
     await waitFor(() => expect(controller.mutationPending).toBe(false));
     view.unmount(); controller.destroy();
   }
+});
+
+it('lists values first and gathers the empty common kinds into one add line after them', async () => {
+  const initial = profile();
+  initial.contact_points = [{ person_id: 7, address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20, ordinal: 0 } }];
+  const { controller, view } = harness(initial);
+  try {
+    const fields = view.container.querySelector('.fields')!;
+    const add = fields.querySelector('.add')!;
+    expect([...add.querySelectorAll('button')].map(button => button.textContent?.trim())).toEqual(['Add phone', 'Add address', 'Add birthday', 'More fields']);
+    expect(fields.lastElementChild).toBe(add);
+    expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
+    // A kind that has a value can still take another, from More fields.
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
 });

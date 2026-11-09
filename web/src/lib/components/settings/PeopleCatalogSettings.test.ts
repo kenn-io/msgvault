@@ -4,6 +4,38 @@ import { createAPIClient } from '../../api/client';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
 
+it.each(['', undefined])('clears a saved description returned as %j without restoring the cached text', async cleared => {
+  const definition = { id: 41, universal_id: 'favorite-plant', object_type: 'person', slug: 'favorite_plant', label: 'Favorite plant', description: 'Garden preferences', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: true };
+  let saved: Record<string, unknown> = definition;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [saved] });
+    if (path.endsWith('/attribute-definitions/41')) {
+      if (request.method === 'PATCH') {
+        expect(await request.json()).toMatchObject({ description: '' });
+        saved = { ...definition, description: cleared, revision: 2 };
+      }
+      return Response.json(saved, { headers: { ETag: '"attribute-definition-41-r1"' } });
+    }
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ kind: 'attribute', key: 'favorite-plant', description: 'Garden preferences' }] });
+    if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  const view = render(PeopleCatalogSettings, { client });
+  try {
+    await screen.findByText('Garden preferences');
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Favorite plant' }));
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Description' }), { target: { value: '' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Description' })).toBeNull());
+    await waitFor(() => expect(screen.queryByText('Garden preferences')).toBeNull());
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: 'Garden preferences' } });
+    await screen.findByText('No fields match');
+  } finally { view.unmount(); }
+});
+
 it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async operation => {
   let created = true; let conflict = operation === 'conflict recovery';
   const writes: Request[] = [];
@@ -24,6 +56,7 @@ it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async ope
       }
       return Response.json(definition, { headers: { ETag: `"attribute-definition-41-r${definition.revision}"` } });
     }
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${path}`);
@@ -35,7 +68,7 @@ it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async ope
     if (operation === 'delete') {
       await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
-      await screen.findByText('No custom fields yet');
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Favorite color' })).toBeNull());
       expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
       return;
     }
@@ -82,6 +115,7 @@ it.each(['edit', 'delete'])('ignores a delayed registry retry after a catalog %s
       if (request.method === 'PATCH') definitions = [{ ...definition, ...await request.json(), revision: definition.revision + 1 }];
       return Response.json(definitions[0], { headers: { ETag: `"attribute-definition-41-r${definitions[0]!.revision}"` } });
     }
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${request.method} ${path}`);
@@ -100,7 +134,7 @@ it.each(['edit', 'delete'])('ignores a delayed registry retry after a catalog %s
     if (operation === 'delete') {
       await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
-      await screen.findByText('No custom fields yet');
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Favorite color' })).toBeNull());
     } else {
       await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Preferred color' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -109,7 +143,7 @@ it.each(['edit', 'delete'])('ignores a delayed registry retry after a catalog %s
 
     await act(async () => { releaseRetry(staleResponse); await retry; });
     expect(screen.queryByRole('button', { name: 'Edit Favorite color' })).toBeNull();
-    if (operation === 'delete') expect(screen.getByText('No custom fields yet')).toBeDefined();
+    if (operation === 'delete') expect(screen.queryByText('No fields match')).toBeNull();
     else expect(screen.getByRole('button', { name: 'Edit Preferred color' })).toBeDefined();
   } finally {
     releaseRetry(staleResponse);
@@ -131,6 +165,7 @@ it('keeps Add disabled and resumes a field creation after its refresh fails', as
       if (failRefresh) { failRefresh = false; return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 }); }
       return Response.json({ definitions });
     }
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${request.method} ${path}`);
@@ -146,4 +181,77 @@ it('keeps Add disabled and resumes a field creation after its refresh fails', as
     await fireEvent.click(screen.getByRole('button', { name: 'Resume field creation' }));
     expect(await screen.findByRole('dialog', { name: 'Create attribute field' })).toBeDefined();
   } finally { view.unmount(); }
+});
+
+it('lists Work and all profile fields, searches names and descriptions, and edits custom fields only', async () => {
+  const base = { object_type: 'person', value_type: 'text', field_type: 'text', cardinality: 'single', is_active: true, revision: 1 };
+  const definitions = [
+    { ...base, id: 2, universal_id: 'favorite-plant', slug: 'favorite_plant', label: 'Favorite plant', description: 'Garden preferences', ownership: 'user', display_order: 2, is_sensitive: true },
+    { ...base, id: 1, universal_id: 'location', slug: 'location', label: 'Location', description: 'Where they live', ownership: 'system', display_order: 1 },
+  ];
+  let targetsRead = 0;
+  const client = createAPIClient(async input => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions });
+    if (path.endsWith('/person-fact-targets') && ++targetsRead === 1) return Response.json({ message: 'Targets unavailable' }, { status: 503 });
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [
+      { kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false },
+      { kind: 'attribute', key: 'location', slug: 'location', description: 'Where they live' },
+    ] });
+    if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0 });
+    throw new Error(`Unexpected ${path}`);
+  });
+  const view = render(PeopleCatalogSettings, { client });
+  try {
+    const fields = within(screen.getByRole('region', { name: 'Fields' }));
+    await fields.findByText('Garden preferences');
+    await fireEvent.click(await fields.findByRole('button', { name: 'Retry' }));
+    const work = await fields.findByText('Current and historical jobs');
+    expect(work.closest('li')?.textContent).toContain('Jobs · several values');
+    await fields.findByText('Garden preferences');
+    expect([...view.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite plant']);
+    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
+    expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
+    expect(fields.getByRole('button', { name: 'Edit Favorite plant' })).toBeDefined();
+    const search = fields.getByRole('searchbox', { name: 'Search fields' });
+    await fireEvent.input(search, { target: { value: 'garden' } });
+    expect(fields.queryByText('Where they live')).toBeNull();
+    expect(fields.queryByText('Current and historical jobs')).toBeNull();
+    expect(fields.getByText('Garden preferences')).toBeDefined();
+    await fireEvent.input(search, { target: { value: 'location' } });
+    expect(fields.getByText('Where they live')).toBeDefined();
+    await fireEvent.input(search, { target: { value: 'no match' } });
+    expect(fields.getByText('No fields match')).toBeDefined();
+  } finally { view.unmount(); }
+});
+
+it('shows loading and failure before an empty catalog', async () => {
+  let reads = 0;
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { release = resolve; });
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/attribute-definitions')) return ++reads === 1 ? pending : Response.json({ definitions: [] });
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
+    if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
+    if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
+    throw new Error(`Unexpected ${path}`);
+  });
+  const view = render(PeopleCatalogSettings, { client });
+  try {
+    expect(screen.getByText('Loading fields…')).toBeDefined();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: 'plant' } });
+    expect(screen.queryByText('No fields match')).toBeNull();
+    release(Response.json({ message: 'Fields unavailable' }, { status: 503 }));
+    await screen.findByRole('button', { name: 'Retry fields' });
+    expect(screen.queryByText('No fields match')).toBeNull();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: 'plant' } });
+    expect(screen.queryByText('No fields match')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry fields' }));
+    await screen.findByText('No fields match');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: '' } });
+    expect(screen.getByText('No fields yet')).toBeDefined();
+  } finally { release(Response.json({ definitions: [] })); view.unmount(); }
 });

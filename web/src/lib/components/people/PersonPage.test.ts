@@ -184,18 +184,18 @@ it('shows Addresses only on the person Details tab', async () => {
   await controller.openTarget(target, {});
   const view = render(PersonPage, { props: { client, directory, controller, target, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
-    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(screen.getAllByRole('heading', { name: 'Addresses' })).toHaveLength(1);
-    const addresses = screen.getByRole('region', { name: 'Known addresses' });
+    expect(screen.getAllByRole('heading', { name: 'Linked addresses' })).toHaveLength(1);
+    const addresses = screen.getByRole('group', { name: 'Known addresses' });
     expect(within(addresses).getByLabelText('Identity alice@example.com')).toBeDefined();
     expect(within(addresses).getByLabelText('Identity alice@example.org')).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });
-    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
     await view.rerender({ filesOpen: false });
-    expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 

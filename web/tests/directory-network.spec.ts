@@ -7,7 +7,7 @@ function directoryURL(personID: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: personID }))}`;
 }
 
-test('Directory network shows curated connections, omits message-only contacts, and navigates durable entities', async ({ page }) => {
+test('Directory network lists who is further out, omits message-only contacts, and opens organizations', async ({ page }) => {
   await installMixedArchive(page);
   await page.route('**/api/v1/organizations/21', (route) => route.fulfill({
     headers: { ETag: '"organization-21-r2"' },
@@ -16,77 +16,42 @@ test('Directory network shows curated connections, omits message-only contacts, 
       names: [], contact_points: [], addresses: [], categories: [], identifiers: [], media: []
     }
   }));
-  await page.route(/\/api\/v1\/people\/43(\/|\?|$)/, (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/api/v1/people/43') return route.fulfill({ json: {
-      id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer',
-      created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z'
-    } });
-    if (path.endsWith('/profile')) return route.fulfill({ json: {
-      person: { id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' },
-      names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
-    } });
-    if (path.endsWith('/attributes')) return route.fulfill({ json: { person_id: 43, attributes: [] } });
-    if (path.endsWith('/contact-state')) return route.fulfill({ json: { person_id: 43, cadence_status: 'unknown', computed_at: '2026-01-03T12:00:00Z', interaction_count: 0, stale: false } });
-    if (path.endsWith('/employments')) return route.fulfill({ json: { employments: [] } });
-    if (path.endsWith('/relationships')) return route.fulfill({ json: { relationships: [] } });
-    if (path.endsWith('/days')) return route.fulfill({ json: { person_id: 43, days: [], total_count: 0 } });
-    if (path.endsWith('/files/search')) return route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} } });
-    if (path.endsWith('/network')) return route.fulfill({ json: {
-      root_person_id: 43, depth: 1, truncated: false,
-      nodes: [{ id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 0 }], edges: []
-    } });
-    return route.fallback();
-  });
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL(42));
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 
-  const list = page.getByRole('list', { name: 'Network connections' });
   await page.getByRole('radio', { name: '2 steps', exact: true }).click();
-  await expect(list).not.toContainText('Message-only Contact');
-
-  const network = page.getByRole('region', { name: 'Directory network', exact: true });
+  const network = page.getByRole('region', { name: 'Network', exact: true });
+  const further = network.getByRole('region', { name: 'Network at 2 steps' });
+  await expect(further).toHaveAttribute('aria-busy', 'false');
+  await expect(network).not.toContainText('Message-only Contact');
   await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Shared Organization', exact: true });
   await expect(organizationEditor).toBeVisible();
   await expect(organizationEditor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Shared Organization');
   await organizationEditor.getByRole('button', { name: 'Close', exact: true }).click();
 
-  await network.getByRole('button', { name: 'Curated Peer' }).click();
-  await expect(page).toHaveURL(/directoryPersonID%22%3A43/);
-  await expect(page.getByRole('heading', { name: 'Curated Peer' })).toBeVisible();
 });
 
-for (const scenario of ['shared organization', 'nested same-column relations', 'non-adjacent same-column relation', 'long employment title']) {
-  test(`Directory network draws connections and keeps names reachable: ${scenario}`, async ({ page }) => {
+for (const scenario of ['shared organization', 'long employment title']) {
+  test(`Directory network lists who is further out, each reachable: ${scenario}`, async ({ page }) => {
     await installMixedArchive(page);
-    const nested = scenario === 'nested same-column relations';
-    const spanning = scenario === 'non-adjacent same-column relation';
-    const count = nested ? 4 : scenario === 'long employment title' ? 1 : 3;
+    const long = scenario === 'long employment title';
+    const count = long ? 1 : 3;
     const nodes = [
-      { id: 'person:42', kind: 'person', entity_id: 42, label: scenario === 'long employment title' ? 'Archive Person With A Very Long Full Name Here' : 'Archive Person', hop: 0 },
-      ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: scenario === 'long employment title' ? 'Curated Peer With A Very Long Full Name Here' : `Curated Peer ${index + 1}`, hop: 1 })),
-      ...nested || spanning ? [] : [{ id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }]
+      { id: 'person:42', kind: 'person', entity_id: 42, label: long ? 'Archive Person With A Very Long Full Name Here' : 'Archive Person', hop: 0 },
+      ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: long ? 'Curated Peer With A Very Long Full Name Here' : `Curated Peer ${index + 1}`, hop: 1 })),
+      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }
     ];
     const edges: NetworkEdge[] = Array.from({ length: count }, (_, index) => ({
       id: `root:${index}`, kind: 'relationship', source_node_id: 'person:42', target_node_id: `person:${43 + index}`, label: 'knows'
     }));
-    if (nested) {
-      edges.push(
-        { id: 'outer', kind: 'relationship', source_node_id: 'person:46', target_node_id: 'person:43', label: 'mentors' },
-        { id: 'inner', kind: 'relationship', source_node_id: 'person:44', target_node_id: 'person:45', label: 'knows' }
-      );
-    } else if (spanning) {
-      edges.push({ id: 'spanning', kind: 'relationship', source_node_id: 'person:43', target_node_id: 'person:45', label: 'works with' });
-    } else {
-      for (let index = 0; index < count; index++) edges.push({
-        id: `employment:${index}`, kind: 'employment', source_node_id: `person:${43 + index}`, target_node_id: 'organization:21',
-        label: scenario === 'long employment title' ? 'Senior principal engineer of distributed computing systems' : 'Engineer'
-      });
-    }
+    for (let index = 0; index < count; index++) edges.push({
+      id: `employment:${index}`, kind: 'employment', source_node_id: `person:${43 + index}`, target_node_id: 'organization:21',
+      label: long ? 'Senior principal engineer of distributed computing systems' : 'Engineer'
+    });
     await page.route('**/api/v1/people/42/network*', (route) => {
       const depth = Number(new URL(route.request().url()).searchParams.get('depth'));
       const visible = nodes.filter((node) => node.hop <= depth);
@@ -96,36 +61,93 @@ for (const scenario of ['shared organization', 'nested same-column relations', '
     await page.goto(directoryURL(42));
     await page.getByRole('radio', { name: 'Details', exact: true }).click();
     await page.getByRole('radio', { name: '2 steps', exact: true }).click();
-    const network = page.getByRole('region', { name: 'Directory network', exact: true });
-    await expect(network.getByRole('region', { name: 'Network graph' })).toHaveAttribute('aria-busy', 'false');
-    await page.evaluate(() => document.fonts.ready);
-    const names = network.getByRole('button');
-    for (const name of await names.all()) {
-      await name.scrollIntoViewIfNeeded();
-      expect(await name.evaluate((button) => {
-        const box = button.getBoundingClientRect();
-        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
-      })).toBe(true);
-    }
-    if (scenario === 'long employment title' || spanning) {
-      const chips = spanning ? network.locator('.edge-label').filter({ hasText: 'works with' }) : network.locator('.edge-label');
-      if (spanning) {
-        await expect(chips).toHaveCount(1);
-        expect(await chips.evaluate((chip) => chip.scrollWidth <= chip.clientWidth)).toBe(true);
-      }
-      for (const chip of await chips.all()) {
-        await chip.scrollIntoViewIfNeeded();
-        for (const fraction of [0.1, 0.5, 0.9]) expect(await chip.evaluate((element, fraction) => {
-          const box = element.getBoundingClientRect();
-          return document.elementFromPoint(box.x + box.width * fraction, box.y + box.height / 2) === element;
-        }, fraction)).toBe(true);
-      }
-    }
-    if (nested) {
-      const rails = await network.locator('svg path').evaluateAll((paths) => paths
-        .filter((path) => path.getAttribute('d')!.includes(' V '))
-        .map((path) => (path as SVGPathElement).getPointAtLength((path as SVGPathElement).getTotalLength() / 2).x));
-      expect(Math.abs(rails[0]! - rails[1]!)).toBeGreaterThan(0);
-    }
+    const network = page.getByRole('region', { name: 'Network', exact: true });
+    const further = network.getByRole('region', { name: 'Network at 2 steps' });
+    await expect(further).toHaveAttribute('aria-busy', 'false');
+    await expect(further.locator('.detail-row')).toHaveCount(1);
+    if (!long) await expect(further.locator('.description')).toHaveText('Engineer · via Curated Peer 1, Curated Peer 2, and 1 more');
+    const name = further.getByRole('button', { name: 'Shared Organization' });
+    await name.scrollIntoViewIfNeeded();
+    expect(await name.evaluate((button) => {
+      const box = button.getBoundingClientRect();
+      return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
+    })).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+test('the person page and its Details sections sit on the Layout scale', async ({ page }) => {
+  await installMixedArchive(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(directoryURL(42));
+  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const network = page.getByRole('region', { name: 'Network', exact: true });
+  await expect(network.locator('.summary')).not.toHaveText(/Loading/);
+  const geometry = await page.evaluate(() => {
+    const box = (element: Element | null) => element!.getBoundingClientRect();
+    const person = document.querySelector('section.person-page')!;
+    const header = box(person.querySelector('header'));
+    const avatar = box(person.querySelector('header .avatar'));
+    const text = box(person.querySelector('header h2')!.parentElement);
+    const tabs = box(person.querySelector('.tabs [role="radiogroup"]'));
+    const pane = person.querySelector<HTMLElement>('[data-scroll-pane]')!;
+    const style = getComputedStyle(pane);
+    const content = box(pane.firstElementChild);
+    const section = document.querySelector('section[aria-label="Network"]')!;
+    const sectionHeader = box(section.querySelector('header'));
+    return {
+      avatar: avatar.height, textCenter: text.top + text.height / 2 - (avatar.top + avatar.height / 2),
+      headerPad: avatar.top - header.top, tabsGap: tabs.top - header.bottom, tabs: tabs.height,
+      gutter: style.scrollbarGutter, left: content.left - box(pane).left, right: box(pane).right - content.right,
+      padding: [style.paddingTop, style.paddingBottom],
+      sectionHeader: sectionHeader.height, control: box(section.querySelector('header [role="radiogroup"]')).height,
+      summaryGap: box(section.querySelector('.summary')).top - sectionHeader.bottom,
+      tasksAdd: Boolean(document.querySelector('section[aria-label="Tasks"] header')),
+      addLine: box(person.querySelector('.fields .add > *')).left - box(person.querySelector('.fields .detail-row .value')).left,
+    };
+  });
+  expect(geometry.avatar, 'a 40 avatar').toBe(40);
+  expect(Math.abs(geometry.textCenter), 'the name and email center on the avatar').toBeLessThanOrEqual(0.5);
+  expect(geometry.headerPad, 'the header is padded 12 above the avatar').toBe(12);
+  expect(geometry.tabsGap, 'the tabs sit 8 below the header').toBe(8);
+  expect(geometry.tabs, 'the tabs are a 28 control').toBe(28);
+  expect(geometry.gutter, 'the Details pane reserves its bar').toBe('stable');
+  expect(geometry.padding, 'Details has 16 above its sections and 32 after them').toEqual(['16px', '32px']);
+  expect(geometry.left, 'content is inset 16 at the left').toBe(16);
+  expect(geometry.right, 'and 16 at the right, counting the reserved bar').toBe(16);
+  expect(geometry.sectionHeader, 'a 28 section header').toBe(28);
+  expect(geometry.control, 'its depth control is 28').toBe(28);
+  expect(geometry.summaryGap, 'the summary sits 8 below the header').toBe(8);
+  expect(geometry.tasksAdd, 'Tasks has a section header').toBe(true);
+  expect(geometry.addLine, 'the add line starts at the value column').toBe(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  // The shell switches to its phone layout a frame after the resize, so wait for the pane to fit before measuring.
+  await expect.poll(() => page.evaluate(() => {
+    const pane = document.querySelector('section.person-page [data-scroll-pane]')!;
+    return pane.scrollWidth - pane.clientWidth;
+  }), { message: 'nothing is wider than the pane' }).toBe(0);
+  const phone = await page.evaluate(() => {
+    const person = document.querySelector('section.person-page')!;
+    const row = person.querySelector('.fields .detail-row:has(.actions)')!;
+    const label = row.querySelector('.label')!.getBoundingClientRect(), value = row.querySelector('.value')!.getBoundingClientRect();
+    const name = person.querySelector('header h2')!.getBoundingClientRect(), actions = person.querySelector('header .actions')!.getBoundingClientRect();
+    const pane = person.querySelector('[data-scroll-pane]')!;
+    const add = person.querySelector('.fields .add > *')!.getBoundingClientRect();
+    return { label: label.width, sameLine: Math.abs(label.top - value.top), actionsBelow: actions.top >= name.bottom, wide: pane.scrollWidth - pane.clientWidth, addLine: add.left - value.left };
+  });
+  expect(phone.label, 'the label column is 120 on a phone').toBe(120);
+  expect(phone.sameLine, 'the value stays beside its label').toBeLessThanOrEqual(2);
+  expect(phone.addLine, 'the add line starts at the value column on a phone too').toBe(0);
+  expect(phone.actionsBelow, 'Merge with… and ⋯ wrap under the name').toBe(true);
+  expect(phone.wide, 'nothing is wider than the pane').toBe(0);
+
+  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { version: 'v1', targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings' })));
+  await page.getByRole('button', { name: 'People', exact: true }).click();
+  await page.getByRole('searchbox', { name: 'Search fields' }).fill('Work');
+  const fields = page.getByRole('region', { name: 'Fields', exact: true });
+  await expect(fields.getByText('Current and historical jobs', { exact: true })).toBeVisible();
+  await expect(fields.locator('li')).toHaveCount(1);
+});

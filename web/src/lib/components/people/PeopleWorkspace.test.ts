@@ -97,10 +97,11 @@ it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the 
       expect(await screen.findByRole('heading', { name: 'Synthetic contact' })).toBeDefined();
       expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(kind === 'filtered');
       await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-      if (kind === 'draft') expect(await screen.findByText('No sent or received messages with this contact yet.')).toBeDefined();
+      if (kind === 'draft') expect(await screen.findByText('No messages with Synthetic contact yet')).toBeDefined();
       else {
-        expect(await screen.findByRole('heading', { name: 'Addresses' })).toBeDefined();
-        expect(screen.queryByText('No sent or received messages with this contact yet.')).toBeNull();
+        await waitFor(() => expect(view.container.querySelector('section.person-page > .details')).toHaveProperty('hidden', false));
+        expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
+        expect(screen.queryByText('No messages with Synthetic contact yet')).toBeNull();
       }
     }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
@@ -1151,7 +1152,7 @@ it('refreshes linked identities after a pending attribute save fails and keeps i
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Location' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Location' }), { target: { value: 'Example City' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(attributeRequest).toBeDefined());
     await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Bob' } });
@@ -1168,7 +1169,7 @@ it('refreshes linked identities after a pending attribute save fails and keeps i
     expect(screen.getByRole('textbox', { name: 'Location' })).toHaveProperty('value', 'Example City');
     expect(directory.profile!.draft).toMatchObject({ kind: 'setAttribute', slug: 'location', body: { value: { type: 'text', text: 'Example City' } } });
     expect(directory.profile!.conflict).toMatchObject({ code: 'attribute_conflict', message: 'Location changed elsewhere', currentValueID: 99 });
-    expect(screen.getByRole('button', { name: 'Reload attributes' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeDefined();
   } finally {
     releaseSave(Response.json({ error: 'unavailable' }, { status: 503 }));
     view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
