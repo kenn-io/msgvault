@@ -461,7 +461,7 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 				f.store = testutil.NewTestStore(t)
 				var ids [3]int64
 				for i := range ids {
-					err := f.store.DB().QueryRowContext(t.Context(), `INSERT INTO participants (display_name) VALUES (?) RETURNING id`, fmt.Sprintf("Person %d", i)).Scan(&ids[i])
+					err := f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`INSERT INTO participants (display_name) VALUES (?) RETURNING id`), fmt.Sprintf("Person %d", i)).Scan(&ids[i])
 					require.NoError(err)
 				}
 				_, err := f.store.LinkParticipants(ids[1], ids[2])
