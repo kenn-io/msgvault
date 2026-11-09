@@ -209,6 +209,7 @@ func TestStore_GetLatestSync(t *testing.T) {
 }
 
 func TestLastSuccessfulSyncLookupUsesCompletedIndex(t *testing.T) {
+	req := require.New(t)
 	f := storetest.New(t)
 	if f.Store.IsPostgreSQL() {
 		t.Skip("EXPLAIN QUERY PLAN is SQLite-only")
@@ -222,9 +223,9 @@ func TestLastSuccessfulSyncLookupUsesCompletedIndex(t *testing.T) {
 		       CASE WHEN i % 10 = 0 THEN 'failed' ELSE 'completed' END
 		FROM n
 	`, f.Source.ID)
-	require.NoError(t, err)
+	req.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), `ANALYZE`)
-	require.NoError(t, err)
+	req.NoError(err)
 
 	for _, tc := range []struct {
 		name string
@@ -234,21 +235,23 @@ func TestLastSuccessfulSyncLookupUsesCompletedIndex(t *testing.T) {
 		{name: "by type", args: []any{f.Source.ID, "incremental"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			query := store.LastSuccessfulSyncQueryForTest(len(tc.args) > 1)
 			rows, err := f.Store.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+query, tc.args...)
-			require.NoError(t, err)
+			require.NoError(err)
 			defer func() { _ = rows.Close() }()
 			var plan []string
 			for rows.Next() {
 				var id, parent, unused int
 				var detail string
-				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				require.NoError(rows.Scan(&id, &parent, &unused, &detail))
 				plan = append(plan, detail)
 			}
-			require.NoError(t, rows.Err())
+			require.NoError(rows.Err())
 			joined := strings.Join(plan, "\n")
-			assert.Contains(t, joined, "idx_sync_runs_completed")
-			assert.NotContains(t, joined, "TEMP B-TREE")
+			assert.Contains(joined, "idx_sync_runs_completed")
+			assert.NotContains(joined, "TEMP B-TREE")
 		})
 	}
 }
