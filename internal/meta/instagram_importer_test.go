@@ -105,7 +105,7 @@ func TestInstagramImportVerificationBudgetAndFences(t *testing.T) {
 		assert.Zero(sum.MessagesAdded)
 	}
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
 	assert.Zero(count)
 	f.linkedID = "201"
 	_, err = imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{MaxRequests: 3})
@@ -163,7 +163,7 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 					require.Error(err)
 					assert.True(sum.Partial)
 					var count int
-					require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+					require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
 					assert.Zero(count)
 					return
 				}
@@ -181,7 +181,7 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			require.True(completed)
 			assert.True(paused, "bounded traversal must resume its durable checkpoint")
 			var cacheBoundary int64
-			require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&cacheBoundary))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&cacheBoundary))
 			beforeReplay := f.calls.Load()
 			replayed, err := imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
 			require.NoError(err)
@@ -189,7 +189,7 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			assert.Equal(4, replayed.MessagesProcessed)
 			assert.Greater(f.calls.Load(), beforeReplay, "the quiet replay must actually read every provider surface")
 			var cacheChanges int
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts'`, cacheBoundary).Scan(&cacheChanges))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset = 'message_facts'`, cacheBoundary).Scan(&cacheChanges))
 			assert.Zero(cacheChanges, "unchanged Instagram media/comments/replies must not invalidate analytics")
 			root, child, reply := message(t, st, src.ID, "300"), message(t, st, src.ID, "400"), message(t, st, src.ID, "500")
 			assert.Equal("instagram_comments", child.MessageType)
@@ -215,11 +215,11 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			}
 			assert.True(stored["300"].SentAt.Valid)
 			assert.Equal(2000, stored["300"].SentAt.Time.Year())
-			body, err := st.GetMessageBodyText(child.ID)
+			body, err := st.GetMessageBodyText(t.Context(), child.ID)
 			require.NoError(err)
 			assert.Equal("searchableorchard", body)
 			var title string
-			require.NoError(st.DB().QueryRow(`SELECT title FROM conversations WHERE id=?`, root.ConversationID).Scan(&title))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE id=?`, root.ConversationID).Scan(&title))
 			wantTitle := "Synthetic caption"
 			if owner == "missing" {
 				wantTitle = "Instagram media 300"
@@ -236,7 +236,7 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 				assert.JSONEq(want, string(metadata[key]), key)
 			}
 			var hits int
-			require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchableorchard'`).Scan(&hits))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchableorchard'`).Scan(&hits))
 			assert.Equal(1, hits)
 			knownUsername := f.comments[0].From.Username
 			f.comments[0].From.Username = ""
@@ -244,10 +244,10 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			require.NoError(err)
 			assert.Zero(updated.MessagesAdded)
 			var retainedName string
-			require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, child.ID).Scan(&retainedName))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, child.ID).Scan(&retainedName))
 			assert.Equal(knownUsername, retainedName, "same Instagram author ID without a username must retain its known snapshot")
 			var indexedName string
-			require.NoError(st.DB().QueryRow(`SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
 			assert.Equal(knownUsername, indexedName)
 			reads := f.mediaReads.Load()
 			f.media[0].Owner, f.comments[0].From = nil, nil
@@ -261,7 +261,7 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			assert.Equal(child.SenderID, message(t, st, src.ID, "400").SenderID)
 			assert.Equal(root.IsFromMe, message(t, st, src.ID, "300").IsFromMe)
 			assert.Equal(root.ID, message(t, st, src.ID, "402").ReplyToMessageID.Int64)
-			require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, child.ID).Scan(&retainedName))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, child.ID).Scan(&retainedName))
 			assert.Equal(knownUsername, retainedName, "missing author projection must preserve its identifier-only snapshot")
 		})
 	}

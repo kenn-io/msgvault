@@ -1,7 +1,6 @@
 package meta
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -41,14 +40,14 @@ func TestInstagramLinkedAccount(t *testing.T) {
 					http.Error(w, "unexpected fixture route", http.StatusNotFound)
 				}
 			})
-			_, err := c.VerifyPage(context.Background(), "100")
+			_, err := c.VerifyPage(t.Context(), "100")
 			if tt.wrongPage {
 				require.Error(err)
 				assert.Equal(int32(1), calls.Load())
 				return
 			}
 			require.NoError(err)
-			account, err := c.LinkedInstagramAccount(context.Background(), "100", "200")
+			account, err := c.LinkedInstagramAccount(t.Context(), "100", "200")
 			if tt.valid {
 				require.NoError(err)
 				assert.Equal("200", account.ID)
@@ -96,7 +95,7 @@ func TestInstagramWireEdges(t *testing.T) {
 			http.Error(w, "unexpected fixture route", http.StatusNotFound)
 		}
 	})
-	ctx := context.Background()
+	ctx := t.Context()
 	media, err := c.InstagramMedia(ctx, "200", "opaque+/=")
 	require.NoError(err)
 	require.Len(media.Data, 1)

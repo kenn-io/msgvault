@@ -95,7 +95,7 @@ func newAddInstagramCommentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -109,7 +109,7 @@ func newAddInstagramCommentsCmd() *cobra.Command {
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Instagram professional account %s for %s (source %d)\n", profile.InstagramAccountID, profile.Identifier, source.ID)
 			}
-			return errors.Join(errors.Join(errs...), runPostSourceCreateMigrationsForInvocation(st, state))
+			return errors.Join(errors.Join(errs...), runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state))
 		},
 	}
 }
@@ -134,7 +134,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
