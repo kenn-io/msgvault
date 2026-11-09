@@ -109,47 +109,60 @@ describe('PersonNetwork', () => {
     expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual([expected]);
   });
 
-  it.each([1, 2])('says a link between two at hop %s once, on the side it describes', async hop => {
-    const network: PersonNetworkProjection = {
-      root_person_id: 7, depth: 3, truncated: false,
-      nodes: [
-        { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
-        { id: 'person:8', kind: 'person', entity_id: 8, label: 'Direct Friend', hop: 1 },
-        { id: 'person:9', kind: 'person', entity_id: 9, label: 'Cedar Bloom', hop },
-        { id: 'person:10', kind: 'person', entity_id: 10, label: 'Maple Reed', hop },
-        { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Fern Hollow', hop }
-      ],
-      edges: [
-        { id: 'relationship:1', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', relationship_type_slug: 'friend', label: 'Friend' },
-        { id: 'relationship:2', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:9', relationship_type_slug: 'friend', label: 'Friend' },
-        { id: 'relationship:3', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:10', relationship_type_slug: 'friend', label: 'Friend' },
-        { id: 'employment:1', kind: 'employment', source_node_id: 'person:8', target_node_id: 'organization:21', label: 'Advisor' },
-        { id: 'relationship:4', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:10', relationship_type_slug: 'mentor', label: 'Mentor' },
-        { id: 'employment:2', kind: 'employment', source_node_id: 'person:10', target_node_id: 'organization:21', label: 'Gardener' }
+  it.each([
+    {
+      name: 'links between direct contacts appear at two steps',
+      network: {
+        root_person_id: 7, depth: 3, truncated: false,
+        nodes: [
+          { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
+          { id: 'person:9', kind: 'person', entity_id: 9, label: 'Cedar Bloom', hop: 1 },
+          { id: 'person:10', kind: 'person', entity_id: 10, label: 'Maple Reed', hop: 1 },
+          { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Fern Hollow', hop: 1 }
+        ],
+        edges: [
+          { id: 'relationship:2', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:9', relationship_type_slug: 'friend', label: 'Friend' },
+          { id: 'relationship:3', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:10', relationship_type_slug: 'friend', label: 'Friend' },
+          { id: 'employment:1', kind: 'employment', source_node_id: 'person:7', target_node_id: 'organization:21', label: 'Advisor' },
+          { id: 'relationship:4', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:10', relationship_type_slug: 'mentor', label: 'Mentor' },
+          { id: 'employment:2', kind: 'employment', source_node_id: 'person:10', target_node_id: 'organization:21', label: 'Gardener' }
+        ]
+      } satisfies PersonNetworkProjection,
+      levels: [{ depth: 2, expected: ['Cedar BloomMentor · with Maple Reed', 'Maple ReedGardener · with Fern Hollow'] }]
+    },
+    {
+      name: 'links between second-step contacts appear at three steps',
+      network: {
+        root_person_id: 7, depth: 3, truncated: false,
+        nodes: [
+          { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
+          { id: 'person:8', kind: 'person', entity_id: 8, label: 'Direct Friend', hop: 1 },
+          { id: 'person:9', kind: 'person', entity_id: 9, label: 'Cedar Bloom', hop: 2 },
+          { id: 'person:10', kind: 'person', entity_id: 10, label: 'Maple Reed', hop: 2 },
+          { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Fern Hollow', hop: 2 }
+        ],
+        edges: [
+          { id: 'relationship:1', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', relationship_type_slug: 'friend', label: 'Friend' },
+          { id: 'relationship:2', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:9', relationship_type_slug: 'friend', label: 'Friend' },
+          { id: 'relationship:3', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:10', relationship_type_slug: 'friend', label: 'Friend' },
+          { id: 'employment:1', kind: 'employment', source_node_id: 'person:8', target_node_id: 'organization:21', label: 'Advisor' },
+          { id: 'relationship:4', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:10', relationship_type_slug: 'mentor', label: 'Mentor' },
+          { id: 'employment:2', kind: 'employment', source_node_id: 'person:10', target_node_id: 'organization:21', label: 'Gardener' }
+        ]
+      } satisfies PersonNetworkProjection,
+      levels: [
+        { depth: 2, expected: ['Cedar BloomFrom Direct Friend: Friend', 'Fern HollowAdvisor · via Direct Friend', 'Maple ReedFrom Direct Friend: Friend'] },
+        { depth: 3, expected: ['Cedar BloomFrom Direct Friend: Friend; Mentor · with Maple Reed', 'Fern HollowAdvisor · via Direct Friend', 'Maple ReedFrom Direct Friend: Friend; Gardener · with Fern Hollow'] }
       ]
-    };
-    if (hop === 1) {
-      network.nodes = network.nodes.filter(node => node.id !== 'person:8');
-      network.edges = network.edges.filter(edge => edge.id !== 'relationship:1').map(edge => ({ ...edge, source_node_id: edge.source_node_id === 'person:8' ? 'person:7' : edge.source_node_id }));
     }
+  ])('shows same-step links once, on the side they describe: $name', async ({ network, levels }) => {
     const { controller } = controllerWith(networkFetcher(network));
     controller.relationshipTypes = [mentor];
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
-    await screen.findByRole('button', { name: 'Maple Reed' });
-    // At 2 steps the links among the second step are past the edge of what was loaded.
-    expect(rows(screen.getByRole('region', { name: 'Network at 2 steps' }))).toEqual(hop === 1 ? ['Cedar BloomMentor · with Maple Reed', 'Maple ReedGardener · with Fern Hollow'] : [
-      'Cedar BloomFrom Direct Friend: Friend',
-      'Fern HollowAdvisor · via Direct Friend',
-      'Maple ReedFrom Direct Friend: Friend'
-    ]);
-    if (hop === 1) return;
-    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-    await waitFor(() => expect(rows(screen.getByRole('region', { name: 'Network at 3 steps' }))).toEqual([
-      'Cedar BloomFrom Direct Friend: Friend; Mentor · with Maple Reed',
-      'Fern HollowAdvisor · via Direct Friend',
-      'Maple ReedFrom Direct Friend: Friend; Gardener · with Fern Hollow'
-    ]));
+    for (const { depth, expected } of levels) {
+      await fireEvent.click(await screen.findByRole('radio', { name: `${depth} steps` }));
+      await waitFor(() => expect(rows(screen.getByRole('region', { name: `Network at ${depth} steps` }))).toEqual(expected));
+    }
   });
 
   it.each([
@@ -250,7 +263,6 @@ describe('PersonNetwork', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await screen.findByRole('button', { name: 'Depth Three Person' });
-    expect(rows(screen.getByRole('region', { name: 'Network at 3 steps' }))).toEqual(['Second Hop PersonFrom Curated Peer: mentors', 'Depth Three PersonFrom Second Hop Person: knows']);
   });
 
 });

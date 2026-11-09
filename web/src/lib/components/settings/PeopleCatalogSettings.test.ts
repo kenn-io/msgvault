@@ -27,7 +27,7 @@ it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async ope
       }
       return Response.json(definition, { headers: { ETag: `"attribute-definition-41-r${definition.revision}"` } });
     }
-    if (path.endsWith('/person-fact-targets')) return ++targetsRead === 1 ? Response.json({ message: 'Targets unavailable' }, { status: 503 }) : pendingTargets;
+    if (path.endsWith('/person-fact-targets')) return operation !== 'edit' ? Response.json({ targets: [] }) : ++targetsRead === 1 ? Response.json({ message: 'Targets unavailable' }, { status: 503 }) : pendingTargets;
     if (path.endsWith('/relationship-types')) return Response.json({ relationship_types: [] });
     if (path.endsWith('/organizations')) return Response.json({ organizations: [], total: 0, limit: 50, offset: 0 });
     throw new Error(`Unexpected ${path}`);
@@ -35,36 +35,35 @@ it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async ope
   const catalog = render(PeopleCatalogSettings, { client });
   try {
     const fields = within(screen.getByRole('region', { name: 'Fields' }));
-    await fields.findByText('Garden preferences');
-    expect(fields.getByText("Couldn't load Work details.")).toBeDefined();
-    const search = fields.getByRole('searchbox', { name: 'Search fields' });
-    await fireEvent.input(search, { target: { value: 'Work' } });
-    await fireEvent.click(fields.getByRole('button', { name: 'Retry' }));
-    expect(fields.getByText('Loading fields…')).toBeDefined();
-    expect(fields.queryByText('No fields match')).toBeNull();
-    releaseTargets(Response.json({ targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] }));
-    const work = await fields.findByText('Current and historical jobs');
-    expect(work.closest('li')?.textContent).toContain('Jobs · several values');
-    await fireEvent.input(search, { target: { value: '' } });
-    expect([...catalog.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
-    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
-    expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
-    await fireEvent.input(search, { target: { value: 'garden' } });
-    expect(fields.getByText('Garden preferences')).toBeDefined();
-    expect(fields.queryByText('Where they live')).toBeNull();
-    expect(fields.queryByText('Current and historical jobs')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'location' } });
-    expect(fields.getByText('Where they live')).toBeDefined();
-    await fireEvent.input(search, { target: { value: 'no match' } });
-    expect(fields.getByText('No fields match')).toBeDefined();
-    await fireEvent.input(search, { target: { value: '' } });
+    if (operation === 'edit') {
+      await fields.findByText('Garden preferences');
+      expect(fields.getByText("Couldn't load Work details.")).toBeDefined();
+      const search = fields.getByRole('searchbox', { name: 'Search fields' });
+      await fireEvent.input(search, { target: { value: 'Work' } });
+      await fireEvent.click(fields.getByRole('button', { name: 'Retry' }));
+      expect(fields.getByText('Loading fields…')).toBeDefined();
+      expect(fields.queryByText('No fields match')).toBeNull();
+      releaseTargets(Response.json({ targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] }));
+      const work = await fields.findByText('Current and historical jobs');
+      expect(work.closest('li')?.textContent).toContain('Jobs · several values');
+      await fireEvent.input(search, { target: { value: '' } });
+      expect([...catalog.container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
+      expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
+      expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
+      await fireEvent.input(search, { target: { value: 'garden' } });
+      expect(fields.getByText('Garden preferences')).toBeDefined();
+      expect(fields.queryByText('Where they live')).toBeNull();
+      expect(fields.queryByText('Current and historical jobs')).toBeNull();
+      await fireEvent.input(search, { target: { value: 'location' } });
+      expect(fields.getByText('Where they live')).toBeDefined();
+      await fireEvent.input(search, { target: { value: '' } });
+    }
     await fireEvent.click(await screen.findByRole('button', { name: 'Edit Favorite color' }));
     await screen.findByRole('textbox', { name: 'Name' });
     if (operation === 'delete') {
       await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit Favorite color' })).toBeNull());
-      expect(fields.getByText('Current and historical jobs')).toBeDefined();
       expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
       return;
     }

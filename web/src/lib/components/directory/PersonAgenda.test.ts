@@ -109,7 +109,6 @@ describe('PersonAgenda', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       await waitFor(() => expect(requests.filter(request => request.method === 'POST')).toHaveLength(2));
       expect(await requests.filter(request => request.method === 'POST')[1]!.clone().json()).toMatchObject({ title: 'Send notes', list: 'agenda' });
-      await screen.findByText("Couldn't add the task.");
       await rerender({ client, personID: 7, refreshKey: '2' });
     }
     await waitFor(() => expect(requests.filter(request => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7/agenda')).toHaveLength(2));

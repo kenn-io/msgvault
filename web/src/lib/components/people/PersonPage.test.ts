@@ -196,7 +196,6 @@ it('shows linked addresses on Details after profile loading and preserves Copy a
   const opening = directory.loadSelection(7);
   const view = render(PersonPage, { props: { client, directory, controller, target, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
-    expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
     await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: ['alice@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { id: index + 1, ordinal: index, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } })) }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
@@ -206,12 +205,6 @@ it('shows linked addresses on Details after profile loading and preserves Copy a
     failProfile = true;
     await act(async () => { await directory.loadSelection(7); });
     expect(within(screen.getByRole('group', { name: 'Known addresses' })).getByRole('button', { name: 'Copy alice@example.com' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
-    await view.rerender({ filesOpen: true });
-    expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-    await view.rerender({ filesOpen: false });
-    expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 

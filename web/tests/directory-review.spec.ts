@@ -6,7 +6,7 @@ import { installDirectoryReviewArchive, installMixedArchive } from './e2e/fixtur
 const peopleURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships' }));
 const duplicatesURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true }));
 
-test('inline People fields use the shared field scale on a phone', async ({ page }) => {
+test('Person Details aligns headers, tabs, and fields on desktop and phone', async ({ page }) => {
   await installDirectoryReviewArchive(page);
   const profile = emptyProfile({ ...person(7, 4, [701, 702], 'Synthetic One'), created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' });
   profile.names = [{ person_id: 7, name_kind: 'preferred', original_value: 'Synthetic One', formatted: 'Synthetic One', is_derived: false, envelope: { id: 1, ordinal: 0, source: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', vcard: {} } }];

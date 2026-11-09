@@ -85,7 +85,7 @@ it('identifies row actions and confirmations by value and service scope', async 
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('blocks attribute additions after a failed read and routes Retry to the profile controller', async () => {
+it('offers field additions and Copy, then blocks additions and routes Retry after a failed read', async () => {
   const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -97,33 +97,14 @@ it('blocks attribute additions after a failed read and routes Retry to the profi
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
-  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
-  await controller.reload();
-  const reload = vi.spyOn(controller, 'reload');
-  const view = render(PersonFields, { controller });
-  try {
-    const alert = screen.getByRole('alert');
-    expect(alert.textContent).toContain("Couldn't load field values.");
-    // The server's message waits in the notice's Details.
-    expect(view.container.querySelector('details pre')?.textContent).toBe('Attributes unavailable');
-    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
-    expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
-    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
-    expect(reload).toHaveBeenCalledOnce();
-    await reload.mock.results[0]!.value;
-  } finally { view.unmount(); controller.destroy(); }
-});
-
-it.each([false, true])('keeps removal state until its outcome settles (failure=%s)', async fail => {
   const initial = profile();
   initial.contact_points = [{ person_id: 7, identity_key: 'old-email-key', address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
-  let finish!: () => void;
   const writeText = vi.fn(async () => undefined);
   const originalClipboard = navigator.clipboard;
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   const onAnnounce = vi.fn();
-  const { controller, view, writes } = harness(initial, { onAnnounce, fail, wait: new Promise<void>(resolve => { finish = resolve; }) });
+  const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: initial, attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
+  const view = render(PersonFields, { controller, onAnnounce });
   try {
     const fields = view.container.querySelector('.fields')!;
     const add = fields.querySelector('.add')!;
@@ -136,6 +117,27 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeDefined();
     await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
+    await controller.reload();
+    const reload = vi.spyOn(controller, 'reload');
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain("Couldn't load field values.");
+    // The server's message waits in the notice's Details.
+    expect(view.container.querySelector('details pre')?.textContent).toBe('Attributes unavailable');
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect((await screen.findByRole('menuitem', { name: 'Note' })).getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.keyDown(screen.getByRole('menu', { name: 'More fields' }), { key: 'Escape' });
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    expect(reload).toHaveBeenCalledOnce();
+    await reload.mock.results[0]!.value;
+  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
+});
+
+it.each([false, true])('keeps removal state until its outcome settles (failure=%s)', async fail => {
+  const initial = profile();
+  initial.contact_points = [{ person_id: 7, identity_key: 'old-email-key', address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
+  let finish!: () => void;
+  const { controller, view, writes } = harness(initial, { fail, wait: new Promise<void>(resolve => { finish = resolve; }) });
+  try {
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Email: old@example.com' }));
     expect(writes).toHaveLength(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
@@ -152,7 +154,7 @@ it.each([false, true])('keeps removal state until its outcome settles (failure=%
       await waitFor(() => expect(screen.queryByText('old@example.com')).toBeNull());
       await expect(writes[0]!.json()).resolves.toEqual({ contact_points: { supersede: [11] } });
     }
-  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
+  } finally { view.unmount(); controller.destroy(); }
 });
 
 it('gates media editing by available data and keeps removal available', () => {

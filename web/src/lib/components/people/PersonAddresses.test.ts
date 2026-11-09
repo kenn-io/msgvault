@@ -66,7 +66,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PersonAddresses', () => {
-  it('shows each address and its source once when expanded', async () => {
+  it('shows address sources and filters own Details values while retaining linked addresses', async () => {
     const view = render(PersonAddresses, baseProps());
     const email = screen.getByLabelText('Identity Alice');
     await fireEvent.click(within(email).getByText('Alice'));
