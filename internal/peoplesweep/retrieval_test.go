@@ -12,7 +12,6 @@ import (
 type retrievalArchive struct {
 	candidates []int64
 	lexical    []EvidenceItem
-	hydrated   map[int64]EvidenceItem
 }
 
 func (f retrievalArchive) ListPersonSweepHistoricalCandidates(context.Context, HistoricalCandidateRequest) ([]int64, error) {
@@ -21,24 +20,12 @@ func (f retrievalArchive) ListPersonSweepHistoricalCandidates(context.Context, H
 func (f retrievalArchive) SearchPersonSweepMessages(context.Context, ContextRequest) ([]EvidenceItem, error) {
 	return f.lexical, nil
 }
-func (f retrievalArchive) HydratePersonSweepMessages(_ context.Context, _ int64, ids []int64, _ int64) ([]EvidenceItem, error) {
-	items := make([]EvidenceItem, 0, len(ids))
-	for _, id := range ids {
-		if item, ok := f.hydrated[id]; ok {
-			items = append(items, item)
-		}
-	}
-	return items, nil
-}
-
-func TestPersonSweepContextRetrieverDeduplicatesEachSignalBeforeFusion(t *testing.T) {
+func TestPersonSweepContextRetrieverDeduplicatesLexicalResults(t *testing.T) {
 	one := retrievalItem(1)
 	two := retrievalItem(2)
-	three := retrievalItem(3)
 	archive := retrievalArchive{
 		candidates: []int64{1, 2, 3},
 		lexical:    []EvidenceItem{one, one, two},
-		hydrated:   map[int64]EvidenceItem{2: two, 3: three},
 	}
 	retriever := NewContextRetriever(archive)
 

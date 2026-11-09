@@ -50,6 +50,9 @@ func (s *Store) dropDocumentIndex(ctx context.Context) error {
 				"DROP TRIGGER IF EXISTS trg_document_message_type_revision ON messages",
 			}
 		}
+		// Retirement accepts document evidence as stored, including queued
+		// document-only withdrawals. Keep surviving lane cursors unchanged so
+		// their processed evidence and provider requests are not replayed.
 		statements = append(statements,
 			"DELETE FROM attachment_change_consumers WHERE consumer_key = 'document-index/v1'",
 			"DELETE FROM person_sweep_cursors WHERE source_lane = 'document_text'",
