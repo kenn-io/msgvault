@@ -26,12 +26,9 @@
   const nodes = $derived(controller.network?.nodes ?? []);
   const edges = $derived(controller.network?.edges ?? []);
   const nodeByID = $derived(new Map(nodes.map((node) => [node.id, node])));
-  /** "A and B" or "A, B, and C" up to `named` labels; past that, "A, B, and 4 more". */
-  function joinNames(labels: string[], named: number): string {
-    return joinWords(labels.length <= named ? labels : [...labels.slice(0, 2), `${labels.length - 2} more`]);
-  }
-  // The summary has its own line, so it names up to three: "Lumen Grove, Cedar Circle, and Tavi Reed".
-  const reached = $derived(joinNames(nodes.filter((node) => node.hop === 1).map((node) => node.label), 3));
+  // Name up to three direct records, then retain the count of the rest.
+  const direct = $derived(nodes.filter(node => node.hop === 1));
+  const reached = $derived(direct.length <= 3 ? direct : [...direct.slice(0, 2), { id: 'more', label: `${direct.length - 2} more` }]);
 
   $effect(() => {
     void controller.loadNetwork(Number(depth));
@@ -96,7 +93,7 @@
     {/if}
     {#if depth === '1'}
       <!-- Direct links only: name them in one line rather than repeat Work and Connections. -->
-      <p class="summary">{#if controller.networkLoading}<span role="status">Loading network…</span>{:else}{reached}{/if}</p>
+      <p class="summary">{#if controller.networkLoading}<span role="status">Loading network…</span>{:else}{#each reached as node, index (node.id)}{#if index > 0}{index === reached.length - 1 ? (reached.length === 2 ? ' and ' : ', and ') : ', '}{/if}{#if 'kind' in node}<!-- kit-ui-check-ignore: a record name styled as a link, matching Connections and Work. --><button type="button" class="link" onclick={() => node.kind === 'person' ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>{:else}{node.label}{/if}{/each}{/if}</p>
     {:else}
       <div class="further" role="region" aria-label={`Network at ${depth} steps`} aria-busy={controller.networkLoading}>
         {#each further as { node, line } (node.id)}

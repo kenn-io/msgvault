@@ -26,11 +26,20 @@ test('Directory network lists who is further out and opens organizations', async
   const network = page.getByRole('region', { name: 'Network', exact: true });
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
   await expect(further).toHaveAttribute('aria-busy', 'false');
+  const linkColor = await network.getByRole('button', { name: 'Shared Organization' }).evaluate(button => getComputedStyle(button).color);
   await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Shared Organization', exact: true });
   await expect(organizationEditor).toBeVisible();
   await expect(organizationEditor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Shared Organization');
   await organizationEditor.getByRole('button', { name: 'Close', exact: true }).click();
+  const peer = { id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' };
+  await page.route('**/api/v1/people/43', route => route.fulfill({ json: peer }));
+  await page.route('**/api/v1/people/43/profile', route => route.fulfill({ json: { person: peer, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+  await network.getByRole('radio', { name: 'Direct', exact: true }).click();
+  const direct = network.getByRole('button', { name: 'Curated Peer', exact: true });
+  await expect(direct).toHaveCSS('color', linkColor);
+  await direct.click();
+  await expect(page.getByRole('heading', { name: 'Curated Peer', exact: true })).toBeVisible();
 
 });
 
@@ -130,8 +139,9 @@ test('the person page and its Details sections sit on the Layout scale', async (
     const name = person.querySelector('header h2')!.getBoundingClientRect(), actions = person.querySelector('header .actions')!.getBoundingClientRect();
     const pane = person.querySelector('[data-scroll-pane]')!;
     const add = person.querySelector('.fields .add > *')!.getBoundingClientRect();
-    return { label: label.width, sameLine: Math.abs(label.top - value.top), actionsBelow: actions.top >= name.bottom, wide: pane.scrollWidth - pane.clientWidth, addLine: add.left - value.left };
+    return { label: label.width, sameLine: Math.abs(label.top - value.top), actionsBelow: actions.top >= name.bottom, wide: pane.scrollWidth - pane.clientWidth, addLine: add.left - value.left, titleInset: row.getBoundingClientRect().left - document.querySelector('.heading h1, .heading h2')!.getBoundingClientRect().left };
   });
+  expect(phone.titleInset, 'Details aligns with the People title on a phone').toBe(0);
   expect(phone.label, 'the label column is 120 on a phone').toBe(120);
   expect(phone.sameLine, 'the value stays beside its label').toBeLessThanOrEqual(2);
   expect(phone.addLine, 'the add line starts at the value column on a phone too').toBe(0);
