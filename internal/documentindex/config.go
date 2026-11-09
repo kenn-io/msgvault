@@ -51,6 +51,7 @@ const (
 	hardMaxFreeSpaceBytes      int64 = 1 << 40
 	hardMaxPagesPerRun               = 1_000_000
 	hardMaxEstimatedCostUSD          = 1_000_000.0
+	hardMaxConcurrentJobs            = 16
 )
 
 var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
@@ -73,6 +74,7 @@ func DefaultDocumentsConfig() DocumentsConfig {
 		MaxRetries:                mistral.DefaultMaxRetries,
 		MaxPagesPerRun:            defaultMaxPagesPerRun,
 		MaxEstimatedCostUSDPerRun: defaultMaxEstimatedCostUSD,
+		MaxConcurrentJobs:         1,
 	}
 	config.ApplyDefaults()
 	return config
@@ -110,6 +112,7 @@ type DocumentsConfig struct {
 	MaxEstimatedCostUSDPerRun float64          `toml:"max_estimated_cost_usd_per_run"`
 	EstimatedCostUSDPerKUnits float64          `toml:"estimated_cost_usd_per_1000_units"`
 	PricingAssumptionOn       string           `toml:"pricing_assumption_on"`
+	MaxConcurrentJobs         int              `toml:"max_concurrent_jobs"`
 	Scope                     ScopeConfig      `toml:"scope"`
 	Index                     IndexConfig      `toml:"index"`
 	Conversion                ConversionConfig `toml:"conversion"`
@@ -250,6 +253,11 @@ func (c *DocumentsConfig) Validate() error {
 		}
 		if !slices.Contains([]string{TrainingUnknown, TrainingDefaultOptOut, TrainingOptedOut}, c.TrainingPosture) {
 			return fmt.Errorf("attachments.documents.training_posture: invalid value %q", c.TrainingPosture)
+		}
+		// Each Mistral job reserves private spool space and counts against
+		// hosted rate limits; neither budget is shared across jobs yet.
+		if c.MaxConcurrentJobs != 1 {
+			return errors.New("attachments.documents.max_concurrent_jobs: Mistral runs one job at a time; only Docling accepts a larger value")
 		}
 
 	default:

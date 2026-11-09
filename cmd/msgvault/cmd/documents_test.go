@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -922,6 +923,41 @@ func TestDocumentBuildStopsOnCancellation(t *testing.T) {
 	assert.Equal(operations.StateCancelled, runs[0].State)
 }
 
+// Workers return no outcome when cancellation arrives before they start or
+// between candidates. The build must still report the cancellation instead of
+// success, because candidates remain pending.
+func TestDocumentCandidatesReportCancellationWithoutWorkerError(t *testing.T) {
+	candidates := []store.DocumentExtractionCandidate{
+		{CanonicalBlobHash: strings.Repeat("a", 64)},
+		{CanonicalBlobHash: strings.Repeat("b", 64)},
+	}
+	tests := []struct {
+		name          string
+		cancelFirst   bool
+		wantCalls     int32
+		wantProcessed int
+	}{
+		{name: "before workers start", cancelFirst: true},
+		{name: "between candidates", wantCalls: 1, wantProcessed: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			worker := &commandCancelingSuccessWorker{cancel: cancel}
+			if test.cancelFirst {
+				cancel()
+			}
+			var result documentBuildResult
+			err := runDocumentCandidates(ctx, nil, worker, candidates, 1, 10, &result)
+			require.ErrorIs(t, err, context.Canceled, "a build with pending candidates must not report success")
+			assert.Equal(t, test.wantCalls, worker.calls.Load())
+			assert.Equal(t, test.wantProcessed, result.Processed)
+			assert.Zero(t, result.Failed)
+		})
+	}
+}
+
 func TestDocumentBuildContinuesAfterProviderTimeout(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1219,6 +1255,25 @@ func (c commandDocumentReadClient) GetDocumentIndexStatus(
 type commandBuildProcessor struct {
 	calls    int
 	firstErr error
+}
+
+// commandCancelingSuccessWorker cancels the build and then reports success.
+// A real worker cannot publish after cancellation, so only a fake can place
+// the cancel after one candidate succeeds and before the next one starts.
+type commandCancelingSuccessWorker struct {
+	cancel context.CancelFunc
+	calls  atomic.Int32
+}
+
+func (w *commandCancelingSuccessWorker) ProcessCandidate(
+	_ context.Context,
+	candidate store.DocumentExtractionCandidate,
+) (documentindex.DocumentExtractionResult, error) {
+	w.calls.Add(1)
+	w.cancel()
+	return documentindex.DocumentExtractionResult{
+		CanonicalBlobHash: candidate.CanonicalBlobHash, ProviderUnits: 1,
+	}, nil
 }
 
 type commandCancelingProcessor struct {

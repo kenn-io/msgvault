@@ -145,6 +145,8 @@ func NewDoclingClient(c *DocumentsConfig) (*docling.Client, error) {
 	}
 	transport := defaultTransport.Clone()
 	transport.Proxy = nil
+	// Concurrent jobs poll in parallel; keep one idle connection per job.
+	transport.MaxIdleConnsPerHost = max(c.MaxConcurrentJobs, http.DefaultMaxIdleConnsPerHost)
 	var secrets docling.SecretResolver
 	if c.APIKeyEnv != "" {
 		secrets = doclingEnvironmentSecrets{}

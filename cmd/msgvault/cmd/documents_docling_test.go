@@ -7,10 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -245,6 +250,209 @@ func testDoclingDocumentsLifecycle(t *testing.T, content []byte, mediaType, uplo
 	_, err = run("build", "--yes")
 	requirements.ErrorContains(err, "exact consent")
 	assertions.Equal(int32(3), uploads.Load())
+}
+
+// doclingJobBarrier holds each upload until the expected number of uploads
+// are in flight together, or a timeout passes, and records the peak.
+type doclingJobBarrier struct {
+	mu       sync.Mutex
+	want     int
+	inFlight int
+	peak     int
+	release  chan struct{}
+}
+
+func (b *doclingJobBarrier) reset(want int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.want, b.peak, b.release = want, 0, make(chan struct{})
+}
+
+func (b *doclingJobBarrier) wait() {
+	b.mu.Lock()
+	b.inFlight++
+	b.peak = max(b.peak, b.inFlight)
+	release := b.release
+	if b.inFlight >= b.want {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}
+	b.mu.Unlock()
+	select {
+	case <-release:
+	case <-time.After(5 * time.Second):
+	}
+	b.mu.Lock()
+	b.inFlight--
+	b.mu.Unlock()
+}
+
+func (b *doclingJobBarrier) peakInFlight() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.peak
+}
+
+func TestDoclingBuildRunsConfiguredConcurrentJobs(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	markDaemonCLISubprocessForTest(t)
+	const jobs = 3
+	var barrier doclingJobBarrier
+	barrier.reset(jobs)
+	var mu sync.Mutex
+	uploads := make(map[string]int)
+	tasks := make(map[string]string)
+	var reject string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost:
+			if !assertions.NoError(r.ParseMultipartForm(1 << 20)) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			files := r.MultipartForm.File["files"]
+			if !assertions.Len(files, 1) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			file, err := files[0].Open()
+			if !assertions.NoError(err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			content, err := io.ReadAll(file)
+			if !assertions.NoError(err) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			digest := sha256.Sum256(content)
+			hash := hex.EncodeToString(digest[:])
+			barrier.wait()
+			mu.Lock()
+			uploads[hash]++
+			rejected := hash == reject
+			taskID := "synthetic-job-" + hash[:16]
+			tasks[taskID] = hash
+			mu.Unlock()
+			if rejected {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, err = w.Write([]byte(`{"task_id":"` + taskID + `","task_type":"convert","task_status":"success"}`))
+			assertions.NoError(err)
+		case strings.HasPrefix(r.URL.Path, "/v1/result/"):
+			mu.Lock()
+			hash := tasks[strings.TrimPrefix(r.URL.Path, "/v1/result/")]
+			mu.Unlock()
+			sentinel := "doclingjob" + hash[:12]
+			response := `{"status":"success","errors":[],"document":{"filename":"document.pdf","md_content":"` + sentinel + `","json_content":{"schema_name":"DoclingDocument","version":"1.7.0","origin":{"filename":"document.pdf"},"pages":{"1":{}},"texts":[{"text":"` + sentinel + `","prov":[{"page_no":1}]}]}}}`
+			_, err := w.Write([]byte(response))
+			assertions.NoError(err)
+		default:
+			assertions.Fail("unexpected Docling request", "%s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	c := &cfg.Attachments.Documents
+	c.Enabled, c.Provider, c.Endpoint = true, documentindex.ProviderDocling, server.URL
+	c.ApplyConfiguredProviderDefaults(func(string) bool { return false })
+	c.PollInterval = time.Millisecond
+	c.MaxConcurrentJobs = jobs
+	// Each document may return one unit, so the run budget admits four.
+	c.MaxPagesPerDocument, c.MaxPagesPerRun = 1, 4
+	ctx := withTestConfig(t, cfg)
+	fixture := storetest.New(t)
+	contents := make(map[string][]byte)
+	for index := range 7 {
+		content := mistraltest.MinimalPDF(fmt.Sprintf("synthetic concurrent document %d", index))
+		digest := sha256.Sum256(content)
+		hash := hex.EncodeToString(digest[:])
+		contents[hash] = content
+		messageID := fixture.CreateMessage(fmt.Sprintf("synthetic-docling-concurrency-%d", index))
+		requirements.NoError(fixture.Store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+			Filename: "synthetic.pdf", MIMEType: "application/pdf", Size: int64(len(content)), ContentHash: hash,
+			StoragePath: hash[:2] + "/" + hash, Role: store.AttachmentRoleStandalone,
+			RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:1",
+		}))
+	}
+	deps := documentsCommandDeps{
+		openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		openAttachments: func(context.Context, *store.Store) (documentindex.DocumentAttachmentOpener, func() error, error) {
+			return commandAttachmentMapOpener{contents: contents}, func() error { return nil }, nil
+		},
+	}
+	run := func(args ...string) (string, error) {
+		command := newDocumentsCmd(deps)
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs(args)
+		err := command.ExecuteContext(ctx)
+		return output.String(), err
+	}
+	snapshot := func() map[string]int {
+		mu.Lock()
+		defer mu.Unlock()
+		return maps.Clone(uploads)
+	}
+	_, err := run("consent-docling", "--yes")
+	requirements.NoError(err)
+
+	output, err := run("build", "--yes")
+	requirements.NoError(err)
+	assertions.Contains(output, "at most 4 canonical document(s)")
+	assertions.Contains(output, "Up to 3 Docling job(s) run at once.")
+	assertions.Contains(output, "indexed 4 document(s), 4 unit(s), skipped 0, failed 0")
+	assertions.Equal(jobs, barrier.peakInFlight(), "the build must keep exactly max_concurrent_jobs uploads in flight")
+	first := snapshot()
+	requirements.Len(first, 4, "the run budget must cap the build at four documents")
+	for hash, count := range first {
+		assertions.Equal(1, count, "document %s uploaded more than once", hash)
+	}
+
+	var remaining []string
+	for hash := range contents {
+		if first[hash] == 0 {
+			remaining = append(remaining, hash)
+		}
+	}
+	requirements.Len(remaining, 3)
+	slices.Sort(remaining)
+	mu.Lock()
+	reject = remaining[0]
+	mu.Unlock()
+	barrier.reset(jobs)
+	output, err = run("resume", "--yes")
+	requirements.ErrorContains(err, "1 extraction failure")
+	assertions.Contains(err.Error(), reject+": provider_rejected")
+	assertions.Contains(output, "indexed 2 document(s), 2 unit(s), skipped 0, failed 1")
+	assertions.Equal(jobs, barrier.peakInFlight())
+
+	_, err = run("resume", "--yes")
+	requirements.NoError(err)
+	all := snapshot()
+	assertions.Len(all, len(contents))
+	for hash := range contents {
+		assertions.Equal(1, all[hash], "document %s must be uploaded exactly once", hash)
+	}
+	for hash := range contents {
+		response, err := fixture.Store.SearchDocuments(ctx, store.DocumentSearchRequest{Query: "doclingjob" + hash[:12]})
+		requirements.NoError(err)
+		if hash == reject {
+			assertions.Empty(response.Results)
+			continue
+		}
+		assertions.Len(response.Results, 1, "document %s must publish its own text", hash)
+	}
 }
 
 func TestDoclingConsentDisclosesCredentialsAndRangeRetention(t *testing.T) {

@@ -518,6 +518,7 @@ endpoint without a manifest.
 | `total_timeout` | `10m` | Docling job timeout, positive and at most `24h` |
 | `poll_interval` | `1s` | Docling polling interval, positive and no longer than `total_timeout` |
 | `max_poll_attempts` | `300` | Docling poll limit, between 1 and 10,000. A job that outlasts this or `total_timeout` fails with `provider_timeout` and needs a manual retry |
+| `max_concurrent_jobs` | `1` | Docling jobs one build or resume runs at once, between 1 and 16. Not part of the consent identity. Mistral accepts only `1` |
 | `max_retries` | `3` | Mistral transient retry limit; Docling uses its polling limits |
 | `max_pages_per_run` | `10000` | Conservative provider-unit budget for one run |
 | `max_estimated_cost_usd_per_run` | `50` | Cost-planning ceiling for one run |

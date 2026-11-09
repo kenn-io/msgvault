@@ -136,6 +136,22 @@ func (s *Store) ClaimDocumentExtraction(
 	ctx context.Context,
 	input DocumentExtractionClaimInput,
 ) (DocumentExtractionClaim, error) {
+	var claim DocumentExtractionClaim
+	err := retryBusyWriteErr(ctx, s, "claim document extraction", func() (err error) {
+		claim, err = s.claimDocumentExtraction(ctx, input)
+		return err
+	})
+	return claim, err
+}
+
+// The claim, failure, and publication transactions read before they write.
+// Under SQLite, a concurrent writer's commit makes that write fail at once
+// with SQLITE_BUSY, which the busy timeout cannot absorb, so the exported
+// methods retry the whole transaction.
+func (s *Store) claimDocumentExtraction(
+	ctx context.Context,
+	input DocumentExtractionClaimInput,
+) (DocumentExtractionClaim, error) {
 	input.LeaseUntil = input.LeaseUntil.UTC()
 	if err := validateDocumentClaimInput(input); err != nil {
 		return DocumentExtractionClaim{}, err
@@ -323,6 +339,12 @@ type DocumentExtractionFailure struct {
 // profile or schedules a later retry. Provider bodies and extracted content
 // are never stored on failure.
 func (s *Store) FailDocumentExtraction(ctx context.Context, failure DocumentExtractionFailure) error {
+	return retryBusyWriteErr(ctx, s, "fail document extraction", func() error {
+		return s.failDocumentExtraction(ctx, failure)
+	})
+}
+
+func (s *Store) failDocumentExtraction(ctx context.Context, failure DocumentExtractionFailure) error {
 	if err := validateDocumentFailure(failure); err != nil {
 		return err
 	}
@@ -451,6 +473,15 @@ func (s *Store) RenewDocumentExtractionClaim(
 // the staging revision ready, switches the owner head, and advances the search
 // revision. Provider work must already be complete before this call.
 func (s *Store) PublishDocumentExtraction(
+	ctx context.Context,
+	publication DocumentExtractionPublication,
+) error {
+	return retryBusyWriteErr(ctx, s, "publish document extraction", func() error {
+		return s.publishDocumentExtraction(ctx, publication)
+	})
+}
+
+func (s *Store) publishDocumentExtraction(
 	ctx context.Context,
 	publication DocumentExtractionPublication,
 ) error {

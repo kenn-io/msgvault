@@ -53,6 +53,65 @@ func TestDoclingExpiredClaimIsReclaimedAutomatically(t *testing.T) {
 	assert.Greater(t, resumed.LeaseFence, first.LeaseFence)
 }
 
+// Concurrent document workers in one build share the archive. A commit from
+// another connection between a transaction's reads and its first write makes
+// SQLite fail that write at once; each writer must retry instead of failing
+// the document.
+func TestDocumentExtractionWritersRetryStaleSQLiteSnapshot(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite snapshot contention")
+	}
+	profile, hash := seedDocumentPublicationAuthority(t, f)
+	writer, err := store.Open(store.DBPathForTest(f.Store))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(writer.Close()) })
+	var armed string
+	var interleaved int
+	t.Cleanup(f.Store.SetRebindHookForTest(func(query string) {
+		if armed == "" || !strings.Contains(query, armed) {
+			return
+		}
+		armed = ""
+		interleaved++
+		_, writeErr := writer.EnsureParticipant(
+			fmt.Sprintf("concurrent-%d@example.com", interleaved), "Concurrent Example", "example.com")
+		requirements.NoError(writeErr)
+	}))
+	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
+		ExtractionID: "extraction-contended-publish", ProfileID: profile.ID,
+		CanonicalBlobHash: hash, ExtractionInputKey: "original",
+		LeaseOwner: "worker-contended", LeaseUntil: time.Now().UTC().Add(10 * time.Minute),
+		LocalBytes: 128, SourceSequence: 1, RequireNoHead: true,
+	})
+
+	armed = "INSERT INTO document_extractions"
+	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+	requirements.NoError(err)
+	armed = "DELETE FROM document_extraction_ranges"
+	requirements.NoError(f.Store.PublishDocumentExtraction(t.Context(),
+		publicationFor(t, claim, "contended publication", strings.Repeat("d", 64))))
+	assert.Equal(t, []string{"contended publication"}, currentDocumentTexts(t, f, profile.ID, hash))
+
+	input.ExtractionID, input.RequireNoHead = "extraction-contended-failure", false
+	replacement, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
+	requirements.NoError(err)
+	// A terminal failure reads the serving head before its first write, so the
+	// competing commit lands after the transaction took its read snapshot.
+	armed = "UPDATE document_extractions"
+	requirements.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
+		Claim: replacement, ReasonCode: "provider_rejected", Terminal: true,
+	}))
+	var state, terminalReason string
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
+		SELECT state, terminal_reason FROM document_extractions WHERE id = ?`),
+		replacement.ExtractionID).Scan(&state, &terminalReason))
+	assert.Equal(t, "terminal", state)
+	assert.Equal(t, "provider_rejected", terminalReason)
+	assert.Equal(t, 3, interleaved)
+}
+
 func TestDocumentExtractionClaimNormalizesNonUTCTimeZone(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

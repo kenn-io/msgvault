@@ -14,6 +14,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"text/tabwriter"
 	"time"
 
@@ -837,6 +839,9 @@ func printDocumentBuildPreflight(
 	_, _ = fmt.Fprintf(w,
 		"- This %s pass will process at most %d canonical document(s) and %d provider unit(s).\n",
 		modeName, limit, documentsConfig.MaxPagesPerRun)
+	if documentsConfig.Provider == documentindex.ProviderDocling {
+		_, _ = fmt.Fprintf(w, "- Up to %d Docling job(s) run at once.\n", documentBuildJobs(documentsConfig))
+	}
 	printDocumentConsentDisclosure(w, documentsConfig, profile, inputPolicy)
 }
 
@@ -924,40 +929,19 @@ func executeDocumentBuild(
 	if err != nil {
 		return result, err
 	}
+	pending := make([]store.DocumentExtractionCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		if len(documentsConfig.Scope.MessageTypes) > 0 &&
 			!slices.Contains(documentsConfig.Scope.MessageTypes, candidate.MessageType) {
 			result.Skipped++
 			continue
 		}
-		extraction, processErr := worker.ProcessCandidate(ctx, candidate)
-		if processErr != nil && ctx.Err() != nil {
-			return result, ctx.Err()
-		}
-		if errors.Is(processErr, store.ErrDocumentExtractionClaimed) ||
-			errors.Is(processErr, store.ErrDocumentExtractionCurrent) {
-			result.Skipped++
-			continue
-		}
-		if processErr != nil {
-			result.Failed++
-			result.Failures = append(result.Failures, documentBuildFailure{
-				CanonicalBlobHash: extraction.CanonicalBlobHash,
-				ReasonCode:        extraction.FailureReasonCode,
-				Detail:            extraction.FailureDetail,
-			})
-			pass.checkpoint(ctx, documentExtractionCounters(result))
-			continue
-		}
-		result.Processed++
-		result.Units += extraction.ProviderUnits
-		if extraction.CleanupError != nil {
-			result.CleanupFailures++
-		}
-		pass.checkpoint(ctx, documentExtractionCounters(result))
-		if result.Units > documentsConfig.MaxPagesPerRun {
-			return result, errors.New("document provider output exceeded max_pages_per_run")
-		}
+		pending = append(pending, candidate)
+	}
+	if err := runDocumentCandidates(
+		ctx, pass, worker, pending, documentBuildJobs(documentsConfig), documentsConfig.MaxPagesPerRun, &result,
+	); err != nil {
+		return result, err
 	}
 	if rebuild != nil {
 		result.Remaining, err = st.CountIncompleteDocumentExtractionRebuild(
@@ -987,6 +971,123 @@ func executeDocumentBuild(
 		)
 	}
 	return result, nil
+}
+
+// runDocumentCandidates extracts the pending candidates with up to jobs calls
+// in flight and adds each outcome to result. It returns the error that ended
+// the build early, including a cancellation that left candidates unstarted.
+func runDocumentCandidates(
+	ctx context.Context,
+	pass *commandOperationPass,
+	worker documentCandidateProcessor,
+	pending []store.DocumentExtractionCandidate,
+	jobs, maxUnits int,
+	result *documentBuildResult,
+) (runErr error) {
+	var failures []indexedDocumentBuildFailure
+	outcomes, stop := processDocumentCandidates(ctx, worker, pending, jobs)
+	defer stop()
+	for outcome := range outcomes {
+		processErr, extraction := outcome.err, outcome.extraction
+		if processErr != nil && ctx.Err() != nil {
+			runErr = ctx.Err()
+			continue
+		}
+		// A call canceled because this build stopped is not a document failure.
+		if processErr != nil && runErr != nil {
+			continue
+		}
+		if errors.Is(processErr, store.ErrDocumentExtractionClaimed) ||
+			errors.Is(processErr, store.ErrDocumentExtractionCurrent) {
+			result.Skipped++
+			continue
+		}
+		if processErr != nil {
+			result.Failed++
+			failures = append(failures, indexedDocumentBuildFailure{index: outcome.index, failure: documentBuildFailure{
+				CanonicalBlobHash: extraction.CanonicalBlobHash,
+				ReasonCode:        extraction.FailureReasonCode,
+				Detail:            extraction.FailureDetail,
+			}})
+			pass.checkpoint(ctx, documentExtractionCounters(*result))
+			continue
+		}
+		result.Processed++
+		result.Units += extraction.ProviderUnits
+		if extraction.CleanupError != nil {
+			result.CleanupFailures++
+		}
+		pass.checkpoint(ctx, documentExtractionCounters(*result))
+		if result.Units > maxUnits && runErr == nil {
+			runErr = errors.New("document provider output exceeded max_pages_per_run")
+			stop()
+		}
+	}
+	// Report failures in candidate order, as a serial build would.
+	slices.SortFunc(failures, func(a, b indexedDocumentBuildFailure) int { return a.index - b.index })
+	for _, failure := range failures {
+		result.Failures = append(result.Failures, failure.failure)
+	}
+	// Workers stop without an outcome when cancellation arrives before or
+	// between candidates, so no error so far can still leave work pending.
+	if runErr == nil {
+		runErr = ctx.Err()
+	}
+	return runErr
+}
+
+type indexedDocumentBuildFailure struct {
+	index   int
+	failure documentBuildFailure
+}
+
+// documentCandidateOutcome is one finished ProcessCandidate call.
+type documentCandidateOutcome struct {
+	index      int
+	extraction documentindex.DocumentExtractionResult
+	err        error
+}
+
+// documentBuildJobs is the number of documents one build extracts at once.
+// Only Docling accepts more than one; configuration validation enforces it.
+func documentBuildJobs(c *documentindex.DocumentsConfig) int {
+	if c.Provider != documentindex.ProviderDocling {
+		return 1
+	}
+	return max(1, c.MaxConcurrentJobs)
+}
+
+// processDocumentCandidates extracts each candidate at most once with up to
+// jobs calls in flight. It closes the returned channel after every call has
+// returned, so the caller must drain it. stop cancels the calls in flight and
+// starts no new ones; each call still records its claim outcome first.
+func processDocumentCandidates(
+	ctx context.Context,
+	worker documentCandidateProcessor,
+	candidates []store.DocumentExtractionCandidate,
+	jobs int,
+) (<-chan documentCandidateOutcome, context.CancelFunc) {
+	runCtx, stop := context.WithCancel(ctx)
+	outcomes := make(chan documentCandidateOutcome)
+	var next atomic.Int64
+	var group sync.WaitGroup
+	for range min(max(1, jobs), len(candidates)) {
+		group.Go(func() {
+			for runCtx.Err() == nil {
+				index := int(next.Add(1) - 1)
+				if index >= len(candidates) {
+					return
+				}
+				extraction, err := worker.ProcessCandidate(runCtx, candidates[index])
+				outcomes <- documentCandidateOutcome{index: index, extraction: extraction, err: err}
+			}
+		})
+	}
+	go func() {
+		group.Wait()
+		close(outcomes)
+	}()
+	return outcomes, stop
 }
 
 func documentExtractionCounters(result documentBuildResult) operations.InvocationCounters {
