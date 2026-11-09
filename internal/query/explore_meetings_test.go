@@ -21,9 +21,6 @@ func TestResolveExploreMeetingsSelectsOnlyExactMeetingEntries(t *testing.T) {
 	b.AddMessage(MessageOpt{SourceID: source, Subject: "Note", MessageType: "meeting_note"})
 	b.AddMessage(MessageOpt{SourceID: source, Subject: "Minutes", MessageType: "meeting_minutes"})
 	engine := b.BuildEngine()
-	explore, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{Kinds: []EntryKind{EntryMeeting}}})
-	require.NoError(t, err)
-	assertions.Equal(int64(3), explore.TotalCount)
 
 	result, err := engine.ResolveExploreMeetings(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{},

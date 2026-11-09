@@ -73,7 +73,7 @@ func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
 	require.True(st.FTS5Available(), "FTS must be available after legacy upgrade")
 }
 
-func TestInitSchema_PGLegacyDeletedAtCascadeRestoresMeetingIndex(t *testing.T) {
+func TestInitSchema_PGLegacyMessagesGetsDeletedAt(t *testing.T) {
 	if !strings.HasPrefix(os.Getenv("MSGVAULT_TEST_DB"), "postgres") {
 		t.Skip("requires PostgreSQL")
 	}
