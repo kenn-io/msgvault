@@ -9,6 +9,7 @@ env:
   GOTRACEBACK: all
   # Compile without absolute source paths, like the Makefile does.
   GOFLAGS: -trimpath
+  PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
 
 on:
   workflow_call:
@@ -199,7 +200,7 @@ jobs:
           cmp -s .custom-gcl.yml "$cache/.custom-gcl.yml" || rm -rf "$cache"
           mkdir -p "$cache"
           cp .custom-gcl.yml "$cache/.custom-gcl.yml"
-          make lint-ci
+          make lint-ci-golangci
 
       - name: Vulnerability check
         run: make vulncheck
@@ -315,6 +316,7 @@ jobs:
             package: ./internal/api
             job_timeout: 13
             test_timeout: 5m
+            followups: true
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     steps:
@@ -337,6 +339,10 @@ jobs:
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
+
+      - name: Check testify helpers
+        if: ${{ !cancelled() && matrix.followups }}
+        run: make testify-helper-check
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1
@@ -1107,10 +1113,10 @@ jobs:
       #
       # Heavy DuckDB packages can exceed go test's 10m per-package default
       # on a contended runner. Leave time for stack output inside the job cap.
-      # The three largest packages run in test-postgres-sharded below, each
-      # against its own server; this covers the rest.
+      # test-postgres-sharded runs the large packages and the additional
+      # package group against separate servers; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
+        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m EXCLUDE_PKGS="${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && env.PG_MOVED_PKGS || '' }}"
 
       - name: Check for test reruns
         if: always()
@@ -1125,7 +1131,7 @@ jobs:
           done
 
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
+        if: failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-shipped-unsharded-attempt-${{ github.run_attempt }}
@@ -1137,8 +1143,8 @@ jobs:
         uses: $/.github/actions/go-cache-save
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
-  # one package per job, each with its own PostgreSQL service so four shards'
-  # connections never compete with the rest of the suite.
+  # each with its own PostgreSQL service so four shards' connections never
+  # compete with the rest of the suite. One job runs additional packages.
   test-postgres-sharded:
     needs: changes
     if: *go-changed
@@ -1160,6 +1166,10 @@ jobs:
             test_timeout: 8m
             package: ./internal/api
             followups: true
+          - name: pg_extra
+            extra_packages: true
+            job_timeout: 36
+            test_timeout: 24m
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     services:
@@ -1200,9 +1210,14 @@ jobs:
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
+      - name: Stabilize tracked file times
+        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        run: go run ./scripts/stable-mtimes
+
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
+        if: ${{ !matrix.extra_packages }}
         id: postgres-shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
 
@@ -1212,6 +1227,27 @@ jobs:
         with:
           name: gotestsum-postgres-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
           path: gotestsum/postgres-sharded-${{ matrix.name }}.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Test additional PostgreSQL packages
+        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=${{ matrix.test_timeout }}
+
+      - name: Check for additional test reruns
+        if: always() && matrix.extra_packages
+        id: check-pg-packages-reruns
+        run: |
+          if [ -s gotestsum/pg-packages-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload additional test events
+        if: ${{ matrix.extra_packages && (failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-pg-packages-reruns.outputs.reruns == 'true') }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pg-packages-attempt-${{ github.run_attempt }}
+          path: gotestsum/pg-packages.json
           retention-days: 14
           if-no-files-found: ignore
 
