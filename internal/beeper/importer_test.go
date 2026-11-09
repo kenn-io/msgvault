@@ -1321,6 +1321,42 @@ func TestImportReconcileRetriesFailedWriteAfterRunAborts(t *testing.T) {
 	assert.Equal(1, reactions, "the unfinished mark must survive the aborted run")
 }
 
+func TestImportReconcileRepairsPartialRewriteAfterSourceReverts(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "s1").Scan(&messageID))
+
+	// An edit rewrites s1's message row, then its body write fails and
+	// aborts the run, leaving the edited snippet beside the original JSON.
+	ch := f.chat("!steady:beeper.local")
+	ch.Msgs[1].Text = "steady 1, edited"
+	release := failWritesWhen(t, st, "message_bodies", "UPDATE", "NEW.message_id = "+strconv.FormatInt(messageID, 10))
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.Error(err)
+	release()
+
+	// The sender reverts the edit, so Beeper serves the archived JSON again.
+	ch.Msgs[1].Text = "steady 1"
+	again := NewImporter(st, imp.client)
+	_, err = again.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var snippet string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT snippet FROM messages WHERE id = ?`), messageID).Scan(&snippet))
+	assert.Equal("steady 1", snippet)
+}
+
 func TestImportReconcileLinksUnchangedReplyToLateParent(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

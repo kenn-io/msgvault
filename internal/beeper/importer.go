@@ -1717,7 +1717,7 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 // per-item auxiliary failures (FTS, recipients, reactions) are counted and
 // recorded but do not abort the run. A rewrite of an archived message counts
 // as updated rather than added.
-func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
+func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) (err error) {
 	archived, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, []string{m.ID})
 	if err != nil {
 		return fmt.Errorf("look up archived Beeper message: %w", err)
@@ -1744,6 +1744,16 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	if err != nil {
 		return err
 	}
+	// The stored rows may now show a newer version than the archived JSON,
+	// which a later revert at the source would match. Any failure from here
+	// on marks the message unfinished so the reconcile pass still rewrites it.
+	marked := false
+	defer func() {
+		if err != nil && !marked {
+			// Cleanup must finish after cancellation.
+			err = errors.Join(err, imp.recordUnfinished(context.WithoutCancel(ctx), cc, m, sum))
+		}
+	}()
 	bodyHTML := MessageHTML(m)
 	if err := imp.store.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}); err != nil {
 		return err
@@ -1790,19 +1800,14 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	}
 	unfinished := !attachmentsStored || sum.Errors-errorsBefore > attachmentErrors
 	if unfinished {
-		if err := imp.recordUnfinished(ctx, cc, m, sum); err != nil {
+		marked = true
+		// Cleanup must finish after cancellation.
+		if err := imp.recordUnfinished(context.WithoutCancel(ctx), cc, m, sum); err != nil {
 			return err
 		}
 	}
 	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
-		err = fmt.Errorf("archive beeper message raw: %w", err)
-		if !unfinished {
-			// The writes above may already show a newer version than the
-			// archived JSON, which a later revert at the source would match.
-			// Cleanup must finish after cancellation.
-			err = errors.Join(err, imp.recordUnfinished(context.WithoutCancel(ctx), cc, m, sum))
-		}
-		return err
+		return fmt.Errorf("archive beeper message raw: %w", err)
 	}
 	if !unfinished {
 		delete(cc.cs.Unfinished, m.ID)
