@@ -15,22 +15,10 @@
     disabled?: boolean; remote?: boolean; highlightFirstOption?: boolean;
   } = $props();
   let query = $state('');
-
-  // Kit names the open search by its placeholder, so the field writes the closed picker's words over it: opening the
-  // picker doesn't change what it says, and the search keeps its name. An open panel ends at its last row, like a menu.
-  function keepPlaceholder(node: HTMLElement): () => void {
-    const fit = (): void => {
-      const input = node.querySelector<HTMLInputElement>('.kit-typeahead__input');
-      if (input && fallbackLabel && input.placeholder !== fallbackLabel) input.placeholder = fallbackLabel;
-    };
-    const observer = new MutationObserver(fit);
-    observer.observe(node, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }
 </script>
 
 {#snippet errorRow()}<InlineNotice message={error} details={errorDetails} actionLabel={onretry ? 'Retry' : undefined} onaction={onretry} />{/snippet}
-<div class="field-picker" role="group" aria-label={title} {@attach keepPlaceholder}>
+<div class="field-picker" role="group" aria-label={title}>
   <Typeahead {options} {value} {placeholder} {fallbackLabel} {title} disabled={disabled || creating}
     {loading} {loadingLabel} {panelAnchor} {highlightFirstOption} {icon}
     {remote} emptyLabel={error ? '' : emptyLabel} allowCustom={!!oncreate && !options.some(option => option.label.trim().toLowerCase() === query.trim().toLowerCase())} customLabel={createLabel}

@@ -148,7 +148,7 @@
   <Login {session} />
 {:else if shellMounted}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>
-    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController, onDirectoryChange, onOpenPerson)}
+    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController, onDirectoryChange)}
       <SettingsWorkspace
         client={session.client}
         plainHTTPWarning={session.status?.plain_http_warning ?? false}
@@ -162,7 +162,6 @@
         {onStatusChange}
         {operationsController}
         {onDirectoryChange}
-        {onOpenPerson}
         onAppearanceSaved={appearanceSaved}
       />
     {/snippet}

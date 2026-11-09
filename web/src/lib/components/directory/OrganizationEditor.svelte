@@ -36,8 +36,6 @@
   let categories = $state('');
   let baselineAliases = $state<string[]>([]);
   let baselineCategories = $state<string[]>([]);
-  let refreshSection = $state<'organization' | 'profile' | undefined>();
-  let refreshing = $state(false);
   // Empty Aliases and Categories wait behind Add alias… and Add category… until the person asks for them.
   let addingAliases = $state(false);
   let addingCategories = $state(false);
@@ -55,15 +53,13 @@
   // Aliases and categories save on their own, with their own If-Match.
   const profileAttempt = new WriteAttempt<Prepared<OrganizationProfile>>();
   const removal = new WriteAttempt<Prepared<OrganizationProfile>>();
-  const submitting = $derived(attempt.busy || profileAttempt.busy || removal.busy || refreshing);
+  const submitting = $derived(attempt.busy || profileAttempt.busy || removal.busy);
   let confirmDelete = $state(false);
   // The jobs check: reset on Back, close, and each new check, so a late result from an earlier one is dropped.
   const check = new WriteAttempt<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
   const holders = $derived(check.prepared);
   const deleteBlocked = $derived(!holders || holders.count > 0);
-  const saveDisabled = $derived(loading || !!refreshSection || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations);
-  const profileDirty = $derived(aliases !== baselineAliases.join(', ') || categories !== baselineCategories.join(', '));
-  const organizationDirty = $derived(!!currentProfile && (name !== currentProfile.organization.name || kind !== currentProfile.organization.kind || primaryDomain !== (currentProfile.organization.primary_domain ?? '') || description !== (currentProfile.organization.description ?? '')));
+  const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations);
 
   onMount(() => {
     if (initialOrganization) void loadCurrent();
@@ -71,25 +67,18 @@
 
   async function loadCurrent(): Promise<void> {
     if (!initialOrganization) return;
-    refreshing = true;
     const loaded = await load.prepare(() => controller.prepareOrganizationMutation(initialOrganization.id));
-    refreshing = false;
     if (!loaded) return;
     opened = loaded;
     const profile = loaded.data;
-    if (refreshSection !== 'profile') {
-      name = profile.organization.name;
-      kind = profile.organization.kind;
-      primaryDomain = profile.organization.primary_domain ?? '';
-      description = profile.organization.description ?? '';
-    }
+    name = profile.organization.name;
+    kind = profile.organization.kind;
+    primaryDomain = profile.organization.primary_domain ?? '';
+    description = profile.organization.description ?? '';
     baselineAliases = (profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
     baselineCategories = (profile.categories ?? []).map((item) => item.category);
-    if (refreshSection !== 'organization') {
-      aliases = baselineAliases.join(', ');
-      categories = baselineCategories.join(', ');
-    }
-    refreshSection = undefined;
+    aliases = baselineAliases.join(', ');
+    categories = baselineCategories.join(', ');
   }
 
   async function saveOrganization(): Promise<void> {
@@ -105,19 +94,13 @@
       if (result.ok) saved = result.entity;
       return result;
     });
-    if (ok) {
-      if (initialOrganization && profileDirty) { refreshSection = 'organization'; await loadCurrent(); }
-      else onDone(saved);
-    }
+    if (ok) onDone(saved);
   }
 
   async function saveProfile(): Promise<void> {
-    if (!initialOrganization || !currentProfile || submitting || refreshSection) return;
+    if (!initialOrganization || !currentProfile || submitting) return;
     attempt.reset();
-    if (await profileAttempt.run(current => controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? opened))) {
-      if (organizationDirty) { refreshSection = 'profile'; await loadCurrent(); }
-      else onDone();
-    }
+    if (await profileAttempt.run(current => controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? opened))) onDone();
   }
 
   // Aliases and categories as the form shows them, over the rest of the version sent.
@@ -397,15 +380,13 @@
           {#if !aliasesShown}<button type="button" class="add-link kit-control-states" disabled={submitting} onclick={() => addingAliases = true}>Add alias…</button>{/if}
           {#if !categoriesShown}<button type="button" class="add-link kit-control-states" disabled={submitting} onclick={() => addingCategories = true}>Add category…</button>{/if}
         </div>{/if}
-        {#if aliasesShown || categoriesShown}<div class="list-save"><Button type="submit" label="Save aliases and categories" disabled={submitting || !!refreshSection} /></div>{/if}
+        {#if aliasesShown || categoriesShown}<div class="list-save"><Button type="submit" label="Save aliases and categories" disabled={submitting} /></div>{/if}
       </form>{/if}
     {/if}
   </div>
 {/if}
   {#snippet notice()}
-    {#if refreshSection && load.details}
-      <InlineNotice message="Couldn't reload this organization after saving." details={load.details} actionLabel="Retry" onaction={() => void loadCurrent()} />
-    {:else if attempt.conflict}
+    {#if attempt.conflict}
       <!-- The footer's Keep yours saves the organization's fields. -->
       {@render conflictNotice(attempt, undefined)}
     {:else if profileAttempt.conflict}

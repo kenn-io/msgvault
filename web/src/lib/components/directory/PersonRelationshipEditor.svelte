@@ -245,9 +245,6 @@
               </FieldPicker>
             </span>
           </div>
-          {#if !relationshipTypeSlug || counterpartID === null || counterpartID === personID}
-            <p class="muted">{!relationshipTypeSlug && (counterpartID === null || counterpartID === personID) ? 'Choose a connection type and a person.' : !relationshipTypeSlug ? 'Choose a connection type.' : 'Choose a person.'}</p>
-          {/if}
         {/if}
       </section>
       <section>

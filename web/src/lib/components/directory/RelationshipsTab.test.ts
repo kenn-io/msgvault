@@ -38,20 +38,6 @@ async function rowAction(label: string): Promise<void> {
 }
 
 describe('RelationshipsTab', () => {
-  it('explains which connection selections are required', async () => {
-    const { client, controller } = controllerWith(async () => Response.json({ people: [directoryPerson(8)] }));
-    controller.relationshipTypes = [relationshipType()];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add connection…' }));
-    expect(screen.getByText('Choose a connection type and a person.')).toBeDefined();
-    await openTypeahead('Connection type');
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
-    expect(screen.getByText('Choose a person.')).toBeDefined();
-    await openTypeahead('Person');
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
-    expect(screen.queryByText('Choose a person.')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Add connection' })).toHaveProperty('disabled', false);
-  });
   it('shows ended connection dates with day precision', async () => {
     const { client, controller } = controllerWith(async () => Response.json({ relationships: [] }));
     const item = view(41, 'outgoing', 'is mentored by', 'Synthetic Peer');

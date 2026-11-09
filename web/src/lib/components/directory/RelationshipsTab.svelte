@@ -1,6 +1,5 @@
 <script lang="ts">
   import { WriteAttempt } from '../../directory/write-attempt.svelte';
-  import { latestDateKey } from '../../directory/dates';
   import { Button } from '@kenn-io/kit-ui';
   import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
   import { untrack, onDestroy } from 'svelte';
@@ -44,7 +43,7 @@
   const acting = $derived(removal.busy || typeRemoval.busy);
 
   const currentConnections = $derived(controller.relationships.filter(view => view.relationship.status !== 'ended'));
-  const endedConnections = $derived(controller.relationships.filter(view => view.relationship.status === 'ended').sort((a, b) => latestDateKey(b.relationship.end_date) - latestDateKey(a.relationship.end_date)));
+  const endedConnections = $derived(controller.relationships.filter(view => view.relationship.status === 'ended'));
   const pending = $derived(imports.rows.filter(row => row.status === 'pending'));
   const reviewed = $derived(imports.rows.filter(row => row.status !== 'pending'));
 

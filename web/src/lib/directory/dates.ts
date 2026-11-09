@@ -110,8 +110,3 @@ export function dateNote(value: string, focused: boolean, today: Date = new Date
   const reading = readablePartialDate(trimmed, today);
   return trimmed === localDateStr(today) ? `Today, ${reading}` : reading === value.trim() ? '' : reading;
 }
-
-/** Sort partial dates latest first, placing an unknown month or day at the end of its period. */
-export function latestDateKey(value: PartialDateParts | undefined): number {
-  return value?.year ? value.year * 10000 + (value.month ?? 12) * 100 + (value.day ?? 31) : 0;
-}

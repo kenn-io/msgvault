@@ -10,7 +10,7 @@
   import AttributeDefinitionDialog from '../directory/AttributeDefinitionDialog.svelte';
   import OrganizationsSettings from './OrganizationsSettings.svelte';
   import { sentenceCase } from '../../explore/labels';
-  let { client, onDirectoryChange, onOpenPerson }: { client: APIClient; onOpenPerson?: (personID: number) => void; onDirectoryChange?: () => void | Promise<void> } = $props();
+  let { client, onDirectoryChange }: { client: APIClient; onDirectoryChange?: () => void | Promise<void> } = $props();
   const entities = new DirectoryEntityController(untrack(() => client), 0, { onDirectoryChange: () => onDirectoryChange?.() });
   const fields = new DirectoryProfileController(untrack(() => client), 0, { etags: {}, errors: {} });
   const customFields = $derived(fields.definitions.filter((field) => field.ownership !== 'system'));
@@ -66,7 +66,7 @@
     </ul>
   {:else}<p class="muted">No custom fields yet</p>{/if}
 </section>
-<OrganizationsSettings controller={entities} {onOpenPerson} />
+<OrganizationsSettings controller={entities} />
 <RelationshipsTab {client} controller={entities} personID={0} catalogOnly />
 {#if creating}<AttributeDefinitionDialog controller={fields} onClose={() => creating = false} />{/if}
 {#if editing}

@@ -168,7 +168,7 @@ for (const width of [1440, 390]) {
     const notes = (await dialog.locator('label.notes').boundingBox())!;
     expect(notes.y - end).toBe(width === 390 ? 16 : 36);
 
-    // The open search shows the closed picker's words, and a failure keeps Retry on its sentence, sits 4 from the
+    // A failure keeps Retry on its sentence, sits 4 from the
     // panel's top and bottom with no divider under it or frame of its own, and folds the server's words under Details.
     await dialog.getByRole('button', { name: 'Connection type: Type', exact: true }).click();
     const typeSearch = dialog.getByRole('combobox', { name: 'Connection type', exact: true });

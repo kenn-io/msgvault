@@ -189,17 +189,6 @@ test('an organization that fails to load shows its error 12 inside the dialog on
   expect(gaps).toEqual([0, 0]);
 });
 
-test('Settings opens the person whose job blocks deleting an organization', async ({ page }) => {
-  await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({ json: { employments: [employment] } }));
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people_catalog' })));
-  await page.getByRole('button', { name: 'Edit Example Org', exact: true }).click();
-  await page.getByRole('button', { name: 'Delete organization…', exact: true }).click();
-  const deletion = page.getByRole('dialog', { name: 'Delete Example Org?', exact: true });
-  await deletion.getByRole('button', { name: 'Archive Person', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Archive Person', exact: true })).toBeVisible();
-  await expect(deletion).toHaveCount(0);
-});
-
 for (const width of [1440, 390]) {
   test(`End job conflict stays contained at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });

@@ -6,8 +6,7 @@ type Orientation = 'outgoing' | 'incoming';
 export type RelationshipChoice = TypeaheadOption & { slug: string; direction: Orientation; group: string };
 
 // Groups in order of use, and each group's types with the common ones first; types not listed fall in Other, by label.
-// Each phrase reads a seeded label as a sentence. The store's seed test checks every seeded type has both, so a new
-// seed can't land here without them (internal/store/relationship_type_phrases_test.go).
+// Each phrase reads a seeded label as a sentence.
 const { groups, phrases }: { groups: Record<string, string[]>; phrases: Record<string, string[]> } = relationshipPhrases;
 export function relationshipPhrase(slug: string, direction: Orientation, label: string): string {
   const phrase = phrases[`${slug}:${direction}`];
