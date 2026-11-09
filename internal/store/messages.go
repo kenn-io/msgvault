@@ -2570,15 +2570,20 @@ func (s *Store) persistMessageWith(
 // one tsvector (MAXSTRPOS).
 const maxTSVectorBytes = 1<<20 - 1
 
+// ftsSafeExpansion bounds how many tsvector bytes one input byte can cost.
+// PostgreSQL indexes overlapping entries, such as a hyphenated word and each
+// of its parts, so the cost can exceed the input's own length. The densest
+// shapes measured, hyphenated words of distinct parts, cost about 4 bytes
+// per input byte; 8 leaves a wide margin.
+const ftsSafeExpansion = 8
+
 // upsertMessageFTS writes a message's search entry inside its write. A
-// distinct lexeme costs its bytes, padded to even length, plus two bytes of
-// position count and two per position, so a tsvector holds at most three
-// bytes per input byte. A document whose bound reaches the limit takes the
-// savepoint path, which marks an overflowing message unsearchable instead of
-// failing the write and every retry of it.
+// document that could overflow the limit takes the savepoint path, which
+// marks an overflowing message unsearchable instead of failing the write and
+// every retry of it. Smaller documents skip the savepoint's round trips.
 func (s *Store) upsertMessageFTS(q querier, doc FTSDoc) error {
 	inputBytes := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs)
-	if 3*inputBytes < maxTSVectorBytes {
+	if ftsSafeExpansion*inputBytes < maxTSVectorBytes {
 		return s.dialect.FTSUpsert(q, doc)
 	}
 	_, err := s.upsertFTSOrUnsearchable(q, doc)
