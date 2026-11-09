@@ -213,6 +213,8 @@ describe('PersonAgenda', () => {
 
     await rerender({ client, personID: 8 });
     await waitFor(() => expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/8/agenda')).toBe(true));
+    await screen.findByText('No tasks yet');
+    expect(screen.queryByLabelText('New task')).toBeNull();
 
     await typeTask('Send notes');
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add task' }) as HTMLButtonElement).disabled).toBe(false));

@@ -189,11 +189,6 @@ describe('PersonNetwork', () => {
     for (const name of links) await fireEvent.click(screen.getByRole('button', { name }));
     expect(onOpenPerson.mock.calls).toEqual(people);
     expect(onOpenOrganization.mock.calls).toEqual(organizations);
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    await screen.findByText('No one else at 2 steps');
-    for (const name of links) expect(screen.queryByRole('button', { name })).toBeNull();
-    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-    await screen.findByText('No one else at 3 steps');
   });
 
   it.each([
@@ -214,9 +209,10 @@ describe('PersonNetwork', () => {
   });
 
   it.each([
-    { name: 'root-only Direct is hidden', network: rootOnly(), sections: 0, notices: 0 },
-    { name: 'a truncated Direct result is reported', network: { ...connected(1), truncated: true }, sections: 1, notices: 1 }
-  ])('shows network result state: $name', async ({ network, sections, notices }) => {
+    { name: 'root-only Direct is hidden', network: rootOnly(), sections: 0, notices: 0, emptyDepths: [], directLinks: [] },
+    { name: 'a truncated Direct result is reported', network: { ...connected(1), truncated: true }, sections: 1, notices: 1, emptyDepths: [], directLinks: [] },
+    { name: 'direct-only contacts leave 2 and 3 steps empty', network: connected(1), sections: 1, notices: 0, emptyDepths: [2, 3], directLinks: ['Curated Peer'] }
+  ])('shows network result state: $name', async ({ network, sections, notices, emptyDepths, directLinks }) => {
     const { controller } = controllerWith(networkFetcher(network));
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await waitFor(() => {
@@ -225,6 +221,12 @@ describe('PersonNetwork', () => {
     });
     expect(screen.queryAllByRole('heading', { name: 'Network' })).toHaveLength(sections);
     expect(screen.queryAllByText('Showing up to 250 people and organizations and 500 connections.')).toHaveLength(notices);
+    for (const name of directLinks) expect(screen.getByRole('button', { name })).toBeDefined();
+    for (const depth of emptyDepths) {
+      await fireEvent.click(screen.getByRole('radio', { name: `${depth} steps` }));
+      await screen.findByText(`No one else at ${depth} steps`);
+      for (const name of directLinks) expect(screen.queryByRole('button', { name })).toBeNull();
+    }
   });
 
   it('retries a failed first load and keeps the list visible during depth loading', async () => {

@@ -68,6 +68,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 describe('PersonAddresses', () => {
   it('shows each address and its source once when expanded', async () => {
     render(PersonAddresses, baseProps());
+    expect(screen.queryByRole('button', { name: /^Unlink / })).toBeNull();
     const email = screen.getByLabelText('Identity Alice');
     await fireEvent.click(within(email).getByText('Alice'));
     expect(email.querySelector('p')?.textContent).toBe('this profile · alice@example.com · email · primary · stored identifier');
