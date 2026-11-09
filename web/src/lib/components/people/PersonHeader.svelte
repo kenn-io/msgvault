@@ -28,7 +28,7 @@
   /* On a phone the name keeps the row, and Merge with… and ⋯ wrap together as one group under it, 8 below, at
    * the header's left inset. */
   @media (max-width: 640px) {
-    header { flex-wrap: wrap; row-gap: var(--space-group); }
+    header { flex-wrap: wrap; row-gap: var(--space-group); padding-inline: var(--page-gutter); }
     header > div { flex: 1 1 0; }
     .actions { flex-basis: 100%; flex-wrap: nowrap; margin-left: 0; }
   }

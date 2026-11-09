@@ -139,8 +139,11 @@ test('the person page and its Details sections sit on the Layout scale', async (
     const name = person.querySelector('header h2')!.getBoundingClientRect(), actions = person.querySelector('header .actions')!.getBoundingClientRect();
     const pane = person.querySelector('[data-scroll-pane]')!;
     const add = person.querySelector('.fields .add > *')!.getBoundingClientRect();
-    return { label: label.width, sameLine: Math.abs(label.top - value.top), actionsBelow: actions.top >= name.bottom, wide: pane.scrollWidth - pane.clientWidth, addLine: add.left - value.left, titleInset: row.getBoundingClientRect().left - document.querySelector('.heading h1, .heading h2')!.getBoundingClientRect().left };
+    const titleLeft = document.querySelector('.heading h1, .heading h2')!.getBoundingClientRect().left;
+    return { headerInset: actions.left - titleLeft, tabsInset: person.querySelector('.tabs [role="radiogroup"]')!.getBoundingClientRect().left - titleLeft, label: label.width, sameLine: Math.abs(label.top - value.top), actionsBelow: actions.top >= name.bottom, wide: pane.scrollWidth - pane.clientWidth, addLine: add.left - value.left, titleInset: row.getBoundingClientRect().left - document.querySelector('.heading h1, .heading h2')!.getBoundingClientRect().left };
   });
+  expect.soft(phone.headerInset, 'the person header aligns with the People title').toBe(0);
+  expect.soft(phone.tabsInset, 'the tabs align with the People title').toBe(0);
   expect(phone.titleInset, 'Details aligns with the People title on a phone').toBe(0);
   expect(phone.label, 'the label column is 120 on a phone').toBe(120);
   expect(phone.sameLine, 'the value stays beside its label').toBeLessThanOrEqual(2);

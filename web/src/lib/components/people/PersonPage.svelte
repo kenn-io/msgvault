@@ -203,6 +203,7 @@
   .details > :global(p) { margin: 0; color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .summary-error { display: flex; align-items: center; gap: var(--space-group); padding: var(--space-group) var(--space-pane); }
   @media (max-width: 640px) {
+    .tabs { padding-inline: var(--page-gutter); }
     .details:not([hidden]) { padding-left: var(--page-gutter); padding-right: calc(var(--page-gutter) - var(--scrollbar-gutter-size)); }
   }
 </style>
