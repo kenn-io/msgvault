@@ -7,8 +7,6 @@ export type OperationLaneStatusKind =
 
 export const OperationLaneStatusKind = {
   carddav_sync: "carddav_sync",
-  document_embedding: "document_embedding",
-  document_extraction: "document_extraction",
   message_embedding: "message_embedding",
   person_embedding: "person_embedding",
   person_enrichment: "person_enrichment",

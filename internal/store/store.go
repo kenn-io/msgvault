@@ -83,10 +83,9 @@ type Store struct {
 	lastSyncOptimize time.Time
 	// syncOptimizeNow and checkpointRetryBackoff are test seams, nil in
 	// production.
-	syncOptimizeNow           func() time.Time
-	syncOptimizeHook          func()
-	checkpointRetryBackoff    []time.Duration
-	documentVectorOperationMu sync.Mutex
+	syncOptimizeNow        func() time.Time
+	syncOptimizeHook       func()
+	checkpointRetryBackoff []time.Duration
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from test files. They belong to the
 	// Store rather than the package because more than one Store can be
@@ -1550,7 +1549,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 				return nil
 			}
 			fresh = true
-			return s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx), version)
+			return s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx))
 		})
 		if err != nil {
 			return err
@@ -1560,14 +1559,14 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return nil
 		}
 	}
-	if err := s.initSchemaContext(ctx, version); err != nil {
+	if err := s.initSchemaContext(ctx); err != nil {
 		return err
 	}
 	s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
 	return nil
 }
 
-func (s *Store) initSchemaContext(ctx context.Context, version int) error {
+func (s *Store) initSchemaContext(ctx context.Context) error {
 	// A missing messages table identifies a fresh PostgreSQL schema. Build the
 	// canonical Message-ID expression index inline after the schema files create
 	// the empty table: CREATE INDEX is cheap there, while making every fresh test
@@ -1777,12 +1776,6 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 			}
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
-		}
-	}
-	if version < 18 {
-		// Earlier versions submitted one provider job per extraction attempt.
-		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
-			return fmt.Errorf("backfill document upload counts: %w", err)
 		}
 	}
 	// account: and received: filter on the account columns, and each sync
@@ -2030,6 +2023,11 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure person sweep change triggers: %w", err)
+	}
+	// Replace callers before dropping the document helper they used. Each
+	// committed migration boundary must leave message writes usable.
+	if err := s.runOnceMigration(ctx, "drop_document_index_v1", 1, false, s.dropDocumentIndex); err != nil {
+		return err
 	}
 	if err := s.runOnceMigration(
 		ctx, migrationActivityProjectionTriggers, 1, false,

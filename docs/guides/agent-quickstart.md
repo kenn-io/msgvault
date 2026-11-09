@@ -275,7 +275,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `query_sql` | read | — | owner-only |
 | `run_saved_view` | read | — | owner-only |
 | `search_by_domains` | read | — | search.read |
-| `search_document_attachments` | read | — | owner-only |
 | `search_in_message` | read | — | message.read |
 | `search_media` | read | — | owner-only |
 | `search_message_bodies` | read | — | search.read |

@@ -1230,11 +1230,6 @@ func TestImporterArchivesStickerAttachment(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(page.Candidates)
 	assert.Equal(int64(1), page.Counts.IneligibleOccurrences)
-	var attachmentID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), messageIDs["$sticker"]).Scan(&attachmentID))
-	_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 0)
-	require.NoError(err)
-	assert.False(eligible)
 }
 
 func TestImporterMediaEditReplacesAttachmentAndStoresEmptyFiles(t *testing.T) {
