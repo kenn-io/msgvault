@@ -34,7 +34,7 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
       { id: 'host', label: 'Server', placeholder: 'imap.example.com' },
       { id: 'username', label: 'Username', placeholder: 'you@example.com' },
     ],
-    template: 'msgvault add-imap --host {host} --username {username}',
+    template: 'msgvault add-imap --host {host} --port {port} --username {username}',
   },
   {
     id: 'contacts', name: 'Contacts', description: 'Google, Microsoft, or CardDAV address books',
@@ -49,22 +49,17 @@ function arg(value: string, shell: 'posix' | 'cmd', optionValue: boolean): strin
 }
 
 export function imapServer(value: string): { host: string; port?: string } | undefined {
-  const server = value.trim();
-  if (!server) return undefined;
-  const match = /^(\[[^\]]+\]|[^:]+):([^:]*)$/.exec(server);
-  if (!match) return { host: server };
-  const port = match[2]!;
-  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) return undefined;
-  return { host: match[1]!, port: String(Number(port)) };
+  const match = /^(\[[^\]]+\]|[^:]+):([^:]*)$/.exec(value.trim());
+  if (!match) return { host: value.trim() };
+  const port = Number(match[2]);
+  return /^\d+$/.test(match[2]!) && port >= 1 && port <= 65535 ? { host: match[1]!, port: String(port) } : undefined;
 }
 
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
   if (kind.fields.some(field => !values[field.id]?.trim())) return undefined;
-  if (kind.id === 'imap') {
-    const server = imapServer(values.host ?? '');
-    if (!server) return undefined;
-    const port = server.port ? ` --port ${server.port}` : '';
-    return `msgvault add-imap --host ${arg(server.host, shell, true)}${port} --username ${arg(values.username!.trim(), shell, true)}`;
-  }
-  return kind.template.replace(/(\S+) \{(\w+)\}/g, (_, before: string, id: string) => `${before} ${arg(values[id]!.trim(), shell, before.startsWith('--'))}`);
+  const server = kind.id === 'imap' ? imapServer(values.host!) : {};
+  if (!server) return undefined;
+  const filled: Record<string, string | undefined> = { ...values, ...server };
+  // An option with no value, such as a server's unstated port, is left out.
+  return kind.template.replace(/ (\S+) \{(\w+)\}/g, (_, before: string, id: string) => filled[id]?.trim() ? ` ${before} ${arg(filled[id]!.trim(), shell, before.startsWith('--'))}` : '');
 }

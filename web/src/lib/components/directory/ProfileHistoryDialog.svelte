@@ -102,8 +102,7 @@
   }
 
   function providerContext(point: Item, workspaces: Map<string, string>): string | null {
-    const scope = point.service_slug === 'slack' && point.scope_kind === 'workspace' && point.scope_value
-      ? workspaces.get(point.scope_value) : point.scope_value ?? (point.scope_kind ? sentenceCase(point.scope_kind) : undefined);
+    const scope = workspaces.get(point.scope_value ?? '') ?? point.scope_value ?? (point.scope_kind ? sentenceCase(point.scope_kind) : undefined);
     const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), scope].filter(Boolean);
     return details.length ? details.join(' · ') : null;
   }
