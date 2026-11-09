@@ -405,7 +405,8 @@ import (
 // 3.48.0 adds owner-only local message search activation and progress.
 // 3.49.0 adds verification.read for revealing detected verification content in delegated reads.
 // 3.50.0 adds provider-neutral message import.
-const APISchemaVersion = "3.50.0"
+// 3.51.0 adds attachment processing outcomes and worker errors.
+const APISchemaVersion = "3.51.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
