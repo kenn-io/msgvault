@@ -198,7 +198,7 @@ func TestImportCachedOrganicCommentKeepsNewerSameRunAdSnapshot(t *testing.T) {
 	assert.True(stored[row.SourceMessageID].SenderID.Valid, "cached responses still supply missing author evidence")
 	assert.True(stored[row.SourceMessageID].SentAt.Valid, "cached responses still supply missing creation evidence")
 	var matches int
-	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH '"new ad example"'`).Scan(&matches))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages_fts WHERE messages_fts MATCH '"new ad example"'`).Scan(&matches))
 	assert.Equal(1, matches, "bounded resume must retain the newer searchable text")
 	fixture.comments["100_200"][1].Message = "fresh reconciled example"
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
@@ -264,10 +264,10 @@ func TestImportPollingCacheProgress(t *testing.T) {
 			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 			require.NoError(err)
 			var before, after int64
-			require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&before))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&before))
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 			require.NoError(err)
-			require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&after))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&after))
 			assert.Equal(before, after, "unchanged polling must not invalidate analytics through recipient replacement")
 			fixture.comments["100_200"][0].Message = "updated example"
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
@@ -293,17 +293,17 @@ func TestImportUnchangedPollingDoesNotEmitContentEdits(t *testing.T) {
 	require.NoError(err)
 	_, err = st.SetPersonTrackingContext(t.Context(), person.ID, true)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000' WHERE id=?`, row.ID)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000' WHERE id=?`, row.ID)
 	require.NoError(err)
 	var before, after string
-	require.NoError(st.DB().QueryRow(`SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&before))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&before))
 	sequence, err := st.LatestPersonSweepChangeSequence(t.Context())
 	require.NoError(err)
 	for range 2 {
 		_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 		require.NoError(err)
 	}
-	require.NoError(st.DB().QueryRow(`SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&after))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&after))
 	assert.Equal(before, after, "polling freshness is operational state, not a content edit")
 	changes, err := st.ScanPersonSweepChanges(t.Context(), person.ID, sequence, 1000)
 	require.NoError(err)
@@ -313,7 +313,7 @@ func TestImportUnchangedPollingDoesNotEmitContentEdits(t *testing.T) {
 	fixture.comments["100_200"][0].Message = "edited example"
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(`SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&after))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&after))
 	assert.NotEqual(before, after)
 	changes, err = st.ScanPersonSweepChanges(t.Context(), person.ID, sequence, 1000)
 	require.NoError(err)
@@ -327,7 +327,7 @@ func TestImportResponseMarkerFailureKeepsPriorBody(t *testing.T) {
 	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
 	row := message(t, st, src.ID, "100_201")
-	_, err = st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_poll_marker BEFORE UPDATE ON archive_metadata
+	_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_poll_marker BEFORE UPDATE ON archive_metadata
 		WHEN NEW.key='meta.poll_read:%d:100_201' BEGIN SELECT RAISE(ABORT, 'synthetic marker unavailable'); END`, src.ID))
 	require.NoError(err)
 	fixture.comments["100_200"][0].Message = "edited example"
@@ -336,7 +336,7 @@ func TestImportResponseMarkerFailureKeepsPriorBody(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), row.ID)
 	require.NoError(err)
 	assert.Equal("original example", body, "content must wait for its durable read ordering")
-	_, err = st.DB().Exec(`DROP TRIGGER fail_poll_marker`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_poll_marker`)
 	require.NoError(err)
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
@@ -450,8 +450,8 @@ func TestImportMissingAuthor(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(known, message(t, st, src.ID, c.ID).SenderID)
 		var displayName, indexedName string
-		require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`, message(t, st, src.ID, c.ID).ID).Scan(&displayName))
-		require.NoError(st.DB().QueryRow(`SELECT from_addr FROM messages_fts WHERE rowid=?`, message(t, st, src.ID, c.ID).ID).Scan(&indexedName))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`, message(t, st, src.ID, c.ID).ID).Scan(&displayName))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT from_addr FROM messages_fts WHERE rowid=?`, message(t, st, src.ID, c.ID).ID).Scan(&indexedName))
 		assert.Equal("Example Customer", displayName)
 		assert.Equal("Example Customer", indexedName)
 	}
