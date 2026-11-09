@@ -2,7 +2,8 @@ import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { expectKitTheme, selectWorkspace } from './kit-ui';
 
-import { candidate, directoryPerson, person } from '../src/lib/directory/entity-fixtures.test-support';
+import { candidate, directoryPerson } from '../src/lib/directory/entity-data.test-support';
+import { person } from '../src/lib/directory/person-fixtures.test-support';
 import { emptyProfile } from '../src/lib/directory/profile-fixtures.test-support';
 import { meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { mockArchiveLayout, row } from './archive-layout';
