@@ -102,6 +102,14 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
   expect(savedAddresses([point], new Set(), row.workspaceLabels).map(addressText)).toEqual(['Neri Bloom · Slack · workspace 2']);
 });
 
+it('keeps the same workspace number between a merge and field history across merges', () => {
+  const one = addressFixture(701, 'slack', 'T_TWO:U_NERI', { participant_display_name: 'Neri Bloom', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' });
+  const other = addressFixture(702, 'slack', 'T_ONE:U_OTHER', { participant_display_name: 'Other member', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_ONE' });
+  const selected = mergeSummaryRow({ merge, participants: [absorbed(701)], labels: labelsOf([one]) }).addresses.get(701)!.map(addressText);
+  const fields = mergedInAddresses([{ merge_id: 41, participant_id: 701, merged_at: '2026-01-03T12:00:00Z', addresses: [one] }, { merge_id: 42, participant_id: 702, merged_at: '2026-01-04T12:00:00Z', addresses: [other] }]);
+  expect(fields.filter(row => row.participantID === 701).map(row => row.value)).toEqual(selected);
+});
+
 it('renders migrated opaque Beeper IDs by their readable name', () => {
   expect(mergeSummaryRow({ merge, labels: labelsOf(migratedAddresses) }).addresses.get(2)?.map(addressText)).toEqual(['WhatsApp · Garden member · account: garden-account']);
 });
