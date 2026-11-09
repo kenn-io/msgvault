@@ -6,18 +6,13 @@ import FieldPicker from './FieldPicker.svelte';
 afterEach(cleanup);
 const options = [{ name: 'garden', label: 'Example Garden' }];
 
-it('offers an existing organization instead of creating a duplicate label', async () => {
-  render(FieldPicker, { placeholder: 'Organization', options: [{ name: 'organization:21', label: 'Example Garden' }], value: '', onselect: vi.fn(), oncreate: vi.fn(), createLabel: 'Create organization “{query}”' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Organization' }));
-  await fireEvent.input(screen.getByRole('combobox'), { target: { value: '  example garden  ' } });
-  expect(screen.queryByRole('option', { name: /^Create organization/ })).toBeNull();
-});
-
 it('offers creation last and shows the created fields with a way back', async () => {
   const oncreate = vi.fn(), onexisting = vi.fn();
   const creation = createRawSnippet(() => ({ render: () => '<label>Name<input value="Example School"></label>' }));
   const view = render(FieldPicker, { placeholder: 'Organization', fallbackLabel: 'Search or create', options, value: '', onselect: vi.fn(), oncreate, onexisting, creation, createLabel: 'Create organization “{query}”', existingLabel: 'Choose an existing organization instead' });
   await fireEvent.click(screen.getByRole('button', { name: 'Organization: Search or create' }));
+  expect(screen.queryByRole('option', { name: /^Create organization/ })).toBeNull();
+  await fireEvent.input(screen.getByRole('combobox'), { target: { value: '  example garden  ' } });
   expect(screen.queryByRole('option', { name: /^Create organization/ })).toBeNull();
   await fireEvent.input(screen.getByRole('combobox'), { target: { value: 'Example School' } });
   const rows = screen.getAllByRole('option');

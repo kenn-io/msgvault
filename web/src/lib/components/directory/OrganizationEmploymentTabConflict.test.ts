@@ -1,8 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
-import { controllerWith, employment, organizationProfile, relationship, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith, employment, organizationProfile, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
-import RelationshipsTab from './RelationshipsTab.svelte';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 
 it('refreshes Work when accepting a job ended elsewhere', async () => {

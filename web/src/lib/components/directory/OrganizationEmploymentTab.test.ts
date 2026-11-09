@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
+import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -159,11 +160,19 @@ describe('OrganizationEmploymentTab', () => {
     const pending = new Promise<Response>(resolve => { release = resolve; });
     let reads = 0;
     let writes = 0;
+    const tags: (string | null)[] = [];
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
       const path = pathOf(request);
-      if (path === '/api/v1/employments/11' && request.method === 'GET') { reads++; return pending; }
-      if (path === '/api/v1/employments/11/primary') { writes++; return Response.json(employment(11, 2, { is_primary: true })); }
+      if (path === '/api/v1/employments/11' && request.method === 'GET') {
+        reads++;
+        return reads === 1 ? pending : Response.json(employment(11, reads), { headers: { ETag: `"employment-11-r${reads}"` } });
+      }
+      if (path === '/api/v1/employments/11/primary') {
+        tags.push(request.headers.get('If-Match'));
+        writes++;
+        return writes === 1 ? Response.json({ message: 'Temporary failure' }, { status: 500 }) : Response.json(employment(11, 3, { is_primary: true }));
+      }
       if (path === '/api/v1/people/7/employments') return collection([employment(11, 2, { is_primary: true }), employment(12, 2, { title: 'Other role', is_primary: false })]);
       throw new Error(`unexpected ${request.method} ${path}`);
     });
@@ -177,6 +186,10 @@ describe('OrganizationEmploymentTab', () => {
       expect(reads).toBe(1);
       release(new Response(JSON.stringify(employment(11, 2, { is_primary: true })), { headers: { ETag: '"employment-11-r1"' } }));
       await waitFor(() => expect(writes).toBe(1));
+      await screen.findByText("Couldn't make this job primary.");
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(writes).toBe(2));
+      expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
       await waitFor(() => expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).toContain('Primary'));
     } finally { release(Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })); view.unmount(); controller.destroy(); }
   });
@@ -215,6 +228,26 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText('1 past job')).toBeDefined();
   });
 
+  it('gives the delete dialog its own shortcut scope', async () => {
+    const rootShortcut = vi.fn();
+    const unregister = appShortcuts.register('x', rootShortcut);
+    const { controller } = controllerWith(async () => Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } }));
+    controller.employments = [employment()];
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await rowAction('Delete…');
+      expect(appShortcuts.activeScope()).toMatch(/^shell-dialog:/);
+      appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
+      expect(rootShortcut).not.toHaveBeenCalled();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Delete .*\?/ })).toBeNull());
+      expect(appShortcuts.activeScope()).toBe('root');
+    } finally {
+      view.unmount();
+      unregister();
+    }
+  });
+
   it('uses retained employer records for Work row names after organization search', async () => {
     const { controller } = controllerWith(async input => {
       const path = pathOf(requestOf(input));
@@ -232,33 +265,6 @@ describe('OrganizationEmploymentTab', () => {
     } finally { view.unmount(); controller.destroy(); }
   });
 });
-
-it('refreshes the job version before retrying a failed Make primary write', async () => {
-  const tags: (string | null)[] = [];
-  let reads = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input), path = pathOf(request);
-    if (path === '/api/v1/people/7/employments') return collection([employment(11, 1, { is_primary: true }), employment(12, 1, { organization_id: 23, title: 'Other role' })]);
-    if (request.method === 'GET' && path === '/api/v1/employments/12') {
-      reads++;
-      return Response.json(employment(12, reads), { headers: { ETag: `"employment-12-r${reads}"` } });
-    }
-    if (path === '/api/v1/employments/12/primary') {
-      tags.push(request.headers.get('If-Match'));
-      return tags.length === 1 ? Response.json({ message: 'Temporary failure' }, { status: 500 }) : Response.json(employment(12, 3, { is_primary: true }));
-    }
-    throw new Error(`unexpected ${request.method} ${path}`);
-  });
-  controller.employments = [employment(11, 1, { is_primary: true }), employment(12, 1, { organization_id: 23, title: 'Other role' })];
-  render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await fireEvent.click(screen.getByRole('button', { name: 'Actions for Other role at this organization' }));
-  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
-  await screen.findByText("Couldn't make this job primary.");
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  await waitFor(() => expect(tags).toHaveLength(2));
-  expect(tags).toEqual(['"employment-12-r1"', '"employment-12-r2"']);
-});
-
 
 it.each(['Delete…', 'Make primary'])('shows the saved job after a conflict on %s', async action => {
   let reads = 0;

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { createRawSnippet, mount, unmount } from 'svelte';
-import { appShortcuts, SelectDropdown } from '@kenn-io/kit-ui';
+import { SelectDropdown } from '@kenn-io/kit-ui';
 import { expect, it, vi } from 'vitest';
 import Dialog from './Dialog.svelte';
 
@@ -18,25 +18,6 @@ it('leaves Escape to a child picker, then closes the dialog', async () => {
   expect(screen.queryByRole('listbox')).toBeNull();
   await fireEvent.keyDown(picker, { key: 'Escape' });
   expect(onclose).toHaveBeenCalledOnce();
-});
-
-it('gives the dialog its own shortcut scope', async () => {
-  const rootShortcut = vi.fn();
-  const unregister = appShortcuts.register('x', rootShortcut);
-  const onclose = vi.fn();
-  const view = render(Dialog, { title: 'Delete job?', onclose, children: createRawSnippet(() => ({ render: () => '<p>Delete this job?</p>' })) });
-  try {
-    expect(appShortcuts.activeScope()).toMatch(/^shell-dialog:/);
-    appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
-    expect(rootShortcut).not.toHaveBeenCalled();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
-    view.unmount();
-    expect(appShortcuts.activeScope()).toBe('root');
-  } finally {
-    view.unmount();
-    unregister();
-  }
 });
 
 it.each([
