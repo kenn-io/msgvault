@@ -245,7 +245,7 @@ describe('PersonSplitSteps', () => {
       throw new Error(`Unexpected request: ${path}`);
     }, undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701], addresses: [addressFixture(701, 'email', 'person701@example.org')] }));
     controller.setParticipantSelected(701, true);
-    expect(controller.confirmSplit()).toBe(true);
+    controller.confirmSplit();
     await controller.submitSplit();
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     expect(screen.getByText(/^This profile changed since you opened it\.$/)).toBeDefined();

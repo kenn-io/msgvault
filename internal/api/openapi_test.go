@@ -1550,9 +1550,7 @@ func TestOpenAPIClientOperationCounterUnitNamesCannotCollideWithExistingExports(
 	assertions.Equal([]any{
 		"OperationPublicCounterUnitAttachments",
 		"OperationPublicCounterUnitBooks",
-		"OperationPublicCounterUnitChunks",
 		"OperationPublicCounterUnitContacts",
-		"OperationPublicCounterUnitDocuments",
 		"OperationPublicCounterUnitMessages",
 		"OperationPublicCounterUnitPeople",
 		"OperationPublicCounterUnitWrites",
@@ -1977,7 +1975,7 @@ func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 			"state":   operationStateValues(),
 			"trigger": {"manual", "scheduled"},
 			"related_status": {
-				"listSourceStatus", "getDocumentIndexStatus", "getDocumentVectorStatus",
+				"listSourceStatus",
 				"getVisualAttachmentStatus", "getCardDAVStatus",
 			},
 			"supported_actions": {"carddav_sync", "visual_build", "visual_resume"},
@@ -1991,7 +1989,7 @@ func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 			"lane":                 operationLaneValues(),
 			"history_availability": {"available", "unavailable"},
 			"related_status": {
-				"listSourceStatus", "getDocumentIndexStatus", "getDocumentVectorStatus",
+				"listSourceStatus",
 				"getVisualAttachmentStatus", "getCardDAVStatus",
 			},
 			"supported_actions": {"carddav_sync", "visual_build", "visual_resume"},

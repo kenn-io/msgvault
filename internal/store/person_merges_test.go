@@ -442,20 +442,20 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
 		prepare                func(*testing.T, *personMergeInspectionFixture)
-		incomplete             bool
+		incomplete, empty      bool
 		profiles, participants int
 	}{
-		{"identifiers", func(t *testing.T, f *personMergeInspectionFixture) { denyPersonMergeIdentityReads(t, f.store) }, true, 2, 0},
+		{"identifiers", func(t *testing.T, f *personMergeInspectionFixture) { denyPersonMergeIdentityReads(t, f.store) }, true, true, 2, 0},
 		{"snapshot", func(t *testing.T, f *personMergeInspectionFixture) {
 			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_merges SET snapshot_blob = ? WHERE id = ?`), []byte("corrupt"), f.merge.Merge.ID)
 			require.NoError(t, err)
-		}, true, 0, 3},
+		}, true, false, 0, 3},
 		{"known empty", func(t *testing.T, f *personMergeInspectionFixture) {
 			_, err := f.store.DB().ExecContext(t.Context(), `DELETE FROM participant_identifiers`)
 			require.NoError(t, err)
 			_, err = f.store.DB().ExecContext(t.Context(), `UPDATE participants SET email_address = NULL, phone_number = NULL`)
 			require.NoError(t, err)
-		}, false, 2, 3},
+		}, false, true, 2, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPersonMergeInspectionFixture(t, "identity-read-failure")
@@ -473,10 +473,8 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 			assert.Len(t, listed[0].Labels.Profiles, tc.profiles)
 			assert.Len(t, detail.Labels.ParticipantIDs, tc.participants)
 			assert.Len(t, listed[0].Labels.ParticipantIDs, tc.participants)
-			if tc.name == "known empty" {
-				assert.Empty(t, detail.Labels.Addresses)
-				assert.Empty(t, listed[0].Labels.Addresses)
-			}
+			assert.Equal(t, tc.empty, len(detail.Labels.Addresses) == 0)
+			assert.Equal(t, tc.empty, len(listed[0].Labels.Addresses) == 0)
 		})
 	}
 }

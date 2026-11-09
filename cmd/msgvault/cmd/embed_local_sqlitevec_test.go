@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -97,8 +98,10 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 
 func TestLocalEmbeddingStatusDiscoversWithoutInstallation(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	fixture, _, ctx := documentVectorCommandFixture(t)
+	fixture := storetest.New(t)
+	ctx := withTestConfig(t, config.NewDefaultConfig())
 	cfg := invocationFromContext(ctx).cfg
+	cfg.Vector.Enabled = true
 	cfg.Vector.Embeddings.LocalOnly = true
 	cfg.Vector.Embeddings.Endpoint = ""
 	cfg.Vector.Embeddings.Model, cfg.Vector.Embeddings.Dimension = "nomic-embed-text", 768
@@ -111,12 +114,8 @@ func TestLocalEmbeddingStatusDiscoversWithoutInstallation(t *testing.T) {
 		return "", embedlocal.ErrNotFound
 	}
 	t.Cleanup(func() { localEmbeddingsDir = original })
-	documents := documentsCommandDeps{openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil }}
-	status := newDocumentVectorStatusCmd(documents)
-	status.SetOut(io.Discard)
-	status.SetErr(io.Discard)
-	status.SetArgs([]string{"--json"})
-	require.NoError(status.ExecuteContext(ctx))
+	status := &cobra.Command{Use: "status"}
+	status.SetContext(ctx)
 	people := localPersonProviderDeps(cfg.People.Sweep, fixture.Store, nil)
 	people.vectorConfig = func() vector.Config { return cfg.Vector }
 	var output bytes.Buffer
