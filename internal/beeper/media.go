@@ -162,6 +162,19 @@ func isConfirmedAssetNotFound(previous store.AttachmentRef, timestamp, now time.
 	return !timestamp.IsZero() && !timestamp.After(now.Add(-assetNotFoundMaxAge))
 }
 
+// effectiveMediaPolicy returns the run's media policy with its size cap
+// resolved: the policy's own cap, else the run's, else the default.
+func effectiveMediaPolicy(opts ImportOptions) attachmentpolicy.Policy {
+	policy := opts.MediaPolicy
+	if policy.MaxBytes <= 0 {
+		policy.MaxBytes = opts.MaxMediaBytes
+	}
+	if policy.MaxBytes <= 0 {
+		policy.MaxBytes = defaultMaxMediaBytes
+	}
+	return policy
+}
+
 // persistAttachments downloads a message's media into content-addressed
 // storage and replaces the message's Beeper attachment rows. Media already
 // downloaded for this message (matched by source_attachment_id) is kept
@@ -189,15 +202,8 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 	if len(m.Attachments) == 0 && len(existing) == 0 {
 		return
 	}
-	maxBytes := opts.MaxMediaBytes
-	if opts.MediaPolicy.MaxBytes > 0 {
-		maxBytes = opts.MediaPolicy.MaxBytes
-	}
-	if maxBytes <= 0 {
-		maxBytes = defaultMaxMediaBytes
-	}
-	policy := opts.MediaPolicy
-	policy.MaxBytes = maxBytes
+	policy := effectiveMediaPolicy(opts)
+	maxBytes := policy.MaxBytes
 	isPreview := sharedLink(m) != ""
 	refs := make([]store.AttachmentRef, 0, len(m.Attachments))
 	for i := range m.Attachments {

@@ -1329,6 +1329,74 @@ func TestImportReconcileRetriesPendingMediaOnUnchangedMessage(t *testing.T) {
 	assert.Empty(assetRequests(f))
 }
 
+func TestImportNoMediaEditClearsRemovedAttachments(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.EqualValues(1, first.AttachmentsDownloaded)
+
+	// The sender edits the photo away; a --no-media run sees the edit.
+	msg := &f.chat("!media:beeper.local").Msgs[0]
+	msg.Type = ""
+	msg.Text = "photo removed"
+	msg.Attachments = nil
+	noMedia := opts
+	noMedia.NoMedia = true
+	_, err = imp.Import(t.Context(), noMedia)
+	require.NoError(err)
+
+	var rows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "p0").Scan(&rows))
+	assert.Zero(rows, "the removed attachment must not outlive the edit")
+}
+
+func TestImportReconcileDownloadsMediaAfterSizeCapRises(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	capped := opts
+	capped.MaxMediaBytes = 5
+	first, err := imp.Import(t.Context(), capped)
+	require.NoError(err)
+	require.EqualValues(1, first.AttachmentsSkipped)
+
+	// The message is unchanged, but the raised cap now allows its media.
+	raised, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, raised.AttachmentsDownloaded)
+
+	settled, err := imp.Import(t.Context(), capped)
+	require.NoError(err)
+	assert.EqualValues(1, settled.MessagesUnchanged, "stored media stays settled under any cap")
+}
+
 func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

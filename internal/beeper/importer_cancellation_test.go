@@ -347,7 +347,7 @@ func TestProcessMessageCancellation(t *testing.T) {
 			sum := &ImportSummary{}
 			err = NewImporter(st, nil).processMessage(ctx, &chatScope{
 				sourceID: sourceID, convID: convID, cs: &ChatState{}, membershipComplete: true,
-			}, message, false, true, sum)
+			}, message, false, sum)
 			require.ErrorIs(err, context.Canceled)
 			assert.Zero(sum.MessagesProcessed)
 			var snippet string

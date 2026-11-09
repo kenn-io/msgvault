@@ -1352,10 +1352,6 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 		// hasMore=true. Skip items this walk already persisted and treat a page
 		// with nothing new as end-of-history.
 		pageIDs := pageMessageIDs(page.Items)
-		archived, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, pageIDs)
-		if err != nil {
-			return fmt.Errorf("look up archived Beeper messages: %w", err)
-		}
 		newItems := 0
 		for i := range page.Items {
 			m := &page.Items[i]
@@ -1363,8 +1359,7 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 				continue
 			}
 			newItems++
-			_, existed := archived[m.ID]
-			if err := imp.processMessage(ctx, cc, m, false, existed, sum); err != nil {
+			if err := imp.processMessage(ctx, cc, m, false, sum); err != nil {
 				if errors.Is(err, errRetryPage) && sum.Stopped {
 					return nil
 				}
@@ -1439,15 +1434,9 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 		if len(page.Items) == 0 {
 			return nil
 		}
-		archived, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, pageMessageIDs(page.Items))
-		if err != nil {
-			return fmt.Errorf("look up archived Beeper messages: %w", err)
-		}
 		processed := 0
 		for i := range page.Items {
-			m := &page.Items[i]
-			_, existed := archived[m.ID]
-			if err := imp.processMessage(ctx, cc, m, true, existed, sum); err != nil {
+			if err := imp.processMessage(ctx, cc, &page.Items[i], true, sum); err != nil {
 				if errors.Is(err, errRetryPage) {
 					if sum.Stopped {
 						return nil
@@ -1527,13 +1516,18 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 				reachedCutoff = true
 				continue
 			}
-			prior, existed := archived[m.ID]
-			if existed {
+			if prior, ok := archived[m.ID]; ok {
 				unchanged, err := imp.matchesArchive(ctx, cc, m, prior)
 				if err != nil {
 					return err
 				}
 				if unchanged {
+					// A reply archived before its parent links to nothing.
+					// Retry the link until the parent arrives; the chat's
+					// buffered pairs flush after the walk.
+					if m.LinkedMessageID != "" && !prior.ReplyToMessageID.Valid {
+						cc.cs.PendingReplies = append(cc.cs.PendingReplies, [2]string{m.ID, m.LinkedMessageID})
+					}
 					sum.MessagesUnchanged++
 					continue
 				}
@@ -1541,7 +1535,7 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 			// Targets in this window are re-persisted when they change,
 			// refreshing their embedded reactions[], so REACTION events need
 			// no refetch.
-			if err := imp.processMessage(ctx, cc, m, false, existed, sum); err != nil {
+			if err := imp.processMessage(ctx, cc, m, false, sum); err != nil {
 				if errors.Is(err, errRetryPage) && sum.Stopped {
 					return nil
 				}
@@ -1567,9 +1561,8 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 
 // processMessage routes one message event: REACTION events refresh their
 // target (when refetchReactionTarget is set), deletions tombstone, hidden
-// events are skipped, and everything else persists. existed reports whether
-// the message is already archived, which decides how it is counted.
-func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Message, refetchReactionTarget, existed bool, sum *ImportSummary) error {
+// events are skipped, and everything else persists.
+func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Message, refetchReactionTarget bool, sum *ImportSummary) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1593,7 +1586,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Messa
 	if !persistsMessageRow(m) {
 		return nil
 	}
-	err := imp.persistMessage(ctx, cc, m, existed, sum)
+	err := imp.persistMessage(ctx, cc, m, sum)
 	if err == nil {
 		sum.MessagesProcessed++
 	}
@@ -1604,8 +1597,9 @@ func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Messa
 // re-walk can skip rewriting it. The archived Beeper JSON carries every field
 // the API sends, including edits, deletion flags, and embedded reactions, and
 // persistMessage writes it last, so a match also means the earlier writes for
-// that message finished. A message with media that still needs a download is
-// treated as changed, so the re-walk keeps retrying the fetch.
+// that message finished. A message with media that still needs a download,
+// or that the current media policy no longer excludes, is treated as changed,
+// so the re-walk keeps retrying the fetch.
 func (imp *Importer) matchesArchive(ctx context.Context, cc *chatScope, m *Message, prior store.StoredMessage) (bool, error) {
 	if !persistsMessageRow(m) || !sameJSON(prior.Raw, m.Raw) {
 		return false, nil
@@ -1613,6 +1607,7 @@ func (imp *Importer) matchesArchive(ctx context.Context, cc *chatScope, m *Messa
 	if len(m.Attachments) == 0 || cc.opts.NoMedia || cc.opts.AttachmentsDir == "" {
 		return true, nil
 	}
+	policy := effectiveMediaPolicy(cc.opts)
 	existing, err := imp.store.MessageBeeperAttachments(ctx, prior.ID)
 	if err != nil {
 		return false, fmt.Errorf("load archived Beeper attachments: %w", err)
@@ -1629,7 +1624,8 @@ func (imp *Importer) matchesArchive(ctx context.Context, cc *chatScope, m *Messa
 		switch {
 		case stored.ContentHash != "",
 			stored.State == attachmentpolicy.StateUnavailable,
-			stored.State == attachmentpolicy.StateSkipped:
+			stored.State == attachmentpolicy.StateSkipped &&
+				policy.Evaluate(cc.opts.MediaConversation, int64(stored.Size)) != "":
 		default:
 			return false, nil
 		}
@@ -1706,12 +1702,7 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 	if target.IsHidden || target.Type == "REACTION" {
 		return nil
 	}
-	archived, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, []string{target.ID})
-	if err != nil {
-		return fmt.Errorf("look up archived Beeper message: %w", err)
-	}
-	_, existed := archived[target.ID]
-	if err := imp.persistMessage(ctx, cc, target, existed, sum); err != nil {
+	if err := imp.persistMessage(ctx, cc, target, sum); err != nil {
 		return err
 	}
 	sum.ReactionsRefreshed++
@@ -1721,9 +1712,17 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 // persistMessage writes a single message via the granular store path.
 // Store-level failures are fatal (they indicate DB problems, not item churn);
 // per-item auxiliary failures (FTS, recipients, reactions) are counted and
-// recorded but do not abort the run. existed reports whether the message was
-// already archived, so a rewrite counts as updated rather than added.
-func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Message, existed bool, sum *ImportSummary) error {
+// recorded but do not abort the run. A rewrite of an archived message counts
+// as updated rather than added.
+func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
+	archived, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, []string{m.ID})
+	if err != nil {
+		return fmt.Errorf("look up archived Beeper message: %w", err)
+	}
+	_, existed := archived[m.ID]
+	// Attachment failures leave typed markers that matchesArchive retries, so
+	// only the other per-item failures hold back the raw archive below.
+	errorsBefore := sum.Errors
 	msg, text := mapMessage(m, cc.convID, cc.sourceID)
 	senderPID, err := imp.res.resolveID(ctx, m.SenderID, m.SenderName)
 	if err != nil {
@@ -1754,14 +1753,16 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 	}
 
-	if len(m.Attachments) > 0 || (!cc.opts.NoMedia && cc.opts.AttachmentsDir != "") {
-		requestCtx, cancel := cc.opts.requestContext(ctx)
-		imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
-		cancel()
-		if cc.opts.budgetExpired() {
-			sum.Stopped = true
-		}
+	// Runs even without media downloads, so an edit that removed every
+	// attachment clears the stale rows.
+	attachmentErrorsBefore := sum.Errors
+	requestCtx, cancel := cc.opts.requestContext(ctx)
+	imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
+	cancel()
+	if cc.opts.budgetExpired() {
+		sum.Stopped = true
 	}
+	attachmentErrors := sum.Errors - attachmentErrorsBefore
 
 	if err := imp.persistMentions(ctx, messageID, m, sum); err != nil {
 		return err
@@ -1774,7 +1775,9 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	// including ones we do not model; fall back to re-marshalling only if a
 	// message was constructed without going through a decode. It is written
 	// last because reconcileChat skips a message whose archived JSON matches:
-	// a run interrupted before this point must leave the message to be redone.
+	// a run interrupted before this point, or a write above that failed, must
+	// leave the message to be redone by the next walk over it.
+	incomplete := sum.Errors-errorsBefore > attachmentErrors
 	raw := []byte(m.Raw)
 	if len(raw) == 0 {
 		marshaled, merr := json.Marshal(m, json.Deterministic(true))
@@ -1783,8 +1786,10 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 		raw = marshaled
 	}
-	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
-		return fmt.Errorf("archive beeper message raw: %w", err)
+	if !incomplete {
+		if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
+			return fmt.Errorf("archive beeper message raw: %w", err)
+		}
 	}
 
 	// Pages arrive newest-first, so a reply can precede its parent even
