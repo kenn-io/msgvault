@@ -20,6 +20,10 @@ const (
 	SyncStatusPaused                       = "paused"
 	GmailHistoryRecoveryRequestFingerprint = "gmail-history-recovery:v1"
 
+	// SyncTypeNotStarted marks a failed run recorded for an attempt that
+	// stopped before its importer started a run, so it wrote nothing.
+	SyncTypeNotStarted = "not_started"
+
 	SyncRunItemStatusError    = "error"
 	SyncRunItemStatusSkipped  = "skipped"
 	SyncRunItemStatusResolved = "resolved"
@@ -1316,6 +1320,17 @@ func (s *Store) FailSync(syncID int64, errMsg string) error {
 	return s.FailSyncContext(context.Background(), syncID, errMsg)
 }
 
+// RecordNotStartedSync records a failed run for an attempt that stopped
+// before its importer started one, so source status shows that failure
+// instead of the previous run's result.
+func (s *Store) RecordNotStartedSync(ctx context.Context, sourceID int64, errMsg string) error {
+	syncID, err := s.StartSyncContext(ctx, sourceID, SyncTypeNotStarted)
+	if err != nil {
+		return fmt.Errorf("record not-started sync: %w", err)
+	}
+	return s.FailSyncContext(ctx, syncID, errMsg)
+}
+
 // FailSyncContext marks a sync as failed using ctx for the terminal write.
 func (s *Store) FailSyncContext(ctx context.Context, syncID int64, errMsg string) error {
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
@@ -1498,6 +1513,27 @@ func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID in
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("latest sync for source %d: %w", sourceID, ErrSyncRunNotFound)
+	}
+	return run, err
+}
+
+// GetLatestStartedSyncContext is GetLatestSyncContext without not-started
+// attempts. Those wrote nothing, so they cannot invalidate an importer's
+// incremental state.
+func (s *Store) GetLatestStartedSyncContext(ctx context.Context, sourceID, excludeID int64) (*SyncRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after, request_fingerprint
+		FROM sync_runs
+		WHERE source_id = ? AND id <> ? AND sync_type <> ?
+		ORDER BY started_at DESC, id DESC
+		LIMIT 1
+	`, sourceID, excludeID, SyncTypeNotStarted)
+
+	run, err := scanSyncRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("latest started sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}
 	return run, err
 }
