@@ -2819,6 +2819,35 @@ func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 }
 
 func TestPersonMergeCountsNewAddresses(t *testing.T) {
+	t.Run("case-sensitive Beeper anchors on Telegram", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		ctx := t.Context()
+		st := testutil.NewTestStore(t)
+		service, err := st.ResolveCommunicationServiceContext(ctx, "telegram")
+		require.NoError(err)
+		var people []*store.Person
+		for _, id := range []string{"@Reader:beeper.local", "@reader:beeper.local"} {
+			key := beeperidentity.Fallback("account-a", id)
+			participant, err := st.EnsureParticipantByIdentifierContext(ctx, "beeper", key, "Reader")
+			require.NoError(err)
+			require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", key, &service.ID, nil, nil))
+			person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+			require.NoError(err)
+			people = append(people, person)
+		}
+		merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: people[0].ID, AbsorbedID: people[1].ID, ExpectedSurvivorRevision: people[0].Revision, ExpectedAbsorbedRevision: people[1].Revision, IdempotencyKey: "telegram-case", Actor: "test"})
+		require.NoError(err)
+		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+		require.Len(detail.Labels.Addresses, 2)
+		assert.Equal(`["telegram","","","beeper:beeper:9:account-a:20:@Reader:beeper.local"]`, detail.Labels.Addresses[0].IdentityKey)
+		assert.Equal(`["telegram","","","beeper:beeper:9:account-a:20:@reader:beeper.local"]`, detail.Labels.Addresses[1].IdentityKey)
+		assert.Equal(1, detail.Labels.AbsorbedAddressCount)
+		page, err := st.ListPersonMergesContext(ctx, people[0].ID)
+		require.NoError(err)
+		require.Len(page, 1)
+		assert.Equal(1, page[0].Labels.AbsorbedAddressCount)
+	})
 	for _, tc := range []struct {
 		name, survivorSaved, absorbedSaved string
 		laterLink                          bool

@@ -157,6 +157,11 @@ func (s *Store) readParticipantIdentifierContext(
 			service = &CommunicationService{Normalization: strategy}
 		}
 		identifier.NormalizedValue, _ = NormalizeServiceValue(service, ContactAddressKind(identifier.Type), identifier.Value)
+		if identifier.Type == sourceTypeBeeper && !isExactMailbox(identifier.Value) {
+			if _, err := NormalizeServiceValue(nil, ContactAddressPhone, identifier.Value); err != nil {
+				identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
+			}
+		}
 		*dest = append(*dest, identifier)
 	}
 	return rows.Err()
