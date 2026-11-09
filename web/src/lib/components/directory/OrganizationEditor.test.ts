@@ -464,11 +464,14 @@ it('shows the newer profile before an alias save that follows Keep yours, and ke
   await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
   revision++;
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+  const conflict = (await screen.findByText('This organization changed since you opened it.')).closest('.kit-notice') as HTMLElement;
+  expect(conflict.getAttribute('data-tone')).toBe('warning');
+  await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+  expect(await screen.findByText('concurrent@example.test')).toBeDefined();
   await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
   await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  // Keep yours wrote over a version with a contact the alias form never showed, so the alias save shows it first.
-  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  // The conflict version has a contact that the opening profile did not.
+  const alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
   expect(within(alert).getByText('concurrent@example.test')).toBeDefined();
   await fireEvent.click(within(alert).getByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
@@ -578,7 +581,7 @@ it("writes the aliases as shown on Keep yours, then shows another writer's domai
   await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'New name' } });
   revision++;
   await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  let alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  let alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
   expect(within(alert).getByText('Other alias')).toBeDefined();
   await fireEvent.click(within(alert).getByRole('button', { name: 'Keep yours' }));
   await waitFor(() => expect(writes).toHaveLength(1));
@@ -594,7 +597,7 @@ it("writes the aliases as shown on Keep yours, then shows another writer's domai
   // The untouched domain still reads as opened, so the organization save shows the newer one before writing.
   expect(screen.getByRole('textbox', { name: 'Organization domain' })).toHaveProperty('value', 'synthetic.example');
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
   expect(within(alert).getByText('Domain', { selector: 'dt' }).nextElementSibling?.textContent).toBe('other.example');
   expect(writes).toHaveLength(2);
   await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
@@ -702,7 +705,7 @@ it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s
   render(OrganizationEditor, { controller, organization: organization() });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  const alert = (await screen.findByRole('alert')).closest('.inline-notice') as HTMLElement;
+  const alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
   if (section === 'retirement') expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
   if (section === 'media') expect(within(alert).getByRole('region', { name: 'Media' }).textContent!.split('https://example.org/logo.png')).toHaveLength(2);
   if (section === 'facts') {

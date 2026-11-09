@@ -17,7 +17,7 @@
   const provenance = $derived(conflictSaved(saved.updated_at, saved.source));
 </script>
 
-<InlineNotice message={`This ${noun} changed since you opened it.`} details={message || undefined} {actionLabel} {onaction}>
+<InlineNotice tone="warning" message={`This ${noun} changed since you opened it.`} details={message || undefined} {actionLabel} {onaction}>
   <section aria-label={`Saved ${noun}`}>
     <dl>{#each Object.entries(record) as [label, value] (label)}<div><dt>{label}</dt><dd>{value || 'None'}</dd></div>{/each}</dl>
     {@render children?.()}

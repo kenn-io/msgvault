@@ -119,7 +119,7 @@
     primaryDomain = saved!.entity!.primary_domain ?? '';
     description = saved!.entity!.description ?? '';
     const written = { data: { ...sent.data, organization: saved!.entity! }, etag: saved!.etag ?? '' };
-    currentProfile = { ...currentProfile, organization: written.data.organization };
+    currentProfile = { ...sent.data, organization: written.data.organization };
     listsVersion = advance(listsVersion, sent, written);
     fieldsVersion = written;
   }
