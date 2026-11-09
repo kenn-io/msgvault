@@ -506,7 +506,7 @@ SELECT person_id, display_label, display_name,
 		WHERE rp.canonical_id = ` + relationshipPersonExpr + `), 0),
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count
-		FROM keyed_person_entries pe WHERE pe.person_id = counted.person_id GROUP BY source_type)) AS VARCHAR), '[]'),
+		FROM person_entries pe WHERE pe.person_id = counted.person_id GROUP BY source_type)) AS VARCHAR), '[]'),
 	first_at, last_at, total_count
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 	rows, err := e.db.QueryContext(ctx, queryText, args...)

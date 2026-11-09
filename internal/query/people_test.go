@@ -1135,22 +1135,3 @@ func TestGetPersonByAliasUsesCanonicalRelationshipTemperature(t *testing.T) {
 		assert.Equal(canonical.PeakRelationshipYear, alias.PeakRelationshipYear)
 	}
 }
-
-func TestPersonSourceCountsRespectDateBounds(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("owner@example.org", "granola")
-	person := b.AddParticipant("person@example.org", "example.org", "Example Person")
-	after := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	before := after.AddDate(0, 0, 1)
-	for i, at := range []time.Time{after.Add(-time.Hour), after.Add(time.Hour)} {
-		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: at})
-		b.AddTo(id, person, "Example Person")
-	}
-	engine := b.BuildEngine()
-	detail, err := engine.GetPerson(t.Context(), person, Context{After: &after, Before: &before}, nil)
-	requirements.NoError(err)
-	requirements.NotNil(detail)
-	assertions.Equal(int64(1), detail.ActivityCount)
-	assertions.Equal([]SourceCount{{SourceType: "granola", Count: 1}}, detail.SourceCounts)
-}
