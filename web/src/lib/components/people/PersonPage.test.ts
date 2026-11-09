@@ -168,12 +168,14 @@ it('opening Files drops the selected day from the conversation reader', async ()
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('keeps linked addresses hidden outside Details, gates initial loading, and forwards listed values or an empty fallback after failure', async () => {
+it.each([
+  { name: 'gates Linked addresses until profile loading finishes and hides them outside Details', failed: false },
+  { name: 'forwards an empty listed-address fallback after a failed profile read', failed: true },
+])('$name', async ({ failed }) => {
   vi.stubEnv('TZ', 'UTC');
   const person = { id: 7, revision: 1, display_name: 'Alice Example', participant_ids: [1], vcard_uid: 'example-7', created_at: when, updated_at: when };
-  let failProfile = false;
   let releaseProfile!: (response: Response) => void;
-  const pendingProfile = new Promise<Response>(resolve => { releaseProfile = resolve; });
+  const pendingProfile = failed ? undefined : new Promise<Response>(resolve => { releaseProfile = resolve; });
   const summary = { profile: person, id: 1, display_label: 'Alice Example', identifiers: [
     { type: 'email', value: 'alice@example.com', participant_id: 1, is_primary: true, provenance: 'participant_identifiers' },
     { type: 'email', value: 'alice@example.org', participant_id: 1, is_primary: false, provenance: 'participant_identifiers' },
@@ -183,7 +185,7 @@ it('keeps linked addresses hidden outside Details, gates initial loading, and fo
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/people/7') return Response.json(person, { headers: { ETag: '"person-7-r1"' } });
-    if (path === '/api/v1/people/7/profile') return failProfile ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : pendingProfile;
+    if (path === '/api/v1/people/7/profile') return failed ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : pendingProfile!;
     if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
     if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
     if (path === '/api/v1/participants/1') return Response.json(summary);
@@ -194,24 +196,26 @@ it('keeps linked addresses hidden outside Details, gates initial loading, and fo
   const directory = new DirectoryController(client);
   await controller.openTarget(target, {});
   const opening = directory.loadSelection(7);
+  if (failed) await opening;
   const view = render(PersonPage, { props: { client, directory, controller, target, filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: context => controller.reconcilePersonMerge(context) } });
   try {
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
-    await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: ['alice@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { id: index + 1, ordinal: index, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } })) }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
-    const addresses = vi.mocked(PersonAddresses).mock.calls.at(-1)![1];
-    expect(addresses.listedInDetails).toEqual(directory.profile!.structuredProfile!.contact_points);
-    failProfile = true;
-    await act(async () => { await directory.loadSelection(7); });
-    expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual([]);
-    const heading = screen.getByRole('heading', { name: 'Linked addresses' });
-    expect(heading.closest('.details')).toHaveProperty('hidden', false);
-    await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
-    await view.rerender({ filesOpen: true });
-    expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
-    await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
-    await view.rerender({ filesOpen: false });
-    expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
+    if (failed) {
+      expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual([]);
+    } else {
+      expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
+      await act(async () => { releaseProfile(Response.json({ ...emptyProfile(person), contact_points: ['alice@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { id: index + 1, ordinal: index, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } })) }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
+      const addresses = vi.mocked(PersonAddresses).mock.calls.at(-1)![1];
+      expect(addresses.listedInDetails).toEqual(directory.profile!.structuredProfile!.contact_points);
+      const heading = screen.getByRole('heading', { name: 'Linked addresses' });
+      expect(heading.closest('.details')).toHaveProperty('hidden', false);
+      await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
+      await view.rerender({ filesOpen: true });
+      expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
+      await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
+      await view.rerender({ filesOpen: false });
+      expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
+    }
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 

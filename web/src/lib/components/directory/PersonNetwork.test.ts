@@ -216,33 +216,41 @@ describe('PersonNetwork', () => {
     expect(screen.queryByRole('button', { name: 'Selected Person' })).toBeNull();
   });
 
-  it('shows load failure details and Retry, then keeps rows rendered while changing depth', async () => {
-    const depthThreeLoad = deferredResponse();
+  it.each([
+    { name: 'shows load failure details and retries the failed read', failure: true },
+    { name: 'keeps rendered rows while the next depth is loading', failure: false },
+  ])('$name', async ({ failure }) => {
+    const depthThreeLoad = failure ? undefined : deferredResponse();
     let directAttempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (new URL(request.url).pathname.endsWith('/relationships')) return Response.json({ relationships: [] });
       const url = new URL(request.url);
       const depth = Number(url.searchParams.get('depth'));
-      if (depth === 1) return ++directAttempts === 1 ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 }) : Response.json(connected(1));
+      if (depth === 1) return ++directAttempts === 1 && failure ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 }) : Response.json(connected(1));
       if (depth === 2) return Response.json(connected(2));
-      return depthThreeLoad.promise;
+      if (depth === 3 && depthThreeLoad) return depthThreeLoad.promise;
+      throw new Error(`Unexpected ${request.method} ${request.url}`);
     }));
     const controller = new DirectoryEntityController(client, 7);
-
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
-    expect(container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByText('Curated Peer');
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    await screen.findByRole('button', { name: 'Second Hop Person' });
-
-    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-    await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
-    expect(screen.getByRole('button', { name: 'Second Hop Person' })).toBeDefined();
-    depthThreeLoad.resolve(Response.json(depthThree()));
-    await screen.findByRole('button', { name: 'Depth Three Person' });
+    const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    try {
+      if (failure) {
+        expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
+        expect(view.container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
+        await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+        expect(await screen.findByText('Curated Peer')).toBeDefined();
+      } else {
+        await screen.findByText('Curated Peer');
+        await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+        await screen.findByRole('button', { name: 'Second Hop Person' });
+        await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+        await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
+        expect(screen.getByRole('button', { name: 'Second Hop Person' })).toBeDefined();
+        depthThreeLoad!.resolve(Response.json(depthThree()));
+        expect(await screen.findByRole('button', { name: 'Depth Three Person' })).toBeDefined();
+      }
+    } finally { view.unmount(); controller.destroy(); }
   });
 
 });
