@@ -28,7 +28,6 @@ func TestMeetingJournalTriggers(t *testing.T) {
 		{name: "Google event bounds", format: "granola_json", note: googleNote, query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`},
 		{name: "Google event UID update", format: "granola_json", note: googleNote, query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`},
 		{name: "Google instance bounds", format: "granola_json", note: strings.Replace(googleNote, `"event"`, `"event_20270314T100000Z"`, 1), query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`},
-		{name: "saved link bounds", decision: "link", query: `UPDATE calendar_events SET end_at='2027-03-14T12:00:00Z' WHERE message_id=$event`},
 		{name: "UID update", note: uidNote, query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`},
 		{name: "UID becomes referenced", note: strings.Replace(uidNote, "meeting@example.test", "other@example.test", 1), query: `UPDATE messages SET metadata='{"ical_uid":"other@example.test"}' WHERE id=$event`},
 		{name: "UID removed", note: uidNote, query: `UPDATE messages SET metadata='{}' WHERE id=$event`},

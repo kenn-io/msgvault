@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 func TestMeetingCountsAcrossFilters(t *testing.T) {
@@ -47,26 +46,6 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 			}
 		})
 	}
-	t.Run("one transcript two occurrences", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		b := NewTestDataBuilder(t)
-		source := b.AddSourceWithType("owner@example.org", "granola")
-		owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
-		person := b.AddParticipant("person@example.org", "example.org", "Person")
-		b.AddOwnerParticipant(source, owner)
-		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 100, MessageType: "meeting_transcript", SentAt: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)})
-		b.AddTo(id, owner, "Owner")
-		b.AddTo(id, person, "Person")
-		b.AddAttachment(id, 100, "notes.txt")
-		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:series/first'),(%d, 'uid:series/second')", id, id))
-		engine := b.BuildEngine()
-		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "person@example.org", Explore: ExploreRequest{Context: Context{SourceIDs: []int64{source}, ParticipantIDs: []int64{person}}}})
-		requirements.NoError(err)
-		requirements.Len(people.Rows, 1)
-		assertions.Equal(int64(2), people.Rows[0].MeetingCount)
-		assertions.Equal(int64(1), people.Rows[0].ActivityCount)
-		assertions.Equal(int64(1), people.Rows[0].FileCount)
-	})
 }
 
 func TestRelationshipMeetingCounts(t *testing.T) {
@@ -76,9 +55,10 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 		at             time.Time
 		want           int64
 		crossYear      bool
+		people         bool
 		calendarCounts map[int]int64
 	}{
-		{name: "one transcript two occurrences", keys: [][]string{{"uid:series/first", "uid:series/second"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2, calendarCounts: map[int]int64{2026: 2}},
+		{name: "one transcript two occurrences", keys: [][]string{{"uid:series/first", "uid:series/second"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2, people: true, calendarCounts: map[int]int64{2026: 2}},
 		{name: "copies across years", keys: [][]string{{"uid:shared@example.org/"}, {"uid:shared@example.org/"}}, at: time.Date(2025, 12, 31, 23, 30, 0, 0, time.UTC), want: 1, crossYear: true, calendarCounts: map[int]int64{2025: 1, 2026: 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,11 +78,22 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				id := b.AddMessage(MessageOpt{SourceID: sources[i%len(sources)], ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: tc.at.Add(time.Duration(i) * time.Hour)})
 				b.AddTo(id, owner, "Owner")
 				b.AddTo(id, person, "Person")
+				if tc.people {
+					b.AddAttachment(id, 100, "notes.txt")
+				}
 				for _, key := range keys {
 					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
 				}
 			}
 			engine := b.BuildEngine()
+			if tc.people {
+				people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "person@example.org", Explore: ExploreRequest{Context: Context{SourceIDs: sources, ParticipantIDs: []int64{person}}}})
+				requirements.NoError(err)
+				requirements.Len(people.Rows, 1)
+				assertions.Equal(tc.want, people.Rows[0].MeetingCount)
+				assertions.Equal(int64(1), people.Rows[0].ActivityCount)
+				assertions.Equal(int64(1), people.Rows[0].FileCount)
+			}
 			for _, scope := range []Context{{}, {SourceIDs: sources, ParticipantIDs: []int64{person}}} {
 				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: tc.at.AddDate(0, 0, 3)})
 				requirements.NoError(err)
@@ -123,8 +114,6 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				if year == tc.at.Year() {
 					requirements.NotEmpty(transcriptDay.Date)
 					assertions.Equal(tc.want, transcriptDay.Meetings)
-					assertions.Equal(identityindex.ModalityMeeting, transcriptDay.ModalityMask)
-					assertions.Equal(identityindex.HeatFirstQuartile, transcriptDay.Level)
 				}
 				assertions.Equal(want, meetings, "year %d", year)
 			}

@@ -1394,6 +1394,125 @@ func runBuildCacheSQLiteMutation(t *testing.T, dbPath, operation string) {
 	require.NoErrorf(t, err, "run concurrent SQLite mutation\noutput:\n%s", output)
 }
 
+func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *testing.T) {
+	for _, terminalStatus := range []string{"completed", "failed", "cancelled"} {
+		t.Run(terminalStatus, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			tmpDir := setupTestSQLite(t)
+			dbPath := filepath.Join(tmpDir, "test.db")
+			analyticsDir := filepath.Join(tmpDir, "analytics")
+			_, err := buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+			stateBefore, err := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(err)
+			filesBefore := snapshotCacheParquet(t, analyticsDir)
+
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`
+				INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type)
+				VALUES (105, 1, 'thread105', 'Partial Meeting', 'email');
+				INSERT INTO messages (
+					id, source_id, source_message_id, conversation_id,
+					subject, snippet, sent_at, size_estimate, message_type
+				) VALUES (
+					6, 1, 'meeting-partial', 105,
+					'Partial Meeting', 'Parent persisted first',
+					'2026-07-12 10:00:00', 500, 'meeting_transcript'
+				);
+				INSERT INTO sync_runs (
+					id, source_id, started_at, status,
+					messages_processed, messages_added, messages_updated, errors_count
+				) VALUES (1, 1, datetime('now'), 'running', 1, 0, 0, 0);
+			`)
+			require.NoError(err)
+			require.NoError(db.Close())
+
+			buildCacheBeforeStateWriteHook = func() {
+				hookDB, hookErr := sql.Open(sqliteutil.DriverName(), dbPath)
+				require.NoError(hookErr)
+				defer func() { require.NoError(hookDB.Close()) }()
+				_, hookErr = hookDB.Exec(`
+					INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
+					VALUES (6, 1, 'from', 'Alice Smith'), (6, 2, 'to', 'Bob Jones');
+					INSERT INTO message_labels (message_id, label_id) VALUES (6, 1);
+					INSERT INTO attachments (message_id, filename, mime_type, size, storage_path)
+					VALUES (6, 'late.txt', 'text/plain', 100, 'test/fixture');
+					UPDATE sync_runs
+					SET status = ?, completed_at = datetime('now'), messages_added = 1
+					WHERE id = 1;
+				`, terminalStatus)
+				require.NoError(hookErr)
+			}
+			t.Cleanup(func() { buildCacheBeforeStateWriteHook = nil })
+
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.NoError(err, "a counter change during export publishes the snapshot")
+			buildCacheBeforeStateWriteHook = nil
+			stateAfter, readErr := os.ReadFile(query.CacheStatePath(analyticsDir))
+			require.NoError(readErr)
+			assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
+			assert.NotEqual(filesBefore, snapshotCacheParquet(t, analyticsDir),
+				"snapshot publication includes the parent message")
+			published, readErr := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(readErr)
+			assert.False(published.FullRebuildRequired, "the journal tracks children committed after export")
+			stale := cacheNeedsBuild(dbPath, analyticsDir)
+			require.True(stale.NeedsBuild, "partial snapshot is stale: %+v", stale)
+			require.True(stale.FullRebuild, "changed sync counters require a full rebuild: %+v", stale)
+
+			// A sync that overlaps this build also queues another automatic
+			// refresh. It must wait even though the next build must be full.
+			deferred, err := buildCacheScheduled(dbPath, analyticsDir, 6*time.Hour, func() time.Time {
+				return published.PublishedAt.Add(time.Hour)
+			})
+			require.NoError(err)
+			assert.True(deferred.Skipped, "partial publication must honor the rebuild interval")
+
+			// A newer message arriving first must not turn the repair into an
+			// incremental build above the parent, which would skip its children.
+			db, err = sql.Open(sqliteutil.DriverName(), dbPath)
+			require.NoError(err)
+			_, err = db.Exec(`
+				INSERT INTO messages (
+					id, source_id, source_message_id, conversation_id,
+					subject, snippet, sent_at, size_estimate, message_type
+				) VALUES (
+					7, 1, 'meeting-later', 105,
+					'Later Meeting', 'Arrived after the partial snapshot',
+					'2026-07-13 10:00:00', 500, 'meeting_transcript'
+				);
+			`)
+			require.NoError(err)
+			require.NoError(db.Close())
+
+			_, err = buildCache(dbPath, analyticsDir, false)
+			require.NoError(err)
+			fresh := cacheNeedsBuild(dbPath, analyticsDir)
+			require.False(fresh.NeedsBuild, "retry must capture the terminal addition: %+v", fresh)
+			repaired, err := query.ReadCacheSyncState(analyticsDir)
+			require.NoError(err)
+			assert.Equal(int64(1), repaired.LastCacheAdditionCount)
+
+			duckdb, err := sql.Open("duckdb", "")
+			require.NoError(err)
+			defer func() { _ = duckdb.Close() }()
+			var recipientRows, attachmentRows int64
+			require.NoError(duckdb.QueryRow(
+				`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
+				filepath.ToSlash(filepath.Join(analyticsDir, "message_recipients", "*.parquet")),
+			).Scan(&recipientRows))
+			require.NoError(duckdb.QueryRow(
+				`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = 6`,
+				filepath.ToSlash(filepath.Join(analyticsDir, "attachments", "*.parquet")),
+			).Scan(&attachmentRows))
+			assert.Equal(int64(2), recipientRows, "full rebuild captures late recipients")
+			assert.Equal(int64(1), attachmentRows, "full rebuild captures late attachment")
+		})
+	}
+}
+
 func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t *testing.T) {
 	for _, terminalStatus := range []string{"failed", "cancelled"} {
 		t.Run(terminalStatus, func(t *testing.T) {
