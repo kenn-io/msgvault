@@ -14,7 +14,7 @@ func ImportICS(ctx context.Context, st *store.Store, path, identifier string) (*
 	if err != nil {
 		return nil, fmt.Errorf("read ICS file: %w", err)
 	}
-	source, err := st.GetOrCreateSource("ics", identifier)
+	source, err := st.GetOrCreateSourceContext(ctx, "ics", identifier)
 	if err != nil {
 		return nil, fmt.Errorf("create ICS source: %w", err)
 	}
