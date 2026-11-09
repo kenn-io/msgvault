@@ -259,10 +259,7 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 // ordinaryAddress lists an unserviced identifier that holds an email or an
 // E.164 phone as that address, so it matches the member's own and saved ones.
 func ordinaryAddress(identifier ParticipantIdentifierContext) ParticipantIdentifierContext {
-	text := identifier.DisplayValue
-	if text == "" {
-		text = identifier.Value
-	}
+	text := cmp.Or(identifier.DisplayValue, identifier.Value)
 	kind := ContactAddressKind(identifier.Type)
 	if isExactMailbox(text) {
 		kind = ContactAddressEmail
