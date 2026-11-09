@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1792,9 +1793,21 @@ func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
 }
 
 func TestAutomaticDaemonReuseLifetime(t *testing.T) {
+	savedResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return "/tmp/source build/msgvault", nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	for _, contended := range []bool{false, true} {
-		for _, timeout := range []string{"2s", "0s", ""} {
-			t.Run(fmt.Sprintf("contended=%t/timeout=%s", contended, timeout), func(t *testing.T) {
+		for _, tc := range []struct {
+			timeout, restart, powerShell string
+			options                      invocationOptions
+		}{
+			{timeout: "2s", options: invocationOptions{homeDir: "/tmp/sample's archive"}, restart: "--home '/tmp/sample'\\''s archive' ", powerShell: "'--home' '/tmp/sample''s archive' "},
+			{timeout: "2s", options: invocationOptions{cfgFile: "/tmp/sample's archive.toml"}, restart: "--config '/tmp/sample'\\''s archive.toml' ", powerShell: "'--config' '/tmp/sample''s archive.toml' "},
+			{timeout: "2s", options: invocationOptions{cfgFile: "/tmp/sample's archive.toml", homeDir: "/tmp/sample's archive"}, restart: "--config '/tmp/sample'\\''s archive.toml' --home '/tmp/sample'\\''s archive' ", powerShell: "'--config' '/tmp/sample''s archive.toml' '--home' '/tmp/sample''s archive' "},
+			{timeout: "2s"}, {timeout: "0s"}, {},
+		} {
+			timeout := tc.timeout
+			t.Run(fmt.Sprintf("contended=%t/timeout=%s/home=%t/config=%t", contended, timeout, tc.options.homeDir != "", tc.options.cfgFile != ""), func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				c := lifecycleTestConfig(t.TempDir())
 				server := httptestPingDaemon(t)
@@ -1816,12 +1829,17 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 					t.Cleanup(func() { _ = lock.Unlock() })
 				}
 				cmd, stdout, stderr := lifecycleTestCommand(t)
+				cmd.SetContext(testInvocationContext(t.Context(), c, tc.options))
 				require.NoError(runServeStart(cmd, c))
 				after, err := os.ReadFile(path)
 				require.NoError(err)
 				assert.Equal(before, after, "reuse preserves the runtime and its lifetime")
 				assert.Contains(stdout.String(), "msgvault already running at http://"+rec.Address+" (pid "+strconv.Itoa(rec.PID)+")\n")
-				assert.Contains(stdout.String(), "Run `msgvault daemon restart` to keep it running until stopped.")
+				restart := "'/tmp/source build/msgvault' " + tc.restart + "daemon restart"
+				if runtime.GOOS == "windows" {
+					restart = "& '/tmp/source build/msgvault' " + tc.powerShell + "'daemon' 'restart'"
+				}
+				assert.Contains(stdout.String(), "Run `"+restart+"` to keep it running until stopped.")
 				if timeout == "" {
 					assert.NotContains(stdout.String(), "  Exits after")
 					assert.NotContains(stdout.String(), "  Stays running")

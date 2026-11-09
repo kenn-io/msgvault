@@ -677,19 +677,23 @@ func shouldReportRetainedDaemonVersion(rt *DaemonRuntime, currentVersion string)
 
 func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
 	if shouldReportRetainedDaemonVersion(rt, Version) {
-		options := optionsFromContext(ctx)
-		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-		executable, err := daemonCLIExecutableResolver()
-		if err != nil {
-			executable = os.Args[0]
-		}
-		commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
-		restart := commands.POSIX
-		if runtime.GOOS == "windows" {
-			restart = commands.PowerShell
-		}
-		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to use this version.\n", rt.Record.Version, Version, restart)
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to use this version.\n", rt.Record.Version, Version, daemonRestartCommand(ctx))
 	}
+}
+
+func daemonRestartCommand(ctx context.Context) string {
+	options := optionsFromContext(ctx)
+	args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+	executable, err := daemonCLIExecutableResolver()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
+	restart := commands.POSIX
+	if runtime.GOOS == "windows" {
+		restart = commands.PowerShell
+	}
+	return restart
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {

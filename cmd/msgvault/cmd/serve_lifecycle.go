@@ -304,7 +304,7 @@ func reportReusableDaemon(cmd *cobra.Command, rt *DaemonRuntime) {
 	reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
 	if rt.Record.Metadata[runtimePersistent] != runtimeBackgroundValue && rt.Record.Metadata[runtimeBackground] == runtimeBackgroundValue {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run `msgvault daemon restart` to keep it running until stopped.")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run `%s` to keep it running until stopped.\n", daemonRestartCommand(cmd.Context()))
 	}
 }
 
