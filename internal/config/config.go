@@ -617,6 +617,7 @@ type Config struct {
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
+	FacebookComments   []FacebookCommentsSource        `toml:"facebook_comments"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -1161,6 +1162,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "facebook_comments" {
+			return nil, fmt.Errorf("unknown Facebook comments config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1327,6 +1331,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateFacebookCommentsSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()
