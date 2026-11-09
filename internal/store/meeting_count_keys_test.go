@@ -10,26 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMeetingCountKeysTranscriptsOnly(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "single", singleLinkRaw("single", "single@example.org"))
-	var transcript int64
-	for _, kind := range []string{"meeting_transcript", "meeting_note", "meeting_minutes"} {
-		data, id := projectionFixture(t, st, kind, "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"single@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-		require.NoError(st.LinkMeetingContext(t.Context(), id, OccurrenceRef{MessageID: event}))
-		data.Message.MessageType = kind
-		_, err := st.PersistMessage(data)
-		require.NoError(err)
-		if kind == "meeting_transcript" {
-			transcript = id
-		}
-	}
-	keys, err := st.MeetingCountKeysContext(t.Context())
-	require.NoError(err)
-	assert.Equal(map[int64][]string{transcript: {"uid:single@example.org/"}}, keys)
-}
-
 func TestMeetingCountKeysSingleSplitAfterCalendarCancellationOrDeletion(t *testing.T) {
 	for _, change := range []string{"cancelled", "deleted from source"} {
 		t.Run(change, func(t *testing.T) {

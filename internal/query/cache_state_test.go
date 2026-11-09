@@ -195,7 +195,7 @@ func TestInspectCacheReadinessPrefersStaleSchemaWhenNewDatasetIsMissing(t *testi
 	dir := completeReadinessCache(t)
 	state, err := ReadCacheSyncState(dir)
 	require.NoError(err)
-	state.SchemaVersion = 35
+	state.SchemaVersion = CacheSchemaVersion - 1
 	require.NoError(os.RemoveAll(filepath.Join(dir, datasetMeetingKeys)))
 	writeReadinessState(t, dir, state)
 
