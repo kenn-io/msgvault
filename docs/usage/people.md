@@ -237,8 +237,7 @@ msgvault employment end 9 --end 2026-08
 ```
 
 Use the IDs returned by your commands. `employment set-primary` chooses the
-primary current job, and `employment add --primary` replaces it with the new
-current job. Ending a job keeps its history. Organization commands
+primary current job. Ending a job keeps its history. Organization commands
 also support profile edits, custom attributes, retirement, and merging
 duplicates; `organization show 3 --history` includes superseded profile rows.
 

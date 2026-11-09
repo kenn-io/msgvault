@@ -40,7 +40,17 @@ it('passes organization search loading and failures to the employer picker', asy
   }
 });
 
-it.each(['no primary', 'existing primary'] as const)('sends primary only when offered for %s', async scenario => {
+async function addPrimaryChoice(controller: DirectoryEntityController, check: boolean, onDone = () => undefined): Promise<void> {
+  render(EmploymentEditor, { controller, personID: 7, onDone });
+  const checkbox = screen.getByRole('checkbox', { name: 'Primary job' }) as HTMLInputElement;
+  expect(checkbox.checked).toBe(false);
+  if (check) await fireEvent.click(checkbox);
+  await fireEvent.keyDown(screen.getByRole('button', { name: /^Organization:/ }), { key: 'ArrowDown' });
+  await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+}
+
+it('offers Primary job beside a current job with no primary, and keeps it off when left unchecked', async () => {
   let body: Record<string, unknown> | undefined;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -48,19 +58,43 @@ it.each(['no primary', 'existing primary'] as const)('sends primary only when of
     return Response.json({ employments: [], organizations: [organization()] });
   });
   controller.organizations = [organization()];
-  controller.employments = [employment(12, 1, { is_primary: scenario === 'existing primary' })];
-  render(EmploymentEditor, { controller, personID: 7 });
-  const checkbox = screen.queryByRole('checkbox', { name: 'Primary job' });
-  if (scenario === 'existing primary') {
-    expect(checkbox).not.toBeNull();
-    await fireEvent.click(checkbox!);
-  } else expect(checkbox).toBeNull();
-  await fireEvent.keyDown(screen.getByRole('button', { name: /^Organization:/ }), { key: 'ArrowDown' });
-  await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Org/ }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+  controller.employments = [employment(12, 1, { is_primary: false })];
+  await addPrimaryChoice(controller, false);
   await waitFor(() => expect(body).toBeDefined());
-  if (scenario === 'existing primary') expect(body).toHaveProperty('is_primary', true);
-  else expect(body).not.toHaveProperty('is_primary');
+  expect(body).toHaveProperty('is_primary', false);
+});
+
+it('adds a primary job over an existing primary, then makes it primary', async () => {
+  const sent: string[] = [];
+  let body: Record<string, unknown> | undefined;
+  let primaryFails = true;
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'POST' && pathOf(request).endsWith('/employments')) {
+      sent.push('create');
+      body = await request.json();
+      return Response.json(employment(13, 1), { status: 201, headers: { ETag: '"employment-13-r1"' } });
+    }
+    if (request.method === 'POST' && pathOf(request).endsWith('/employments/13/primary')) {
+      sent.push(`primary ${request.headers.get('If-Match') ?? ''}`.trim());
+      if (primaryFails) return Response.json({ message: 'Primary unavailable' }, { status: 500 });
+      return Response.json(employment(13, 1, { is_primary: true }), { headers: { ETag: '"employment-13-r2"' } });
+    }
+    if (pathOf(request).endsWith('/employments/13')) return Response.json(employment(13, 1), { headers: { ETag: '"employment-13-r1"' } });
+    return Response.json({ employments: [], organizations: [organization()] });
+  });
+  controller.organizations = [organization()];
+  controller.employments = [employment(12, 1, { is_primary: true })];
+  await addPrimaryChoice(controller, true, onDone);
+  expect(await screen.findByText("Added the job, but couldn't make it primary.")).toBeDefined();
+  expect(body).toHaveProperty('is_primary', false);
+  expect(sent).toEqual(['create', 'primary "employment-13-r1"']);
+  primaryFails = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Make primary' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(sent.filter(item => item === 'create')).toHaveLength(1);
+  expect(sent.at(-1)).toMatch(/^primary/);
 });
 
 it('ends a primary job from Edit without overriding the stored primary rule', async () => {

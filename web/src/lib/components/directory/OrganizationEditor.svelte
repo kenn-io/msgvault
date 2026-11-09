@@ -23,11 +23,11 @@
     onClose?: () => void;
     /** Opens a person who holds a job here, so a blocked delete can be resolved. */
     onOpenPerson?: (personID: number) => void;
-    /** The holder's own job here, when it's on screen: the blocked delete opens it directly instead of the person. */
-    holderJob?: (personID: number) => { label: string; open: () => void } | undefined;
+    /** The holder's own jobs here, when they're on screen: the blocked delete opens each directly instead of the person. */
+    holderJobs?: (personID: number) => { label: string; open: () => void }[];
   }
 
-  let { controller, organization = undefined, onDone = () => undefined, onClose = () => undefined, onOpenPerson = undefined, holderJob = undefined }: Props = $props();
+  let { controller, organization = undefined, onDone = () => undefined, onClose = () => undefined, onOpenPerson = undefined, holderJobs = undefined }: Props = $props();
   const initialOrganization = untrack(() => organization);
   let name = $state(initialOrganization?.name ?? '');
   let kind = $state(initialOrganization?.kind ?? 'company');
@@ -413,9 +413,9 @@
         <p>{holders.count === 1 && !holders.atLeast ? "Delete its job first. Ending it isn't enough." : `Delete its ${holders.count}${holders.atLeast ? ' or more' : ''} jobs first. Ending them isn't enough.`}</p>
         <!-- The open person's own job is deleted from here. Anyone else's is deleted on their page, so their row's
              action opens it and says why. -->
-        <div class="holders">{#each holders.holders as holder}{@const job = holderJob?.(holder.personID)}
+        <div class="holders">{#each holders.holders as holder}{@const jobs = holderJobs?.(holder.personID) ?? []}
           <DetailRow description={holder.job} actionLabel={holder.name}
-            menu={job ? [{ label: job.label, onselect: () => { job.open(); onClose(); } }] : onOpenPerson ? [{ label: 'Open to delete…', ariaLabel: `Open to delete ${holder.name}’s job`, onselect: () => { onClose(); onOpenPerson(holder.personID); } }] : []}>
+            menu={jobs.length ? jobs.map(job => ({ label: job.label, onselect: () => { job.open(); onClose(); } })) : onOpenPerson ? [{ label: 'Open to delete…', ariaLabel: `Open to delete ${holder.name}’s job`, onselect: () => { onClose(); onOpenPerson(holder.personID); } }] : []}>
             {#if onOpenPerson}<button type="button" data-link onclick={() => { onClose(); onOpenPerson(holder.personID); }}>{holder.name}</button>{:else}{holder.name}{/if}
           </DetailRow>{/each}</div>
         {#if holders.peopleCount > holders.holders.length}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - holders.holders.length} more</p>{/if}

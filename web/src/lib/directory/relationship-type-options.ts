@@ -1,31 +1,14 @@
 import type { TypeaheadOption } from '@kenn-io/kit-ui';
 import type { RelationshipType } from './models';
+import relationshipPhrases from './relationship-phrases.json';
 
 type Orientation = 'outgoing' | 'incoming';
 export type RelationshipChoice = TypeaheadOption & { slug: string; direction: Orientation; group: string };
 
-// Groups in order of use, and each group's types with the common ones first. Each type appears once;
-// types not listed fall in Other, by label.
-const groups: Record<string, string[]> = {
-  Family: ['spouse', 'parent', 'sibling', 'kin'],
-  Work: ['colleague', 'co-worker', 'agent'],
-  Social: ['friend', 'date', 'sweetheart', 'acquaintance', 'neighbor', 'met', 'co-resident', 'crush', 'muse'],
-  Other: ['contact'],
-};
-const phrases: Record<string, [string, string]> = {
-  'parent:outgoing': ['parent', 'is a parent of'], 'parent:incoming': ['child', 'is a child of'],
-  'sibling:outgoing': ['sibling', 'is a sibling of'], 'spouse:outgoing': ['spouse', 'is a spouse of'],
-  'kin:outgoing': ['relative', 'is a relative of'],
-  'agent:outgoing': ['agent', 'is an agent for'], 'agent:incoming': ['principal', 'is represented by'],
-  'colleague:outgoing': ['colleague', 'is a colleague of'], 'co-worker:outgoing': ['co-worker', 'is a co-worker of'],
-  'acquaintance:outgoing': ['acquaintance', 'is an acquaintance of'], 'friend:outgoing': ['friend', 'is a friend of'],
-  'met:outgoing': ['met', 'has met'], 'neighbor:outgoing': ['neighbor', 'is a neighbor of'],
-  'co-resident:outgoing': ['co-resident', 'is a co-resident of'], 'date:outgoing': ['date', 'is dating'],
-  'sweetheart:outgoing': ['sweetheart', 'is a sweetheart of'], 'crush:outgoing': ['crush', 'is a crush of'],
-  'crush:incoming': ['admirer', 'has a crush on'], 'muse:outgoing': ['muse', 'is a muse to'],
-  'muse:incoming': ['inspired by', 'is inspired by'], 'contact:outgoing': ['contact', 'is a contact of'],
-  'emergency:outgoing': ['emergency contact', 'is an emergency contact for'], 'emergency:incoming': ['emergency contact for', 'has emergency contact'],
-};
+// Groups in order of use, and each group's types with the common ones first; types not listed fall in Other, by label.
+// Each phrase reads a seeded label as a sentence. The store's seed test checks every seeded type has both, so a new
+// seed can't land here without them (internal/store/relationship_type_phrases_test.go).
+const { groups, phrases }: { groups: Record<string, string[]>; phrases: Record<string, string[]> } = relationshipPhrases;
 export function relationshipPhrase(slug: string, direction: Orientation, label: string): string {
   const phrase = phrases[`${slug}:${direction}`];
   return phrase && label === phrase[0] ? phrase[1] : label;

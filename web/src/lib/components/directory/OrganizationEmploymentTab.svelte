@@ -37,10 +37,9 @@
   let primaryPreparing = $state(false);
   const acting = $derived(removal.busy || primary.busy || primaryPreparing);
   let openedOrganizationRequestKey = $state(0);
-  function holderJob(organizationID: number, holderID: number): { label: string; open: () => void } | undefined {
+  function holderJobs(organizationID: number, holderID: number): { label: string; open: () => void }[] {
     const jobs = holderID === personID ? controller.employments.filter(item => item.organization_id === organizationID) : [];
-    const job = jobs.length === 1 ? jobs[0] : undefined;
-    return job ? { label: 'Delete job…', open: () => { openDelete(job); } } : undefined;
+    return jobs.map(job => ({ label: jobs.length === 1 ? 'Delete job…' : `Delete ${employmentLabel(job)}…`, open: () => { openDelete(job); } }));
   }
 
   $effect(() => {
@@ -144,7 +143,7 @@
 {#if organizationEditor !== undefined}
   {@const organizationID = organizationEditor?.id}
   <OrganizationEditor controller={controller} organization={organizationEditor ?? undefined} {onOpenPerson}
-    holderJob={organizationID === undefined ? undefined : (holderID) => holderJob(organizationID, holderID)}
+    holderJobs={organizationID === undefined ? undefined : (holderID) => holderJobs(organizationID, holderID)}
     onDone={() => { organizationEditor = undefined; }} onClose={() => { organizationEditor = undefined; }} />
 {/if}
 {#if employmentEditor !== undefined}

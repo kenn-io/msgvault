@@ -51,26 +51,6 @@ func TestConcurrentAndHistoricalEmploymentsStayIndependentlyQueryable(t *testing
 	assert.Equal("2018-06", byOrganization[0].EndDate.String())
 }
 
-func TestCreatingPrimaryEmploymentReplacesExistingPrimary(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	ctx := t.Context()
-	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(ctx, t, st, "primary@example.com", "primary")
-	first := mustOrganization(t, st, "First Example")
-	second := mustOrganization(t, st, "Second Example")
-	previous, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: first.ID, Source: store.ProvenanceUser, IsPrimary: new(true)})
-	require.NoError(err)
-	created, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: second.ID, Source: store.ProvenanceUser, IsPrimary: new(true)})
-	require.NoError(err)
-	assert.True(created.IsPrimary)
-	demoted, err := st.GetEmploymentContext(ctx, previous.ID)
-	require.NoError(err)
-	assert.False(demoted.IsPrimary)
-	assert.True(demoted.IsCurrent)
-	assert.Equal(previous.Revision+1, demoted.Revision)
-}
-
 func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -82,7 +62,8 @@ func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
 	primary, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: first.ID, Title: new("Engineer"), Source: store.ProvenanceUser, IsPrimary: new(true)})
 	require.NoError(err)
 	assert.True(primary.IsPrimary)
-	_, err = st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: second.ID, Title: new("Advisor"), Source: store.ProvenanceExtraction, IsPrimary: new(true)})
+	_, err = st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: second.ID, Title: new("Advisor"), Source: store.ProvenanceUser, IsPrimary: new(true)})
+	require.Error(err)
 	require.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
 	side, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: second.ID, Title: new("Advisor"), Source: store.ProvenanceUser})
 	require.NoError(err)

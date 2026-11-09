@@ -66,6 +66,11 @@ export function isTextProfileDate(value: string): boolean {
   return trimmed !== '' && profileParts(trimmed) === undefined;
 }
 
+/** A typed date with spaces trimmed and the compact form spelled out: " 20240315" reads "2024-03-15". */
+export function canonicalDate(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+}
+
 export function formatPartialDate(value: { year?: number; month?: number; day?: number } | undefined): string {
   if (!value) return '';
   return [value.year?.toString().padStart(4, '0'), value.month?.toString().padStart(2, '0'), value.day?.toString().padStart(2, '0')].filter(Boolean).join('-');
@@ -82,7 +87,7 @@ export function readablePartialDate(value: string | PartialDateParts | null | un
   if (!value) return '';
   let date: PartialDateParts | undefined = typeof value === 'string' ? undefined : value;
   if (typeof value === 'string') {
-    const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'));
+    const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(canonicalDate(value));
     if (!match) return value.trim();
     date = { year: Number(match[1]), month: match[2] ? Number(match[2]) : undefined, day: match[3] ? Number(match[3]) : undefined };
   }
@@ -100,7 +105,7 @@ export function readablePartialDate(value: string | PartialDateParts | null | un
  */
 export function dateNote(value: string, focused: boolean, today: Date = new Date()): string {
   if (intervalDateError(value)) return '';
-  const trimmed = value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+  const trimmed = canonicalDate(value);
   if (focused || !trimmed) return DATE_HINT;
   const reading = readablePartialDate(trimmed, today);
   return trimmed === localDateStr(today) ? `Today, ${reading}` : reading === value.trim() ? '' : reading;

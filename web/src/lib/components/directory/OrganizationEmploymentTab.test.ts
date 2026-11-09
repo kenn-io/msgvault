@@ -121,6 +121,29 @@ describe('OrganizationEmploymentTab', () => {
     } finally { view.unmount(); controller.destroy(); }
   });
 
+  it('offers a delete for each of the open person’s jobs at a blocked organization', async () => {
+    const jobs = [employment(), employment(12, 1, { title: 'Advisor', is_current: false, is_primary: false })];
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+      if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: jobs });
+      if (path === '/api/v1/people/7') return Response.json({ display_name: 'Example Person' });
+      if (path === '/api/v1/employments/12') return Response.json(jobs[1], { headers: { ETag: '"employment-12-r1"' } });
+      throw new Error(`unexpected ${path}`);
+    });
+    controller.employments = jobs;
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    try {
+      await fireEvent.click(screen.getAllByRole('button', { name: 'this organization' })[0]);
+      await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+      await screen.findByText("Delete its 2 jobs first. Ending them isn't enough.");
+      await fireEvent.click(screen.getByRole('button', { name: 'Actions for Example Person' }));
+      expect(screen.getByRole('menuitem', { name: 'Delete Engineer…' })).toBeDefined();
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete Advisor…' }));
+      expect(await screen.findByRole('dialog', { name: 'Delete Advisor at Synthetic Org?' })).toBeDefined();
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
   it('keeps local employment history actionable beside a reconciliation warning and recovers', async () => {
     let reads = 0;
     let resolveRefresh!: (response: Response) => void;

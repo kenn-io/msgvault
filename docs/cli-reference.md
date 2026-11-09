@@ -3419,8 +3419,6 @@ Keep organization details and current or historical jobs in structured records.
 
 These commands accept `--json`. Employment creation accepts `--title`, `--role`,
 `--department`, `--location`, `--description`, `--start`, `--end`, and `--primary`.
-On creation, `--primary` replaces the existing primary current job for user-sourced writes;
-`employment set --primary` still refuses while another job is primary, so use `set-primary`.
 Dates can be partial (`YYYY`, `YYYY-MM`, or `YYYY-MM-DD`). Attribute writes
 support `--dry-run` and `--expected-value-id` for validation and concurrent-edit
 checks. See [employment and relationships](/docs/usage/people/#record-employment-and-relationships).

@@ -7,7 +7,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import { formatPartialDate as partialDate } from '../../directory/dates';
+  import { canonicalDate, formatPartialDate as partialDate } from '../../directory/dates';
   import { formatShortDate } from '../../util/format';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type {
@@ -209,10 +209,6 @@
     let targetID = draft.target_person_id;
     // The picker offers canonical types only; the store orders a symmetric pair's people.
     if (controller.relationshipTypes.find(type => type.slug === typeSlug)?.is_symmetric && sourceID > targetID) [sourceID, targetID] = [targetID, sourceID];
-    const canonicalDate = (value: string | undefined) => {
-      const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(value?.trim() ?? '');
-      return compact ? `${compact[1]}-${compact[2]}-${compact[3]}` : value?.trim() ?? '';
-    };
     return saved.source_person_id === sourceID && saved.target_person_id === targetID &&
       saved.type_slug === typeSlug && partialDate(saved.start_date) === canonicalDate(draft.start_date) &&
       partialDate(saved.end_date) === canonicalDate(draft.end_date) && (saved.notes?.trim() ?? '') === (draft.notes ?? '');

@@ -79,13 +79,11 @@ type EmploymentsResponse struct {
 
 func (s *Server) registerEmploymentRoutes(api huma.API) {
 	create := rawAPIV1Operation("createEmployment", http.MethodPost, "/employments", "Create an employment record")
-	create.Description = "For source `user`, setting `is_primary` to true demotes the existing primary current employment. Other sources receive a conflict when a primary current employment already exists."
 	create.RequestBody = jsonRequestBodyFor[EmploymentBody](api)
 	create.Responses = jsonResponsesFor[store.Employment](api, http.StatusCreated)
 	addEmploymentETagHeader(create.Responses[httpStatusKey(http.StatusCreated)])
 	addEmploymentLocationHeader(create.Responses[httpStatusKey(http.StatusCreated)])
 	addErrorResponses(api, create.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusServiceUnavailable)
-	create.Responses[httpStatusKey(http.StatusConflict)].Description = "Conflict if this duplicates a current employment, a non-user source tries to replace the primary, or concurrent writes prevent primary replacement."
 	registerRawHumaRoute(api, create, s.handleCreateEmployment)
 
 	get := rawAPIV1Operation("getEmployment", http.MethodGet, "/employments/{id}", "Get an employment record")
@@ -96,7 +94,6 @@ func (s *Server) registerEmploymentRoutes(api huma.API) {
 	registerRawHumaRoute(api, get, s.handleGetEmployment)
 
 	patch := rawAPIV1Operation("patchEmployment", http.MethodPatch, "/employments/{id}", "Replace an employment record's mutable fields")
-	patch.Description = "Setting `is_primary` to true conflicts when another primary current employment exists; `POST /employments/{id}/primary` replaces it."
 	addEmploymentIDParameter(&patch)
 	addEmploymentIfMatchParameter(&patch)
 	patch.RequestBody = jsonRequestBodyFor[EmploymentBody](api)

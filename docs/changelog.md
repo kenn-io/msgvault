@@ -20,8 +20,6 @@ All notable changes to msgvault, grouped by release.
 - Matrix sync archives images, stickers, video, audio and files under the shared chat media policy, including encrypted attachments. Syncs after upgrading also find media in messages archived earlier. `sync-matrix --no-media` leaves media for a later sync, and failed downloads retry on later syncs.
 - People sweeps record employment again when the model names the organization as plain text or writes dates such as `2023-05`. Such claims were rejected as malformed, so no sweep ever set an employer.
 
-- `msgvault employment add --primary` and `POST /api/v1/employments` with `is_primary` replace the person's primary current job instead of failing, so **Add job** in People can make the new job primary. `employment set --primary` and `PATCH /api/v1/employments/{id}` still refuse while another job is primary; use `employment set-primary`.
-
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
 - Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
