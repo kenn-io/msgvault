@@ -52,7 +52,7 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 				var snippet string
 				requirements.NoError(st.db.QueryRow(`SELECT snippet FROM messages WHERE id=?`, id).Scan(&snippet))
 				assertions.True(strings.HasPrefix(snippet, "Meeting details. "), "snippet must come from the description")
-				body, err := st.GetMessageBodyText(id)
+				body, err := st.GetMessageBodyText(t.Context(), id)
 				requirements.NoError(err)
 				assertions.Equal(description+"\nJoin: https://meet.example.com/meeting\nLocation: Conference room", body)
 				return
@@ -122,7 +122,7 @@ func TestICalendarRawIsNotEmailDedupEvidence(t *testing.T) {
 	_, err := st.PersistICalendarContext(t.Context(), source, raw)
 	requirements.NoError(err)
 	requirements.Len(emailEvents(t, st, source), 2)
-	candidates, err := st.GetAllRawMIMECandidates(source)
+	candidates, err := st.GetAllRawMIMECandidates(t.Context(), source)
 	requirements.NoError(err)
 	assert.Empty(t, candidates, "the shared VCALENDAR bytes do not prove the VEVENT messages are duplicates")
 }
