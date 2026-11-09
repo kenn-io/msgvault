@@ -404,7 +404,9 @@ import (
 // 3.47.0 adds retry hints to CLI and fast search.
 // 3.48.0 adds owner-only local message search activation and progress.
 // 3.49.0 adds verification.read for revealing detected verification content in delegated reads.
-const APISchemaVersion = "3.49.0"
+// 3.50.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
+// and registered service labels to current contact points.
+const APISchemaVersion = "3.50.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1030,6 +1032,13 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MessagingRoute", "network_label"},
 		{"MessagingRoute", "provider_chat_id"},
 		{"PersonMessagingRoutesPage", "alias_reason"},
+		{"ParticipantAddress", "display_value"},
+		{"ParticipantAddress", "normalized_value"},
+		{"ParticipantAddress", "service_slug"},
+		{"ParticipantAddress", "service_label"},
+		{"ParticipantAddress", "scope_kind"},
+		{"ParticipantAddress", "scope_value"},
+		{"ParticipantAddress", "participant_display_name"},
 	} {
 		if schema := schemas[field.schema]; schema != nil {
 			if property := schema.Properties[field.property]; property != nil {

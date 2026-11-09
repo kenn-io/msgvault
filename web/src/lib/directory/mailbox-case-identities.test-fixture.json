@@ -1,0 +1,28 @@
+[
+  {
+    "participant_id": 1,
+    "type": "email",
+    "value": "Reader@Example.org",
+    "display_value": "",
+    "normalized_value": "reader@example.org",
+    "service_slug": "email",
+    "service_label": "",
+    "scope_kind": "",
+    "scope_value": "",
+    "participant_display_name": "Reader",
+    "identity_key": "[\"email\",\"\",\"\",\"reader@example.org\"]"
+  },
+  {
+    "participant_id": 2,
+    "type": "email",
+    "value": "reader@example.org",
+    "display_value": "",
+    "normalized_value": "reader@example.org",
+    "service_slug": "email",
+    "service_label": "",
+    "scope_kind": "",
+    "scope_value": "",
+    "participant_display_name": "Reader",
+    "identity_key": "[\"email\",\"\",\"\",\"reader@example.org\"]"
+  }
+]

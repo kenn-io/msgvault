@@ -62,6 +62,19 @@ async function checkAndConsent(controller: PeopleInferenceController): Promise<v
 }
 
 describe('PeopleInferenceSettings', () => {
+  it('mounts the fields kept updated list', async () => {
+    const { client } = fixture(status, request => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [{ slug: 'favorite_plant', label: 'Favorite plant' }] });
+      if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ kind: 'attribute', key: 'field:favorite_plant', slug: 'favorite_plant', description: 'A plant', sensitive: false }] });
+      return undefined;
+    });
+    const controller = new PeopleInferenceController(client);
+    await controller.load();
+    render(PeopleInferenceSettings, { client, controller });
+    expect(await screen.findByRole('heading', { name: 'Fields kept updated' })).toBeDefined();
+  });
+
   it('checks host-managed environment profiles without offering a replacement key', async () => {
     const { client, requests } = fixture({ ...status,
       profiles: [{ ...profile, credential_source: 'env', credential_env: 'PEOPLE_API_KEY' }] });
@@ -135,8 +148,9 @@ describe('PeopleInferenceSettings', () => {
     await fireEvent.click(screen.getByLabelText('Allow sensitive content'));
     await fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
     await screen.findByText('Stored key');
-    await expect(requests[1]!.json()).resolves.toEqual(preset);
-    await expect(requests[2]!.json()).resolves.toEqual({ value: 'synthetic-secret' });
+    const writes = requests.filter(request => request.method !== 'GET');
+    await expect(writes[0]!.json()).resolves.toEqual(preset);
+    await expect(writes[1]!.json()).resolves.toEqual({ value: 'synthetic-secret' });
     expect((screen.getByLabelText('API key') as HTMLInputElement).value).toBe('');
   });
 

@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
@@ -364,6 +367,8 @@ func TestPersonMerge_Inspect(t *testing.T) {
 	require.NoError(err)
 	require.Len(list, 1)
 	assert.Equal(f.merge.Merge.ID, list[0].Merge.ID)
+	assert.False(list[0].Labels.Incomplete)
+
 	assert.Equal(3, list[0].ParticipantCount)
 	assert.Equal(1, list[0].SplitCount)
 	assert.Equal(1, list[0].PendingCandidateCount)
@@ -379,19 +384,22 @@ func TestPersonMerge_Inspect(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(f.merge.Merge.ID, detail.Merge.ID)
 	assert.Len(detail.Participants, 3)
+	assert.Len(detail.Labels.ParticipantIDs, 3)
+	assert.Equal(detail.Participants, list[0].Labels.Participants)
+	assert.Empty(detail.Labels.Participants)
 	assert.NotEmpty(detail.Rows)
 	assert.Len(detail.Splits, 1)
 	assert.Len(detail.ReviewCandidates, 1)
 }
 
-func TestPersonMerge_InspectNewestFirst(t *testing.T) {
+func TestPersonMerge_InspectOrderAndPageLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	survivor := mustPromotedPerson(t.Context(), t, st, "inspect-order-survivor@example.com", "Survivor")
 	mergeIDs := []int64{}
-	for index := range 2 {
+	for index := range 3 {
 		absorbed := mustPromotedPerson(t.Context(), t, st,
 			fmt.Sprintf("inspect-order-%d@example.com", index), "Absorbed")
 		survivor, _ = st.GetPersonContext(ctx, survivor.ID)
@@ -405,10 +413,10 @@ func TestPersonMerge_InspectNewestFirst(t *testing.T) {
 		survivor = &merged.Person
 		mergeIDs = append(mergeIDs, merged.Merge.ID)
 	}
-	list, err := st.ListPersonMergesContext(ctx, survivor.ID)
+	list, err := st.ListPersonMergesPageContext(ctx, survivor.ID, 2, 0)
 	require.NoError(err)
 	require.Len(list, 2)
-	assert.Equal([]int64{mergeIDs[1], mergeIDs[0]},
+	assert.Equal([]int64{mergeIDs[2], mergeIDs[1]},
 		[]int64{list[0].Merge.ID, list[1].Merge.ID})
 }
 
@@ -427,6 +435,45 @@ func TestPersonMerge_Snapshot(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.store.GetPersonMergeSnapshotContext(ctx, f.merge.Merge.ID)
 	require.ErrorIs(t, err, store.ErrPersonMergeSnapshotCorrupt)
+}
+
+func TestPersonMerge_IncompleteLabelsPreserveAvailableContext(t *testing.T) {
+	for _, failure := range []string{"identifiers", "snapshot"} {
+		t.Run(failure, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newPersonMergeInspectionFixture(t, "identity-read-failure")
+			if failure == "identifiers" {
+				denyPersonMergeIdentityReads(t, f.store)
+			} else {
+				_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_merges SET snapshot_blob = ? WHERE id = ?`), []byte("corrupt"), f.merge.Merge.ID)
+				require.NoError(err)
+			}
+			detail, err := f.store.GetPersonMergeContext(t.Context(), f.merge.Merge.ID)
+			require.NoError(err)
+			assert.NotEmpty(detail.Participants)
+			assert.True(detail.Labels.Incomplete)
+			if failure == "identifiers" {
+				assert.Len(detail.Labels.Profiles, 2)
+				assert.Empty(detail.Labels.ParticipantIDs)
+				listed, err := f.store.ListPersonMergesContext(t.Context(), f.merge.Person.ID)
+				require.NoError(err)
+				require.Len(listed, 1)
+				assert.True(listed[0].Labels.Incomplete)
+				assert.NotEmpty(listed[0].Labels.Participants)
+				assert.Empty(listed[0].Labels.ParticipantIDs)
+			} else {
+				listed, err := f.store.ListPersonMergesContext(t.Context(), f.merge.Person.ID)
+				require.NoError(err)
+				require.Len(listed, 1)
+				assert.NotEmpty(listed[0].Labels.Participants)
+				assert.True(listed[0].Labels.Incomplete)
+				assert.Empty(listed[0].Labels.Profiles)
+				assert.Empty(detail.Labels.Profiles)
+				assert.NotEmpty(detail.Labels.ParticipantIDs)
+			}
+		})
+	}
 }
 
 func TestPersonMerge_CandidateDecisionAcceptedAndIdempotent(t *testing.T) {
@@ -2507,6 +2554,147 @@ func TestMergePersons_MovesBriefEnrollmentToSurvivor(t *testing.T) {
 				WHERE merge_id = ? AND table_name = 'person_brief_enrollments'`),
 				merged.Merge.ID).Scan(&action))
 			assert.Equal(test.wantAction, action)
+		})
+	}
+}
+
+func TestPersonMerge_DetailLabelsCurrentBindings(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newPersonMergeInspectionFixture(t, "detail-current-labels")
+	ctx := t.Context()
+	added, err := f.store.EnsureParticipant("Later@Example.org", "Later sender", "example.org")
+	require.NoError(err)
+	current, err := f.store.GetPersonContext(ctx, f.merge.Person.ID)
+	require.NoError(err)
+	_, err = f.store.LinkParticipants(current.ParticipantIDs[0], added)
+	require.NoError(err)
+	require.NoError(f.store.SetParticipantIdentifierContext(ctx, added, "beeper", "later-handle"))
+	absorbedLater, err := f.store.EnsureParticipant("absorbed-later@example.org", "Later absorbed sender", "example.org")
+	require.NoError(err)
+	_, err = f.store.LinkParticipants(f.absorbedParticipant, absorbedLater)
+	require.NoError(err)
+	detail, err := f.store.GetPersonMergeContext(ctx, f.merge.Merge.ID)
+	require.NoError(err)
+	assert.Contains(detail.Labels.ParticipantIDs, added)
+	assert.Contains(detail.Participants, store.PersonMergeParticipant{MergeID: f.merge.Merge.ID, ParticipantID: added, OriginSide: "survivor"})
+	assert.Contains(detail.Participants, store.PersonMergeParticipant{MergeID: f.merge.Merge.ID, ParticipantID: absorbedLater, OriginSide: "absorbed"})
+	for _, profile := range detail.Labels.Profiles {
+		assert.NotContains(profile.ParticipantIDs, added)
+		assert.NotContains(profile.ParticipantIDs, absorbedLater)
+	}
+	assert.Contains(detail.Labels.Addresses, store.ParticipantAddress{ParticipantID: added, Type: "beeper", Value: "later-handle", NormalizedValue: "beeper:later-handle", ParticipantDisplayName: "Later sender", IdentityKey: `["","","","beeper:later-handle"]`})
+	require.Len(detail.Labels.Profiles, 2)
+	assert.Equal(new("Survivor"), detail.Labels.Profiles[0].DisplayName)
+	assert.Equal(new("Absorbed"), detail.Labels.Profiles[1].DisplayName)
+	assert.False(detail.Labels.Incomplete)
+}
+
+func denyPersonMergeIdentityReads(t *testing.T, st *store.Store) {
+	t.Helper()
+	require := require.New(t)
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE participant_identifiers RENAME TO unavailable_identifiers`)
+		require.NoError(err)
+		return
+	}
+	st.DB().SetMaxOpenConns(1)
+	st.DB().SetMaxIdleConns(1)
+	var fail atomic.Bool
+	fail.Store(true)
+	t.Cleanup(func() { fail.Store(false) })
+	conn, connErr := st.DB().Conn(t.Context())
+	require.NoError(connErr)
+	err := conn.Raw(func(driverConn any) error {
+		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
+			if fail.Load() && action == sqlite3.SQLITE_READ && table == "participant_identifiers" {
+				return sqlite3.SQLITE_DENY
+			}
+			return sqlite3.SQLITE_OK
+		})
+		return nil
+	})
+	require.NoError(conn.Close())
+	require.NoError(err)
+}
+
+func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
+	for _, mode := range []string{"curated and superseded", "service scope and inactive catalog"} {
+		t.Run(mode, func(t *testing.T) {
+			scoped := mode == "service scope and inactive catalog"
+			require, assert := require.New(t), assert.New(t)
+			st := storetest.New(t).Store
+			ctx := t.Context()
+			owner := mustPromotedPerson(ctx, t, st, "owner@example.org", "Owner")
+			guest := mustPromotedPerson(ctx, t, st, "guest@example.org", "Guest")
+			inputs := []store.PersonContactPointInput{
+				{AddressKind: store.ContactAddressEmail, OriginalValue: "curated@example.org", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+				{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport}},
+			}
+			want := []store.PersonMergeRecordedContactPoint{
+				{AddressKind: store.ContactAddressEmail, OriginalValue: "curated@example.org", NormalizedValue: "curated@example.org", IdentityKey: "[\"email\",\"\",\"\",\"curated@example.org\"]"},
+				{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", IdentityKey: "[\"phone\",\"\",\"\",\"+12025550144\"]"},
+			}
+			var serviceID int64
+			if scoped {
+				service, _, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{
+					Slug: "scoped-phone", DisplayLabel: "Scoped phone", ScopePolicy: store.ScopePolicyRequired,
+					DefaultScopeKind: new("workspace"), Normalization: store.NormalizationPhoneE164, NormalizationVersion: 1,
+				})
+				require.NoError(err)
+				serviceID = service.ID
+				inputs = []store.PersonContactPointInput{
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("whatsapp")},
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("signal")},
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("scoped-phone"), ScopeKind: new("workspace"), ScopeValue: new("garden")},
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("scoped-phone"), ScopeKind: new("workspace"), ScopeValue: new("work")},
+					{AddressKind: store.ContactAddressUsername, OriginalValue: "alex", ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("garden")},
+				}
+				want = []store.PersonMergeRecordedContactPoint{
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", ServiceSlug: new("whatsapp"), ServiceLabel: new("WhatsApp"), IdentityKey: "[\"whatsapp\",\"\",\"\",\"+12025550144\"]"},
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", ServiceSlug: new("signal"), ServiceLabel: new("Signal"), IdentityKey: "[\"signal\",\"\",\"\",\"+12025550144\"]"},
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", ServiceSlug: new("scoped-phone"), ServiceLabel: new("Scoped phone"), ScopeKind: new("workspace"), ScopeValue: new("garden"), IdentityKey: "[\"scoped-phone\",\"workspace\",\"garden\",\"+12025550144\"]"},
+					{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", ServiceSlug: new("scoped-phone"), ServiceLabel: new("Scoped phone"), ScopeKind: new("workspace"), ScopeValue: new("work"), IdentityKey: "[\"scoped-phone\",\"workspace\",\"work\",\"+12025550144\"]"},
+					{AddressKind: store.ContactAddressUsername, OriginalValue: "alex", NormalizedValue: "alex", ServiceSlug: new("slack"), ServiceLabel: new("Slack"), ScopeKind: new("workspace"), ScopeValue: new("garden"), IdentityKey: "[\"slack\",\"workspace\",\"garden\",\"alex\"]"},
+				}
+			} else {
+				old, err := st.AddPersonContactPointContext(ctx, guest.ID, store.PersonContactPointInput{
+					AddressKind: store.ContactAddressEmail, OriginalValue: "retired@example.org", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+				})
+				require.NoError(err)
+				require.NoError(st.SupersedePersonContactPointContext(ctx, guest.ID, old.Envelope.ID, nil))
+			}
+			for _, input := range inputs {
+				if scoped {
+					input.Envelope = store.ValueEnvelopeInput{Source: store.ProvenanceUser}
+				}
+				_, err := st.AddPersonContactPointContext(ctx, guest.ID, input)
+				require.NoError(err)
+			}
+			guest, err := st.GetPersonContext(ctx, guest.ID)
+			require.NoError(err)
+			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "saved-contact-points", Actor: "test"})
+			require.NoError(err)
+			if scoped {
+				_, err = st.SetCommunicationServiceActiveContext(ctx, serviceID, false)
+				require.NoError(err)
+			}
+			detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+			require.NoError(err)
+			listed, err := st.ListPersonMergesContext(ctx, owner.ID)
+			require.NoError(err)
+			require.Len(listed, 1)
+			for _, labels := range []store.PersonMergeLabels{detail.Labels, listed[0].Labels} {
+				var points []store.PersonMergeRecordedContactPoint
+				for _, recorded := range labels.Profiles {
+					if recorded.ID == guest.ID {
+						points = recorded.ContactPoints
+					}
+				}
+				assert.ElementsMatch(want, points)
+			}
 		})
 	}
 }

@@ -21,6 +21,12 @@ Each merge stores two related forms of history:
   close selected lineage, and `current_person_id` becomes `NULL` when a merge
   has no remaining absorbed lineage.
 
+History lists each lineage participant's current identities, and reads saved
+profile contact points, including service and scope, from the existing
+snapshot. Split offers the same participant identities and reads each resulting
+profile's saved contacts after committing, so later edits appear in the result
+without changing the recorded merge.
+
 Exact reversal means the selected lineage and live dependencies still permit
 the pre-merge profiles to be restored. Partial splits move only attributable
 rows and report ambiguous or unrestored rows. The implementation must not call

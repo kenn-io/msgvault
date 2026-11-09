@@ -63,20 +63,6 @@ type MixedArchiveFixture = {
   firstPage: ExploreHTTPResponse;
 };
 
-export type CapturedTrackingRequest = {
-  method: 'GET' | 'PUT';
-  path: string;
-  includeSensitive?: boolean;
-  tracked?: boolean;
-};
-
-
-type InstalledMixedArchive = MixedArchiveFixture & {
-  trackingRequests: CapturedTrackingRequest[];
-  failNextTrackingMutation: () => void;
-  failNextTrackingRead: () => void;
-};
-
 let fixturePromise: Promise<MixedArchiveFixture> | undefined;
 
 export function loadMixedArchive(): Promise<MixedArchiveFixture> {
@@ -107,13 +93,10 @@ export function loadMixedArchive(): Promise<MixedArchiveFixture> {
   return fixturePromise;
 }
 
-export async function installMixedArchive(page: Page): Promise<InstalledMixedArchive> {
+export async function installMixedArchive(page: Page): Promise<MixedArchiveFixture> {
   const fixture = await loadMixedArchive();
-  const trackingRequests: CapturedTrackingRequest[] = [];
   let tracked = false;
   let trackedAt: string | null = null;
-  let trackingMutationFailure = false;
-  let trackingReadFailure = false;
   await page.route('**/api/session', sessionRoute);
   await page.route('**/api/v1/settings', (route) =>
     route.fulfill({
@@ -285,17 +268,6 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
   await page.route('**/api/v1/people/42/tracking', async (route) => {
     const request = route.request();
     if (request.method() === 'GET') {
-      trackingRequests.push({ method: 'GET', path: '/api/v1/people/42/tracking' });
-      if (trackingReadFailure) {
-        trackingReadFailure = false;
-        return route.fulfill({
-          status: 503,
-          json: {
-            error: 'tracking_unavailable',
-            message: 'forbidden-private-credential',
-          },
-        });
-      }
       return route.fulfill({ json: { person_id: 42, tracked, tracked_at: trackedAt } });
     }
     if (request.method() === 'PUT') {
@@ -303,71 +275,13 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
       if (!body || typeof body.tracked !== 'boolean' || Object.keys(body).length !== 1) {
         return route.fulfill({ status: 400, json: { error: 'bad_request', message: 'Invalid synthetic body.' } });
       }
-      trackingRequests.push({ method: 'PUT', path: '/api/v1/people/42/tracking', tracked: body.tracked });
       tracked = body.tracked;
       trackedAt = tracked ? FIXTURE_TIME : null;
-      if (trackingMutationFailure) {
-        trackingMutationFailure = false;
-        return route.fulfill({
-          status: 503,
-          json: {
-            error: 'tracking_unavailable',
-            message: 'forbidden-private-credential',
-          },
-        });
-      }
       return route.fulfill({ json: { person_id: 42, tracked, tracked_at: trackedAt } });
     }
     return route.fulfill({
       status: 405,
       json: { error: 'method_not_allowed', message: 'Unsupported synthetic method.' },
-    });
-  });
-  await page.route('**/api/v1/person-fact-targets*', (route) => {
-    const url = new URL(route.request().url());
-    const includeSensitive = url.searchParams.get('include_sensitive') === 'true';
-    trackingRequests.push({
-      method: 'GET',
-      path: '/api/v1/person-fact-targets',
-      includeSensitive,
-    });
-    const common = {
-      kind: 'attribute',
-      revision: 'forbidden-target-revision',
-      value_type: 'text',
-      cardinality: 'single',
-      choices: null,
-      fields: null,
-      href: 'https://forbidden.example.test/profile',
-      credential: 'forbidden-private-credential',
-    };
-    return route.fulfill({
-      json: {
-        version: 'v1',
-        fingerprint: 'forbidden-catalog-fingerprint',
-        targets: [
-          {
-            ...common,
-            key: 'forbidden-target-key',
-            slug: 'timezone',
-            universal_id: 'forbidden-universal-id',
-            description: 'Time zone',
-            sensitive: false,
-          },
-          ...(includeSensitive
-            ? [
-                {
-                  ...common,
-                  key: 'forbidden-sensitive-target-key',
-                  slug: 'private-note',
-                  universal_id: 'forbidden-sensitive-universal-id',
-                  description: 'Private note',
-                  sensitive: true,
-                },
-              ]
-            : []),
-        ],
-      },
     });
   });
   await page.route('**/api/v1/people/42/profile', (route) =>
@@ -602,16 +516,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
   await stubOperationStatus(page);
   await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
-  return {
-    ...fixture,
-    trackingRequests,
-    failNextTrackingMutation(): void {
-      trackingMutationFailure = true;
-    },
-    failNextTrackingRead(): void {
-      trackingReadFailure = true;
-    },
-  };
+  return fixture;
 }
 
 type IdentityMatchCandidate = IdentityMatchCandidate;
@@ -624,27 +529,6 @@ export type CapturedReviewRequest = {
   headers: Record<string, string>;
 };
 
-export const FACT_LEDGER_FORBIDDEN_MARKERS = [
-  'forbidden-target-key',
-  'forbidden-target-revision',
-  'forbidden-catalog-fingerprint',
-  'forbidden-evidence-key',
-  'forbidden-content-sha',
-  'forbidden-source-ref',
-  'forbidden-source-url',
-  'forbidden-source-version',
-  'forbidden-subject-ref',
-  'forbidden-claim-key',
-  'forbidden-program-id',
-  'forbidden-program-version',
-  'forbidden-program-fingerprint',
-  'forbidden-value-fingerprint',
-  'forbidden-decision-key',
-  'forbidden-competing-claim-key',
-  'forbidden-pin-actor',
-  'forbidden-private-error',
-  'forbidden-extension-field',
-] as const;
 
 const FACT_TARGET_REVISION = `sha256:${'d'.repeat(64)}`;
 
@@ -1220,13 +1104,24 @@ function reviewMerge(): PersonMerge {
   return { ...merge(person(7, 5)), created_at: '2026-01-03T12:00:00Z' };
 }
 
+function reviewIdentifier(participant_id: number) {
+  return { participant_id, type: 'email', value: `person${participant_id}@example.org`, normalized_value: `person${participant_id}@example.org`, display_value: '', service_slug: 'email', service_label: 'Email', scope_kind: '', scope_value: '' };
+}
+
+/** The review merge's participants. */
+function reviewParticipants(splitCompleted: boolean): PersonMergeDetail['participants'] {
+  return [
+    { merge_id: 41, participant_id: 901, origin_side: 'absorbed', ...(splitCompleted ? { split_id: 55 } : {}) },
+    { merge_id: 41, participant_id: 701, origin_side: 'survivor' },
+    { merge_id: 41, participant_id: 702, origin_side: 'survivor' },
+  ];
+}
+
 function reviewMergeDetail(splitCompleted = false): PersonMergeDetail {
   return {
     merge: reviewMerge(),
-    participants: [
-      { merge_id: 41, participant_id: 901, origin_side: 'absorbed', ...(splitCompleted ? { split_id: 55 } : {}) },
-      { merge_id: 41, participant_id: 701, origin_side: 'survivor' },
-    ],
+    labels: { ...reviewMergeSummary(splitCompleted).labels, participants: undefined },
+    participants: reviewParticipants(splitCompleted),
     rows: [
       {
         merge_id: 41,
@@ -1248,7 +1143,16 @@ function reviewMergeDetail(splitCompleted = false): PersonMergeDetail {
 function reviewMergeSummary(splitCompleted = false): PersonMergeSummary {
   return {
     merge: reviewMerge(),
-    participant_count: 2,
+    labels: {
+      profiles: [{ id: 7, display_name: 'Synthetic One', participant_ids: [701, 702] }, { id: 9, display_name: 'Synthetic Two', participant_ids: [901] }],
+      participants: reviewParticipants(splitCompleted),
+      participant_ids: [701, 702, 901], absorbed_address_count: 2, incomplete: false,
+      addresses: [701, 702, 901].flatMap(id => [
+        { ...reviewIdentifier(id), participant_display_name: '', identity_key: reviewIdentifier(id).value },
+        ...(id === 901 ? [{ participant_id: id, type: 'phone', value: '+1 (202) 555-0123', normalized_value: '+12025550123', display_value: '', service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '', participant_display_name: '', identity_key: 'review-phone' }] : []),
+      ]),
+    },
+    participant_count: 3,
     pending_candidate_count: 0,
     row_action_counts: { copied: 1 },
     row_count: 1,

@@ -10155,6 +10155,24 @@ type PartialDate struct {
 	Year  *int64 `json:"year,omitempty"`
 }
 
+type ParticipantAddress struct {
+	DisplayValue           string `json:"display_value" validate:"omitempty"`
+	IdentityKey            string `json:"identity_key" validate:"required"`
+	NormalizedValue        string `json:"normalized_value" validate:"omitempty"`
+	ParticipantDisplayName string `json:"participant_display_name" validate:"omitempty"`
+	ParticipantID          int64  `json:"participant_id"`
+	ScopeKind              string `json:"scope_kind" validate:"omitempty"`
+	ScopeValue             string `json:"scope_value" validate:"omitempty"`
+	ServiceLabel           string `json:"service_label" validate:"omitempty"`
+	ServiceSlug            string `json:"service_slug" validate:"omitempty"`
+	Type                   string `json:"type" validate:"required"`
+	Value                  string `json:"value" validate:"required"`
+}
+
+func (p ParticipantAddress) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type ParticipantCompletionHTTPRequest struct {
 	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=0,lte=20"`
 	Query string `json:"query" validate:"required"`
@@ -11340,6 +11358,7 @@ type PersonClusterMember struct {
 type PersonContactPoint struct {
 	AddressKind          string        `json:"address_kind" validate:"required"`
 	Envelope             ValueEnvelope `json:"envelope"`
+	IdentityKey          string        `json:"identity_key" validate:"required"`
 	Normalization        string        `json:"normalization" validate:"required"`
 	NormalizationVersion int64         `json:"normalization_version"`
 	NormalizedValue      string        `json:"normalized_value" validate:"required"`
@@ -11347,6 +11366,7 @@ type PersonContactPoint struct {
 	PersonID             int64         `json:"person_id"`
 	ScopeKind            *string       `json:"scope_kind,omitzero"`
 	ScopeValue           *string       `json:"scope_value,omitzero"`
+	ServiceLabel         *string       `json:"service_label,omitzero"`
 	ServiceSlug          *string       `json:"service_slug,omitzero"`
 	URI                  *string       `json:"uri,omitzero"`
 }
@@ -11360,6 +11380,9 @@ func (p PersonContactPoint) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Envelope", err)
 		}
+	}
+	if err := typesValidator.Var(p.IdentityKey, "required"); err != nil {
+		errors = errors.Append("IdentityKey", err)
 	}
 	if err := typesValidator.Var(p.Normalization, "required"); err != nil {
 		errors = errors.Append("Normalization", err)
@@ -12785,6 +12808,7 @@ func (p PersonMerge) Validate() error {
 }
 
 type PersonMergeDetail struct {
+	Labels           PersonMergeLabels            `json:"labels"`
 	Merge            PersonMerge                  `json:"merge"`
 	Participants     []PersonMergeParticipant     `json:"participants" validate:"required"`
 	ReviewCandidates []PersonMergeReviewCandidate `json:"review_candidates" validate:"required"`
@@ -12794,6 +12818,11 @@ type PersonMergeDetail struct {
 
 func (p PersonMergeDetail) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(p.Labels).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Labels", err)
+		}
+	}
 	if v, ok := any(p.Merge).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Merge", err)
@@ -12845,6 +12874,53 @@ func (p PersonMergeDetail) Validate() error {
 	return errors
 }
 
+type PersonMergeLabels struct {
+	AbsorbedAddressCount int64                        `json:"absorbed_address_count"`
+	Addresses            []ParticipantAddress         `json:"addresses" validate:"required"`
+	Incomplete           bool                         `json:"incomplete"`
+	ParticipantIds       []int64                      `json:"participant_ids" validate:"required"`
+	Participants         []PersonMergeParticipant     `json:"participants,omitempty"`
+	Profiles             []PersonMergeRecordedProfile `json:"profiles" validate:"required"`
+}
+
+func (p PersonMergeLabels) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Addresses, "required"); err != nil {
+		errors = errors.Append("Addresses", err)
+	}
+	for i, item := range p.Addresses {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Addresses[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
+		errors = errors.Append("ParticipantIds", err)
+	}
+	for i, item := range p.Participants {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Profiles, "required"); err != nil {
+		errors = errors.Append("Profiles", err)
+	}
+	for i, item := range p.Profiles {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Profiles[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonMergeParticipant struct {
 	MergeID       int64  `json:"merge_id"`
 	OriginSide    string `json:"origin_side" validate:"required"`
@@ -12870,6 +12946,46 @@ func (p PersonMergeProfile) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Person", err)
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonMergeRecordedContactPoint struct {
+	AddressKind     string  `json:"address_kind" validate:"required"`
+	IdentityKey     string  `json:"identity_key" validate:"required"`
+	NormalizedValue string  `json:"normalized_value" validate:"required"`
+	OriginalValue   string  `json:"original_value" validate:"required"`
+	ScopeKind       *string `json:"scope_kind,omitzero"`
+	ScopeValue      *string `json:"scope_value,omitzero"`
+	ServiceLabel    *string `json:"service_label,omitzero"`
+	ServiceSlug     *string `json:"service_slug,omitzero"`
+}
+
+func (p PersonMergeRecordedContactPoint) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMergeRecordedProfile struct {
+	ContactPoints  []PersonMergeRecordedContactPoint `json:"contact_points,omitempty"`
+	DisplayName    *string                           `json:"display_name,omitzero"`
+	ID             int64                             `json:"id"`
+	ParticipantIds []int64                           `json:"participant_ids" validate:"required"`
+}
+
+func (p PersonMergeRecordedProfile) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.ContactPoints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ContactPoints[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
+		errors = errors.Append("ParticipantIds", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -13019,16 +13135,22 @@ func (p PersonMergeSnapshotResponse) Validate() error {
 }
 
 type PersonMergeSummary struct {
-	Merge                 PersonMerge      `json:"merge"`
-	ParticipantCount      int64            `json:"participant_count"`
-	PendingCandidateCount int64            `json:"pending_candidate_count"`
-	RowActionCounts       map[string]int64 `json:"row_action_counts"`
-	RowCount              int64            `json:"row_count"`
-	SplitCount            int64            `json:"split_count"`
+	Labels                PersonMergeLabels `json:"labels"`
+	Merge                 PersonMerge       `json:"merge"`
+	ParticipantCount      int64             `json:"participant_count"`
+	PendingCandidateCount int64             `json:"pending_candidate_count"`
+	RowActionCounts       map[string]int64  `json:"row_action_counts"`
+	RowCount              int64             `json:"row_count"`
+	SplitCount            int64             `json:"split_count"`
 }
 
 func (p PersonMergeSummary) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(p.Labels).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Labels", err)
+		}
+	}
 	if v, ok := any(p.Merge).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Merge", err)

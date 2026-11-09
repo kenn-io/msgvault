@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonKeepsManyCurrentAndHistoricalContactPointsWithoutJSONBundling(t *testing.T) {
+func TestPersonContactPointsKeepServiceMetadataAndHistory(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
@@ -33,6 +33,8 @@ func TestPersonKeepsManyCurrentAndHistoricalContactPointsWithoutJSONBundling(t *
 		require.NoError(err)
 		created = append(created, *point)
 	}
+	assert.Equal(new("WhatsApp"), created[0].ServiceLabel)
+	assert.Nil(created[1].ServiceLabel)
 	assert.Equal("+12025550123", created[0].NormalizedValue)
 	assert.Equal("alice@example.com", created[1].NormalizedValue)
 	assert.Equal("alice", created[2].NormalizedValue)

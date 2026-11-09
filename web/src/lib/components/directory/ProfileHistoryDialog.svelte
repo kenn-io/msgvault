@@ -1,10 +1,13 @@
 <script lang="ts">
   import { getPersonProfileHistory as generatedGetPersonProfileHistory } from '../../api/generated/api/api';
-  import { Disclosure, Button, Modal } from '@kenn-io/kit-ui';
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import HistorySection, { type HistoryRow as SectionRow } from './HistorySection.svelte';
   import AttributeSection from './AttributeSection.svelte';
   import { sentenceCase } from '../../explore/labels';
-  import { historyProvenance } from './history-format';
-  import { formatDateTime as historyTime } from '../../util/format';
+  import { sourceTypeLabel } from '../../sources/labels';
+  import { valueProvenance } from './history-format';
+  import { formatDateTime, formatShortDate } from '../../util/format';
+  import { addressKey, type MergedInAddress } from '../../directory/merge-labels';
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
@@ -32,6 +35,7 @@
   onMount(() => void controller?.reload(false));
   async function load(): Promise<void> {
     error = null;
+    loading = true;
     try {
       const { data, error: responseError, response } = await generatedGetPersonProfileHistory({ id: personID }, client);
       if (data) {
@@ -46,13 +50,30 @@
     }
   }
   type HistoryRow = { id: number; value: string; context?: string | null; envelope: ValueEnvelope; observedAt?: string };
+  /** An address a merge brought in, under Email and phone: "Merged in · Nov 6", opening that merge. */
+  function mergedInRows(openMerge: (mergeID: number) => void, mergedIn: MergedInAddress[]): SectionRow[] {
+    // An address that is a current contact point shows once. One only seen in services, or since removed, keeps its merge link here.
+    const listed = new Set((history?.contact_points ?? []).filter(point => !ended(point.envelope) && point.normalized_value)
+      .map(point => addressKey({ ...point, title: point.original_value, service_slug: point.service_slug || point.address_kind })));
+    return mergedIn.filter(address => {
+      if (!address.normalized_value) return true;
+      const key = addressKey({ ...address, title: address.value });
+      if (listed.has(key)) return false;
+      listed.add(key);
+      return true;
+    }).map(address => ({
+      id: `merged-${address.mergeID}-${address.participantID}-${addressKey({ ...address, title: address.value })}`, value: address.value,
+      provenance: { text: `Merged in · ${formatShortDate(address.mergedAt)}`, title: `Merged ${formatDateTime(address.mergedAt)}` },
+      onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
+    }));
+  }
 
   // Any closed validity or transaction interval makes a value historical.
   function ended(envelope: ValueEnvelope): string | undefined {
     return envelope.superseded_at ?? envelope.active_until;
   }
 
-  type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; scope_kind?: string; scope_value?: string };
+  type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; service_label?: string; scope_kind?: string; scope_value?: string };
   function rows(items: Item[], value: ((item: Item) => string) | null = null, context: ((item: Item) => string | null) | null = null): HistoryRow[] {
     return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at }));
   }
@@ -61,14 +82,15 @@
     if (!history) return [];
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
-      { title: 'Contact points', rows: rows(history.contact_points ?? [], null, providerContext) },
+      { title: 'Email and phone', rows: rows(history.contact_points ?? [], null, providerContext) },
       { title: 'Addresses', rows: rows(history.addresses ?? []) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },
       { title: 'Categories', rows: rows(history.categories ?? []) },
       { title: 'Media', rows: rows(history.media ?? []) },
       { title: 'Seen in services', rows: rows(history.observations ?? [], null, providerContext) },
     ]
-      .filter((section) => section.rows.length > 0)
+      // Email and phone stays for the addresses merges brought in, which join it when it renders.
+      .filter((section) => section.rows.length > 0 || section.title === 'Email and phone')
       .map((section) => ({
         ...section,
         current: section.rows.filter((row) => !ended(row.envelope)),
@@ -76,12 +98,16 @@
       }));
   });
 
-  function providerContext(point: { service_slug?: string; scope_kind?: string; scope_value?: string }): string | null {
-    const scope =
-      point.scope_kind && point.scope_value
-        ? `${point.scope_kind} / ${point.scope_value}`
-        : (point.scope_kind ?? point.scope_value);
-    const details = [point.service_slug, scope].filter(Boolean);
+  function historyRow(item: HistoryRow): SectionRow {
+    return { id: item.id, value: item.value, detail: item.context, provenance: valueProvenance(item.envelope, [['Seen', item.observedAt]]) };
+  }
+
+  /**
+   * Where an address lives, as the person would say it: "Slack · garden-club", never "slack · workspace / garden-club".
+   * A contact point names its service as registered; an observation, which carries only the slug, reads it as a type.
+   */
+  function providerContext(point: { service_slug?: string; service_label?: string; scope_kind?: string; scope_value?: string }): string | null {
+    const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), point.scope_value ?? (point.scope_kind ? sentenceCase(point.scope_kind) : undefined)].filter(Boolean);
     return details.length ? details.join(' · ') : null;
   }
   function messageFor(value: unknown, status: number): string {
@@ -93,121 +119,37 @@
       ).message;
       if (typeof message === 'string' && message) return message;
     }
-    return status ? `Unable to load profile history (${status})` : 'Unable to load profile history';
+    return status ? `The server answered ${status}.` : 'The server didn’t answer.';
   }
 </script>
 
-<Modal
-  title="History"
-  ariaLabel="History"
-  closeLabel="Close profile history"
-  onclose={onClose}
-  maxWidth="min(760px, calc(100vw - 32px))"
->
-  <div class="profile-history">
-    {#if loading}
-      <p role="status">Loading profile history…</p>
-    {:else if error}
-      <p role="alert" class="history-error">{error}</p>
-    {:else if history}
-      {#snippet row(item: HistoryRow)}
-        <li>
-          <span class="value">{item.value}{#if item.context}<small>{item.context}</small>{/if}</span>
-          <span class="meta">
-            {historyProvenance(item.envelope)}{#if item.observedAt} · {historyTime(item.observedAt)}{/if}
-          </span>
-        </li>
-      {/snippet}
-      {#each sections as section (section.title)}
-        <section>
-          <h3>{section.title}</h3>
-          {#if section.current.length > 0}
-            <ul>{#each section.current as item (item.id)}{@render row(item)}{/each}</ul>
-          {/if}
-          {#if section.past.length > 0}
-            <Disclosure variant="plain">{#snippet summary()}{section.past.length} earlier {section.past.length === 1 ? 'value' : 'values'}{/snippet}
-              <ul>{#each section.past as item (item.id)}{@render row(item)}{/each}</ul>
-            </Disclosure>
-          {/if}
-        </section>
-      {/each}
-    {/if}
-    {#if error}<Button label="Retry history" onclick={() => { loading = true; void load(); }} />{/if}
-    {#if controller?.attributesError ?? controller?.definitionsError}
-      <p role="alert" class="history-error">{controller?.attributesError ?? controller?.definitionsError}</p>
-      <Button label="Retry attribute history" onclick={() => void controller?.reload(false)} />
-    {:else if controller}<AttributeSection {controller} />{/if}
-    {#if !loading}
-      <PersonMergeHistory {client} {personID} onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined} onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }} />
-    {/if}
-  </div>
-  {#snippet footer()}
-    <Button label="Close" onclick={onClose} />
+<PersonMergeHistory {client} {personID} {onClose} definitions={controller?.definitions}
+  onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined}
+  onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }}>
+  {#snippet fields(openMerge, mergedIn)}
+    <div class="profile-history">
+      {#if loading}<p role="status">Loading profile history…</p>
+      {:else if history}
+        {@const merged = mergedInRows(openMerge, mergedIn)}
+        {#each sections as section (section.title)}
+          {@const rows = [...section.current.map(historyRow), ...(section.title === 'Email and phone' ? merged : [])]}
+          {#if rows.length || section.past.length}<HistorySection title={section.title} {rows} earlier={section.past.map(historyRow)} />{/if}
+        {/each}
+      {/if}
+      {#if error}<InlineNotice message="Couldn't load names, email, phone, and other details." actionLabel="Retry" onaction={() => void load()} details={error} />{/if}
+      {#if controller?.attributesError ?? controller?.definitionsError}
+        <InlineNotice message="Couldn't load field history." actionLabel="Retry" onaction={() => void controller?.reload(false)} details={controller?.attributesError ?? controller?.definitionsError ?? undefined} />
+      {:else if controller}<AttributeSection {controller} />{/if}
+    </div>
   {/snippet}
-</Modal>
+</PersonMergeHistory>
 
 <style>
+  /* Groups (Names, Email and phone, each field) are 24 apart, each heading 8 above its rows. */
   .profile-history {
     display: grid;
-    gap: var(--space-6);
-    min-width: min(42rem, calc(100vw - 64px));
-  }
-  section {
-    display: grid;
-    gap: var(--space-2);
-  }
-  h3,
-  p,
-  ul {
-    margin: 0;
-  }
-  ul {
-    display: grid;
-    padding: 0;
-    list-style: none;
-  }
-  li {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--field-gap);
-    padding: var(--space-2) 0;
-    border-bottom: 1px solid var(--border-muted);
-  }
-  .value {
-    display: grid;
+    gap: var(--space-section);
     min-width: 0;
-    overflow-wrap: anywhere;
   }
-  .meta {
-    min-width: 0;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-  small {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-  .profile-history :global(.kit-disclosure__summary) {
-    padding: var(--space-2) 0;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: var(--font-size-sm);
-  }
-  .profile-history :global(.kit-disclosure li) {
-    flex-direction: column;
-    gap: var(--space-1);
-    color: var(--text-secondary);
-  }
-  .history-error {
-    color: var(--text-danger);
-  }
-  @media (max-width: 640px) {
-    li {
-      flex-direction: column;
-      gap: var(--space-1);
-    }
-  }
+  p { margin: 0; font-size: var(--type-meta-size); line-height: var(--type-meta-line); color: var(--text-muted); }
 </style>

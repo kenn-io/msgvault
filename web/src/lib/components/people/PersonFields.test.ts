@@ -66,9 +66,9 @@ it('keeps a conflicted structured editor available when Cancel is clicked during
 it('identifies row actions and confirmations by value and service scope', async () => {
   const initial = profile();
   initial.contact_points = [
-    ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
-    ...['T-WORK', 'T-PERSONAL'].map((scope, index) => ({ person_id: 7, address_kind: 'username', original_value: 'example', normalized_value: 'example', service_slug: 'slack', scope_kind: 'workspace', scope_value: scope, normalization: 'casefold', normalization_version: 1, envelope: { ...envelope, id: 40 + index, ordinal: index } })),
-    ...['+12025550123', '+12025550124'].map((value, index) => ({ person_id: 7, address_kind: 'phone', original_value: value, normalized_value: value, normalization: 'phone', normalization_version: 1, envelope: { ...envelope, id: 30 + index, ordinal: index } })),
+    ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, identity_key: 'email', address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
+    ...['T-WORK', 'T-PERSONAL'].map((scope, index) => ({ person_id: 7, identity_key: scope, address_kind: 'username', original_value: 'example', normalized_value: 'example', service_slug: 'slack', scope_kind: 'workspace', scope_value: scope, normalization: 'casefold', normalization_version: 1, envelope: { ...envelope, id: 40 + index, ordinal: index } })),
+    ...['+12025550123', '+12025550124'].map((value, index) => ({ person_id: 7, identity_key: value, address_kind: 'phone', original_value: value, normalized_value: value, normalization: 'phone', normalization_version: 1, envelope: { ...envelope, id: 30 + index, ordinal: index } })),
   ];
   const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
@@ -115,7 +115,7 @@ it('blocks attribute additions after a failed read and routes Retry to the profi
 
 it.each([false, true])('keeps removal state until its outcome settles (failure=%s)', async fail => {
   const initial = profile();
-  initial.contact_points = [{ person_id: 7, address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
+  initial.contact_points = [{ person_id: 7, identity_key: 'email', address_kind: 'email', original_value: 'old@example.com', normalized_value: 'old@example.com', normalization: 'email', normalization_version: 1, envelope }];
   let finish!: () => void;
   const { controller, view, writes } = harness(initial, { fail, wait: new Promise<void>(resolve => { finish = resolve; }) });
   try {

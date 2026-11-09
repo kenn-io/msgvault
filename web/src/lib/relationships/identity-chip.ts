@@ -41,8 +41,14 @@ function linkOrigins(edges: PersonClusterEdge[]): string {
   return [...new Set(edges.map(linkOriginText).filter(Boolean))].sort().join(' · ');
 }
 
+/** "workspace: garden", or whichever half of a scope is known. */
+export function identityScopeText(identity: { scope_kind?: string; scope_value?: string }): string {
+  return identity.scope_kind && identity.scope_value
+    ? `${identity.scope_kind}: ${identity.scope_value}` : identity.scope_kind || identity.scope_value || '';
+}
+
 export function identityChipText(
-  identifier: PersonIdentifier | undefined,
+  identifier: Pick<PersonIdentifier, 'type' | 'value' | 'display_value' | 'service_label' | 'participant_display_name' | 'scope_kind' | 'scope_value'> | undefined,
   member: PersonClusterMember | undefined,
   edges: PersonClusterEdge[]
 ): IdentityChipText {
@@ -52,8 +58,7 @@ export function identityChipText(
     const title = ordinary ? identifier.display_value?.trim() || identifier.value
       : identifier.service_label || typeLabels[identifier.type] || identifier.type.replaceAll('_', ' ');
     const name = identifier.participant_display_name || member?.display_name || '';
-    const scope = identifier.scope_kind && identifier.scope_value
-      ? `${identifier.scope_kind}: ${identifier.scope_value}` : identifier.scope_kind || identifier.scope_value || '';
+    const scope = identityScopeText(identifier);
     return {
       title,
       subtitle: [name === title ? '' : name, origin].filter(Boolean).join(' · '),

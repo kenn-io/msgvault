@@ -3,6 +3,7 @@
   import type { APIClient } from '../../api/client';
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
   import { credentialStatus, PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
+  import TrackedFieldsList from './TrackedFieldsList.svelte';
 
   let { client, controller }: { client: APIClient; controller: PeopleInferenceController } = $props();
   let provider = $state<PeopleInferencePresetCreateRequest['preset_id']>('openai');
@@ -172,6 +173,7 @@
       </div>
     {/if}
   {/if}
+  <TrackedFieldsList {client} />
 </section>
 
 <style>

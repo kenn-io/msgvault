@@ -10575,6 +10575,45 @@ components:
           format: int64
           type: integer
       type: object
+    ParticipantAddress:
+      additionalProperties: true
+      properties:
+        display_value:
+          type: string
+        identity_key:
+          type: string
+        normalized_value:
+          type: string
+        participant_display_name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_label:
+          type: string
+        service_slug:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+      required:
+        - identity_key
+        - participant_display_name
+        - participant_id
+        - type
+        - value
+        - display_value
+        - normalized_value
+        - service_slug
+        - service_label
+        - scope_kind
+        - scope_value
+      type: object
     ParticipantCompletionHTTPRequest:
       additionalProperties: false
       properties:
@@ -11689,6 +11728,8 @@ components:
           type: string
         envelope:
           $ref: "#/components/schemas/ValueEnvelope"
+        identity_key:
+          type: string
         normalization:
           type: string
         normalization_version:
@@ -11705,11 +11746,14 @@ components:
           type: string
         scope_value:
           type: string
+        service_label:
+          type: string
         service_slug:
           type: string
         uri:
           type: string
       required:
+        - identity_key
         - envelope
         - person_id
         - address_kind
@@ -13044,6 +13088,8 @@ components:
     PersonMergeDetail:
       additionalProperties: true
       properties:
+        labels:
+          $ref: "#/components/schemas/PersonMergeLabels"
         merge:
           $ref: "#/components/schemas/PersonMerge"
         participants:
@@ -13063,11 +13109,44 @@ components:
             $ref: "#/components/schemas/PersonSplit"
           type: array
       required:
+        - labels
         - merge
         - participants
         - rows
         - splits
         - review_candidates
+      type: object
+    PersonMergeLabels:
+      additionalProperties: true
+      properties:
+        absorbed_address_count:
+          format: int64
+          type: integer
+        addresses:
+          items:
+            $ref: "#/components/schemas/ParticipantAddress"
+          type: array
+        incomplete:
+          type: boolean
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        participants:
+          items:
+            $ref: "#/components/schemas/PersonMergeParticipant"
+          type: array
+        profiles:
+          items:
+            $ref: "#/components/schemas/PersonMergeRecordedProfile"
+          type: array
+      required:
+        - profiles
+        - participant_ids
+        - addresses
+        - absorbed_address_count
+        - incomplete
       type: object
     PersonMergeParticipant:
       additionalProperties: true
@@ -13098,6 +13177,52 @@ components:
       required:
         - person
         - etag
+      type: object
+    PersonMergeRecordedContactPoint:
+      additionalProperties: true
+      properties:
+        address_kind:
+          type: string
+        identity_key:
+          type: string
+        normalized_value:
+          type: string
+        original_value:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_label:
+          type: string
+        service_slug:
+          type: string
+      required:
+        - identity_key
+        - address_kind
+        - original_value
+        - normalized_value
+      type: object
+    PersonMergeRecordedProfile:
+      additionalProperties: true
+      properties:
+        contact_points:
+          items:
+            $ref: "#/components/schemas/PersonMergeRecordedContactPoint"
+          type: array
+        display_name:
+          type: string
+        id:
+          format: int64
+          type: integer
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - id
+        - participant_ids
       type: object
     PersonMergeRequiredError:
       additionalProperties: true
@@ -13260,6 +13385,8 @@ components:
     PersonMergeSummary:
       additionalProperties: true
       properties:
+        labels:
+          $ref: "#/components/schemas/PersonMergeLabels"
         merge:
           $ref: "#/components/schemas/PersonMerge"
         participant_count:
@@ -13280,6 +13407,7 @@ components:
           format: int64
           type: integer
       required:
+        - labels
         - merge
         - participant_count
         - row_count
@@ -17301,7 +17429,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.49.0
+  version: 3.50.0
 openapi: 3.1.0
 paths:
   /api/ping:

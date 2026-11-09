@@ -59,7 +59,7 @@ describe('StructuredProfileEditor', () => {
       person_id: 7,
       address_kind: 'email',
       original_value: 'old@example.test',
-      normalized_value: 'old@example.test',
+      identity_key: 'old@example.test', normalized_value: 'old@example.test',
       normalization: 'email',
       normalization_version: 1,
       envelope: { id: 11, ordinal: 2, source: 'archive_observation', created_at: when, updated_at: when, vcard: {} },

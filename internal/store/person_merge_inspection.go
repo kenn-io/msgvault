@@ -35,26 +35,34 @@ func (s *Store) ListPersonMergesPageContext(
 		if _, err := s.getPersonTx(ctx, tx, personID); err != nil {
 			return err
 		}
+		services, err := personMergeServicesTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		rows, err := tx.QueryContext(ctx, `SELECT
 			merge_record.id, merge_record.survivor_person_id_at_merge,
 			merge_record.absorbed_person_id, merge_record.current_person_id,
 			merge_record.survivor_uid, merge_record.absorbed_uid,
 			merge_record.survivor_revision_before, merge_record.absorbed_revision_before,
 			merge_record.survivor_revision_after, merge_record.actor,
-			merge_record.snapshot_version, merge_record.snapshot_sha256, merge_record.created_at,
+			merge_record.snapshot_version, merge_record.snapshot_sha256, merge_record.created_at, merge_record.snapshot_blob,
 			(SELECT COUNT(*) FROM person_merge_participants lineage_count
 			 WHERE lineage_count.merge_id = merge_record.id),
 			(SELECT COUNT(*) FROM person_merge_rows row_count
 			 WHERE row_count.merge_id = merge_record.id),
 			(SELECT COUNT(*) FROM person_splits split_count
-			 WHERE split_count.merge_id = merge_record.id),
+			 WHERE split_count.merge_id = merge_record.id OR split_count.id IN (
+				SELECT split_lineage.split_id FROM person_merge_participants split_lineage
+				WHERE split_lineage.merge_id = merge_record.id)),
 			(SELECT COUNT(*) FROM person_merge_review_candidates candidate_count
 			 WHERE candidate_count.merge_id = merge_record.id AND candidate_count.state = 'pending')
 			FROM person_merges merge_record
 			WHERE merge_record.current_person_id = ?
 			   OR EXISTS (
 				SELECT 1 FROM person_splits split_record
-				WHERE split_record.merge_id = merge_record.id
+				WHERE (split_record.merge_id = merge_record.id OR split_record.id IN (
+					SELECT split_lineage.split_id FROM person_merge_participants split_lineage
+					WHERE split_lineage.merge_id = merge_record.id))
 				  AND (split_record.source_person_id = ? OR split_record.new_person_id = ?)
 			   )
 			   OR EXISTS (
@@ -72,6 +80,7 @@ func (s *Store) ListPersonMergesPageContext(
 		for rows.Next() {
 			var summary PersonMergeSummary
 			var currentID sql.NullInt64
+			var snapshotBlob []byte
 			if err := rows.Scan(
 				&summary.Merge.ID, &summary.Merge.SurvivorPersonID,
 				&summary.Merge.AbsorbedPersonID, &currentID,
@@ -79,7 +88,7 @@ func (s *Store) ListPersonMergesPageContext(
 				&summary.Merge.SurvivorRevisionBefore, &summary.Merge.AbsorbedRevisionBefore,
 				&summary.Merge.SurvivorRevisionAfter, &summary.Merge.Actor,
 				&summary.Merge.SnapshotVersion, &summary.Merge.SnapshotSHA256,
-				&summary.Merge.CreatedAt, &summary.ParticipantCount, &summary.RowCount,
+				&summary.Merge.CreatedAt, &snapshotBlob, &summary.ParticipantCount, &summary.RowCount,
 				&summary.SplitCount, &summary.PendingCandidateCount,
 			); err != nil {
 				_ = rows.Close()
@@ -88,6 +97,7 @@ func (s *Store) ListPersonMergesPageContext(
 			if currentID.Valid {
 				summary.Merge.CurrentPersonID = &currentID.Int64
 			}
+			summary.Labels = personMergeRecordedLabels(snapshotBlob, summary.Merge.SnapshotSHA256, services)
 			summary.RowActionCounts = map[string]int{}
 			mergeIDs = append(mergeIDs, summary.Merge.ID)
 			result = append(result, summary)
@@ -131,7 +141,33 @@ func (s *Store) ListPersonMergesPageContext(
 		if err := actionRows.Close(); err != nil {
 			return fmt.Errorf("close person merge page row actions: %w", err)
 		}
-		return nil
+		lineage, err := tx.QueryContext(ctx, `SELECT merge_id, participant_id, origin_side, split_id
+			FROM person_merge_participants WHERE merge_id IN (`+personMergeSnapshotPlaceholders(len(mergeIDs))+`) ORDER BY merge_id, participant_id`, personMergeSnapshotIDArgs(mergeIDs)...)
+		if err != nil {
+			return fmt.Errorf("list merge page participants: %w", err)
+		}
+		defer func() { _ = lineage.Close() }()
+		var participantIDs []int64
+		for lineage.Next() {
+			var participant PersonMergeParticipant
+			var splitID sql.NullInt64
+			if err := lineage.Scan(&participant.MergeID, &participant.ParticipantID, &participant.OriginSide, &splitID); err != nil {
+				return fmt.Errorf("scan merge page participant: %w", err)
+			}
+			if splitID.Valid {
+				participant.SplitID = &splitID.Int64
+			}
+			labels := &summariesByID[participant.MergeID].Labels
+			labels.Participants = append(labels.Participants, participant)
+			participantIDs = append(participantIDs, participant.ParticipantID)
+		}
+		if err := lineage.Err(); err != nil {
+			return err
+		}
+		if err := lineage.Close(); err != nil {
+			return err
+		}
+		return s.loadPersonMergePageIdentities(ctx, tx, result, participantIDs)
 	})
 	if err != nil {
 		return nil, err
@@ -146,6 +182,7 @@ func (s *Store) GetPersonMergeContext(
 		return nil, ErrPersonMergeNotFound
 	}
 	var detail *PersonMergeDetail
+	var currentParticipantIDs []int64
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		merge, err := s.getPersonMergeTx(ctx, tx, mergeID)
 		if err != nil {
@@ -167,11 +204,27 @@ func (s *Store) GetPersonMergeContext(
 		if err != nil {
 			return err
 		}
+		var blob []byte
+		if err := tx.QueryRowContext(ctx, `SELECT snapshot_blob FROM person_merges WHERE id = ?`, mergeID).Scan(&blob); err != nil {
+			return err
+		}
+		if merge.CurrentPersonID != nil {
+			current, err := s.getPersonTx(ctx, tx, *merge.CurrentPersonID)
+			if err != nil {
+				return err
+			}
+			currentParticipantIDs = current.ParticipantIDs
+		}
+		services, err := personMergeServicesTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		detail = &PersonMergeDetail{
-			Merge: *merge, Participants: participants, Rows: rows,
+			Labels: personMergeRecordedLabels(blob, merge.SnapshotSHA256, services),
+			Merge:  *merge, Participants: participants, Rows: rows,
 			Splits: splits, ReviewCandidates: candidates,
 		}
-		return nil
+		return s.loadPersonMergeIdentities(ctx, tx, &detail.Labels, currentParticipantIDs, detail.Participants)
 	})
 	if err != nil {
 		return nil, err
@@ -258,7 +311,10 @@ func listPersonSplitsTx(
 	rows, err := tx.QueryContext(ctx, `SELECT id, merge_id, source_person_id,
 		new_person_id, new_person_uid, source_revision_before,
 		source_revision_after, actor, is_exact_reversal, created_at
-		FROM person_splits WHERE merge_id = ? ORDER BY id`, mergeID)
+		FROM person_splits WHERE merge_id = ? OR id IN (
+			SELECT lineage.split_id FROM person_merge_participants lineage
+			WHERE lineage.merge_id = ?)
+		ORDER BY id`, mergeID, mergeID)
 	if err != nil {
 		return nil, fmt.Errorf("list person splits: %w", err)
 	}
@@ -524,4 +580,119 @@ func (s *Store) acceptPersonMergeCandidateValueTx(
 		return 0, err
 	}
 	return inserted.ID, nil
+}
+
+func personMergeServicesTx(ctx context.Context, tx *loggedTx) (map[int64]*CommunicationService, error) {
+	services, err := listCommunicationServicesContext(ctx, tx, true)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]*CommunicationService, len(services))
+	for index := range services {
+		byID[services[index].ID] = &services[index]
+	}
+	return byID, nil
+}
+
+func personMergeRecordedLabels(blob []byte, digest string, services map[int64]*CommunicationService) PersonMergeLabels {
+	labels := PersonMergeLabels{Profiles: []PersonMergeRecordedProfile{}, Participants: []PersonMergeParticipant{}, ParticipantIDs: []int64{}, Addresses: []ParticipantAddress{}}
+	snapshot, err := decodePersonMergeSnapshot(blob, digest)
+	if err != nil {
+		labels.Incomplete = true
+		return labels
+	}
+	for _, profile := range snapshot.Persons {
+		labels.Profiles = append(labels.Profiles, PersonMergeRecordedProfile{ID: profile.ID, DisplayName: profile.DisplayName, ParticipantIDs: profile.ParticipantIDs, ContactPoints: personMergeRecordedContactPoints(snapshot.Rows, profile.ID, services)})
+	}
+	return labels
+}
+
+// personMergeRecordedContactPoints reads the profile's current saved contact rows from the immutable snapshot.
+func personMergeRecordedContactPoints(rows []personMergeSnapshotRow, personID int64, services map[int64]*CommunicationService) []PersonMergeRecordedContactPoint {
+	var points []PersonMergeRecordedContactPoint
+	for _, row := range rows {
+		owner, _ := personMergeSnapshotRowInteger(row, personMergePersonIDColumn)
+		kind := ContactAddressKind(personSplitSnapshotRowText(row, "address_kind"))
+		if row.TableName != personContactPointsTableName || owner != personID ||
+			personSplitSnapshotRowText(row, "active_until") != "" || personSplitSnapshotRowText(row, "superseded_at") != "" {
+			continue
+		}
+		point := PersonMergeRecordedContactPoint{AddressKind: kind,
+			OriginalValue: personSplitSnapshotRowText(row, "original_value"), NormalizedValue: personSplitSnapshotRowText(row, "normalized_value"),
+			ScopeKind: trimmedOrNil(new(personSplitSnapshotRowText(row, "scope_kind"))), ScopeValue: trimmedOrNil(new(personSplitSnapshotRowText(row, "scope_value")))}
+		serviceID, _ := personMergeSnapshotRowInteger(row, "service_id")
+		if service := services[serviceID]; service != nil {
+			point.ServiceSlug, point.ServiceLabel = new(service.Slug), new(service.DisplayLabel)
+		}
+		point.IdentityKey = contactPointIdentityKey(point.AddressKind, point.ServiceSlug, point.ScopeKind, point.ScopeValue, point.NormalizedValue)
+		points = append(points, point)
+	}
+	return points
+}
+
+func (s *Store) loadPersonMergeIdentities(ctx context.Context, tx *loggedTx, label *PersonMergeLabels, currentIDs []int64, participants []PersonMergeParticipant) error {
+	ids := append([]int64{}, currentIDs...)
+	for _, participant := range participants {
+		ids = append(ids, participant.ParticipantID)
+	}
+	identities, err := s.getParticipantIdentityContext(ctx, tx.Tx, ids, false)
+	if err != nil {
+		label.Incomplete = true
+	} else {
+		label.Addresses, label.ParticipantIDs = participantAddresses(identities)
+	}
+	label.AbsorbedAddressCount = absorbedAddressCount(*label, participants)
+	return nil
+}
+
+// loadPersonMergePageIdentities labels a page's lineage with one identity read.
+func (s *Store) loadPersonMergePageIdentities(ctx context.Context, tx *loggedTx, page []PersonMergeSummary, participantIDs []int64) error {
+	identities, err := s.getParticipantIdentityContext(ctx, tx.Tx, participantIDs, false)
+	addresses, known := []ParticipantAddress{}, []int64{}
+	if err == nil {
+		addresses, known = participantAddresses(identities)
+	}
+	for index := range page {
+		labels := &page[index].Labels
+		labels.Incomplete = labels.Incomplete || err != nil
+		bound := map[int64]bool{}
+		for _, participant := range labels.Participants {
+			bound[participant.ParticipantID] = true
+		}
+		for _, id := range known {
+			if bound[id] {
+				labels.ParticipantIDs = append(labels.ParticipantIDs, id)
+			}
+		}
+		for _, address := range addresses {
+			if bound[address.ParticipantID] {
+				labels.Addresses = append(labels.Addresses, address)
+			}
+		}
+		labels.AbsorbedAddressCount = absorbedAddressCount(*labels, labels.Participants)
+	}
+	return nil
+}
+
+func absorbedAddressCount(labels PersonMergeLabels, participants []PersonMergeParticipant) int {
+	absorbed, seen := map[int64]bool{}, map[string]bool{}
+	for _, participant := range participants {
+		if participant.OriginSide == "absorbed" {
+			absorbed[participant.ParticipantID] = true
+		}
+	}
+	for _, address := range labels.Addresses {
+		if absorbed[address.ParticipantID] {
+			seen[address.IdentityKey] = true
+		}
+	}
+	// Snapshot profiles retain survivor first and absorbed second, even for saved-only profiles.
+	if len(labels.Profiles) > 1 {
+		for _, point := range labels.Profiles[1].ContactPoints {
+			if point.AddressKind != ContactAddressLanguage {
+				seen[point.IdentityKey] = true
+			}
+		}
+	}
+	return len(seen)
 }

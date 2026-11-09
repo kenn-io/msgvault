@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { parseExploreURLState } from '../../src/lib/explore/state.svelte';
 import { installMixedArchive } from './fixtures/mixed-archive';
+import { stubOperationStatus } from '../kit-ui';
 
 function directoryURL(personID?: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({
@@ -121,77 +122,41 @@ test('Directory opens an accessible narrow People page and returns to its list',
   await expect(page.getByRole('grid', { name: 'People results' })).toBeFocused();
 });
 
-test('Directory profile maintenance uses exact safe requests and GET-only ambiguity recovery', async ({ page }) => {
-  const archive = await installMixedArchive(page);
-  await page.setViewportSize({ width: 1280, height: 900 });
+test('Directory profile updates save with keyboard', async ({ page }) => {
+  await installMixedArchive(page);
+  await stubOperationStatus(page, ['person_sweep']);
   await page.goto(directoryURL(42));
   await page.getByRole('button', { name: 'More actions' }).click();
-  await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
-
-  const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
-  await expect(maintenance).toBeVisible();
-  await expect(maintenance).toContainText('Time zone');
-  await expectNoAxeViolations(page, 'Directory profile maintenance desktop');
-  const forbidden = /forbidden-/i;
-  expect(await page.locator('body').innerHTML()).not.toMatch(forbidden);
-
-  const toggle = maintenance.getByRole('switch', { name: 'Track this person for profile maintenance' });
-  await toggle.focus();
+  const item = page.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+  await item.focus();
   await page.keyboard.press('Space');
-  await expect(toggle).toBeChecked();
-  await expect(toggle).toBeFocused();
-  await expect(page.getByRole('status', { name: 'Operation status' })).toContainText('Profile maintenance tracking enabled.');
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toBeHidden();
+});
 
-  archive.failNextTrackingMutation();
-  archive.failNextTrackingRead();
-  await page.keyboard.press('Space');
-  const retry = maintenance.getByRole('button', { name: 'Retry profile maintenance state' });
-  await expect(retry).toBeVisible();
-  await retry.focus();
-  await page.keyboard.press('Enter');
-  await expect(toggle).not.toBeChecked();
-  await expect(toggle).toBeEnabled();
-  await expect(toggle).toBeFocused();
+test('Directory profile updates menu is accessible on a phone', async ({ page }) => {
+  await installMixedArchive(page);
+  await stubOperationStatus(page, ['person_sweep']);
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.goto(directoryURL(42));
+  await page.getByRole('button', { name: 'More actions' }).click();
+  const item = page.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+  await expect(item).toBeInViewport();
+  await item.click();
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await expect(item).toBeInViewport();
+  await expectNoAxeViolations(page, 'Directory profile updates menu');
+});
 
-  const reveal = maintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
-  await expect(reveal).toBeEnabled();
-  await reveal.focus();
-  await page.keyboard.press('Enter');
-  await expect(maintenance.getByText('Private note')).toBeVisible();
-  await expect(maintenance.getByText('Sensitive', { exact: true })).toBeVisible();
-  expect(await page.locator('body').innerHTML()).not.toMatch(forbidden);
-
-  expect(archive.trackingRequests).toEqual([
-    { method: 'GET', path: '/api/v1/people/42/tracking' },
-    { method: 'GET', path: '/api/v1/person-fact-targets', includeSensitive: false },
-    { method: 'PUT', path: '/api/v1/people/42/tracking', tracked: true },
-    { method: 'PUT', path: '/api/v1/people/42/tracking', tracked: false },
-    { method: 'GET', path: '/api/v1/people/42/tracking' },
-    { method: 'GET', path: '/api/v1/people/42/tracking' },
-    { method: 'GET', path: '/api/v1/person-fact-targets', includeSensitive: true }
-  ]);
-
-  await page.getByRole('dialog', { name: 'Keep this profile updated' }).getByRole('button', { name: 'Close', exact: true }).click();
-  await expect(maintenance).toBeHidden();
-  await page.setViewportSize({ width: 390, height: 844 });
-  const drawer = page.getByRole('group', { name: 'Person page' });
-  await drawer.getByRole('button', { name: 'More actions' }).click();
-  await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
-  const drawerMaintenance = page.getByRole('region', { name: 'Profile maintenance' });
-  await expect(drawerMaintenance.getByText('Time zone')).toBeVisible();
-  const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
-  await expect(drawerReveal).toBeEnabled();
-  await drawerReveal.focus();
-  await expect(drawerReveal).toBeFocused();
-  await page.keyboard.press('Enter');
-  await expect(maintenance.getByText('Private note')).toBeVisible();
-  const targetCards = maintenance.locator('li');
-  const first = await targetCards.nth(0).boundingBox();
-  const second = await targetCards.nth(1).boundingBox();
-  expect(first).not.toBeNull();
-  expect(second).not.toBeNull();
-  expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height - 1);
-  await expectNoAxeViolations(page, 'Directory profile maintenance narrow');
+test('Directory profile updates offer Set up… while people lookups are off', async ({ page }) => {
+  await installMixedArchive(page);
+  await page.goto(directoryURL(42));
+  await page.getByRole('button', { name: 'More actions' }).click();
+  const item = page.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+  await expect(item).toContainText('Set up…');
+  await item.click();
+  await expect(page).toHaveURL(/settingsCategory%22%3A%22enrichment/);
 });
 
 test('Directory retains rows after an invalid cursor and reloads page one', async ({ page }) => {
