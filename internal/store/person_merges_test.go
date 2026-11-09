@@ -445,12 +445,17 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 		incomplete, empty      bool
 		profiles, participants int
 	}{
-		{"identifiers", func(t *testing.T, f *personMergeInspectionFixture) { denyPersonMergeIdentityReads(t, f.store) }, true, true, 2, 0},
+		{"identifiers", func(t *testing.T, f *personMergeInspectionFixture) {
+			t.Helper()
+			denyPersonMergeIdentityReads(t, f.store)
+		}, true, true, 2, 0},
 		{"snapshot", func(t *testing.T, f *personMergeInspectionFixture) {
+			t.Helper()
 			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_merges SET snapshot_blob = ? WHERE id = ?`), []byte("corrupt"), f.merge.Merge.ID)
 			require.NoError(t, err)
 		}, true, false, 0, 3},
 		{"known empty", func(t *testing.T, f *personMergeInspectionFixture) {
+			t.Helper()
 			_, err := f.store.DB().ExecContext(t.Context(), `DELETE FROM participant_identifiers`)
 			require.NoError(t, err)
 			_, err = f.store.DB().ExecContext(t.Context(), `UPDATE participants SET email_address = NULL, phone_number = NULL`)
@@ -2754,7 +2759,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 			})
 		}
 	})
-
 }
 
 func denyPersonMergeIdentityReads(t *testing.T, st *store.Store) {
@@ -2830,7 +2834,6 @@ func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 				})
 				require.NoError(err)
 				serviceID = service.ID
-
 			} else {
 				old, err := st.AddPersonContactPointContext(ctx, guest.ID, store.PersonContactPointInput{
 					AddressKind: store.ContactAddressEmail, OriginalValue: "retired@example.org", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
