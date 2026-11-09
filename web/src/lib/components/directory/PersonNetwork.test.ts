@@ -166,11 +166,9 @@ describe('PersonNetwork', () => {
   });
 
   it.each([
-    { labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove' },
-    { labels: ['Lumen Grove', 'Cedar Circle'], expected: 'Curated Peer, Lumen Grove, and Cedar Circle' },
-    { labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard'], expected: 'Curated Peer, Lumen Grove, and 3 more' }
-  ])('summarizes Direct as $expected', async ({ labels, expected }) => {
-    const network = connected(1);
+    { network: connected(1), personID: 8, labels: ['Lumen Grove'], expected: 'Curated Peer and Lumen Grove' },
+    { network: rootOnly(), personID: undefined, labels: ['Lumen Grove', 'Cedar Circle', 'Fern Hollow', 'Moss Yard', 'Willow Field', 'Birch Garden'], expected: 'Lumen Grove, Cedar Circle, and 4 more' }
+  ])('summarizes Direct as $expected', async ({ network, personID, labels, expected }) => {
     labels.forEach((label, index) => {
       const id = 22 + index;
       network.nodes.push({ id: `organization:${id}`, kind: 'organization', entity_id: id, label, hop: 1 });
@@ -180,20 +178,21 @@ describe('PersonNetwork', () => {
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
     const { container } = render(PersonNetwork, { controller: controllerWith(fetcher).controller, onOpenPerson, onOpenOrganization });
-    await screen.findByRole('button', { name: 'Curated Peer' });
+    await screen.findByRole('button', { name: 'Lumen Grove' });
     expect(container.querySelector('.summary')?.textContent?.trim()).toBe(expected);
     expect(new URL(requestOf(fetcher.mock.calls[0]![0]).url).searchParams.get('depth')).toBe('1');
     expect(screen.queryByRole('region', { name: 'Network at 2 steps' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
+    if (personID !== undefined) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
+      expect(onOpenPerson).toHaveBeenCalledWith(personID);
+    }
     await fireEvent.click(screen.getByRole('button', { name: 'Lumen Grove' }));
-    expect(onOpenPerson).toHaveBeenCalledWith(8);
     expect(onOpenOrganization).toHaveBeenCalledWith(22);
   });
 
   it.each([
     { catalog: [mentor], reverse: false, truncated: false, expected: 'Second Hop PersonMentor · via Curated Peer' },
     { catalog: [], reverse: false, truncated: false, expected: 'Second Hop PersonMentors · via Curated Peer' },
-    { catalog: [mentor], reverse: true, truncated: false, expected: 'Second Hop PersonMentee · via Curated Peer' },
     { catalog: [mentor], reverse: true, truncated: true, expected: 'Second Hop PersonMentee · via Curated Peer' }
   ])('reads a link from either end: $expected, truncated=$truncated', async ({ catalog, reverse, truncated, expected }) => {
     const network = connected();

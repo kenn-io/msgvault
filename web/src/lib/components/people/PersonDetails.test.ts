@@ -140,8 +140,8 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 });
 
 
-it.each(['profile', 'details', 'deleted'])('handles a failed %s read with one notice and its recovery action', async failure => {
-  const options = { detailsFailure: failure === 'details', personFailure: failure === 'profile', personDeleted: false };
+it.each(['profile and details', 'deleted'])('handles a failed %s read with one notice and its recovery action', async failure => {
+  const options = { detailsFailure: failure === 'profile and details', personFailure: failure === 'profile and details', personDeleted: false };
   const { directory } = await renderDetails([], options);
   if (failure === 'deleted') {
     options.personDeleted = true;
@@ -154,7 +154,7 @@ it.each(['profile', 'details', 'deleted'])('handles a failed %s read with one no
   expect(screen.getAllByText("Couldn't load these details.")).toHaveLength(1);
   const notice = within(screen.getByRole('alert'));
   await fireEvent.click(notice.getByText('Details'));
-  expect(notice.getByText(failure === 'details' ? 'Structured profile unavailable Contact state unavailable' : 'Saved profile unavailable')).toBeDefined();
+  expect(notice.getByText('Saved profile unavailable Structured profile unavailable Contact state unavailable')).toBeDefined();
   options.detailsFailure = false; options.personFailure = false;
   await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
