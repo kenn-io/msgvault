@@ -2522,14 +2522,6 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp.Results = results
-	if len(results) == 0 && offset == 0 {
-		if matcher, ok := s.queryEngineForContext(r.Context()).(query.SenderNameMatcher); ok {
-			resp.Hints = matcher.MatchSenderName(r.Context(), parsed)
-			if s.writeIfContextError(w, r.Context().Err()) {
-				return
-			}
-		}
-	}
 	if grant == nil && len(results) == 0 && offset == 0 && len(parsed.TextTerms) > 0 &&
 		len(parsed.AccountAddrs) == 0 && len(parsed.ReceivedAddrs) == 0 &&
 		parsed.DeletionScope != search.DeletionScopeDeleted && parsed.DeletionScope != search.DeletionScopeAny {

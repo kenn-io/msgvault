@@ -143,7 +143,7 @@ msgvault search "quarterly report" --limit 100 --offset 50
 
 | Operator      | Description                          | Example                    |
 |---------------|--------------------------------------|----------------------------|
-| `from:`       | Sender email address or domain       | `from:bob@example.com`     |
+| `from:`       | Sender name, address, or domain       | `from:bob@example.com`     |
 | `to:`         | Recipient email address              | `to:team@company.com`      |
 | `cc:`         | CC recipient                         | `cc:manager@company.com`   |
 | `bcc:`        | BCC recipient                        | `bcc:hr@company.com`       |

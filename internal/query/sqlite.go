@@ -2052,10 +2052,10 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 		return conditions, args, ""
 	}
 
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.CcAddrs, "cc")
-	conditions, args = appendSQLiteAddressCondition(conditions, args, q.BccAddrs, "bcc")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.FromAddrs, "from")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.ToAddrs, "to")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.CcAddrs, "cc")
+	conditions, args = e.appendSQLiteAddressCondition(conditions, args, q.BccAddrs, "bcc")
 
 	// Label filter - case-insensitive substring match using EXISTS
 	// so each label term can match a different row in message_labels.
@@ -2176,13 +2176,21 @@ func (e *SQLiteEngine) buildSearchCriteria(ctx context.Context, q *search.Query,
 // appendSQLiteAddressCondition resolves matching participants first and looks
 // messages up by rowid. A correlated EXISTS scans every message for a rare
 // address; this semi-join also avoids multiplying result rows.
-func appendSQLiteAddressCondition(
+func (e *SQLiteEngine) appendSQLiteAddressCondition(
 	conditions []string,
 	args []any,
 	addresses []string,
 	recipientType string,
 ) ([]string, []any) {
 	if len(addresses) == 0 {
+		return conditions, args
+	}
+	if recipientType == "from" {
+		for _, address := range addresses {
+			_, matching, senderArgs := search.SenderLookup(address, e.dialect.UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+			conditions = append(conditions, "m.id IN ("+matching+")")
+			args = append(args, senderArgs...)
+		}
 		return conditions, args
 	}
 	parts := make([]string, 0, len(addresses))
@@ -2192,9 +2200,6 @@ func appendSQLiteAddressCondition(
 		case strings.HasPrefix(address, "@"):
 			parts = append(parts, `LOWER(p_addr.email_address) LIKE ? ESCAPE '\'`)
 			matchArgs = append(matchArgs, "%"+escapeSQLiteLike(strings.ToLower(address)))
-		case recipientType == "from":
-			parts = append(parts, "LOWER(p_addr.email_address) = LOWER(?)")
-			matchArgs = append(matchArgs, address)
 		default:
 			lower := strings.ToLower(address)
 			parts = append(parts, "(LOWER(p_addr.email_address) = ? OR p_addr.phone_number = ?)")
@@ -2579,9 +2584,8 @@ func searchResultsSQL(pageSource, whereClause string) string {
 // Most context filters are appended to existing query filters.
 // For OR queries, drill-down fields land on the parent and AND with each alternative.
 //
-// Note on semantics: Appending to FromAddrs/ToAddrs produces OR semantics
-// within each dimension (IN clause). Labels use per-term EXISTS subqueries
-// with AND semantics (message must have all labels). MessageType and date
+// Recipient addresses use OR within their dimension. Labels and from: values
+// use per-term requirements. MessageType and date
 // filters are scoped intersections so an in-view search cannot widen outside
 // the current drill-down context.
 func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
@@ -2639,11 +2643,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Sender filter - append to existing from: filters
-	if filter.Sender != "" {
-		merged.FromAddrs = append(merged.FromAddrs, filter.Sender)
-	}
-
 	// Recipient filter - append to existing to: filters
 	if filter.Recipient != "" {
 		merged.ToAddrs = append(merged.ToAddrs, filter.Recipient)
@@ -2669,11 +2668,6 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 	if filter.WithAttachmentsOnly {
 		hasAttachment := true
 		merged.HasAttachment = &hasAttachment
-	}
-
-	// Domain filter - add as @domain pattern (handled specially in Search)
-	if filter.Domain != "" {
-		merged.FromAddrs = append(merged.FromAddrs, "@"+filter.Domain)
 	}
 
 	// Hide-deleted filter
@@ -2713,7 +2707,7 @@ func MergeFilterIntoQuery(q *search.Query, filter MessageFilter) *search.Query {
 		}
 	}
 
-	// Note: SenderName, RecipientName, ListID, and
+	// Note: Sender, SenderName, Domain, RecipientName, ListID, and
 	// EmptyValueTargets cannot be represented in search.Query.
 	// ListID scopes must use an exact-capable engine path rather than
 	// being translated to the substring list: search operator.
@@ -2902,14 +2896,5 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
 	}
-	result := &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}
-	if limit > 0 && offset == 0 && len(results) == 0 && count <= 0 {
-		result.Hints = e.matchSenderName(ctx, q, func(ctx context.Context, scoped *search.Query) ([]string, []any, string) {
-			return e.buildFilteredMetadataSearchQueryParts(ctx, scoped, filter)
-		})
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
+	return &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}, nil
 }
