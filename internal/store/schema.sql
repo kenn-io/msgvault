@@ -2365,6 +2365,8 @@ CREATE INDEX IF NOT EXISTS idx_sync_runs_operations_running
     ON sync_runs(started_at DESC, id DESC) WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_sync_runs_operations_succeeded
     ON sync_runs(started_at DESC, id DESC) WHERE status = 'completed' AND errors_count = 0;
+CREATE INDEX IF NOT EXISTS idx_sync_runs_completed
+    ON sync_runs(source_id, completed_at DESC, id DESC) WHERE status = 'completed';
 
 -- A cursor page binds the exact membership/order view across every operation
 -- ledger. Aggregate counter checkpoints do not affect this revision.
