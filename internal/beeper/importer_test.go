@@ -1207,11 +1207,18 @@ func TestImportReconcileRetriesFailedAuxiliaryWrite(t *testing.T) {
 	f.chat("!steady:beeper.local").Msgs[3].Reactions = []map[string]any{
 		{"id": "@me:beeper.local", "reactionKey": "👍", "participantID": "@me:beeper.local", "emoji": true},
 	}
-	release := failReactionInserts(t, st)
+	release := failWrites(t, st, "reactions", "INSERT")
 	failed, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.Positive(failed.Errors, "the reaction write must fail")
 	release()
+	// The source JSON is archived even though a write beside it failed.
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "s3").Scan(&messageID))
+	raw, err := st.GetMessageRawContext(t.Context(), messageID)
+	require.NoError(err)
+	assert.Contains(string(raw), "reactionKey")
 
 	// The incoming message has not changed since the failed run, but its
 	// reaction was never stored, so the next re-check must write it again.
@@ -1226,42 +1233,43 @@ func TestImportReconcileRetriesFailedAuxiliaryWrite(t *testing.T) {
 	assert.Equal(1, reactions)
 }
 
-// failReactionInserts makes every reaction insert fail until the returned
-// function runs.
-func failReactionInserts(t *testing.T, st *store.Store) func() {
+// failWrites makes every event (INSERT, UPDATE, or DELETE) on table fail
+// until the returned function runs.
+func failWrites(t *testing.T, st *store.Store, table, event string) func() {
 	t.Helper()
 	require := require.New(t)
+	name := "fail_beeper_" + table + "_" + strings.ToLower(event)
 	if st.IsPostgreSQL() {
-		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_beeper_reaction_insert()
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION `+name+`()
 			RETURNS trigger LANGUAGE plpgsql AS $$
 			BEGIN
-				RAISE EXCEPTION 'forced reaction failure';
+				RAISE EXCEPTION 'forced write failure';
 			END;
 			$$`)
 		require.NoError(err)
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_beeper_reaction_insert
-			BEFORE INSERT ON reactions
-			FOR EACH ROW EXECUTE FUNCTION fail_beeper_reaction_insert()`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+`
+			BEFORE `+event+` ON `+table+`
+			FOR EACH ROW EXECUTE FUNCTION `+name+`()`)
 		require.NoError(err)
 		release := func() {
 			// Cleanup runs after t.Context() is canceled.
 			ctx := context.WithoutCancel(t.Context())
-			_, err := st.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS fail_beeper_reaction_insert ON reactions`)
+			_, err := st.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name+` ON `+table)
 			require.NoError(err)
-			_, err = st.DB().ExecContext(ctx, `DROP FUNCTION IF EXISTS fail_beeper_reaction_insert()`)
+			_, err = st.DB().ExecContext(ctx, `DROP FUNCTION IF EXISTS `+name+`()`)
 			require.NoError(err)
 		}
 		t.Cleanup(release)
 		return release
 	}
-	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_beeper_reaction_insert
-		BEFORE INSERT ON reactions
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+`
+		BEFORE `+event+` ON `+table+`
 		FOR EACH ROW BEGIN
-			SELECT RAISE(ABORT, 'forced reaction failure');
+			SELECT RAISE(ABORT, 'forced write failure');
 		END`)
 	require.NoError(err)
 	release := func() {
-		_, err := st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_beeper_reaction_insert`)
+		_, err := st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS `+name)
 		require.NoError(err)
 	}
 	t.Cleanup(release)

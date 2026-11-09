@@ -1485,6 +1485,7 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 // rewrite the whole window on every run. Changes older than the window are
 // only repaired by --full runs (documented limitation).
 func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff time.Time, sum *ImportSummary) error {
+	cc.cs.pruneUnfinished(cutoff)
 	cursor, direction := "", ""
 	for range maxReconcilePages {
 		if err := ctx.Err(); err != nil {
@@ -1597,11 +1598,12 @@ func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Messa
 // re-walk can skip rewriting it. The archived Beeper JSON carries every field
 // the API sends, including edits, deletion flags, and embedded reactions, and
 // persistMessage writes it last, so a match also means the earlier writes for
-// that message finished. A message with media that still needs a download,
+// that message finished, unless a write failed and left it unfinished. A
+// message with media that still needs a download,
 // or that the current media policy no longer excludes, is treated as changed,
 // so the re-walk keeps retrying the fetch.
 func (imp *Importer) matchesArchive(ctx context.Context, cc *chatScope, m *Message, prior store.StoredMessage) (bool, error) {
-	if !persistsMessageRow(m) || !sameJSON(prior.Raw, m.Raw) {
+	if _, unfinished := cc.cs.Unfinished[m.ID]; unfinished || !persistsMessageRow(m) || !sameJSON(prior.Raw, m.Raw) {
 		return false, nil
 	}
 	if len(m.Attachments) == 0 || cc.opts.NoMedia || cc.opts.AttachmentsDir == "" {
@@ -1720,8 +1722,9 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		return fmt.Errorf("look up archived Beeper message: %w", err)
 	}
 	_, existed := archived[m.ID]
-	// Attachment failures leave typed markers that matchesArchive retries, so
-	// only the other per-item failures hold back the raw archive below.
+	// A failed per-item write below marks the message unfinished, so the
+	// reconcile pass rewrites it even though its archived JSON matches.
+	// Failed downloads are excluded: their typed markers already drive retries.
 	errorsBefore := sum.Errors
 	msg, text := mapMessage(m, cc.convID, cc.sourceID)
 	senderPID, err := imp.res.resolveID(ctx, m.SenderID, m.SenderName)
@@ -1757,7 +1760,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	// attachment clears the stale rows.
 	attachmentErrorsBefore := sum.Errors
 	requestCtx, cancel := cc.opts.requestContext(ctx)
-	imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
+	attachmentsStored := imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
 	cancel()
 	if cc.opts.budgetExpired() {
 		sum.Stopped = true
@@ -1775,9 +1778,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	// including ones we do not model; fall back to re-marshalling only if a
 	// message was constructed without going through a decode. It is written
 	// last because reconcileChat skips a message whose archived JSON matches:
-	// a run interrupted before this point, or a write above that failed, must
-	// leave the message to be redone by the next walk over it.
-	incomplete := sum.Errors-errorsBefore > attachmentErrors
+	// a run interrupted before this point must leave the message to be redone.
 	raw := []byte(m.Raw)
 	if len(raw) == 0 {
 		marshaled, merr := json.Marshal(m, json.Deterministic(true))
@@ -1786,10 +1787,13 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 		raw = marshaled
 	}
-	if !incomplete {
-		if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
-			return fmt.Errorf("archive beeper message raw: %w", err)
-		}
+	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
+		return fmt.Errorf("archive beeper message raw: %w", err)
+	}
+	if !attachmentsStored || sum.Errors-errorsBefore > attachmentErrors {
+		cc.cs.markUnfinished(m.ID, m.Timestamp)
+	} else {
+		delete(cc.cs.Unfinished, m.ID)
 	}
 
 	// Pages arrive newest-first, so a reply can precede its parent even

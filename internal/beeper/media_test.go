@@ -1366,6 +1366,47 @@ func TestImportNoMediaEditClearsRemovedAttachments(t *testing.T) {
 	assert.Zero(rows, "the removed attachment must not outlive the edit")
 }
 
+func TestImportReconcileRetriesFailedAttachmentCleanup(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	// The photo is edited away, but clearing its row fails.
+	msg := &f.chat("!media:beeper.local").Msgs[0]
+	msg.Type = ""
+	msg.Text = "photo removed"
+	msg.Attachments = nil
+	release := failWrites(t, st, "attachments", "DELETE")
+	failed, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Positive(failed.Errors)
+	release()
+
+	// The message is unchanged since then, so only its unfinished cleanup
+	// brings the re-check back to it.
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	var rows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "p0").Scan(&rows))
+	assert.Zero(rows)
+}
+
 func TestImportReconcileDownloadsMediaAfterSizeCapRises(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
