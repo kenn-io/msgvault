@@ -5,29 +5,31 @@ import { requestOf, pathOf, organization, employment, organizationProfile, envel
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
-  it('saves aliases and categories that differ only by case or whitespace once', async () => {
-    const profile = organizationProfile();
+  it('keeps a saved alias with a comma as it is when the aliases are left as loaded', async () => {
+    const profile = { ...organizationProfile(), names: [{ ...organizationProfile().names[0], name: 'Acme, Inc.', name_normalized: 'acme, inc.' }] };
     const onDone = vi.fn();
-    let body: { names: { name: string; name_kind: string }[]; categories: { category: string }[] } | undefined;
+    const writes: { method: string; body: { names?: { name: string }[]; categories?: { category: string }[] } }[] = [];
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
-      if (request.method === 'PUT') {
-        body = await request.json();
-        if (body?.names.some(item => item.name === 'acme  labs') || body?.categories.some(item => item.category === 'research')) {
-          return Response.json({ message: 'Duplicate profile value' }, { status: 400 });
-        }
-        return Response.json(organizationProfile(3), { headers: { ETag: '"organization-21-r3"' } });
-      }
-      return Response.json(profile, { headers: { ETag: '"organization-21-r1"' } });
+      if (request.method === 'GET') return Response.json(profile, { headers: { ETag: '"organization-21-r1"' } });
+      writes.push({ method: request.method, body: await request.json() });
+      return request.method === 'PATCH'
+        ? Response.json(organization(21, 2, 'Renamed'), { headers: { ETag: '"organization-21-r2"' } })
+        : Response.json(organizationProfile(2), { headers: { ETag: '"organization-21-r2"' } });
     });
-    render(OrganizationEditor, { controller, organization: organization(), onDone });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Acme Labs, acme  labs' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add category…' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research, research' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    const { unmount } = render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Renamed' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    // Untouched, the aliases have nothing unsaved, so the organization save closes the dialog.
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(body?.names.filter(item => item.name_kind === 'alias').map(item => item.name)).toEqual(['Acme Labs']);
-    expect(body?.categories.map(item => item.category)).toEqual(['Research']);
+    unmount();
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Add category…' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research, Research' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(2));
+    expect(writes[1].body.names?.map(item => item.name)).toEqual(['Acme, Inc.']);
+    expect(writes[1].body.categories?.map(item => item.category)).toEqual(['Research']);
   });
 
   it('shows a changed organization before deleting its newer revision', async () => {

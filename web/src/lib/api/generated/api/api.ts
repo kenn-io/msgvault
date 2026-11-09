@@ -1681,6 +1681,7 @@ export const getEmployment = (
   );
 };
 /**
+ * Setting `is_primary` to true conflicts when another primary current employment exists; `POST /employments/{id}/primary` replaces it.
  * @summary Replace an employment record's mutable fields
  */
 export const patchEmployment = (

@@ -21895,6 +21895,7 @@ paths:
       tags:
         - API
     patch:
+      description: Setting `is_primary` to true conflicts when another primary current employment exists; `POST /employments/{id}/primary` replaces it.
       operationId: patchEmployment
       parameters:
         - description: Employment ID

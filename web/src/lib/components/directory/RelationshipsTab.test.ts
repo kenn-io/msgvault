@@ -570,6 +570,7 @@ describe('RelationshipsTab', () => {
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'PATCH') {
         if (request.headers.get('If-Match') === '"relationship-41-r1"') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+        if (requests.filter(sent => sent.method === 'PATCH').length === 2) return Response.json({ message: 'Disk full' }, { status: 500 });
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-41-r3"' } });
       }
       if (path === '/api/v1/people/7/relationships') {
@@ -595,12 +596,17 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Opening note' } });
     expect(within(screen.getByRole('region', { name: 'Saved connection' })).getByText('Notes').nextElementSibling?.textContent).toBe('Concurrent note');
     await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+    // The form is back to its opening values, and a failed Keep yours still retries.
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
     const patches = requests.filter(request => request.method === 'PATCH');
     await expect(patches[0].clone().json()).resolves.toEqual({ end_date: '2026-06', notes: null });
-    await expect(patches[1].clone().json()).resolves.toEqual({ end_date: '2026-06', notes: 'Opening note' });
-    expect(patches[1].headers.get('If-Match')).toBe('"relationship-41-r2"');
+    for (const retry of patches.slice(1)) {
+      await expect(retry.clone().json()).resolves.toEqual({ end_date: '2026-06', notes: 'Opening note' });
+      expect(retry.headers.get('If-Match')).toBe('"relationship-41-r2"');
+    }
+    expect(patches).toHaveLength(3);
   });
 
   it('refreshes connections after Keep yours on a conflict that already saved the requested note', async () => {
@@ -628,7 +634,7 @@ describe('RelationshipsTab', () => {
     expect(controller.network?.nodes?.[0].label).toBe('After');
   });
 
-  it('keeps an ended connection unchanged until notes change, then omits a cleared end date', async () => {
+  it('omits a cleared end date from an ended connection\'s save', async () => {
     const opening = relationship(41, 1, { status: 'ended', end_date: { year: 2023 }, notes: 'Old' });
     const bodies: unknown[] = [];
     const { client, controller } = controllerWith(async input => {
@@ -641,14 +647,8 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
     await fireEvent.click(screen.getByText('1 past connection'));
     await rowAction('Edit…');
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '' } });
     expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
-    const date = screen.getByRole('textbox', { name: 'End date' });
-    await fireEvent.submit(date.closest('form')!);
-    expect(bodies).toHaveLength(0);
-    expect(screen.getByRole('dialog', { name: 'Edit connection' })).toBeDefined();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'New' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(bodies).toHaveLength(1));

@@ -67,7 +67,7 @@
   const fieldsSaved = $derived(fieldsVersion?.data.organization);
   const fieldsUnsaved = $derived(!!fieldsSaved && (name.trim() !== fieldsSaved.name || kind !== fieldsSaved.kind
     || primaryDomain.trim() !== (fieldsSaved.primary_domain ?? '') || description.trim() !== (fieldsSaved.description ?? '')));
-  const listsUnsaved = $derived([valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories))].some((delta) => delta.added.length || delta.removed.size));
+  const listsUnsaved = $derived([valueDelta(baselineAliases, listValues(aliases, baselineAliases)), valueDelta(baselineCategories, listValues(categories, baselineCategories))].some((delta) => delta.added.length || delta.removed.size));
   // Save organization writes only its own fields, so it waits until one of them changes; a failed write stays retryable.
   const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations
     || (!!currentProfile && !fieldsUnsaved && !attempt.conflict && !attempt.failed));
@@ -160,7 +160,7 @@
   // Aliases and categories as the form shows them, over the rest of the version sent.
   function listsBody(profile: OrganizationProfile): OrganizationProfileBody {
     const saved = (profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
-    return profileBody(profile, valueDelta(saved, values(aliases)), valueDelta((profile.categories ?? []).map((item) => item.category), values(categories)));
+    return profileBody(profile, valueDelta(saved, listValues(aliases, baselineAliases)), valueDelta((profile.categories ?? []).map((item) => item.category), listValues(categories, baselineCategories)));
   }
 
   async function checkDeletion(): Promise<void> {
@@ -196,7 +196,12 @@
   }
 
   function values(value: string): string[] {
-    return value.split(',').map((item) => item.trim()).filter(Boolean);
+    return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
+  }
+
+  // A list left as loaded keeps its saved values, even one with a comma in it.
+  function listValues(text: string, baseline: string[]): string[] {
+    return text === baseline.join(', ') ? baseline : values(text);
   }
 
   function present(parts: Array<string | number | undefined>): string {
@@ -308,23 +313,10 @@
     };
   }
 
-  // The PUT refuses two aliases or two categories that differ only by case or whitespace, so a new one that matches
-  // a kept or earlier one is left out. Match Go's simple lowercase and whitespace rules in NormalizeOrganizationName.
-  function newValues(kept: string[], added: string[]): string[] {
-    const key = (value: string) => Array.from(value, char => char === 'İ' ? 'i' : char.toLowerCase()).join('').split(/\p{White_Space}+/u).filter(Boolean).join(' ');
-    const seen = new Set(kept.map(key));
-    return added.filter(value => {
-      if (seen.has(key(value))) return false;
-      seen.add(key(value));
-      return true;
-    });
-  }
-
   function namesWithDelta(profile: OrganizationProfile, delta: ValueDelta): NameBody[] {
     const retained = (profile.names ?? []).filter((item) => item.name_kind !== 'alias' || !delta.removed.has(item.name));
     const nextOrdinal = Math.max(-1, ...(profile.names ?? []).map((item) => item.envelope.ordinal)) + 1;
-    const kept = retained.filter((item) => item.name_kind === 'alias').map((item) => item.name);
-    return [...retained.map(nameBody), ...newValues(kept, delta.added).map((name, index): NameBody => ({ name, name_kind: 'alias', ordinal: nextOrdinal + index, source: 'user' }))];
+    return [...retained.map(nameBody), ...delta.added.map((name, index): NameBody => ({ name, name_kind: 'alias', ordinal: nextOrdinal + index, source: 'user' }))];
   }
 
   function nameBody(item: Name): NameBody {
@@ -334,7 +326,7 @@
   function categoriesWithDelta(profile: OrganizationProfile, delta: ValueDelta): CategoryBody[] {
     const retained = (profile.categories ?? []).filter((item) => !delta.removed.has(item.category));
     const nextOrdinal = Math.max(-1, ...(profile.categories ?? []).map((item) => item.envelope.ordinal)) + 1;
-    return [...retained.map(categoryBody), ...newValues(retained.map((item) => item.category), delta.added).map((category, index): CategoryBody => ({ category, ordinal: nextOrdinal + index, source: 'user' }))];
+    return [...retained.map(categoryBody), ...delta.added.map((category, index): CategoryBody => ({ category, ordinal: nextOrdinal + index, source: 'user' }))];
   }
 
   function categoryBody(item: Category): CategoryBody {

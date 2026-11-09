@@ -96,6 +96,7 @@ func (s *Server) registerEmploymentRoutes(api huma.API) {
 	registerRawHumaRoute(api, get, s.handleGetEmployment)
 
 	patch := rawAPIV1Operation("patchEmployment", http.MethodPatch, "/employments/{id}", "Replace an employment record's mutable fields")
+	patch.Description = "Setting `is_primary` to true conflicts when another primary current employment exists; `POST /employments/{id}/primary` replaces it."
 	addEmploymentIDParameter(&patch)
 	addEmploymentIfMatchParameter(&patch)
 	patch.RequestBody = jsonRequestBodyFor[EmploymentBody](api)

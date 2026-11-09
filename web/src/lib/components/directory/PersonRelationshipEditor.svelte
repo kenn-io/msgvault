@@ -164,7 +164,7 @@
   }
   async function submit(): Promise<void> {
     if (
-      attempt.busy || loading || (!!initialView && !opened) || (!!initialRelationship && !attempt.conflict && !edited) ||
+      attempt.busy || loading || (!!initialView && !opened) ||
       datesInvalid || !!endDateError ||
       !relationshipTypeSlug ||
       (!initialRelationship && (counterpartID === null || counterpartID === personID))
@@ -193,7 +193,6 @@
   function patchBody(): PatchPersonRelationshipRequest {
     return { ...(endDate.trim() ? { end_date: endDate.trim() } : {}), notes: notes.trim() || null };
   }
-  const edited = $derived(!!initialRelationship && ((!!endDate.trim() && endDate.trim() !== partialDate(initialRelationship.end_date)) || notes.trim() !== (initialRelationship.notes?.trim() ?? '')));
   // The list refresh unblocks Add before the network refresh ends, so the whole check runs under busy.
   const refreshAfterUncertainOutcome = () => attempt.hold(async () => {
     await controller.refreshRelationships();
@@ -232,7 +231,7 @@
 <Dialog title={initialRelationship ? 'Edit connection' : 'Add connection'} onclose={requestClose}
   primaryLabel={attempt.conflict ? 'Keep yours' : initialRelationship ? 'Save' : 'Add connection'} onprimary={() => void submit()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}
-  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || !relationshipTypeSlug || datesInvalid || !!endDateError || (!!initialRelationship && !attempt.conflict && !edited) || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  busy={attempt.busy} primaryDisabled={loading || (!!initialView && !opened) || !relationshipTypeSlug || datesInvalid || !!endDateError || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
   {#if loading}<p role="status">Loading connection…</p>{:else if !initialView || opened}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="editor" aria-busy={attempt.busy}>
