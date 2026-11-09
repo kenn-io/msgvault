@@ -127,7 +127,7 @@ export GOLANGCI_LINT_CACHE
 # serialize one another while duplicate runners in one worktree can wait.
 GOLANGCI_LINT_TMP ?= $(GOLANGCI_LINT_CACHE)/tmp
 
-.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
+.PHONY: build build-release homebrew install clean test test-unsharded test-shards test-v test-pg test-pg-shipped test-pg-shipped-unsharded test-pg-packages test-pg-both pg-shipped-only-check require-test-db fmt lint-tools custom-gcl lint lint-ci lint-ci-golangci vuln-tools vulncheck testify-helper-check tidy openapi api-generate openapi-check api-check web-install web-generate web-check web-test web-browser-install web-test-browser web-e2e web-build web-embed web-assets-check smoke-web-release shootout run-shootout install-hooks bench vcard-registry-check vcard-registry-update docs-install docs-build docs-serve docs-check docs-fixture-test docs-fixture-check docs-fixture-smoke docs-web-screenshots docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy help
 
 .PHONY: agent-guide agent-guide-check
 
@@ -290,11 +290,13 @@ test-pg-shipped: require-test-db
 	$(MAKE) test-pg-shipped-unsharded
 	$(MAKE) test-shards
 
-# test-pg-shipped minus SHARDED_TEST_PKGS, for CI's test-postgres lane; the
-# test-postgres-sharded jobs cover the rest against their own servers.
+# test-pg-shipped minus SHARDED_TEST_PKGS and any additional CI exclusions.
 test-pg-shipped-unsharded: require-test-db
-	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
+	@excluded=$$(go list $(SHARDED_TEST_PKGS) $(EXCLUDE_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
 	$(call gotestsum,pg-shipped-unsharded,$$(go list ./... | grep -vxF $$excluded),-timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)")
+
+test-pg-packages: require-test-db
+	$(call gotestsum,pg-packages,$(PKGS),-timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)")
 
 # Both PostgreSQL lanes' coverage in one pass.
 #
@@ -496,7 +498,9 @@ huma-check:
 # Run linter (CI, no auto-fix). The second pass lints the files that only the
 # PostgreSQL-only CGO_ENABLED=0 build compiles. It covers the packages whose
 # tests also build without CGO; the others' tests need the SQLite driver.
-lint-ci: custom-gcl testify-helper-check lint-workflow-retries
+lint-ci: lint-ci-golangci testify-helper-check
+
+lint-ci-golangci: custom-gcl lint-workflow-retries
 	@mkdir -p "$(GOLANGCI_LINT_TMP)"
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run ./...
 	CGO_ENABLED=0 TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run $(NOCGO_LINT_PKGS)
@@ -627,6 +631,7 @@ help:
 	@echo "  test-cli-e2e    - Build and test the CLI on a synthetic archive"
 	@echo "  test-shards    - Run SHARDED_TEST_PKGS as TEST_SHARDS concurrent processes each"
 	@echo "  test-unsharded - Run every package except SHARDED_TEST_PKGS (CI's test lane)"
+	@echo "  test-pg-packages - Run PostgreSQL tests for PKGS"
 	@echo "  fmt            - Format code"
 	@echo "  lint           - Run linter (auto-fix)"
 	@echo "  lint-ci        - Run linter (CI, no auto-fix; also runs testify-helper-check)"
