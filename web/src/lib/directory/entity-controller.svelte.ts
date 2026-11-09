@@ -175,7 +175,8 @@ export class DirectoryEntityController {
       const rows = response.data.employments ?? [];
       const found = rows.find(row => Object.entries(body).every(([key, value]) => {
         if ((key === 'start_date' || key === 'end_date') && typeof value === 'string') {
-          return formatPartialDate(row[key] as { year?: number; month?: number; day?: number }) === value;
+          const canonical = value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+          return formatPartialDate(row[key] as { year?: number; month?: number; day?: number }) === canonical;
         }
         return sameValue(row[key], value);
       }));

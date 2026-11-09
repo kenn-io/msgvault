@@ -143,6 +143,7 @@
     if (controller.createBlocked.employments) return;
     try {
       if (uncertainBody && await controller.findEmploymentByBody(uncertainBody)) {
+        await controller.refreshDirectoryViews();
         onDone();
         return;
       }

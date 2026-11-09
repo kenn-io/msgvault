@@ -52,9 +52,9 @@ export function collection(rows = [employment()], projection = { employment_id: 
   return Response.json({ employments: rows, projection });
 }
 
-export function controllerWith(fetchFn: typeof fetch, personID = 7) {
+export function controllerWith(fetchFn: typeof fetch, personID = 7, options: { onDirectoryChange?: () => void | Promise<void> } = {}) {
   const client = createAPIClient(fetchFn);
-  return { client, controller: new DirectoryEntityController(client, personID) };
+  return { client, controller: new DirectoryEntityController(client, personID, options) };
 }
 
 
