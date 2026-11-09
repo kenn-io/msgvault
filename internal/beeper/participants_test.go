@@ -12,6 +12,48 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestResolvedContactMergeLabelsExcludeFallbackAnchor(t *testing.T) {
+	for _, tc := range []struct {
+		name, phone, email, kind, value string
+	}{
+		{"phone", "+12025550123", "", "phone", "+12025550123"},
+		{"email", "", "reader@example.org", "email", "reader@example.org"},
+		{"only an anchor", "", "", "beeper", "beeper:9:account-a:6:user-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			participant, err := newParticipantResolver(st, "account-a").resolveUser(ctx, &User{ID: "user-a", PhoneNumber: tc.phone, Email: tc.email, FullName: "Reader"})
+			require.NoError(err)
+			guest, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+			require.NoError(err)
+			ownerID, err := st.EnsureParticipantContext(ctx, "owner@example.org", "Owner", "example.org")
+			require.NoError(err)
+			owner, _, err := st.CreatePersonFromParticipantContext(ctx, ownerID)
+			require.NoError(err)
+			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "beeper-anchor", Actor: "test"})
+			require.NoError(err)
+			detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+			require.NoError(err)
+			assert.Equal(1, detail.Labels.AbsorbedAddressCount)
+			var addresses []store.ParticipantAddress
+			for _, address := range detail.Labels.Addresses {
+				if address.ParticipantID == participant {
+					addresses = append(addresses, address)
+				}
+			}
+			require.Len(addresses, 1)
+			assert.Equal(tc.kind, addresses[0].Type)
+			assert.Equal(tc.value, addresses[0].Value)
+			anchorID, _, err := st.ParticipantByIdentifierContext(ctx, "beeper", "beeper:9:account-a:6:user-a")
+			require.NoError(err)
+			assert.Equal(participant, anchorID)
+		})
+	}
+}
+
 func TestResolveUserPhoneRungDedupesAcrossSources(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

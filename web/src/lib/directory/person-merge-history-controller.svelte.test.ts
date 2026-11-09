@@ -40,7 +40,7 @@ function summary(id: number) {
   return {
     merge: mergeDetail.merge,
     labels: { ...mergeDetail.labels, participants: mergeDetail.participants.map(participant => ({ ...participant, merge_id: id })) },
-    participant_count: 1,
+    participant_count: mergeDetail.participants.length,
     pending_candidate_count: 0,
     row_action_counts: { restored: 2 },
     row_count: 2,

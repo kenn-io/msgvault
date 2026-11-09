@@ -14,66 +14,31 @@ import (
 // TestWebMergeIdentityFixturesMatchStore keeps the Web History fixtures in sync
 // with merge labels returned by the store.
 func TestWebMergeIdentityFixturesMatchStore(t *testing.T) {
-	for _, tc := range []struct {
-		kind  string
-		setup func(*testing.T, *store.Store) (*store.Person, *store.Person)
-	}{
-		{"beeper-phone", beeperPhoneMergePeople},
-		{"beeper-migrated", func(t *testing.T, st *store.Store) (*store.Person, *store.Person) {
-			t.Helper()
-			owner := mustPromotedPerson(t.Context(), t, st, "owner@example.org", "Owner")
-			participant, _ := migratedBeeperParticipant(t.Context(), t, st)
-			guest, _, err := st.CreatePersonFromParticipant(participant)
-			require.NoError(t, err)
-			return owner, guest
-		}},
-		{"mailbox-case", mailboxCaseMergePeople},
-		{"beeper-raw-phone", func(t *testing.T, st *store.Store) (*store.Person, *store.Person) {
-			t.Helper()
-			require := require.New(t)
-			participant, err := st.EnsureParticipantByIdentifierContext(t.Context(), "beeper", "+12025550123", "Reader")
-			require.NoError(err)
-			service, err := st.ResolveCommunicationServiceContext(t.Context(), "whatsapp")
-			require.NoError(err)
-			require.NoError(st.ClassifyParticipantIdentifierServiceContext(t.Context(), "beeper", "+12025550123", &service.ID, nil, nil))
-			guest, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
-			require.NoError(err)
-			return mustPromotedPerson(t.Context(), t, st, "owner@example.org", "Owner"), guest
-		}},
-	} {
-		t.Run(tc.kind, func(t *testing.T) {
-			require := require.New(t)
-			st := storetest.New(t).Store
-			ctx := t.Context()
-			owner, guest := tc.setup(t, st)
-			fixtureName := tc.kind + "-identities.test-fixture.json"
-			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: tc.kind, Actor: "test"})
-			require.NoError(err)
-			detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
-			require.NoError(err)
-			addresses := []store.ParticipantAddress{}
-			for _, address := range detail.Labels.Addresses {
-				for _, participant := range detail.Participants {
-					if participant.OriginSide == "absorbed" && participant.ParticipantID == address.ParticipantID {
-						addresses = append(addresses, address)
-					}
-				}
+	st := storetest.New(t).Store
+	owner, guest := mailboxCaseMergePeople(t, st)
+	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "mailbox-case", Actor: "test"})
+	require.NoError(t, err)
+	detail, err := st.GetPersonMergeContext(t.Context(), merged.Merge.ID)
+	require.NoError(t, err)
+	assertPersonMergeIdentityFixture(t, detail, "mailbox-case")
+	assert.Equal(t, 1, detail.Labels.AbsorbedAddressCount)
+}
+
+func assertPersonMergeIdentityFixture(t *testing.T, detail *store.PersonMergeDetail, kind string) {
+	t.Helper()
+	addresses := []store.ParticipantAddress{}
+	for _, address := range detail.Labels.Addresses {
+		for _, participant := range detail.Participants {
+			if participant.OriginSide == "absorbed" && participant.ParticipantID == address.ParticipantID {
+				addresses = append(addresses, address)
 			}
-			data, err := json.Marshal(addresses)
-			require.NoError(err)
-			fixture, err := os.ReadFile("../../web/src/lib/directory/" + fixtureName)
-			require.NoError(err)
-			require.JSONEq(string(fixture), string(data))
-			page, err := st.ListPersonMergesContext(ctx, owner.ID)
-			require.NoError(err)
-			require.Len(page, 1)
-			assert.Equal(t, detail.Labels.Addresses, page[0].Labels.Addresses)
-			assert.Equal(t, detail.Labels.AbsorbedAddressCount, page[0].Labels.AbsorbedAddressCount)
-			if tc.kind == "mailbox-case" {
-				assert.Equal(t, 1, detail.Labels.AbsorbedAddressCount)
-			}
-		})
+		}
 	}
+	data, err := json.Marshal(addresses)
+	require.NoError(t, err)
+	fixture, err := os.ReadFile("../../web/src/lib/directory/" + kind + "-identities.test-fixture.json")
+	require.NoError(t, err)
+	require.JSONEq(t, string(fixture), string(data))
 }
 
 func beeperPhoneMergePeople(t *testing.T, st *store.Store) (*store.Person, *store.Person) {

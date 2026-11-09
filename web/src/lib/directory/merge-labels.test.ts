@@ -1,4 +1,4 @@
-// These projections are emitted by TestWebMergeIdentityFixturesMatchStore.
+// These projections are compared by TestWebMergeIdentityFixturesMatchStore.
 import migratedAddresses from './beeper-migrated-identities.test-fixture.json';
 import phoneAddresses from './beeper-phone-identities.test-fixture.json';
 import rawPhoneAddresses from './beeper-raw-phone-identities.test-fixture.json';

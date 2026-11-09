@@ -151,12 +151,11 @@ describe('PersonSplitSteps', () => {
       participant_ids: [701, 999], addresses: [
       { participant_id: 701, type: 'email', value: 'alex@example.org', normalized_value: 'alex@example.org', display_value: '', service_slug: 'email', service_label: 'Email', scope_kind: '', scope_value: '' },
       { participant_id: 701, type: 'phone', value: '+12025550101', normalized_value: '+12025550101', display_value: '', service_slug: 'phone', service_label: 'Phone', scope_kind: '', scope_value: '' },
-      { participant_id: 701, type: 'slack', value: 'T_EXAMPLE:U_NERI', normalized_value: 'T_EXAMPLE:U_NERI', display_value: '', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_EXAMPLE' },
     ].map(a => addressFixture(a.participant_id, a.type, a.value, a)).concat([addressFixture(701, 'email', 'neri@example.org'), addressFixture(999, 'email', 'later@example.org')]) }));
     const onOpenPerson = vi.fn();
     render(PersonSplitSteps, { controller, onOpenPerson });
 
-    const label = 'alex@example.org, +12025550101, Slack · workspace 1, neri@example.org';
+    const label = 'alex@example.org, +12025550101, neri@example.org';
     expect(screen.getByText('None chosen yet')).toBeDefined();
     await fireEvent.click(screen.getByRole('checkbox', { name: label }));
     expect(screen.getByRole('group', { name: 'Addresses to move' })).toBeDefined();

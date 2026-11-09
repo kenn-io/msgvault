@@ -241,6 +241,10 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 			}
 		}
 		for _, identifier := range byParticipant[member.ParticipantID] {
+			if identifier.Type == sourceTypeBeeper && strings.HasPrefix(identifier.Value, beeperidentity.Prefix+":") &&
+				identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" && (member.Email != "" || member.Phone != "") {
+				continue
+			}
 			if identifier.NormalizedValue == "" || identifier.ServiceSlug == "" {
 				identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
 			}

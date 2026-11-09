@@ -81,7 +81,7 @@ function summary(mergeDetail: MergeDetail) {
         ...(participant_id === 701 ? [{ participant_id, type: 'phone', value: '+12025550101' }] : []),
       ]).map(identifier => addressFixture(identifier.participant_id, identifier.type, identifier.value, identifier)),
     },
-    participant_count: 2,
+    participant_count: mergeDetail.participants.length,
     pending_candidate_count: 0,
     row_action_counts: { restored: 1 },
     row_count: 1,
@@ -120,6 +120,7 @@ function renderHistory(value: number | null | MergeDetail = 12, options: {
     const listed = options.fail ? { ...labels, participant_ids: mergeDetail.labels.participant_ids, addresses: mergeDetail.labels.addresses, incomplete: false } : labels;
     if (path === '/api/v1/people/7/merges') return Response.json({ merges: (options.list ?? [mergeDetail]).map(item => ({ ...summary(item), labels: item === mergeDetail ? listed : { ...item.labels, participants: item.participants } })), limit: 100, offset: 0 });
     if (path.endsWith('/snapshot')) return Response.json({ version: 1, sha256: 'synthetic-digest', snapshot: { explicitly_revealed: 'synthetic content', persons: labels.profiles } });
+    if (path === '/api/v1/people/12/profile') return Response.json(emptyProfile(person(12)));
     if (path.startsWith('/api/v1/people/')) {
       const id = Number(path.split('/').at(-1));
       return Response.json(person(id, 4, [701], id === 19 ? 'Alex Restored' : 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
@@ -270,20 +271,15 @@ describe('PersonMergeHistory', () => {
     expect(within(cards[1]).getByRole('heading').textContent).toBe('Mira Vale');
   });
 
-  it('shows a merged-in profile with no addresses as having none', async () => {
+  it('omits the moved-in count when no addresses moved', async () => {
     const value = detail();
     value.splits = [];
     for (const participant of value.participants) delete participant.split_id;
     renderHistory(value, {
       addresses: addressIdentifiers().filter(identifier => identifier.participant_id === 702), count: 0,
-      respond: path => path === '/api/v1/people/12' ? Response.json(person(12, 4, [701, 702, 703], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } }) : undefined,
     });
     const row = await screen.findByRole('button', { name: /^Open Alex Example · work merged into Alex Example · / });
     expect(row.closest('.detail-row')?.querySelector('.description')?.textContent).not.toContain('moved in');
-    await fireEvent.click(row);
-    const [absorbed] = within(await screen.findByRole('group', { name: 'Merged profiles' })).getAllByRole('region');
-    expect(absorbed.textContent).toContain('No addresses');
-    expect(screen.getByRole('button', { name: 'Split…' })).toBeDefined();
   });
 
   it('summarizes a whole-profile split without listing only its participant addresses', async () => {

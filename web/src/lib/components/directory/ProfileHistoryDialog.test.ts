@@ -1,3 +1,4 @@
+import phoneAddresses from '../../directory/beeper-phone-identities.test-fixture.json';
 import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
 import { mergeResult } from '../../directory/entity-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
@@ -222,8 +223,9 @@ describe('ProfileHistoryDialog', () => {
   });
 });
 
+const formattedPhone = phoneAddresses.find(address => address.type === 'phone')!;
 const mergedInCases = [
-  { name: 'formatted phone', rows: 1, service: 'phone', label: 'Phone', value: '+15550100100', normalized: '+15550100100', display: '+1 555 010 0100', original: '+1 555 010 0100', observed: '+15550100100' },
+  { name: 'formatted phone', rows: 1, service: formattedPhone.service_slug, label: formattedPhone.service_label, value: formattedPhone.value, normalized: formattedPhone.normalized_value, display: formattedPhone.display_value, original: formattedPhone.value, observed: formattedPhone.normalized_value },
   { name: 'same handle in another workspace', rows: 2, service: 'slack', label: 'Slack', value: 'neri', normalized: 'neri', original: 'neri', observed: 'neri', scopeKind: 'workspace', scope: 'garden-club', otherScope: 'seed-exchange' },
   { name: 'curated mixed-case email', rows: 1, service: 'email', label: 'Email', value: 'mira@example.org', normalized: 'mira@example.org', original: 'Mira@Example.org', observed: 'mira@example.org' },
 ];
