@@ -352,7 +352,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	if err != nil {
 		return nil, err
 	}
-	conditions, args := buildIdentityHistoryConditions(request.Explore)
+	conditions, args := buildExploreConditions(request.Explore)
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
 		return nil, err
@@ -363,8 +363,6 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs,
 		e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
-	dates, dateArgs := identityDateConditions(request.Explore.Context)
-	args = append(args, dateArgs...)
 	// bestNameExpr is the shared cluster label policy (see person_label.go).
 	// Listing/search rows are canonical identities, so the label evaluates
 	// every member of the row's cluster (resolved through the canon CTE that
@@ -397,9 +395,9 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	}
 	overrideExpr := sqlPersonNameOverrideExpr(e.parquetPath(datasetPersonDisplayNames), overrideFilter)
 	personWhere := []string{"true"}
-	populationFrom := "FROM dated_person_entries pe JOIN participants p ON p.id = pe.person_id"
+	populationFrom := "FROM keyed_person_entries pe JOIN participants p ON p.id = pe.person_id"
 	if keepInactive {
-		populationFrom = "FROM participants p LEFT JOIN dated_person_entries pe ON pe.person_id = p.id"
+		populationFrom = "FROM participants p LEFT JOIN keyed_person_entries pe ON pe.person_id = p.id"
 	}
 	if exactID != nil {
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
@@ -471,9 +469,8 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	args = append(args, limit, request.Page.Offset)
 	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
 	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
-), dated_person_entries AS (
-	SELECT * FROM (` + e.selectedMeetingKeysSQL("(SELECT *, person_id AS canonical_id, "+identityindex.EntryKindSQL("message_type")+" AS entry_kind FROM person_entries)", "anchor_message_id") + `)
-	WHERE ` + dates + `
+), keyed_person_entries AS (
+	SELECT * FROM (` + e.withMeetingKeysSQL("person_entries", "anchor_message_id") + `)
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
@@ -509,7 +506,7 @@ SELECT person_id, display_label, display_name,
 		WHERE rp.canonical_id = ` + relationshipPersonExpr + `), 0),
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count
-		FROM dated_person_entries pe WHERE pe.person_id = counted.person_id GROUP BY source_type)) AS VARCHAR), '[]'),
+		FROM keyed_person_entries pe WHERE pe.person_id = counted.person_id GROUP BY source_type)) AS VARCHAR), '[]'),
 	first_at, last_at, total_count
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 	rows, err := e.db.QueryContext(ctx, queryText, args...)

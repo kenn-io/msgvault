@@ -249,8 +249,7 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	cutoff := effectiveAt.UTC()
 	activity := fmt.Sprintf(`(
 		SELECT * FROM relationship_activity_expanded
-		WHERE entry_kind <> 'meeting'
-		  AND occurred_year IN (%s)
+		WHERE occurred_year IN (%s)
 		  AND occurred_at >= TIMESTAMP '%s'
 		  AND occurred_at < TIMESTAMP '%s'
 		  AND canonical_id IN (%s)
@@ -258,21 +257,12 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		    SELECT message_id FROM relationship_activity_expanded
 		    WHERE canonical_id = %d AND occurred_year IN (%s)
 		  )
-		UNION ALL
-		SELECT * FROM relationship_activity_expanded
-		WHERE entry_kind = 'meeting'
-		  AND canonical_id IN (%s)
-		  AND message_id IN (
-		    SELECT message_id FROM relationship_activity_expanded
-		    WHERE canonical_id = %d
-		  )
 	)`,
 		strings.Join(years, ","),
 		startUTC.Format("2006-01-02 15:04:05.999999999"),
 		endUTC.Format("2006-01-02 15:04:05.999999999"),
 		strings.Join(canonicalIDs, ","),
 		request.CanonicalID, strings.Join(years, ","),
-		strings.Join(canonicalIDs, ","), request.CanonicalID,
 	)
 	facts := identityindex.RelationshipTemperatureFactsSQL(activity, cutoff, e.parquetPath("meeting_keys"))
 	rows, err := e.db.QueryContext(ctx, `
@@ -289,10 +279,9 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		       bit_or(modality_mask)::UTINYINT AS modality_mask
 		FROM relationship_facts
 		WHERE canonical_id = ?
-		  AND occurred_at >= ? AND occurred_at < ?
 		GROUP BY local_date
 		ORDER BY local_date
-	`, request.TimezoneOrUTC(), request.CanonicalID, startUTC, endUTC)
+	`, request.TimezoneOrUTC(), request.CanonicalID)
 	if err != nil {
 		return nil, fmt.Errorf("query relationship calendar: %w", err)
 	}

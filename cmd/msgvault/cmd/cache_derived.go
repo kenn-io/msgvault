@@ -152,19 +152,6 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
-	if !repairRelated {
-		var meetingChangePending bool
-		if err := sourceSnapshot.QueryRow(`SELECT EXISTS (
-			SELECT 1 FROM cache_related_change_journal
-			WHERE seq > ? AND dataset = 'meeting_links'
-			AND (message_id <= ? OR message_id IN (SELECT member_message_id FROM meeting_link_decisions))
-		)`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&meetingChangePending); err != nil {
-			return nil, fmt.Errorf("inspect pending meeting changes: %w", err)
-		}
-		if meetingChangePending {
-			return nil, fmt.Errorf("%w: meeting changes require related-row repair", ErrDerivedRefreshRequiresFullBuild)
-		}
-	}
 	datasets := []string{
 		"cache_unsent_messages",
 		tableMessages,
@@ -530,11 +517,7 @@ func stageCacheMapping[V any](ctx context.Context, db sqlRunner, insert string, 
 		return nil
 	}
 	for id, value := range entries {
-		row := format(id, value)
-		if row == "" {
-			continue
-		}
-		values = append(values, row)
+		values = append(values, format(id, value))
 		if len(values) >= participantClusterMaxBatchRows {
 			if err := flush(); err != nil {
 				return err

@@ -567,7 +567,6 @@ export * from "./meetingLink";
 export * from "./meetingLinkDecisionRequest";
 export * from "./meetingLinkDecisionRequestDecision";
 export * from "./meetingLinkDecisionResponse";
-export * from "./meetingLinkDecisionResponseCacheState";
 export * from "./meetingMetadata";
 export * from "./meetingMetricsRequest";
 export * from "./meetingPerson";

@@ -27,10 +27,9 @@ type MeetingLinkDecisionRequest struct {
 }
 
 type MeetingLinkDecisionResponse struct {
-	MessageID  int64  `json:"message_id"`
-	Event      string `json:"event"`
-	Decision   string `json:"decision"`
-	CacheState string `json:"cache_state" enum:"ready,stale"`
+	MessageID int64  `json:"message_id"`
+	Event     string `json:"event"`
+	Decision  string `json:"decision"`
 }
 
 type MeetingSuggestionsResponse struct {
@@ -99,10 +98,7 @@ func (s *Server) handleMeetingLinkDecision(w http.ResponseWriter, r *http.Reques
 		s.writeMeetingLinkError(w, err)
 		return
 	}
-	writeJSON(w, 200, MeetingLinkDecisionResponse{
-		MessageID: request.MessageID, Event: request.Event, Decision: request.Decision,
-		CacheState: s.refreshIdentityCacheState(r.Context()),
-	})
+	writeJSON(w, 200, MeetingLinkDecisionResponse(request))
 }
 
 func (s *Server) handleMeetingLinkSuggestions(w http.ResponseWriter, r *http.Request) {

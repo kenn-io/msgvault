@@ -573,7 +573,7 @@ func buildCacheDerivedOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
-		relatedDriftOnly(cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)),
+		false,
 		builderOverrides...,
 	)
 }

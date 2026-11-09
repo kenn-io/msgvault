@@ -379,18 +379,12 @@ func MeetingKeysSQL(keys, messageType, messageID string) string {
 
 // DeduplicateMeetingSQL keeps one meeting row per person and occurrence.
 func DeduplicateMeetingSQL(relation, meetingKeys, messageID string) string {
-	return `SELECT * EXCLUDE (meeting_key, meeting_selected) FROM (` + MeetingCopySelectionSQL(relation, meetingKeys, messageID) + `) WHERE meeting_selected`
-}
-
-// MeetingCopySelectionSQL marks each occurrence's representative while retaining
-// every activity row for readers that also count raw messages and files.
-func MeetingCopySelectionSQL(relation, meetingKeys, messageID string) string {
-	return `SELECT p.*, ` + meetingIdentityKeySQL("mk", "p."+messageID) + ` AS meeting_key,
+	return `SELECT * EXCLUDE (meeting_key, meeting_selected) FROM (SELECT p.*, ` + meetingIdentityKeySQL("mk", "p."+messageID) + ` AS meeting_key,
 	(p.entry_kind <> 'meeting' OR row_number() OVER (
 	    PARTITION BY p.canonical_id, ` + meetingIdentityKeySQL("mk", "p."+messageID) + `
 	    ORDER BY p.occurred_at, p.` + messageID + `) = 1) AS meeting_selected
 	FROM ` + relation + ` p
-	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID
+	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID + `) WHERE meeting_selected`
 }
 
 func meetingIdentityKeySQL(keys, messageID string) string {

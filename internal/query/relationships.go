@@ -321,7 +321,6 @@ func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
 	directory := quoteIdentitySQLPath(
 		e.parquetPath(identityindex.DatasetPeople),
 	)
-	dates, dateArgs := identityDateConditions(explore.Context)
 	queryText := logicalSQL + `,
 relationship_interactions AS (
 	SELECT p.*,
@@ -346,7 +345,7 @@ relationship_interactions AS (
 	       exp(-? * greatest(
 	           0, date_diff('day', p.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
 	FROM (` + identityindex.DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE entry_kind <> 'event' AND (with_owner OR entry_kind <> 'meeting'))", e.parquetPath("meeting_keys"), "entry_num") + `) p
-	WHERE NOT p.is_owner AND ` + dates + `
+	WHERE NOT p.is_owner
 ), aggregated AS (
 	SELECT canonical_id,
 	       sum(sent_units * decay)::DOUBLE AS sent_decayed,
@@ -375,7 +374,6 @@ JOIN read_parquet('` + directory + `') d USING (canonical_id)`
 		identityindex.RelationshipDecayRate,
 		duckDBDateParam(now),
 	)
-	args = append(args, dateArgs...)
 	return queryText, args, nil
 }
 

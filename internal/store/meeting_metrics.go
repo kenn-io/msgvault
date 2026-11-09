@@ -1,22 +1,17 @@
 package store
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 
-	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 func (s *Store) GetMeetingMetricsContext(
 	ctx context.Context, scope MeetingQueryScope,
 ) (*meetingcontent.Metrics, error) {
-	candidateScope := scope
-	candidateScope.After, candidateScope.Before = nil, nil
-	statement, err := s.buildMeetingScopeStatement(candidateScope)
+	statement, err := s.buildMeetingScopeStatement(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -34,76 +29,6 @@ func (s *Store) GetMeetingMetricsContext(
 		}
 		if readErr = s.validateMeetingScopePopulation(ctx, tx, scope); readErr != nil {
 			return readErr
-		}
-		rows, queryErr := tx.QueryContext(ctx, statement.cte+`
-			SELECT sm.message_id, sm.duration_seconds, `+meetingCountLinkedSQL+`
-			FROM scoped_meetings sm JOIN messages m ON m.id = sm.message_id`, statement.args...)
-		if queryErr != nil {
-			return fmt.Errorf("read meeting count candidates: %w", queryErr)
-		}
-		type candidate struct {
-			id       int64
-			duration sql.NullFloat64
-			linked   bool
-		}
-		var candidates []candidate
-		for rows.Next() {
-			var item candidate
-			if err := rows.Scan(&item.id, &item.duration, &item.linked); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("scan meeting count candidate: %w", err)
-			}
-			candidates = append(candidates, item)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("iterate meeting count candidates: %w", err)
-		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close meeting count candidates: %w", err)
-		}
-		slices.SortFunc(candidates, func(a, b candidate) int {
-			if a.duration.Valid != b.duration.Valid {
-				if a.duration.Valid {
-					return -1
-				}
-				return 1
-			}
-			if order := cmp.Compare(b.duration.Float64, a.duration.Float64); order != 0 {
-				return order
-			}
-			return cmp.Compare(a.id, b.id)
-		})
-		taken := make(map[string]bool)
-		kept := make([]int64, 0, len(candidates))
-		reader := reboundReader{loggedReader: tx, dialect: s.dialect}
-		for _, item := range candidates {
-			var occurrences []linkOccurrence
-			if item.linked {
-				budget := calrecur.RequestReadBudget
-				var err error
-				occurrences, err = s.meetingMemberOccurrences(ctx, reader, item.id, &budget)
-				if unresolvedMeetingCount(err) {
-					occurrences = nil
-				} else if err != nil {
-					return fmt.Errorf("resolve meeting count member %d: %w", item.id, err)
-				}
-			}
-			if len(occurrences) > 0 && !slices.ContainsFunc(occurrences, func(o linkOccurrence) bool { return !taken[o.Identity.countKey()] }) {
-				continue
-			}
-			kept = append(kept, item.id)
-			for _, occurrence := range occurrences {
-				taken[occurrence.Identity.countKey()] = true
-			}
-		}
-		if len(kept) != len(candidates) || scope.After != nil || scope.Before != nil {
-			countScope := scope
-			countScope.MessageIDs = &kept
-			statement, readErr = s.buildMeetingScopeStatement(countScope)
-			if readErr != nil {
-				return readErr
-			}
 		}
 		var average sql.NullFloat64
 		var first, last nullableTimestamp
@@ -141,7 +66,7 @@ func (s *Store) GetMeetingMetricsContext(
 			result.LastMeetingAt = nullableTimePointer(last)
 		}
 
-		rows, queryErr = tx.QueryContext(ctx, statement.cte+`
+		rows, queryErr := tx.QueryContext(ctx, statement.cte+`
 			SELECT duration_basis, COUNT(*), COALESCE(SUM(duration_seconds), 0)
 			FROM scoped_meetings
 			WHERE duration_seconds IS NOT NULL

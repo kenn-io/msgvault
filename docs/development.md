@@ -541,10 +541,6 @@ The [CLI reference](cli-reference.md#schema-version) owns the probe contract,
 and [Setup](setup.md#migrate-before-replacing-the-executable) owns the operator
 upgrade procedure.
 
-The analytics cache uses `query.CacheSchemaVersion` independently of the archive
-version. Cache schema 36 adds meeting occurrence keys and retains schema 35's
-room exclusion. Older cache publications require a full rebuild.
-
 ## Code Conventions
 
 - **Web UI**: Svelte with TypeScript, generated OpenAPI types, and components

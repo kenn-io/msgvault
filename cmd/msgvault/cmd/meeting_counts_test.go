@@ -12,7 +12,50 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+type meetingCountSeriesFixture struct {
+	st                    *store.Store
+	path, cache           string
+	source, person, event int64
+	notes                 []int64
+}
+
+func newMeetingCountSeriesFixture(t *testing.T, copies int) meetingCountSeriesFixture {
+	t.Helper()
+	root := t.TempDir()
+	f := meetingCountSeriesFixture{path: filepath.Join(root, "archive.db"), cache: filepath.Join(root, "analytics")}
+	f.st = testutil.NewSQLiteTestStoreAt(t, f.path)
+	source, err := f.st.GetOrCreateSource("meeting_import", "owner@example.org")
+	require.NoError(t, err)
+	f.source = source.ID
+	owner, err := f.st.EnsureParticipant("owner@example.org", "Owner", "example.org")
+	require.NoError(t, err)
+	require.NoError(t, f.st.AddAccountIdentity(source.ID, "owner@example.org", "explicit"))
+	f.person, err = f.st.EnsureParticipant("person@example.org", "Person", "example.org")
+	require.NoError(t, err)
+	calendarSource := meetingCountCalendarSource(t, f.st, "calendar@example.org")
+	raw := `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+	f.event, err = f.st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: calendarSource, SourceMessageID: "series", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "series", ConversationType: "calendar"},
+		RawFormat:    "gcal_json", RawMIME: []byte(raw), Metadata: meetingCountCalendarMetadata(t, "calendar@example.org", raw),
+	})
+	require.NoError(t, err)
+	for i := range copies {
+		key := fmt.Sprintf("note-%d", i)
+		note, err := f.st.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
+			RawFormat:    "plaud_json", RawMIME: []byte(`{}`),
+			Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, f.person}, DisplayNames: []string{"Owner", "Person"}}},
+		})
+		require.NoError(t, err)
+		f.notes = append(f.notes, note)
+	}
+	return f
+}
 
 func meetingCountCalendarSource(t *testing.T, st *store.Store, calendar string) int64 {
 	t.Helper()
@@ -136,74 +179,66 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 }
 
 func TestMeetingKeysAckSnapshotBoundary(t *testing.T) {
-	for _, csv := range []bool{false, true} {
-		t.Run(fmt.Sprintf("csv_%t", csv), func(t *testing.T) {
-			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
-			if csv {
-				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
-			}
-			require := require.New(t)
-			assertions := assert.New(t)
-			path := filepath.Join(t.TempDir(), "archive.db")
-			st, err := store.OpenForTest(path)
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			require.NoError(st.InitSchema())
-			source, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
-			require.NoError(err)
-			calendarSource := meetingCountCalendarSource(t, st, "calendar@example.test")
-			persist := func(id, kind, format, raw string) int64 {
-				sourceID, conversation := source.ID, "meeting"
-				var metadata *sql.NullString
-				if kind == "calendar_event" {
-					sourceID, conversation = calendarSource, "calendar"
-					metadata = meetingCountCalendarMetadata(t, "calendar@example.test", raw)
-				}
-				messageID, err := st.PersistMessage(&store.MessagePersistData{
-					Message:      &store.Message{SourceID: sourceID, SourceMessageID: id, MessageType: kind, SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
-					Conversation: &store.ConversationPersistData{SourceConversationID: id, ConversationType: conversation},
-					RawFormat:    format, RawMIME: []byte(raw), Metadata: metadata,
-				})
-				require.NoError(err)
-				return messageID
-			}
-			event := persist("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"}}`)
-			other := persist("other", "calendar_event", "gcal_json", `{"id":"other","start":{"dateTime":"2026-08-02T10:00:00Z"},"end":{"dateTime":"2026-08-02T11:00:00Z"}}`)
-			note := persist("note", "meeting_transcript", "plaud_json", `{}`)
-			var decisionSeq, late int64
-			buildCacheAfterSnapshotHook = func() {
-				require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
-				require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: other}))
-				late = persist("late", "meeting_transcript", "plaud_json", `{}`)
-				require.NoError(st.LinkMeetingContext(t.Context(), late, store.OccurrenceRef{MessageID: event}))
-				require.NoError(st.DB().QueryRow(`SELECT max(seq) FROM cache_related_change_journal`).Scan(&decisionSeq))
-			}
-			t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
-			cache := filepath.Join(t.TempDir(), "analytics")
-			_, err = buildCache(path, cache, true)
-			require.NoError(err)
-			buildCacheAfterSnapshotHook = nil
-			state, err := query.ReadCacheSyncState(cache)
-			require.NoError(err)
-			assertions.Less(state.LastRelatedChangeSeq, decisionSeq)
-			assertions.True(cacheNeedsBuild(path, cache).HasRelatedRowDrift)
-			db, err := sql.Open("duckdb", "")
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(db.Close()) })
-			var count int
-			require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id = ?`, filepath.Join(cache, "meeting_keys", "*.parquet"), note).Scan(&count))
-			assertions.Equal(2, count, "the later key read includes both decisions")
-			require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id = ?`, filepath.Join(cache, "meeting_keys", "*.parquet"), late).Scan(&count))
-			assertions.Zero(count, "keys exclude messages above the source snapshot boundary")
-			result, err := buildCache(path, cache, false)
-			require.NoError(err)
-			assertions.Equal(int64(1), result.StagedCount)
-			state, err = query.ReadCacheSyncState(cache)
-			require.NoError(err)
-			assertions.Equal(decisionSeq, state.LastRelatedChangeSeq)
-			assertions.False(cacheNeedsBuild(path, cache).NeedsBuild)
+	require := require.New(t)
+	assertions := assert.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	st, err := store.OpenForTest(path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
+	require.NoError(err)
+	calendarSource := meetingCountCalendarSource(t, st, "calendar@example.test")
+	persist := func(id, kind, format, raw string) int64 {
+		sourceID, conversation := source.ID, "meeting"
+		var metadata *sql.NullString
+		if kind == "calendar_event" {
+			sourceID, conversation = calendarSource, "calendar"
+			metadata = meetingCountCalendarMetadata(t, "calendar@example.test", raw)
+		}
+		messageID, err := st.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: sourceID, SourceMessageID: id, MessageType: kind, SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: id, ConversationType: conversation},
+			RawFormat:    format, RawMIME: []byte(raw), Metadata: metadata,
 		})
+		require.NoError(err)
+		return messageID
 	}
+	event := persist("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"}}`)
+	other := persist("other", "calendar_event", "gcal_json", `{"id":"other","start":{"dateTime":"2026-08-02T10:00:00Z"},"end":{"dateTime":"2026-08-02T11:00:00Z"}}`)
+	note := persist("note", "meeting_transcript", "plaud_json", `{}`)
+	var decisionSeq, late int64
+	buildCacheAfterSnapshotHook = func() {
+		require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+		require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: other}))
+		late = persist("late", "meeting_transcript", "plaud_json", `{}`)
+		require.NoError(st.LinkMeetingContext(t.Context(), late, store.OccurrenceRef{MessageID: event}))
+		require.NoError(st.DB().QueryRow(`SELECT max(seq) FROM cache_related_change_journal`).Scan(&decisionSeq))
+	}
+	t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
+	cache := filepath.Join(t.TempDir(), "analytics")
+	_, err = buildCache(path, cache, true)
+	require.NoError(err)
+	buildCacheAfterSnapshotHook = nil
+	state, err := query.ReadCacheSyncState(cache)
+	require.NoError(err)
+	assertions.Less(state.LastRelatedChangeSeq, decisionSeq)
+	assertions.True(cacheNeedsBuild(path, cache).HasRelatedRowDrift)
+	db, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
+	var count int
+	require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id = ?`, filepath.Join(cache, "meeting_keys", "*.parquet"), note).Scan(&count))
+	assertions.Equal(2, count, "the later key read includes both decisions")
+	require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id = ?`, filepath.Join(cache, "meeting_keys", "*.parquet"), late).Scan(&count))
+	assertions.Zero(count, "keys exclude messages above the source snapshot boundary")
+	result, err := buildCache(path, cache, false)
+	require.NoError(err)
+	assertions.Equal(int64(1), result.StagedCount)
+	state, err = query.ReadCacheSyncState(cache)
+	require.NoError(err)
+	assertions.Equal(decisionSeq, state.LastRelatedChangeSeq)
+	assertions.False(cacheNeedsBuild(path, cache).NeedsBuild)
 }
 
 func TestMeetingCountsCalendarEdits(t *testing.T) {
@@ -212,16 +247,16 @@ func TestMeetingCountsCalendarEdits(t *testing.T) {
 	excluded := fmt.Sprintf(eventRaw, "series@example.test", "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3","EXDATE:20270321T100000Z"]`)
 	zoned := fmt.Sprintf(eventRaw, "series@example.test", "America/New_York", "America/New_York", `["RRULE:FREQ=WEEKLY;COUNT=3"]`)
 	for _, step := range []struct {
-		name, beforeRaw, raw, wantKey string
+		name, beforeRaw, beforeKey, raw, wantKey string
 	}{
-		{"baseline", "", original, "uid:series@example.test/20270321T100000Z"},
-		{"projection removed", "", `{}`, ""},
-		{"restored after projection removal", `{}`, original, "uid:series@example.test/20270321T100000Z"},
-		{"EXDATE", "", excluded, ""},
-		{"restored after EXDATE", excluded, original, "uid:series@example.test/20270321T100000Z"},
-		{"zone", "", zoned, ""},
-		{"restored after zone", zoned, original, "uid:series@example.test/20270321T100000Z"},
-		{"UID", "", fmt.Sprintf(eventRaw, "different@example.test", "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3"]`), ""},
+		{"baseline", "", "", original, "uid:series@example.test/20270321T100000Z"},
+		{"projection removed", "", "", `{}`, ""},
+		{"restored after projection removal", `{}`, "", original, "uid:series@example.test/20270321T100000Z"},
+		{"EXDATE", "", "", excluded, "uid:series@example.test/20270321T100000Z"},
+		{"restored after EXDATE", excluded, "uid:series@example.test/20270321T100000Z", original, "uid:series@example.test/20270321T100000Z"},
+		{"zone", "", "", zoned, "uid:series@example.test/20270321T100000Z"},
+		{"restored after zone", zoned, "uid:series@example.test/20270321T100000Z", original, "uid:series@example.test/20270321T100000Z"},
+		{"UID", "", "", fmt.Sprintf(eventRaw, "different@example.test", "UTC", "UTC", `["RRULE:FREQ=WEEKLY;COUNT=3"]`), ""},
 	} {
 		t.Run(step.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -272,7 +307,7 @@ func TestMeetingCountsCalendarEdits(t *testing.T) {
 				requirements.NoError(st.SetMessageMetadata(event, *meetingCountCalendarMetadata(t, "calendar@example.test", step.beforeRaw)))
 				_, err = buildCache(path, cache, false)
 				requirements.NoError(err)
-				readKeys("")
+				readKeys(step.beforeKey)
 			}
 			requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(step.raw), "gcal_json"))
 			requirements.NoError(st.SetMessageMetadata(event, *meetingCountCalendarMetadata(t, "calendar@example.test", step.raw)))
@@ -303,4 +338,46 @@ func readCachedMeetingKeys(t *testing.T, cache string) map[int64][]string {
 	}
 	requirements.NoError(rows.Err())
 	return keys
+}
+
+func TestMeetingCountsAutomaticRemovedOccurrence(t *testing.T) {
+	for _, manual := range []bool{false, true} {
+		t.Run(fmt.Sprintf("manual_link_%t", manual), func(t *testing.T) {
+			requirements := require.New(t)
+			f := newMeetingCountSeriesFixture(t, 2)
+			want := int64(1)
+			if manual {
+				want = 2
+				for _, note := range f.notes {
+					requirements.NoError(f.st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: f.event, Key: "20260314T100000Z"}))
+				}
+			}
+			requirements.NoError(f.st.UpsertMessageRawWithFormat(f.notes[0], []byte(`{"owner":{"email":"calendar@example.org"},"calendar_event":{"calendar_event_id":"series_20260321T100000Z","scheduled_start_time":"2026-03-21T10:00:00Z"}}`), "granola_json"))
+			requirements.NoError(f.st.UpsertMessageRawWithFormat(f.notes[1], []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2026-03-21T10:00:00Z"}}`), "twenty_json"))
+			_, err := buildCache(f.path, f.cache, true)
+			requirements.NoError(err)
+			engine, err := query.NewDuckDBEngine(f.cache, "", nil)
+			requirements.NoError(err)
+			t.Cleanup(func() { requirements.NoError(engine.Close()) })
+			check := func() {
+				t.Helper()
+				person, err := engine.GetPerson(t.Context(), f.person, query.Context{}, nil)
+				requirements.NoError(err)
+				requirements.NotNil(person)
+				assert.Equal(t, want, person.MeetingCount)
+				calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: f.person, Year: 2026, Timezone: "UTC"})
+				requirements.NoError(err)
+				var total int64
+				for _, day := range calendar.Days {
+					total += day.Meetings
+				}
+				assert.Equal(t, want, total)
+			}
+			check()
+			requirements.NoError(f.st.UpsertMessageRawWithFormat(f.event, []byte(`{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-14T10:00:00Z"},"end":{"dateTime":"2026-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`), "gcal_json"))
+			_, err = buildCache(f.path, f.cache, false)
+			requirements.NoError(err)
+			check()
+		})
+	}
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestMeetingLinksClient(t *testing.T) {
@@ -35,10 +34,7 @@ func TestMeetingLinksClient(t *testing.T) {
 			assertions.Equal(int64(42), body.MessageID)
 			assertions.Equal("evt:81@20270314T100000Z", body.Event)
 			decisions = append(decisions, body.Decision)
-			assertions.NoError(json.MarshalWrite(w, generated.MeetingLinkDecisionResponse{
-				CacheState: generated.MeetingLinkDecisionResponseCacheStateReady,
-				Decision:   body.Decision, Event: body.Event, MessageID: body.MessageID,
-			}))
+			assertions.NoError(json.MarshalWrite(w, body))
 			return
 		}
 		if r.URL.Path == "/api/v1/meetings/record" {
@@ -70,12 +66,7 @@ func TestMeetingLinksClient(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(client.Close()) })
 	for _, decision := range []string{"link", "unlink"} {
-		result, err := client.DecideMeetingLink(t.Context(), 42, "evt:81@20270314T100000Z", decision)
-		requirements.NoError(err)
-		assertions.Equal(generated.MeetingLinkDecisionResponse{
-			MessageID: 42, Event: "evt:81@20270314T100000Z", Decision: decision,
-			CacheState: generated.MeetingLinkDecisionResponseCacheStateReady,
-		}, result)
+		requirements.NoError(client.DecideMeetingLink(t.Context(), 42, "evt:81@20270314T100000Z", decision))
 	}
 	assertions.Equal([]string{"link", "unlink"}, decisions)
 	suggestions, err := client.SuggestMeetingLinks(t.Context(), "evt:81@20270314T100000Z")

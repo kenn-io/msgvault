@@ -234,9 +234,6 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if x.Event.Start != nil {
 		at = *x.Event.Start
 	}
-	if len(moved) == 0 && row.Event.Kind == "single" && row.Event.Start != nil && ref.Key == (calrecur.Identity{Instant: *row.Event.Start, Date: row.Event.StartDate, AllDay: row.Event.AllDay}).Key() {
-		return occurrenceFromRow(row, ""), nil
-	}
 	master := row
 	master.Event.Status = ""
 	occurrences, err := expandMeetingSeries(ctx, r, master, at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin), budget)
@@ -347,7 +344,7 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 		predicate = `e.provider_event_id IN (?, ?) AND EXISTS (SELECT 1 FROM calendar_events candidate JOIN messages cm ON cm.id = candidate.message_id
  WHERE (` + meetingEventAliasPredicate("candidate.message_id") + `)
  AND COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id = cm.id), cm.source_id) IN (` + placeholders(len(sourceIDs)) + `)
- AND (candidate.provider_event_id = ? OR (candidate.kind IN ('series', 'single') AND candidate.provider_event_id = ?)))`
+ AND (candidate.provider_event_id = ? OR (candidate.kind = 'series' AND candidate.provider_event_id = ?)))`
 		args = append([]any{key.Value, base}, sourceIDs...)
 		args = append(args, key.Value, base)
 	} else if key.ScheduledAt != nil {
@@ -388,7 +385,6 @@ candidatesLoop:
 			if base != "" && row.Event.ProviderEventID == base {
 				ref.Key = instance.Key()
 			}
-			ref.Key = storedOccurrenceKey(row, ref.Key)
 			o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
 			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				continue
@@ -512,11 +508,6 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 		}
 		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-			if identity, err := storedMeetingIdentity(ctx, r, d.Ref, budget); err == nil {
-				out = append(out, linkOccurrence{Ref: d.Ref, Identity: identity})
-			} else if !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
 			continue
 		}
 		if err != nil {

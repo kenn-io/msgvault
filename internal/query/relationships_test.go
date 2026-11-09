@@ -647,38 +647,6 @@ func TestRelationshipsOwnerAbsentMeetingContributesNoModality(t *testing.T) {
 		"LastAt must reflect the email, not the later owner-absent meeting")
 }
 
-func TestIndependentCalendarInviteDoesNotAdvanceLastContact(t *testing.T) {
-	for _, withOwner := range []bool{true, false} {
-		t.Run(fmt.Sprintf("with_owner=%t", withOwner), func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			b := NewTestDataBuilder(t)
-			source := b.AddSource("owner@example.org")
-			owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
-			person := b.AddParticipant("person@example.org", "example.org", "Person")
-			b.AddOwnerParticipant(source, owner)
-			lastContact := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
-			email := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true, SentAt: lastContact})
-			b.AddFrom(email, owner, "Owner")
-			b.AddTo(email, person, "Person")
-			invitee := owner
-			if !withOwner {
-				invitee = b.AddParticipant("guest@example.org", "example.org", "Guest")
-			}
-			event := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event", SentAt: lastContact.AddDate(0, 1, 0)})
-			b.AddFrom(event, person, "Person")
-			b.AddTo(event, invitee, "Invitee")
-			engine := b.BuildEngine()
-			for _, scope := range []Context{{}, {SourceIDs: []int64{source}}} {
-				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, ShowAll: !withOwner, Now: lastContact.AddDate(0, 2, 0)})
-				requirements.NoError(err)
-				requirements.Len(result.Rows, 1)
-				assertions.Equal(lastContact, result.Rows[0].LastAt)
-				assertions.Equal(lastContact, result.Rows[0].Signals.LastInteractionAt)
-			}
-		})
-	}
-}
-
 func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

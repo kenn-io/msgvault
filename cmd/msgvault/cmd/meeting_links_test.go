@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 type meetingLinkFakeClient struct {
@@ -31,10 +29,10 @@ type meetingLinkFakeClient struct {
 func (f *meetingLinkFakeClient) APISchemaVersion(context.Context) (string, error) {
 	return f.version, nil
 }
-func (f *meetingLinkFakeClient) DecideMeetingLink(_ context.Context, id int64, event, decision string) (generated.MeetingLinkDecisionResponse, error) {
+func (f *meetingLinkFakeClient) DecideMeetingLink(_ context.Context, id int64, event, decision string) error {
 	f.calls++
 	f.id, f.event, f.decision = id, event, decision
-	return generated.MeetingLinkDecisionResponse{MessageID: id, Event: event, Decision: decision, CacheState: generated.MeetingLinkDecisionResponseCacheStateReady}, nil
+	return nil
 }
 func (f *meetingLinkFakeClient) SuggestMeetingLinks(_ context.Context, ref string) (store.MeetingSuggestionPage, error) {
 	f.calls++
@@ -72,8 +70,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 		{"suggest note", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", false, false},
 		{"suggest warning", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", true, true},
 		{"suggest event", []string{"suggest", "evt:81@20270314T100000Z", "--json"}, "", "", `"unexpandable":[{"message_id":99,"reason":"unsupported recurrence"}]`, true, false},
-		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.46.0", "upgrade the daemon", "", false, false},
-		{"old daemon unlink", []string{"unlink", "42", "--event", "evt:81"}, "3.46.0", "upgrade the daemon", "", false, false},
+		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
 		{"old daemon suggest", []string{"suggest", "msg:42"}, "3.24.0", "upgrade the daemon", "", false, false},
 		{"invalid note", []string{"link", "0", "--event", "evt:81"}, "", "positive message ID", "", false, false},
 	} {
@@ -82,7 +79,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 			requirements := require.New(t)
 			fake := &meetingLinkFakeClient{version: tc.version, unexpandable: tc.unexpandable}
 			if fake.version == "" {
-				fake.version = "3.47.0"
+				fake.version = meetingLinksMinAPISchemaVersion
 			}
 			cleaned := false
 			open := func(context.Context) (meetingLinkClient, func(), error) { return fake, func() { cleaned = true }, nil }
@@ -136,7 +133,6 @@ func TestMeetingLinkCommands(t *testing.T) {
 				assertions.Equal(int64(42), fake.id)
 				assertions.Equal("evt:81@20270314T100000Z", fake.event)
 				assertions.Equal(tc.args[0], fake.decision)
-				assertions.Equal("Cache state: ready\n", out.String())
 			}
 		})
 	}
@@ -149,30 +145,12 @@ func TestMeetingLinkCommands(t *testing.T) {
 	}
 }
 
-func TestIndependentCLIReportsStaleMeetingCounts(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newMeetingCountSeriesFixture(t, 1)
-	server := httptest.NewServer(api.NewServer(&config.Config{}, f.st, nil, slog.New(slog.DiscardHandler)).Router())
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-	requirements.NoError(err)
-	t.Cleanup(func() { assertions.NoError(client.Close()) })
-	for _, decision := range []string{"link", "unlink"} {
-		command := newMeetingLinkDecisionCommand(decision, func(context.Context) (meetingLinkClient, func(), error) { return client, func() {}, nil })
-		var out bytes.Buffer
-		command.SetOut(&out)
-		command.SetArgs([]string{strconv.FormatInt(f.notes[0], 10), "--event", fmt.Sprintf("evt:%d@20260314T100000Z", f.event)})
-		requirements.NoError(command.Execute())
-		assertions.Equal("Cache state: stale\n", out.String(), decision)
-	}
-}
-
 func TestMeetingLinksCLIEventRecord(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := testutil.NewTestStore(t)
-	sourceID := meetingCountCalendarSource(t, st, "calendar@example.com")
-	raw := `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
-	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: sourceID, SourceMessageID: "event", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(raw), Metadata: meetingCountCalendarMetadata(t, "calendar@example.com", raw), RawFormat: "gcal_json"})
+	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	requirements.NoError(err)
+	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json"})
 	requirements.NoError(err)
 	noteSource, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
 	requirements.NoError(err)

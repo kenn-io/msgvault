@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 )
@@ -55,7 +57,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 	keys := make(map[int64][]string)
 	for _, id := range members {
 		budget := calrecur.RequestReadBudget
-		occurrences, err := s.meetingMemberOccurrences(ctx, r, id, &budget)
+		occurrences, err := s.meetingCountOccurrences(ctx, r, id, &budget)
 		if unresolvedMeetingCount(err) {
 			continue
 		}
@@ -67,6 +69,117 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 		}
 	}
 	return keys, nil
+}
+
+// meetingCountOccurrences adds the archived identities of saved links and
+// automatic evidence that the current series no longer expands, then removes
+// every identity a saved split names.
+func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
+	r = r.withMeetingCache()
+	out, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	if err != nil {
+		return nil, err
+	}
+	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
+	if err != nil {
+		return nil, err
+	}
+	splits := map[meetingIdentity]bool{}
+	for _, d := range decisions {
+		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
+		identity, archived := o.Identity, errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence)
+		if archived {
+			identity, err = storedMeetingIdentity(ctx, r, d.Ref, budget)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if d.Decision == "split" {
+			splits[identity] = true
+		} else if archived {
+			out = append(out, linkOccurrence{Identity: identity})
+		}
+	}
+	identity, ok, err := s.removedMeetingCountIdentity(ctx, r, memberID, budget)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		out = append(out, linkOccurrence{Identity: identity})
+	}
+	out = slices.DeleteFunc(out, func(o linkOccurrence) bool { return splits[o.Identity] })
+	return uniqueMeetingOccurrences(out), nil
+}
+
+// removedMeetingCountIdentity returns the identity an automatic link was
+// imported with when the archived series no longer expands that occurrence.
+func (s *Store) removedMeetingCountIdentity(ctx context.Context, r reboundReader, memberID int64, budget *int) (meetingIdentity, bool, error) {
+	key, err := memberLinkKey(ctx, r, memberID)
+	if err != nil {
+		return meetingIdentity{}, false, err
+	}
+	var predicate string
+	var args []any
+	var instance calrecur.Identity
+	switch key.Kind {
+	case "google_event_id":
+		var base string
+		var ok bool
+		base, instance, ok = calrecur.ParseInstanceID(key.Value)
+		if !ok {
+			return meetingIdentity{}, false, nil
+		}
+		predicate, args = `e.provider_event_id = ?`, []any{base}
+	case "ical_uid":
+		if key.ScheduledAt == nil {
+			return meetingIdentity{}, false, nil
+		}
+		predicate, args = s.calendarUIDPredicate(), []any{key.Value}
+	default:
+		return meetingIdentity{}, false, nil
+	}
+	if current, err := s.automaticMeetingOccurrences(ctx, r, key, budget); err != nil || len(current) > 0 {
+		return meetingIdentity{}, false, err
+	}
+	rows, err := meetingEventRows(ctx, r, predicate+` AND e.kind = 'series'`, args, budget)
+	if err != nil {
+		return meetingIdentity{}, false, err
+	}
+	var found []meetingIdentity
+	for _, row := range rows {
+		original := instance
+		if key.Kind == "google_event_id" {
+			var config sql.NullString
+			err := r.QueryRowContext(ctx, `SELECT sync_config FROM sources WHERE source_type = 'gcal'
+ AND id = COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id = ?), ?)`, row.MessageID, row.SourceID).Scan(&config)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && calendarMailbox(config) != key.CalendarID {
+				continue
+			}
+			if err != nil {
+				return meetingIdentity{}, false, err
+			}
+		} else if row.Event.AllDay {
+			zone, err := calendarEventZone(row.Event)
+			if err != nil {
+				return meetingIdentity{}, false, err
+			}
+			original = calrecur.Identity{AllDay: true, Date: key.ScheduledAt.In(zone).Format(time.DateOnly)}
+		} else {
+			original = calrecur.Identity{Instant: *key.ScheduledAt}
+		}
+		identity := occurrenceFromRow(row, original.Key()).Identity
+		if len(found) > 0 && identity != found[0] {
+			return meetingIdentity{}, false, nil
+		}
+		found = append(found, identity)
+	}
+	if len(found) == 0 {
+		return meetingIdentity{}, false, nil
+	}
+	return found[0], true, nil
 }
 
 func unresolvedMeetingCount(err error) bool {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,10 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 	requirements.NoError(err)
 	assertions.ElementsMatch([]string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}, keys[note])
 	assertions.NotContains(keys, master)
+	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
+	archived, err := st.MeetingCountKeysContext(t.Context())
+	requirements.NoError(err)
+	assertions.ElementsMatch([]string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}, archived[note])
 }
 
 func TestMeetingCountKeysMovedExceptionKeepsOccurrence(t *testing.T) {

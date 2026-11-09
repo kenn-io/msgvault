@@ -8161,11 +8161,6 @@ components:
     MeetingLinkDecisionResponse:
       additionalProperties: true
       properties:
-        cache_state:
-          enum:
-            - ready
-            - stale
-          type: string
         decision:
           type: string
         event:
@@ -8177,7 +8172,6 @@ components:
         - message_id
         - event
         - decision
-        - cache_state
       type: object
     MeetingMetricsRequest:
       additionalProperties: false
@@ -17348,7 +17342,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.47.0
+  version: 3.46.0
 openapi: 3.1.0
 paths:
   /api/ping:

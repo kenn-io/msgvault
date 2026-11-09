@@ -74,22 +74,19 @@ func (e *DuckDBEngine) relationshipQuerySetsError() error {
 // filtered relationships ranking consumes — is_author (anchor authorship for
 // chat entries, matching the index builder), is_owner, with_owner — plus the
 // entry facts the filtered people search aggregates. Conditions render
-// through buildExploreConditions. Meetings retain their history until copy
-// selection, then readers apply the requested dates to the selected keys.
+// through buildExploreConditions, so every Explore dimension filters these
+// searches identically to Explore itself.
 func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	ctx context.Context,
 	request ExploreRequest,
 	identityCandidateSQL string,
 ) (string, []any, error) {
 	var err error
-	after, before := request.Context.After, request.Context.Before
-	request.Context.After, request.Context.Before = nil, nil
 	request, err = e.narrowIdentityFactCandidates(ctx, request)
 	if err != nil {
 		return "", nil, err
 	}
-	request.Context.After, request.Context.Before = after, before
-	conditions, args := buildIdentityHistoryConditions(request)
+	conditions, args := buildExploreConditions(request)
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
 		return "", nil, err
@@ -483,11 +480,9 @@ func (e *DuckDBEngine) searchPeople(
 		if logicalErr != nil {
 			return nil, logicalErr
 		}
-		dates, dateArgs := identityDateConditions(request.Explore.Context)
-		queryText = e.filteredPeopleSQL(logicalSQL, order, dates)
+		queryText = e.filteredPeopleSQL(logicalSQL, order)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
-		args = append(args, dateArgs...)
 	}
 	limit := request.Page.Limit
 	if limit == 0 {
@@ -588,7 +583,7 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 }
 
 func (e *DuckDBEngine) filteredPeopleSQL(
-	logicalSQL, order, dates string,
+	logicalSQL, order string,
 ) string {
 	// person_stats is the ONLY reference to the per-(entry, person) rows,
 	// and it reads person_flags rather than logical_people: a second
@@ -608,8 +603,7 @@ person_stats AS (
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
-	FROM (` + e.selectedMeetingKeysSQL("person_flags", "entry_num") + `) p
-	WHERE ` + dates + `
+	FROM (` + e.withMeetingKeysSQL("person_flags", "entry_num") + `) p
 	GROUP BY p.canonical_id, p.source_type
 ), person_totals AS (
 	SELECT canonical_id,
@@ -933,26 +927,8 @@ func quoteIdentitySQLPath(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
 }
 
-func (e *DuckDBEngine) selectedMeetingKeysSQL(relation, messageID string) string {
-	return `SELECT * EXCLUDE (meeting_key, meeting_selected),
-	coalesce(list(meeting_key) FILTER (WHERE message_type = 'meeting_transcript' AND meeting_selected), []::VARCHAR[]) AS meeting_keys
-	FROM (` + identityindex.MeetingCopySelectionSQL(relation, e.parquetPath(datasetMeetingKeys), messageID) + `)
-	GROUP BY ALL`
-}
-
-func identityDateConditions(scope Context) (string, []any) {
-	return buildExploreConditions(ExploreRequest{Context: Context{After: scope.After, Before: scope.Before}})
-}
-
-// Keep meeting history until representatives are selected. Other entry kinds
-// retain Explore's early date filtering, including chat anchor selection.
-func buildIdentityHistoryConditions(request ExploreRequest) (string, []any) {
-	dates, dateArgs := identityDateConditions(request.Context)
-	request.Context.After, request.Context.Before = nil, nil
-	conditions, args := buildExploreConditions(request)
-	if len(dateArgs) > 0 {
-		conditions += " AND (" + identityindex.EntryKindSQL("message_type") + " = 'meeting' OR (" + dates + "))"
-		args = append(args, dateArgs...)
-	}
-	return conditions, args
+func (e *DuckDBEngine) withMeetingKeysSQL(relation, messageID string) string {
+	return `SELECT p.*, ` + identityindex.MeetingKeysSQL("mk", "p.message_type", "p."+messageID) + ` AS meeting_keys
+    FROM ` + relation + ` p
+    LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = p.` + messageID
 }
