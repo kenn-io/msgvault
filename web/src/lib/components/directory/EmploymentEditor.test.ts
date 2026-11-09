@@ -328,7 +328,7 @@ it('allows closing while the job loads', async () => {
   });
 
 
-  it('shows a reassigned job owner and refuses Keep yours from the old person', async () => {
+  it('shows a reassigned job owner in the conflict', async () => {
     let patches = 0;
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);

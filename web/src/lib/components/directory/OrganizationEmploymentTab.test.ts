@@ -331,7 +331,7 @@ it('deletes the saved version a job delete conflict shows', async () => {
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 });
 
-it('shows a reassigned owner and refuses to delete the job from the old person', async () => {
+it('shows a reassigned owner in the delete conflict', async () => {
   let deletes = 0;
   let reads = 0;
   const { controller } = controllerWith(async input => {
