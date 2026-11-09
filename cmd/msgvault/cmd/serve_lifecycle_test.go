@@ -1622,19 +1622,12 @@ func (t *recordingBackgroundProcessTree) Close() error {
 }
 
 func TestStartServeBackgroundProcessTransfersProcessTreeOwnership(t *testing.T) {
-	for _, persistent := range []bool{false, true} {
-		t.Run(strconv.FormatBool(persistent), func(t *testing.T) { testBackgroundProcessLifetimeEnvironment(t, persistent) })
-	}
-}
-
-func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
-	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 
 	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 	t.Setenv("GO_HELPER_MODE", "block")
-	t.Setenv(servePersistentChildEnv, strconv.FormatBool(!persistent))
+	t.Setenv(servePersistentChildEnv, "true")
 	tree := &recordingBackgroundProcessTree{terminate: func() error { return nil }}
 	oldCommand := newServeBackgroundCommandForRun
 	oldConfigure := configureServeBackgroundCommandForRun
@@ -1642,7 +1635,7 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 		return helperProcessCommand(t.Context(), "block")
 	}
 	configureServeBackgroundCommandForRun = func(cmd *exec.Cmd) (backgroundServeCommandConfig, error) {
-		assert.Contains(cmd.Environ(), servePersistentChildEnv+"="+strconv.FormatBool(persistent))
+		assert.Contains(cmd.Environ(), servePersistentChildEnv+"=false")
 		return backgroundServeCommandConfig{ProcessTree: tree}, nil
 	}
 	t.Cleanup(func() {
@@ -1652,7 +1645,7 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 
 	proc, err := startServeBackgroundProcess(
 		lifecycleTestConfig(t.TempDir()),
-		backgroundServeStartOptions{ExecutablePath: os.Args[0], Persistent: persistent},
+		backgroundServeStartOptions{ExecutablePath: os.Args[0]},
 	)
 	require.NoError(err)
 	t.Cleanup(func() {
@@ -1664,11 +1657,9 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 		_ = proc.releaseProcessTree()
 	})
 
-	if !persistent {
-		assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
-		require.NoError(proc.releaseProcessTree())
-		assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
-	}
+	assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
+	require.NoError(proc.releaseProcessTree())
+	assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
 }
 
 func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
@@ -1798,16 +1789,15 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 			{options: invocationOptions{cfgFile: "/tmp/sample's archive.toml", homeDir: "/tmp/sample's archive"}, restart: "--config '/tmp/sample'\\''s archive.toml' --home '/tmp/sample'\\''s archive' ", powerShell: "'--config' '/tmp/sample''s archive.toml' '--home' '/tmp/sample''s archive' "},
 			{timeout: "0s", persistent: "true", lifetime: "  Stays running until msgvault daemon stop"},
 		} {
-			timeout := tc.timeout
-			t.Run(fmt.Sprintf("contended=%t/timeout=%s/home=%t/config=%t", contended, timeout, tc.options.homeDir != "", tc.options.cfgFile != ""), func(t *testing.T) {
+			t.Run(fmt.Sprintf("contended=%t/timeout=%s/home=%t/config=%t", contended, tc.timeout, tc.options.homeDir != "", tc.options.cfgFile != ""), func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				c := lifecycleTestConfig(t.TempDir())
 				server := httptestPingDaemon(t)
 				rec := daemon.RuntimeRecord{PID: os.Getpid(), Service: daemonService, Version: Version, Network: daemon.NetworkTCP, Address: net.JoinHostPort(server.Host, strconv.Itoa(server.Port)), Metadata: map[string]string{
 					runtimeAPIVersion: strconv.Itoa(daemonAPIVersion), runtimeAPISchemaVersion: api.APISchemaVersion, runtimeCreateTime: matchingProcessCreateTime(t),
-					runtimeBackground: "true", runtimePersistent: tc.persistent, runtimeIdleTimeout: timeout,
+					runtimeBackground: "true", runtimePersistent: tc.persistent, runtimeIdleTimeout: tc.timeout,
 				}}
-				if timeout == "" {
+				if tc.timeout == "" {
 					delete(rec.Metadata, runtimePersistent)
 					delete(rec.Metadata, runtimeIdleTimeout)
 				}

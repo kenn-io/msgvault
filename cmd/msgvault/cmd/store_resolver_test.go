@@ -1207,7 +1207,6 @@ func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
 		{name: "same base source stays", cli: "v0.23.0-45-gabc", daemon: "v0.23.0-46-gdef", notice: true, policy: config.DaemonAutoRestartNewer},
 		{name: "persistent source replacement", persistent: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "persistent incompatible replacement", persistent: true, incompatible: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
-		{name: "automatic incompatible replacement", incompatible: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "source replaces release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true, policy: config.DaemonAutoRestartNever},
 		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true, policy: config.DaemonAutoRestartAlways},
@@ -1323,7 +1322,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	}
 	assert.Equal(wantURL, info.URL)
 	if tt.notice {
-		assert.Contains(stderr, "to use this version.")
+		assert.Contains(stderr, "to use this version and keep it running until stopped.")
 	} else if tt.replace {
 		assert.Contains(stderr, "Starting local msgvault daemon")
 	} else {

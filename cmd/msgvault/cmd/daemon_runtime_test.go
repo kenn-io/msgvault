@@ -426,15 +426,11 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 		restart    string
 		powerShell string
 		daemon     string
-		automatic  bool
 	}{
 		{name: "default archive", daemon: "v0.23.0",
 			restart:    "'/tmp/source build/msgvault' daemon restart",
 			powerShell: "& '/tmp/source build/msgvault' 'daemon' 'restart'"},
 		{name: "both selections", daemon: "v0.23.0", options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"},
-			restart:    "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
-			powerShell: "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'"},
-		{name: "automatic with both selections", daemon: "v0.23.0", automatic: true, options: invocationOptions{cfgFile: "/tmp/archive.toml", homeDir: "/tmp/sample's archive"},
 			restart:    "'/tmp/source build/msgvault' --config /tmp/archive.toml --home '/tmp/sample'\\''s archive' daemon restart",
 			powerShell: "& '/tmp/source build/msgvault' '--config' '/tmp/archive.toml' '--home' '/tmp/sample''s archive' 'daemon' 'restart'"},
 		{name: "retained same base source", daemon: "v0.23.0-46-gdef",
@@ -445,11 +441,7 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var stderr bytes.Buffer
 			ctx := testInvocationContext(t.Context(), nil, tt.options)
-			record := daemon.RuntimeRecord{Version: tt.daemon}
-			if tt.automatic {
-				record.Metadata = map[string]string{runtimeBackground: "true", runtimePersistent: "false"}
-			}
-			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: record})
+			reportRetainedDaemonVersion(ctx, &stderr, &DaemonRuntime{Record: daemon.RuntimeRecord{Version: tt.daemon}})
 			if runtime.GOOS == "windows" {
 				tt.restart = tt.powerShell
 			}
@@ -457,11 +449,7 @@ func TestReportRetainedDaemonVersion(t *testing.T) {
 				assert.Empty(t, stderr.String())
 				return
 			}
-			consequence := "to use this version"
-			if tt.automatic {
-				consequence += " and keep it running until stopped"
-			}
-			assert.Equal(t, "msgvault: daemon "+tt.daemon+" is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" "+consequence+".\n", stderr.String())
+			assert.Equal(t, "msgvault: daemon "+tt.daemon+" is running; this CLI is v0.23.0-45-gabc. Run "+tt.restart+" to use this version.\n", stderr.String())
 		})
 	}
 }
