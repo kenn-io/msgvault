@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Topic search](usage/people.md#find-who-knows-about-a-topic) lists the people who wrote about a topic, with dated message citations. Available as `person who-knows` and the owner-only `GET /api/v1/people/who-knows`.
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
   nested replies on organic, visitor, and ad posts returned for a selected Page.

@@ -214,7 +214,7 @@ func renderMessageBody(message *Message) string {
 	}
 	content := resolveDiscordMarkup(message.Content, message)
 	var parts []string
-	if isAuthoredMessageType(message.Type) {
+	if store.IsDiscordAuthoredMessageType(message.Type) {
 		if content != "" {
 			parts = append(parts, content)
 		}
@@ -242,15 +242,6 @@ func renderMessageBody(message *Message) string {
 		}
 	}
 	return strings.Join(parts, "\n")
-}
-
-func isAuthoredMessageType(messageType int) bool {
-	switch messageType {
-	case 0, 19, 20, 23:
-		return true
-	default:
-		return false
-	}
 }
 
 func resolveDiscordMarkup(content string, message *Message) string {

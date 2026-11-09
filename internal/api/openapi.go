@@ -404,7 +404,8 @@ import (
 // 3.47.0 adds retry hints to CLI and fast search.
 // 3.48.0 adds owner-only local message search activation and progress.
 // 3.49.0 adds verification.read for revealing detected verification content in delegated reads.
-const APISchemaVersion = "3.49.0"
+// 3.50.0 adds people/who-knows, a ranking of authors by cited topic evidence.
+const APISchemaVersion = "3.50.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

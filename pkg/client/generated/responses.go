@@ -2719,6 +2719,14 @@ type PreviewPersonTiersErrorResponseJSON = ErrorResponse
 
 type PreviewPersonTiersErrorResponseJSONDefault = ErrorResponse
 
+type FindPeopleWhoKnowResponse = WhoKnowsResponse
+
+type FindPeopleWhoKnowErrorResponse = ErrorResponse
+
+type FindPeopleWhoKnowErrorResponseJSON = ErrorResponse
+
+type FindPeopleWhoKnowErrorResponseJSONDefault = ErrorResponse
+
 type DeletePersonErrorResponse = ErrorResponse
 
 type DeletePersonErrorResponseJSON = ErrorResponse
@@ -6547,6 +6555,16 @@ type PreviewPersonTiersResp struct {
 	JSON409      *PreviewPersonTiersErrorResponse
 	JSON503      *PreviewPersonTiersErrorResponseJSON
 	JSONDefault  *PreviewPersonTiersErrorResponseJSONDefault
+}
+
+type FindPeopleWhoKnowResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *FindPeopleWhoKnowResponse
+	JSON400      *FindPeopleWhoKnowErrorResponse
+	JSON503      *FindPeopleWhoKnowErrorResponseJSON
+	JSONDefault  *FindPeopleWhoKnowErrorResponseJSONDefault
 }
 
 type DeletePersonResp struct {
