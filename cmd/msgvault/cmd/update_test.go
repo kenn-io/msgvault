@@ -182,9 +182,10 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterPartialStopFailure(t *test
 }
 
 func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
-	for _, background := range []string{"", "false", "true"} {
-		t.Run("background="+background, func(t *testing.T) {
-			persistent := background == "true"
+	for _, tc := range []struct{ background, persistent string }{{}, {background: "false"}, {background: "true", persistent: "false"}, {background: "true", persistent: "true"}, {background: "true"}} {
+		background := tc.background
+		t.Run("background="+background+"/persistent="+tc.persistent, func(t *testing.T) {
+			persistent := tc.persistent == "true"
 			require := require.New(t)
 			assert := assert.New(t)
 			dataDir := t.TempDir()
@@ -197,13 +198,15 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 				Service: daemonService,
 				Version: Version,
 				Metadata: map[string]string{
-					runtimePersistent:       strconv.FormatBool(persistent),
 					runtimeHost:             server.Host,
 					runtimePort:             portText,
 					runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
 					runtimeAPISchemaVersion: api.APISchemaVersion,
 					runtimeCreateTime:       matchingProcessCreateTime(t),
 				},
+			}
+			if tc.persistent != "" {
+				record.Metadata[runtimePersistent] = tc.persistent
 			}
 			if background != "" {
 				record.Metadata[runtimeBackground] = background

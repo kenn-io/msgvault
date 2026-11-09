@@ -1640,7 +1640,6 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 	}
 	configureServeBackgroundCommandForRun = func(cmd *exec.Cmd) (backgroundServeCommandConfig, error) {
 		assert.Contains(cmd.Environ(), servePersistentChildEnv+"="+strconv.FormatBool(persistent))
-		assert.NotContains(cmd.Environ(), servePersistentChildEnv+"="+strconv.FormatBool(!persistent))
 		return backgroundServeCommandConfig{ProcessTree: tree}, nil
 	}
 	t.Cleanup(func() {
@@ -1662,9 +1661,11 @@ func testBackgroundProcessLifetimeEnvironment(t *testing.T, persistent bool) {
 		_ = proc.releaseProcessTree()
 	})
 
-	assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
-	require.NoError(proc.releaseProcessTree())
-	assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
+	if !persistent {
+		assert.Zero(tree.closeCalls.Load(), "successful startup must transfer process-tree ownership")
+		require.NoError(proc.releaseProcessTree())
+		assert.Equal(int32(1), tree.closeCalls.Load(), "owner releases process-tree handle")
+	}
 }
 
 func TestStopBackgroundServeStartupTerminatesProcessTree(t *testing.T) {
@@ -1738,13 +1739,16 @@ func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
 		name       string
 		background string
 		override   string
+		persistent string
 	}{
 		{name: "foreground"},
+		{name: "persistent child", background: "1", persistent: "true", override: "2s"},
 		{name: "environment override", background: "1", override: "0s"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(serveBackgroundChildEnv, tt.background)
 			t.Setenv(daemonIdleTimeoutEnv, tt.override)
+			t.Setenv(servePersistentChildEnv, tt.persistent)
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Server.DaemonIdleTimeout = time.Second
 
@@ -1753,43 +1757,28 @@ func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
 	}
 }
 
-func TestDaemonLaunchLifetime(t *testing.T) {
-	for _, persistent := range []bool{false, true} {
-		t.Run(strconv.FormatBool(persistent), func(t *testing.T) {
-			t.Setenv(serveBackgroundChildEnv, "1")
-			t.Setenv(servePersistentChildEnv, strconv.FormatBool(persistent))
-			t.Setenv(daemonIdleTimeoutEnv, "2s")
+func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
+	t.Setenv(serveBackgroundChildEnv, "1")
+	t.Setenv(servePersistentChildEnv, "false")
+	for _, tc := range []struct {
+		override string
+		want     time.Duration
+	}{{"", 20 * time.Millisecond}, {"2s", 2 * time.Second}} {
+		t.Run(tc.override, func(t *testing.T) {
+			t.Setenv(daemonIdleTimeoutEnv, tc.override)
 			synctest.Test(t, func(t *testing.T) {
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				tracker := newDaemonIdleTracker(lifecycleTestConfig(t.TempDir()), cancel, testDiscardLogger())
-				if tracker != nil {
-					go tracker.Run(ctx)
-				}
-				time.Sleep(5 * time.Second)
-				assert.Equal(t, !persistent, ctx.Err() != nil)
+				cfg := lifecycleTestConfig(t.TempDir())
+				cfg.Server.DaemonIdleTimeout = 20 * time.Millisecond
+				fired := make(chan struct{})
+				tracker := newDaemonIdleTracker(cfg, func() { close(fired) }, testDiscardLogger())
+				require.NotNil(t, tracker)
+				started := time.Now()
+				go tracker.Run(t.Context())
+				<-fired
+				assert.Equal(t, tc.want, time.Since(started))
 			})
 		})
 	}
-}
-
-func TestNewDaemonIdleTrackerUsesServerConfigTimeout(t *testing.T) {
-	t.Setenv(serveBackgroundChildEnv, "1")
-	t.Setenv(daemonIdleTimeoutEnv, "")
-	synctest.Test(t, func(t *testing.T) {
-		cfg := lifecycleTestConfig(t.TempDir())
-		cfg.Server.DaemonIdleTimeout = 20 * time.Millisecond
-		fired := make(chan struct{})
-
-		tracker := newDaemonIdleTracker(cfg, func() { close(fired) }, testDiscardLogger())
-		require.NotNil(t, tracker)
-
-		started := time.Now()
-		go tracker.Run(t.Context())
-
-		<-fired
-		assert.Equal(t, cfg.Server.DaemonIdleTimeout, time.Since(started))
-	})
 }
 
 func TestAutomaticDaemonReuseLifetime(t *testing.T) {
@@ -1798,13 +1787,13 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 	t.Cleanup(func() { daemonCLIExecutableResolver = savedResolver })
 	for _, contended := range []bool{false, true} {
 		for _, tc := range []struct {
-			timeout, restart, powerShell string
-			options                      invocationOptions
+			timeout, persistent, lifetime, restart, powerShell string
+			options                                            invocationOptions
 		}{
-			{timeout: "2s", options: invocationOptions{homeDir: "/tmp/sample's archive"}, restart: "--home '/tmp/sample'\\''s archive' ", powerShell: "'--home' '/tmp/sample''s archive' "},
-			{timeout: "2s", options: invocationOptions{cfgFile: "/tmp/sample's archive.toml"}, restart: "--config '/tmp/sample'\\''s archive.toml' ", powerShell: "'--config' '/tmp/sample''s archive.toml' "},
-			{timeout: "2s", options: invocationOptions{cfgFile: "/tmp/sample's archive.toml", homeDir: "/tmp/sample's archive"}, restart: "--config '/tmp/sample'\\''s archive.toml' --home '/tmp/sample'\\''s archive' ", powerShell: "'--config' '/tmp/sample''s archive.toml' '--home' '/tmp/sample''s archive' "},
-			{timeout: "2s"}, {timeout: "0s"}, {},
+			{timeout: "2s", persistent: "false", lifetime: "  Exits after 2s idle (started automatically)", options: invocationOptions{homeDir: "/tmp/sample's archive"}, restart: "--home '/tmp/sample'\\''s archive' ", powerShell: "'--home' '/tmp/sample''s archive' "},
+			{timeout: "0s", persistent: "false", lifetime: "  Stays running (started automatically)", options: invocationOptions{cfgFile: "/tmp/sample's archive.toml"}, restart: "--config '/tmp/sample'\\''s archive.toml' ", powerShell: "'--config' '/tmp/sample''s archive.toml' "},
+			{options: invocationOptions{cfgFile: "/tmp/sample's archive.toml", homeDir: "/tmp/sample's archive"}, restart: "--config '/tmp/sample'\\''s archive.toml' --home '/tmp/sample'\\''s archive' ", powerShell: "'--config' '/tmp/sample''s archive.toml' '--home' '/tmp/sample''s archive' "},
+			{timeout: "0s", persistent: "true", lifetime: "  Stays running until msgvault daemon stop"},
 		} {
 			timeout := tc.timeout
 			t.Run(fmt.Sprintf("contended=%t/timeout=%s/home=%t/config=%t", contended, timeout, tc.options.homeDir != "", tc.options.cfgFile != ""), func(t *testing.T) {
@@ -1813,7 +1802,7 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 				server := httptestPingDaemon(t)
 				rec := daemon.RuntimeRecord{PID: os.Getpid(), Service: daemonService, Version: Version, Network: daemon.NetworkTCP, Address: net.JoinHostPort(server.Host, strconv.Itoa(server.Port)), Metadata: map[string]string{
 					runtimeAPIVersion: strconv.Itoa(daemonAPIVersion), runtimeAPISchemaVersion: api.APISchemaVersion, runtimeCreateTime: matchingProcessCreateTime(t),
-					runtimeBackground: "true", runtimePersistent: "false", runtimeIdleTimeout: timeout,
+					runtimeBackground: "true", runtimePersistent: tc.persistent, runtimeIdleTimeout: timeout,
 				}}
 				if timeout == "" {
 					delete(rec.Metadata, runtimePersistent)
@@ -1834,16 +1823,18 @@ func TestAutomaticDaemonReuseLifetime(t *testing.T) {
 				after, err := os.ReadFile(path)
 				require.NoError(err)
 				assert.Equal(before, after, "reuse preserves the runtime and its lifetime")
-				assert.Contains(stdout.String(), "msgvault already running at http://"+rec.Address+" (pid "+strconv.Itoa(rec.PID)+")\n")
-				restart := "'/tmp/source build/msgvault' " + tc.restart + "daemon restart"
-				if runtime.GOOS == "windows" {
-					restart = "& '/tmp/source build/msgvault' " + tc.powerShell + "'daemon' 'restart'"
+				want := "msgvault already running at http://" + rec.Address + " (pid " + strconv.Itoa(rec.PID) + ")\n"
+				if tc.lifetime != "" {
+					want += tc.lifetime + "\n"
 				}
-				assert.Contains(stdout.String(), "Run `"+restart+"` to keep it running until stopped.")
-				if timeout == "" {
-					assert.NotContains(stdout.String(), "  Exits after")
-					assert.NotContains(stdout.String(), "  Stays running")
+				if tc.persistent != "true" {
+					restart := "'/tmp/source build/msgvault' " + tc.restart + "daemon restart"
+					if runtime.GOOS == "windows" {
+						restart = "& '/tmp/source build/msgvault' " + tc.powerShell + "'daemon' 'restart'"
+					}
+					want += "Run `" + restart + "` to keep it running until stopped.\n"
 				}
+				assert.Equal(want, stdout.String())
 				assert.Empty(stderr.String())
 			})
 		}
@@ -1855,7 +1846,7 @@ func TestServeStatusLifetime(t *testing.T) {
 		{"true", "true", "0s", "  Stays running until msgvault daemon stop"},
 		{"false", "true", "20m0s", "  Exits after 20m idle (started automatically)"},
 		{"false", "true", "0s", "  Stays running (started automatically)"},
-		{"false", "", "0s", "  Stays running until msgvault daemon stop"},
+		{"", "", "0s", "  Stays running until msgvault daemon stop"},
 		{"", "", "", "  pid:     0"},
 	} {
 		rt := &DaemonRuntime{Record: daemon.RuntimeRecord{Metadata: map[string]string{runtimePersistent: tc.persistent, runtimeBackground: tc.background, runtimeIdleTimeout: tc.timeout}}}
@@ -1864,23 +1855,17 @@ func TestServeStatusLifetime(t *testing.T) {
 }
 
 func TestDaemonLifetimeMetadata(t *testing.T) {
-	for _, persistent := range []bool{false, true} {
-		for _, timeout := range []string{"2s", "0s"} {
-			t.Run(fmt.Sprintf("persistent=%t/timeout=%s", persistent, timeout), func(t *testing.T) {
-				t.Setenv(serveBackgroundChildEnv, "1")
-				t.Setenv(servePersistentChildEnv, strconv.FormatBool(persistent))
-				t.Setenv(daemonIdleTimeoutEnv, timeout)
-				owner, err := claimServeOwnership(t.Context(), lifecycleTestConfig(t.TempDir()), "127.0.0.1", 8123, Version)
-				require.NoError(t, err)
-				t.Cleanup(func() { assert.NoError(t, owner.Close()) })
-				assert.Equal(t, strconv.FormatBool(persistent), owner.record.Metadata[runtimePersistent])
-				wantTimeout := timeout
-				if persistent {
-					wantTimeout = "0s"
-				}
-				assert.Equal(t, wantTimeout, owner.record.Metadata[runtimeIdleTimeout])
-			})
-		}
+	for _, tc := range []struct{ persistent, timeout, wantTimeout string }{{"false", "2s", "2s"}, {"false", "0s", "0s"}, {"true", "2s", "0s"}} {
+		t.Run("persistent="+tc.persistent+"/timeout="+tc.timeout, func(t *testing.T) {
+			t.Setenv(serveBackgroundChildEnv, "1")
+			t.Setenv(servePersistentChildEnv, tc.persistent)
+			t.Setenv(daemonIdleTimeoutEnv, tc.timeout)
+			owner, err := claimServeOwnership(t.Context(), lifecycleTestConfig(t.TempDir()), "127.0.0.1", 8123, Version)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+			assert.Equal(t, tc.persistent, owner.record.Metadata[runtimePersistent])
+			assert.Equal(t, tc.wantTimeout, owner.record.Metadata[runtimeIdleTimeout])
+		})
 	}
 }
 

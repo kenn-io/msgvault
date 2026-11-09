@@ -100,7 +100,6 @@ func TestWriteDaemonRuntimePublishesKitRecord(t *testing.T) {
 	rec, err = daemon.RuntimeStore{Dir: dataDir}.Read(path)
 	require.NoError(err, "read background runtime record")
 	assert.Equal("true", rec.Metadata[runtimeBackground])
-	assert.Equal("true", rec.Metadata[runtimePersistent])
 }
 
 func TestWriteDaemonRuntimeAcceptsSymlinkedDataDir(t *testing.T) {

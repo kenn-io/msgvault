@@ -1270,7 +1270,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 		Version: tt.daemon,
 		Metadata: map[string]string{
 			runtimePersistent:       strconv.FormatBool(tt.persistent),
-			runtimeIdleTimeout:      "0s",
+			runtimeBackground:       "true",
 			runtimeHost:             host,
 			runtimePort:             strconv.Itoa(port),
 			runtimeAPIVersion:       strconv.Itoa(apiVersion),
