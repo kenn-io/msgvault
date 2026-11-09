@@ -6693,6 +6693,66 @@ func (i ImportResult) Validate() error {
 	return errors
 }
 
+type ImportedMessage struct {
+	BodyHTML     *string                   `json:"body_html,omitzero"`
+	BodyMarkdown *string                   `json:"body_markdown,omitzero"`
+	BodyText     *string                   `json:"body_text,omitzero"`
+	Conversation MessageImportConversation `json:"conversation"`
+
+	// ExternalID Stable ID of the message in its source; with source.identifier it is the idempotency key
+	ExternalID string `json:"external_id" validate:"required,max=256"`
+
+	// MessageType Caller-chosen type such as feed_item; lowercase letters, digits and underscores, starting with a letter
+	MessageType string              `json:"message_type" validate:"required,max=64"`
+	Metadata    map[string]any      `json:"metadata,omitempty"`
+	Sender      MessageImportSender `json:"sender"`
+	SentAt      string              `json:"sent_at" validate:"required"`
+	Title       *string             `json:"title,omitzero" validate:"omitempty,max=4096"`
+
+	// URL Canonical URL of the message
+	URL *string `json:"url,omitzero" validate:"omitempty,max=4096"`
+}
+
+func (i ImportedMessage) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Conversation).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Conversation", err)
+		}
+	}
+	if err := typesValidator.Var(i.ExternalID, "required,max=256"); err != nil {
+		errors = errors.Append("ExternalID", err)
+	}
+	if err := typesValidator.Var(i.MessageType, "required,max=64"); err != nil {
+		errors = errors.Append("MessageType", err)
+	}
+	if err := runtime.ValidatePattern(i.MessageType, `^[a-z][a-z0-9_]*$`); err != nil {
+		errors = errors.Append("MessageType", err)
+	}
+	if v, ok := any(i.Sender).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Sender", err)
+		}
+	}
+	if err := typesValidator.Var(i.SentAt, "required"); err != nil {
+		errors = errors.Append("SentAt", err)
+	}
+	if i.Title != nil {
+		if err := typesValidator.Var(i.Title, "omitempty,max=4096"); err != nil {
+			errors = errors.Append("Title", err)
+		}
+	}
+	if i.URL != nil {
+		if err := typesValidator.Var(i.URL, "omitempty,max=4096"); err != nil {
+			errors = errors.Append("URL", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type KataEvidenceLinkRequest struct {
 	Evidence []Reference `json:"evidence" validate:"required"`
 }
@@ -7871,6 +7931,119 @@ func (m MessageDetail) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type MessageImportConversation struct {
+	// ExternalID Stable ID of the conversation in its source
+	ExternalID string  `json:"external_id" validate:"required,max=256"`
+	Title      *string `json:"title,omitzero" validate:"omitempty,max=4096"`
+}
+
+func (m MessageImportConversation) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MessageImportRequest struct {
+	Message ImportedMessage     `json:"message"`
+	Source  MessageImportSource `json:"source"`
+}
+
+func (m MessageImportRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Message).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Message", err)
+		}
+	}
+	if v, ok := any(m.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MessageImportResponse struct {
+	MessageID       int64                       `json:"message_id"`
+	SourceID        int64                       `json:"source_id"`
+	SourceMessageID string                      `json:"source_message_id" validate:"required"`
+	Status          MessageImportResponseStatus `json:"status" validate:"required"`
+}
+
+func (m MessageImportResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
+	}
+	if v, ok := any(m.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MessageImportSender struct {
+	Email *runtime.Email `json:"email,omitempty"`
+
+	// ID Stable identifier for this sender in the import source
+	ID   *string `json:"id,omitzero" validate:"omitempty,max=200"`
+	Name *string `json:"name,omitzero" validate:"omitempty,max=256"`
+
+	// Phone International phone number starting with + or 00; normalized to E.164
+	Phone *string `json:"phone,omitzero" validate:"omitempty,max=64"`
+	URL   *string `json:"url,omitzero" validate:"omitempty,max=4096"`
+}
+
+func (m MessageImportSender) Validate() error {
+	var errors runtime.ValidationErrors
+	if m.Email != nil {
+		if v, ok := any(m.Email).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Email", err)
+			}
+		}
+	}
+	if m.ID != nil {
+		if err := typesValidator.Var(m.ID, "omitempty,max=200"); err != nil {
+			errors = errors.Append("ID", err)
+		}
+	}
+	if m.Name != nil {
+		if err := typesValidator.Var(m.Name, "omitempty,max=256"); err != nil {
+			errors = errors.Append("Name", err)
+		}
+	}
+	if m.Phone != nil {
+		if err := typesValidator.Var(m.Phone, "omitempty,max=64"); err != nil {
+			errors = errors.Append("Phone", err)
+		}
+	}
+	if m.URL != nil {
+		if err := typesValidator.Var(m.URL, "omitempty,max=4096"); err != nil {
+			errors = errors.Append("URL", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MessageImportSource struct {
+	AccountEmail string  `json:"account_email" validate:"required"`
+	DisplayName  *string `json:"display_name,omitzero" validate:"omitempty,max=256"`
+	Identifier   string  `json:"identifier" validate:"required,max=128"`
+}
+
+func (m MessageImportSource) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
 type MessageListResponse struct {

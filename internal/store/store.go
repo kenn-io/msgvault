@@ -1800,6 +1800,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	if err := s.ensureCacheSourceAttribution(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureCacheSourceSizeAttribution(ctx); err != nil {
+		return err
+	}
 	// Older runs predate typed checkpoints. Restore types only when the source
 	// or pinned Gmail handoff cursor identifies them unambiguously, then tag
 	// unfinished Gmail recovery runs for the strict resume matcher.

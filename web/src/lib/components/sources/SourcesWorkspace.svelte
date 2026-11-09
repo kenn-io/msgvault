@@ -12,7 +12,7 @@
   import { CardDAVController } from '../../carddav/controller.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
-  import { sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
+  import { isOnDemandSourceType, sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import Dialog from '../common/Dialog.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
@@ -182,7 +182,7 @@
     return source.sync_unavailable_reason === 'sync_already_running';
   }
   function isOnDemandSource(source: Source): boolean {
-    return source.source_type === 'meeting_import';
+    return isOnDemandSourceType(source.source_type);
   }
   // Later status failures may retry in the background. A failed first load
   // waits for the user's Retry action so its error stays visible.

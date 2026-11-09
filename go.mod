@@ -49,8 +49,8 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
 	go.kenn.io/docbank v0.17.0
-	go.kenn.io/kata v0.22.0
-	go.kenn.io/kit v0.48.2
+	go.kenn.io/kata v0.23.0
+	go.kenn.io/kit v0.48.4
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0

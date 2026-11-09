@@ -289,6 +289,8 @@ import type {
   MergePersonRequest,
   MergePersonsPathParameters,
   MessageDetail,
+  MessageImportRequest,
+  MessageImportResponse,
   MessageListResponse,
   MessageRecordingsResponse,
   MessageTagChange,
@@ -1960,6 +1962,23 @@ export const importMeeting = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: meetingImportRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Import one message
+ */
+export const importMessage = (
+  messageImportRequest: MessageImportRequest,
+  options?: SecondParameter<typeof orvalFetch<MessageImportResponse>>,
+) => {
+  return orvalFetch<MessageImportResponse>(
+    {
+      url: `/api/v1/import/message`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: messageImportRequest,
     },
     options,
   );

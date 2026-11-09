@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -123,13 +124,14 @@ Examples:
 			))
 		}
 
-		// Validate --message-type against the known set, like --mode, so a
-		// typo (e.g. carrier_pigeon) fails fast instead of silently
-		// returning no results.
+		// A malformed --message-type (e.g. SMS or meeting-transcript) fails
+		// fast instead of silently returning no results. Any well-formed type
+		// is accepted: message imports choose their own types, such as
+		// feed_item, which no fixed list can know.
 		for _, mt := range searchMessageTypes {
-			if !query.IsKnownMessageType(mt) {
+			if !store.IsWellFormedMessageType(mt) {
 				return usageErr(cmd, fmt.Errorf(
-					"invalid --message-type: %q (want one of: %s)",
+					"invalid --message-type: %q (want lowercase letters, digits and underscores, e.g. %s)",
 					mt, strings.Join(query.KnownMessageTypes, ", "),
 				))
 			}
@@ -428,5 +430,5 @@ func init() {
 	searchCmd.Flags().StringVar(&searchDeletionScope, "deletion-scope", "active",
 		"Source deletion scope: active|deleted|any (FTS mode only)")
 	searchCmd.Flags().StringSliceVar(&searchMessageTypes, "message-type", nil,
-		"Limit results to message type(s), e.g. email, sms, calendar_event, meeting_transcript")
+		"Limit results to message type(s), e.g. email, sms, calendar_event, meeting_transcript, or an imported type")
 }

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -43,7 +44,7 @@ func (imp *Importer) recoverPlaceholders(ctx context.Context, sourceID int64, op
 }
 
 func (imp *Importer) recoverRooms(ctx context.Context, sourceID int64, opts ImportOptions, sum *ImportSummary) error {
-	rooms, err := imp.store.MatrixPendingRooms(ctx, sourceID, opts.Rooms, opts.ExcludeRooms)
+	rooms, err := imp.store.MatrixPendingRooms(ctx, sourceID, opts.Rooms, opts.ExcludeRooms, opts.MediaPolicy)
 	if err != nil || len(rooms) == 0 || opts.SkipKeyBackup {
 		return err
 	}
@@ -58,7 +59,7 @@ func (imp *Importer) recoverRooms(ctx context.Context, sourceID int64, opts Impo
 	due := store.MatrixRecoveryDue{All: opts.Full, Stamp: imp.runtime.stamp, RetryBefore: time.Now().Add(-recoveryCooldown).Unix()}
 	var failures error
 	for _, room := range rooms {
-		err := imp.recoverRoom(ctx, sourceID, room, due, sum)
+		err := imp.recoverRoom(ctx, sourceID, room, due, opts, sum)
 		imp.runtime.releaseRoom(id.RoomID(room.RoomID))
 		if imp.runtime.failure != nil {
 			sum.BackupFailure = imp.runtime.failure
@@ -76,7 +77,11 @@ func (imp *Importer) recoverRooms(ctx context.Context, sourceID int64, opts Impo
 
 // recoverRoom decrypts a room's due placeholders one page at a time. Each write
 // is safe to repeat, so an interrupted page finishes on the next sync.
-func (imp *Importer) recoverRoom(ctx context.Context, sourceID int64, room store.MatrixPendingRoom, due store.MatrixRecoveryDue, sum *ImportSummary) error {
+// Recovered media stays pending; the media retry pass downloads it.
+func (imp *Importer) recoverRoom(ctx context.Context, sourceID int64, room store.MatrixPendingRoom, due store.MatrixRecoveryDue, opts ImportOptions, sum *ImportSummary) error {
+	pending := pendingMediaOptions(opts)
+	pending.MediaMutation = opts.MediaMutation
+	conversation := attachmentpolicy.Conversation{Type: room.ConversationType, ParticipantCount: room.ParticipantCount}
 	var after int64
 	for {
 		page, err := imp.store.MatrixDueEncryptedEvents(ctx, room.ConversationID, after, due, recoveryPageSize)
@@ -112,7 +117,7 @@ func (imp *Importer) recoverRoom(ctx context.Context, sourceID int64, room store
 		}
 		var relations []decryptedEvent
 		for _, item := range decrypted {
-			settled, relation, err := imp.applyDecrypted(ctx, sourceID, room.ConversationID, item, due.Stamp, sum)
+			settled, relation, err := imp.applyDecrypted(ctx, sourceID, room.ConversationID, item, due.Stamp, conversation, pending, sum)
 			if err != nil {
 				return err
 			}
@@ -125,7 +130,7 @@ func (imp *Importer) recoverRoom(ctx context.Context, sourceID int64, room store
 		// Apply edits and reactions after their targets, oldest first.
 		slices.SortFunc(relations, func(a, b decryptedEvent) int { return compareRelations(a.plain, b.plain) })
 		for _, rel := range relations {
-			if err := imp.persistEvent(ctx, sourceID, room.ConversationID, rel.plain, sum); err != nil {
+			if err := imp.persistEvent(ctx, sourceID, room.ConversationID, rel.plain, conversation, pending, sum); err != nil {
 				if !errors.Is(err, errRelationTargetMissing) {
 					return err
 				}
@@ -143,7 +148,7 @@ func (imp *Importer) recoverRoom(ctx context.Context, sourceID int64, room store
 
 // applyDecrypted writes one decrypted placeholder, or reports a relation the
 // caller applies after its page's messages. An unsettled placeholder stays pending until the backup changes.
-func (imp *Importer) applyDecrypted(ctx context.Context, sourceID, convID int64, item decryptedEvent, stamp string, sum *ImportSummary) (settled, relation bool, err error) {
+func (imp *Importer) applyDecrypted(ctx context.Context, sourceID, convID int64, item decryptedEvent, stamp string, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) (settled, relation bool, err error) {
 	plain := item.plain
 	// The row may have been deleted or reused while the backup was read.
 	pending, deleted, err := imp.store.MatrixEncryptedEventPending(ctx, item.MessageID, plain.ID.String())
@@ -154,7 +159,7 @@ func (imp *Importer) applyDecrypted(ctx context.Context, sourceID, convID int64,
 	// copy. Edits and reactions keep their first claim, so none applies twice.
 	message := (plain.Type == event.EventMessage || plain.Type == event.EventSticker) && parseContent(plain) && plain.Content.AsMessage().RelatesTo.GetReplaceID() == ""
 	if message {
-		if err := imp.preferEarlierMessage(ctx, sourceID, convID, item, stamp); err != nil {
+		if err := imp.preferEarlierMessage(ctx, sourceID, convID, item, stamp, conversation, opts); err != nil {
 			return false, false, err
 		}
 	}
@@ -180,7 +185,7 @@ func (imp *Importer) applyDecrypted(ctx context.Context, sourceID, convID int64,
 		// edits; writing the content again would hide those edits.
 		if current.Type == event.EventEncrypted {
 			plain.Unsigned.RedactedBecause = nil
-			err := imp.persistEvent(ctx, sourceID, convID, plain, sum)
+			err := imp.persistEvent(ctx, sourceID, convID, plain, conversation, opts, sum)
 			switch {
 			case errors.Is(err, store.ErrMatrixPlaceholderGone):
 				return true, false, nil
@@ -193,11 +198,11 @@ func (imp *Importer) applyDecrypted(ctx context.Context, sourceID, convID int64,
 			// Finish the reply link the interrupted run may have missed, without rewriting the body.
 			resumed := *plain
 			resumed.Mautrix.WasEncrypted = false
-			if err := imp.persistEvent(ctx, sourceID, convID, &resumed, &ImportSummary{}); err != nil {
+			if err := imp.persistEvent(ctx, sourceID, convID, &resumed, conversation, opts, &ImportSummary{}); err != nil {
 				return false, false, err
 			}
 		}
-		if err := imp.replayPendingEdits(ctx, sourceID, convID, item.MessageID, sum); err != nil {
+		if err := imp.replayPendingEdits(ctx, sourceID, convID, item.MessageID, conversation, opts, sum); err != nil {
 			return false, false, err
 		}
 		return true, false, imp.store.SetMatrixEncryptedEventRecovered(ctx, item.MessageID, true, "", 0)
@@ -215,7 +220,7 @@ func (imp *Importer) claim(ctx context.Context, convID int64, key megolmIndex, e
 
 // preferEarlierMessage returns a later message that holds item's Megolm index
 // to its placeholder, so an older event's text is not credited to its copy.
-func (imp *Importer) preferEarlierMessage(ctx context.Context, sourceID, convID int64, item decryptedEvent, stamp string) error {
+func (imp *Importer) preferEarlierMessage(ctx context.Context, sourceID, convID int64, item decryptedEvent, stamp string, conversation attachmentpolicy.Conversation, opts ImportOptions) error {
 	holder, err := imp.store.MatrixMegolmClaim(ctx, convID, item.session.String(), item.index)
 	if err != nil || holder == "" || holder == item.plain.ID.String() {
 		return err
@@ -256,9 +261,15 @@ func (imp *Importer) preferEarlierMessage(ctx context.Context, sourceID, convID 
 	if current.Type != event.EventEncrypted {
 		// Rewrite the row through the same body, raw and index updates.
 		encrypted.Mautrix.WasEncrypted = true
-		if err := imp.persistEvent(ctx, sourceID, convID, encrypted, &ImportSummary{}); err != nil {
+		if err := imp.persistEvent(ctx, sourceID, convID, encrypted, conversation, opts, &ImportSummary{}); err != nil {
 			return err
 		}
+	}
+	// The copy's media came from the earlier event's content.
+	if err := mediaMutation(ctx, opts, func() error {
+		return imp.store.ReplaceMessageMatrixAttachments(ctx, holderID, nil)
+	}); err != nil {
+		return err
 	}
 	if err := imp.store.SetMessageEditedStateContext(ctx, holderID, false); err != nil {
 		return err
@@ -268,6 +279,7 @@ func (imp *Importer) preferEarlierMessage(ctx context.Context, sourceID, convID 
 	}
 	metadata, err := imp.mergedMetadata(ctx, holderID, map[string]any{
 		editEventKey: nil, editTSKey: nil, "referenced_message_id": nil,
+		"matrix_media_content": nil, "matrix_media_content_version": nil,
 		"matrix_replay_conflict": item.plain.ID.String(),
 	})
 	if err != nil {

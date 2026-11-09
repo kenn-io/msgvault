@@ -1731,9 +1731,14 @@ msgvault sync-matrix --full
 | Flag | Default | Description |
 |---|---|---|
 | `--account` | all registered | Sync only this exact Matrix user ID |
-| `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+| `--full` | `false` | Re-fetch complete joined-room history, rescan archived messages for media, and retry media downloads immediately |
+| `--no-media` | `false` | Record media metadata without downloading bytes this run |
 
 Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry rules described in the [Matrix guide](usage/matrix.md). The recovered count includes messages replaced with decrypted content, excluding edits and reactions.
+
+The first sync after upgrading discovers media in previously archived messages and saves a per-account completion marker. Later syncs skip this scan; `--full` repeats it.
+
+Later syncs fetch pending media and retry temporary failures such as 408, 425, 429, 5xx, timeouts and connection errors. Transient failures stay pending and retry on normal syncs after a growing backoff of 1, 2, 4, 8, 16, then 24 hours. Later failures keep the 24-hour backoff. Access denied, missing files, hash mismatches and decryption errors stay failed and retry on normal syncs after one week. `--full` bypasses both waits. The summary counts outstanding pending and failed media for the selected account and rooms. Each media item is attempted once per run.
 
 ---
 
@@ -2763,7 +2768,7 @@ msgvault search <query> [flags]
 | `--json` | Output results as JSON |
 | `--account` | Limit results to a specific account |
 | `--collection` | Limit results to all member accounts of a collection |
-| `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `discord`, `calendar_event`, `sms` |
+| `--message-type` | Limit results to one or more message types, e.g. `email`, `teams`, `discord`, `calendar_event`, `sms`, or an imported type such as `feed_item` |
 | `--deletion-scope` | Source-deletion scope: `active` (default), `deleted`, or `any`. Non-active scopes require `--mode fts`. |
 | `--mode` | Search mode: `fts` (default), `vector`, or `hybrid`. `vector` and `hybrid` require vector search to be configured. |
 | `--explain` | Include per-signal scores (RRF, BM25, vector) in the output. Only applies to `--mode vector` and `--mode hybrid`. |

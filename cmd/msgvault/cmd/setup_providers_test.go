@@ -1203,6 +1203,7 @@ func TestSetupStatusReportsPendingLanesForPresentKeys(t *testing.T) {
 	media := findLane(t, report, laneMediaPolicy)
 	assert.Contains(media.Reason, "beeper scope all")
 	assert.Contains(media.Reason, "imessage scope all")
+	assert.Contains(media.Reason, "matrix scope")
 	assert.Equal([]string{"search_people", "get_person_notes", "get_person_relationship", "search_person_files"}, report.MCPTools)
 
 	human, err := fixture.run(t, "status")

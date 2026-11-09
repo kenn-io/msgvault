@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +101,32 @@ func TestLogoutDeletesDedicatedDevice(t *testing.T) {
 		Homeserver: server.URL, UserID: "@archive:example.org", DeviceID: "DEVICE1", AccessToken: "secret",
 	})
 	assert.NoError(err)
+}
+
+func TestMatrixRequestsRefuseRedirects(t *testing.T) {
+	for _, operation := range []string{"login", "authenticated"} {
+		t.Run(operation, func(t *testing.T) {
+			require := require.New(t)
+			var redirected atomic.Int32
+			// Same hostname, another port: Go would keep Authorization and resend the login body.
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				redirected.Add(1)
+				_, _ = w.Write([]byte(`{"access_token":"secret","device_id":"DEVICE1","user_id":"@archive:example.org"}`))
+			}))
+			defer target.Close()
+			homeserver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+			}))
+			defer homeserver.Close()
+
+			var err error
+			if operation == "login" {
+				_, err = Login(t.Context(), homeserver.URL, "@archive:example.org", "password", false)
+			} else {
+				err = CheckLogin(t.Context(), Credentials{Homeserver: homeserver.URL, UserID: "@archive:example.org", DeviceID: "DEVICE1", AccessToken: "secret"})
+			}
+			require.Error(err)
+			assert.Zero(t, redirected.Load())
+		})
+	}
 }

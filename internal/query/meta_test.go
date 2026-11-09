@@ -22,6 +22,6 @@ func TestFacebookCommentsVisibleAsTextConversations(t *testing.T) {
 	require.NoError(err)
 	require.Len(rows, 1)
 	assert.Equal(int64(701), rows[0].ConversationID)
-	assert.True(IsKnownMessageType("facebook_comments"))
+	assert.Contains(KnownMessageTypes, "facebook_comments")
 	assert.True(IsChatEntry("facebook_comments", "public_comments"))
 }

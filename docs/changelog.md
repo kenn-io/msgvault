@@ -14,9 +14,19 @@ All notable changes to msgvault, grouped by release.
   Search the archive and link commenters through existing people tools. This
   does not send messages or include Instagram or ad-creative discovery.
 
+- Matrix sync archives images, stickers, video, audio and files under the shared chat media policy, including encrypted attachments. Syncs after upgrading also find media in messages archived earlier. `sync-matrix --no-media` leaves media for a later sync, and failed downloads retry on later syncs.
+
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
 - Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
+- Archive messages from sources msgvault has no connector for, such as the
+  items of the feeds you follow, with `POST /api/v1/import/message`. Each
+  message keeps the type its sender chose, such as `feed_item`, for search
+  and export filters, and a retry updates it instead of adding a copy. See
+  [Messages from any source](usage/message-import.md). It needs HTTP API
+  schema 3.50.0.
+- `msgvault search --message-type` accepts any type of lowercase letters,
+  digits, and underscores, so it can filter imported types.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
@@ -51,6 +61,7 @@ All notable changes to msgvault, grouped by release.
   `2026-07-28` or newer.
 
 - Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
 
 - Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
 

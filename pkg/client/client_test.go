@@ -1435,6 +1435,47 @@ func TestImportMeetingAcceptsIdempotentOK(t *testing.T) {
 	assert.Equal(int64(901), got.MessageID, "message id")
 }
 
+func TestImportMessageAcceptsIdempotentOK(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(http.MethodPost, r.Method, "method")
+		assert.Equal("/api/v1/import/message", r.URL.Path, "path")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"status":"updated","source_id":3,"message_id":902,"source_message_id":"entry-42"}`,
+		))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	require.NoError(err, "New")
+
+	title := "Example Project 1.2.0"
+	name := "Example Project"
+	got, err := c.ImportMessage(t.Context(), &generated.ImportMessageRequestOptions{
+		Body: &generated.ImportMessageBody{
+			Source: generated.MessageImportSource{
+				Identifier:   "feeds",
+				AccountEmail: "user@example.com",
+			},
+			Message: generated.ImportedMessage{
+				ExternalID:   "entry-42",
+				MessageType:  "feed_item",
+				Conversation: generated.MessageImportConversation{ExternalID: "feed-7"},
+				Sender:       generated.MessageImportSender{Name: &name},
+				Title:        &title,
+				SentAt:       "2026-11-07T10:00:00-05:00",
+			},
+		},
+	})
+	require.NoError(err, "ImportMessage update")
+
+	assert.Equal(generated.MessageImportResponseStatusUpdated, got.Status, "status")
+	assert.Equal(int64(902), got.MessageID, "message id")
+}
+
 func TestStageDeletionAcceptsDryRunOK(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
