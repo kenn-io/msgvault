@@ -298,7 +298,7 @@ func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 				wantSubject = "Merged invite"
 			}
 			// Represent retained MIME written before invitation extraction existed.
-			_, err := st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
 			requirements.NoError(err)
 			var drop string
 			if tc.merged {
@@ -312,18 +312,18 @@ func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 				assertions.Zero(sum.Errors)
 			} else {
 				requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Invitation", Valid: true}, sql.NullString{}))
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet='' WHERE id=?`), id)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET snippet='' WHERE id=?`), id)
 				requirements.NoError(err)
 				requirements.NoError(st.UpsertFTS(id, "Stored subject", "Invitation", "", "", ""))
 				fault := `CREATE TRIGGER fail_invite_revision BEFORE INSERT ON archive_metadata WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT, 'revision failure'); END`
 				drop = `DROP TRIGGER fail_invite_revision`
 				if st.IsPostgreSQL() {
-					_, err = st.DB().Exec(`CREATE FUNCTION fail_invite_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
+					_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_invite_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key = 'derived_data_revision' THEN RAISE EXCEPTION 'revision failure'; END IF; RETURN NEW; END $$`)
 					requirements.NoError(err)
 					fault = `CREATE TRIGGER fail_invite_revision BEFORE INSERT ON archive_metadata FOR EACH ROW EXECUTE FUNCTION fail_invite_revision()`
 					drop += ` ON archive_metadata`
 				}
-				_, err = st.DB().Exec(fault)
+				_, err = st.DB().ExecContext(t.Context(), fault)
 				requirements.NoError(err)
 				sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 				requirements.Error(err)
@@ -338,7 +338,7 @@ func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 			assertions.Equal(wantSubject, page.Occurrences[0].Subject)
 			if !tc.merged {
 				assertions.Zero(derivedDataRevision(t, st))
-				_, err = st.DB().Exec(drop)
+				_, err = st.DB().ExecContext(t.Context(), drop)
 				requirements.NoError(err)
 				_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 				requirements.NoError(err)

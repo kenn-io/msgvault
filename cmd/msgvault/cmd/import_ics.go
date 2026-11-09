@@ -27,17 +27,17 @@ func newImportICSCommand() *cobra.Command {
 			}
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping...")
 			defer stop()
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 			summary, importErr := importer.ImportICS(ctx, st, args[0], identifier)
 			if importErr != nil {
-				return errors.Join(importErr, rebuildCacheAfterWrite(state.cfg.DatabaseDSN(), state))
+				return errors.Join(importErr, rebuildCacheAfterWrite(ctx, state.cfg.DatabaseDSN(), state))
 			}
 			printICSImportSummary(cmd, summary)
-			return rebuildCacheAfterWrite(state.cfg.DatabaseDSN(), state)
+			return rebuildCacheAfterWrite(ctx, state.cfg.DatabaseDSN(), state)
 		},
 	}
 	cmd.Flags().StringVar(&identifier, "identifier", "", "Stable name for this calendar export (required)")
