@@ -4,6 +4,7 @@
 
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
+  import { CONTACT_LABELS } from '../../directory/contact-labels';
   import type { Organization, OrganizationProfile, OrganizationProfileBody, Prepared } from '../../directory/models';
 
   import Dialog from '../common/Dialog.svelte';
@@ -239,7 +240,6 @@
 
   type Fact = { label: string; value: string };
   type ProfileRow = { value: string; envelope: Name['envelope']; record: object };
-  const CONTACT_LABELS: Record<string, string> = { email: 'Email', phone: 'Phone', url: 'Website' };
 
   // The structured profile the form doesn't edit, grouped as a person names it: Email, Phone, Address. A contact's
   // kind is its group's title, so its facts leave it out.

@@ -552,6 +552,9 @@ export class DirectoryEntityController {
     body: PatchPersonRelationshipRequest,
     prepared?: Prepared<PersonRelationship>,
   ): Promise<DirectoryEntityMutationResult<PersonRelationship, Prepared<PersonRelationship>>> {
+    if (prepared && !this.ownsRelationship(prepared.data)) {
+      return { ok: false, kind: 'error', status: 409, message: 'This connection no longer involves this person. Open it from the other person’s profile before editing or deleting it.' };
+    }
     const result = await this.writeExisting(
       () => this.prepareRelationshipMutation(id),
       (_current, signal, etag) =>
@@ -572,6 +575,9 @@ export class DirectoryEntityController {
     return result;
   }
   async deleteRelationship(id: number, prepared?: Prepared<PersonRelationship>): Promise<DirectoryEntityMutationResult<never, Prepared<PersonRelationship>>> {
+    if (prepared && !this.ownsRelationship(prepared.data)) {
+      return { ok: false, kind: 'error', status: 409, message: 'This connection no longer involves this person. Open it from the other person’s profile before editing or deleting it.' };
+    }
     const result = await this.deleteExisting(
       () => this.prepareRelationshipMutation(id),
       (signal, etag) =>
@@ -591,6 +597,9 @@ export class DirectoryEntityController {
     );
     if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
+  }
+  private ownsRelationship(relationship: PersonRelationship): boolean {
+    return relationship.source_person_id === this.personID || relationship.target_person_id === this.personID;
   }
   async createRelationshipType(
     body: CreateRelationshipTypeRequest,

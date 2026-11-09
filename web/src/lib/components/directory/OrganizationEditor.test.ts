@@ -6,10 +6,14 @@ import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
   it('shows the structured profile read-only under the fields, grouped by what each value is', async () => {
-    const { controller } = controllerWith(async () => Response.json(richOrganizationProfile(1), { headers: { ETag: '"organization-21-r1"' } }));
+    const profile = richOrganizationProfile(1);
+    profile.contact_points.push({ ...profile.contact_points[0], address_kind: 'impp', original_value: 'mira@example.test', envelope: envelope(49) });
+    const { controller } = controllerWith(async () => Response.json(profile, { headers: { ETag: '"organization-21-r1"' } }));
     render(OrganizationEditor, { controller, organization: organization() });
     const email = await screen.findByRole('region', { name: 'Email' });
     expect(within(email).getByText('concurrent@example.test')).toBeDefined();
+    expect(await screen.findByRole('region', { name: 'Messaging' })).toBeDefined();
+    expect(screen.getByText('mira@example.test')).toBeDefined();
     expect(within(email).queryByRole('textbox')).toBeNull();
     // One Details on the Contact details heading holds every row's facts, with the vCard properties last.
     expect(within(email).queryByRole('button', { name: 'Details' })).toBeNull();

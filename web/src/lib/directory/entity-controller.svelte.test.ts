@@ -33,6 +33,24 @@ it.each([
   } finally { controller.destroy(); }
 });
 
+it.each(['update', 'delete'] as const)('refuses a saved connection moved away from this person on %s retry', async action => {
+  const requests: Request[] = [];
+  const client = createAPIClient(async input => {
+    requests.push(requestOf(input));
+    throw new Error('a moved connection must be rejected before a request');
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  try {
+    const moved = { data: relationship(41, 2, { source_person_id: 9, target_person_id: 8 }), etag: '"relationship-41-r2"' };
+    const result = action === 'update'
+      ? await controller.updateRelationship(41, { notes: 'Keep my notes' }, moved)
+      : await controller.deleteRelationship(41, moved);
+
+    expect(result).toMatchObject({ ok: false, kind: 'error', status: 409 });
+    expect(requests).toHaveLength(0);
+  } finally { controller.destroy(); }
+});
+
 function relationshipType(id = 31, revision = 1) {
   return makeRelationshipType({ id, revision, slug: 'knows', forward_label: 'knows', reverse_label: 'is known by', is_canonical: false, universal_id: `relationship-type-${id}` });
 }

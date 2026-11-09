@@ -12,6 +12,7 @@
   } from '../../api/generated/models';
   import type { PersonProfilePatchRequest } from '../../directory/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+  import { CONTACT_LABELS } from '../../directory/contact-labels';
   import AttributeEditor from '../directory/AttributeEditor.svelte';
   import { displayAttributeValue, joinDefinitions, isAttributeRevealed, supportedAttribute, canAddAttribute, canEditAttribute, canCloseAttribute } from '../directory/attribute-value';
   import DetailRow from './DetailRow.svelte';
@@ -48,18 +49,6 @@
     if (!activeEditor || !activeEditor.definition.is_active || !activeEditor.definition.ui_editable || !activeEditor.definition.api_mutable || !supportedAttribute(activeEditor.definition) || !isAttributeRevealed(activeEditor.definition, revealed)) close();
   });
 
-  const CONTACT_LABELS: Record<string, string> = {
-    email: 'Email',
-    phone: 'Phone',
-    username: 'Username',
-    impp: 'Messaging',
-    url: 'Website',
-    social: 'Social',
-    calendar: 'Calendar',
-    contact_uri: 'Contact link',
-    org_directory: 'Directory page',
-    language: 'Language',
-  };
   const DATE_LABELS: Record<string, string> = { birthday: 'Birthday', anniversary: 'Anniversary', death: 'Died' };
   const NAME_LABELS: Record<string, string> = { nickname: 'Nickname', phonetic: 'Pronunciation', sort: 'Sorted as' };
 
