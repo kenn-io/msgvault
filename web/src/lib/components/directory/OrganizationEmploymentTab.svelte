@@ -8,7 +8,7 @@
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, Organization, Prepared } from '../../directory/models';
   import ConflictNotice from '../common/ConflictNotice.svelte';
-  import { employmentFacts } from '../../directory/conflict';
+  import { employmentConflictDetails, employmentFacts } from '../../directory/conflict';
   import { WriteAttempt } from '../../directory/write-attempt.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import { dateSpan } from '../../directory/labels';
@@ -131,7 +131,7 @@
     {employmentLabel(employment)} at <button type="button" data-link onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
   </DetailRow>
   {#if primary.conflict && primaryTarget?.id === employment.id}
-    <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller, controller.personID)} message={primary.details} actionLabel="Keep yours" onaction={() => void makePrimary(employment)} />
+    <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller, controller.personID)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel="Keep yours" onaction={() => void makePrimary(employment)} />
     <button type="button" data-link disabled={acting} onclick={() => { primary.reset(); primaryTarget = undefined; void controller.acceptSavedEmployment(); }}>Use saved</button>
   {:else if primary.details && primaryTarget?.id === employment.id}
     <InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
@@ -157,7 +157,7 @@
     {#snippet notice()}
       {#if removal.conflict && deletingEmployment}
         <!-- Delete again removes the saved version the notice shows. -->
-        <ConflictNotice noun="job" saved={removal.conflict.data} record={employmentFacts(removal.conflict.data, controller, controller.personID)} message={removal.details} />
+        <ConflictNotice noun="job" saved={removal.conflict.data} record={employmentFacts(removal.conflict.data, controller, controller.personID)} message={employmentConflictDetails(removal.conflict.data, removal.details)} />
       {:else if removal.details}<InlineNotice message="Couldn't delete this job." details={removal.details} actionLabel="Retry" onaction={() => { if (removal.prepared) void removeEmployment(); else void prepareDelete(); }} />{/if}
     {/snippet}
   </Dialog>

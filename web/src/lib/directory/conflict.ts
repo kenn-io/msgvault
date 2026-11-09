@@ -16,6 +16,10 @@ export function employmentFacts(job: Employment, names: { organizationName(id: n
   };
 }
 
+export function employmentConflictDetails(job: Employment, message: string): string {
+  return [message, job.source_ref ? `Source reference: ${job.source_ref}` : ''].filter(Boolean).join('\n');
+}
+
 export function connectionFacts(connection: PersonRelationship): Record<string, string> {
   return { 'End date': readablePartialDate(connection.end_date), Notes: text(connection.notes) };
 }
