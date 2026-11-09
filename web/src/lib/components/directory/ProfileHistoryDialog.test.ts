@@ -245,7 +245,7 @@ async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
     const path = new URL((input as Request).url).pathname;
     if (path.endsWith('/merges')) return Response.json({ merges: merges.map(merge => ({ merge, labels: labels(merge), participant_count: recorded.length + 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} })), limit: 100, offset: 0 });
     if (path.startsWith('/api/v1/person-merges/')) { const merge = merges.find(item => path.endsWith(`/${item.id}`))!; return Response.json({ merge, labels: { ...labels(merge), participants: undefined }, participants: labels(merge).participants, rows: [], splits: [], review_candidates: [] }); }
-    return Response.json({ ...emptyProfile(person()), observations: tc.name === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: tc.original, identity_key: identityKeyFixture('email', 'mira@example.org'), normalized_value: 'mira@example.org', service_slug: 'email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } }] : [], contact_points: tc.name === 'removed before the merge' ? [{ person_id: 7, address_kind: 'email', original_value: tc.original, identity_key: identityKeyFixture('email', 'mira@example.org'), normalized_value: 'mira@example.org', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' } }] : [] });
+    return Response.json({ ...emptyProfile(person()), observations: tc.name === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: tc.original, normalized_value: 'mira@example.org', service_slug: 'email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } }] : [], contact_points: tc.name === 'removed before the merge' ? [{ person_id: 7, address_kind: 'email', original_value: tc.original, identity_key: identityKeyFixture('email', 'mira@example.org'), normalized_value: 'mira@example.org', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' } }] : [] });
   }) });
   await screen.findAllByRole('button', { name: /^Open .+ merged into .+ · / });
   const section = screen.getByRole('heading', { name: 'Email and phone' }).closest('section')!;
@@ -257,5 +257,8 @@ it.each(mergedInCases)('lists each merged-in address once: $name', async entry =
   expect(section.querySelectorAll('.detail-row')).toHaveLength(tc.rows);
   expect(screen.getByRole('button', { name: 'Open the merge that brought in mira@example.org' })).toBeDefined();
   if (tc.name === 'removed before the merge') expect(screen.getByText(tc.original).closest('details')).not.toBeNull();
-  else expect(screen.getByRole('heading', { name: 'Seen in services' })).toBeDefined();
+  else {
+    expect(section.querySelector('.detail-row')!.textContent).toContain('Email · Merged in · ');
+    expect(screen.queryByRole('heading', { name: 'Seen in services' })).toBeNull();
+  }
 });

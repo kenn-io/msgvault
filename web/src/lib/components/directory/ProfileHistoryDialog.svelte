@@ -14,6 +14,7 @@
   import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
+    ParticipantContactObservation,
     PersonProfileHistory as GeneratedPersonProfileHistory,
     ValueEnvelope as GeneratedValueEnvelope,
   } from '../../api/generated/models';
@@ -50,19 +51,39 @@
     }
   }
   type HistoryRow = { id: number; value: string; context?: string | null; envelope: ValueEnvelope; observedAt?: string };
-  /** An address a merge brought in, under Email and phone: "Merged in · Nov 6", opening that merge. */
-  function mergedInRows(openMerge: (mergeID: number) => void, mergedIn: MergedInAddress[]): SectionRow[] {
-    // An address that is a current contact point shows once. One only seen in services, or since removed, keeps its merge link here.
+  /**
+   * An address a merge brought in, under Email and phone: "Merged in · Nov 6", opening that merge.
+   * `seen` holds the observations those rows stand in for, which Seen in services leaves out.
+   */
+  function mergedInRows(openMerge: (mergeID: number) => void, mergedIn: MergedInAddress[]): { rows: SectionRow[]; seen: Set<number> } {
+    // An address that is a current contact point shows once. One a service has seen shows here once, naming the service.
     const listed = new Set((history?.contact_points ?? []).filter(point => !ended(point.envelope)).map(point => point.identity_key));
-    return mergedIn.filter(address => {
+    const observations = (history?.observations ?? []).filter(point => !ended(point.envelope));
+    const seen = new Set<number>();
+    const rows = mergedIn.filter(address => {
       if (listed.has(address.identity_key)) return false;
       listed.add(address.identity_key);
       return true;
-    }).map(address => ({
-      id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value: address.value,
-      provenance: { text: `Merged in · ${formatShortDate(address.mergedAt)}`, title: `Merged ${formatDateTime(address.mergedAt)}` },
-      onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
-    }));
+    }).map(address => {
+      const matches = observations.filter(point => observationKey(point) === address.identity_key);
+      for (const point of matches) seen.add(point.envelope.id);
+      const observed = matches[0];
+      return {
+        id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value: address.value,
+        detail: observed ? providerContext(observed, workspaces) : undefined,
+        provenance: {
+          text: `Merged in · ${formatShortDate(address.mergedAt)}`,
+          title: [`Merged ${formatDateTime(address.mergedAt)}`, observed && `Seen ${formatDateTime(observed.observed_at ?? observed.envelope.created_at)}`].filter(Boolean).join('\n'),
+        },
+        onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
+      };
+    });
+    return { rows, seen };
+  }
+
+  // A seen address's identity, built as the server builds a contact point's.
+  function observationKey(point: ParticipantContactObservation): string {
+    return JSON.stringify([point.service_slug || point.address_kind, point.scope_kind ?? '', point.scope_value ?? '', point.normalized_value]);
   }
 
   // Any closed validity or transaction interval makes a value historical.
@@ -75,9 +96,9 @@
     return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at }));
   }
 
+  const workspaces = $derived(workspaceLabels([...(history?.contact_points ?? []), ...(history?.observations ?? [])]));
   const sections = $derived.by(() => {
     if (!history) return [];
-    const workspaces = workspaceLabels([...(history.contact_points ?? []), ...(history.observations ?? [])]);
     const context = (point: Item) => providerContext(point, workspaces);
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
@@ -128,7 +149,8 @@
       {:else if history}
         {@const merged = mergedInRows(openMerge, mergedIn)}
         {#each sections as section (section.title)}
-          {@const rows = [...section.current.map(historyRow), ...(section.title === 'Email and phone' ? merged : [])]}
+          {@const current = section.title === 'Seen in services' ? section.current.filter(row => !merged.seen.has(row.id)) : section.current}
+          {@const rows = [...current.map(historyRow), ...(section.title === 'Email and phone' ? merged.rows : [])]}
           {#if rows.length || section.past.length}<HistorySection title={section.title} {rows} earlier={section.past.map(historyRow)} />{/if}
         {/each}
       {/if}
