@@ -22,9 +22,8 @@ This command reads each message's stored raw MIME and records the role of
 every attachment it can match to exactly one MIME part. Attachments without
 retained MIME, or with ambiguous evidence, stay unknown.
 
-The command writes immediately. Progress is saved after each batch, so an
-interrupted run resumes where it stopped, and a run after a completed pass
-returns at once. It works entirely offline and never contacts a provider.`,
+Changes are written immediately. Interrupted runs resume from saved progress;
+completed runs return at once. The command works entirely offline.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
