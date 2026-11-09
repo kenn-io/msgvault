@@ -23,7 +23,7 @@ func newImportICSCommand() *cobra.Command {
 				return errors.New("configuration is unavailable")
 			}
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping...")
 			defer stop()
