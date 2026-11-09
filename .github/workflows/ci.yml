@@ -1116,7 +1116,7 @@ jobs:
       # test-postgres-sharded runs the large packages and the additional
       # package group against separate servers; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m EXCLUDE_PKGS="$PG_MOVED_PKGS"
+        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m EXCLUDE_PKGS="${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && env.PG_MOVED_PKGS || '' }}"
 
       - name: Check for test reruns
         if: always()
@@ -1210,7 +1210,9 @@ jobs:
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
-      - *stable-mtimes
+      - name: Stabilize tracked file times
+        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        run: go run ./scripts/stable-mtimes
 
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
@@ -1229,7 +1231,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Test additional PostgreSQL packages
-        if: matrix.extra_packages
+        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
         run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=${{ matrix.test_timeout }}
 
       - name: Check for additional test reruns
