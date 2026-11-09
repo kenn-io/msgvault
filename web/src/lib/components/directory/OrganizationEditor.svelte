@@ -67,7 +67,7 @@
   const fieldsSaved = $derived(fieldsVersion?.data.organization);
   const fieldsUnsaved = $derived(!!fieldsSaved && (name.trim() !== fieldsSaved.name || kind !== fieldsSaved.kind
     || primaryDomain.trim() !== (fieldsSaved.primary_domain ?? '') || description.trim() !== (fieldsSaved.description ?? '')));
-  const listsUnsaved = $derived([valueDelta(baselineAliases, listValues(aliases, baselineAliases)), valueDelta(baselineCategories, listValues(categories, baselineCategories))].some((delta) => delta.added.length || delta.removed.size));
+  const listsUnsaved = $derived([valueDelta(baselineAliases, values(aliases)), valueDelta(baselineCategories, values(categories))].some((delta) => delta.added.length || delta.removed.size));
   // Save organization writes only its own fields, so it waits until one of them changes; a failed write stays retryable.
   const saveDisabled = $derived(loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations
     || (!!currentProfile && !fieldsUnsaved && !attempt.conflict && !attempt.failed));
@@ -160,7 +160,7 @@
   // Aliases and categories as the form shows them, over the rest of the version sent.
   function listsBody(profile: OrganizationProfile): OrganizationProfileBody {
     const saved = (profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
-    return profileBody(profile, valueDelta(saved, listValues(aliases, baselineAliases)), valueDelta((profile.categories ?? []).map((item) => item.category), listValues(categories, baselineCategories)));
+    return profileBody(profile, valueDelta(saved, values(aliases)), valueDelta((profile.categories ?? []).map((item) => item.category), values(categories)));
   }
 
   async function checkDeletion(): Promise<void> {
@@ -197,11 +197,6 @@
 
   function values(value: string): string[] {
     return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
-  }
-
-  // A list left as loaded keeps its saved values, even one with a comma in it.
-  function listValues(text: string, baseline: string[]): string[] {
-    return text === baseline.join(', ') ? baseline : values(text);
   }
 
   function present(parts: Array<string | number | undefined>): string {

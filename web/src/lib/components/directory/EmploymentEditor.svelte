@@ -47,15 +47,11 @@
   const loading = $derived(!!initialEmployment && !opened && !attempt.details);
   const loadFailed = $derived(!!initialEmployment && !opened && !!attempt.details);
   let selectedOrganization = $state<Organization>();
-  // Offered whenever another job is current, off by default; with none, the new current job is primary on its own.
-  const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current));
-  // Making the new job primary over an existing one is a second write after the create; a failed second write keeps the
-  // added job here, so Retry only makes it primary.
-  let added = $state<Employment>();
-  let replacing = false;
+  // A new current job can be marked primary when no current job already is.
+  const showPrimary = $derived(!initialEmployment && isCurrent && controller.employments.some(job => job.is_current) && !controller.employments.some(job => job.is_current && job.is_primary));
   let datesInvalid = $state(false);
   let uncertainBody: EmploymentBody | undefined;
-  const locked = $derived(attempt.busy || controller.createBlocked.employments || !!added);
+  const locked = $derived(attempt.busy || controller.createBlocked.employments);
   const saveDisabled = $derived(loading || loadFailed || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || datesInvalid || controller.createBlocked.employments);
   const organizationCreateBlocked = $derived(creatingOrganization && controller.createBlocked.organizations);
   let releaseScope: (() => void) | undefined;
@@ -129,7 +125,6 @@
   async function submit(): Promise<void> {
     if (saveDisabled || attempt.busy) return;
     const ok = await attempt.run(async current => {
-      if (added) return controller.makeEmploymentPrimary(added.id, current);
       if (creatingOrganization) {
         const created = await controller.createOrganization({ name: organizationName.trim(), kind: organizationKind as OrganizationCreateBody['kind'], primary_domain: organizationDomain.trim() || null });
         if (!created.ok) return created;
@@ -138,12 +133,8 @@
         creatingOrganization = false;
       }
       if (initialEmployment) return controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened);
-      replacing = showPrimary && isPrimary && controller.employments.some(job => job.is_current && job.is_primary);
-      uncertainBody = { ...body(), source: 'user', ...(replacing ? { is_primary: false } : {}) };
-      const created = await controller.createEmployment(uncertainBody);
-      if (!created.ok || !replacing) return created;
-      added = created.entity;
-      return controller.makeEmploymentPrimary(created.entity!.id, { data: created.entity!, etag: created.etag ?? '' });
+      uncertainBody = { ...body(), source: 'user' };
+      return controller.createEmployment(uncertainBody);
     });
     if (ok) onDone();
   }
@@ -155,18 +146,16 @@
       if (controller.createBlocked.employments) return;
       try {
         const found = uncertainBody && await controller.findEmploymentByBody(uncertainBody);
-        if (found && !replacing) {
+        if (found) {
           await controller.refreshDirectoryViews();
           onDone();
           return;
         }
-        added = found;
         attempt.details = '';
       } catch {
         controller.createBlocked.employments = true;
       }
     });
-    if (added) await submit();
   }
 
   async function refreshOrganizationAfterUnknown(): Promise<void> {
@@ -185,7 +174,7 @@
   }
 </script>
 
-<Dialog title={initialEmployment ? 'Edit job' : 'Add job'} onclose={requestClose} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : added ? 'Make primary' : initialEmployment ? 'Save' : 'Add job'} onprimary={() => void submit()} primaryDisabled={saveDisabled} busy={attempt.busy}
+<Dialog title={initialEmployment ? 'Edit job' : 'Add job'} onclose={requestClose} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialEmployment ? 'Save' : 'Add job'} onprimary={() => void submit()} primaryDisabled={saveDisabled} busy={attempt.busy}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
   {#if !loadFailed}<form class="editor" aria-busy={loading || attempt.busy} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     {#if loading}<p role="status">Loading job…</p>{:else}
@@ -226,7 +215,7 @@
     {#if attempt.conflict}
       <ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller, controller.personID)} message={employmentConflictDetails(attempt.conflict.data, attempt.details)} />
     {:else if attempt.details || controller.createBlocked.employments || organizationCreateBlocked}
-      <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : added ? "Added the job, but couldn't make it primary." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void refreshOrganizationAfterUnknown(); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
+      <InlineNotice message={organizationCreateBlocked ? "Couldn't confirm the organization was saved." : controller.createBlocked.employments ? "Couldn't confirm the job was saved." : loadFailed ? "Couldn't load this job." : "Couldn't save this job."} details={attempt.details} actionLabel={controller.createBlocked.employments || organizationCreateBlocked ? 'Check again' : 'Retry'} onaction={() => { if (organizationCreateBlocked) void refreshOrganizationAfterUnknown(); else if (controller.createBlocked.employments) void refreshAfterUnknown(); else if (loadFailed) void prepare(); else void submit(); }} />
     {/if}
   {/snippet}
 </Dialog>

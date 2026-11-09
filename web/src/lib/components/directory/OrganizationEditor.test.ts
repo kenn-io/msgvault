@@ -5,33 +5,6 @@ import { requestOf, pathOf, organization, employment, organizationProfile, envel
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
-  it('keeps a saved alias with a comma as it is when the aliases are left as loaded', async () => {
-    const profile = { ...organizationProfile(), names: [{ ...organizationProfile().names[0], name: 'Acme, Inc.', name_normalized: 'acme, inc.' }] };
-    const onDone = vi.fn();
-    const writes: { method: string; body: { names?: { name: string }[]; categories?: { category: string }[] } }[] = [];
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'GET') return Response.json(profile, { headers: { ETag: '"organization-21-r1"' } });
-      writes.push({ method: request.method, body: await request.json() });
-      return request.method === 'PATCH'
-        ? Response.json(organization(21, 2, 'Renamed'), { headers: { ETag: '"organization-21-r2"' } })
-        : Response.json(organizationProfile(2), { headers: { ETag: '"organization-21-r2"' } });
-    });
-    const { unmount } = render(OrganizationEditor, { controller, organization: organization(), onDone });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Renamed' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    // Untouched, the aliases have nothing unsaved, so the organization save closes the dialog.
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    unmount();
-    render(OrganizationEditor, { controller, organization: organization(), onDone });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add category…' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research, Research' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(2));
-    expect(writes[1].body.names?.map(item => item.name)).toEqual(['Acme, Inc.']);
-    expect(writes[1].body.categories?.map(item => item.category)).toEqual(['Research']);
-  });
-
   it('shows the structured profile read-only under the fields, grouped by what each value is', async () => {
     const { controller } = controllerWith(async () => Response.json(richOrganizationProfile(1), { headers: { ETag: '"organization-21-r1"' } }));
     render(OrganizationEditor, { controller, organization: organization() });
