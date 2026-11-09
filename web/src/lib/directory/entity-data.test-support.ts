@@ -1,6 +1,7 @@
 import type { RelationshipType } from './models';
 import type { DirectoryPersonSummary } from '../api/generated/models/directoryPersonSummary';
 import { person } from './person-fixtures.test-support';
+export { person } from './person-fixtures.test-support';
 
 export function organization(id = 21, revision = 1, name = 'Synthetic Org') {
   return {
@@ -25,6 +26,15 @@ export function relationshipType(overrides: Partial<RelationshipType> = {}): Rel
   return {
     id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by',
     is_symmetric: false, is_canonical: true, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
+    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
+  };
+}
+
+export function relationship(id = 41, revision = 1, overrides: Record<string, unknown> = {}) {
+  return {
+    id, revision, relationship_type_id: 31, type_slug: 'mentor', source_person_id: 7, target_person_id: 8,
+    forward_label: 'mentors', reverse_label: 'is mentored by', is_symmetric: false, status: 'active', source: 'user',
+    created_by: 'user', updated_by: 'user', vcard_identity: {},
     created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
   };
 }

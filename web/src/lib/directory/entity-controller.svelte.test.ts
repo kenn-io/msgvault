@@ -119,7 +119,7 @@ describe('DirectoryEntityController', () => {
     }
   });
 
-  it.each(['connection', 'work'])('refreshes an open Network after a %s write with the selected graph controls', async (kind) => {
+  it.each(['connection', 'work'])('refreshes an open Network after a %s write with ended connections excluded', async (kind) => {
     let changed = false;
     const reads: URL[] = [];
     const client = createAPIClient(async input => {

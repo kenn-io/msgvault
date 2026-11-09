@@ -1,4 +1,3 @@
-import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 import { stubOperationStatus } from './kit-ui';
 import { setKitTheme, setTemporaryDensity } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';

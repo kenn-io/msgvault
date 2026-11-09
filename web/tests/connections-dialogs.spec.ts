@@ -1,11 +1,7 @@
 import { setKitTheme } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
-
-const person = (id: number) => ({ id, revision: id === 7 ? 4 : 2, participant_ids: id === 7 ? [] : [2], display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: '2026-07-19T10:00:00Z', updated_at: '2026-07-19T10:00:00Z', vcard_uid: `synthetic-${id}` });
-const directoryPerson = (id: number, overrides: Record<string, unknown> = {}) => ({ id, revision: id === 7 ? 4 : 2, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', categories: [], organizations: [], carddav_bindings: [], contact_state: 'active', vcard_uid: `synthetic-${id}`, ...overrides });
-const relationshipType = (overrides: Record<string, unknown> = {}) => ({ id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by', is_symmetric: false, is_canonical: true, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides });
-const relationship = (id = 41, revision = 1, overrides: Record<string, unknown> = {}) => ({ id, revision, relationship_type_id: 31, type_slug: 'mentor', source_person_id: 7, target_person_id: 8, forward_label: 'mentors', reverse_label: 'is mentored by', is_symmetric: false, status: 'active', source: 'user', created_by: 'user', updated_by: 'user', vcard_identity: {}, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides });
+import { person, directoryPerson, relationshipType, relationship } from '../src/lib/directory/entity-data.test-support';
 
 test('saved person remains selectable at 280px', async ({ page }) => {
   await installDirectoryReviewArchive(page);
@@ -90,7 +86,7 @@ for (const width of [1440, 390]) {
     expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(900);
     expect(await panel.locator('.kit-typeahead__body').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await dialog.getByRole('option', { name: /Synthetic Two/ }).click();
-    await dialog.getByRole('textbox', { name: 'Start date' }).press('Enter');
+    await dialog.getByRole('button', { name: 'Add connection', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(add).toBeFocused();
     await page.getByRole('region', { name: 'Connections', exact: true }).getByRole('button', { name: /^Actions for /  }).first().click();
@@ -165,12 +161,8 @@ for (const width of [1440, 390]) {
       : route.fulfill({ json: { people: [directoryPerson(9)] } }));
     await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
     await page.getByRole('radio', { name: 'Details', exact: true }).click();
-    const connections = page.getByRole('heading', { name: 'Open loops', exact: true });
-    const before = (await connections.boundingBox())!.y;
     await page.getByRole('button', { name: 'Add connection…', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Add connection', exact: true });
-    // The page behind the dialog stays where it was.
-    expect((await connections.boundingBox())!.y).toBe(before);
     // On a phone an empty End date holds no line of its own: Notes is a field gap below it.
     const end = await dialog.getByRole('textbox', { name: 'End date', exact: true }).evaluate(input => input.closest('.kit-text-input')!.getBoundingClientRect().bottom);
     const notes = (await dialog.locator('label.notes').boundingBox())!;

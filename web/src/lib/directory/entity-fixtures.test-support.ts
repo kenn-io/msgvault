@@ -1,5 +1,5 @@
 import { organization, employment } from './entity-data.test-support';
-export { organization, employment, directoryPerson, relationshipType } from './entity-data.test-support';
+export { organization, employment, directoryPerson, relationshipType, relationship } from './entity-data.test-support';
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
 
@@ -61,15 +61,4 @@ export function controllerWith(fetchFn: typeof fetch, personID = 7, options: { o
 
 export function candidate(id: number, state = 'candidate') {
   return { id, left_id: id * 10, left_kind: 'participant', right_id: id * 10 + 1, right_kind: 'participant', basis: 'email', source: 'user', state, actionable: state === 'candidate' || state === 'conflict', application_pending: false, review_token: `token-${id}-${state}`, evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
-}
-
-
-
-export function relationship(id = 41, revision = 1, overrides: Record<string, unknown> = {}) {
-  return {
-    id, revision, relationship_type_id: 31, type_slug: 'mentor', source_person_id: 7, target_person_id: 8,
-    forward_label: 'mentors', reverse_label: 'is mentored by', is_symmetric: false, status: 'active', source: 'user',
-    created_by: 'user', updated_by: 'user', vcard_identity: {},
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
 }

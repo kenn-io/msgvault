@@ -82,6 +82,8 @@ func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
 	primary, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: first.ID, Title: new("Engineer"), Source: store.ProvenanceUser, IsPrimary: new(true)})
 	require.NoError(err)
 	assert.True(primary.IsPrimary)
+	_, err = st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: second.ID, Title: new("Advisor"), Source: store.ProvenanceExtraction, IsPrimary: new(true)})
+	require.ErrorIs(err, store.ErrEmploymentPrimaryConflict)
 	side, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: second.ID, Title: new("Advisor"), Source: store.ProvenanceUser})
 	require.NoError(err)
 	rotated, err := st.SetPrimaryEmploymentContext(ctx, side.ID, side.Revision)

@@ -35,7 +35,7 @@ func inferenceNote(t *testing.T, st *Store, id int64, source Provenance, text st
 }
 
 func TestInferenceExportEmploymentMutations(t *testing.T) {
-	for _, scenario := range []string{"revise", "move", "end inferred", "nonrendering", "declared replace", "manual end", "manual delete", "primary", "primary no-op", "primary hides", "rollback"} {
+	for _, scenario := range []string{"revise", "move", "end inferred", "nonrendering", "declared replace", "manual end", "manual delete", "primary", "primary no-op", "primary hides", "primary replaced by user create", "rollback"} {
 		t.Run(scenario, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -60,6 +60,13 @@ func TestInferenceExportEmploymentMutations(t *testing.T) {
 			}
 			before := inferenceRevision(t, st, id)
 			want := before
+			if scenario == "primary replaced by user create" {
+				_, err = st.AddEmploymentContext(t.Context(), EmploymentInput{
+					PersonID: id, OrganizationID: org.ID, Title: new("Declared role"),
+					Source: ProvenanceUser, IsPrimary: new(true),
+				})
+				want++
+			}
 			switch scenario {
 			case "revise":
 				input.Title = new("Director")
@@ -88,7 +95,7 @@ func TestInferenceExportEmploymentMutations(t *testing.T) {
 			case "rollback":
 				input.OrganizationID = -1
 			}
-			if scenario != "manual end" && scenario != "manual delete" && scenario != "primary" && scenario != "primary no-op" && scenario != "primary hides" {
+			if scenario != "manual end" && scenario != "manual delete" && scenario != "primary" && scenario != "primary no-op" && scenario != "primary hides" && scenario != "primary replaced by user create" {
 				_, err = st.UpdateEmploymentContext(t.Context(), emp.ID, emp.Revision, input)
 			}
 			if scenario == "rollback" {
@@ -108,36 +115,6 @@ func TestInferenceExportEmploymentMutations(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPrimaryReplacementByCreateInvalidatesInferenceExport(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, id, _ := newPersonFactProjectionStore(t)
-	oldOrg, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Inferred Org", Kind: OrganizationKindCompany})
-	require.NoError(err)
-	newOrg, err := st.CreateOrganizationContext(t.Context(), OrganizationInput{Name: "Declared Org", Kind: OrganizationKindCompany})
-	require.NoError(err)
-	oldPrimary, err := st.AddEmploymentContext(t.Context(), EmploymentInput{
-		PersonID: id, OrganizationID: oldOrg.ID, Title: new("Inferred role"),
-		Source: ProvenanceExtraction, IsPrimary: new(true),
-	})
-	require.NoError(err)
-	replacement, err := st.AddEmploymentContext(t.Context(), EmploymentInput{
-		PersonID: id, OrganizationID: newOrg.ID, Title: new("Declared role"),
-		Source: ProvenanceUser, IsPrimary: new(true),
-	})
-	require.NoError(err)
-	require.True(replacement.IsPrimary)
-	demoted, err := st.GetEmploymentContext(t.Context(), oldPrimary.ID)
-	require.NoError(err)
-	require.False(demoted.IsPrimary)
-	assert.Equal(int64(2), inferenceRevision(t, st, id), "replacing the exported primary must advance CardDAV review state")
-	pins, err := st.ListPersonFactPinsContext(t.Context(), id)
-	require.NoError(err)
-	require.Len(pins, 1)
-	assert.Equal(personfacts.TargetEmployment, pins[0].Target.Kind)
-	assert.True(pins[0].Pinned)
 }
 
 func TestInferenceExportDefinitionExposureRetriesConcurrentWrite(t *testing.T) {

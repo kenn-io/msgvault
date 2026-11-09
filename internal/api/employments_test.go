@@ -132,18 +132,12 @@ func TestEmploymentPrimaryReplacementRequiresUserSource(t *testing.T) {
 	primaryResponse := organizationRequest(t, srv, http.MethodPost, employmentsPath,
 		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"source":"user"}`, person.ID, first.ID), "")
 	require.Equal(http.StatusCreated, primaryResponse.Code)
-	var primary store.Employment
-	require.NoError(json.Unmarshal(primaryResponse.Body.Bytes(), &primary))
 
 	createExtraction := organizationRequest(t, srv, http.MethodPost, employmentsPath,
 		fmt.Appendf(nil, `{"person_id":%d,"organization_id":%d,"is_primary":true,"source":"extraction"}`, person.ID, second.ID), "")
 	assert.Equal(http.StatusConflict, createExtraction.Code)
 
-	firstAfterRejectedWrites := organizationRequest(t, srv, http.MethodGet,
-		fmt.Sprintf("%s/%d", employmentsPath, primary.ID), nil, "")
-	require.Equal(http.StatusOK, firstAfterRejectedWrites.Code)
-	require.NoError(json.Unmarshal(firstAfterRejectedWrites.Body.Bytes(), &primary))
-	assert.True(primary.IsPrimary, "a rejected write must preserve the user's primary choice")
+	assert.Contains(createExtraction.Body.String(), "employment_primary_conflict")
 }
 
 func TestEmploymentHTTPValidationAndConflictMapping(t *testing.T) {

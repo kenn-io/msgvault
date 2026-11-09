@@ -21,7 +21,7 @@ it('renders a date error under its field', async () => {
   expect(screen.queryByText('End date must be on or after start date.')).toBeNull();
 });
 
-it('shows date hints and places Current under the end date', async () => {
+it('shows one shared date hint under the field being edited', async () => {
   const hint = () => screen.queryByText('2024, 2024-03, or 2024-03-15');
   const initial = render(DateRange, { start: '', current: true });
   expect(hint()).not.toBeNull();

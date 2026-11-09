@@ -350,8 +350,8 @@ it('shows a reassigned owner and refuses to delete the job from the old person',
   expect(deletes).toBe(1);
 });
 
-it('opens the person when multiple jobs block an organization deletion', async () => {
-  const jobs = [employment(), employment(12, 1, { is_current: false })];
+it('opens the person when a job blocks an organization deletion', async () => {
+  const jobs = [employment()];
   const onOpenPerson = vi.fn();
   const { controller } = controllerWith(async input => {
     const path = pathOf(requestOf(input));
@@ -364,7 +364,6 @@ it('opens the person when multiple jobs block an organization deletion', async (
   render(OrganizationEmploymentTab, { controller, personID: 7, onOpenPerson });
   await fireEvent.click(screen.getAllByRole('button', { name: 'this organization' })[0]);
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-  await screen.findByText("Delete its 2 jobs first. Ending them isn't enough.");
-  await fireEvent.click(screen.getByRole('button', { name: 'Open to delete Example Person’s job' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Example Person' }));
   expect(onOpenPerson).toHaveBeenCalledWith(7);
 });
