@@ -198,6 +198,18 @@ func normalizeMeeting(meeting Meeting) (NormalizedMeeting, error) {
 	summaryMarkdown := strings.TrimSpace(meeting.SummaryMarkdown)
 	summaryText := strings.TrimSpace(meeting.SummaryText)
 	transcript := strings.TrimSpace(meeting.Transcript)
+	for _, text := range []struct{ field, value string }{
+		{"meeting.summary_markdown", summaryMarkdown},
+		{"meeting.summary_text", summaryText},
+		{"meeting.transcript", transcript},
+	} {
+		if err := apiimport.ValidateText(text.field, text.value); err != nil {
+			return NormalizedMeeting{}, err
+		}
+	}
+	if err := apiimport.ValidateMetadataText("meeting.metadata", meeting.Metadata); err != nil {
+		return NormalizedMeeting{}, err
+	}
 	segments, err := normalizeSegments(meeting.TranscriptSegments)
 	if err != nil {
 		return NormalizedMeeting{}, err
@@ -299,6 +311,13 @@ func normalizeSegments(segments []TranscriptSegment) ([]TranscriptSegment, error
 		if segment.Text == "" {
 			return nil, apiimport.ValidationError("meeting.transcript_segments[%d].text is required", idx)
 		}
+		field := fmt.Sprintf("meeting.transcript_segments[%d]", idx)
+		if err := apiimport.ValidateText(field+".speaker", segment.Speaker); err != nil {
+			return nil, err
+		}
+		if err := apiimport.ValidateText(field+".text", segment.Text); err != nil {
+			return nil, err
+		}
 		if segment.OffsetSeconds != nil {
 			offset := *segment.OffsetSeconds
 			if math.IsNaN(offset) || math.IsInf(offset, 0) || offset < 0 {
@@ -317,6 +336,9 @@ func normalizeSegments(segments []TranscriptSegment) ([]TranscriptSegment, error
 
 func normalizePerson(field string, person MeetingPerson) (MeetingPerson, error) {
 	out := MeetingPerson{Name: strings.TrimSpace(person.Name)}
+	if err := apiimport.ValidateText(field+".name", out.Name); err != nil {
+		return MeetingPerson{}, err
+	}
 	if strings.TrimSpace(person.Email) != "" {
 		email, err := apiimport.NormalizeEmail(field+".email", person.Email)
 		if err != nil {

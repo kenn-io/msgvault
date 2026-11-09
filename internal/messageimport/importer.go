@@ -150,7 +150,9 @@ func persist(ctx context.Context, st *store.Store, sourceID int64, snapshot Snap
 		return apiimport.Write{}, fmt.Errorf("persist message: %w", err)
 	}
 	write := apiimport.Write{MessageID: messageID, Created: !existed, Changed: true}
-	return write, recomputeStats(ctx, st, messageID, priorConversationID)
+	// The write has committed. Only this call knows the conversation a
+	// replacement left, so a canceled request must not skip its refresh.
+	return write, recomputeStats(context.WithoutCancel(ctx), st, messageID, priorConversationID)
 }
 
 // recomputeStats refreshes the conversation that holds messageID and, when
