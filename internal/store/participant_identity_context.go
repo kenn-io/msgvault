@@ -136,7 +136,7 @@ func (s *Store) readParticipantIdentifierContext(
 	ctx context.Context, reader SQLReader, dest *[]ParticipantIdentifierContext, in string, args []any,
 ) error {
 	rows, err := reader.QueryContext(ctx, s.Rebind(fmt.Sprintf(`SELECT pi.participant_id,
-		pi.identifier_type, pi.identifier_value, COALESCE(pi.display_value, ''), COALESCE(cs.slug, CASE WHEN pi.identifier_type IN ('email', 'phone') THEN pi.identifier_type ELSE '' END),
+		pi.identifier_type, pi.identifier_value, COALESCE(pi.display_value, ''), COALESCE(cs.slug, ''),
 		COALESCE(cs.display_label, ''), COALESCE(pi.scope_kind, ''),
 		COALESCE(pi.scope_value, ''), COALESCE(cs.normalization, '')
 		FROM participant_identifiers pi
@@ -223,20 +223,7 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 	for _, member := range identities.Members {
 		ids = append(ids, member.ParticipantID)
 		seen := map[string]bool{}
-		memberAddresses := []ParticipantIdentifierContext{}
-		for _, field := range []struct {
-			kind  ContactAddressKind
-			value string
-		}{{ContactAddressEmail, member.Email}, {ContactAddressPhone, member.Phone}} {
-			if field.value == "" {
-				continue
-			}
-			normalized, err := NormalizeServiceValue(nil, field.kind, field.value)
-			if err != nil || normalized == "" {
-				normalized = string(field.kind) + ":" + field.value
-			}
-			memberAddresses = append(memberAddresses, ParticipantIdentifierContext{ParticipantID: member.ParticipantID, Type: string(field.kind), Value: field.value, NormalizedValue: normalized, ServiceSlug: string(field.kind)})
-		}
+		memberAddresses := memberContactAddresses(member)
 		appendAddress := func(identifier ParticipantIdentifierContext) {
 			key := addressIdentityKey(identifier.ServiceSlug, identifier.ScopeKind, identifier.ScopeValue, identifier.NormalizedValue)
 			if !seen[key] {
@@ -245,6 +232,10 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 			}
 		}
 		for _, identifier := range byParticipant[member.ParticipantID] {
+			if identifier.ServiceSlug == "" && (identifier.Type == string(ContactAddressEmail) || identifier.Type == string(ContactAddressPhone)) {
+				// An unserviced email or phone compares with the member's own address.
+				identifier.ServiceSlug = identifier.Type
+			}
 			if identifier.Type == sourceTypeBeeper {
 				matched := false
 				for _, address := range memberAddresses {
@@ -274,4 +265,23 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 		}
 	}
 	return addresses, ids
+}
+
+// memberContactAddresses returns a member's own email and phone as addresses.
+func memberContactAddresses(member ParticipantIdentityMember) []ParticipantIdentifierContext {
+	addresses := []ParticipantIdentifierContext{}
+	for _, field := range []struct {
+		kind  ContactAddressKind
+		value string
+	}{{ContactAddressEmail, member.Email}, {ContactAddressPhone, member.Phone}} {
+		if field.value == "" {
+			continue
+		}
+		normalized, err := NormalizeServiceValue(nil, field.kind, field.value)
+		if err != nil || normalized == "" {
+			normalized = string(field.kind) + ":" + field.value
+		}
+		addresses = append(addresses, ParticipantIdentifierContext{ParticipantID: member.ParticipantID, Type: string(field.kind), Value: field.value, NormalizedValue: normalized, ServiceSlug: string(field.kind)})
+	}
+	return addresses
 }

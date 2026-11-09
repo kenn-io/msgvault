@@ -18,3 +18,15 @@ it('clears copy feedback when the command changes', async () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
   }
 });
+
+it('reports when the browser cannot copy the command', async () => {
+  const originalClipboard = navigator.clipboard;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async () => { throw new DOMException('Clipboard permission denied', 'NotAllowedError'); }) } });
+  try {
+    render(CommandLine, { command: 'msgvault add-account one@example.com' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy msgvault add-account one@example.com' }));
+    await screen.findByText("Couldn't copy");
+  } finally {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+  }
+});

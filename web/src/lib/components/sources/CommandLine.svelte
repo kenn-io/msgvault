@@ -2,26 +2,25 @@
   import { Button, copyToClipboard } from '@kenn-io/kit-ui';
   import { onDestroy } from 'svelte';
 
-  /** A command the user runs in a terminal, with Copy, which reads "Copied" for two seconds once it has. */
+  /** A command the user runs in a terminal, with Copy, which reads "Copied" or "Couldn't copy" for two seconds after a click. */
   let { command }: { command: string } = $props();
-  let copiedCommand = $state<string>();
+  let attempt = $state<{ command: string; copied: boolean }>();
   let reset: ReturnType<typeof setTimeout> | undefined;
   // A changed command reads Copy again.
-  const copied = $derived(copiedCommand === command);
+  const outcome = $derived(attempt?.command !== command ? undefined : attempt.copied ? 'Copied' : "Couldn't copy");
 
   async function copy(): Promise<void> {
     const text = command;
-    if (!(await copyToClipboard(text))) return;
-    copiedCommand = text;
+    attempt = { command: text, copied: await copyToClipboard(text) };
     clearTimeout(reset);
-    reset = setTimeout(() => (copiedCommand = undefined), 2000);
+    reset = setTimeout(() => (attempt = undefined), 2000);
   }
   onDestroy(() => clearTimeout(reset));
 </script>
 
 <span class="command">
   <code>{command}</code>
-  <Button size="sm" label={copied ? 'Copied' : 'Copy'} ariaLabel={copied ? 'Copied' : `Copy ${command}`} onclick={() => void copy()} />
+  <Button size="sm" label={outcome ?? 'Copy'} ariaLabel={outcome ?? `Copy ${command}`} onclick={() => void copy()} />
 </span>
 
 <style>

@@ -66,7 +66,7 @@ func TestGetParticipantIdentityContext(t *testing.T) {
 	details, err = st.GetParticipantIdentityContext(ctx, []int64{unscopedPhone})
 	require.NoError(err)
 	require.Len(details.Identifiers, 1)
-	assert.Equal("phone", details.Identifiers[0].ServiceSlug)
+	assert.Empty(details.Identifiers[0].ServiceSlug)
 	assert.Equal("+16045550103", details.Identifiers[0].NormalizedValue)
 
 	migrated, scoped := migratedBeeperParticipant(ctx, t, st)
