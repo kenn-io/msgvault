@@ -306,20 +306,24 @@ func TestNormalizeEmploymentValueExpandsShorthand(t *testing.T) {
 		},
 		{name: "unparseable date string still fails", submitted: `{"organization":"Acme","start_date":"spring 2021"}`, wantFail: true},
 		{name: "out of range month still fails", submitted: `{"organization":"Acme","start_date":"2021-13"}`, wantFail: true},
+		{name: "zero month still fails", submitted: `{"organization":"Acme","start_date":"2023-00"}`, wantFail: true},
+		{name: "zero day still fails", submitted: `{"organization":"Acme","start_date":"2023-05-00"}`, wantFail: true},
+		{name: "impossible calendar day still fails", submitted: `{"organization":"Acme","start_date":"2023-02-30"}`, wantFail: true},
 		{name: "empty organization name still fails", submitted: `{"organization":"  "}`, wantFail: true},
 		{name: "unknown field still fails", submitted: `{"organization":"Acme","salary":"high"}`, wantFail: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
 			normalized, failure, err := NormalizeClaimValue(testEmploymentTarget(), json.RawMessage(test.submitted))
-			require.NoError(t, err)
+			require.NoError(err)
 			if test.wantFail {
-				require.NotNil(t, failure)
-				require.Nil(t, normalized)
+				require.NotNil(failure)
+				require.Nil(normalized)
 				return
 			}
-			require.Nil(t, failure)
-			require.NotNil(t, normalized)
+			require.Nil(failure)
+			require.NotNil(normalized)
 			assert.JSONEq(t, test.want, string(normalized.JSON))
 		})
 	}

@@ -240,32 +240,25 @@ func expandEmploymentShorthand(submitted jsontext.Value) jsontext.Value {
 	return encoded
 }
 
-// parseISOPartialDate accepts "YYYY", "YYYY-MM" or "YYYY-MM-DD". Range
-// checks are left to validatePartialDate.
+// parseISOPartialDate accepts "YYYY", "YYYY-MM" or "YYYY-MM-DD". time.Parse
+// rejects a zero or out-of-range month or day, so such a string stays
+// unparsed and fails the strict validation.
 func parseISOPartialDate(text string) (PartialDateValue, bool) {
-	parts := strings.Split(text, "-")
-	if len(parts) > 3 || len(parts[0]) != 4 {
-		return PartialDateValue{}, false
-	}
-	numbers := make([]int, len(parts))
-	for i, part := range parts {
-		if i > 0 && len(part) != 2 {
-			return PartialDateValue{}, false
+	for _, layout := range []string{"2006", "2006-01", "2006-01-02"} {
+		parsed, err := time.Parse(layout, text)
+		if err != nil {
+			continue
 		}
-		n, err := strconv.Atoi(part)
-		if err != nil || n < 0 {
-			return PartialDateValue{}, false
+		date := PartialDateValue{Year: parsed.Year()}
+		if len(layout) >= len("2006-01") {
+			date.Month = int(parsed.Month())
 		}
-		numbers[i] = n
+		if len(layout) == len("2006-01-02") {
+			date.Day = parsed.Day()
+		}
+		return date, true
 	}
-	date := PartialDateValue{Year: numbers[0]}
-	if len(numbers) > 1 {
-		date.Month = numbers[1]
-	}
-	if len(numbers) > 2 {
-		date.Day = numbers[2]
-	}
-	return date, true
+	return PartialDateValue{}, false
 }
 
 func partialDateAfterAtSharedPrecision(start, end *PartialDateValue) bool {
