@@ -222,7 +222,7 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 		title = ""
 	}
 	familyKey := calevent.ICSMessageID(c.UID, "")
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT c.source_conversation_id FROM conversations c WHERE c.source_id=? AND c.id IN (SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=? UNION ALL SELECT conversation_id FROM source_merge_conversations WHERE original_conversation_id=?) ORDER BY CASE WHEN c.source_conversation_id=? THEN 0 ELSE 1 END, c.id LIMIT 1), ?)`, sourceID, sourceID, familyKey, familyKey, familyKey, familyKey).Scan(&familyKey); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT c.source_conversation_id FROM (SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=? UNION ALL SELECT conversation_id FROM source_merge_conversations WHERE original_conversation_id=?) family JOIN conversations c ON c.id=family.id WHERE c.source_id=? ORDER BY CASE WHEN c.source_conversation_id=? THEN 0 ELSE 1 END, c.id LIMIT 1), ?)`, sourceID, familyKey, familyKey, sourceID, familyKey, familyKey).Scan(&familyKey); err != nil {
 		return fmt.Errorf("resolve ICS family conversation: %w", err)
 	}
 	id, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, func(ids []int64) *MessagePersistData {
