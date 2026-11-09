@@ -3836,6 +3836,7 @@ CREATE TABLE IF NOT EXISTS source_merge_messages (
     match_basis TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_source_merge_messages_original ON source_merge_messages(original_source_id);
+CREATE INDEX IF NOT EXISTS idx_source_merge_messages_original_message ON source_merge_messages(original_message_id);
 -- These owning-row markers survive subsets that omit merge provenance. The
 -- original provider message ID lets media consumers verify imported raw data.
 CREATE TABLE IF NOT EXISTS source_merge_archive_only_messages (
@@ -3865,6 +3866,7 @@ CREATE TABLE IF NOT EXISTS source_merge_conversations (
  original_conversation_id TEXT,
  destination_conversation_id BIGINT NOT NULL REFERENCES conversations(id)
 );
+CREATE INDEX IF NOT EXISTS idx_source_merge_conversations_original_conversation ON source_merge_conversations(original_conversation_id);
 CREATE TABLE IF NOT EXISTS source_merge_attachments (
  attachment_id BIGINT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
  original_attachment_id BIGINT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,

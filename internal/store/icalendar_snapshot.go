@@ -19,7 +19,8 @@ func acceptedICSSnapshot(q querier, sourceID int64, item preparedICS, summary *I
 	key := calevent.ICSMessageID(c.UID, "")
 	var organizer string
 	var metadata sql.NullString
-	err := q.QueryRow(`SELECT m.metadata FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE c.source_id=? AND c.id IN (SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=? UNION ALL SELECT conversation_id FROM source_merge_conversations WHERE original_conversation_id=?) AND m.message_type='calendar_event' AND COALESCE(m.metadata ->> 'invite_organizer', '') <> '' ORDER BY m.id LIMIT 1`, sourceID, sourceID, key, key).Scan(&metadata)
+	// Start from the family IDs; COALESCE keeps SQLite off the message_type index.
+	err := q.QueryRow(`SELECT m.metadata FROM (SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=? UNION ALL SELECT conversation_id FROM source_merge_conversations WHERE original_conversation_id=?) family JOIN conversations c ON c.id=family.id JOIN messages m ON m.conversation_id=c.id WHERE c.source_id=? AND COALESCE(m.message_type, '')='calendar_event' AND COALESCE(m.metadata ->> 'invite_organizer', '') <> '' ORDER BY m.id LIMIT 1`, sourceID, key, key, sourceID).Scan(&metadata)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		organizer = c.OrganizerEmail
