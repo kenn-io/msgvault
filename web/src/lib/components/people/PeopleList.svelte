@@ -5,6 +5,8 @@
     label: string;
     /** "42 messages", or the organization for a saved person. */
     detail: string;
+    cadence?: string;
+    cadenceOverdue?: boolean;
     lastAt?: string;
     saved: boolean;
     domain: boolean;
@@ -12,6 +14,7 @@
 </script>
 
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import {
     Button,
     Chip,
@@ -42,6 +45,8 @@
   }
 
   interface Props {
+    cadenceControls?: Snippet;
+    blocked?: boolean;
     rows: PeopleRow[];
     loading: boolean;
     loadingMore?: boolean;
@@ -76,6 +81,8 @@
 
   let {
     rows,
+    cadenceControls,
+    blocked = false,
     loading,
     loadingMore = false,
     pageRecovery = null,
@@ -196,10 +203,13 @@
         {/each}
       </div>
     {/if}
+    {@render cadenceControls?.()}
     {#if countLabel && rows.length > 0 && !degraded}<span class="count" aria-live="polite">{countLabel}</span>{/if}
   </div>
 
-  {#if degraded?.readiness === 'building'}
+  {#if blocked}
+    <!-- The controls explain the incompatible context; no unrelated rows or empty claim. -->
+  {:else if degraded?.readiness === 'building'}
     <EmptyState title="Preparing the people list…" />
   {:else if degraded}
     <EmptyState title="The people list needs the analytics cache" description="Run msgvault build-cache." />
@@ -276,6 +286,7 @@
                   {#if row.lastAt}<span class="when" data-mono>{relativeDate(row.lastAt)}</span>{/if}
                 </div>
                 {#if row.detail}<span class="detail" data-mono>{row.detail}</span>{/if}
+                {#if row.cadence}<span class="cadence" class:overdue={row.cadenceOverdue}>{row.cadence}</span>{/if}
               </div>
             </div>
           </div>
@@ -476,6 +487,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .cadence { color: var(--text-muted); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+  .cadence.overdue { color: var(--status-warning-ink); }
 
   .list-status {
     margin: 0;
