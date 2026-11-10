@@ -856,49 +856,51 @@ func TestImportCleanupDeadline(t *testing.T) {
 func TestImportLateStopRecordsCheckpointAndCompletion(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
 		f := newFakeBeeper(t)
 		chat := budgetTestChat("!late-stop:beeper.local", 2, time.Now().Add(-48*time.Hour))
 		f.addChat(chat)
 		f.addChat(budgetTestChat("!later-chat:beeper.local", 2, time.Now().Add(-72*time.Hour)))
 		imp, st := newHandlerTestImporter(t, f)
-		t.Cleanup(func() { require.NoError(t, st.Close()) })
+		t.Cleanup(func() { require.NoError(st.Close()) })
 		sum, err := imp.Import(t.Context(), ImportOptions{
 			AccountID: "signal", StopAt: time.Now().Add(time.Second),
-			// Model a per-chat operation that only returns after the old
-			// StopAt+15s finalization deadline has already passed.
+			// Model a per-chat operation that returns after StopAt and
+			// after more than 15 seconds of fake time.
 			Progress: func(string) { time.Sleep(30 * time.Second) },
 		})
-		require.NoError(t, err, "a late stop must still record its result")
-		require.True(t, sum.Stopped)
+		require.NoError(err, "a late stop must still record its result")
+		require.True(sum.Stopped)
 		run, err := st.GetLastSuccessfulSync(sum.SourceID)
-		require.NoError(t, err)
-		assert.Equal(t, "completed", run.Status)
-		assert.EqualValues(t, 2, run.MessagesProcessed)
+		require.NoError(err)
+		assert.Equal("completed", run.Status)
+		assert.EqualValues(2, run.MessagesProcessed)
 		state, err := LoadSyncState(run.CursorAfter.String)
-		require.NoError(t, err)
-		require.NotNil(t, state.Chats[chat.ID], "the final checkpoint must survive the late stop")
+		require.NoError(err)
+		require.NotNil(state.Chats[chat.ID], "the final checkpoint must survive the late stop")
 	})
 }
 
 func TestConversationStatsContextUsesCallerBudget(t *testing.T) {
 	t.Parallel()
+	outerAssert, outerRequire := assert.New(t), require.New(t)
 	parent, cancelParent := context.WithTimeout(t.Context(), time.Hour)
 	defer cancelParent()
 	parentDeadline, ok := parent.Deadline()
-	require.True(t, ok)
+	outerRequire.True(ok)
 
 	manual, cancelManual := (ImportOptions{}).conversationStatsContext(parent)
 	defer cancelManual()
 	manualDeadline, ok := manual.Deadline()
-	require.True(t, ok)
-	assert.Equal(t, parentDeadline, manualDeadline, "manual imports keep the caller's full budget")
+	outerRequire.True(ok)
+	outerAssert.Equal(parentDeadline, manualDeadline, "manual imports keep the caller's full budget")
 
 	scheduledStopAt := time.Now().Add(30 * time.Minute)
 	scheduled, cancelScheduled := (ImportOptions{Scheduled: true, StopAt: scheduledStopAt}).conversationStatsContext(parent)
 	defer cancelScheduled()
 	scheduledDeadline, ok := scheduled.Deadline()
-	require.True(t, ok)
-	assert.Equal(t, scheduledStopAt, scheduledDeadline, "scheduled stats use the remaining scheduled budget")
+	outerRequire.True(ok)
+	outerAssert.Equal(scheduledStopAt, scheduledDeadline, "scheduled stats use the remaining scheduled budget")
 
 	for name, makeOpts := range map[string]func() ImportOptions{
 		"late":  func() ImportOptions { return ImportOptions{StopAt: time.Now().Add(-time.Minute)} },
@@ -906,12 +908,15 @@ func TestConversationStatsContextUsesCallerBudget(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
+				parent, cancelParent := context.WithTimeout(t.Context(), time.Hour)
+				defer cancelParent()
 				stopped, cancelStopped := makeOpts().conversationStatsContext(parent)
 				defer cancelStopped()
-				require.NoError(t, stopped.Err(), "stopped stats still get a usable cleanup window")
+				require.NoError(stopped.Err(), "stopped stats still get a usable cleanup window")
 				deadline, ok := stopped.Deadline()
-				require.True(t, ok)
-				assert.InDelta(t, stoppedImportFinalizeTimeout.Seconds(), time.Until(deadline).Seconds(), 1,
+				require.True(ok)
+				assert.InDelta(stoppedImportFinalizeTimeout.Seconds(), time.Until(deadline).Seconds(), 1,
 					"stopped stats receive a fresh bounded window")
 			})
 		})
@@ -921,7 +926,7 @@ func TestConversationStatsContextUsesCallerBudget(t *testing.T) {
 	cancelCanceledParent()
 	canceled, cancelCanceled := (ImportOptions{Scheduled: true}).conversationStatsContext(canceledParent)
 	defer cancelCanceled()
-	require.ErrorIs(t, canceled.Err(), context.Canceled, "scheduler cancellation is not detached")
+	outerRequire.ErrorIs(canceled.Err(), context.Canceled, "scheduler cancellation is not detached")
 }
 
 func TestImportBudgetAtCompletedChatStillAdvancesCycle(t *testing.T) {
