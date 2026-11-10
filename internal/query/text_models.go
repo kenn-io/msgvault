@@ -180,4 +180,5 @@ var KnownMessageTypes = []string{
 	"inline",
 	"matrix",
 	"telegram",
+	"x_dm",
 }

@@ -2,7 +2,8 @@ import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { expectKitTheme, selectWorkspace } from './kit-ui';
 
-import { candidate, directoryPerson, person } from '../src/lib/directory/entity-fixtures.test-support';
+import { candidate, directoryPerson } from '../src/lib/directory/entity-data.test-support';
+import { person } from '../src/lib/directory/person-fixtures.test-support';
 import { emptyProfile } from '../src/lib/directory/profile-fixtures.test-support';
 import { meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { mockArchiveLayout, row } from './archive-layout';
@@ -255,17 +256,17 @@ for (const width of [1280, 390]) {
     await view.getByRole('button', { name: 'Archive search actions', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Edit description…' }).click();
     const dialog = page.getByRole('dialog', { name: 'Describe Archive search' });
-    await expect(dialog.locator('.kit-modal-header')).toHaveCSS('height', '44px');
+    await expect(dialog.locator('.dialog-header')).toHaveCSS('height', '44px');
     await expect(dialog.locator('.kit-modal-footer')).toHaveCSS('height', '44px');
-    const topInset = await dialog.locator('.kit-modal-body').evaluate(body => body.firstElementChild!.getBoundingClientRect().top - body.getBoundingClientRect().top);
+    const topInset = await dialog.locator('.dialog-content').evaluate(body => body.firstElementChild!.getBoundingClientRect().top - body.getBoundingClientRect().top);
     expect(topInset).toBe(12);
     const bounds = (await dialog.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(16);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width - 16);
     await page.setViewportSize({ width, height: 160 });
-    const fixed = dialog.locator('.kit-modal-header, .kit-modal-footer');
+    const fixed = dialog.locator('.dialog-header, .kit-modal-footer');
     const positions = await fixed.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top));
-    const body = dialog.locator('.kit-modal-body');
+    const body = dialog.locator('.dialog-content');
     expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await body.evaluate(element => { element.scrollTop = element.scrollHeight; });
     expect(await body.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
@@ -621,12 +622,12 @@ test.describe('form picker focus', () => {
         await page.route('**/api/v1/organizations**', route => route.fulfill({ json: { organizations: [], total: 0, limit: 50, offset: 0 } }));
         await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
         await page.getByRole('radio', { name: 'Details', exact: true }).click();
-        await page.getByRole('button', { name: 'Add work', exact: true }).click();
+        await page.getByRole('button', { name: 'Add job…', exact: true }).click();
       }
       const trigger = page.getByRole('button', { name: new RegExp(`^${picker}:`) });
       const predecessor = picker === 'Time zone'
         ? page.getByRole('textbox', { name: 'Slack schedule', exact: true })
-        : page.getByRole('button', { name: 'New organization', exact: true });
+        : page.getByRole('textbox', { name: 'Job title', exact: true });
       await predecessor.focus();
       const restingBorder = await trigger.evaluate(element => getComputedStyle(element).borderColor);
       await page.keyboard.press(picker === 'Time zone' ? 'Tab' : 'Shift+Tab');

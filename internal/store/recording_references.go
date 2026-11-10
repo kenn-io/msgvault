@@ -144,7 +144,7 @@ type RecordingReferenceResult struct {
 }
 
 func (s *Store) ReconcileRecordingReferences(ctx context.Context, destination string, messageID int64, live bool, refs []RecordingReferenceInput) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		return s.reconcileRecordingReferences(ctx, tx, destination, messageID, live, refs)
 	})
 }
@@ -241,7 +241,7 @@ func (s *Store) FinishRecordingReference(ctx context.Context, claim RecordingRef
 		sent = s.dialect.TimestampParam(*result.LastSendAt)
 	}
 	var applied bool
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE recording_references SET state=?,next_action_at=?,error_code=?,source_id=?,occurrence_id=?,outcome=?,coverage_state=?,last_send_at=?,retry_count=? WHERE destination_key=? AND message_id=? AND route_key=? AND operation_id=?`, result.State, s.dialect.TimestampParam(result.NextActionAt), result.ErrorCode, result.SourceID, result.OccurrenceID, result.Outcome, result.CoverageState, sent, result.RetryCount, claim.DestinationKey, claim.MessageID, claim.RouteKey, claim.OperationID)
 		if err != nil {
 			return err

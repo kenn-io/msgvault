@@ -250,6 +250,7 @@ type Filter struct {
 	SourceIDs          []int64   // from [server/sources].identifier; empty = no source filter
 	ConversationIDs    []int64   // exact messages.conversation_id values; empty = unrestricted
 	SenderTerms        []string  // each normalized from: value; message and participant metadata
+	SenderDomain       string    // exact domain on a from row
 	SenderGroups       [][]int64 // structured domain selections; AND across, OR within
 	SenderExactGroups  [][]int64 // exact structured sender; from rows OR messages.sender_id
 	RecipientAnyGroups [][]int64 // exact structured recipient; to/cc/bcc rows are OR'd
@@ -277,6 +278,7 @@ func (f Filter) IsEmpty() bool {
 		len(f.SourceIDs) == 0 &&
 		len(f.ConversationIDs) == 0 &&
 		len(f.SenderTerms) == 0 &&
+		f.SenderDomain == "" &&
 		len(f.SenderGroups) == 0 &&
 		len(f.SenderExactGroups) == 0 &&
 		len(f.RecipientAnyGroups) == 0 &&

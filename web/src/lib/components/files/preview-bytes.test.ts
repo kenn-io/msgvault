@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   readBoundedStream,
+  readStreamPrefix,
   validatedImageBlob,
   validatedThumbnailBlob
 } from './preview-bytes';
@@ -33,7 +34,7 @@ describe('preview byte validation', () => {
       new Headers({ 'Content-Length': '5' }),
       new AbortController().signal,
       4
-    )).rejects.toThrow(/byte limit/i);
+    )).rejects.toThrow('This file is too large to preview.');
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -43,30 +44,19 @@ describe('preview byte validation', () => {
       }
     });
     await expect(readBoundedStream(stream, new Headers(), new AbortController().signal, 4))
-      .rejects.toThrow(/byte limit/i);
-  });
-
-  it('cancels an oversized declared response body exactly once before reporting the size error', async () => {
-    const cancel = vi.fn(async () => undefined);
-    const stream = new ReadableStream<Uint8Array>({ cancel });
-
-    await expect(readBoundedStream(
-      stream, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4
-    )).rejects.toThrow(/byte limit/i);
-
-    expect(cancel).toHaveBeenCalledOnce();
+      .rejects.toThrow('This file is too large to preview.');
   });
 
   it('keeps the declared size error when the body is absent or cancellation rejects', async () => {
     await expect(readBoundedStream(
       null, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4
-    )).rejects.toThrow(/byte limit/i);
+    )).rejects.toThrow('This file is too large to preview.');
 
     const cancel = vi.fn(async () => { throw new Error('cancel failed'); });
     const stream = new ReadableStream<Uint8Array>({ cancel });
     await expect(readBoundedStream(
       stream, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4
-    )).rejects.toThrow(/byte limit/i);
+    )).rejects.toThrow('This file is too large to preview.');
     expect(cancel).toHaveBeenCalledOnce();
   });
 
@@ -98,6 +88,22 @@ describe('preview byte validation', () => {
       new Uint8Array(imageCases[3]![1]), 'image/webp', 'image/webp'
     )).toThrow(/thumbnail/i);
   });
+  it.each([
+    { chunks: [[1, 2, 3, 4, 5]], close: false, truncated: true },
+    { chunks: [[1, 2], [3]], close: true, truncated: false },
+    { chunks: [[1, 2, 3], [4]], close: true, truncated: true },
+  ])('reads a bounded prefix across chunks', async ({ chunks, close, truncated }) => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new Uint8Array(chunk));
+        if (close) controller.close();
+      }
+    });
+    const result = await readStreamPrefix(stream, new AbortController().signal, 3);
+    expect([...result.bytes]).toEqual([1, 2, 3]);
+    expect(result.truncated).toBe(truncated);
+  });
+
 });
 
 function pngBytes(width: number, height: number, animated = false): Uint8Array {

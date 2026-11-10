@@ -56,7 +56,7 @@ func TestResolveUserIdentifierFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	r := newParticipantResolver(st)
+	r := newParticipantResolver(st, "account-a")
 
 	pid, err := r.resolveUser(t.Context(), &User{ID: "@signal_uuid:beeper.local", FullName: "Carol"})
 	require.NoError(err)
@@ -67,7 +67,7 @@ func TestResolveUserIdentifierFallback(t *testing.T) {
 		`SELECT identifier_type, identifier_value FROM participant_identifiers WHERE participant_id = ?`), pid,
 	).Scan(&identifierType, &identifierValue))
 	assert.Equal("beeper", identifierType)
-	assert.Equal("@signal_uuid:beeper.local", identifierValue)
+	assert.Equal(beeperidentity.Fallback("account-a", "@signal_uuid:beeper.local"), identifierValue)
 }
 
 func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
@@ -252,28 +252,24 @@ func TestRichResolutionPersistsAcrossRuns(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
-	// Run 1 sees the user with a phone number in a chat's member list.
-	r1 := newParticipantResolver(st)
-	rich, err := r1.resolveUser(t.Context(), &User{
-		ID:          "@15550100005:local-whatsapp.localhost",
-		PhoneNumber: "+15550100005",
-		FullName:    "Gil",
-	})
-	require.NoError(err)
-
-	// Run 2 (fresh cache) sees the same user only as a bare sender ID (they
-	// left the group): the persisted identifier must unify, not fork.
-	r2 := newParticipantResolver(st)
-	pid, err := r2.resolveID(t.Context(), "@15550100005:local-whatsapp.localhost", "Gil")
-	require.NoError(err)
-	assert.Equal(rich, pid, "bare-ID resolution in a later run must find the rich participant")
+	for _, user := range []User{
+		{ID: "@15550100005:local-whatsapp.localhost", PhoneNumber: "+15550100005", FullName: "Gil"},
+		{ID: "@reader:beeper.local", Email: "reader@example.org", FullName: "Reader"},
+	} {
+		// A later run must find rich metadata by the account-scoped sender ID.
+		rich, err := newParticipantResolver(st, "account-a").resolveUser(t.Context(), &user)
+		require.NoError(err)
+		pid, err := newParticipantResolver(st, "account-a").resolveID(t.Context(), user.ID, user.FullName)
+		require.NoError(err)
+		assert.Equal(rich, pid, "bare-ID resolution in a later run must find the rich participant")
+	}
 
 	// And the reverse order: a weak participant from run 1 is re-pointed
 	// when run 2 learns the phone number.
-	r3 := newParticipantResolver(st)
+	r3 := newParticipantResolver(st, "account-a")
 	weak, err := r3.resolveID(t.Context(), "@15550100006:beeper.local", "Hana")
 	require.NoError(err)
-	r4 := newParticipantResolver(st)
+	r4 := newParticipantResolver(st, "account-a")
 	native, err := st.EnsureParticipantByPhone(t.Context(), "+15550100006", "Hana Native", "imessage")
 	require.NoError(err)
 	upgraded, err := r4.resolveUser(t.Context(), &User{
@@ -284,8 +280,8 @@ func TestRichResolutionPersistsAcrossRuns(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(native, upgraded)
 	assert.NotEqual(weak, upgraded)
-	r5 := newParticipantResolver(st)
-	pid, err = r5.resolveID(t.Context(), "@15550100006:beeper.local", "Hana")
+	r5 := newParticipantResolver(st, "account-a")
+	pid, err := r5.resolveID(t.Context(), "@15550100006:beeper.local", "Hana")
 	require.NoError(err)
 	assert.Equal(native, pid, "the identifier row must be re-pointed at the rich participant")
 }

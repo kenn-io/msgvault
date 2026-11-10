@@ -15,6 +15,13 @@ type identityCacheFixtureOptions struct {
 	unsentMessages string
 }
 
+func identityFixtureProjection(dataset string) string {
+	if dataset == "message_recipients" {
+		return "*, NULL::VARCHAR AS email_address, false AS is_relayed"
+	}
+	return "*"
+}
+
 // ensureIdentityCacheFixtureDatasets keeps hand-built API fixtures compatible
 // with the current cache contract by deriving the identity datasets from
 // the fixture's raw Parquet tables with the production builder. The derived
