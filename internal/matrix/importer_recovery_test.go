@@ -829,7 +829,7 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 }
 
 func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
-	for _, mode := range []string{"same", "alternate base64", "encrypted target", "missing target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
+	for _, mode := range []string{"same", "relations pages", "alternate base64", "encrypted target", "missing target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
 		t.Run(mode, func(t *testing.T) {
 			req, check := require.New(t), assert.New(t)
 			f := newRecoveryFixture(t)
@@ -901,10 +901,38 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 			check.Equal(encryptedPlaceholder, f.body(t, pending.ID.String()))
 
 			f.edits = []*event.Event{candidate}
+			pages := make(chan string, 3)
+			if mode == "relations pages" {
+				first := f.edit(t, "$first", "$other", "first", 15)
+				handler := f.server.Config.Handler
+				f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if strings.HasSuffix(r.URL.Path, "/m.replace") {
+						from := r.URL.Query().Get("from")
+						select {
+						case pages <- from:
+						default:
+							http.Error(w, "too many relations pages", http.StatusBadRequest)
+							return
+						}
+						if from == "" {
+							writeMatrixJSON(t, w, map[string]any{"chunk": []*event.Event{first}, "next_batch": "second"})
+							return
+						}
+					}
+					handler.ServeHTTP(w, r)
+				})
+			}
 			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
 			_, err = f.run(t, true, false)
 			req.NoError(err)
-			check.Equal("other", f.body(t, "$other"))
+			if mode == "relations pages" {
+				req.Len(pages, 2)
+				check.Empty(<-pages)
+				check.Equal("second", <-pages)
+				check.Equal("first", f.body(t, "$other"))
+			} else {
+				check.Equal("other", f.body(t, "$other"))
+			}
 			var owner string
 			req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`), f.backup.out.ID().String(), index).Scan(&owner))
 			check.Equal(wantOwner, owner)
