@@ -59,7 +59,11 @@ func (s *Store) prepareICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 	if err := tx.QueryRowContext(ctx, `SELECT sync_config FROM sources WHERE id=?`, sourceID).Scan(&config); err != nil {
 		return nil, fmt.Errorf("read ICS source: %w", err)
 	}
-	components, err := calevent.ParseICS(raw, method, calendarConfigZone(config))
+	parse := calevent.ParseICS
+	if fromEmail {
+		parse = calevent.ParseEmailICS
+	}
+	components, err := parse(raw, method, calendarConfigZone(config))
 	if err != nil {
 		return nil, &icsInterpretationError{err}
 	}

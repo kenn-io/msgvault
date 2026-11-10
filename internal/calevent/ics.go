@@ -94,7 +94,16 @@ func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Com
 // ParseICS accepts one complete VCALENDAR. A single-event file is retained
 // byte for byte; each event of a larger file keeps its own VEVENT and the
 // shared calendar lines.
-func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err error) {
+func ParseICS(raw []byte, method, calendarZone string) ([]ICSComponent, error) {
+	return parseICS(raw, method, calendarZone, false)
+}
+
+// ParseEmailICS requires the MIME method to agree with the calendar's METHOD.
+func ParseEmailICS(raw []byte, mimeMethod, calendarZone string) ([]ICSComponent, error) {
+	return parseICS(raw, mimeMethod, calendarZone, true)
+}
+
+func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSComponent, err error) {
 	defer func() {
 		if recover() != nil {
 			out = nil
@@ -113,7 +122,7 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	if _, err := decoder.Decode(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("calendar has trailing content")
 	}
-	method, err = icsMethod(cal, method)
+	method, err = icsMethod(cal, method, strict)
 	if err != nil {
 		return nil, err
 	}
@@ -159,13 +168,16 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	return out, nil
 }
 
-func icsMethod(cal *ical.Calendar, method string) (string, error) {
+func icsMethod(cal *ical.Calendar, method string, strict bool) (string, error) {
 	declared, err := propText(cal.Props, "METHOD")
 	if err != nil {
 		return "", err
 	}
 	declared = strings.ToUpper(strings.TrimSpace(declared))
 	method = strings.ToUpper(strings.TrimSpace(method))
+	if strict && declared != "" && method != "" && declared != method {
+		return "", fmt.Errorf("calendar METHOD %q conflicts with MIME method %q", declared, method)
+	}
 	if declared != "" {
 		method = declared
 	}
