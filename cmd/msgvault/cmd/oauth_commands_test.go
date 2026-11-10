@@ -472,6 +472,21 @@ func TestHeadlessCommandsPreserveNativeArguments(t *testing.T) {
 			})
 		}
 	}
+	var out bytes.Buffer
+	oauth.PrintHeadlessCommand(&out, "msgvault", "sync-full", "--", "imap://reader$tag@host.example:143")
+	var lines []string
+	for line := range strings.SplitSeq(out.String(), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "msgvault ") {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+	require.Len(t, lines, 2)
+	for i, shell := range []string{"sh", "pwsh"} {
+		t.Run("sync/"+shell, func(t *testing.T) {
+			assert.Equal(t, []string{"sync-full", "--", "imap://reader$tag@host.example:143"}, headlessNativeArgs(t, shell, fixture, lines[i]))
+		})
+	}
+
 }
 
 const sharedLoadBudget = 15 * time.Second

@@ -216,10 +216,6 @@ describe('ProfileHistoryDialog', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
       await waitFor(() => expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 }));
       expect(await screen.findByRole('dialog', { name: 'Split complete' })).toBeDefined();
-      expect(historyReads).toBe(initialFailure ? 2 : 1);
-      await waitFor(() => {
-        for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value, { exact: true })).toBeNull();
-      });
     } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });
 });

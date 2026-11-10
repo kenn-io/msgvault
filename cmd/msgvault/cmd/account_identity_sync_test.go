@@ -250,13 +250,14 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 		o365TenantID, teamsTenantID = savedO365Tenant, savedTeamsTenant
 	})
 	for _, tc := range []struct {
-		name       string
-		newCommand func() *cobra.Command
-		args       []string
+		name        string
+		newCommand  func() *cobra.Command
+		args        []string
+		wantCommand string
 	}{
-		{"o365", newAddO365LocalCmd, nil},
-		{"graph", newAddO365LocalCmd, []string{"--graph"}},
-		{"teams", newAddTeamsLocalCmd, nil},
+		{"o365", newAddO365LocalCmd, nil, "msgvault sync-full -- user@example.com"},
+		{"graph", newAddO365LocalCmd, []string{"--graph"}, "msgvault sync -- user@example.com"},
+		{"teams", newAddTeamsLocalCmd, nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -279,11 +280,8 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				err := cmd.ExecuteContext(ctx)
 				output := stop()
 				require.NoError(err)
-				if tc.name == "o365" {
-					assert.Contains(output, "msgvault sync-full -- user@example.com")
-				}
-				if tc.name == "graph" {
-					assert.Contains(output, "msgvault sync -- user@example.com")
+				if tc.wantCommand != "" {
+					assert.Contains(output, tc.wantCommand)
 				}
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)

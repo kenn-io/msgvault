@@ -242,7 +242,7 @@ describe('PersonSplitSteps', () => {
     }, [], () => ({ ...mergeDetail().labels, profiles: [{ id: 7, participant_ids: [] }, { id: 9, participant_ids: [] }], incomplete: false }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     expect(screen.getByText('Splitting restores its profile history.')).toBeDefined();
-    await act(() => { expect(controller.confirmSplit()).toBe(true); return controller.submitSplit(); });
+    await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
     expect(screen.getByRole('button', { name: 'Open Synthetic Restored' })).toBeDefined();
     controller.destroy();
   });

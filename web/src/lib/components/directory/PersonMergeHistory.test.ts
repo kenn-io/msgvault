@@ -98,13 +98,12 @@ function addressIdentifiers(): MergeDetail['labels']['addresses'] {
 }
 
 function renderHistory(value: number | null | MergeDetail = 12, options: {
-  unnamedSurvivor?: boolean; fail?: boolean; count?: number; addresses?: MergeDetail['labels']['addresses'];
+  unnamedSurvivor?: boolean; fail?: boolean; addresses?: MergeDetail['labels']['addresses'];
   list?: MergeDetail[]; respond?: (path: string, request: Request) => Response | Promise<Response> | undefined;
   onSplitCommitted?: () => Promise<void>;
 } = {}) {
   const mergeDetail = typeof value === 'object' && value !== null ? value : detail(value);
   if (options.addresses) mergeDetail.labels.addresses = options.addresses;
-  if (options.count !== undefined) mergeDetail.labels.absorbed_address_count = options.count;
   const requests: Request[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
