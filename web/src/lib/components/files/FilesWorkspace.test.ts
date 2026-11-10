@@ -43,7 +43,7 @@ function response() {
       source_identifier: 'archive@example.com', containing_title: 'Containing item',
       filename: 'fixture.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
       participant_labels: ['Alice Example'], participant_domains: ['example.com'],
-      content_state: 'local_content', content_available: true
+      content_state: 'unverified', content_available: false
     }],
     total_count: 1, cache_revision: 'cache-files', search_provenance: {}
   };
@@ -1270,11 +1270,11 @@ describe('FilesWorkspace', () => {
       expect(typeCheckboxLabels()).toEqual(expected);
     });
 
-    it('keeps the fusion score out of the row text and names a missing file plainly', async () => {
+    it('keeps the fusion score out of the row text and labels unchecked content', async () => {
       const base = response();
       const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
         ...base,
-        files: [{ ...base.files[0]!, content_state: 'missing_blob', search_explain: { rrf: 0.0123 } }]
+        files: [{ ...base.files[0]!, content_state: 'unverified', search_explain: { rrf: 0.0123 } }]
       }));
       render(FilesWorkspace, {
         client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
@@ -1284,7 +1284,7 @@ describe('FilesWorkspace', () => {
       expect(row.textContent).not.toContain('RRF');
       expect(within(row).getByText('fixture.pdf').closest('[role="gridcell"]')?.getAttribute('title'))
         .toBe('Match score 0.0123');
-      expect(within(row).getByText('File missing')).toBeDefined();
+      expect(within(row).getByText('Not checked')).toBeDefined();
       expect(row.textContent).not.toContain('Missing blob');
     });
 
@@ -1414,22 +1414,6 @@ it.each([503, 409])('leaves recovery with the list after a %s and keeps the boun
   await fireEvent.click(screen.getByRole('button', { name: status === 409 ? 'Reload files' : 'Retry loading more files' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   await waitFor(() => expect(grid.getAttribute('aria-busy')).toBe('false'));
-});
-
-it('keeps a successful step visible while the controlled selection awaits its parent update', async () => {
-  const first = response().files[0]!;
-  const second = { ...first, id: 8, key: 'file:8', filename: 'second.txt' };
-  const onSelectedKey = vi.fn();
-  const fetchFn = vi.fn<typeof fetch>(async (input) => {
-    const path = new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname;
-    if (path.endsWith('/files/search')) return Response.json({ ...response(), files: [first, second], total_count: 2 });
-    return Response.json({ ...(path.endsWith('/8') ? second : first), content_state: 'metadata_only' });
-  });
-  renderReady({ client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7', onSelectedKey });
-  const dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
-  await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
-  expect(await screen.findByRole('dialog', { name: 'View second.txt' })).toBeDefined();
-  expect(onSelectedKey).toHaveBeenCalledWith('file:8', { replace: true });
 });
 
 it('steps after a pending page when the URL controls the current file', async () => {

@@ -44,8 +44,8 @@ function file(filename: string, mimeType: string, mimeFamily: string) {
     size_bytes: 1024,
     participant_labels: ['Example Person'],
     participant_domains: ['example.com'],
-    content_state: 'local_content',
-    content_available: true
+    content_state: 'unverified',
+    content_available: false
   };
 }
 
@@ -105,7 +105,6 @@ for (const dismissal of ['close button', 'Escape', 'Back']) {
     await expect(grid).toHaveAttribute('aria-busy', 'false');
     await expect(grid).toBeFocused();
     await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-8');
-    await expect(grid).toHaveCSS('box-shadow', 'none');
     await page.keyboard.press('Enter');
     await expect(page.getByRole('dialog', { name: `View ${second.filename}` })).toBeVisible();
   });

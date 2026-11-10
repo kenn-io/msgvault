@@ -99,6 +99,25 @@ describe('preview byte validation', () => {
       new Uint8Array(imageCases[3]![1]), 'image/webp', 'image/webp'
     )).toThrow(/thumbnail/i);
   });
+  it.each([
+    { chunks: [[1, 2, 3, 4, 5]], close: false, truncated: true, canceled: true },
+    { chunks: [[1, 2], [3]], close: true, truncated: false, canceled: false },
+    { chunks: [[1, 2, 3], [4]], close: true, truncated: true, canceled: false },
+  ])('reads a bounded prefix across chunks', async ({ chunks, close, truncated, canceled }) => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new Uint8Array(chunk));
+        if (close) controller.close();
+      },
+      cancel
+    });
+    const result = await readStreamPrefix(stream, new AbortController().signal, 3);
+    expect([...result.bytes]).toEqual([1, 2, 3]);
+    expect(result.truncated).toBe(truncated);
+    if (canceled) expect(cancel).toHaveBeenCalledOnce();
+  });
+
 });
 
 function pngBytes(width: number, height: number, animated = false): Uint8Array {
@@ -132,21 +151,3 @@ function u16(value: number): number[] {
 function u32(value: number): number[] {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
-
-it('reads and cancels only the start of a large text stream', async () => {
-  const cancel = vi.fn();
-  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3, 4, 5])); }, cancel });
-  const result = await readStreamPrefix(stream, new AbortController().signal, 3);
-  expect([...result.bytes]).toEqual([1, 2, 3]);
-  expect(result.truncated).toBe(true);
-  expect(cancel).toHaveBeenCalledOnce();
-});
-
-it('reports a complete prefix at the exact limit, including across chunks', async () => {
-  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2])); controller.enqueue(new Uint8Array([3])); controller.close(); } });
-  expect(await readStreamPrefix(stream, new AbortController().signal, 3)).toEqual({ bytes: new Uint8Array([1, 2, 3]), truncated: false });
-});
-it('detects bytes after a chunk that exactly fills the prefix', async () => {
-  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); controller.enqueue(new Uint8Array([4])); controller.close(); } });
-  expect((await readStreamPrefix(stream, new AbortController().signal, 3)).truncated).toBe(true);
-});

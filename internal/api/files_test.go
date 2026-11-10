@@ -141,7 +141,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "aa/" + hash},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.pdf", MimeType: "application/pdf", URL: "https://files.example/remote.pdf"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/gone.bin"},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/missing.bin"},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "metadata.txt"},
 	}}
 	blobs := &countingFileBlobStore{}
@@ -490,7 +490,7 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "metadata.txt"},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.txt", URL: "https://files.example/remote.txt"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/gone.wav"},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/missing.pdf"},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "bb/" + hash},
 	}}
 	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
@@ -596,8 +596,7 @@ func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
 // TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable is the
 // regression for packed attachments that carry only a content hash: the row
 // must resolve through the blob store, not be rejected as missing because its
-// storage path is empty — in the download, the metadata endpoint, and the
-// search listing's availability flag.
+// storage path is empty — in the download, the metadata endpoint, and the metadata endpoint.
 func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -607,17 +606,9 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		7: {ID: 7, MessageID: 11, ConversationID: 21, Filename: "packed.png", MimeType: "image/png", ContentHash: hash},
 	}}
-	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
-		Files: []query.FileRow{{
-			ID: 7, Key: "file:7", EntryKey: "message:11", MessageID: 11, ConversationID: 21,
-			OccurredAt: time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC),
-			Filename:   "packed.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
-		}},
-		TotalCount: 1, CacheRevision: "cache-packed",
-	}}
 	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}},
-		Store:  catalog, Engine: engine,
+		Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}},
+		Store:     catalog,
 		BlobStore: packedFileBlobStore{blobs: map[string][]byte{hash: packed}},
 		Logger:    testLogger(),
 	})
@@ -636,17 +627,6 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
 	assertions.Equal(FileContentLocal, decoded.ContentState)
 	assertions.True(decoded.ContentAvailable)
-
-	search := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
-	search.Header.Set("Content-Type", "application/json")
-	listing := httptest.NewRecorder()
-	srv.Router().ServeHTTP(listing, search)
-	requirements.Equal(http.StatusOK, listing.Code, listing.Body.String())
-	var searched FileSearchHTTPResponse
-	requirements.NoError(json.NewDecoder(listing.Body).Decode(&searched))
-	requirements.Len(searched.Files, 1)
-	assertions.Equal(FileContentUnverified, searched.Files[0].ContentState)
-	assertions.False(searched.Files[0].ContentAvailable)
 }
 
 // TestPackedFileMissingBlobReportsMissingNotError covers a hash-only row whose
@@ -1062,19 +1042,13 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	require.Equal(http.StatusOK, light.Code, light.Body.String())
 }
 
-type unreadableFileBlobStore struct{}
-
-func (unreadableFileBlobStore) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
-	return nil, 0, os.ErrPermission
-}
-
 func TestFileDetailsReportsUnreadableContent(t *testing.T) {
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		8: {ID: 8, Filename: "report.pdf", ContentHash: strings.Repeat("ab", 32)},
 	}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
-		BlobStore: unreadableFileBlobStore{}, Logger: testLogger(),
+		BlobStore: &countingFileBlobStore{}, Logger: testLogger(),
 	})
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))

@@ -66,7 +66,7 @@ test('first PDF page stays in place when a later page makes the preview scroll',
     source_identifier: 'archive@example.com', containing_title: 'Containing item',
     filename: 'receipt.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: bytes.length,
     participant_labels: ['Example Person'], participant_domains: ['example.com'],
-    content_state: 'local_content', content_available: true
+    content_state: 'unverified', content_available: false
   };
   await page.context().addCookies([{
     name: 'msgvault_session', value: 'browser-fixture-session', url: new URL(baseURL).origin

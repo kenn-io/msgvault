@@ -82,7 +82,7 @@ describe('PersonMediaGallery', () => {
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
     const rows = Array.from({ length: 6 }, (_, index) => media({
       id: index + 1, key: `file:${index + 1}`, filename: `photo-${index + 1}.png`,
-      content_state: 'local_content', content_available: true
+      content_state: 'unverified', content_available: false
     }));
     render(PersonMediaGallery, { client: createAPIClient(fetchFn), rows });
 

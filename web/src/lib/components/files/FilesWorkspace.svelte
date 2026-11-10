@@ -1229,7 +1229,7 @@
     overflow-anchor: none;
     outline: none;
   }
-  .files-grid:focus-visible .data-row--active { box-shadow: inset 0 0 0 2px var(--accent-blue); }
+  .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
   .table-header,
   .data-row {
     display: grid;

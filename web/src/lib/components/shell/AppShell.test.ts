@@ -1700,7 +1700,7 @@ describe('AppShell', () => {
             source_id: 1, source_type: 'synthetic', source_identifier: 'archive@example.com',
             containing_title: 'Containing item', filename: `page-${filePages}.pdf`,
             mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 1,
-            content_state: 'missing_blob', content_available: false
+            content_state: 'unverified', content_available: false
           }],
           total_count: 5, cache_revision: 'cache-1', search_provenance: {},
           ...(filePages < 5 ? { next_cursor: `page-${filePages}` } : {})
@@ -1734,7 +1734,7 @@ describe('AppShell', () => {
           conversation_id: 1, occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
           source_identifier: 'archive@example.com', containing_title: 'Containing item',
           filename: 'fallback.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 1,
-          content_state: 'missing_blob', content_available: false
+          content_state: 'unverified', content_available: false
         }],
         total_count: 1, cache_revision: 'cache-1', search_provenance: {}
       });
@@ -1762,7 +1762,7 @@ describe('AppShell', () => {
           conversation_id: 1, occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
           source_identifier: 'archive@example.com', containing_title: 'Containing item',
           filename: 'returned.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 1,
-          content_state: 'missing_blob', content_available: false
+          content_state: 'unverified', content_available: false
         }],
         total_count: 1, cache_revision: 'cache-1', search_provenance: {}
       });
@@ -2050,7 +2050,7 @@ describe('AppShell', () => {
       occurred_at: '2026-07-19T10:00:00Z', source_id: 1, source_type: 'gmail',
       source_identifier: 'alice@example.com', containing_title: 'Subject', filename: 'report.pdf',
       mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 100,
-      content_state: 'local_content', content_available: true
+      content_state: 'unverified', content_available: false
     };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
