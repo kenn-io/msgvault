@@ -31,6 +31,7 @@ func TestParseAutomationSignals(t *testing.T) {
 			msg, err := Parse([]byte(raw))
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, msg.AutomationSignals())
+			assert.Equal(t, new(tt.want.Flags("alex@example.test")), msg.AutomationFlags())
 		})
 	}
 }
@@ -155,10 +156,32 @@ func TestAutomationSignalsFlags(t *testing.T) {
 }
 
 func TestAutomationFlagEncoding(t *testing.T) {
-	for _, tc := range []struct{ flag, want uint32 }{
-		{FlagAutoSubmitted, 1}, {FlagPrecedenceBulk, 2}, {FlagListID, 4}, {FlagListUnsubscribe, 8},
-		{FlagCalendarPart, 16}, {FlagReplyToNoReply, 32}, {FlagSenderNoReply, 64}, {FlagBotSender, 128},
+	assert.Equal(t, uint32(128), FlagBotSender)
+}
+
+func TestMessageAutomationFlagsCompleteness(t *testing.T) {
+	assertions := assert.New(t)
+	require := require.New(t)
+	for _, tc := range []struct {
+		name    string
+		message *Message
+		want    *uint32
+	}{
+		{name: "nil"},
+		{name: "incomplete", message: &Message{Incomplete: true, ListID: "news.example.test"}},
+		{name: "complete human", message: &Message{}, want: new(uint32(0))},
+		{name: "complete list", message: &Message{ListID: "news.example.test"}, want: new(uint32(4))},
 	} {
-		assert.Equal(t, tc.want, tc.flag)
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.message.AutomationFlags())
+		})
 	}
+	incomplete, err := Parse([]byte("From: alex@example.test\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nAAAAA\r\n--b--\r\n"))
+	require.NoError(err)
+	require.True(incomplete.Incomplete)
+	assertions.Nil(incomplete.AutomationFlags())
+	recovered, err := ParseWithRecovery([]byte("invalid MIME"), "")
+	require.Error(err)
+	require.True(recovered.Incomplete)
+	assertions.Nil(recovered.AutomationFlags())
 }

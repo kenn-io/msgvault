@@ -199,11 +199,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		buildRecipientSet("bcc", parsed.Bcc, participantMap),
 	}
 
-	var automation *uint32
-	if parseErr == nil && !parsed.Incomplete {
-		flags := parsed.AutomationFlags()
-		automation = &flags
-	}
+	automation := parsed.AutomationFlags()
 
 	// Persist atomically
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{

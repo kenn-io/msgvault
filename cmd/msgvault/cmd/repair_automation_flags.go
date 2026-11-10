@@ -19,7 +19,15 @@ func newRepairAutomationFlagsCmd() *cobra.Command {
 The default is a dry run: it reports the values that would change without
 modifying the archive. Pass --apply to write the repaired values. This command
 works entirely offline and never contacts a provider.`,
-		Args: cobra.NoArgs,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.NoArgs(cmd, args); err != nil {
+				return err
+			}
+			if batchSize < 1 || batchSize > 5000 {
+				return errors.New("automation repair batch size must be between 1 and 5000")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)

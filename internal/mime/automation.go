@@ -107,11 +107,16 @@ const (
 	BulkMask = FlagPrecedenceBulk | FlagListID | FlagListUnsubscribe
 )
 
-// AutomationFlags returns the signals plus the first From address's marker.
-func (m *Message) AutomationFlags() uint32 {
+// AutomationFlags returns complete evidence, including a known zero for human mail.
+// Nil and incomplete messages cannot establish automation evidence.
+func (m *Message) AutomationFlags() *uint32 {
+	if m == nil || m.Incomplete {
+		return nil
+	}
 	from := ""
 	if len(m.From) > 0 {
 		from = m.From[0].Email
 	}
-	return m.AutomationSignals().Flags(from)
+	flags := m.AutomationSignals().Flags(from)
+	return &flags
 }

@@ -142,7 +142,7 @@ func duplicateMIMEAttachments(ctx context.Context, q contextStatementQuerier, me
 		WHERE message_id = ?`, messageID).Scan(&compressed, &compression, &format); err != nil {
 		return nil, fmt.Errorf("read duplicate %d raw data: %w", messageID, err)
 	}
-	if format != "mime" {
+	if format != emailLinkageRawFormat {
 		return map[duplicateMIMEAttachment]int{}, nil
 	}
 	raw, err := decodeMessageRaw(compressed, compression)

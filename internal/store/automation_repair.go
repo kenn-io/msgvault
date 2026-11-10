@@ -88,7 +88,7 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 				if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
 					return readErr
 				}
-				if errors.Is(readErr, sql.ErrNoRows) || format.String != "mime" || encryption != 0 {
+				if errors.Is(readErr, sql.ErrNoRows) || format.String != emailLinkageRawFormat || encryption != 0 {
 					batch.Unreadable++
 					continue
 				}
@@ -100,20 +100,20 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 				// MIME parts can carry text/calendar below a multipart header. A header-only
 				// parse would publish a false known-human flag set for those messages.
 				parsed, parseErr := mime.ParseWithRecovery(raw, "")
-				if parseErr != nil || parsed.Incomplete {
+				flags := parsed.AutomationFlags()
+				if parseErr != nil || flags == nil {
 					batch.Unreadable++
 					continue
 				}
-				flags := parsed.AutomationFlags()
-				if flags&BulkMask != 0 {
+				if *flags&BulkMask != 0 {
 					batch.Bulk++
 				}
-				if flags != 0 {
+				if *flags != 0 {
 					batch.Automated++
 				}
 				if opts.Apply {
 					result, writeErr := q.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?
- AND (automation_flags IS NULL OR automation_rule_version IS NULL OR automation_rule_version <> ?)`, flags, AutomationRuleVersion, id, AutomationRuleVersion)
+ AND (automation_flags IS NULL OR automation_rule_version IS NULL OR automation_rule_version <> ?)`, *flags, AutomationRuleVersion, id, AutomationRuleVersion)
 					if writeErr != nil {
 						return writeErr
 					}

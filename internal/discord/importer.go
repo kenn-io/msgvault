@@ -1509,7 +1509,7 @@ func (imp *Importer) persistPage(
 		}
 		var automation *uint32
 		if message.Author.Bot || message.Author.System || authorObservation(message).Automated {
-			flags := uint32(store.FlagBotSender)
+			flags := store.FlagBotSender
 			automation = &flags
 		} else if message.Author.ID != "" {
 			flags := uint32(0)

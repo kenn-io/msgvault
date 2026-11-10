@@ -138,7 +138,7 @@ func TestIMAPRelocationAutomationAdoptsEditedSentSnapshot(t *testing.T) {
 	flags, current, err := env.Store.MessageAutomationContext(t.Context(), initialID)
 	require.NoError(err)
 	assert.True(current)
-	assert.Equal(uint32(store.FlagListUnsubscribe), flags)
+	assert.Equal(store.FlagListUnsubscribe, flags)
 
 	assertMessageCount(t, env.Store, 1)
 	results, total, err := env.Store.SearchMessagesQuery(

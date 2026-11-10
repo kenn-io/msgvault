@@ -2638,6 +2638,8 @@ func TestFullSyncWithAttachment(t *testing.T) {
 // TestFullSyncPersistsListID catches an email sync path that parses List-Id
 // but drops it before the shared message persistence boundary.
 func TestFullSyncPersistsListIDAndAutomation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	t.Parallel()
 	env := newTestEnv(t)
 	raw := testemail.NewMessage().
@@ -2656,15 +2658,15 @@ func TestFullSyncPersistsListIDAndAutomation(t *testing.T) {
 	assertSummary(t, summary, WantSummary{Added: new(int64(1)), Errors: new(int64(0))})
 
 	var listID sql.NullString
-	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `
+	require.NoError(env.Store.DB().QueryRowContext(t.Context(), `
 		SELECT list_id FROM messages WHERE source_message_id = ?`, "list-id-message",
 	).Scan(&listID), "read synced list ID")
-	assert.True(t, listID.Valid, "list ID should be present")
-	assert.Equal(t, "<announce.example.org>", listID.String, "list ID")
+	assert.True(listID.Valid, "list ID should be present")
+	assert.Equal("<announce.example.org>", listID.String, "list ID")
 	var flags, version int
-	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages WHERE source_message_id = ?`, "list-id-message").Scan(&flags, &version))
-	assert.Equal(t, 12, flags)
-	assert.Equal(t, store.AutomationRuleVersion, version)
+	require.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages WHERE source_message_id = ?`, "list-id-message").Scan(&flags, &version))
+	assert.Equal(12, flags)
+	assert.Equal(store.AutomationRuleVersion, version)
 }
 
 func TestFullSyncWithEmptyAttachment(t *testing.T) {

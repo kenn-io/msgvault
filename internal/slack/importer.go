@@ -1295,7 +1295,7 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	// after every fatal auxiliary write succeeds. Tombstone retries use its
 	// presence as the durable signal that this whole snapshot completed.
 	user, knownUser := imp.res.users[m.User]
-	if m.BotID != "" || m.User == "USLACKBOT" || (knownUser && user.IsBot) {
+	if m.BotID != "" || m.User == "USLACKBOT" || m.User == "USLACK" || (knownUser && user.IsBot) {
 		err = imp.store.UpsertMessageRawWithAutomationContext(ctx, messageID, raw, "slack_json", store.FlagBotSender)
 	} else if m.User != "" && knownUser {
 		err = imp.store.UpsertMessageRawWithAutomationContext(ctx, messageID, raw, "slack_json", 0)

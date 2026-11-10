@@ -139,6 +139,7 @@ var topLevelCommandGroups = map[string]string{
 	"remove-account":          helpGroupSources,
 	"repack-attachments":      helpGroupMaintenance,
 	"repair-attachment-roles": helpGroupMaintenance,
+	"repair-automation-flags": helpGroupMaintenance,
 	"repair-dates":            helpGroupMaintenance,
 	"repair-derived":          helpGroupMaintenance,
 	"repair-encoding":         helpGroupMaintenance,

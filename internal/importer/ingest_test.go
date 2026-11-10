@@ -336,13 +336,14 @@ func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testi
 }
 
 func TestIngestAutomationMalformedOriginalRemainsUnknown(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("mbox", "archive@example.test")
-	require.NoError(t, err)
-	require.NoError(t, IngestRawMessage(t.Context(), st, source.ID, "archive@example.test", "", nil, "malformed-automation", "hash", []byte("invalid MIME"), time.Time{}, slog.Default()))
+	require.NoError(err)
+	require.NoError(IngestRawMessage(t.Context(), st, source.ID, "archive@example.test", "", nil, "malformed-automation", "hash", []byte("invalid MIME"), time.Time{}, slog.Default()))
 	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'malformed-automation'`).Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'malformed-automation'`).Scan(&id))
 	_, current, err := st.MessageAutomationContext(t.Context(), id)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.False(t, current)
 }

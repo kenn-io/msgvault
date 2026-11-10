@@ -1953,11 +1953,7 @@ func (s *Syncer) prepareMessage(
 	}
 
 	// Failed or incomplete originals must retain the loops readability fallback.
-	var automation *uint32
-	if parseErr == nil && !parsed.Incomplete {
-		flags := parsed.AutomationFlags()
-		automation = &flags
-	}
+	automation := parsed.AutomationFlags()
 
 	return &messageData{
 		originalMessageID: originalMessageID,

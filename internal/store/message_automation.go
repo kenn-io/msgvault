@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"math"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -29,10 +31,11 @@ func (s *Store) MessageAutomationContext(ctx context.Context, id int64) (flags u
 	if err != nil {
 		return 0, false, fmt.Errorf("read message automation: %w", err)
 	}
-	if !value.Valid || !version.Valid || version.Int64 != AutomationRuleVersion {
+	rawFlags := value.Int64
+	if !value.Valid || !version.Valid || version.Int64 != AutomationRuleVersion || rawFlags < 0 || rawFlags > math.MaxUint32 {
 		return 0, false, nil
 	}
-	return uint32(value.Int64), true, nil
+	return uint32(rawFlags), true, nil
 }
 
 // PutMessageAutomationContext publishes both derived columns together.
@@ -97,7 +100,7 @@ func (s *Store) initAutomationTriggers(ctx context.Context) error {
 // UpdateArchivedEmailAutomationContext refuses evidence from a stale original.
 func (s *Store) UpdateArchivedEmailAutomationContext(ctx context.Context, item *ArchivedRawMessage, flags uint32) (changed bool, err error) {
 	if item.rawFingerprint == nil {
-		return false, fmt.Errorf("automation repair requires a scanned MIME fingerprint")
+		return false, errors.New("automation repair requires a scanned MIME fingerprint")
 	}
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockArchivedEmailTextContext(ctx, tx, item); err != nil {
