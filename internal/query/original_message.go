@@ -480,7 +480,7 @@ func (e *SQLiteEngine) fillThreadParticipants(ctx context.Context, messages []Th
 		SELECT message_id, recipient_type, address, display_name
 		FROM (
 			SELECT mr.message_id, mr.recipient_type,
-			       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '') AS address,
+			       COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '') AS address,
 			       %[1]s AS display_name, mr.id AS recipient_id
 			FROM message_recipients mr
 			JOIN participants p ON p.id = mr.participant_id

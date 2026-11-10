@@ -450,20 +450,35 @@ func TestExportMessagesPreservesRelayedFromAddress(t *testing.T) {
 	require.NoError(t, err)
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 	id := insertMessageExportMessage(t, st, source.ID, conversation, "message", "email", start, "body", "subject", author, false, false)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES (?, ?, 'from', ?, ?)`), id, author, "Alice", "notifications@github.com")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address, is_relayed) VALUES (?, ?, 'from', ?, ?, TRUE)`), id, author, "Alice", "notifications@github.com")
+	require.NoError(t, err)
+	alias, err := st.EnsureParticipant("old@example.test", "Alice", "example.test")
+	require.NoError(t, err)
+	ordinary := insertMessageExportMessage(t, st, source.ID, conversation, "ordinary", "email", start, "body", "subject", alias, false, false)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'from', ?)`), ordinary, alias, "old@example.test")
 	require.NoError(t, err)
 	for _, linked := range []bool{false, true} {
 		if linked {
 			contact, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 			require.NoError(t, err)
 			require.NoError(t, st.MergeParticipants(author, contact))
+			require.NoError(t, st.MergeParticipants(alias, contact))
 		}
 		sink := &collectingMessageExportSink{}
 		_, err := st.ExportMessages(t.Context(), store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}, sink)
 		require.NoError(t, err)
-		require.Len(t, sink.messages, 1)
-		require.NotNil(t, sink.messages[0].Author)
-		assert.Equal(t, "notifications@github.com", sink.messages[0].Author.Address)
+		require.Len(t, sink.messages, 2)
+		addresses := make(map[string]string)
+		for _, message := range sink.messages {
+			require.NotNil(t, message.Author)
+			addresses[message.ID] = message.Author.Address
+		}
+		assert.Equal(t, "notifications@github.com", addresses["message"])
+		ordinaryAddress := "old@example.test"
+		if linked {
+			ordinaryAddress = "alice@example.test"
+		}
+		assert.Equal(t, ordinaryAddress, addresses["ordinary"])
 	}
 }
 

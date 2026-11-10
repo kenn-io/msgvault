@@ -71,6 +71,7 @@ func buildPreparedSnapshot(
 		}
 	}
 	from := buildRecipientSet("from", prepared.from, fromMap)
+	from.IsRelayed = prepared.relayType != ""
 
 	return &store.MessagePersistData{
 		Message:  &message,

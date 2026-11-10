@@ -16,6 +16,7 @@ func TestDuckDBRelayedSenderEnvelope(t *testing.T) {
 	b.participants[0].PhoneNumber = "+12025550199"
 	message := b.AddMessage(MessageOpt{Subject: "Notice", SenderID: &author})
 	b.AddRecipientWithEnvelope(message, author, "from", "GitHub", "notifications@github.com")
+	b.recipients[len(b.recipients)-1].IsRelayed = true
 	dir, cleanup := b.Build()
 	t.Cleanup(cleanup)
 	engine, err := NewDuckDBEngine(t.Context(), dir, "", nil)
@@ -61,6 +62,7 @@ func TestDuckDBQuotedLocalPartSenderDomain(t *testing.T) {
 	author := b.AddParticipant("primary@example.test", "example.test", "Author")
 	message := b.AddMessage(MessageOpt{SenderID: &author})
 	b.AddRecipientWithEnvelope(message, author, "from", "Author", `"a@b"@relay.example.test`)
+	b.recipients[len(b.recipients)-1].IsRelayed = true
 	dir, cleanup := b.Build()
 	t.Cleanup(cleanup)
 	engine, err := NewDuckDBEngine(t.Context(), dir, "", nil)
@@ -115,4 +117,34 @@ func TestDuckDBRelayedEnvelopeMixedAndLegacy(t *testing.T) {
 	rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "other@example.test"})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
+}
+
+func TestDuckDBSenderViewsAfterParticipantMerge(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("reader@example.test")
+	author := b.AddParticipant("author@example.test", "example.test", "Author")
+	ordinary := b.AddMessage(MessageOpt{Subject: "Ordinary", SenderID: &author})
+	b.AddRecipientWithEnvelope(ordinary, author, "from", "Author", "old@old.test")
+	relay := b.AddMessage(MessageOpt{Subject: "Relay", SenderID: &author})
+	b.AddRecipientWithEnvelope(relay, author, "from", "Author", "notifications@github.com")
+	b.recipients[len(b.recipients)-1].IsRelayed = true
+	engine := b.BuildEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	for _, statement := range []string{
+		`SELECT from_email, from_domain FROM v_messages`,
+		`SELECT from_email, from_domain FROM v_senders`,
+		`SELECT sender_identifier, sender_domain FROM analytical_entries`,
+	} {
+		rows, err := engine.db.QueryContext(t.Context(), statement)
+		require.NoError(t, err)
+		var got []string
+		for rows.Next() {
+			var address, domain string
+			require.NoError(t, rows.Scan(&address, &domain))
+			got = append(got, address+"|"+domain)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		assert.ElementsMatch(t, []string{"author@example.test|example.test", "notifications@github.com|github.com"}, got, statement)
+	}
 }

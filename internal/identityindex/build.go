@@ -537,8 +537,8 @@ WITH messages AS (
 	       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
 	FROM %s
 ), senders AS (
-	SELECT DISTINCT COALESCE(NULLIF(mr.email_address, ''), p.email_address) AS email_address,
-	       COALESCE(NULLIF(%s, ''), p.domain) AS domain
+	SELECT DISTINCT COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address) AS email_address,
+	       COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(%s, '') END, p.domain) AS domain
 	FROM %s mr
 	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
 	WHERE mr.recipient_type = 'from'

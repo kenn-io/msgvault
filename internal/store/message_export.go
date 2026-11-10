@@ -348,7 +348,7 @@ func (s *Store) exportMessageRows(
 		                 FROM person_participants person_binding JOIN persons person_name ON person_name.id = person_binding.person_id
 		                 WHERE person_binding.participant_id = p_sender.id), ''),
 		       COALESCE(p_sender.display_name, ''),
-		       COALESCE(NULLIF(mr_from.email_address, ''), p_sender.email_address, p_sender.phone_number, '')
+		       COALESCE(CASE WHEN mr_from.is_relayed THEN NULLIF(mr_from.email_address, '') END, p_sender.email_address, p_sender.phone_number, '')
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources s ON s.id = m.source_id

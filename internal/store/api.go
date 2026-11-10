@@ -26,13 +26,13 @@ import (
 const participantDisplaySQL = `COALESCE(
 		CASE
 			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
-			  AND COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
+			  AND COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
 			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
 				|| ' <'
-				|| COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), p.phone_number)
+				|| COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''), p.phone_number)
 				|| '>'
 			ELSE COALESCE(
-				NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''),
+				CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''),
 				NULLIF(p.phone_number, ''),
 				NULLIF(TRIM(mr.display_name), ''),
 				NULLIF(TRIM(p.display_name), ''),
@@ -42,7 +42,7 @@ const participantDisplaySQL = `COALESCE(
 		''
 	)`
 
-const participantSenderEmailSQL = `COALESCE(NULLIF(mr.email_address, ''), NULLIF(p.email_address, ''), '')`
+const participantSenderEmailSQL = `COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''), '')`
 const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
 const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
 const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,

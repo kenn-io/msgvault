@@ -34,6 +34,16 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 		assert.Equal(t, raw, archived)
 		assert.True(t, senderauth.Evaluate(archived, []string{"mx.example.test"}, message.FromEmail).Verified)
 	}
+	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
+	require.NoError(t, err)
+	raw := []byte("From: Alice <old@old.test>\r\nTo: reader@example.test\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nSubject: Ordinary\r\n\r\nHello")
+	require.NoError(t, importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, "ordinary", "ordinary", raw, time.Time{}, slog.Default()))
+	alias, err := st.EnsureParticipant("old@old.test", "Alice", "old.test")
+	require.NoError(t, err)
+	contact, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.MergeParticipants(author, contact))
+	require.NoError(t, st.MergeParticipants(alias, contact))
 	require.NoError(t, st.Close())
 	_, err = buildCache(t.Context(), path, analytics, false)
 	require.NoError(t, err)
@@ -45,7 +55,11 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 		people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: login, Page: query.PageSpec{Limit: 10}})
 		require.NoError(t, err)
 		require.Len(t, people.Rows, 1)
-		assert.Equal(t, int64(1), people.Rows[0].ActivityCount)
+		want := int64(1)
+		if login == "alice" {
+			want = 2
+		}
+		assert.Equal(t, want, people.Rows[0].ActivityCount)
 		ids[people.Rows[0].CanonicalID()] = true
 	}
 	assert.Len(t, ids, 2)
@@ -53,6 +67,21 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 	messages, err := engine.ListMessages(t.Context(), filter)
 	require.NoError(t, err)
 	assert.Len(t, messages, 2)
+	for _, message := range messages {
+		assert.Equal(t, "notifications@github.com", message.FromEmail)
+	}
+	for view, want := range map[query.ViewType][]string{
+		query.ViewSenders: {"notifications@github.com", "alice@example.test"},
+		query.ViewDomains: {"github.com", "example.test"},
+	} {
+		rows, err := engine.Aggregate(t.Context(), view, query.DefaultAggregateOptions())
+		require.NoError(t, err)
+		var keys []string
+		for _, row := range rows {
+			keys = append(keys, row.Key)
+		}
+		assert.ElementsMatch(t, want, keys)
+	}
 	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), filter)
 	require.NoError(t, err)
 	assert.Len(t, targets, 2)

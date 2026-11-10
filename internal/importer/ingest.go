@@ -205,11 +205,13 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 			rec.SenderID = sql.NullInt64{Int64: relayID, Valid: true}
 			fromMap = map[string]int64{parsed.From[0].Email: relayID}
 		}
+		from := buildRecipientSet("from", parsed.From, fromMap)
+		from.IsRelayed = relayID != 0
 		return &store.MessagePersistData{
 			Message: rec, BodyText: sql.NullString{String: bodyText, Valid: bodyText != ""},
 			BodyHTML: sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}, RawMIME: raw,
 			Recipients: []store.RecipientSet{
-				buildRecipientSet("from", parsed.From, fromMap),
+				from,
 				buildRecipientSet("to", parsed.To, participantMap),
 				buildRecipientSet("cc", parsed.Cc, participantMap),
 				buildRecipientSet("bcc", parsed.Bcc, participantMap),

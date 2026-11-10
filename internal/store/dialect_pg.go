@@ -739,6 +739,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// Legacy rows stay NULL (unfillable without re-parsing raw MIME) and
 		// discovery falls back to the participant's email for them.
 		{`ALTER TABLE message_recipients ADD COLUMN IF NOT EXISTS email_address TEXT`, "message_recipients.email_address"},
+		{`ALTER TABLE message_recipients ADD COLUMN IF NOT EXISTS is_relayed BOOLEAN NOT NULL DEFAULT FALSE`, "message_recipients.is_relayed"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_role TEXT NOT NULL DEFAULT 'unknown' CHECK (attachment_role IN ('standalone', 'inline', 'avatar', 'thumbnail', 'preview', 'sticker', 'ui_asset', 'unknown'))`, "attachments.attachment_role"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},

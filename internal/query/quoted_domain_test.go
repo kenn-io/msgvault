@@ -24,7 +24,7 @@ func TestQuotedLocalPartSenderDomain(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
 		Message:    &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "quoted", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}},
-		Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, EmailAddresses: []string{`"a@b"@relay.example.test`}}},
+		Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, EmailAddresses: []string{`"a@b"@relay.example.test`}, IsRelayed: true}},
 	})
 	require.NoError(t, err)
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -123,4 +123,75 @@ func TestRelayedEnvelopeMixedAndLegacyFallback(t *testing.T) {
 	rows, err = engine.ListMessages(t.Context(), query.MessageFilter{Sender: "other@example.test"})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
+}
+
+func TestRelayedSenderThreadParticipants(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "relay-thread", "")
+	require.NoError(t, err)
+	author, err := st.EnsureParticipantByIdentifier("github", "author", "Author")
+	require.NoError(t, err)
+	message, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message:    &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "relay", MessageType: "email", SenderID: sql.NullInt64{Int64: author, Valid: true}},
+		Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{author}, DisplayNames: []string{"Author"}, EmailAddresses: []string{"notifications@github.com"}, IsRelayed: true}},
+	})
+	require.NoError(t, err)
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	t.Cleanup(func() { _ = engine.Close() })
+	check := func() {
+		t.Helper()
+		thread, err := engine.(query.OriginalMessageReader).ListThread(t.Context(), query.ThreadQuery{ID: message})
+		require.NoError(t, err)
+		require.Len(t, thread.Messages, 1)
+		require.Len(t, thread.Messages[0].From, 1)
+		assert.Equal(t, "notifications@github.com", thread.Messages[0].From[0].Email)
+	}
+	check()
+	contact, err := st.EnsureParticipant("author@example.test", "Author", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.MergeParticipants(author, contact))
+	check()
+}
+
+func TestSenderAggregatesAfterParticipantMerge(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "aggregate-thread", "")
+	require.NoError(t, err)
+	alias, err := st.EnsureParticipant("old@old.test", "Author", "old.test")
+	require.NoError(t, err)
+	author, err := st.EnsureParticipantByIdentifier("github", "author", "Author")
+	require.NoError(t, err)
+	contact, err := st.EnsureParticipant("author@example.test", "Author", "example.test")
+	require.NoError(t, err)
+	for _, row := range []struct {
+		id, address string
+		participant int64
+		relayed     bool
+	}{{"ordinary", "old@old.test", alias, false}, {"relay", "notifications@github.com", author, true}} {
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message:    &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: row.id, MessageType: "email", SenderID: sql.NullInt64{Int64: row.participant, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}},
+			Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{row.participant}, EmailAddresses: []string{row.address}, IsRelayed: row.relayed}},
+		})
+		require.NoError(t, err)
+	}
+	require.NoError(t, st.MergeParticipants(alias, contact))
+	require.NoError(t, st.MergeParticipants(author, contact))
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	t.Cleanup(func() { _ = engine.Close() })
+	for view, want := range map[query.ViewType][]string{
+		query.ViewSenders: {"notifications@github.com", "author@example.test"},
+		query.ViewDomains: {"github.com", "example.test"},
+	} {
+		rows, err := engine.Aggregate(t.Context(), view, query.DefaultAggregateOptions())
+		require.NoError(t, err)
+		var keys []string
+		for _, row := range rows {
+			keys = append(keys, row.Key)
+		}
+		assert.ElementsMatch(t, want, keys)
+	}
 }

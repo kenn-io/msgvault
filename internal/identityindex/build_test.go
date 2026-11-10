@@ -976,7 +976,7 @@ func writeRelationshipParquet(
 ) {
 	tb.Helper()
 	if dataset == "message_recipients" {
-		query = "SELECT *, NULL::VARCHAR AS email_address FROM (" + query + ")"
+		query = "SELECT *, NULL::VARCHAR AS email_address, FALSE AS is_relayed FROM (" + query + ")"
 	}
 	directory := filepath.Join(root, dataset)
 	require.NoError(tb, os.MkdirAll(directory, 0o755))
@@ -1062,8 +1062,8 @@ func TestCollectCacheStatsRelayedSenderEnvelope(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	inputs := cacheStatsRelations{
 		messages:     "(SELECT 1 AS id, 1 AS source_id, TIMESTAMP '2026-01-01' AS sent_at, 0 AS size_estimate)",
-		recipients:   `(SELECT * FROM (VALUES (1, 'from', 'relay@service.test'), (2, 'from', 'relay@service.test'), (3, 'from', NULL), (4, 'from', '"odd@name"@elsewhere.test')) AS t(participant_id, recipient_type, email_address))`,
-		participants: `(SELECT * FROM (VALUES (1, NULL, NULL), (2, NULL, NULL), (3, 'fallback@example.test', 'example.test'), (4, NULL, NULL)) AS t(id, email_address, domain))`,
+		recipients:   `(SELECT * FROM (VALUES (1, 'from', 'relay@service.test', TRUE), (2, 'from', 'relay@service.test', TRUE), (3, 'from', NULL, FALSE), (4, 'from', '"odd@name"@elsewhere.test', TRUE), (5, 'from', 'old@old.test', FALSE)) AS t(participant_id, recipient_type, email_address, is_relayed))`,
+		participants: `(SELECT * FROM (VALUES (1, NULL, NULL), (2, NULL, NULL), (3, 'fallback@example.test', 'example.test'), (4, NULL, NULL), (5, 'fallback@example.test', 'example.test')) AS t(id, email_address, domain))`,
 		attachments:  "(SELECT 0 AS size)",
 	}
 	stats, err := collectCacheStats(t.Context(), db, inputs)

@@ -64,6 +64,7 @@ type RecipientSet struct {
 	ParticipantIDs []int64
 	DisplayNames   []string
 	EmailAddresses []string
+	IsRelayed      bool
 }
 
 // ParticipantPersistData describes one email participant to resolve inside a
@@ -2824,15 +2825,15 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 
 	return insertInChunks(tx, chunkInsert{
 		totalRows:    len(recipients),
-		valuesPerRow: 5,
-		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
+		valuesPerRow: 6,
+		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address, is_relayed) VALUES ",
 	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]any, 0, (end-start)*5)
+		args := make([]any, 0, (end-start)*6)
 		for i := start; i < end; i++ {
-			values[i-start] = "(?, ?, ?, ?, ?)"
+			values[i-start] = "(?, ?, ?, ?, ?, ?)"
 			row := recipients[i]
-			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email))
+			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email), row.isRelayed)
 		}
 		return values, args
 	})
@@ -2842,6 +2843,7 @@ type messageRecipientRow struct {
 	participantID int64
 	displayName   string
 	email         string
+	isRelayed     bool
 }
 
 func normalizedMessageRecipients(rs RecipientSet) []messageRecipientRow {
@@ -2872,7 +2874,7 @@ func normalizedMessageRecipients(rs RecipientSet) []messageRecipientRow {
 		if i < len(rs.DisplayNames) {
 			name = rs.DisplayNames[i]
 		}
-		rows = append(rows, messageRecipientRow{pid, name, email})
+		rows = append(rows, messageRecipientRow{pid, name, email, rs.IsRelayed})
 	}
 
 	return rows
@@ -2884,7 +2886,7 @@ func (s *Store) MessageRecipientsMatchContext(ctx context.Context, messageID int
 	for _, set := range sets {
 		want[set.Type] = normalizedMessageRecipients(set)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? ORDER BY id`, messageID)
+	rows, err := s.db.QueryContext(ctx, `SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, ''), is_relayed FROM message_recipients WHERE message_id = ? ORDER BY id`, messageID)
 	if err != nil {
 		return false, err
 	}
@@ -2893,7 +2895,7 @@ func (s *Store) MessageRecipientsMatchContext(ctx context.Context, messageID int
 	for rows.Next() {
 		var role string
 		var row messageRecipientRow
-		if err := rows.Scan(&role, &row.participantID, &row.displayName, &row.email); err != nil {
+		if err := rows.Scan(&role, &row.participantID, &row.displayName, &row.email, &row.isRelayed); err != nil {
 			return false, err
 		}
 		if _, supplied := want[role]; supplied {

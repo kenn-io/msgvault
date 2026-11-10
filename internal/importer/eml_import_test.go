@@ -427,7 +427,9 @@ func TestImportEMLDirCustomRelayedSender(t *testing.T) {
 	_, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{Identifier: "reader@example.test", RelayedSenders: []mime.RelayedSenderRule{{Address: "relay@example.test", Header: "X-Author", IdentifierType: "example"}}})
 	require.NoError(t, err)
 	var identifier, envelope string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT pi.identifier_value, mr.email_address FROM messages m JOIN participant_identifiers pi ON pi.participant_id=m.sender_id AND pi.identifier_type='example' JOIN message_recipients mr ON mr.message_id=m.id AND mr.recipient_type='from'`).Scan(&identifier, &envelope))
+	var relayed bool
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT pi.identifier_value, mr.email_address, mr.is_relayed FROM messages m JOIN participant_identifiers pi ON pi.participant_id=m.sender_id AND pi.identifier_type='example' JOIN message_recipients mr ON mr.message_id=m.id AND mr.recipient_type='from'`).Scan(&identifier, &envelope, &relayed))
 	assert.Equal(t, "alice", identifier)
 	assert.Equal(t, "relay@example.test", envelope)
+	assert.True(t, relayed)
 }

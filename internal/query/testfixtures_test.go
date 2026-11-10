@@ -103,6 +103,7 @@ type RecipientFixture struct {
 	// participant's current address in email_address, matching what the
 	// exporter writes for cache schema v26.
 	EmailAddress string
+	IsRelayed    bool
 }
 
 // LabelFixture defines a label row for Parquet test data.
@@ -617,9 +618,9 @@ func (b *TestDataBuilder) recipientsSQL() string {
 		} else if email := b.participantEmail(r.ParticipantID); email != "" {
 			resolved = sqlStr(email)
 		}
-		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s)",
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s, %t)",
 			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName),
-			resolved, envelope)
+			resolved, envelope, r.IsRelayed)
 	})
 }
 
@@ -768,7 +769,7 @@ func (b *TestDataBuilder) recipientCols() string {
 	if b.legacyRecipientSchema {
 		return messageRecipientsCols
 	}
-	return messageRecipientsColsWithEnvelope
+	return messageRecipientsColsWithEnvelope + ", is_relayed"
 }
 
 // recipientDummyRow returns the schema-only dummy row matching recipientCols.
@@ -776,7 +777,7 @@ func (b *TestDataBuilder) recipientDummyRow() string {
 	if b.legacyRecipientSchema {
 		return "(0::BIGINT, 0::BIGINT, '', '')"
 	}
-	return "(0::BIGINT, 0::BIGINT, '', '', '', '')"
+	return "(0::BIGINT, 0::BIGINT, '', '', '', '', false)"
 }
 
 // addAuxiliaryTables adds sources, participants, recipients, labels, message_labels, and conversations.
@@ -967,9 +968,21 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 		legacyRecipients, err = os.ReadFile(recipientPath)
 		require.NoError(b.t, err)
 		currentPath := recipientPath + ".current"
-		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address, FALSE AS is_relayed FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
 		require.NoError(b.t, err)
 		require.NoError(b.t, os.Rename(currentPath, recipientPath))
+	}
+	if !b.legacyRecipientSchema {
+		recipientPath = filepath.Join(tmpDir, "message_recipients", "message_recipients.parquet")
+		var count int
+		err = db.QueryRowContext(b.t.Context(), "SELECT count(*) FROM parquet_schema('"+escapePath(recipientPath)+"') WHERE name = 'is_relayed'").Scan(&count)
+		require.NoError(b.t, err)
+		if count == 0 {
+			currentPath := recipientPath + ".current"
+			_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, FALSE AS is_relayed FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+			require.NoError(b.t, err)
+			require.NoError(b.t, os.Rename(currentPath, recipientPath))
+		}
 	}
 	derived, err := identityindex.Build(b.t.Context(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,

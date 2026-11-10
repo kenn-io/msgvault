@@ -134,16 +134,16 @@ func escapeSQLiteLike(s string) string {
 	return r.Replace(s)
 }
 
-func senderEnvelopeDomainExpr(address string) string {
-	return identityindex.SenderEnvelopeDomainExpr(address)
-}
-
 func senderDomainExpr(recipient, participant string) string {
 	return senderDomainFallbackExpr(recipient, participant, "message_recipients", "email_address")
 }
 
 func senderDomainFallbackExpr(recipient, participant, table, address string) string {
-	return "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(recipient+"."+address) + ", ''), CASE WHEN " + senderEnvelopeAbsent(table, address, recipient+".message_id") + " THEN " + participant + ".domain END, '')"
+	return "COALESCE(NULLIF(" + identityindex.SenderEnvelopeDomainExpr(recipient+"."+address) + ", ''), CASE WHEN " + senderEnvelopeAbsent(table, address, recipient+".message_id") + " THEN " + participant + ".domain END, '')"
+}
+
+func senderDisplayDomainExpr(recipient, participant string) string {
+	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN NULLIF(" + identityindex.SenderEnvelopeDomainExpr(recipient+".email_address") + ", '') END, " + participant + ".domain, '')"
 }
 
 // aggDimension describes the variable parts of an aggregate query for a given ViewType.
@@ -159,10 +159,10 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 	switch view {
 	case ViewSenders:
 		return aggDimension{
-			keyExpr: "COALESCE(NULLIF(mr.email_address, ''), p.email_address)",
+			keyExpr: "COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address)",
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: "COALESCE(NULLIF(mr.email_address, ''), p.email_address) IS NOT NULL",
+			whereExpr: "COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address) IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
 		nameExpr := recipientNameExpr("mr", "p")
@@ -189,10 +189,10 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 		}, nil
 	case ViewDomains:
 		return aggDimension{
-			keyExpr: senderDomainExpr("mr", "p"),
+			keyExpr: senderDisplayDomainExpr("mr", "p"),
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: senderDomainExpr("mr", "p") + " != ''",
+			whereExpr: senderDisplayDomainExpr("mr", "p") + " != ''",
 		}, nil
 	case ViewLabels:
 		return aggDimension{
@@ -1106,7 +1106,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE((SELECT NULLIF(mr_email.email_address, '') FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
+			COALESCE((SELECT CASE WHEN mr_email.is_relayed THEN NULLIF(mr_email.email_address, '') END FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
@@ -1255,7 +1255,7 @@ func (e *SQLiteEngine) fetchMessageSummariesByIDsInto(
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE((SELECT NULLIF(mr_email.email_address, '') FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
+			COALESCE((SELECT CASE WHEN mr_email.is_relayed THEN NULLIF(mr_email.email_address, '') END FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
@@ -2569,7 +2569,7 @@ func searchResultsSQL(pageSource, whereClause string) string {
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE((SELECT NULLIF(mr_email.email_address, '') FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
+			COALESCE((SELECT CASE WHEN mr_email.is_relayed THEN NULLIF(mr_email.email_address, '') END FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,

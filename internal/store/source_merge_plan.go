@@ -223,7 +223,7 @@ func mergeEmailRecipients(ctx context.Context, tx *loggedTx, messageID int64) ([
 }
 
 func mergeEmailSenderEvidence(ctx context.Context, tx *loggedTx, messageID int64) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(participant_id, 0), LOWER(TRIM(COALESCE(email_address, '')))
+	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(participant_id, 0), LOWER(TRIM(COALESCE(email_address, ''))), is_relayed
 		FROM message_recipients
 		WHERE message_id = ? AND LOWER(TRIM(recipient_type)) = 'from'
 		ORDER BY LOWER(TRIM(COALESCE(email_address, ''))), COALESCE(participant_id, 0), id`, messageID)
@@ -234,11 +234,12 @@ func mergeEmailSenderEvidence(ctx context.Context, tx *loggedTx, messageID int64
 	for rows.Next() {
 		var participantID int64
 		var address string
-		if err := rows.Scan(&participantID, &address); err != nil {
+		var isRelayed bool
+		if err := rows.Scan(&participantID, &address, &isRelayed); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		senders = append(senders, fmt.Sprintf("%d:%s", participantID, address))
+		senders = append(senders, fmt.Sprintf("%d:%s:%t", participantID, address, isRelayed))
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err

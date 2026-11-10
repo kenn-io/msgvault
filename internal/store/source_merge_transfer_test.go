@@ -269,7 +269,7 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	var participant int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE email_address = 'owner@example.test'`).Scan(&participant))
 	require.NoError(st.EnsureConversationParticipant(oldChat, participant, "member"))
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'to', 'owner@example.test')`), duplicate, participant)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address, is_relayed) VALUES (?, ?, 'from', 'owner@example.test', TRUE)`), duplicate, participant)
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO reactions(message_id, participant_id, reaction_type, reaction_value) VALUES (?, ?, 'emoji', 'like')`), duplicate, participant)
 	require.NoError(err)
@@ -324,6 +324,9 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), survivor).Scan(&count))
 		assert.Equal(1, count)
 	}
+	var relayed bool
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_relayed FROM message_recipients WHERE message_id = ?`), survivor).Scan(&relayed))
+	assert.True(relayed)
 	var owned bool
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), unique).Scan(&owned))
 	assert.True(owned)
