@@ -15,14 +15,14 @@ const (
 	syncItemPhaseIngest = "ingest"
 	syncItemPhaseDelete = "delete"
 
-	syncItemKindBatchFetchError               = "batch_fetch_error"
-	syncItemKindFetchError                    = "fetch_error"
+	syncItemKindBatchFetchError               = store.SyncItemKindBatchFetchError
+	syncItemKindFetchError                    = store.SyncItemKindFetchError
 	syncItemKindGmailNotFound                 = "gmail_not_found"
 	syncItemKindMessageGone                   = "message_gone"
-	syncItemKindIngestError                   = "ingest_error"
-	syncItemKindAttachmentError               = "attachment_error"
-	syncItemKindRemoteImageError              = "remote_image_error"
-	syncItemKindAttachmentAndRemoteImageError = "attachment_remote_image_error"
+	syncItemKindIngestError                   = store.SyncItemKindIngestError
+	syncItemKindAttachmentError               = store.SyncItemKindAttachmentError
+	syncItemKindRemoteImageError              = store.SyncItemKindRemoteImageError
+	syncItemKindAttachmentAndRemoteImageError = store.SyncItemKindAttachmentAndRemoteImageError
 	syncItemKindDeleteError                   = "delete_error"
 	syncItemKindAcquired                      = "acquired"
 )

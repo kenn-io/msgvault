@@ -1,41 +1,29 @@
 package store
 
-import "strings"
+const (
+	SyncItemKindBatchFetchError               = "batch_fetch_error"
+	SyncItemKindFetchError                    = "fetch_error"
+	SyncItemKindIngestError                   = "ingest_error"
+	SyncItemKindAttachmentError               = "attachment_error"
+	SyncItemKindRemoteImageError              = "remote_image_error"
+	SyncItemKindAttachmentAndRemoteImageError = "attachment_remote_image_error"
+)
 
-// These are the operations understood by Gmail acquisition replay. Keep the
-// in-memory candidate check and diagnostic SQL on the same persisted contract.
-var acquisitionOperations = [...]struct{ phase, kind, operation string }{
-	{"fetch", "fetch_error", "acquisition"},
-	{"fetch", "batch_fetch_error", "acquisition"},
-	{"ingest", "ingest_error", "acquisition"},
-	{"ingest", "attachment_error", "files"},
-	{"ingest", "remote_image_error", "files"},
-	{"ingest", "attachment_remote_image_error", "files"},
-}
-
-// IsAcquisitionReplayCandidate reports whether the outcome names a usable
-// message and an operation understood by Gmail replay. Selection of the latest
-// error and its run boundary remains latestAcquisitionOutcomeIDsSQL's job.
+// IsAcquisitionReplayCandidate identifies outcomes the syncer can retry.
 func (item SyncRunItem) IsAcquisitionReplayCandidate() bool {
 	if item.SourceMessageID == "" || item.SourceMessageID == "(unknown)" {
 		return false
 	}
-	for _, entry := range acquisitionOperations {
-		if item.Phase == entry.phase && item.ErrorKind == entry.kind {
+	switch item.Phase {
+	case "fetch":
+		return item.ErrorKind == SyncItemKindFetchError || item.ErrorKind == SyncItemKindBatchFetchError
+	case "ingest":
+		switch item.ErrorKind {
+		case SyncItemKindIngestError, SyncItemKindAttachmentError, SyncItemKindRemoteImageError, SyncItemKindAttachmentAndRemoteImageError:
 			return true
 		}
 	}
 	return false
-}
-
-func acquisitionOperationSQL(alias string) string {
-	var sql strings.Builder
-	sql.WriteString("CASE WHEN " + alias + ".source_message_id IN ('', '(unknown)') THEN 'unknown'")
-	for _, entry := range acquisitionOperations {
-		sql.WriteString(" WHEN " + alias + ".phase = '" + entry.phase + "' AND " + alias + ".error_kind = '" + entry.kind + "' THEN '" + entry.operation + "'")
-	}
-	sql.WriteString(" ELSE 'unknown' END")
-	return sql.String()
 }
 
 // latestAcquisitionOutcomeIDsSQL is the replay boundary, shared by diagnostics
@@ -56,9 +44,8 @@ func latestAcquisitionOutcomeIDsSQL(oneMessage bool) string {
 		GROUP BY i.source_message_id`
 }
 
-// syntheticFileObligationSQL recognizes only the marker shipped with file
-// obligations. It does not determine whether an outcome is replayable.
+// syntheticFileObligationSQL identifies the persisted file-saving reminder.
 func syntheticFileObligationSQL(alias string) string {
-	return "(COALESCE(" + alias + ".error_kind, '') IN ('attachment_error', 'remote_image_error', 'attachment_remote_image_error')" +
+	return "(COALESCE(" + alias + ".error_kind, '') IN ('" + SyncItemKindAttachmentError + "', '" + SyncItemKindRemoteImageError + "', '" + SyncItemKindAttachmentAndRemoteImageError + "')" +
 		" AND COALESCE(" + alias + ".error_message, '') = '" + SyncRunItemFilesPendingMessage + "')"
 }

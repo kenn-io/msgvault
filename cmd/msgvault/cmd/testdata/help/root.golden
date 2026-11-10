@@ -82,7 +82,7 @@ Add and sync sources:
   backfill-inline-media  Retry eligible Inline attachment downloads
   backfill-slack-media   Retry pending Slack file downloads
   backfill-teams-media   Re-fetch missing Teams inline images for imported messages
-  diagnose-acquisition   Show known Gmail download and file-saving status (read-only)
+  diagnose-acquisition   List pending Gmail acquisition failures
   list-folders           List IMAP folders (mailboxes) available for an account
   merge-account          Merge archived accounts
   muesli-hook            Sync the meeting named by a Muesli completion event
