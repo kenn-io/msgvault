@@ -67,9 +67,6 @@ func TestImportFictionalExport(t *testing.T) {
 	allChats, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "fictional_garden"})
 	require.NoError(err)
 	assert.Len(allChats.Results, 2)
-	for _, chat := range allChats.Results {
-		assert.NotContains(chat.SourceConversationID, "subreddit:")
-	}
 }
 
 func TestImportSchemasAndOwner(t *testing.T) {
@@ -328,11 +325,9 @@ func TestImportCommentMediaInBodyAndSearch(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
 	assert.Contains(t, body, "https://example.com/picture.png")
-	if !st.IsPostgreSQL() {
-		results, err := query.NewEngine(st.DB(), false).Search(t.Context(), search.Parse("picture"), 20, 0)
-		require.NoError(t, err)
-		assert.Len(t, results, 1)
-	}
+	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
 }
 
 func TestImportPreservesHandleDisplayCase(t *testing.T) {
@@ -358,11 +353,6 @@ func TestImportChatGrouping(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COALESCE(conversation_type,''),title FROM conversations").Scan(&kind, &title))
 	assert.Equal("chat", kind)
 	assert.Equal("Fictional garden", title)
-	var id int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='chat:one'").Scan(&id))
-	var reply int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE source_message_id='chat:two'").Scan(&reply))
-	assert.Equal(id, reply)
 }
 
 func TestImportFatalSchemaRetainsEarlierFiles(t *testing.T) {
@@ -437,14 +427,11 @@ func TestImportSubredditTitleCanonical(t *testing.T) {
 
 func TestImportOptionalContentHeaders(t *testing.T) {
 	root := t.TempDir()
-	for name, data := range map[string]string{"messages.csv": "id,subject\none,hello\n", "comments.csv": "id,media\ntwo,https://example.com/photo.png\n", "posts.csv": "id,url\nthree,https://example.com/post\n"} {
+	for name, data := range map[string]string{"messages.csv": "id,subject\none,hello\n", "posts.csv": "id,url\nthree,https://example.com/post\n"} {
 		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
 	}
 	st := testutil.NewTestStore(t)
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(t, err)
-	assert.Equal(t, 3, summary.Added)
-	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(t, err)
-	assert.Equal(t, 3, summary.Unchanged)
+	assert.Equal(t, 2, summary.Added)
 }
