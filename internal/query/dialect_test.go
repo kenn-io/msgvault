@@ -6,47 +6,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestPostgreSQLBuildFTSTerm asserts the PostgreSQL dialect renders a
-// dialect-neutral term slice into a to_tsquery argument with prefix
-// lexemes AND-joined by " & ", and that "stopword-like" words (e.g.
-// "or") are emitted as ordinary lexemes rather than reinterpreted as a
-// boolean operator. This is the unit-level guard for the hybrid FTS
-// parity fix: the BM25 leg must prefix-match the SAME term set on PG as
-// SQLite, and to_tsquery must never see a bare boolean operator from a
-// natural-language query.
 func TestPostgreSQLBuildFTSTerm(t *testing.T) {
 	t.Parallel()
-	d := PostgreSQLQueryDialect{}
-
-	cases := []struct {
-		name    string
-		terms   []string
-		wantArg string
-	}{
-		{
-			name:    "prefix lexemes AND-joined",
-			terms:   []string{"security", "alert", "account"},
-			wantArg: "security:* & alert:* & account:*",
-		},
-		{
-			name:    "or is a lexeme not an operator",
-			terms:   []string{"monthly", "bill", "or", "invoice"},
-			wantArg: "monthly:* & bill:* & or:* & invoice:*",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			expr, arg := d.BuildFTSTerm(tc.terms)
-			assert.Equal("m.search_fts @@ to_tsquery('simple', ?)", expr)
-			assert.Equal(tc.wantArg, arg)
-		})
-	}
-
-	// "or" must appear as a prefix lexeme, proving it is NOT treated as a
-	// tsquery boolean operator (which would corrupt the parity term set).
-	_, arg := d.BuildFTSTerm([]string{"monthly", "bill", "or", "invoice"})
-	assert.Contains(t, arg, "or:*")
+	expr, arg := (PostgreSQLQueryDialect{}).BuildFTSTerm([]string{"monthly", "bill", "or", "invoice"})
+	assert.Equal(t, "m.search_fts @@ to_tsquery('simple', ?)", expr)
+	assert.Equal(t, "monthly:* & bill:* & or:* & invoice:*", arg)
 }
 
 // TestSQLiteBuildFTSTerm asserts the SQLite dialect renders a

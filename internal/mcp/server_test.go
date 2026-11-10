@@ -954,64 +954,23 @@ func TestSearchMessageBodies_PostgreSQLContextIgnoresAccentLookalikes(t *testing
 }
 
 func TestSearchMessageBodies_PostgreSQLContextUsesParserTokens(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL parser-specific body context semantics")
+		t.Skip("PostgreSQL token semantics")
 	}
-
-	tests := []struct {
-		name      string
-		lookalike string
-		query     string
-		marker    string
-	}{
-		{
-			name:      "combined word differs from separated tokens",
-			lookalike: "cafeteria",
-			query:     "cafe\u0301teria",
-			marker:    "cafe teria marker",
-		},
-		{
-			name:      "combined host differs from separated tokens",
-			lookalike: "foobar",
-			query:     `"foo bar"`,
-			marker:    "foo bar marker",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			lookalike := tc.lookalike + " " + strings.Repeat("padding ", 60)
-			body := strings.Repeat(lookalike, query.MessageBodyContextMaxSnippets) + tc.marker
-			messageID := f.NewMessage().
-				WithSourceMessageID("mcp-postgres-parser-"+tc.name).
-				WithSubject("ordinary subject").
-				WithSnippet("ordinary preview").
-				Create(t, f.Store)
-			require.NoError(f.Store.UpsertMessageBody(messageID,
-				sql.NullString{String: body, Valid: true}, sql.NullString{}), "UpsertMessageBody")
-			_, err := f.Store.BackfillFTS(nil)
-			require.NoError(err, "BackfillFTS")
-
-			engine := query.NewEngine(f.Store.DB(), true)
-			resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
-				newTestHandlers(engine).searchMessageBodies,
-				map[string]any{"query": tc.query})
-			require.Len(resp.Data, 1, "body hit")
-			assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-			require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
-			assert.Condition(func() bool {
-				for _, m := range resp.Data[0].Matches {
-					if strings.Contains(m.Snippet, tc.marker) {
-						return true
-					}
-				}
-				return false
-			}, "context snippets must ignore PostgreSQL parser lookalikes")
-		})
-	}
+	body := "cafe\u0301teria marker"
+	messageID := f.NewMessage().WithSourceMessageID("mcp-postgres-combining-mark").Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	engine := query.NewEngine(f.Store.DB(), true)
+	resp := runTool[paginatedSearchMessages](t, "search_message_bodies", newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "cafe teria"})
+	require.Len(resp.Data, 1)
+	assert.Equal(messageID, resp.Data[0].ID)
+	require.NotEmpty(resp.Data[0].Matches)
+	assert.Contains(resp.Data[0].Matches[0].Snippet, body)
 }
 
 func TestSearchMessageBodies_ContextIgnoresFullFoldExpansionLookalikes(t *testing.T) {

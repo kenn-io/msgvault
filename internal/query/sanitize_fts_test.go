@@ -1,7 +1,7 @@
 package query
 
 import (
-	"strings"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,24 +28,12 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 	assert.Empty(d.SanitizeFTSQuery("   "))
 }
 
-// TestPostgreSQLSanitizeFTSQuery_AllowlistOnly asserts the output never contains
-// any character outside the allowed set: Unicode letters/digits plus the join
-// punctuation that SanitizeFTSQuery itself adds.
+// TestPostgreSQLSanitizeFTSQuery_AllowlistOnly accepts only generated operators.
 func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 	t.Parallel()
 	d := PostgreSQLQueryDialect{}
+	shape := regexp.MustCompile(`^(?:[\pL\pN]+:\*|\((?:[\pL\pN]+ <-> )+[\pL\pN]+:\*\))?$`)
 	for _, in := range []string{"foo<3bar", "a=b", "c#d", "x$y", "user@example.com", "---", "a.b.c"} {
-		got := d.SanitizeFTSQuery(in)
-		// Strip the join/suffix punctuation the sanitizer is allowed to emit,
-		// then confirm everything left is a letter or digit.
-		stripped := strings.NewReplacer(":", "", "*", "", "&", "", " ", "", "<", "", ">", "", "-", "", "(", "", ")", "").Replace(got)
-		for _, r := range stripped {
-			assert.True(t, isLetterOrDigit(r),
-				"input %q produced disallowed rune %q in output %q", in, string(r), got)
-		}
+		assert.Regexp(t, shape, d.SanitizeFTSQuery(in), "input %q", in)
 	}
-}
-
-func isLetterOrDigit(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }

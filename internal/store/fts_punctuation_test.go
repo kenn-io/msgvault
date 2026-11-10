@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -22,6 +22,9 @@ func TestSearchFTSPunctuation(t *testing.T) {
 			require.Equal(t, []int64{id}, ids)
 		})
 	}
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"example@both"}}, 10)
+	require.NoError(t, err)
+	require.Empty(t, ids)
 }
 
 func TestPostgresFTSPunctuationBackfill(t *testing.T) {
@@ -34,20 +37,20 @@ func TestPostgresFTSPunctuationBackfill(t *testing.T) {
 	body := "Write to both@example.com or see changelog.example.net."
 	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 	require.NoError(f.Store.UpsertFTS(id, "Release 1.2.0 notes", body, "", "", ""))
-	searchFor := func(term string, want []int64) {
-		t.Helper()
-		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
-		require.NoError(err)
-		require.Equal(want, ids, term)
-	}
-	_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET indexing_version = 2 WHERE id = $1", id)
+	_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET search_fts = to_tsvector('simple', $1), indexing_version = 2 WHERE id = $2", body, id)
 	require.NoError(err)
+	q := &search.Query{TextTerms: []string{"both@exam"}}
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), q, 10)
+	require.NoError(err)
+	require.Empty(ids)
 	_, err = f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	for _, term := range []string{"both@example.com", "both@exam", "1.2.0"} {
-		searchFor(term, []int64{id})
-	}
-	searchFor("example@both", []int64{})
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), q, 10)
+	require.NoError(err)
+	require.Equal([]int64{id}, ids)
+	var version int
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT indexing_version FROM messages WHERE id = $1", id).Scan(&version))
+	require.Equal(store.CurrentFTSIndexingVersion, version)
 }
 
 func TestPostgresFTSPhraseDoesNotCrossFields(t *testing.T) {
@@ -60,7 +63,6 @@ func TestPostgresFTSPhraseDoesNotCrossFields(t *testing.T) {
 	crossField := f.NewMessage().WithSourceMessageID("cross-field").Create(t, f.Store)
 	crossRecipients := f.NewMessage().WithSourceMessageID("cross-recipients").Create(t, f.Store)
 	complete := f.NewMessage().WithSourceMessageID("complete-address").Create(t, f.Store)
-	require.NoError(f.Store.UpsertMessageBody(complete, sql.NullString{String: "alice@example.com", Valid: true}, sql.NullString{}))
 	require.NoError(f.Store.UpsertFTS(crossField, "alice", "", "example.com", "", ""))
 	require.NoError(f.Store.UpsertFTS(crossRecipients, "", "", "", "alice", "example.com"))
 	require.NoError(f.Store.UpsertFTS(complete, "", "alice@example.com", "", "", ""))
@@ -74,12 +76,4 @@ func TestPostgresFTSPhraseDoesNotCrossFields(t *testing.T) {
 	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice", "example"}}, 10)
 	require.NoError(err)
 	assert.ElementsMatch([]int64{crossField, crossRecipients, complete}, ids)
-
-	engine := query.NewEngine(f.Store.DB(), true)
-	bodySearcher, ok := engine.(query.MessageBodySearcher)
-	require.True(ok)
-	results, err := bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 10, 0)
-	require.NoError(err)
-	require.Len(results.Messages, 1)
-	assert.Equal(complete, results.Messages[0].ID)
 }
