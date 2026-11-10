@@ -17,5 +17,4 @@ type ImportSummary struct {
 	Files                                   []*FileSummary
 	Unsupported                             []string
 	Added, Unchanged, Malformed, MissingIDs int
-	UnknownDates, UnknownSenders            int
 }

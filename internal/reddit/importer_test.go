@@ -216,7 +216,8 @@ func TestImportPlainMarkerNamesArePeople(t *testing.T) {
 			var n int
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('unknown','deleted')").Scan(&n))
 			assert.Equal(2, n)
-			assert.Zero(summary.UnknownSenders)
+			require.Len(summary.Files, 1)
+			assert.Zero(summary.Files[0].UnknownSenders)
 		})
 	}
 }
@@ -268,8 +269,15 @@ func TestImportCoverageCountsExistingRecords(t *testing.T) {
 	for range 2 {
 		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 		require.NoError(err)
-		assert.Equal(4, summary.UnknownDates)
-		assert.Equal(4, summary.UnknownSenders)
+		require.Len(summary.Files, 3)
+		for _, file := range summary.Files {
+			want := 1
+			if file.Filename == "chat_history.csv" {
+				want = 2
+			}
+			assert.Equal(want, file.UnknownDates)
+			assert.Equal(want, file.UnknownSenders)
+		}
 	}
 }
 

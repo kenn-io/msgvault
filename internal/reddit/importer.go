@@ -41,8 +41,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			summary.Unchanged += f.Unchanged
 			summary.Malformed += f.Malformed
 			summary.MissingIDs += f.MissingIDs
-			summary.UnknownDates += f.UnknownDates
-			summary.UnknownSenders += f.UnknownSenders
 		}
 		retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, &store.Checkpoint{
 			MessagesProcessed: int64(summary.Added + summary.Unchanged), MessagesAdded: int64(summary.Added),
