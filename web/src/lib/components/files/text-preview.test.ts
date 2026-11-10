@@ -67,6 +67,12 @@ it('keeps a complete record when a CRLF prefix ends after the carriage return', 
   expect(result.rows).toEqual([['Complete', 'Ready']]);
 });
 
+it('keeps a CRLF-terminated record when a quoted field contains an LF', async () => {
+  const result = await parseDelimited('"Name\ncontinued",Note\r\nA,B\r', ',', 200, true);
+  expect(result.header).toEqual(['Name\ncontinued', 'Note']);
+  expect(result.rows).toEqual([['A', 'B']]);
+});
+
 it('keeps every column in a wide CSV preview', async () => {
   const result = await parseDelimited(Array(101).fill('Header').join(',') + '\nValue', ',');
   expect(result.header).toHaveLength(101);

@@ -11,7 +11,7 @@ export function decodeText(bytes: Uint8Array, contentType = '', truncated = fals
 
 export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; hasErrors: boolean }> {
   const { default: Papa } = await import('papaparse');
-  const linebreak = /\r\n|\n|\r/.exec(text)?.[0];
+  const linebreak = text.endsWith('\r') ? Papa.parse(text + '\n', { delimiter, preview: maxRows + 2, skipEmptyLines: true }).meta.linebreak : '';
   const prefix = text.endsWith('\r') && linebreak === '\n' ? text.slice(0, -1) + '\n' : text.endsWith('\r') && linebreak === '\r\n' ? text + '\n' : text;
   const result = Papa.parse<string[]>(prefix, { delimiter, preview: maxRows + 2, skipEmptyLines: true });
   const hasErrors = result.errors.some((error) => error.type === 'Quotes' && !(inputTruncated && !result.meta.truncated && error.code === 'MissingQuotes' && error.row === result.data.length - 1));
