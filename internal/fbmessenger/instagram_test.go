@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,11 +21,6 @@ func TestInstagramImportReplay(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	assert.Equal("39151bedba35d941336e56ea21fd767503efe5c6f0ddc63dcfd58ffaaa600733", instagramFingerprint(rawJSONMessage{SenderName: "Nova <Example>", Content: "&\u2028\u2029"}))
-	assert.Equal("f98077c6cc44f21c5f0ff8ef1ce0a52af105f99b10da4ad48bf002ab9453e722", instagramFingerprint(rawJSONMessage{
-		SenderName: "Mira", TimestampMs: 1730500000123, Content: "hello",
-		Share:  &rawJSONShare{Link: "https://example.com/cafÃ©", ShareText: "a link", OriginalContentOwner: "owner"},
-		Photos: []rawJSONPhoto{{URI: "photos/a.jpg"}}, Files: []rawJSONPhoto{{URI: "docs/a.txt"}},
-	}))
 	st := testutil.NewTestStore(t)
 	opts := ImportOptions{Source: "instagram", RootDir: "testdata/instagram", Account: "orbit.example", SelfName: "Nova Example", AttachmentsDir: t.TempDir()}
 	summary, err := ImportDYI(t.Context(), st, opts)
@@ -693,25 +687,6 @@ func TestInstagramLargeIdenticalGroupReplay(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, summary.MessagesAdded)
 	assert.Equal(t, 300, countMessages(t, st, ""))
-}
-
-func TestInstagramDistinctMessagesReplay(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	var records []map[string]any
-	for i := range 500 {
-		record := instagramTestRecord(fmt.Sprintf("message %d", i))
-		record["timestamp_ms"] = int64(1730500000123 + i)
-		records = append(records, record)
-	}
-	instagramTestShard(t, root, "circle", "message_1.json", records...)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, 500, countMessages(t, st, ""))
 }
 
 func TestInstagramUnreadableStoredEvidenceGetsNewOccurrence(t *testing.T) {

@@ -111,18 +111,6 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 				summary.Incomplete = true
 				continue
 			}
-			for _, items := range [][]rawJSONPhoto{record.Photos, record.Videos, record.Audio, record.Files, record.Gifs, record.Media} {
-				for _, item := range items {
-					if strings.TrimSpace(item.URI) == "" {
-						summary.MediaRejected++
-						summary.Incomplete = true
-					}
-				}
-			}
-			if record.Sticker != nil && strings.TrimSpace(record.Sticker.URI) == "" {
-				summary.MediaRejected++
-				summary.Incomplete = true
-			}
 			message := instagramJSONMessage(record)
 			message.SentAt = time.UnixMilli(*stamp.Timestamp).UTC()
 

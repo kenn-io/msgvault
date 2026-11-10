@@ -203,15 +203,11 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		if err != nil {
 			return summary, err
 		}
-		ids := make([]string, 0, len(metadata))
+		archivedGroups = make(map[string][]string)
 		for id := range metadata {
 			if strings.HasPrefix(id, "ig:v") && !strings.HasPrefix(id, "ig:v1:") {
 				return summary, fmt.Errorf("instagram: unsupported fingerprint version in %q", id)
 			}
-			ids = append(ids, id)
-		}
-		archivedGroups = make(map[string][]string)
-		for _, id := range ids {
 			if i := strings.LastIndexByte(id, ':'); i >= 0 {
 				archivedGroups[id[:i+1]] = append(archivedGroups[id[:i+1]], id)
 			}
@@ -377,9 +373,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 			}
 		}
 
-		if !instagram {
-			summary.ThreadsProcessed++
-		}
+		summary.ThreadsProcessed++
 		var err error
 		if instagram {
 			var parsed *Thread
@@ -418,9 +412,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 			// heals. If the error is persistent the user will see
 			// HardErrors=true and can rerun with --no-resume.
 			continue
-		}
-		if instagram {
-			summary.ThreadsProcessed++
 		}
 		// Persist per-thread checkpoint so resume can skip fully
 		// committed threads. Advance ThreadIndex to threadIdx+1
