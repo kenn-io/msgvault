@@ -3,7 +3,7 @@
  */
 
 /**
- * List availability is based on metadata; file details check stored bytes.
+ * List availability is based on metadata; file details check whether storage can be opened.
  */
 export type PersonFileSearchRowContentState =
   (typeof PersonFileSearchRowContentState)[keyof typeof PersonFileSearchRowContentState];

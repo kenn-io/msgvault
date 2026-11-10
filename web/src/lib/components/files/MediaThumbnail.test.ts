@@ -11,7 +11,7 @@ function media(overrides: Partial<PersonFileSearchRow> = {}): PersonFileSearchRo
     occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
     source_identifier: 'archive@example.com', containing_title: 'Containing item',
     filename: 'photo.png', mime_type: 'image/png', mime_family: 'image', size_bytes: 8,
-    content_state: 'unverified', content_available: false,
+    content_state: 'unverified', content_available: null,
     person_provenance: { participant_ids: [42], roles: ['from'], directions: ['from_person'] },
     ...overrides
   };
@@ -47,7 +47,7 @@ describe('MediaThumbnail', () => {
       pngBytes().buffer as ArrayBuffer,
       { headers: { 'Content-Type': 'image/png' } }
     ));
-    const view = render(MediaThumbnail, { client: createAPIClient(fetchFn), file: media({ content_state: 'unverified', content_available: false }) });
+    const view = render(MediaThumbnail, { client: createAPIClient(fetchFn), file: media({ content_state: 'unverified', content_available: null }) });
 
     expect((await screen.findByRole('img', { name: 'Thumbnail photo.png' })).getAttribute('src'))
       .toBe('blob:person-thumbnail');

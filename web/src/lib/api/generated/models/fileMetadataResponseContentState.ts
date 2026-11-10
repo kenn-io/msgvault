@@ -3,7 +3,7 @@
  */
 
 /**
- * File details check stored bytes; unreadable content returns an error.
+ * File details check whether content can be opened; read or integrity errors can still occur.
  */
 export type FileMetadataResponseContentState =
   (typeof FileMetadataResponseContentState)[keyof typeof FileMetadataResponseContentState];

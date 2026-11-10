@@ -332,7 +332,11 @@ func TestFileSuggestionsHTTPContentStates(t *testing.T) {
 	states := []string{"unverified", "unverified", "url_only", "metadata_only"} // Newest first.
 	for i, row := range rows {
 		assert.Equal(states[i], row["content_state"])
-		assert.Equal(false, row["content_available"])
+		if i < 2 {
+			assert.Nil(row["content_available"])
+		} else {
+			assert.Equal(false, row["content_available"])
+		}
 		assert.NotContains(row, "url")
 		assert.NotContains(row, "storage_path")
 		assert.NotContains(row, "content_hash")
@@ -350,7 +354,7 @@ func TestFileSuggestionsHTTPDoesNotResolveBlobs(t *testing.T) {
 	rows := suggestionRows(t, suggestionBody(t, w))
 	require.Len(t, rows, 1)
 	assert.Equal(t, "unverified", rows[0]["content_state"])
-	assert.Equal(t, false, rows[0]["content_available"])
+	assert.Nil(t, rows[0]["content_available"])
 	assert.Zero(t, blobs.calls)
 }
 

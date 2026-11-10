@@ -7,8 +7,12 @@ import type { PersonFileSuggestionRowMimeFamily } from "./personFileSuggestionRo
 import type { Provenance } from "./provenance";
 
 export interface PersonFileSuggestionRow {
-  content_available: boolean;
-  /** Suggestion availability is based on metadata; file details check stored bytes. */
+  /**
+   * Null means availability has not been checked.
+   * @nullable
+   */
+  content_available: boolean | null;
+  /** Suggestion availability is based on metadata; file details check whether storage can be opened. */
   content_state: PersonFileSuggestionRowContentState;
   conversation_id: number;
   filename: string;

@@ -45,7 +45,7 @@ function file(filename: string, mimeType: string, mimeFamily: string) {
     participant_labels: ['Example Person'],
     participant_domains: ['example.com'],
     content_state: 'unverified',
-    content_available: false
+    content_available: null
   };
 }
 

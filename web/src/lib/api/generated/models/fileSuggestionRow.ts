@@ -6,8 +6,12 @@ import type { FileSuggestionRowFilenameMatch } from "./fileSuggestionRowFilename
 import type { FileSuggestionRowMimeFamily } from "./fileSuggestionRowMimeFamily";
 
 export interface FileSuggestionRow {
-  content_available: boolean;
-  /** Suggestion availability is based on metadata; file details check stored bytes. */
+  /**
+   * Null means availability has not been checked.
+   * @nullable
+   */
+  content_available: boolean | null;
+  /** Suggestion availability is based on metadata; file details check whether storage can be opened. */
   content_state: FileSuggestionRowContentState;
   conversation_id: number;
   filename: string;

@@ -50,9 +50,9 @@ it.each(['Name\nOne\nTwo', 'Name,Amount\nExample,42,extra\nOther,73'])('keeps re
   expect((await parseDelimited(text)).hasErrors).toBe(false);
 });
 
-it('pads ragged headers and rows to the widest visible record', async () => {
+it('pads the header while retaining short rows', async () => {
   expect(await parseDelimited('Name,Amount\nExample,42,extra\nOther', ',')).toEqual({
-    header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other', '', '']], truncated: false, hasErrors: false
+    header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other']], truncated: false, hasErrors: false
   });
 });
 
@@ -70,5 +70,5 @@ it('keeps a complete record when a CRLF prefix ends after the carriage return', 
 it('keeps every column in a wide CSV preview', async () => {
   const result = await parseDelimited(Array(101).fill('Header').join(',') + '\nValue', ',');
   expect(result.header).toHaveLength(101);
-  expect(result.rows[0]).toHaveLength(101);
+  expect(result.rows[0]).toHaveLength(1);
 });

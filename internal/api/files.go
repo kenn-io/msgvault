@@ -85,8 +85,8 @@ type FileSearchRow struct {
 	ParticipantIDs     []int64              `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string             `json:"participant_labels,omitempty"`
 	ParticipantDomains []string             `json:"participant_domains,omitempty"`
-	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content,unverified" doc:"List availability is based on metadata; file details check stored bytes."`
-	ContentAvailable   bool                 `json:"content_available"`
+	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content,unverified" doc:"List availability is based on metadata; file details check whether storage can be opened."`
+	ContentAvailable   *bool                `json:"content_available" nullable:"true" doc:"Null means availability has not been checked."`
 	SearchExplain      *FileSearchExplain   `json:"search_explain,omitzero" nullable:"false"`
 }
 
@@ -150,7 +150,7 @@ type FileMetadataResponse struct {
 	Size             int64                        `json:"size_bytes"`
 	ContentHash      string                       `json:"content_hash,omitempty"`
 	URL              string                       `json:"url,omitempty"`
-	ContentState     FileContentState             `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content" doc:"File details check stored bytes; unreadable content returns an error."`
+	ContentState     FileContentState             `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content" doc:"File details check whether content can be opened; read or integrity errors can still occur."`
 	ContentAvailable bool                         `json:"content_available"`
 }
 
@@ -860,7 +860,8 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "file_not_found", "File not found")
 		return
 	}
-	state, available := fileContentState(*file)
+	state, _ := fileContentState(*file)
+	available := false
 	if state == FileContentUnverified {
 		content, _, err := s.openFileContent(r.Context(), *file)
 		if errors.Is(err, os.ErrNotExist) {
@@ -959,13 +960,13 @@ func (s *Server) openFileContent(ctx context.Context, file store.FileMetadata) (
 	return content, length, err
 }
 
-// fileContentState classifies list rows from their metadata. Details check the bytes.
-func fileContentState(file store.FileMetadata) (FileContentState, bool) {
+// fileContentState classifies list rows from their metadata. Details check whether storage can be opened.
+func fileContentState(file store.FileMetadata) (FileContentState, *bool) {
 	if file.URL != "" {
-		return FileContentURLOnly, false
+		return FileContentURLOnly, new(false)
 	}
 	if file.ContentHash == "" {
-		return FileContentMetadataOnly, false
+		return FileContentMetadataOnly, new(false)
 	}
-	return FileContentUnverified, false
+	return FileContentUnverified, nil
 }

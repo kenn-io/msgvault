@@ -936,7 +936,7 @@ func (e ExploreSortField) Validate() error {
 	}
 }
 
-// FileMetadataResponseContentState File details check stored bytes; unreadable content returns an error.
+// FileMetadataResponseContentState File details check whether content can be opened; read or integrity errors can still occur.
 type FileMetadataResponseContentState string
 
 const (
@@ -956,7 +956,7 @@ func (f FileMetadataResponseContentState) Validate() error {
 	}
 }
 
-// FileSearchRowContentState List availability is based on metadata; file details check stored bytes.
+// FileSearchRowContentState List availability is based on metadata; file details check whether storage can be opened.
 type FileSearchRowContentState string
 
 const (
@@ -1000,7 +1000,7 @@ func (f FileSuggestionHTTPRequestMimeFamilies) Validate() error {
 	}
 }
 
-// FileSuggestionRowContentState Suggestion availability is based on metadata; file details check stored bytes.
+// FileSuggestionRowContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 type FileSuggestionRowContentState string
 
 const (
@@ -2333,7 +2333,7 @@ func (p PersonFileSearchHTTPRequestDirections) Validate() error {
 	}
 }
 
-// PersonFileSearchRowContentState List availability is based on metadata; file details check stored bytes.
+// PersonFileSearchRowContentState List availability is based on metadata; file details check whether storage can be opened.
 type PersonFileSearchRowContentState string
 
 const (
@@ -2395,7 +2395,7 @@ func (p PersonFileSuggestionHTTPRequestMimeFamilies) Validate() error {
 	}
 }
 
-// PersonFileSuggestionRowContentState Suggestion availability is based on metadata; file details check stored bytes.
+// PersonFileSuggestionRowContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 type PersonFileSuggestionRowContentState string
 
 const (

@@ -5300,7 +5300,7 @@ type FileMetadataResponse struct {
 	ContentAvailable bool    `json:"content_available"`
 	ContentHash      *string `json:"content_hash,omitzero"`
 
-	// ContentState File details check stored bytes; unreadable content returns an error.
+	// ContentState File details check whether content can be opened; read or integrity errors can still occur.
 	ContentState   FileMetadataResponseContentState `json:"content_state" validate:"required"`
 	ConversationID int64                            `json:"conversation_id"`
 	Docbank        []DocbankAttachmentRef           `json:"docbank,omitempty"`
@@ -5418,10 +5418,12 @@ func (f FileSearchHTTPResponse) Validate() error {
 }
 
 type FileSearchRow struct {
-	ContainingTitle  string `json:"containing_title" validate:"required"`
-	ContentAvailable bool   `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
 
-	// ContentState List availability is based on metadata; file details check stored bytes.
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable bool `json:"content_available"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       FileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                     `json:"conversation_id"`
 	EntryKey           string                    `json:"entry_key" validate:"required"`
@@ -5576,9 +5578,10 @@ func (f FileSuggestionHTTPResponse) Validate() error {
 }
 
 type FileSuggestionRow struct {
+	// ContentAvailable Null means availability has not been checked.
 	ContentAvailable bool `json:"content_available"`
 
-	// ContentState Suggestion availability is based on metadata; file details check stored bytes.
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 	ContentState   FileSuggestionRowContentState  `json:"content_state" validate:"required"`
 	ConversationID int64                          `json:"conversation_id"`
 	Filename       string                         `json:"filename" validate:"required"`
@@ -12082,10 +12085,12 @@ func (p PersonFileSearchHTTPResponse) Validate() error {
 }
 
 type PersonFileSearchRow struct {
-	ContainingTitle  string `json:"containing_title" validate:"required"`
-	ContentAvailable bool   `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
 
-	// ContentState List availability is based on metadata; file details check stored bytes.
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable bool `json:"content_available"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       PersonFileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                           `json:"conversation_id"`
 	EntryKey           string                          `json:"entry_key" validate:"required"`
@@ -12245,9 +12250,10 @@ func (p PersonFileSuggestionHTTPResponse) Validate() error {
 }
 
 type PersonFileSuggestionRow struct {
+	// ContentAvailable Null means availability has not been checked.
 	ContentAvailable bool `json:"content_available"`
 
-	// ContentState Suggestion availability is based on metadata; file details check stored bytes.
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 	ContentState     PersonFileSuggestionRowContentState  `json:"content_state" validate:"required"`
 	ConversationID   int64                                `json:"conversation_id"`
 	Filename         string                               `json:"filename" validate:"required"`

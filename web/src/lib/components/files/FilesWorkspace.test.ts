@@ -43,7 +43,7 @@ function response() {
       source_identifier: 'archive@example.com', containing_title: 'Containing item',
       filename: 'fixture.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
       participant_labels: ['Alice Example'], participant_domains: ['example.com'],
-      content_state: 'unverified', content_available: false
+      content_state: 'unverified', content_available: null
     }],
     total_count: 1, cache_revision: 'cache-files', search_provenance: {}
   };
@@ -1459,7 +1459,7 @@ it('returns focus to the last file viewed in the media gallery', async () => {
 
 it('labels a file whose bytes have not been checked', async () => {
   const listing = response();
-  listing.files[0] = { ...listing.files[0]!, content_state: 'unverified', content_available: false };
+  listing.files[0] = { ...listing.files[0]!, content_state: 'unverified', content_available: null };
   render(FilesWorkspace, { client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(listing))), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
   expect(await screen.findByText('Not checked')).toBeDefined();
   expect(screen.queryByText('Local content')).toBeNull();

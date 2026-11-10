@@ -3,7 +3,7 @@
  */
 
 /**
- * Suggestion availability is based on metadata; file details check stored bytes.
+ * Suggestion availability is based on metadata; file details check whether storage can be opened.
  */
 export type FileSuggestionRowContentState =
   (typeof FileSuggestionRowContentState)[keyof typeof FileSuggestionRowContentState];

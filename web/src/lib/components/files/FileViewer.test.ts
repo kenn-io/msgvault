@@ -37,7 +37,7 @@ function file(overrides: Partial<FileSearchRow> = {}): FileSearchRow {
     mime_family: 'image',
     size_bytes: 68,
     content_state: 'unverified',
-    content_available: false,
+    content_available: null,
     ...overrides
   };
 }
@@ -165,7 +165,7 @@ describe('FileViewer', () => {
       id: 7, message_id: 11, conversation_id: 21, filename: 'unavailable.bin', mime_type: '',
       size_bytes: 12, content_state: contentState, content_available: false
     });
-    render(FileViewer, { client: createAPIClient(fetchFn), file: file({ filename: 'unavailable.bin', mime_type: '', size_bytes: 12, content_state: contentState === 'missing_blob' ? 'unverified' : contentState, content_available: false }) });
+    render(FileViewer, { client: createAPIClient(fetchFn), file: file({ filename: 'unavailable.bin', mime_type: '', size_bytes: 12, content_state: contentState === 'missing_blob' ? 'unverified' : contentState, content_available: contentState === 'missing_blob' ? null : false }) });
     expect(await screen.findByText(message)).toBeDefined();
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(true);
@@ -178,7 +178,7 @@ describe('FileViewer', () => {
     });
     render(FileViewer, {
       client: createAPIClient(fetchFn),
-      file: file({ filename: '   ', mime_type: '', size_bytes: 12, content_state: 'unverified', content_available: false })
+      file: file({ filename: '   ', mime_type: '', size_bytes: 12, content_state: 'unverified', content_available: null })
     });
 
     expect(await screen.findByRole('dialog', { name: 'View attachment 7' })).toBeDefined();
@@ -281,7 +281,7 @@ describe('FileViewer', () => {
     await waitFor(() => expect(rejectStale).toBeDefined());
 
     await view.rerender({
-      file: file({ id: 8, key: 'file:8', filename: 'next.bin', content_state: 'unverified', content_available: false })
+      file: file({ id: 8, key: 'file:8', filename: 'next.bin', content_state: 'unverified', content_available: null })
     });
     rejectStale!(new TypeError('stale network failure'));
 
@@ -464,4 +464,18 @@ it.each(['audio/wav', 'application/pdf', 'image/png'])('offers Download when %s 
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type, size_bytes: 26 * 1024 * 1024 })), file: file({ mime_type, size_bytes: 26 * 1024 * 1024 }) });
   expect(await screen.findByText('This file is too large to preview.')).toBeDefined();
   expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(false);
+});
+
+it('omits the final carriage return from a CSV record', async () => {
+  const target = file({ filename: 'report.csv', mime_type: 'text/csv' });
+  render(FileViewer, { client: createAPIClient(viewerFetch(target, new TextEncoder().encode('Name,Amount\nExample,42\r'))), file: target });
+  expect((await screen.findByRole('cell', { name: '42' })).getAttribute('title')).toBe('42');
+});
+
+it('renders short records without expanding them to the header width', async () => {
+  const target = file({ filename: 'wide.csv', mime_type: 'text/csv' });
+  const content = Array(300).fill('Header').join(',') + '\n' + Array(10).fill('Value').join('\n');
+  render(FileViewer, { client: createAPIClient(viewerFetch(target, new TextEncoder().encode(content))), file: target });
+  await screen.findAllByRole('columnheader');
+  expect(screen.getAllByRole('cell')).toHaveLength(10);
 });

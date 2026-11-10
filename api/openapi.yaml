@@ -5459,7 +5459,7 @@ components:
         content_hash:
           type: string
         content_state:
-          description: File details check stored bytes; unreadable content returns an error.
+          description: File details check whether content can be opened; read or integrity errors can still occur.
           enum:
             - metadata_only
             - url_only
@@ -5574,9 +5574,12 @@ components:
         containing_title:
           type: string
         content_available:
-          type: boolean
+          description: Null means availability has not been checked.
+          type:
+            - boolean
+            - "null"
         content_state:
-          description: List availability is based on metadata; file details check stored bytes.
+          description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
@@ -5726,9 +5729,12 @@ components:
       additionalProperties: true
       properties:
         content_available:
-          type: boolean
+          description: Null means availability has not been checked.
+          type:
+            - boolean
+            - "null"
         content_state:
-          description: Suggestion availability is based on metadata; file details check stored bytes.
+          description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
@@ -12230,9 +12236,12 @@ components:
         containing_title:
           type: string
         content_available:
-          type: boolean
+          description: Null means availability has not been checked.
+          type:
+            - boolean
+            - "null"
         content_state:
-          description: List availability is based on metadata; file details check stored bytes.
+          description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
@@ -12382,9 +12391,12 @@ components:
       additionalProperties: true
       properties:
         content_available:
-          type: boolean
+          description: Null means availability has not been checked.
+          type:
+            - boolean
+            - "null"
         content_state:
-          description: Suggestion availability is based on metadata; file details check stored bytes.
+          description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
