@@ -288,7 +288,6 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 					"CAST(display_name AS VARCHAR) AS display_name",
 				},
 				optionalCols: []optionalCol{
-					{name: "is_relayed", replaceExpr: "CAST(is_relayed AS BOOLEAN) AS is_relayed", defaultExpr: "false AS is_relayed"},
 					{
 						// Resolved recipient address (cache schema v26): the
 						// header address when one was recorded, otherwise the

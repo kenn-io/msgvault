@@ -886,9 +886,6 @@ func newParquetBuilder(tb testing.TB) *parquetBuilder {
 
 // addTable adds a table definition to be written as Parquet.
 func (b *parquetBuilder) addTable(name, subdir, file, columns, values string) *parquetBuilder {
-	if name == "message_recipients" && columns == messageRecipientsCols {
-		b.legacyRecipientSchema = true
-	}
 	b.tables = append(b.tables, parquetTable{
 		name:    name,
 		subdir:  subdir,
@@ -971,7 +968,7 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 		legacyRecipients, err = os.ReadFile(recipientPath)
 		require.NoError(b.t, err)
 		currentPath := recipientPath + ".current"
-		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address, false AS is_relayed FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
 		require.NoError(b.t, err)
 		require.NoError(b.t, os.Rename(currentPath, recipientPath))
 	}
@@ -1089,6 +1086,17 @@ func (b *parquetBuilder) writeParquetFiles(db *sql.DB, tmpDir string) {
 	for _, tbl := range b.tables {
 		path := escapePath(filepath.Join(tmpDir, tbl.subdir, tbl.file))
 		writeTableParquet(b.t, db, path, tbl.columns, tbl.values, tbl.empty)
+		if tbl.name == "message_recipients" && tbl.columns == messageRecipientsCols {
+			// Every cache v36 shard has is_relayed. Only legacy TestDataBuilder
+			// fixtures omit the envelope columns.
+			current := "SELECT *, false AS is_relayed"
+			if !b.legacyRecipientSchema {
+				current = "SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address, false AS is_relayed"
+			}
+			_, err := db.ExecContext(b.t.Context(), "COPY ("+current+" FROM read_parquet('"+path+"')) TO '"+path+".v36' (FORMAT PARQUET)")
+			require.NoError(b.t, err)
+			require.NoError(b.t, os.Rename(filepath.FromSlash(path+".v36"), filepath.FromSlash(path)))
+		}
 	}
 }
 
