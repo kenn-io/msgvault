@@ -29,10 +29,14 @@ func TestMeetingJournalTriggers(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name, decision, query string
+		calendar              bool
 	}{
 		{name: "insert", query: `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,decision) VALUES ($note, $event, 'link')`},
 		{name: "update", decision: "link", query: `UPDATE meeting_link_decisions SET decision='split' WHERE member_message_id=$note`},
 		{name: "delete", decision: "link", query: `DELETE FROM meeting_link_decisions WHERE member_message_id=$note`},
+		{name: "event zone", calendar: true, query: `UPDATE calendar_events SET event_time_zone='America/New_York' WHERE message_id=$event`},
+		{name: "calendar zone", calendar: true, query: `UPDATE calendar_events SET calendar_time_zone='America/New_York' WHERE message_id=$event`},
+		{name: "recurrence", calendar: true, query: `UPDATE calendar_events SET recurrence_json='["RRULE:FREQ=WEEKLY;COUNT=2"]' WHERE message_id=$event`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -52,7 +56,11 @@ func TestMeetingJournalTriggers(t *testing.T) {
 			requirements.NoError(err)
 			var id int64
 			requirements.NoError(st.db.QueryRow(`SELECT message_id FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&id))
-			assert.Equal(t, note, id)
+			if tc.calendar {
+				assert.Zero(t, id)
+			} else {
+				assert.Equal(t, note, id)
+			}
 		})
 	}
 }

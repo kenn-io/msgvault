@@ -127,6 +127,9 @@ func TestMeetingCountCalendarRefresh(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			f := newMeetingCountArchive(t, time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC))
 			raw := `{"id":"event","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-07T10:00:00Z"},"end":{"dateTime":"2026-03-07T11:00:00Z"}}`
+			if kind == "event zone" || kind == "calendar zone" {
+				raw = `{"id":"event","iCalUID":"weekly@example.org","start":{"date":"2026-03-07"},"end":{"date":"2026-03-08"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`
+			}
 			if kind == "occurrence dates" || kind == "recurrence" {
 				raw = strings.TrimSuffix(raw, "}") + `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
 			}
@@ -134,10 +137,16 @@ func TestMeetingCountCalendarRefresh(t *testing.T) {
 				raw = `{"id":"event","iCalUID":"weekly@example.org","start":{"date":"2026-03-07"},"end":{"date":"2026-03-08"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`
 			}
 			if kind == "event zone" {
-				raw = strings.ReplaceAll(raw, `"dateTime":`, `"timeZone":"UTC","dateTime":`)
+				raw = strings.ReplaceAll(raw, `"date":`, `"timeZone":"UTC","date":`)
 			}
 			event := f.persist(t, "calendar", "event", "gcal_json", raw)
 			noteFormat, noteRaw := "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2026-03-07T10:00:00Z"}}`
+			if kind == "event zone" || kind == "calendar zone" {
+				noteRaw = strings.Replace(noteRaw, "2026-03-07T10:00:00Z", "2026-03-08T02:00:00Z", 1)
+			}
+			if kind == "recurrence" {
+				noteRaw = strings.Replace(noteRaw, "2026-03-07T10:00:00Z", "2026-03-14T10:00:00Z", 1)
+			}
 			if kind == "all day" {
 				noteFormat, noteRaw = "plaud_json", `{}`
 			}
@@ -153,8 +162,12 @@ func TestMeetingCountCalendarRefresh(t *testing.T) {
 			}
 			_, err := buildCache(f.path, f.cache, true)
 			requirements.NoError(err)
-			var before int64
-			requirements.NoError(f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&before))
+			if kind == "event zone" || kind == "calendar zone" {
+				assertions.Equal([]string{"uid:weekly@example.org/20260308"}, readCachedMeetingKeys(t, f.cache)[note])
+			}
+			if kind == "recurrence" {
+				assertions.Equal([]string{"uid:weekly@example.org/20260314T100000Z"}, readCachedMeetingKeys(t, f.cache)[note])
+			}
 			switch kind {
 			case "time":
 				requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(strings.ReplaceAll(raw, "2026-03-07T", "2026-03-08T")), "gcal_json"))
@@ -165,17 +178,22 @@ func TestMeetingCountCalendarRefresh(t *testing.T) {
 			case "calendar zone":
 				requirements.NoError(f.st.UpdateSourceSyncConfig(f.sources["calendar"], `{"calendar_id":"calendar@example.org","time_zone":"America/New_York"}`))
 			case "recurrence":
-				requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=2", "COUNT=3", 1)), "gcal_json"))
+				requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]`, "", 1)), "gcal_json"))
 			}
 			if kind != "occurrence dates" && kind != "all day" {
-				var after int64
-				requirements.NoError(f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
-				assertions.Greater(after, before)
 				_, err = buildCache(f.path, f.cache, false)
 				requirements.NoError(err)
 			}
 			if kind == "uid" {
 				assertions.Empty(readCachedMeetingKeys(t, f.cache)[note])
+				return
+			}
+			if kind == "event zone" || kind == "calendar zone" {
+				assertions.Equal([]string{"uid:weekly@example.org/20260307"}, readCachedMeetingKeys(t, f.cache)[note])
+				return
+			}
+			if kind == "recurrence" {
+				assertions.Equal([]string{"uid:weekly@example.org/"}, readCachedMeetingKeys(t, f.cache)[note])
 				return
 			}
 			db, err := sql.Open("duckdb", "")
