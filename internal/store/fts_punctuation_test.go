@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"database/sql"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +27,59 @@ func TestSearchFTSPunctuation(t *testing.T) {
 	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"example@both"}}, 10)
 	require.NoError(t, err)
 	require.Empty(t, ids)
+}
+
+func TestPostgresFTSSaturatedPhrases(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	ordinary := f.NewMessage().WithSourceMessageID("ordinary").Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(ordinary, "hello", "short body", "", "", ""))
+	var fieldsNull bool
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT search_fts_fields IS NULL FROM messages WHERE id = $1", ordinary).Scan(&fieldsNull))
+	assert.True(fieldsNull)
+	var matchingIDs []int64
+	for i, prefix := range []string{strings.Repeat("filler ", 17000), strings.Repeat("alice ", 255), strings.Repeat("alice ", 300)} {
+		id := f.NewMessage().WithSourceMessageID(strconv.Itoa(i)).Create(t, f.Store)
+		matchingIDs = append(matchingIDs, id)
+		require.NoError(f.Store.UpsertFTS(id, "", prefix+"alice@example.com", "", "", ""))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT search_fts_fields IS NULL FROM messages WHERE id = $1", id).Scan(&fieldsNull))
+		assert.False(fieldsNull)
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10)
+		require.NoError(err)
+		assert.Contains(ids, id)
+		ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"example@alice"}}, 10)
+		require.NoError(err)
+		assert.NotContains(ids, id)
+	}
+	separated := f.NewMessage().WithSourceMessageID("separated").Create(t, f.Store)
+	crossField := f.NewMessage().WithSourceMessageID("cross-field-saturated").Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(separated, "", strings.Repeat("filler ", 17000)+"alice middle example", "", "", ""))
+	require.NoError(f.Store.UpsertFTS(crossField, "alice", strings.Repeat("filler ", 17000)+"example", "", "", ""))
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example"}}, 10)
+	require.NoError(err)
+	assert.NotContains(ids, separated)
+	assert.NotContains(ids, crossField)
+	q := &search.Query{TextTerms: []string{"alice@exam"}}
+	first, total, err := f.Store.SearchMessagesQueryContext(t.Context(), q, 0, 2)
+	require.NoError(err)
+	assert.EqualValues(3, total)
+	require.Len(first, 2)
+	second, total, err := f.Store.SearchMessagesQueryContext(t.Context(), q, 2, 2)
+	require.NoError(err)
+	assert.EqualValues(3, total)
+	require.Len(second, 1)
+	assert.ElementsMatch(matchingIDs, []int64{first[0].ID, first[1].ID, second[0].ID})
+	unicodeID := f.NewMessage().WithSourceMessageID("unicode-saturated").Create(t, f.Store)
+	require.NoError(f.Store.UpsertFTS(unicodeID, "", strings.Repeat("filler ", 17000)+"CAFÉ@東京.example e\u0301xample", "", "", ""))
+	for _, term := range []string{"café@東京.exam", "e@xam"} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		assert.Contains(ids, unicodeID)
+	}
 }
 
 func TestPostgresFTSPunctuationBackfill(t *testing.T) {

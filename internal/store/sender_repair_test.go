@@ -267,11 +267,15 @@ func TestApplySenderRepairRefreshesFTS(t *testing.T) {
 	require.NoError(f.Store.UpsertMessageRaw(messageID,
 		[]byte("From: repairftsneedle@example.test\r\n\r\nBody\r\n")),
 		"UpsertMessageRaw repair candidate")
+	body := "preservedbodyneedle"
+	if f.Store.IsPostgreSQL() {
+		body = strings.Repeat("filler ", 17000) + body
+	}
 	require.NoError(f.Store.UpsertMessageBody(messageID,
-		sql.NullString{String: "preservedbodyneedle", Valid: true}, sql.NullString{}),
+		sql.NullString{String: body, Valid: true}, sql.NullString{}),
 		"UpsertMessageBody repair candidate")
 	require.NoError(f.Store.UpsertFTS(
-		messageID, "Repair subject", "preservedbodyneedle", "", "", "",
+		messageID, "Repair subject", body, "", "", "",
 	), "seed FTS without sender")
 	candidate := senderRepairCandidateForMessage(t, f.Store, messageID)
 
@@ -284,6 +288,11 @@ func TestApplySenderRepairRefreshesFTS(t *testing.T) {
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
 		require.NoError(err)
 		assert.Equal(t, []int64{messageID}, ids)
+	}
+	if f.Store.IsPostgreSQL() {
+		var sender string
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_fields[2] FROM messages WHERE id = $1`, messageID).Scan(&sender))
+		assert.Contains(t, sender, "repairftsneedle example test")
 	}
 }
 

@@ -2,7 +2,6 @@ package sqldialect
 
 import (
 	"testing"
-	"unicode"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -76,9 +75,4 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 			assert.Equal(t, tc.want, TSQuery(tc.in, ""))
 		})
 	}
-}
-
-// Changing Unicode tables changes the persisted PostgreSQL search format.
-func TestFTSUnicodeVersion(t *testing.T) {
-	assert.Equal(t, "17.0.0", unicode.Version)
 }

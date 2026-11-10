@@ -9,8 +9,8 @@ import (
 func TestPostgreSQLBuildFTSTerm(t *testing.T) {
 	t.Parallel()
 	expr, arg := (PostgreSQLQueryDialect{}).BuildFTSTerm([]string{"monthly", "bill", "or", "invoice"})
-	assert.Equal(t, "m.search_fts @@ to_tsquery('simple', ?)", expr)
-	assert.Equal(t, "monthly:* & bill:* & or:* & invoice:*", arg)
+	assert.Contains(t, expr, "indexed.search_fts_fields")
+	assert.JSONEq(t, `{"phrase":"monthly:* & bill:* & or:* & invoice:*","candidate":"monthly:* & bill:* & or:* & invoice:*","patterns":["(^| )monthly","(^| )bill","(^| )or","(^| )invoice"]}`, arg)
 }
 
 // TestSQLiteBuildFTSTerm asserts the SQLite dialect renders a
@@ -60,8 +60,8 @@ func TestBuildFTSBodyTermScopesExactBodyField(t *testing.T) {
 	t.Parallel()
 	t.Run("PostgreSQL weight D", func(t *testing.T) {
 		expr, arg := (PostgreSQLQueryDialect{}).BuildFTSBodyTerm([]string{"foo-bar", "baz"})
-		assert.Equal(t, "m.search_fts @@ to_tsquery('simple', ?)", expr)
-		assert.Equal(t, "(foo:D <-> bar:*D) & baz:*D", arg)
+		assert.Contains(t, expr, "indexed.search_fts_fields[5:5]")
+		assert.JSONEq(t, `{"phrase":"(foo:D <-> bar:*D) & baz:*D","candidate":"foo & bar:* & baz:*","patterns":["(^| )foo +bar","(^| )baz"]}`, arg)
 	})
 
 	t.Run("SQLite body column", func(t *testing.T) {

@@ -263,7 +263,7 @@ msgvault search --collection Work
 
 The two flags are mutually exclusive. Collection filters work in full-text, vector, and hybrid local search modes.
 
-PostgreSQL full-text search splits punctuation into ordered word pieces. For example, `both@exam` finds `both@example.com`. After an upgrade, the first CLI search starts a resumable rebuild of older PostgreSQL search entries; results can be incomplete until it finishes.
+PostgreSQL full-text search splits punctuation into ordered word pieces. For example, `both@exam` finds `both@example.com`. After an upgrade, the daemon starts a resumable rebuild of older PostgreSQL search entries. Results can be incomplete until it finishes.
 
 SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 

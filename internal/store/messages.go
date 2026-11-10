@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -6774,7 +6775,7 @@ func (s *Store) EndWaitingProviderAttachments(ctx context.Context, sourceID int6
 
 // markFTSMessageUnsearchable shares the terminal PostgreSQL overflow policy.
 func markFTSMessageUnsearchable(q querier, messageID int64) error {
-	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
+	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, search_fts_fields = NULL, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
 	return err
 }
 
@@ -6989,42 +6990,87 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 	return changed, setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
 }
 
-// backfillPostgresFTS reads stored fields one message at a time inside the batch transaction.
+// backfillPostgresFTS locks and indexes bounded pages inside the batch transaction.
 func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64) (int64, error) {
-	query += ` ORDER BY id FOR UPDATE`
-	rows, err := tx.QueryContext(ctx, query, fromID, toID)
-	if err != nil {
-		return 0, err
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return 0, err
-	}
-	q := boundQuerier{ctx: ctx, q: tx}
 	env := storedFTSEnvelopeSQL("STRING_AGG")
-	for _, id := range ids {
-		doc := FTSDoc{MessageID: id}
-		err := q.QueryRow(`SELECT LEFT(`+env.subject+`, 600000), LEFT(COALESCE(b.body_text, ''), 600000), LEFT(`+env.fromAddr+`, 600000), LEFT(`+env.toAddrs+`, 600000), LEFT(`+env.ccAddrs+`, 600000) FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, id).Scan(&doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs)
+	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, 600000), LEFT(COALESCE(b.body_text, ''), 600000), LEFT(` + env.fromAddr + `, 600000), LEFT(` + env.toAddrs + `, 600000), LEFT(` + env.ccAddrs + `, 600000) FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
+	vector, _ := pgFTSVector(FTSDoc{})
+	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
+	vector = replace.Replace(vector)
+	fields := replace.Replace(pgFTSOverflowFields("u.vector"))
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs)), v AS (SELECT u.*, ` + vector + ` AS vector FROM u) UPDATE messages m SET search_fts = u.vector, search_fts_fields = ` + fields + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
+	var affected int64
+	for fromID < toID {
+		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
 		if err != nil {
 			return 0, err
 		}
-		if err := s.dialect.FTSUpsert(q, doc); err != nil {
+		var lockedIDs []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			lockedIDs = append(lockedIDs, id)
+		}
+		err = rows.Err()
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
 			return 0, err
 		}
+		if len(lockedIDs) == 0 {
+			break
+		}
+		// Read the envelope after locking, using a fresh READ COMMITTED snapshot.
+		rows, err = tx.QueryContext(ctx, selectSQL, lockedIDs)
+		if err != nil {
+			return 0, err
+		}
+		var ids []int64
+		var subjects, bodies, senders, tos, ccs []string
+		bytes := 0
+		for rows.Next() {
+			var doc FTSDoc
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs); err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs)
+			if len(ids) > 0 && bytes+size > 4*1024*1024 {
+				break
+			}
+			ids = append(ids, doc.MessageID)
+			subjects = append(subjects, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject)))
+			bodies = append(bodies, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body)))
+			senders = append(senders, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr)))
+			tos = append(tos, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs)))
+			ccs = append(ccs, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs)))
+			bytes += size
+			if bytes >= 4*1024*1024 {
+				break
+			}
+		}
+		err = rows.Err()
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return 0, err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs); err != nil {
+			return 0, err
+		}
+		affected += int64(len(ids))
+		fromID = ids[len(ids)-1] + 1
 	}
-	return int64(len(ids)), nil
+	return affected, nil
 }
 
 // derivedEmailText is a retained email's stored text and the search document

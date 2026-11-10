@@ -1,12 +1,14 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,6 +108,50 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
 	assertFTSContains(t, f.Store, "obsolete", 0)
+}
+
+func TestPG_BackfillFTS_PagesLargeMessages(t *testing.T) {
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	body := strings.Repeat("filler ", 83000) + "alice@example.com"
+	for _, id := range f.CreateMessages(8) {
+		require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	}
+	count, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	assert.EqualValues(t, 8, count)
+	assertFTSContains(t, f.Store, "alice@example.com", 8)
+}
+
+func TestPG_BackfillFTS_SeesConcurrentBodyUpdate(t *testing.T) {
+	require := require.New(t)
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("concurrent-backfill")
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "old body", Valid: true}, sql.NullString{}))
+	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	_, err = tx.ExecContext(t.Context(), `UPDATE messages SET subject = 'updated', search_fts = NULL WHERE id = $1`, id)
+	require.NoError(err)
+	_, err = tx.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = 'new@example.com' WHERE message_id = $1`, id)
+	require.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Store.BackfillFTSContext(ctx, nil)
+		done <- err
+	}()
+	require.Eventually(func() bool {
+		var waiting bool
+		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&waiting)
+		return err == nil && waiting
+	}, 30*time.Second, 20*time.Millisecond)
+	require.NoError(tx.Commit())
+	require.NoError(<-done)
+	assertFTSContains(t, f.Store, "new@example.com", 1)
+	assertFTSContains(t, f.Store, "old", 0)
 }
 
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,

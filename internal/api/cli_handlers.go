@@ -2474,10 +2474,20 @@ func (s *Server) ensureCLISearchIndexAsync(cliStore CLIStore, mayRepair bool) st
 	if bound, ok := cliStore.(*requestCLIStore); ok {
 		cliStore = bound.CLIStore
 	}
+	s.importMu.Lock()
+	if s.importsClosed {
+		s.importMu.Unlock()
+		return state
+	}
+	s.importWG.Add(1)
+	s.importMu.Unlock()
 	s.ftsEnsureMayRepair = mayRepair
 	s.ftsEnsureRunning.Store(true)
 	s.ftsIndexState.Store(state)
-	go s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	go func() {
+		defer s.importWG.Done()
+		s.runCLISearchIndexEnsure(cliStore, knownIncomplete, !mayRepair)
+	}()
 	return state
 }
 

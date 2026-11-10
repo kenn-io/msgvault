@@ -270,15 +270,9 @@ func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity str
 	}
 }
 
-// FTSSearchExpression uses to_tsquery (not plainto_tsquery) so the
-// bound argument can carry prefix-match operators ("invo:*" matches
-// "invoice"); BuildFTSTerm and SanitizeFTSQuery both emit arguments in
-// that shape, and the store dialect's FTSSearchClause does the same.
-// Keeping all three aligned prevents the next caller from binding a
-// :*-shaped argument into plainto_tsquery and silently getting a
-// literal-phrase match.
+// FTSSearchExpression uses the same bound search payload as the store dialect.
 func (PostgreSQLQueryDialect) FTSSearchExpression() string {
-	return "m.search_fts @@ to_tsquery('simple', ?)"
+	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields")
 }
 
 func (PostgreSQLQueryDialect) HasFTSTableSQL() string {
@@ -303,19 +297,19 @@ func (PostgreSQLQueryDialect) FTSJoin() string { return "" }
 
 // BuildFTSTerm matches each term's pieces in order, with a final prefix.
 func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg string) {
-	arg = sqldialect.TSQuery(terms, "")
+	arg = sqldialect.PostgreSQLSearchArg(terms, "")
 	if arg == "" {
 		return "FALSE", ""
 	}
-	return "m.search_fts @@ to_tsquery('simple', ?)", arg
+	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields"), arg
 }
 
 func (PostgreSQLQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
-	arg = sqldialect.TSQuery(terms, "D")
+	arg = sqldialect.PostgreSQLSearchArg(terms, "D")
 	if arg == "" {
 		return "FALSE", ""
 	}
-	return "m.search_fts @@ to_tsquery('simple', ?)", arg
+	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields[5:5]"), arg
 }
 
 func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
@@ -325,9 +319,9 @@ func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
 	)
 }
 
-// SanitizeFTSQuery builds a safe ordered tsquery for one term.
+// SanitizeFTSQuery builds a safe search argument for one term.
 func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
-	return sqldialect.TSQuery([]string{query}, "")
+	return sqldialect.PostgreSQLSearchArg([]string{query}, "")
 }
 
 func (SQLiteQueryDialect) DateOrderExpression(column string) string {

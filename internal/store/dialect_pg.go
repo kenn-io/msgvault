@@ -332,7 +332,7 @@ func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 // BuildFTSArg builds ordered phrases from Unicode letter and digit runs.
 // The final piece of each term matches a prefix.
 func (d *PostgreSQLDialect) BuildFTSArg(terms []string) string {
-	return sqldialect.TSQuery(terms, "")
+	return sqldialect.PostgreSQLSearchArg(terms, "")
 }
 
 // InsertOrIgnore rewrites INSERT OR IGNORE INTO to INSERT INTO and appends
@@ -414,9 +414,9 @@ func truncateBytesRuneSafe(s string) string {
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = `+vector+`,
+		`UPDATE messages SET search_fts = v.vector, search_fts_fields = `+pgFTSOverflowFields("v.vector")+`,
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
-		WHERE id = $1`,
+		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
 	)
 	return err
@@ -427,15 +427,22 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	vector, args := pgFTSVector(doc)
 	var matches bool
 	err := q.QueryRow(
-		`SELECT COALESCE(search_fts = `+vector+`
+		`SELECT COALESCE(search_fts = v.vector
+			AND search_fts_fields IS NOT DISTINCT FROM `+pgFTSOverflowFields("v.vector")+`
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
-		FROM messages WHERE id = $1`,
+		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
 	).Scan(&matches)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return matches, err
+}
+
+// PostgreSQL caps positions at 16383 and stores at most 255 per lexeme.
+// Inspect the completed vector so concatenated fields share the same limit.
+func pgFTSOverflowFields(vector string) string {
+	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT($2, 600000), LEFT($4, 600000), LEFT($5, 600000), LEFT($6, 600000), LEFT($3, 600000)] ELSE NULL END`
 }
 
 // pgFTSVector returns the bounded tsvector expression for doc and its
@@ -460,26 +467,23 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
 // PostgreSQL stores the tsvector on the messages table — no JOIN needed.
-// Uses to_tsquery (not plainto_tsquery) so the bound argument can carry
-// prefix-match operators ("invo:*" matches "invoice"); BuildFTSArg
-// produces the matching shape. Uses `?` placeholders; loggedDB rebinds
-// to `$N` at execution time. ts_rank needs the query term a second time,
-// so orderArgCount is 1.
+// BuildFTSArg supplies the phrase, candidate, and field patterns as JSON.
+// Rank uses the candidate query and binds the argument a second time.
 func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
 	return "",
-		"m.search_fts @@ to_tsquery('simple', ?)",
-		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))",
+		sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields"),
+		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', (?::jsonb)->>'candidate'))",
 		1
 }
 
 // FTSDeleteSQL returns the SQL to clear tsvector data for messages belonging to a source.
 func (d *PostgreSQLDialect) FTSDeleteSQL() string {
-	return `UPDATE messages SET search_fts = NULL WHERE source_id = $1`
+	return `UPDATE messages SET search_fts = NULL, search_fts_fields = NULL WHERE source_id = $1`
 }
 
 func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec(
-		"UPDATE messages SET search_fts = NULL, indexing_version = NULL WHERE id = $1",
+		"UPDATE messages SET search_fts = NULL, search_fts_fields = NULL, indexing_version = NULL WHERE id = $1",
 		messageID,
 	)
 	return err
@@ -663,6 +667,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// column and FTS stays unavailable. Its GIN index is created
 		// separately by EnsureFTSIndex AFTER this migration runs. [cr2-10]
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`, "search_fts"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`, "search_fts_fields"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and

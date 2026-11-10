@@ -160,7 +160,7 @@ func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.
 }
 
 func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
-	assert.Equal(t, "(user <-> example <-> com:*)", (&PostgreSQLDialect{}).BuildFTSArg([]string{"user@example.com"}))
+	assert.JSONEq(t, `{"phrase":"(user <-> example <-> com:*)","candidate":"user & example & com:*","patterns":["(^| )user +example +com"]}`, (&PostgreSQLDialect{}).BuildFTSArg([]string{"user@example.com"}))
 }
 
 func TestPostgreSQLDialect_InsertOrIgnorePrefix(t *testing.T) {

@@ -466,6 +466,39 @@ func TestSearchMessageBodies_PhraseGrouping(t *testing.T) {
 	assert.Equal(adjacentID, messages.Messages[0].ID, "adjacent phrase hit")
 }
 
+func TestSearchMessageBodies_PostgreSQLSaturatedPhrase(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	body := strings.Repeat("alice ", 300) + "alice@example.com appears here"
+	sender := f.EnsureParticipant("sender@example.test", "Sender", "example.test")
+	id := createSearchScopeMessage(t, f, "saturated-body", "ordinary", "ordinary", body, sender, 0)
+	subjectID := createSearchScopeMessage(t, f, "saturated-subject", strings.Repeat("alice ", 300)+"alice@example.com", "ordinary", "example alice", sender, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	engine := query.NewEngine(f.Store.DB(), true)
+	searcher, ok := engine.(query.MessageBodySearcher)
+	require.True(ok)
+	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.Equal(id, result.Messages[0].ID)
+	require.NotEmpty(result.Messages[0].BodyContextSnippets)
+	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "alice@example.com")
+	all, err := engine.Search(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10, 0)
+	require.NoError(err)
+	assert.Len(all, 2, "body %d and subject %d", id, subjectID)
+	opts := query.DefaultAggregateOptions()
+	opts.SearchQuery = "alice@exam"
+	rows, err := engine.Aggregate(t.Context(), query.ViewSenders, opts)
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.EqualValues(2, rows[0].Count)
+}
+
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

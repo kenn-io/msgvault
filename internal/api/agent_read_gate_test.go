@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,6 +44,45 @@ type agentReadGateStore struct {
 	onQuick                    func()
 	snapshotContext            context.Context
 	sourceLists, sourceLookups atomic.Int32
+}
+
+func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	source, err := st.GetOrCreateSource("test", "reader@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "old-index", MessageType: "email"})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Write to both@example.com today", Valid: true}, sql.NullString{}))
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2 WHERE id = $1`, id)
+	require.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), true), Logger: testLogger()})
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(err)
+	done := make(chan error, 1)
+	go func() { done <- srv.StartOnListener(listener) }()
+	t.Cleanup(func() {
+		require.NoError(srv.Shutdown(context.WithoutCancel(t.Context())))
+		require.ErrorIs(<-done, http.ErrServerClosed)
+	})
+	require.NoError(srv.WaitStarted(t.Context()))
+	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() }, 30*time.Second, 10*time.Millisecond)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+listener.Addr().String()+"/api/v1/search/deep?q=both%40exam&scope=body", nil)
+	require.NoError(err)
+	req.Header.Set("Authorization", "Bearer owner")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	response, err := io.ReadAll(resp.Body)
+	require.NoError(err)
+	assert.Equal(http.StatusOK, resp.StatusCode, string(response))
+	assert.Contains(string(response), "both@example.com")
 }
 
 func (s *agentReadGateStore) ListSourcesContext(ctx context.Context, kind string) ([]*store.Source, error) {

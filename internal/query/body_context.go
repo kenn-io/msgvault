@@ -631,9 +631,8 @@ func (e *SQLiteEngine) canonicalBodyContextMatches(
 	}
 	queryValues := make([]string, len(terms))
 	for group, term := range terms {
-		_, weightedArg := e.dialect.BuildFTSBodyTerm([]string{term})
-		queryValues[group] = fmt.Sprintf("(%d, to_tsquery('simple', ?))", group)
-		args = append(args, postgresContextTSQuery(weightedArg))
+		queryValues[group] = fmt.Sprintf("(%d, ?::text)", group)
+		args = append(args, sqldialect.PostgreSQLPhrasePattern(term))
 	}
 	rows, err := e.queryContext(ctx, fmt.Sprintf(`
 		WITH
@@ -642,7 +641,7 @@ func (e *SQLiteEngine) canonicalBodyContextMatches(
 		SELECT b.message_id, q.group_id
 		FROM canonical_bodies b
 		CROSS JOIN query_groups q
-		WHERE to_tsvector('simple', b.body) @@ q.query
+		WHERE b.body ~* q.query
 	`, strings.Join(sourceValues, ", "), strings.Join(queryValues, ", ")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("query PostgreSQL canonical body-context probe: %w", err)
@@ -855,13 +854,12 @@ func (e *SQLiteEngine) postgresBodyContexts(
 	}
 	queryValues := make([]string, 0, len(terms))
 	for group, term := range terms {
-		_, weightedArg := e.dialect.BuildFTSBodyTerm([]string{term})
-		arg := postgresContextTSQuery(weightedArg)
+		arg := sqldialect.TSQuery([]string{term}, "")
 		if arg == "" {
 			continue
 		}
-		queryValues = append(queryValues, fmt.Sprintf("(%d, to_tsquery('simple', ?))", group))
-		args = append(args, arg)
+		queryValues = append(queryValues, fmt.Sprintf("(%d, to_tsquery('simple', ?), ?::text)", group))
+		args = append(args, arg, sqldialect.PostgreSQLPhrasePattern(term))
 	}
 	if len(queryValues) == 0 {
 		return nil, errors.New("message body context query has no searchable terms")
@@ -874,12 +872,12 @@ func (e *SQLiteEngine) postgresBodyContexts(
 	rows, err := e.queryContext(ctx, fmt.Sprintf(`
 		WITH
 		chunks(chunk_id, message_id, body) AS (VALUES %s),
-		query_groups(group_id, query) AS (VALUES %s)
+		query_groups(group_id, query, pattern) AS (VALUES %s)
 		SELECT c.message_id, q.group_id, c.chunk_id,
 			ts_headline('simple', c.body, q.query, ?) AS marked
 		FROM chunks c
 		CROSS JOIN query_groups q
-		WHERE to_tsvector('simple', c.body) @@ q.query
+		WHERE c.body ~* q.pattern
 		ORDER BY c.message_id, q.group_id, c.chunk_id
 	`, strings.Join(chunkValues, ", "), strings.Join(queryValues, ", ")), args...)
 	if err != nil {
@@ -936,8 +934,7 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 			}
 			continue
 		}
-		_, weightedArg := e.dialect.BuildFTSBodyTerm([]string{terms[item.group]})
-		queryArg := postgresContextTSQuery(weightedArg)
+		queryArg := sqldialect.TSQuery([]string{terms[item.group]}, "")
 		foundBudget := false
 		for start := range item.spans {
 			for width := 1; width <= lexemeCount && start+width <= len(item.spans); width++ {
@@ -1020,10 +1017,6 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 		}
 	}
 	return accepted, uncertain, nil
-}
-
-func postgresContextTSQuery(weightedArg string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(weightedArg, ":*D", ":*"), ":D", "")
 }
 
 func parseMarkedBodyContext(

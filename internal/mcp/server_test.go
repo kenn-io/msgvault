@@ -1087,6 +1087,22 @@ func TestSearchMessageBodies_PhraseContextSurvivesSnippetCap(t *testing.T) {
 	assert.True(foundPhrase, "context snippets must include the matched phrase")
 }
 
+func TestSearchMessageBodies_OverlappingAndDistantMatches(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	body := "needle " + strings.Repeat("padding ", 10) + "needle " + strings.Repeat(strings.Repeat("padding ", 70)+"needle ", 6)
+	id := f.NewMessage().WithSourceMessageID("mcp-overlapping-distant").WithSubject("ordinary").Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	response := runTool[paginatedSearchMessages](t, "search_message_bodies", newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL())).searchMessageBodies, map[string]any{"query": "needle"})
+	require.Len(response.Data, 1)
+	assert.Equal(id, response.Data[0].ID)
+	require.NotEmpty(response.Data[0].Matches)
+	assert.True(response.Data[0].MatchesTruncated)
+}
+
 func TestSearchMessageBodies_WidePhrasePreservesMatchedEndpoint(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -1,10 +1,12 @@
 package query
 
 import (
+	"encoding/json"
 	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestPostgreSQLSanitizeFTSQuery_NoMetacharacters verifies that the PostgreSQL
@@ -20,7 +22,7 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 	got := d.SanitizeFTSQuery("<3")
 	assert.NotContains(got, "<")
 	assert.NotContains(got, ">")
-	assert.Equal("3:*", got)
+	assert.JSONEq(`{"phrase":"3:*","candidate":"3:*","patterns":["(^| )3"]}`, got)
 
 	// Inputs that are entirely metacharacters yield an empty arg.
 	assert.Empty(d.SanitizeFTSQuery("<>=#$"))
@@ -34,6 +36,14 @@ func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 	d := PostgreSQLQueryDialect{}
 	shape := regexp.MustCompile(`^(?:[\pL\pN]+:\*|\((?:[\pL\pN]+ <-> )+[\pL\pN]+:\*\))?$`)
 	for _, in := range []string{"foo<3bar", "a=b", "c#d", "x$y", "user@example.com", "---", "a.b.c"} {
-		assert.Regexp(t, shape, d.SanitizeFTSQuery(in), "input %q", in)
+		arg := d.SanitizeFTSQuery(in)
+		if arg == "" {
+			continue
+		}
+		var payload struct {
+			Phrase string `json:"phrase"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(arg), &payload))
+		assert.Regexp(t, shape, payload.Phrase, "input %q", in)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -139,14 +140,11 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		}
 
 		if useFTS {
-			// Render the dialect-neutral terms into a PG tsquery arg
-			// (ordered phrases with a final prefix) BEFORE binding. to_tsquery requires a
-			// pre-formatted argument (operators &, prefix :*) and ERRORS on
-			// raw text — this is safe ONLY because we always feed it
-			// PostgreSQLQueryDialect.BuildFTSTerm's output, never raw text.
+			// Use the shared phrase predicate before applying the pool limit.
 			_, tsArg := query.PostgreSQLQueryDialect{}.BuildFTSTerm(req.FTSTerms)
 			ftsArg := bind(tsArg)
-			ftsRank := postgresFTSRankExpression("m.search_fts", ftsArg)
+			ftsRank := postgresFTSRankExpression("m.search_fts", "("+ftsArg+"::jsonb)->>'candidate'")
+			ftsPredicate := sqldialect.PostgreSQLSearchPredicate(ftsArg, "m.search_fts_fields")
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
 			// Empty filter: scan messages directly with an inline liveness
@@ -159,17 +157,17 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 				ftsLive = "       AND " + liveSQL + "\n"
 			}
 			omittedFTS = fmt.Sprintf(`((SELECT COUNT(*) FROM fts_pool) > %s AND EXISTS (
- SELECT 1 FROM messages m %s WHERE m.search_fts @@ to_tsquery('simple', %s)
- %s AND m.id NOT IN (SELECT message_id FROM fused)))`, kArg, ftsFrom, ftsArg, ftsLive)
+ SELECT 1 FROM messages m %s WHERE %s
+ %s AND m.id NOT IN (SELECT message_id FROM fused)))`, kArg, ftsFrom, ftsPredicate, ftsLive)
 			ctes = append(ctes,
 				fmt.Sprintf(`fts_pool AS (
     SELECT m.id AS message_id,
            %s AS bm25
       FROM messages m
-%s     WHERE m.search_fts @@ to_tsquery('simple', %s)
+%s     WHERE %s
 %s     ORDER BY bm25 DESC
      LIMIT %s
-)`, ftsRank, ftsFrom, ftsArg, ftsLive, kp1Arg),
+)`, ftsRank, ftsFrom, ftsPredicate, ftsLive, kp1Arg),
 				fmt.Sprintf(`fts_ranked AS (
     SELECT message_id, bm25,
            ROW_NUMBER() OVER (ORDER BY bm25 DESC, message_id ASC) AS rnk

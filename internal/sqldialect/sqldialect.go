@@ -11,6 +11,7 @@
 package sqldialect
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode"
@@ -38,6 +39,53 @@ func RebindPostgreSQL(query string) string {
 		}
 	}
 	return b.String()
+}
+
+// PostgreSQLSearchArg carries both index queries and exact field patterns.
+func PostgreSQLSearchArg(terms []string, weight string) string {
+	phrase := TSQuery(terms, weight)
+	if phrase == "" {
+		return ""
+	}
+	var candidates, patterns []string
+	for _, term := range terms {
+		parts := EscapeTSQueryTerm(term)
+		if len(parts) == 0 {
+			continue
+		}
+		patterns = append(patterns, PostgreSQLPhrasePattern(term))
+		parts[len(parts)-1] += ":*"
+		candidates = append(candidates, strings.Join(parts, " & "))
+	}
+	data, err := json.Marshal(struct {
+		Phrase    string   `json:"phrase"`
+		Candidate string   `json:"candidate"`
+		Patterns  []string `json:"patterns"`
+	}{phrase, strings.Join(candidates, " & "), patterns})
+	if err != nil {
+		panic(err) // Strings and string slices are always JSON encodable.
+	}
+	return string(data)
+}
+
+// PostgreSQLPhrasePattern matches adjacent normalized pieces with a final prefix.
+func PostgreSQLPhrasePattern(term string) string {
+	parts := EscapeTSQueryTerm(term)
+	if len(parts) == 0 {
+		return ""
+	}
+	return "(^| )" + strings.Join(parts, " +")
+}
+
+// PostgreSQLSearchPredicate binds one search argument and checks each term in a field.
+func PostgreSQLSearchPredicate(arg, fields string) string {
+	fields = strings.ReplaceAll(fields, "m.", "indexed.")
+	return `m.id IN (WITH fts AS MATERIALIZED (SELECT * FROM jsonb_to_record(` + arg + `::jsonb) AS payload(phrase text, candidate text, patterns text[]))
+		SELECT indexed.id FROM fts CROSS JOIN messages indexed WHERE
+		(indexed.search_fts_fields IS NULL AND indexed.search_fts @@ to_tsquery('simple', fts.phrase)) OR
+		(indexed.search_fts_fields IS NOT NULL AND indexed.search_fts @@ to_tsquery('simple', fts.candidate) AND
+		 NOT EXISTS (SELECT 1 FROM unnest(fts.patterns) AS pattern WHERE NOT EXISTS
+		 (SELECT 1 FROM unnest(` + fields + `) AS field WHERE field ~* pattern))))`
 }
 
 // tokenSpans returns byte offsets of Unicode letter and digit runs.
