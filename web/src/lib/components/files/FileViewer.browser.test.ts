@@ -36,6 +36,18 @@ describe('PDF preview resource bounds', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
   });
 
+  it('fits a narrow page to the preview width after zooming', async () => {
+    const task = loadingTask([{ width: 300, height: 400 }]);
+    pdf.getDocument.mockReturnValue(task);
+    const host = document.createElement('div');
+    Object.defineProperty(host, 'clientWidth', { value: 1200 });
+    const handle = await renderPDF(new TextEncoder().encode('%PDF-1.4'), host, new AbortController().signal);
+    handle.setZoom(2);
+    handle.setZoom(1);
+    expect(host.querySelector<HTMLElement>('.pdf-page')!.style.width).toBe('1176px');
+    handle.destroy();
+  });
+
   it.each([
     ['one Letter page', 2, [792]],
     ['four Letter pages', 2, Array<number>(4).fill(792)],

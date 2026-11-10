@@ -58,7 +58,7 @@ export async function renderPDF(
   const resize = (): void => {
     for (const { section, layer, page } of layers) {
       const natural = page.getViewport({ scale: 1 });
-      const width = Math.min(availableWidth(), natural.width * 1.25) * zoom;
+      const width = availableWidth() * zoom;
       const scale = Math.max(1, width) / natural.width;
       const viewport = page.getViewport({ scale });
       section.style.width = `${viewport.width}px`;
