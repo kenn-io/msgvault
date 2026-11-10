@@ -92,7 +92,7 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 		err = errors.Join(err, rebuildCacheAfterWrite(context.WithoutCancel(ctx), state.cfg.DatabaseDSN(), state))
 	}
 	if err != nil {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import failed. Re-run to continue; committed messages are preserved.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import failed. Re-run to continue. Committed messages are preserved.")
 		return err
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import complete. Coverage is limited to supported records; omissions are shown above.")

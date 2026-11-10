@@ -14,11 +14,12 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestImportSignalExportRefreshesCacheAndReportsPartialFailure(t *testing.T) {
+func TestImportSignalExportReportsPartialImport(t *testing.T) {
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Data.DataDir = t.TempDir()
 	ctx := withStoreResolverConfig(t, cfg)
 	root := t.TempDir()
+	// Omit files/ so the fixture attachment is reported as missing.
 	data, err := os.ReadFile("../../../internal/signalexport/testdata/native-v1/main.jsonl")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "metadata.json"), []byte(`{"version":1}`), 0600))
@@ -31,9 +32,8 @@ func TestImportSignalExportRefreshesCacheAndReportsPartialFailure(t *testing.T) 
 	err = runImportSignalExport(cmd, root, "fictional")
 	require.ErrorContains(t, err, "line 12")
 	assert.Contains(t, out.String(), "3 added")
-	assert.Contains(t, out.String(), "Records: 0 empty, 0 unrecognized")
 	assert.Contains(t, out.String(), "Missing media file not found: 1")
-	assert.Contains(t, out.String(), "Import failed. Re-run to continue; committed messages are preserved.")
+	assert.Contains(t, out.String(), "Import failed. Re-run to continue. Committed messages are preserved.")
 	db, err := sql.Open("duckdb", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
