@@ -9,7 +9,7 @@ it('shows the IMAP steps and one command when platforms agree', async () => {
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'reader' } });
   expect(screen.getByText('The command asks for your password.')).toBeDefined();
   expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['Run this command in a terminal where msgvault is installed.', 'Run the first-sync command it prints.']);
-  expect(screen.getByRole('link', { name: 'Setup guide' })).toBeDefined();
+  expect(screen.getByRole('link', { name: 'Setup guide' }).getAttribute('href')).toBe('https://msgvault.io/docs/setup/#add-an-imap-account');
   expect(screen.queryByRole('radiogroup', { name: 'Platform' })).toBeNull();
   const command = screen.getByText(/imap\.example\.com/, { selector: 'code' });
   expect(command.textContent).toContain('reader');

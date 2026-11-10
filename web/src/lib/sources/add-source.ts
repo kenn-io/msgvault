@@ -29,7 +29,7 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
   },
   {
     id: 'imap', name: 'IMAP mailbox', description: 'Any other mail provider',
-    docs: 'https://msgvault.io/docs/usage/imap/',
+    docs: 'https://msgvault.io/docs/setup/#add-an-imap-account',
     fields: [
       { id: 'host', label: 'Server', placeholder: 'imap.example.com' },
       { id: 'username', label: 'Username', placeholder: 'you@example.com' },
@@ -52,7 +52,7 @@ function validImapServer(value: string): boolean {
 }
 
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
-  if (kind.fields.some(field => !values[field.id]?.trim())) return undefined;
+  if (kind.fields.some(field => !(kind.id === 'imap' && field.id === 'username' ? values[field.id] : values[field.id]?.trim()))) return undefined;
   if (kind.id === 'imap' && !validImapServer(values.host!)) return undefined;
-  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(values[id]!.trim(), shell));
+  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(kind.id === 'imap' && id === 'username' ? values[id]! : values[id]!.trim(), shell));
 }

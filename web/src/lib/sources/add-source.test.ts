@@ -31,7 +31,8 @@ describe('addSourceCommand', () => {
   });
 
   it('quotes spaces and shell characters for each platform', () => {
-    expect(addSourceCommand(imap, { host: 'imap.example.org', username: 'A B' }, 'posix')).toBe("msgvault add-imap --host imap.example.org --username='A B'");
+    expect(addSourceCommand(imap, { host: 'imap.example.org', username: ' A B ' }, 'posix')).toBe("msgvault add-imap --host imap.example.org --username=' A B '");
+    expect(addSourceCommand(imap, { host: 'imap.example.org', username: ' ' }, 'posix')).toBe("msgvault add-imap --host imap.example.org --username=' '");
     expect(addSourceCommand(imap, { host: 'imap.example.org', username: 'A B' }, 'cmd')).toBe('msgvault add-imap --host imap.example.org --username="A B"');
     expect(addSourceCommand(imap, { host: 'imap.example.com', username: '~/reader' }, 'posix')).toBe("msgvault add-imap --host imap.example.com --username='~/reader'");
   });
