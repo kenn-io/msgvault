@@ -834,18 +834,50 @@ func TestImportBudgetedCycleReachesEveryChat(t *testing.T) {
 	assert.Equal(7, countBeeperMessages(t, imp), "the next cycle imports new activity")
 }
 
-func TestImportCleanupDeadlineAfterEarlyPreemption(t *testing.T) {
+func TestImportCleanupDeadline(t *testing.T) {
+	t.Parallel()
+	for _, offset := range []time.Duration{2 * time.Minute, -time.Minute} {
+		t.Run(offset.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				opts := ImportOptions{StopAt: time.Now().Add(offset)}
+				cleanup, stop := opts.finalizeContext(ctx)
+				defer stop()
+				require.NoError(t, cleanup.Err(), "a stop still allows checkpoint cleanup")
+				time.Sleep(stoppedImportFinalizeTimeout)
+				synctest.Wait()
+				require.ErrorIs(t, cleanup.Err(), context.DeadlineExceeded, "cleanup remains bounded")
+			})
+		})
+	}
+}
+
+func TestImportLateStopRecordsCheckpointAndCompletion(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		opts := ImportOptions{StopAt: time.Now().Add(2 * time.Minute)}
-		cleanup, stop := opts.finalizeContext(ctx)
-		defer stop()
-		require.NoError(t, cleanup.Err(), "preemption still allows checkpoint cleanup")
-		time.Sleep(15 * time.Second)
-		synctest.Wait()
-		require.ErrorIs(t, cleanup.Err(), context.DeadlineExceeded, "cleanup gets at most fifteen seconds")
+		f := newFakeBeeper(t)
+		chat := budgetTestChat("!late-stop:beeper.local", 2, time.Now().Add(-48*time.Hour))
+		f.addChat(chat)
+		f.addChat(budgetTestChat("!later-chat:beeper.local", 2, time.Now().Add(-72*time.Hour)))
+		imp, st := newHandlerTestImporter(t, f)
+		t.Cleanup(func() { require.NoError(t, st.Close()) })
+		sum, err := imp.Import(t.Context(), ImportOptions{
+			AccountID: "signal", StopAt: time.Now().Add(time.Second),
+			// Model a per-chat operation that only returns after the old
+			// StopAt+15s finalization deadline has already passed.
+			Progress: func(string) { time.Sleep(30 * time.Second) },
+		})
+		require.NoError(t, err, "a late stop must still record its result")
+		require.True(t, sum.Stopped)
+		run, err := st.GetLastSuccessfulSync(sum.SourceID)
+		require.NoError(t, err)
+		assert.Equal(t, "completed", run.Status)
+		assert.EqualValues(t, 2, run.MessagesProcessed)
+		state, err := LoadSyncState(run.CursorBefore.String)
+		require.NoError(t, err)
+		require.NotNil(t, state.Chats[chat.ID], "the final checkpoint must survive the late stop")
+		assert.True(t, state.Chats[chat.ID].Visited)
 	})
 }
 
@@ -870,6 +902,14 @@ func TestConversationStatsContextUsesCallerBudget(t *testing.T) {
 	scheduledDeadline, ok := scheduled.Deadline()
 	require.True(ok)
 	assert.Equal(scheduledStopAt, scheduledDeadline, "scheduled stats use the remaining scheduled budget")
+
+	late, cancelLate := (ImportOptions{StopAt: time.Now().Add(-time.Minute)}).conversationStatsContext(parent)
+	defer cancelLate()
+	require.NoError(late.Err(), "stats after a late stop still get a usable cleanup window")
+	lateDeadline, ok := late.Deadline()
+	require.True(ok)
+	assert.InDelta(stoppedImportFinalizeTimeout.Seconds(), time.Until(lateDeadline).Seconds(), 1,
+		"late stats receive a fresh bounded window")
 
 	stopped, cancelStopped := (ImportOptions{ShouldStop: func() bool { return true }}).conversationStatsContext(parent)
 	defer cancelStopped()
