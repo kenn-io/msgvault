@@ -1311,7 +1311,7 @@ func (e *SQLiteEngine) GetMessageBySourceID(ctx context.Context, sourceMessageID
 func (e *SQLiteEngine) getMessageByQuery(ctx context.Context, whereClause string, args ...any) (*MessageDetail, error) {
 	conditions, values := e.appendIncomingScope(ctx, []string{whereClause}, args)
 	whereClause, args = strings.Join(conditions, " AND "), values
-	return getMessageByQueryShared(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, "", whereClause, args...)
+	return getMessageByQueryShared(ctx, store.ReadDBContext(ctx, e.db), e.dialect.Rebind, e.dialect.UnicodeLowerExpression, "", whereClause, args...)
 }
 
 // GetAttachment retrieves attachment metadata by ID.
@@ -1415,6 +1415,22 @@ func (e *SQLiteEngine) ListAccounts(ctx context.Context) ([]AccountInfo, error) 
 	}
 
 	return accounts, rows.Err()
+}
+
+func (e *SQLiteEngine) appendIncomingLabelScope(ctx context.Context, labelConditions []string, labelArgs []any) ([]string, []any) {
+	if sourcescope.IncomingRestricted(ctx) {
+		predicate, values := sourcescope.IncomingPredicate(ctx, "m.id", "m.source_id", e.dialect.UnicodeLowerExpression)
+		visible := "EXISTS (SELECT 1 FROM message_labels ml JOIN messages m ON m.id = ml.message_id WHERE ml.label_id = labels.id AND m.source_id = labels.source_id AND " + predicate + ")"
+		if ids := sourcescope.UnrestrictedIncomingSourceIDs(ctx); len(ids) > 0 {
+			visible = "labels.source_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ") OR " + visible
+			for _, id := range ids {
+				labelArgs = append(labelArgs, id)
+			}
+		}
+		labelConditions = append(labelConditions, "("+visible+")")
+		labelArgs = append(labelArgs, values...)
+	}
+	return labelConditions, labelArgs
 }
 
 // GetTotalStats returns overall statistics.
@@ -1533,11 +1549,7 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 	// Inventory counts include permitted accounts and labels with no messages.
 	labelConditions, labelArgs := appendSourceFilter([]string{"TRUE"}, nil, "", opts.SourceID, nil)
 	labelConditions, labelArgs = appendSourceFilter(labelConditions, labelArgs, "", nil, sourcescope.IDs(ctx))
-	if sourcescope.IncomingRestricted(ctx) {
-		predicate, values := sourcescope.IncomingPredicate(ctx, "m.id", "m.source_id", e.dialect.UnicodeLowerExpression)
-		labelConditions = append(labelConditions, "EXISTS (SELECT 1 FROM message_labels ml JOIN messages m ON m.id = ml.message_id WHERE ml.label_id = labels.id AND "+predicate+")")
-		labelArgs = append(labelArgs, values...)
-	}
+	labelConditions, labelArgs = e.appendIncomingLabelScope(ctx, labelConditions, labelArgs)
 	accountConditions, accountArgs := appendIDFilter([]string{"TRUE"}, nil, "id", opts.SourceID, nil)
 	accountConditions, accountArgs = appendIDFilter(accountConditions, accountArgs, "id", nil, sourcescope.IDs(ctx))
 

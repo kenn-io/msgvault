@@ -525,7 +525,7 @@ func getMessageRawShared(ctx context.Context, db store.SQLReader, rebind rebindF
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use; it is applied
 // to every sub-query this function dispatches.
-func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
+func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, lower func(string) string, tablePrefix string, whereClause string, args ...any) (*MessageDetail, error) {
 	conditions, args := appendSourceFilter([]string{whereClause}, args, "m.", nil, sourcescope.IDs(ctx))
 	whereClause = strings.Join(conditions, " AND ")
 	query := fmt.Sprintf(`
@@ -586,7 +586,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 	msg.ConversationTitle = sourcescope.ConversationTitle(ctx, msg.SourceID, msg.ConversationTitle)
 	msg.RelatedMessageID = store.RelatedMessageCandidate(msg.ID, msg.MessageType, metadata.String)
 	related := []store.APIMessage{{SourceID: msg.SourceID, MessageType: msg.MessageType, RelatedMessageID: msg.RelatedMessageID}}
-	if err := store.PopulateRelatedMessagesContext(ctx, db, rebind, tablePrefix, related); err != nil {
+	if err := store.PopulateRelatedMessagesContext(ctx, db, rebind, lower, tablePrefix, related); err != nil {
 		return nil, err
 	}
 	msg.RelatedMessageID = related[0].RelatedMessageID
