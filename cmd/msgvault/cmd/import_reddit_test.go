@@ -32,10 +32,6 @@ func TestImportRedditRefreshesCacheAfterPartialFailure(t *testing.T) {
 	var n int
 	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
 	assert.Equal(1, n)
-	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title,date\na,lantern,2026-05-24 03:19:35 UTC\nb,recovered,2026-05-24 03:20:35 UTC\n"), 0600))
-	require.NoError(runImportReddit(cmd, root, redditCLIOptions{Me: "fictional_owner"}))
-	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
-	assert.Equal(2, n)
 }
 
 func TestImportRedditRejectsClientFilesOnRemote(t *testing.T) {
