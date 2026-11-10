@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,17 +28,9 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			cfg := config.NewDefaultConfig()
 			cfg.HomeDir, cfg.Data.DataDir = dir, dir
 			var st *store.Store
-			if dbURL := os.Getenv("MSGVAULT_TEST_DB"); store.IsPostgresURL(dbURL) && tc.pending {
+			if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) && tc.pending {
 				st = testutil.NewTestStore(t)
-				var database, schema string
-				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT current_database(), current_schema()").Scan(&database, &schema))
-				parsed, err := url.Parse(dbURL)
-				require.NoError(err)
-				parsed.Path = "/" + database
-				query := parsed.Query()
-				query.Set("search_path", schema)
-				parsed.RawQuery = query.Encode()
-				cfg.Data.DatabaseURL = parsed.String()
+				setMatrixTestDatabaseURL(t, st, cfg)
 			} else {
 				st = testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			}
