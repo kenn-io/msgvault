@@ -835,9 +835,9 @@ export class DirectoryEntityController {
           ...(current === undefined ? {} : { current }),
         };
       }
-      return { ok: false, kind: 'error', status, message: failureMessage(response.error, status) };
+      return { ok: false, kind: 'error', status, message: failureMessage(response.error, status), attempted: snapshot };
     } catch (cause: unknown) {
-      return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) };
+      return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0), attempted: snapshot };
     } finally {
       this.entityRequests.delete(abort);
     }

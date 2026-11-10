@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
 import { WriteAttempt } from './write-attempt.svelte';
-import type { Prepared } from './models';
+import type { DirectoryEntityMutationResult, Employment, PersonRelationship, Prepared } from './models';
 import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
 function relationshipType(id = 31, revision = 1) {
@@ -979,6 +979,44 @@ it('keeps the attempted version after a refused delete until the newer version i
     expect(attempt.conflict?.etag).toBe('"newer"');
     expect(await remove()).toBe(true);
     expect(deletedWith).toEqual(['"original"', '"original"', '"newer"']);
+  } finally { controller.destroy(); }
+});
+
+it.each([
+  ['job', '/api/v1/employments/11'],
+  ['connection', '/api/v1/person-relationships/41'],
+] as const)('retries a failed %s delete with the version it sent, so a later edit shows as a conflict', async (kind, path) => {
+  let revision = 1;
+  const deletedWith: (string | null)[] = [];
+  const client = createAPIClient(async input => {
+    const request = requestOf(input);
+    if (request.method === 'DELETE') {
+      deletedWith.push(request.headers.get('If-Match'));
+      if (deletedWith.length === 1) {
+        revision = 2;
+        return Response.json({ message: 'Unavailable' }, { status: 503 });
+      }
+      return request.headers.get('If-Match') === '"r2"' ? new Response(null, { status: 204 }) : Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    }
+    if (pathOf(request) === path) return Response.json(kind === 'job' ? employment(11, revision) : relationship(41, revision), { headers: { ETag: `"r${revision}"` } });
+    return defaultResponse(request);
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  function deletion<C>(send: (current?: C) => Promise<DirectoryEntityMutationResult<never, C>>) {
+    const attempt = new WriteAttempt<C>();
+    return { attempt, remove: () => attempt.run(send) };
+  }
+  const { attempt, remove } = kind === 'job'
+    ? deletion<Prepared<Employment>>(current => controller.deleteEmployment(11, current))
+    : deletion<Prepared<PersonRelationship>>(current => controller.deleteRelationship(41, current));
+  try {
+    expect(await remove()).toBe(false);
+    expect(attempt.conflict).toBeUndefined();
+    expect(await remove()).toBe(false);
+    expect(deletedWith).toEqual(['"r1"', '"r1"']);
+    expect(attempt.conflict?.etag).toBe('"r2"');
+    expect(await remove()).toBe(true);
+    expect(deletedWith).toEqual(['"r1"', '"r1"', '"r2"']);
   } finally { controller.destroy(); }
 });
 
