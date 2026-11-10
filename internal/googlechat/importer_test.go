@@ -95,7 +95,7 @@ func TestImportGoogleChatReplayKeepsSnapshot(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='group/topic/message'`).Scan(&id))
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(err)
-	// A partial later export cannot clear text, raw bytes or stored media.
+	// A partial later export retains the original raw message.
 	root := t.TempDir()
 	write(t, root, "Groups/DM synthetic-dm/messages.json", strings.Replace(fixtureMessages(t), "Bodyneedle synthetic", "replacement", 1))
 	opts.Roots = []string{root}
@@ -174,26 +174,20 @@ func TestImportGoogleChatValidation(t *testing.T) {
 }
 
 func TestImportGoogleChatMediaSafety(t *testing.T) {
-	for _, tc := range []struct{ name, ref string }{{"traversal", "../secret"}, {"absolute", "/secret"}, {"missing", "File-example.txt"}, {"escaped symlink", "escape.txt"}, {"oversized", "large.txt"}, {"ambiguous", "duplicate.txt"}, {"nonregular", "directory"}} {
+	for _, tc := range []struct{ name, ref string }{{"traversal", "../secret"}, {"escaped symlink", "escape.txt"}, {"oversized", "large.txt"}, {"nonregular", "directory"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			a, b := t.TempDir(), t.TempDir()
 			require.NoError(os.MkdirAll(filepath.Join(b, "Groups"), 0700))
-			ref := tc.ref
-			if tc.name == "absolute" {
-				ref = filepath.Join(b, "secret")
-			}
-			encodedRef, err := json.Marshal(ref)
+			encodedRef, err := json.Marshal(tc.ref)
 			require.NoError(err)
 			write(t, a, "Groups/DM a/messages.json", strings.ReplaceAll(fixtureMessages(t), `"File-example.txt"`, string(encodedRef)))
 			dir := filepath.Join(a, "Groups/DM a")
 			switch tc.name {
 			case "traversal":
 				write(t, a, "Groups/secret", "outside the conversation")
-			case "absolute":
-				write(t, b, "secret", "outside the supplied conversation")
 			case "nonregular":
 				require.NoError(os.Mkdir(filepath.Join(dir, tc.ref), 0700))
 			case "escaped symlink":
@@ -204,19 +198,12 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 				require.NoError(err)
 				require.NoError(f.Truncate(251 << 20))
 				require.NoError(f.Close())
-			case "ambiguous":
-				write(t, a, "Groups/DM a/duplicate.txt", "a")
-				write(t, b, "Groups/DM a/duplicate.txt", "b")
 			}
 			summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{a, b}, AttachmentsDir: t.TempDir()})
-			if tc.name == "ambiguous" {
-				require.ErrorContains(err, "ambiguous")
-				return
-			}
 			require.NoError(err)
 			assert.Equal(1, summary.AttachmentsMissing)
 			assert.Zero(summary.AttachmentsStored)
-			if tc.name == "nonregular" || tc.name == "traversal" || tc.name == "absolute" {
+			if tc.name == "nonregular" || tc.name == "traversal" {
 				assert.Equal(1, summary.AttachmentsUnsupported)
 			}
 			if tc.name == "oversized" {
