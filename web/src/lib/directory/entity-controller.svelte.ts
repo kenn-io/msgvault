@@ -816,6 +816,7 @@ export class DirectoryEntityController {
           kind: 'conflict',
           status,
           message: failureMessage(response.error, status),
+          attempted: snapshot,
           ...(current === undefined ? {} : { current }),
         };
       }

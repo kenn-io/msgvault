@@ -39,7 +39,10 @@ export class WriteAttempt<C = never> {
       const result = await send(current);
       if (result.ok) { this.prepared = undefined; return true; }
       this.failed = true;
-      if (result.kind === 'conflict' && result.current) this.conflict = this.prepared = result.current;
+      if (result.kind === 'conflict') {
+        this.conflict = result.current;
+        this.prepared = result.current ?? result.attempted ?? this.prepared;
+      }
       this.details = result.kind === 'unknown' || result.kind === 'blocked' ? '' : result.message;
       return false;
     } finally {

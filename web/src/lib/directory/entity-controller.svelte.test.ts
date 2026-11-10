@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
+import { WriteAttempt } from './write-attempt.svelte';
 import type { Prepared } from './models';
 import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
@@ -920,24 +921,31 @@ describe('DirectoryEntityController', () => {
   });
 });
 
-it('reports no saved version when the delete conflict refresh fails', async () => {
+it('keeps the attempted version after a refused delete until the newer version is shown', async () => {
   let reads = 0;
   const deletedWith: (string | null)[] = [];
   const client = createAPIClient(async input => {
     const request = requestOf(input);
     if (request.method === 'DELETE') {
       deletedWith.push(request.headers.get('If-Match'));
+      if (request.headers.get('If-Match') === '"newer"') return new Response(null, { status: 204 });
       return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
     }
     if (++reads === 2) return Response.json({ message: 'Unavailable' }, { status: 503 });
     return Response.json(organizationProfile(reads), { headers: { ETag: reads === 1 ? '"original"' : '"newer"' } });
   });
   const controller = new DirectoryEntityController(client, 7);
+  const attempt = new WriteAttempt<Awaited<ReturnType<typeof controller.prepareOrganizationMutation>>>();
+  const remove = () => attempt.run(current => controller.deleteOrganization(21, current));
   try {
-    const result = await controller.deleteOrganization(21);
-    expect(result).toMatchObject({ ok: false, kind: 'conflict' });
-    expect(result).not.toHaveProperty('current');
+    expect(await remove()).toBe(false);
+    expect(attempt.conflict).toBeUndefined();
     expect(deletedWith).toEqual(['"original"']);
+    expect(await remove()).toBe(false);
+    expect(deletedWith).toEqual(['"original"', '"original"']);
+    expect(attempt.conflict?.etag).toBe('"newer"');
+    expect(await remove()).toBe(true);
+    expect(deletedWith).toEqual(['"original"', '"original"', '"newer"']);
   } finally { controller.destroy(); }
 });
 
