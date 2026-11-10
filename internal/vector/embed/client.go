@@ -7,8 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.kenn.io/kit/embedclient"
@@ -52,12 +52,16 @@ type Config struct {
 	// RejectRedirects prevents provider responses from replaying embedding input
 	// to another URL. BeforeRequest clients always reject redirects as well.
 	RejectRedirects bool
+	// Builtin identifies the locally discovered embedding server.
+	Builtin bool
 }
 
 // Client calls an OpenAI-compatible /v1/embeddings endpoint.
 type Client struct {
-	cfg  Config
-	http *http.Client
+	cfg        Config
+	http       *http.Client
+	mu         sync.Mutex
+	batchLimit int
 }
 
 // NewClient constructs a Client, applying defaults for Timeout and MaxRetries.
@@ -108,13 +112,19 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 	defer cleanupRetry()
 	ctx = retryCtx
 	httpClient.Transport = retryTransport
+	batchSize := len(inputs)
+	c.mu.Lock()
+	if c.batchLimit > 0 {
+		batchSize = min(batchSize, c.batchLimit)
+	}
+	c.mu.Unlock()
 	client, err := embedclient.New(embedclient.Options{
 		Model: embedconfig.Model{Name: c.cfg.Model, Dimensions: c.cfg.Dimension,
 			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone},
 		Roles:      embedconfig.Roles{DocumentPrefix: c.cfg.DocumentPrefix, QueryPrefix: c.cfg.QueryPrefix},
 		Deployment: embedconfig.Deployment{BaseURL: c.cfg.Endpoint, TrustPrivateNetwork: true},
 		// The workers already pack batches and preserve document boundaries.
-		Batch:     embedconfig.Batch{Items: math.MaxInt},
+		Batch:     embedconfig.Batch{Items: batchSize},
 		Transport: embedconfig.Transport{Timeout: c.cfg.Timeout},
 		APIKey:    c.cfg.APIKey, HTTP: &httpClient,
 		Retry: embedclient.Retry{
@@ -127,7 +137,19 @@ func (c *Client) embed(ctx context.Context, role embedconfig.Role, inputs []stri
 	if err != nil {
 		return nil, fmt.Errorf("embed: %w", err)
 	}
+	started := time.Now()
 	vectors, err := client.EmbedTexts(ctx, role, inputs)
+	if c.cfg.Builtin && batchSize > 1 {
+		transport, timeout := errors.AsType[*embedclient.TransportError](err)
+		// A yield can cancel Kit after it has already split a timed-out request.
+		if timeout && transport.Timeout() || errors.Is(err, context.DeadlineExceeded) || time.Since(started) >= c.cfg.Timeout {
+			c.mu.Lock()
+			if c.batchLimit == 0 || batchSize/2 < c.batchLimit {
+				c.batchLimit = batchSize / 2
+			}
+			c.mu.Unlock()
+		}
+	}
 	if err == nil {
 		if role == embedconfig.RoleDocument {
 			addEmbeddingPrefix(ctx, c.cfg.DocumentPrefix, len(inputs))
