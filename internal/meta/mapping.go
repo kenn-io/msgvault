@@ -233,6 +233,11 @@ func archiveObject(ctx context.Context, st *store.Store, sum *ImportSummary, o a
 			return errors.New("invalid comment creation time")
 		}
 		sent = sql.NullTime{Time: parsed, Valid: true}
+		// Graph reads give whole seconds; keep a finer time a webhook stored
+		// for the same second, so messages within a second stay in order.
+		if prior != nil && prior.SentAt.Valid && parsed.Nanosecond() == 0 && prior.SentAt.Time.Truncate(time.Second).Equal(parsed) {
+			sent = prior.SentAt
+		}
 	} else if prior != nil {
 		sent = prior.SentAt
 	}

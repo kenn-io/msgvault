@@ -170,8 +170,9 @@ func (b Inbox) persistMessage(ctx context.Context, st *store.Store, sourceID int
 	case customer.ID:
 		sender, fromName = customerID, customer.label()
 	}
-	if sender != 0 && fromName == "" {
+	if sender != 0 && fromName == "" && prior == nil {
 		// Webhook events carry IDs only; search by the name polling stored.
+		// An archived message keeps its own sender name instead.
 		names, err := st.ParticipantDisplayNamesContext(ctx, []int64{sender})
 		if err != nil {
 			return err
