@@ -37,7 +37,7 @@
 
 {#if setupOnly}
   <MenuItem textValue="Keep this profile updated" onselect={() => onSetUp?.()}>
-    <span class="copy tracking-setup-copy"><span>Keep this profile updated</span><small>Set up…</small></span>
+    <span class="menu-switch-copy"><span>Keep this profile updated</span><small>Set up…</small></span>
   </MenuItem>
 {:else}
   <MenuSwitchItem label="Keep this profile updated" checked={controller.tracking?.tracked ?? false}
@@ -45,10 +45,3 @@
     {error} onretry={retry} onchange={(checked) => void changeTracking(checked)} />
   {#if onSetUp}<MenuItem textValue="Set up people lookups…" onselect={onSetUp}>Set up people lookups…</MenuItem>{/if}
 {/if}
-
-<style>
-  /* The setup row matches the switch's two lines: Body over Meta, 8 above and below. */
-  :global(:root:root .kit-menu__item:has(.tracking-setup-copy)) { align-items: flex-start; min-height: var(--list-item-h-2); padding-block: var(--space-group); }
-  .copy { display: grid; white-space: normal; font-size: var(--type-body-size); line-height: var(--type-body-line); }
-  small { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-</style>

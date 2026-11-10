@@ -30,16 +30,16 @@
   if (error && onretry) onretry();
   else onchange(!checked);
 }}>
-  <span class="copy menu-switch-copy" {@attach semantics}><span>{label}</span>{#if secondary}<small>{secondary}</small>{/if}</span>
+  <span class="menu-switch-copy" {@attach semantics}><span>{label}</span>{#if secondary}<small>{secondary}</small>{/if}</span>
   {#snippet trailing()}<span class="switch" inert aria-hidden="true"><Toggle {checked} ariaLabel={label} disabled={busy || loading || !!error} /></span>{/snippet}
 </MenuItem>
 
 <style>
-  /* One line uses the menu row; two lines use 54 (Body over Meta, 8 above and below), with the switch on the first line. */
+  /* One line uses the menu row; two lines use 54 (Body over Meta, 8 above and below), with the switch on the first line. Global, so PersonTrackingControl's setup row matches. */
   :global(:root:root .kit-menu__item:has(.menu-switch-copy)) { align-items: center; gap: var(--space-group); min-height: var(--list-item-h); padding-block: 0; }
   :global(:root:root .kit-menu__item:has(.menu-switch-copy) .kit-menu__trailing) { display: flex; }
-  .copy { display: grid; white-space: normal; font-size: var(--type-body-size); line-height: var(--type-body-line); }
+  :global(.menu-switch-copy) { display: grid; white-space: normal; font-size: var(--type-body-size); line-height: var(--type-body-line); }
   :global(:root:root .kit-menu__item:has(.menu-switch-copy small)) { align-items: flex-start; min-height: var(--list-item-h-2); padding-block: var(--space-group); }
-  small { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  :global(.menu-switch-copy small) { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .switch { display: inline-flex; align-items: center; height: var(--type-body-line); pointer-events: none; }
 </style>

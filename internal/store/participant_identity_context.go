@@ -244,7 +244,7 @@ func participantAddresses(identities *ParticipantIdentityContext, observations [
 				replaced := false
 				for _, observation := range observations {
 					if observation.ParticipantID != member.ParticipantID || observation.ServiceSlug == nil || *observation.ServiceSlug != identifier.ServiceSlug ||
-						stringOrEmpty(observation.ScopeKind) != identifier.ScopeKind || stringOrEmpty(observation.ScopeValue) != identifier.ScopeValue ||
+						derefString(observation.ScopeKind) != identifier.ScopeKind || derefString(observation.ScopeValue) != identifier.ScopeValue ||
 						(observation.AddressKind != ContactAddressEmail && observation.AddressKind != ContactAddressPhone && observation.AddressKind != ContactAddressUsername) {
 						continue
 					}
@@ -316,11 +316,4 @@ func memberContactAddresses(member ParticipantIdentityMember) []ParticipantIdent
 		addresses = append(addresses, ParticipantIdentifierContext{ParticipantID: member.ParticipantID, Type: string(field.kind), Value: field.value, NormalizedValue: normalized, ServiceSlug: string(field.kind)})
 	}
 	return addresses
-}
-
-func stringOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
