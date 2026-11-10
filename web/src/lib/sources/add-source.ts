@@ -34,7 +34,7 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
       { id: 'host', label: 'Server', placeholder: 'imap.example.com' },
       { id: 'username', label: 'Username', placeholder: 'you@example.com' },
     ],
-    template: 'msgvault add-imap --host {host} --username {username}',
+    template: 'msgvault add-imap --host {host} --username={username}',
   },
   {
     id: 'contacts', name: 'Contacts', description: 'Google, Microsoft, or CardDAV address books',
@@ -46,8 +46,14 @@ function arg(value: string, shell: 'posix' | 'cmd'): string {
   return /^[A-Za-z0-9@._+:/-]+$/.test(value) ? value : shellQuote(value, shell);
 }
 
+export function validImapServer(value: string): boolean {
+  const host = value.trim();
+  const ipv6 = host.replace(/%[\w.~-]+(?=\]?$)/, '');
+  return !!host && !/^[-\s]|\s/.test(host) && (!host.includes(':') || (!host.startsWith('[') || host.endsWith(']')) && URL.canParse(`http://${host.startsWith('[') ? ipv6 : `[${ipv6}]`}`));
+}
+
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
-  if (kind.fields.some(field => !values[field.id]?.trim() || values[field.id]!.trim().startsWith('-'))) return undefined;
-  if (kind.id === 'imap' && /[:\s]/.test(values.host!.trim())) return undefined;
+  if (kind.fields.some(field => !values[field.id]?.trim() || (field.id !== 'username' && values[field.id]!.trim().startsWith('-')))) return undefined;
+  if (kind.id === 'imap' && !validImapServer(values.host!)) return undefined;
   return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(values[id]!.trim(), shell));
 }
