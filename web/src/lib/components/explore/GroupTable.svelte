@@ -76,8 +76,8 @@
   const timeGroup = $derived((dimension === 'month' || dimension === 'year') && rows.some((row) => row.total_items !== undefined));
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
-    ? `minmax(0,480px) 80px ${timeGroup ? 'minmax(96px,1fr) ' : ''}40px`
-    : `minmax(200px,240px) 88px 96px 128px ${timeGroup ? 'minmax(96px,1fr) ' : ''}40px`);
+    ? `minmax(0,1fr) 80px ${timeGroup ? '96px ' : ''}40px`
+    : 'minmax(200px,480px) 88px 96px 128px minmax(96px,1fr) 40px');
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -307,7 +307,7 @@
         <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Latest</span>
       {/if}
       {#if timeGroup}<span role="columnheader" class={[compact.current && 'kit-sr-only']}>Share</span>{/if}
-      <span role="columnheader" aria-label="Show items"></span>
+      <span role="columnheader" class="group-action" aria-label="Show items"></span>
     </div>
     <div class="group-body" role="rowgroup">
       {#if unavailable}
@@ -540,6 +540,7 @@
   .group-name { display: flex; align-items: center; gap: var(--space-2); }
   .group-name strong { overflow: hidden; text-overflow: ellipsis; }
   .group-name :global(.group-icon) { flex-shrink: 0; color: var(--artifact-ink); }
+  .group-header > .group-action, .group-row > .group-action { grid-column: -2; }
   .group-row > .group-action { padding: 0; }
   .share-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
   .share-fill { height: 100%; background: var(--accent-blue); }

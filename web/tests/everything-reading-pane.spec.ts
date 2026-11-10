@@ -577,3 +577,33 @@ test('a person inspector keeps grouped columns inside the right-side reader layo
   await expect(page.getByRole('region', { name: 'Group overview' })).toBeVisible();
   expect(await grid.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
+
+test('keeps group actions at the grid edge in wide and inspected views', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore/groups', route => {
+    const body = route.request().postDataJSON();
+    const label = body.grouping[0] === 'source' ? 'Example source' : 'Person Example';
+    return route.fulfill({ json: {
+      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
+      ...(body.group_key ? { overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 3 }], co_participants: [] } } : {}),
+      total_count: 1, cache_revision: 'cache-groups', search_provenance: {}
+    } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['source'] })))}`);
+  const sources = page.getByRole('grid', { name: 'Messages grouped by source' });
+  const sourceAction = sources.getByRole('row', { name: /Example source/ }).getByRole('button', { name: 'Show items in Example source' });
+  await expect(sourceAction).toBeVisible();
+  const sourceGrid = (await sources.boundingBox())!;
+  const sourceCell = (await sourceAction.locator('..').boundingBox())!;
+  expect.soft(sourceGrid.x + sourceGrid.width - sourceCell.x - sourceCell.width, 'wide Source action inset').toBeLessThanOrEqual(2);
+
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['participant'] })))}`);
+  const people = page.getByRole('grid', { name: 'Messages grouped by participant' });
+  await people.getByText('Person Example', { exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Group overview' })).toBeVisible();
+  const personAction = people.getByRole('row', { name: /Person Example/ }).getByRole('button', { name: 'Show items in Person Example' });
+  const personGrid = (await people.boundingBox())!;
+  const personCell = (await personAction.locator('..').boundingBox())!;
+  expect.soft(personGrid.x + personGrid.width - personCell.x - personCell.width, 'inspected Person action inset').toBeLessThanOrEqual(2);
+});
