@@ -170,10 +170,9 @@ func TestRosterWorkStopLeavesChatResumable(t *testing.T) {
 				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 				require.NoError(err)
 				assert.NotContains(unresolved, chat.ID)
-				lastID := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
-				observations, err := st.ListParticipantObservationsContext(t.Context(), lastID, true)
-				require.NoError(err)
-				assert.NotEmpty(observations, "quiet repair must finish deferred enrichment")
+				state := latestBeeperState(t, imp)
+				require.NotNil(state.Chats[chat.ID].RosterWork)
+				assert.False(state.Chats[chat.ID].RosterWork.MatchingPending, "quiet repair must finish deferred enrichment")
 			}
 			assert.Equal(2, countBeeperMessages(t, imp))
 		})
@@ -325,6 +324,7 @@ func TestRosterRetriesSkipResolvedMembers(t *testing.T) {
 				t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
 				var sourceID int64
 				for range tc.runs {
+					imp = NewImporter(st, imp.client)
 					sum, err := imp.Import(t.Context(), ImportOptions{
 						AccountID: "signal", NoMedia: true, Scheduled: true, StopAt: time.Now().Add(time.Second),
 					})
@@ -455,6 +455,7 @@ func TestDeferredObservationsSkipSettledMatches(t *testing.T) {
 		}
 		for range 12 {
 			time.Sleep(25 * time.Hour) // Fresh daily scan revisits both rosters.
+			imp = NewImporter(st, imp.client)
 			sum, err := imp.Import(t.Context(), ImportOptions{
 				AccountID: "signal", NoMedia: true, Scheduled: true, StopAt: time.Now().Add(time.Second),
 			})

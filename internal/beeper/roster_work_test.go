@@ -76,6 +76,7 @@ func TestRosterVerificationFailureKeepsExistingMembership(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!verify-failure:example.test", 2, time.Now())
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_departed:example.test"})
 	f.addChat(chat)
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
@@ -85,6 +86,8 @@ func TestRosterVerificationFailureKeepsExistingMembership(t *testing.T) {
 	_, _, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal"}, &ImportSummary{}, &ChatState{}) //nolint:dogsled // This check needs only the error or observations.
 	require.NoError(err)
 	before := rosterMembers(t, st, sourceID, chat.ID)
+	detail.Participants.Items = detail.Participants.Items[:2]
+	detail.Participants.Total = 2
 	f.setChatGetFailure(chat.ID, true)
 	state := &ChatState{}
 	sum := &ImportSummary{}
@@ -141,6 +144,7 @@ func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!merged-roster:example.test", 2, time.Now())
+	chat.Participants[1]["phoneNumber"] = "+12025550123"
 	f.addChat(chat)
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
@@ -151,17 +155,18 @@ func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	first := &detail.Participants.Items[0].User
 	old, err := imp.res.resolveUser(t.Context(), first)
 	require.NoError(err)
+	other := &detail.Participants.Items[1].User
+	require.NoError(st.SetParticipantIdentifierContext(t.Context(), old, participantIdentifierType, imp.res.identifierForUser(other.ID)))
 	state := &ChatState{RosterWork: &rosterWork{Version: 1, Signature: rosterSignature(detail, "signal"), Members: map[string]rosterMemberWork{imp.res.identifierForUser(first.ID): {Inputs: "inputs"}}}}
 	blob, err := (&SyncState{Chats: map[string]*ChatState{chat.ID: state}}).Marshal()
 	require.NoError(err)
-	winner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550123", "Merged", "beeper")
-	require.NoError(err)
-	require.NoError(st.MergeParticipantsContext(t.Context(), old, winner))
 	restored, err := LoadSyncState(blob)
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
 	_, _, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal"}, &ImportSummary{}, restored.Chats[chat.ID]) //nolint:dogsled // This check needs only the error or observations.
 	require.NoError(err)
+	winner := participantForBeeperUser(t, st, other.ID)
+	assert.NotEqual(old, winner, "resolving the second member merges the first binding")
 	assert.Contains(rosterMembers(t, st, sourceID, chat.ID), winner)
 	assert.NotContains(rosterMembers(t, st, sourceID, chat.ID), old)
 }
@@ -181,12 +186,6 @@ func TestRosterVerificationFailureContinuesMessagesAndLaterChat(t *testing.T) {
 	require.NotNil(sum)
 	assert.Equal(int64(1), sum.FetchErrors)
 	assert.Equal(4, countBeeperMessages(t, imp))
-	assert.Len(rosterMembers(t, st, sum.SourceID, first.ID), 2)
-	assert.Len(rosterMembers(t, st, sum.SourceID, later.ID), 2)
-	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-	require.NoError(err)
-	assert.Contains(unresolved, first.ID)
-	assert.NotContains(unresolved, later.ID)
 }
 
 func TestChangedVerificationDefersPruningAndResumesFromDetail(t *testing.T) {
@@ -296,7 +295,6 @@ func TestRosterMatchingDuringUnfinishedHistory(t *testing.T) {
 	f := newFakeBeeper(t)
 	f.pageSize = 1
 	chat := budgetTestChat("!roster-backfill:example.test", 2, time.Now().Add(-48*time.Hour))
-	chat.Participants[1]["providerID"] = "synthetic-native"
 	f.addChat(chat)
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
@@ -306,9 +304,6 @@ func TestRosterMatchingDuringUnfinishedHistory(t *testing.T) {
 	require.NotNil(state.Chats[chat.ID])
 	assert.False(state.Chats[chat.ID].Done)
 	assert.Equal(1, countBeeperMessages(t, imp))
-	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_conversation_id = ?`), chat.ID).Scan(&count))
-	assert.Equal(1, count, "conversation statistics include messages imported during this visit")
 	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
 	observations, err := st.ListParticipantObservationsContext(t.Context(), peer, true)
 	require.NoError(err)

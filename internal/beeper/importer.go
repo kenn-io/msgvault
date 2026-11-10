@@ -891,36 +891,28 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		sum.Stopped = true
 		return 0, false, nil
 	}
-	capture := func() error {
-		if observations == nil {
-			return nil
-		}
-		return imp.captureRosterObservations(ctx, sourceID, opts, observations, sum)
-	}
-	if observations != nil && observations.work.MatchingFirst {
-		observations.work.MatchingFirst = false
-		observationErr := capture()
-		if errors.Is(observationErr, errBeeperBudgetExpired) {
-			sum.Stopped = true
-			return 0, false, nil
-		}
-		if observationErr != nil {
-			return 0, false, observationErr
-		}
-	} else if observations != nil {
-		observations.work.MatchingFirst = true
-		defer func() {
+	if observations != nil {
+		capture := func() {
 			if err != nil || sum.Stopped {
 				return
 			}
-			observationErr := capture()
-			if errors.Is(observationErr, errBeeperBudgetExpired) {
+			err = imp.captureRosterObservations(ctx, sourceID, opts, observations, sum)
+			if errors.Is(err, errBeeperBudgetExpired) {
 				sum.Stopped = true
 				chatComplete = false
-				return
+				err = nil
 			}
-			err = errors.Join(err, observationErr)
-		}()
+		}
+		if observations.work.MatchingFirst {
+			observations.work.MatchingFirst = false
+			capture()
+			if err != nil || sum.Stopped {
+				return 0, false, err
+			}
+		} else {
+			observations.work.MatchingFirst = true
+			defer capture()
+		}
 	}
 	if membershipComplete {
 		cs.RosterRetryAfter = ""

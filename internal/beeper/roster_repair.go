@@ -165,10 +165,6 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	if observations != nil {
 		err = imp.captureRosterObservations(ctx, sourceID, opts, observations, repairSummary)
 	}
-	sum.ObservationsRecorded += repairSummary.ObservationsRecorded
-	sum.IdentityAutoResolved += repairSummary.IdentityAutoResolved
-	sum.IdentityCandidates += repairSummary.IdentityCandidates
-	sum.IdentityConflicts += repairSummary.IdentityConflicts
 	if errors.Is(err, errBeeperBudgetExpired) {
 		return true, nil
 	}

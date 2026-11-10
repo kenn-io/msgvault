@@ -6059,13 +6059,8 @@ func (s *Store) ApplyConversationParticipantBatchContext(ctx context.Context, co
 		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
 			return err
 		}
-		if s.dialect.DriverName() != postgresDriverName {
-			if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-				return fmt.Errorf("lock conversation membership journal: %w", err)
-			}
-		}
-		var before int64
-		if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&before); err != nil {
+		before, err := beginConversationParticipantJournal(q, s.dialect)
+		if err != nil {
 			return err
 		}
 		for _, id := range removals {
@@ -6106,17 +6101,9 @@ func replaceConversationParticipantsTx(
 	participants []ConversationParticipantRef,
 ) error {
 	q := boundQuerier{ctx: ctx, q: tx}
-	if dialect.DriverName() != postgresDriverName {
-		// Acquire SQLite's writer slot before taking the journal snapshot. A
-		// deferred transaction that reads first cannot upgrade its stale WAL
-		// snapshot if another writer commits before the membership DELETE.
-		if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-			return fmt.Errorf("lock conversation membership journal: %w", err)
-		}
-	}
-	var journalBefore int64
-	if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&journalBefore); err != nil {
-		return fmt.Errorf("read embedding change clock before membership snapshot: %w", err)
+	journalBefore, err := beginConversationParticipantJournal(q, dialect)
+	if err != nil {
+		return err
 	}
 	desired := make(map[int64]string, len(participants))
 	for _, participant := range participants {
@@ -6158,17 +6145,28 @@ func replaceConversationParticipantsTx(
 		WHERE conversation_id = ? AND participant_id IN (%s)`); err != nil {
 		return err
 	}
-	for _, participantID := range ids {
-		if _, err := q.Exec(fmt.Sprintf(`
-			INSERT INTO conversation_participants (conversation_id, participant_id, role, joined_at)
-			VALUES (?, ?, ?, %s)
-			ON CONFLICT (conversation_id, participant_id) DO UPDATE SET role = excluded.role
-			WHERE conversation_participants.role IS DISTINCT FROM excluded.role`, dialect.Now()),
-			conversationID, participantID, desired[participantID]); err != nil {
-			return err
-		}
+	upserts := make([]ConversationParticipantRef, 0, len(ids))
+	for _, id := range ids {
+		upserts = append(upserts, ConversationParticipantRef{ParticipantID: id, Role: desired[id]})
+	}
+	if err := mergeConversationParticipantsWith(q, dialect, conversationID, upserts); err != nil {
+		return err
 	}
 	return consolidateConversationParticipantJournal(q, dialect, conversationID, journalBefore)
+}
+
+func beginConversationParticipantJournal(q querier, dialect Dialect) (int64, error) {
+	// Acquire SQLite's writer slot before reading the journal snapshot.
+	if dialect.DriverName() != postgresDriverName {
+		if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+			return 0, fmt.Errorf("lock conversation membership journal: %w", err)
+		}
+	}
+	var before int64
+	if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&before); err != nil {
+		return 0, fmt.Errorf("read embedding change clock before membership snapshot: %w", err)
+	}
+	return before, nil
 }
 
 func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conversationID, after int64) error {
