@@ -35,8 +35,8 @@ export function formatDay(day: string): string {
 /** Only the saved directory projection supplies cadence; stale dates are provisional. */
 export function cadenceLabel(cadence: NonNullable<RelationshipRow['cadence']>): string {
   const frequency = cadence.list ? `List ${cadence.list}` : cadence.frequency_days ? `Every ${cadence.frequency_days} ${cadence.frequency_days === 1 ? 'day' : 'days'}` : 'No list';
-  if (cadence.stale) return `${frequency} · Due date updating`;
   if (!cadence.frequency_days) return frequency;
+  if (cadence.stale) return `${frequency} · Due date updating`;
   if (!cadence.due_at) return `${frequency} · Due date unknown`;
   const date = formatDay(cadence.due_at.slice(0, 10));
   return `${frequency} · ${cadence.status === 'overdue' ? `Overdue · ${date}` : `Due ${date}`}`;

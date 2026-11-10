@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-10"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -200,6 +200,8 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 `person list` continues to show the full unpaginated profile collection. Its `--json` output remains an array of profiles.
 
 ### Keep in touch with contact lists
+
+Use the [Web UI’s Keep in touch filter](../web-ui.md#people-and-domains) to find people to contact.
 
 A contact list is the person's `contact_frequency` attribute, an interval in days. Lists A, B, C and D are 21, 60, 180 and 365 days. Any other interval stays a custom list. Set a list with `person attributes set`; `--list` writes the matching interval through the same audited attribute writer:
 

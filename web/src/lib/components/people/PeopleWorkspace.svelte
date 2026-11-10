@@ -1,5 +1,7 @@
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE, Button, NumberInput, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
+  import { RelationshipsHTTPRequestCadence as Cadence } from '../../api/generated/models/relationshipsHTTPRequestCadence';
+  import { DUE_WITHIN_MAX } from '../../explore/models';
   import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
@@ -30,7 +32,7 @@
   const cadence = $derived(urlState.relationshipCadence);
   let dueDraft = $state<number | null>(null);
   $effect(() => { dueDraft = urlState.relationshipDueWithinDays; });
-  const validDue = (value: number | null): boolean => value === null || (Number.isInteger(value) && value >= 0 && value <= 3660);
+  const validDue = (value: number | null): boolean => value === null || (Number.isInteger(value) && value >= 0 && value <= DUE_WITHIN_MAX);
   const invalidDue = $derived(cadence === 'due' && !validDue(dueDraft));
   function clearCadence(): void { onNavigate({ relationshipCadence: '', relationshipDueWithinDays: null }); }
   function changeDue(value: number | null): void {
@@ -38,8 +40,8 @@
     if (validDue(value)) onDraftNavigation({ relationshipDueWithinDays: value });
   }
   const cadenceOptions = [
-    { value: 'overdue', label: 'Overdue' }, { value: 'due', label: 'Due' },
-    { value: 'no_list', label: 'No list' }, { value: 'unknown', label: 'Due date unknown' },
+    { value: Cadence.overdue, label: 'Overdue' }, { value: Cadence.due, label: 'Due' },
+    { value: Cadence.no_list, label: 'No list' }, { value: Cadence.unknown, label: 'Due date unknown' },
   ] as const;
   const selection = new ExploreSelectionState();
   let root = $state<HTMLElement>();
@@ -241,9 +243,9 @@
 {#snippet cadenceControls()}
   {#if cadence === 'due'}
     <div class="cadence-controls">
-      <label>Due within days<span class="due-value"><NumberInput block ariaLabel="Due within days" value={dueDraft} min={0} max={3660} step={1} invalid={invalidDue} oninput={changeDue} /></span></label>
+      <label>Due within days<span class="due-value"><NumberInput block ariaLabel="Due within days" value={dueDraft} min={0} max={DUE_WITHIN_MAX} step={1} invalid={invalidDue} oninput={changeDue} /></span></label>
       <span>Includes overdue. Uses UTC days; empty means today (0).</span>
-      {#if invalidDue}<span class="cadence-error" role="alert">Enter a whole number from 0 to 3660 to show results.</span>{/if}
+      {#if invalidDue}<span class="cadence-error" role="alert">Enter a whole number from 0 to {DUE_WITHIN_MAX} to show results.</span>{/if}
     </div>
   {/if}
   {#if cadenceBlocked}

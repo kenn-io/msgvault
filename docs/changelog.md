@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-10"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -9,6 +9,8 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 ### API schema 3.44.0
+
+- The Web UI shows saved contacts’ cadence in People sorted by Closest, with Keep in touch filters to find people due for contact.
 
 - Ranked relationships carry the saved person ID, contact-list cadence, and last-contact channel. `POST /api/v1/relationships` and the new MCP `list_relationships` tool filter the ranking by `cadence` and `due_within_days`.
 

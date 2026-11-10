@@ -123,6 +123,8 @@ export interface ExploreScrollAnchor {
   offset: number;
 }
 
+export const DUE_WITHIN_MAX = 3660;
+
 /** Browser-restorable exploration context. Bulk selection is session-only. */
 export interface ExploreURLState {
   schemaVersion: number;
