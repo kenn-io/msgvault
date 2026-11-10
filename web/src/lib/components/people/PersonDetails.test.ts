@@ -138,23 +138,28 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 });
 
 
-it.each([
-  { name: 'attributes failure', options: { attributesFailure: true } },
-  { name: 'profile and details', options: { detailsFailure: true, personFailure: true }, message: "Couldn't load these details.", details: 'Saved profile unavailable Structured profile unavailable Contact state unavailable', retry: true },
-  { name: 'deleted person', options: { personDeleted: true }, message: "This person isn't in your archive anymore.", details: undefined, retry: false }
-])('deduplicates the $name alert and checks any page-owned recovery', async ({ options, message, details, retry }) => {
+it('shows one alert when attribute values fail to load', async () => {
+  await renderDetails([], { attributesFailure: true });
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+});
+
+it('shows profile failure details and recovers through Retry', async () => {
+  const options = { detailsFailure: true, personFailure: true };
   await renderDetails([], options);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
-  if (message) {
-    const notice = within(screen.getByRole('alert'));
-    expect(notice.getByText(message)).toBeDefined();
-    expect(notice.queryAllByRole('button', { name: 'Retry' })).toHaveLength(retry ? 1 : 0);
-    if (details) {
-      await fireEvent.click(notice.getByText('Details'));
-      expect(notice.getByText(details)).toBeDefined();
-      options.detailsFailure = false; options.personFailure = false;
-      await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
-      await waitFor(() => expect(screen.queryByText(message)).toBeNull());
-    }
-  }
+  const notice = within(screen.getByRole('alert'));
+  expect(notice.getByText("Couldn't load these details.")).toBeDefined();
+  await fireEvent.click(notice.getByText('Details'));
+  expect(notice.getByText('Saved profile unavailable Structured profile unavailable Contact state unavailable')).toBeDefined();
+  options.detailsFailure = false; options.personFailure = false;
+  await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
+});
+
+it('explains that a deleted person is gone without offering Retry', async () => {
+  await renderDetails([], { personDeleted: true });
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  const notice = within(screen.getByRole('alert'));
+  expect(notice.getByText("This person isn't in your archive anymore.")).toBeDefined();
+  expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
 });

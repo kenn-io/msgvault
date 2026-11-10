@@ -223,42 +223,35 @@ describe('PersonNetwork', () => {
     expect(person.closest('.detail-row')?.textContent?.trim()).toBe(expected);
   });
 
-  it.each([
-    {
-      name: 'shows load failure details and retries the failed read',
-      run: async () => {
-        let attempts = 0;
-        const client = networkClient(() => ++attempts === 1
-          ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 })
-          : Response.json(connected(1)));
-        const controller = new DirectoryEntityController(client, 7);
-        const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-        try {
-          expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
-          expect(view.container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
-          await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-          expect(await screen.findByText('Curated Peer')).toBeDefined();
-        } finally { view.unmount(); controller.destroy(); }
-      }
-    },
-    {
-      name: 'marks the next depth busy until its rows arrive',
-      run: async () => {
-        const depthThreeLoad = deferredResponse();
-        const client = networkClient(depth => depth === 3 ? depthThreeLoad.promise : Response.json(connected(depth)));
-        const controller = new DirectoryEntityController(client, 7);
-        const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-        try {
-          await screen.findByText('Curated Peer');
-          await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-          await screen.findByRole('button', { name: 'Second Hop Person' });
-          await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
-          await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
-          depthThreeLoad.resolve(Response.json(depthThree()));
-          expect(await screen.findByRole('button', { name: 'Depth Three Person' })).toBeDefined();
-        } finally { view.unmount(); controller.destroy(); }
-      }
-    },
-  ])('$name', async ({ run }) => run());
+  it('shows load failure details and retries the failed read', async () => {
+    let attempts = 0;
+    const client = networkClient(() => ++attempts === 1
+      ? Response.json({ message: 'Synthetic network unavailable.' }, { status: 503 })
+      : Response.json(connected(1)));
+    const controller = new DirectoryEntityController(client, 7);
+    const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    try {
+      expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
+      expect(view.container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
+      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(await screen.findByText('Curated Peer')).toBeDefined();
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
+  it('marks the next depth busy until its rows arrive', async () => {
+    const depthThreeLoad = deferredResponse();
+    const client = networkClient(depth => depth === 3 ? depthThreeLoad.promise : Response.json(connected(depth)));
+    const controller = new DirectoryEntityController(client, 7);
+    const view = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    try {
+      await screen.findByText('Curated Peer');
+      await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
+      await screen.findByRole('button', { name: 'Second Hop Person' });
+      await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Network at 3 steps' }).getAttribute('aria-busy')).toBe('true'));
+      depthThreeLoad.resolve(Response.json(depthThree()));
+      expect(await screen.findByRole('button', { name: 'Depth Three Person' })).toBeDefined();
+    } finally { view.unmount(); controller.destroy(); }
+  });
 
 });

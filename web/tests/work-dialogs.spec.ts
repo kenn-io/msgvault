@@ -173,15 +173,6 @@ test('an organization that fails to load shows its error inside the dialog paddi
   expect(gaps).toEqual([0, 0]);
 });
 
-test('Settings People search finds Work', async ({ page }) => {
-  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await selectWorkspace(page, 'Settings');
-  await page.getByRole('main', { name: 'Settings' }).getByRole('navigation').getByRole('button', { name: 'People', exact: true }).click();
-  const search = page.getByRole('searchbox', { name: 'Search fields' });
-  await search.fill('Work');
-  await expect(page.getByRole('region', { name: 'Fields', exact: true }).getByRole('listitem').filter({ hasText: /^Work/ })).toBeVisible();
-});
 
 for (const width of [1440, 390]) {
   test(`End job conflict stays contained at ${width}px`, async ({ page }, testInfo) => {
