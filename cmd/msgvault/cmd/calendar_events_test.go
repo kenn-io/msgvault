@@ -5,8 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +46,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 		want, wantErr, wantWarning string
 		err                        error
 	}{
-		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
+		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Ref: "evt:377@20270302T170000Z", Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Ref: "evt:412", Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}, {MessageID: 413, Ref: "evt:413@20270304", Subject: "Cancelled", Status: "cancelled", AllDay: true, StartDate: "2027-03-04", EndDate: "2027-03-05"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
 		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
 		{name: "json", args: []string{"--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"message_id":378`},
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
@@ -103,7 +105,10 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Contains(out.String(), "2027-03-03")
 				assertions.Contains(out.String(), "2027-03-04")
 				assertions.Contains(out.String(), "ID")
-				assertions.Regexp(`\s378\s+Standup`, out.String())
+				assertions.Contains(out.String(), "REF")
+				assertions.Regexp(`\s378\s+evt:377@20270302T170000Z\s+Standup`, out.String())
+				assertions.Contains(out.String(), "evt:412")
+				assertions.Contains(out.String(), "evt:413@20270304")
 			}
 			if tc.name == "json" {
 				var page store.CalendarOccurrencePage
@@ -308,4 +313,53 @@ func TestCalendarEventsSkippedDateWindow(t *testing.T) {
 			assertions.Empty(page.Unexpandable)
 		})
 	}
+}
+
+func TestCalendarEventsTableMeetingHandoff(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.test")
+	require.NoError(t, err)
+	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
+	require.NoError(t, err)
+	persist := func(source int64, key, kind, conv, format, raw string) int64 {
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: kind}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: conv}, RawMIME: []byte(raw), RawFormat: format})
+		require.NoError(t, err)
+		return id
+	}
+	series := persist(calendar.ID, "series", "calendar_event", "calendar", "gcal_json", `{"id":"series","iCalUID":"uid@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	note := persist(notes.ID, "note", "meeting_transcript", "meeting", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.test","startsAt":"2027-03-21T10:00:00Z"}}`)
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}
+	logger := slog.New(slog.DiscardHandler)
+	daemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st, config: cfg, logger: logger}, nil, logger).Router())
+	t.Cleanup(daemon.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: daemon.Client()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return client, func() {}, nil })
+	var table bytes.Buffer
+	cmd.SetOut(&table)
+	cmd.SetArgs([]string{"--from", "2027-03-14T00:00:00Z", "--to", "2027-03-22T00:00:00Z"})
+	require.NoError(t, cmd.Execute())
+	want := fmt.Sprintf("evt:%d@20270321T100000Z", series)
+	var ref string
+	for _, word := range strings.Fields(table.String()) {
+		if word == want {
+			ref = word
+		}
+	}
+	require.NotEmpty(t, ref, table.String())
+	bare := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
+	bare.SetArgs([]string{fmt.Sprintf("evt:%d", series)})
+	require.ErrorContains(t, bare.Execute(), "copy the full occurrence reference from calendar events")
+	links := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
+	var out bytes.Buffer
+	links.SetOut(&out)
+	links.SetArgs([]string{ref, "--json"})
+	require.NoError(t, links.Execute())
+	var record store.MeetingRecord
+	require.NoError(t, json.Unmarshal(out.Bytes(), &record))
+	require.Len(t, record.Links, 1)
+	assert.Equal(t, want, record.Links[0].Ref)
+	assert.Equal(t, "2027-03-21T10:00:00Z", record.Links[0].Start.UTC().Format(time.RFC3339))
+	assert.Equal(t, []int64{note}, record.MessageIDs)
 }

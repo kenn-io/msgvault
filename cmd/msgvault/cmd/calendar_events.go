@@ -105,7 +105,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			}
 		} else {
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "START\tEND (EXCL)\tSTATUS\tID\tTITLE"); err != nil {
+			if _, err := fmt.Fprintln(writer, "START\tEND (EXCL)\tSTATUS\tID\tREF\tTITLE"); err != nil {
 				return fmt.Errorf("write calendar events: %w", err)
 			}
 			for _, o := range page.Occurrences {
@@ -113,7 +113,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				if o.AllDay {
 					start, end = o.StartDate, o.EndDate
 				}
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\n", start, end, calendarOccurrenceStatus(o), o.MessageID, normalizeSearchTableText(o.Subject)); err != nil {
+				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n", start, end, calendarOccurrenceStatus(o), o.MessageID, o.Ref, normalizeSearchTableText(o.Subject)); err != nil {
 					return fmt.Errorf("write calendar events: %w", err)
 				}
 			}

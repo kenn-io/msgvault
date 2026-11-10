@@ -52,15 +52,15 @@ aggregates remain email-only unless you choose another message type.
 
 Use `msgvault meetings links <note-id>` to see the calendar copies and notes
 that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
-from `msgvault calendar events --json`. The API and MCP expose the same record.
+from the `REF` column of `msgvault calendar events`, for example
+`msgvault meetings links evt:23@20270321T100000Z`. The API and MCP expose the same record.
 Twenty notes use their iCalendar UID and scheduled time. Granola notes use the
 Google event ID only when their owner matches the archived calendar's mailbox.
 Twenty notes with the same UID and time and Granola notes with the same
 instance-suffixed Google ID can link before a calendar is imported. A bare
 Google series ID cannot identify one week, so those notes remain separate.
 A calendar single or exception can prove that a bare ID names one event,
-including after a reschedule. Circleback, Notion, Muesli, and generic notes
-supply no link evidence.
+including after a reschedule. Other note formats remain separate unless they supply supported evidence.
 
 Records show whether a calendar copy was cancelled or deleted at its source.
 When a recurrence cannot be expanded, the record keeps the copies it found and

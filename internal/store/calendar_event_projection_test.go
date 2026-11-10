@@ -209,9 +209,11 @@ func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, id := calendarFixture(t, st, "uid-upgrade", calendarRaw)
+	data, id := calendarFixture(t, st, "uid-upgrade", calendarRaw)
+	_, exception := calendarFixture(t, st, "uid-upgrade-exception", `{"id":"exception","recurringEventId":"event-example","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
 	for _, query := range []string{
 		`DROP INDEX IF EXISTS idx_calendar_events_ical_uid`,
+		`DROP INDEX IF EXISTS idx_calendar_events_series_provider_id`,
 		`ALTER TABLE calendar_events DROP COLUMN ical_uid`,
 		`UPDATE calendar_events SET projection_version = 2`,
 		`UPDATE applied_migrations SET version = 2 WHERE name = 'calendar_event_projection_v1'`,
@@ -228,6 +230,14 @@ func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
 	rows := calendarRows(t, reopened, id)
 	require.Len(rows, 1)
 	assert.Equal(t, "event-uid@example.com", rows[0].ICalUID)
+	budget := 100
+	related, err := reopened.meetingRelatedEventRows(t.Context(), data.Message.SourceID, "event-example", time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), &budget)
+	require.NoError(err)
+	var ids []int64
+	for _, row := range related {
+		ids = append(ids, row.MessageID)
+	}
+	assert.ElementsMatch(t, []int64{id, exception}, ids)
 }
 
 func TestCalendarEventProjectionUpgradeRebuildsLeapYearEnd(t *testing.T) {
