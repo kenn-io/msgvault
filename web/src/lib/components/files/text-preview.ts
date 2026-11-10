@@ -9,7 +9,9 @@ export function decodeText(bytes: Uint8Array, contentType = '', truncated = fals
   return decoder.decode(bytes, { stream: truncated });
 }
 
-export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; hasErrors: boolean }> {
+const MAX_PREVIEW_CELLS = 20_000;
+
+export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; cellLimit: boolean; columnsTruncated: boolean; hasErrors: boolean }> {
   const { default: Papa } = await import('papaparse');
   const linebreak = text.endsWith('\r') ? Papa.parse(text + '\n', { delimiter, preview: maxRows + 2, skipEmptyLines: true }).meta.linebreak : '';
   const prefix = text.endsWith('\r') && linebreak === '\n' ? text.slice(0, -1) + '\n' : text.endsWith('\r') && linebreak === '\r\n' ? text + '\n' : text;
@@ -20,9 +22,16 @@ export async function parseDelimited(text: string, delimiter = '', maxRows = 200
   if (inputTruncated && !result.meta.truncated && (!prefix.endsWith(result.meta.linebreak) || result.errors.some((error) => error.code === 'MissingQuotes'))) result.data.pop();
   const visible = result.data.slice(0, maxRows + 1);
   const columns = Math.max(0, ...visible.map((row) => row.length));
-  const header = Array.from({ length: columns }, (_, index) => visible[0]?.[index] ?? '');
+  const header = Array.from({ length: Math.min(columns, MAX_PREVIEW_CELLS) }, (_, index) => visible[0]?.[index] ?? '');
+  const rows: string[][] = [];
+  let cells = header.length;
+  for (const row of visible.slice(1)) {
+    if (cells + row.length > MAX_PREVIEW_CELLS) break;
+    rows.push(row);
+    cells += row.length;
+  }
   return {
-    header, rows: visible.slice(1),
+    header, rows, cellLimit: rows.length < visible.length - 1, columnsTruncated: columns > header.length,
     truncated: result.data.length > maxRows + 1 || result.meta.truncated,
     hasErrors,
   };

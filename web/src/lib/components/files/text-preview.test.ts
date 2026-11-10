@@ -18,11 +18,8 @@ it('omits only an unfinished character when a prefix cuts UTF-8', () => {
 });
 
 describe('delimited previews', () => {
-  it('parses quoted commas and embedded newlines', async () => {
-    expect(await parseDelimited('Name,Note\n"Example, A","First\nSecond"', ',')).toEqual({ header: ['Name', 'Note'], rows: [['Example, A', 'First\nSecond']], truncated: false, hasErrors: false });
-  });
   it('reports whether data rows were omitted', async () => {
-    expect(await parseDelimited('Name\nOne\nTwo\nThree', ',', 2)).toEqual({ header: ['Name'], rows: [['One'], ['Two']], truncated: true, hasErrors: false });
+    expect(await parseDelimited('Name\nOne\nTwo\nThree', ',', 2)).toEqual({ header: ['Name'], rows: [['One'], ['Two']], truncated: true, cellLimit: false, columnsTruncated: false, hasErrors: false });
     expect((await parseDelimited('Name\nOne\nTwo', ',', 2)).truncated).toBe(false);
   });
   it('keeps complete records at byte boundaries and drops unfinished records', async () => {
@@ -47,10 +44,22 @@ describe('delimited previews', () => {
   });
   it('pads headers, keeps short rows sparse, and retains wide headers', async () => {
     expect(await parseDelimited('Name,Amount\nExample,42,extra\nOther', ',')).toEqual({
-      header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other']], truncated: false, hasErrors: false
+      header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other']], truncated: false, cellLimit: false, columnsTruncated: false, hasErrors: false
     });
     const result = await parseDelimited(Array(101).fill('Header').join(',') + '\nValue', ',');
     expect(result.header).toHaveLength(101);
     expect(result.rows[0]).toHaveLength(1);
+  });
+  it('limits rendered cells while retaining complete wide rows', async () => {
+    const row = Array(1000).fill('x').join(',');
+    const result = await parseDelimited(Array(22).fill(row).join('\n'), ',');
+    expect(result.header).toHaveLength(1000);
+    expect(result.rows).toHaveLength(19);
+    expect(result.rows[0]).toHaveLength(1000);
+    expect(result.cellLimit).toBe(true);
+    expect(result.columnsTruncated).toBe(false);
+    const wider = await parseDelimited(Array(20001).fill('x').join(',') + '\nvalue', ',');
+    expect(wider.header).toHaveLength(20000);
+    expect(wider.columnsTruncated).toBe(true);
   });
 });

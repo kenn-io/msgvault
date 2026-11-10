@@ -479,3 +479,13 @@ it('renders short records without expanding them to the header width', async () 
   await screen.findAllByRole('columnheader');
   expect(screen.getAllByRole('cell')).toHaveLength(10);
 });
+
+it('reports when the cell limit omits rows', async () => {
+  const target = file({ filename: 'wide.csv', mime_type: 'text/csv' });
+  const row = Array(1000).fill('x').join(',');
+  const content = new TextEncoder().encode(Array(202).fill(row).join('\n'));
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, content)), file: target });
+  expect(await screen.findByText('Preview is limited to 20,000 cells; showing 19 rows.', {}, { timeout: 15000 })).toBeDefined();
+  expect(screen.getByText('Preview is limited to 200 rows.')).toBeDefined();
+  expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(false);
+}, 20000);
