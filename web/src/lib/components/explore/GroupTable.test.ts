@@ -256,22 +256,10 @@ describe('GroupTable', () => {
     expect(grid.getAttribute('aria-activedescendant')).toContain('month-3A150');
   });
 
-  it('removes the drill affordance when drilling is disabled', async () => {
-    const onDrill = vi.fn();
-    const view = render(GroupTable, { rows, dimension: 'source', onDrill });
-    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
-    grid.focus();
-    await view.rerender({ rows, dimension: 'source', drillable: false, onDrill });
-    expect(screen.queryAllByRole('button', { name: /Show items in/ })).toHaveLength(0);
-    await fireEvent.keyDown(grid, { key: 'Enter' });
-    await fireEvent.dblClick(screen.getAllByRole('row')[1]!);
-    expect(onDrill).not.toHaveBeenCalled();
-  });
-
   it('only drills rows allowed by the caller', async () => {
     const onDrill = vi.fn();
     const onInspect = vi.fn();
-    render(GroupTable, { rows, dimension: 'source', onDrill, onInspect, canDrill: (row: typeof rows[number]) => row.key !== '7' });
+    const view = render(GroupTable, { rows, dimension: 'source', onDrill, onInspect, canDrill: (row: typeof rows[number]) => row.key !== '7' });
     const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
     const first = screen.getByRole('row', { name: /Example source/ });
 
@@ -283,6 +271,12 @@ describe('GroupTable', () => {
     expect(onDrill).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Show items in Second source' }));
     expect(onDrill).toHaveBeenCalledWith(rows[1]);
+    onDrill.mockClear();
+    await view.rerender({ rows, dimension: 'source', drillable: false, onDrill, onInspect });
+    expect(screen.queryAllByRole('button', { name: /Show items in/ })).toHaveLength(0);
+    await fireEvent.keyDown(grid, { key: 'Enter' });
+    await fireEvent.dblClick(first);
+    expect(onDrill).not.toHaveBeenCalled();
   });
 
   it('opens aggregate inspection from a focused pointer row without drilling', async () => {
@@ -340,12 +334,9 @@ it('updates a source name when its type arrives after the rows', async () => {
  await view.rerender({ rows: [{ key: '7', label: 'A person', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }], dimension: 'participant', sourceTypes, onDrill: vi.fn() });
  expect(screen.getByText('A person')).toBeDefined();
  expect(lookup).not.toHaveBeenCalled();
-});
-
-it('drills a repeated source by its distinct name', async () => {
+ const repeatedRows = ['workspace-a', 'workspace-b'].map((label, index) => ({ key: String(index + 1), label, count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }));
  const onDrill = vi.fn();
- const rows = ['workspace-a', 'workspace-b'].map((label, index) => ({ key: String(index + 1), label, count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }));
- render(GroupTable, { rows, dimension: 'source', sourceTypes: new Map([['1', 'mbox'], ['2', 'mbox']]), onDrill });
+ await view.rerender({ rows: repeatedRows, dimension: 'source', sourceTypes: new Map([['1', 'mbox'], ['2', 'mbox']]), onDrill });
  await fireEvent.click(screen.getByRole('button', { name: 'Show items in Mbox import · workspace-b' }));
- expect(onDrill).toHaveBeenCalledWith(rows[1]);
+ expect(onDrill).toHaveBeenCalledWith(repeatedRows[1]);
 });

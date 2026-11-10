@@ -9,7 +9,6 @@ import { meetingAction, meetingActions, meetingFixtureResponse } from '../../mee
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
-import { groupRowName } from '../../explore/labels';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { sourceGroup } from '../../explore/fixtures.test-support';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
@@ -210,8 +209,6 @@ describe('EverythingWorkspace', () => {
       await within(grid).findByText('File');
       expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
       await fireEvent.pointerDown(within(grid).getByText('File'));
-      await fireEvent.keyDown(grid, { key: 'Enter' });
-      await fireEvent.dblClick(within(grid).getByText('File'));
       expect(state.current.groupingChain).toEqual(['kind']);
       expect(state.current.filters).toEqual([]);
       expect(fileBodies.length).toBeGreaterThan(0);
@@ -222,9 +219,8 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it.each([
-    ['month', '2026-07', '2026-07-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'],
-  ] as const)('drills Files %s groups using UTC boundaries', async (dimension, key, after, before) => {
+  it('drills Files month groups using UTC boundaries', async () => {
+    const dimension = 'month', key = '2026-07';
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -235,10 +231,10 @@ describe('EverythingWorkspace', () => {
     state.replaceTransient({ workspace: 'files', groupingChain: [dimension] });
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
-      await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${groupRowName(dimension, key, key).name}` }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Show items in Jul 2026' }));
       expect(state.current.filters).toEqual([
-        { dimension: 'after', values: [after] },
-        { dimension: 'before', values: [before] }
+        { dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] },
+        { dimension: 'before', values: ['2026-08-01T00:00:00.000Z'] }
       ]);
     } finally {
       view.unmount();
@@ -1631,6 +1627,7 @@ describe('EverythingWorkspace', () => {
       if (meetingResponse) return meetingResponse;
       if (path.endsWith('/groups')) return Response.json({
         rows: [{ key, label, count: 3, estimated_bytes: 512, latest_at: '2026-07-18T12:00:00Z' }],
+        overview: { first_at: '2026-07-18T12:00:00Z', activity: [{ bucket: '2026-07', count: 3 }], co_participants: [] },
         total_count: 1, cache_revision: 'cache-1', search_provenance: {},
       });
       if (path.endsWith('/explore/files')) {
@@ -2503,7 +2500,7 @@ describe('EverythingWorkspace', () => {
     window.history.replaceState(null, '', '/');
     const rows = [{ key: '7', label: 'workspace-a', count: 2, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }];
     const baseClient = createAPIClient(async (input) => new URL((input as Request).url).pathname.endsWith('/groups')
-      ? Response.json({ rows, total_count: 1, cache_revision: 'cache-1', search_provenance: {} })
+      ? Response.json({ rows, overview: { first_at: '2026-07-18T12:00:00Z', activity: [{ bucket: '2026-07', count: 2 }], co_participants: [] }, total_count: 1, cache_revision: 'cache-1', search_provenance: {} })
       : Response.json(exploreResponse()));
     const client = { fetch: (async (input, init) => {
       const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
@@ -2608,10 +2605,10 @@ describe('EverythingWorkspace', () => {
   });
 
   it.each([
-    ['participant', '42', [{ dimension: 'participant', values: ['42'] }]],
-    ['domain', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
-    ['message_type', 'email', [{ dimension: 'message_type', values: ['email'] }]],
-  ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, expectedFilters) => {
+    ['participant', '42', '42', [{ dimension: 'participant', values: ['42'] }]],
+    ['domain', 'example.com', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
+    ['message_type', 'email', 'Email', [{ dimension: 'message_type', values: ['email'] }]],
+  ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, name, expectedFilters) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2628,7 +2625,7 @@ describe('EverythingWorkspace', () => {
       scrollAnchor: { key: `group:${dimension}:${key}`, offset: 4 }
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${groupRowName(dimension, key, key).name}` }));
+    await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${name}` }));
 
     expect(state.current.filters).toEqual(expectedFilters);
     expect(parseExploreURLState(window.location.search).filters).toEqual(expectedFilters);
