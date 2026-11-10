@@ -27,9 +27,8 @@ Supply all parts together. --me selects the exporting account; supplied owner
 profiles must agree. Accepted roots contain Takeout/Google Chat, Google Chat,
 or Groups, or are Groups themselves. ZIP/TGZ files must be extracted first.
 
-Run the command again to add new messages and missing attachments. Messages and
-attachments already in the archive stay unchanged. Later edits and deletions in
-Google Chat do not change archived messages.
+Run the command again to add new messages and missing attachments. Archived
+messages and attachments stay unchanged, even if edited or deleted in Google Chat.
 Attachment filenames must match exactly. The summary reports missing attachments,
 unsupported records, unknown dates, and incomplete group membership. Takeout may
 not include your full history. Group members aren't treated as message recipients.

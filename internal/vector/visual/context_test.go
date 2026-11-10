@@ -9,11 +9,8 @@ import (
 )
 
 func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
-	for _, tc := range []struct{ messageType, want string }{
-		{"slack", "Subject: Launch\n\nphoto caption\n\nMessage type: chat message"},
-		{"matrix", "Subject: Launch\n\nphoto caption\n\nMessage type: chat message"},
-	} {
-		t.Run(tc.messageType, func(t *testing.T) {
+	for _, messageType := range []string{"slack", "matrix"} {
+		t.Run(messageType, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			media := &MediaInput{Kind: MediaKindImage, MIMEType: "image/png", BlobHash: testHash, Bytes: []byte("png"), Width: 2, Height: 2}
@@ -22,7 +19,7 @@ func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
 				Media: media,
 				Context: MessageContext{
 					Subject: "Launch", Body: "<p>photo caption</p>\n\n> quoted history\n-- \nsignature",
-					MessageType: tc.messageType, Filename: "secret-name.png", ThreadHistory: "other message",
+					MessageType: messageType, Filename: "secret-name.png", ThreadHistory: "other message",
 				},
 				Role: store.AttachmentRoleStandalone, SourceSequence: 44,
 				Policy: ContextPolicy{MaxChars: 60, InputVersion: "visual-input-v1", EligibilityVersion: "visual-eligibility-v1"},
@@ -30,7 +27,7 @@ func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
 			require.NoError(err)
 			assert.False(truncated)
 			require.Len(doc.Parts, 2)
-			assert.Equal(tc.want, doc.Parts[0].Text)
+			assert.Equal("Subject: Launch\n\nphoto caption\n\nMessage type: chat message", doc.Parts[0].Text)
 			assert.Same(media, doc.Parts[1].Media)
 			assert.NotContains(doc.Parts[0].Text, "secret-name")
 			assert.NotContains(doc.Parts[0].Text, "other message")
