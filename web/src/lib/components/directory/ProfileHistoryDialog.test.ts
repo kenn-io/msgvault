@@ -97,19 +97,14 @@ describe('ProfileHistoryDialog', () => {
           envelope: { id: 8, ordinal: 0, source: 'user', active_until: '2026-07-31T00:00:00Z', created_at: when, updated_at: when, vcard: {} }
         }],
         media: [{ person_id: 7, media_kind: 'photo', has_data: false, original_value: 'Current photo', envelope: { ...currentEnvelope, id: 34 } }],
-        observations: [{ participant_id: 71, address_kind: 'username', original_value: 'observer', normalized_value: 'observer', identity_key: 'observer-key', normalization: 'none', normalization_version: 1, service_slug: 'slack', scope_kind: 'workspace', scope_value: 'T_BETA', source_id: 12, observed_at: when, envelope: { ...currentEnvelope, id: 36, source: 'archive_observation' } }, {
-          participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
-          normalized_value: 'observed@example.test', identity_key: 'observed-test-key', normalization: 'email', normalization_version: 1,
-          service_slug: 'email', source_id: 12, observed_at: '2026-07-31T12:00:00Z',
-          envelope: { id: 9, ordinal: 0, source: 'archive_observation', created_at: when, updated_at: when, vcard: {} }
-        }]
+        observations: []
       });
     }));
 
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
     await screen.findByText('Previous Name');
-    for (const title of ['Names', 'Email and phone', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
+    for (const title of ['Names', 'Email and phone', 'Addresses', 'Dates', 'Categories', 'Media']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
     expect.soft(screen.getByText('Scheduled end category').closest('details')).not.toBeNull();
@@ -142,16 +137,18 @@ describe('ProfileHistoryDialog', () => {
         normalized_value: 'observed@example.test', identity_key: 'observed-test-key', normalization: 'email', normalization_version: 1,
         service_slug: 'email', source_id: 987654321, observed_at: '2026-07-31T12:00:00Z',
         envelope: { ...currentEnvelope, id: 9, source: 'archive_observation', source_ref: 'synthetic-archive' },
-      }] });
+      }, { participant_id: 71, address_kind: 'username', original_value: 'observer', normalized_value: 'observer', identity_key: 'observer-key', normalization: 'none', normalization_version: 1, service_slug: 'slack', scope_kind: 'workspace', scope_value: 'T_BETA', source_id: 12, observed_at: when, envelope: { ...currentEnvelope, id: 36, source: 'archive_observation' } }] });
     });
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
+    expect(await screen.findByRole('heading', { name: 'Seen in services' })).toBeDefined();
     const row = (await screen.findByText('observed@example.test')).closest('.detail-row')!;
     const line = row.querySelector<HTMLElement>('.description')!;
     expect(line.textContent).toMatch(/^Email · From your messages · /);
     expect(line.title).toContain('Seen');
     expect(line.title).toContain('Reference: synthetic-archive');
     expect(row.textContent).not.toMatch(/987654321|synthetic-archive/);
+    expect(screen.getByText('observer').closest('.detail-row')?.textContent).not.toContain('T_BETA');
   });
 
   it.each(['available', 'failed'] as const)('waits for history and ends a split on its receipt: initially %s', async initial => {

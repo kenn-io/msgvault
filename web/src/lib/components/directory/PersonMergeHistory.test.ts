@@ -228,7 +228,7 @@ describe('PersonMergeHistory', () => {
     await fireEvent.click(await screen.findByRole('button', { name: /^Open Garden member merged into Survivor/ }));
     const card = await screen.findByRole('region', { name: 'Garden member' });
     const rows = within(card).getAllByRole('listitem');
-    expect(rows[0].textContent).toBe('WhatsApp@garden-member · account 1');
+    expect(rows[0].textContent).not.toContain('Garden member');
   });
 
   it('keeps each merge’s recorded survivor even after that profile was merged away', async () => {

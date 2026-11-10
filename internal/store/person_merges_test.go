@@ -368,7 +368,6 @@ func TestPersonMerge_Inspect(t *testing.T) {
 	require.NoError(err)
 	require.Len(list, 1)
 	assert.Equal(f.merge.Merge.ID, list[0].Merge.ID)
-
 	assert.Equal(3, list[0].ParticipantCount)
 	assert.Equal(1, list[0].SplitCount)
 	assert.Equal(1, list[0].PendingCandidateCount)
