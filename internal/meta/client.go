@@ -20,6 +20,9 @@ const graphVersion = "v26.0"
 const maxResponseBytes = 8 << 20
 const pageLimit = 100
 
+// fieldsParam is Graph's query parameter that selects returned fields.
+const fieldsParam = "fields"
+
 var decimalID = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 // ValidAccountID validates configured app/Page IDs, not native object IDs.

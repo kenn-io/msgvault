@@ -9,6 +9,9 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- Instagram captions and comments that @-mention a linked account are archived
+  into its [mentions source](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  when the Meta webhook receiver gets the `mentions` field.
 - [Meta webhooks](usage/meta-webhooks.md) archive new Instagram comments and
   live comments as they arrive. Subscribe the Instagram object to `comments`
   and `live_comments`.

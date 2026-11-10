@@ -69,8 +69,8 @@ func ApplyInstagramComments(ctx context.Context, st *store.Store, reader Instagr
 			return instagramCommentObject(&node.IGComment), err
 		},
 	}
-	return applyWebhook(ctx, st, InstagramSourceType, InstagramSourceIdentifier(app, page, account), func(run *importRun) error {
-		run.app, run.page, run.imp.instagram = app, page, account
+	return applyWebhook(ctx, st, InstagramSourceType, InstagramSourceIdentifier(app, page, account), func(st *store.Store, source *store.Source, sum *ImportSummary) error {
+		run := &importRun{imp: &Importer{store: st, instagram: account}, app: app, page: page, source: source, sum: sum}
 		for _, t := range targets {
 			node, err := reader.InstagramComment(ctx, t.comment)
 			if err != nil {

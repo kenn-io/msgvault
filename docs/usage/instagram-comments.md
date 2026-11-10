@@ -83,6 +83,13 @@ Conversation. The author's `@username` is the subject, so you can search for
 it; Meta returns no author ID for media the account does not own, so the
 author is not linked to a person. Media the account owns is skipped here.
 
+Captions and comments by other accounts that @-mention the account are not on
+any edge that sync can read. With [Meta webhooks](meta-webhooks.md), subscribe
+the Instagram object to the `mentions` field and msgvault archives each
+mentioned caption or comment into the same source as Meta reports it. A
+mentioned comment is stored as a reply to its media. The message metadata's
+`kind` is `tag`, `caption_mention` or `comment_mention`.
+
 Each request reads up to 100 tagged media items, and `--max-requests` limits a
 run. An unfinished run resumes from its saved position. A finished run starts
 again from the newest tagged media on the next sync, and `--full` does the same

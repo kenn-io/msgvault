@@ -47,7 +47,9 @@ Each Page must have an enabled [`[[facebook_comments]]` profile](../configuratio
 for the same app and Page, registered with `msgvault source facebook-comments add`.
 
 For Instagram, subscribe the app's Instagram object to the `comments` and
-`live_comments` fields with the same callback URL. Each account must have an
+`live_comments` fields with the same callback URL, and to `mentions` for
+[mentions of the account](instagram-comments.md#archive-media-that-tags-the-account)
+on a profile that sets `mentions = true`. Each account must have an
 enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
 for the same app and account, registered with
 `msgvault source instagram-comments add`.
@@ -76,7 +78,7 @@ without holding back the other changes in its delivery.
 ## Limits
 
 - Only comment changes from the Page `feed` field and the Instagram
-  `comments` and `live_comments` fields are applied. Reactions, other feed
+  `comments`, `live_comments` and `mentions` fields are applied. Reactions, other feed
   changes and other fields are logged and ignored.
 - Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored.

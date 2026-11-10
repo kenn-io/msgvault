@@ -52,6 +52,7 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 		{Object: "page", Name: "feed"}:               metaFeedHandler(cfg, st, work),
 		{Object: "instagram", Name: "comments"}:      instagramCommentsHandler(cfg, st, work),
 		{Object: "instagram", Name: "live_comments"}: instagramCommentsHandler(cfg, st, work),
+		{Object: "instagram", Name: "mentions"}:      instagramMentionsHandler(cfg, st, work),
 	})
 	handler, err := metawebhook.NewHandler(apps, pending, worker.Wake)
 	if err != nil {
@@ -149,6 +150,28 @@ func instagramCommentsHandler(cfg *config.Config, st *store.Store, work schedule
 		}
 		return applyMetaWebhook(ctx, work, func() error {
 			return meta.ApplyInstagramComments(ctx, st, client, profile.AppID, profile.PageID, profile.InstagramAccountID, change.Values)
+		})
+	}
+}
+
+// instagramMentionsHandler applies Instagram mention changes to the mentions
+// source of the enabled [[instagram_comments]] profile that sets
+// mentions = true for the app and account.
+func instagramMentionsHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTracker) metawebhook.FieldHandler {
+	return func(ctx context.Context, change metawebhook.Change) error {
+		i := slices.IndexFunc(cfg.InstagramComments, func(p config.InstagramCommentsSource) bool {
+			return p.Enabled && p.Mentions && p.AppID == change.App && p.InstagramAccountID == change.EntryID
+		})
+		if i < 0 {
+			return fmt.Errorf("%w: no enabled [[instagram_comments]] profile with mentions = true for app %s and account %s", metawebhook.ErrUnrecoverable, change.App, change.EntryID)
+		}
+		profile := cfg.InstagramComments[i]
+		client, err := configuredInstagramCommentsClient(profile)
+		if err != nil {
+			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
+		}
+		return applyMetaWebhook(ctx, work, func() error {
+			return meta.ApplyMentions(ctx, st, client, profile.AppID, profile.PageID, profile.InstagramAccountID, change.Values)
 		})
 	}
 }

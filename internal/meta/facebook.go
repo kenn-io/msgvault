@@ -12,7 +12,7 @@ func (c *Client) VerifyPage(ctx context.Context, id string) (Page, error) {
 	if !ValidAccountID(id) {
 		return page, errors.New("invalid selected Page ID")
 	}
-	if err := c.get(ctx, "me", url.Values{"fields": {"id,name,category"}}, &page); err != nil {
+	if err := c.get(ctx, "me", url.Values{fieldsParam: {"id,name,category"}}, &page); err != nil {
 		return Page{}, err
 	}
 	// Category is Page-only evidence in the pinned SDK, not a token-type
@@ -27,7 +27,7 @@ func (c *Client) Posts(ctx context.Context, page string, edge PostEdge, after st
 	if !ValidAccountID(page) || !edge.valid() {
 		return ObjectPage{}, errors.New("invalid selected Page or discovery edge")
 	}
-	q := url.Values{"fields": {"id,message,created_time,from"}, "limit": {"100"}}
+	q := url.Values{fieldsParam: {"id,message,created_time,from"}, "limit": {"100"}}
 	if edge == AdsPosts {
 		q.Set("include_inline_create", "true")
 	}
@@ -39,7 +39,7 @@ func (c *Client) Comments(ctx context.Context, object, after string) (ObjectPage
 		return ObjectPage{}, errors.New("invalid Graph object ID")
 	}
 	return c.objects(ctx, url.PathEscape(object)+"/comments", after, url.Values{
-		"fields": {"id,message,created_time,from,parent"}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
+		fieldsParam: {"id,message,created_time,from,parent"}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
 	})
 }
 
@@ -70,7 +70,7 @@ func readNode[T any](ctx context.Context, c *Client, id, fields string, nodeID f
 	if !safeObjectID(id) {
 		return node, errors.New("invalid Graph object ID")
 	}
-	if err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {fields}}, &node); err != nil {
+	if err := c.get(ctx, url.PathEscape(id), url.Values{fieldsParam: {fields}}, &node); err != nil {
 		return node, err
 	}
 	if nodeID(node) != id {

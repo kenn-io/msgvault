@@ -147,7 +147,7 @@ func (c *Client) LinkedInstagramAccount(ctx context.Context, pageID, accountID s
 		ID      string  `json:"id"`
 		Account *IGUser `json:"instagram_business_account"`
 	}
-	if err := c.get(ctx, pageID, url.Values{"fields": {"id,instagram_business_account{id,username}"}}, &wire); err != nil {
+	if err := c.get(ctx, pageID, url.Values{fieldsParam: {"id,instagram_business_account{id,username}"}}, &wire); err != nil {
 		return IGUser{}, err
 	}
 	if wire.ID != pageID || wire.Account == nil || wire.Account.ID != accountID {
@@ -161,7 +161,7 @@ func (c *Client) InstagramMedia(ctx context.Context, accountID, after string) (I
 		return IGMediaPage{}, errors.New("invalid selected Instagram account ID")
 	}
 	page, err := readObjectPage(ctx, c, accountID+"/media", after, url.Values{
-		"fields": {"id,caption,timestamp,permalink,owner{id}"}, "limit": {"100"},
+		fieldsParam: {"id,caption,timestamp,permalink,owner{id}"}, "limit": {"100"},
 	}, func(media IGMedia) string { return media.ID }, false)
 	return IGMediaPage(page), err
 }
@@ -171,7 +171,7 @@ func (c *Client) InstagramComments(ctx context.Context, mediaID, after string) (
 		return IGCommentPage{}, errors.New("invalid Graph object ID")
 	}
 	page, err := readObjectPage(ctx, c, url.PathEscape(mediaID)+"/comments", after, url.Values{
-		"fields": {instagramCommentFields}, "limit": {"100"},
+		fieldsParam: {instagramCommentFields}, "limit": {"100"},
 	}, func(comment IGComment) string { return comment.ID }, false)
 	return IGCommentPage(page), err
 }
@@ -181,7 +181,7 @@ func (c *Client) InstagramReplies(ctx context.Context, commentID, after string) 
 		return IGCommentPage{}, errors.New("invalid Graph object ID")
 	}
 	page, err := readObjectPage(ctx, c, url.PathEscape(commentID)+"/replies", after, url.Values{
-		"fields": {instagramCommentFields}, "limit": {"100"},
+		fieldsParam: {instagramCommentFields}, "limit": {"100"},
 	}, func(comment IGComment) string { return comment.ID }, false)
 	return IGCommentPage(page), err
 }

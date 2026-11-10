@@ -63,8 +63,8 @@ func ApplyFeed(ctx context.Context, st *store.Store, reader ObjectReader, app, p
 	if len(changes) == 0 {
 		return nil
 	}
-	return applyWebhook(ctx, st, SourceType, SourceIdentifier(app, page), func(run *importRun) error {
-		run.app, run.page = app, page
+	return applyWebhook(ctx, st, SourceType, SourceIdentifier(app, page), func(st *store.Store, source *store.Source, sum *ImportSummary) error {
+		run := &importRun{imp: &Importer{store: st}, app: app, page: page, source: source, sum: sum}
 		for _, change := range changes {
 			if err := run.applyFeedChange(ctx, reader, change); err != nil {
 				return fmt.Errorf("feed %s %s: %w", change.Item, change.Verb, err)
@@ -75,8 +75,9 @@ func ApplyFeed(ctx context.Context, st *store.Store, reader ObjectReader, app, p
 }
 
 // applyWebhook runs apply under the source's execution lock in a webhook
-// sync run, and records the run's outcome and counts.
-func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier string, apply func(*importRun) error) (retErr error) {
+// sync run, and records the run's outcome and counts. apply writes through
+// the store scoped to that run.
+func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier string, apply func(*store.Store, *store.Source, *ImportSummary) error) (retErr error) {
 	source, execution, err := acquireSource(ctx, st, sourceType, identifier)
 	if err != nil {
 		return err
@@ -86,11 +87,11 @@ func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier s
 	if err != nil {
 		return err
 	}
-	run := &importRun{imp: &Importer{store: st.ScopedToSync(source.ID, syncID)}, source: source, sum: &ImportSummary{}, syncID: syncID}
-	err = apply(run)
+	sum := &ImportSummary{}
+	err = apply(st.ScopedToSync(source.ID, syncID), source, sum)
 	// Record the outcome even when ctx was cancelled during apply.
 	finish := context.WithoutCancel(ctx)
-	cp := &store.Checkpoint{MessagesAdded: int64(run.sum.MessagesAdded), MessagesUpdated: int64(run.sum.MessagesUpdated), MessagesProcessed: int64(run.sum.MessagesProcessed)}
+	cp := &store.Checkpoint{MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
 	if err = errors.Join(err, st.UpdateSyncCheckpointContext(finish, syncID, cp)); err != nil {
 		return errors.Join(err, st.FailSyncContext(finish, syncID, err.Error()))
 	}

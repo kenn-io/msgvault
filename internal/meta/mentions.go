@@ -21,6 +21,10 @@ const mentionRawFormat = "instagram-mention-json"
 // mentionTag marks media in which another account tagged the connected account.
 const mentionTag = "tag"
 
+// mentionMediaFields are the fields read on media by other accounts. Meta
+// returns owner only for the account's own media.
+const mentionMediaFields = "id,caption,timestamp,permalink,username,owner{id}"
+
 type MentionAPI interface {
 	VerifyPage(ctx context.Context, pageID string) (Page, error)
 	LinkedInstagramAccount(ctx context.Context, pageID, accountID string) (IGUser, error)
@@ -34,7 +38,7 @@ func (c *Client) Tags(ctx context.Context, accountID, after string) (IGMediaPage
 		return IGMediaPage{}, errors.New("invalid selected Instagram account ID")
 	}
 	page, err := readObjectPage(ctx, c, accountID+"/tags", after, url.Values{
-		"fields": {"id,caption,timestamp,permalink,username,owner{id}"}, "limit": {"100"},
+		fieldsParam: {mentionMediaFields}, "limit": {"100"},
 	}, func(media IGMedia) string { return media.ID }, true)
 	return IGMediaPage(page), err
 }
@@ -124,8 +128,7 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 			return sum, err
 		}
 		for _, media := range tagged.Data {
-			// The account's own media belongs to its comments source.
-			if media.Owner != nil && media.Owner.ID == account {
+			if run.own(media) {
 				continue
 			}
 			if err := run.persistMedia(ctx, media, mentionTag); err != nil {
@@ -152,13 +155,14 @@ type mentionRun struct {
 	sum                *ImportSummary
 }
 
-// mentionMetadata records how the media reached the archive. A later
+// mentionMetadata records how an object reached the archive. A later
 // delivery of the same object replaces Kind.
 type mentionMetadata struct {
 	AppID              string `json:"app_id"`
 	PageID             string `json:"page_id"`
 	InstagramAccountID string `json:"instagram_account_id"`
 	MediaID            string `json:"media_id"`
+	CommentID          string `json:"comment_id,omitempty"`
 	Kind               string `json:"kind"`
 }
 
@@ -166,26 +170,6 @@ type mentionMetadata struct {
 // conversation. The author's handle is the subject because Meta returns no
 // owner ID that could identify a participant.
 func (r *mentionRun) persistMedia(ctx context.Context, media IGMedia, kind string) error {
-	existing, err := r.store.StoredMessagesContext(ctx, r.sourceID, mentionRawFormat, []string{media.ID})
-	if err != nil {
-		return err
-	}
-	var prior *store.StoredMessage
-	var priorMetadata sql.NullString
-	if row, ok := existing[media.ID]; ok {
-		prior = &row
-		if priorMetadata, err = r.store.GetMessageMetadataContext(ctx, row.ID); err != nil {
-			return err
-		}
-	}
-	metadata, err := json.Marshal(mentionMetadata{AppID: r.app, PageID: r.page, InstagramAccountID: r.account, MediaID: media.ID, Kind: kind})
-	if err != nil {
-		return err
-	}
-	raw, err := json.Marshal(media)
-	if err != nil {
-		return err
-	}
 	title := media.Caption
 	if title == "" {
 		title = "Instagram media " + media.ID
@@ -194,10 +178,31 @@ func (r *mentionRun) persistMedia(ctx context.Context, media IGMedia, kind strin
 	if media.Username != "" {
 		subject = "@" + media.Username
 	}
-	return archiveObject(ctx, r.store, r.sum, archivedObject{
-		sourceID: r.sourceID, messageType: MentionsSourceType, format: mentionRawFormat,
-		obj:          Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp},
-		conversation: media.ID, title: title, subject: subject, fromName: subject,
-		metadata: metadata, raw: raw,
-	}, prior, priorMetadata)
+	obj := archivedObject{obj: Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp}, conversation: media.ID, title: title, subject: subject, fromName: subject}
+	return r.write(ctx, obj, mentionMetadata{MediaID: media.ID, Kind: kind}, media)
+}
+
+// write archives obj in the mentions source with meta and the raw object.
+func (r *mentionRun) write(ctx context.Context, obj archivedObject, meta mentionMetadata, raw any) error {
+	existing, err := r.store.StoredMessagesContext(ctx, r.sourceID, mentionRawFormat, []string{obj.obj.ID})
+	if err != nil {
+		return err
+	}
+	var prior *store.StoredMessage
+	var priorMetadata sql.NullString
+	if row, ok := existing[obj.obj.ID]; ok {
+		prior = &row
+		if priorMetadata, err = r.store.GetMessageMetadataContext(ctx, row.ID); err != nil {
+			return err
+		}
+	}
+	meta.AppID, meta.PageID, meta.InstagramAccountID = r.app, r.page, r.account
+	if obj.metadata, err = json.Marshal(meta); err != nil {
+		return err
+	}
+	if obj.raw, err = json.Marshal(raw); err != nil {
+		return err
+	}
+	obj.sourceID, obj.messageType, obj.format = r.sourceID, MentionsSourceType, mentionRawFormat
+	return archiveObject(ctx, r.store, r.sum, obj, prior, priorMetadata)
 }
