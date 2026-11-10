@@ -357,7 +357,7 @@ func TestSavedViewItemsPreserveExplicitEmptyOperations(t *testing.T) {
 			var bodies []map[string]json.RawMessage
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]json.RawMessage
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 				bodies = append(bodies, body)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(savedViewFixtureJSON))
