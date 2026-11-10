@@ -191,7 +191,7 @@ func (s *Server) prepareIdentitySearch(w http.ResponseWriter, r *http.Request, r
 		return identitySearchPrepared{}, false
 	}
 	request.Predicate.Cursor = ""
-	prepared, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
+	prepared, err := s.prepareResolvedExplorePredicate(r, request.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_identity_predicate")
 		return identitySearchPrepared{}, false
@@ -427,7 +427,7 @@ func (s *Server) prepareIdentitySummary(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_identity_predicate", "identity summary does not accept grouping")
 		return query.ExploreRequest{}, "", false
 	}
-	prepared, err := s.prepareResolvedExplorePredicate(r.Context(), request)
+	prepared, err := s.prepareResolvedExplorePredicate(r, request)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_identity_predicate")
 		return query.ExploreRequest{}, "", false

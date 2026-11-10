@@ -226,7 +226,7 @@ func (s *Server) handleGroupFiles(w http.ResponseWriter, r *http.Request) {
 	if !decodeExploreJSON(w, r, &request) {
 		return
 	}
-	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r, request.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_files_predicate")
 		return
@@ -412,7 +412,7 @@ func (s *Server) handleSearchFilesRequest(
 			return
 		}
 	}
-	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r, request.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_files_predicate")
 		return

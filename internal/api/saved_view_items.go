@@ -1,9 +1,9 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -39,16 +39,11 @@ func (s *Server) savedViewItemsResponse(r *http.Request, view *store.SavedView) 
 	return response, nil
 }
 
-func (s *Server) resolveExploreItems(ctx context.Context, include, exclude []string) (query.EntryItems, error) {
+func (s *Server) resolveExploreItems(r *http.Request, include, exclude []string) (query.EntryItems, error) {
 	items := query.EntryItems{}
 	for mode, keys := range [][]string{include, exclude} {
 		if len(keys) > store.MaxSavedViewItemsPerMode {
 			return items, newAPIHTTPError(400, "saved_view_items_limit", "at most 500 keys per mode")
-		}
-		for i, key := range keys {
-			if _, err := query.ParseEntryKey(key); err != nil {
-				return items, newAPIHTTPError(400, "invalid_entry_key", fmt.Sprintf("%s_keys[%d]: %s", []string{"include", "exclude"}[mode], i, err))
-			}
 		}
 		if len(keys) == 0 {
 			continue
@@ -56,11 +51,15 @@ func (s *Server) resolveExploreItems(ctx context.Context, include, exclude []str
 		if s.savedViewStore == nil {
 			return items, newAPIHTTPError(503, "saved_views_unavailable", "entry key resolution unavailable")
 		}
-		resolved, _, err := s.savedViewStore.ResolveEntryKeys(ctx, keys)
+		resolved, rejected, err := s.savedViewStore.ResolveEntryKeys(r.Context(), keys)
 		if err != nil {
 			return items, err
 		}
-		r := (&http.Request{}).WithContext(ctx)
+		for _, rejection := range rejected {
+			if rejection.Reason == "invalid_entry_key" {
+				return items, newAPIHTTPError(400, "invalid_entry_key", fmt.Sprintf("%s_keys[%d]: invalid entry key", []string{"include", "exclude"}[mode], slices.Index(keys, rejection.Key)))
+			}
+		}
 		for _, key := range keys {
 			entry, ok := resolved[key]
 			if !ok || !s.agentObjectSourceAllowed(r, entry.Ref.SourceID) {

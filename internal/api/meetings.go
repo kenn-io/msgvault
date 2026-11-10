@@ -178,7 +178,7 @@ func (s *Server) handleMeetingContext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resolved, resolvedOK := s.resolveMeetingExploreScope(
-			r.Context(), w, MeetingExploreScope{}, request.Selection, meetingContextMaxIDs, true,
+			r, w, MeetingExploreScope{}, request.Selection, meetingContextMaxIDs, true,
 		)
 		if !resolvedOK {
 			return
@@ -219,7 +219,7 @@ func (s *Server) handleMeetingActions(w http.ResponseWriter, r *http.Request) {
 	if !validateMeetingActionsRequest(w, request, fields) {
 		return
 	}
-	resolved, ok := s.resolveMeetingRequestScope(r.Context(), w, fields, request.Scope, request.Explore)
+	resolved, ok := s.resolveMeetingRequestScope(r, w, fields, request.Scope, request.Explore)
 	if !ok {
 		return
 	}
@@ -251,7 +251,7 @@ func (s *Server) handleMeetingMetrics(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	resolved, ok := s.resolveMeetingRequestScope(r.Context(), w, fields, request.Scope, request.Explore)
+	resolved, ok := s.resolveMeetingRequestScope(r, w, fields, request.Scope, request.Explore)
 	if !ok {
 		return
 	}
@@ -275,7 +275,7 @@ func (s *Server) handleMeetingMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveMeetingRequestScope(
-	ctx context.Context,
+	r *http.Request,
 	w http.ResponseWriter,
 	fields map[string]jsontext.Value,
 	direct *MeetingScopeRequest,
@@ -304,13 +304,13 @@ func (s *Server) resolveMeetingRequestScope(
 		) {
 			return meetingScopeResolution{}, false
 		}
-		return s.resolveMeetingExploreScope(ctx, w, *explore, nil, meetingExploreMaxIDs, false)
+		return s.resolveMeetingExploreScope(r, w, *explore, nil, meetingExploreMaxIDs, false)
 	}
 	if directPresent && direct == nil {
 		writeError(w, http.StatusBadRequest, "invalid_meeting_scope", "scope must be an object")
 		return meetingScopeResolution{}, false
 	}
-	return s.resolveDirectMeetingScope(ctx, w, direct, directFields)
+	return s.resolveDirectMeetingScope(r.Context(), w, direct, directFields)
 }
 
 func validateMeetingActionsRequest(

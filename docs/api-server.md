@@ -2800,15 +2800,14 @@ unsupported schema version, `404 saved_view_not_found`,
 `409 saved_view_name_conflict`, `428 if_match_required`, and
 `400 invalid_if_match`.
 
----
-
 A view also carries pinned and hidden entries, separate from `canonical_state`.
 `GET` and run responses include `items.include` and `items.exclude`, with each
 entry's `entry_key`, `source_id`, `message_id` or `conversation_id`, `kind`, and
 `added_by`. `include_count` and `exclude_count` count live, visible entries;
 `stale_item_count` counts missing or mismatched targets, and
 `redacted_item_count` counts entries omitted by source access restrictions.
-List responses expose the same counts. If stored item JSON is invalid, the list
+List responses expose the same counts without item arrays. If stored item JSON
+is invalid, the list
 marks that row with `incompatibility_reason: "items_json_invalid"` and keeps
 healthy views visible. GET and run refuse that view with
 `400 invalid_saved_view` and message `items_json_invalid`. Source removal,

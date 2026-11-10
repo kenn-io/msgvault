@@ -1875,7 +1875,9 @@ it('round-trips provider Inbox Unread filters through the URL', () => {
 describe('Saved View item population', () => {
   it('passes live pinned and hidden keys while keeping canonical state separate', () => {
     const state = new ExploreState(window);
-    state.setSavedViewItems({ include: [{ entry_key: 'source:1:message:a' }, { entry_key: 'source:1:message:b' }], exclude: [{ entry_key: 'source:1:message:c' }] });
+    const item = (id: number, key: string) => ({ message_id: id, source_id: 1, entry_key: key, kind: 'message' as const, added_by: 'owner' });
+    state.commitSavedView({ id: 1, name: 'Pinned', canonical_state: {}, schema_version: 2, revision: 1, created_at: '', updated_at: '', include_count: 2, exclude_count: 1, stale_item_count: 0, redacted_item_count: 0,
+      items: { include: [item(1, 'source:1:message:a'), item(2, 'source:1:message:b')], exclude: [item(3, 'source:1:message:c')] } }, {});
     expect(state.predicate().include_keys).toEqual(['source:1:message:a', 'source:1:message:b']);
     expect(state.predicate().exclude_keys).toEqual(['source:1:message:c']);
     state.commitNavigation({ query: 'new filter' });

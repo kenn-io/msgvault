@@ -905,3 +905,25 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		assertions.Equal(scope.id, response.Messages[0].ID)
 	}
 }
+
+func TestAgentExploreItemsRespectGrantSources(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	seedSavedViewItemArchive(t, st)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "synthetic-owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, SavedViewStore: st, Engine: newExploreDuckDBFixture(t), Logger: testLogger()})
+	t.Cleanup(func() { assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	source, err := st.GetSourceByIDContext(t.Context(), 1)
+	require.NoError(t, err)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(`{"include_keys":["source:2:message:m3"],"exclude_keys":["source:1:message:m2"]}`))
+	request.Header.Set("Content-Type", applicationJSONMediaType)
+	request.Header.Set(apiprotocol.AgentTokenHeader, token)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var result ExploreHTTPResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(t, result.Rows, 1)
+	assert.Equal(t, "source:1:message:m1", result.Rows[0].Key)
+}

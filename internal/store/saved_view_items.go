@@ -22,8 +22,8 @@ var ErrSavedViewItemsLimit = errors.New("saved view items limit exceeded")
 var ErrSavedViewItemsInvalid = errors.New("items_json_invalid")
 
 type SavedViewItemRef struct {
-	MessageID      int64 `json:"message_id,omitempty"`
-	ConversationID int64 `json:"conversation_id,omitempty"`
+	MessageID      int64 `json:"message_id,omitzero"`
+	ConversationID int64 `json:"conversation_id,omitzero"`
 	SourceID       int64 `json:"source_id"`
 }
 type SavedViewItemEntry struct {
@@ -417,10 +417,12 @@ func (s *Store) SavedViewItemsForView(ctx context.Context, view *SavedView) (Sav
 	return result, stale, nil
 }
 
-type ItemRemap struct{ Messages, Conversations, Sources map[int64]int64 }
+type ItemRemap struct {
+	Messages, Conversations map[SavedViewItemRef]SavedViewItemRef
+}
 
 func (s *Store) rewriteSavedViewItems(ctx context.Context, q itemSQL, rewrite func(SavedViewItems) SavedViewItems) error {
-	rows, err := q.QueryContext(ctx, `SELECT id,items_json FROM saved_views WHERE items_json IS NOT NULL`)
+	rows, err := q.QueryContext(ctx, `SELECT id,items_json FROM saved_views WHERE items_json IS NOT NULL ORDER BY id`+s.dialect.SelectForUpdate())
 	if err != nil {
 		return err
 	}
@@ -466,29 +468,17 @@ func (s *Store) rewriteSavedViewItems(ctx context.Context, q itemSQL, rewrite fu
 	return nil
 }
 func (s *Store) remapSavedViewItemsTx(ctx context.Context, tx *loggedTx, remap ItemRemap) error {
-	// Dedup can cross sources, so derive the survivor source, too.
-	survivorSources := map[int64]int64{}
-	for _, id := range remap.Messages {
-		var sid int64
-		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM messages WHERE id=?`, id).Scan(&sid); err != nil {
-			return err
-		}
-		survivorSources[id] = sid
-	}
 	return s.rewriteSavedViewItems(ctx, tx.Tx, func(items SavedViewItems) SavedViewItems {
 		out := SavedViewItems{Version: 1, Include: []SavedViewItemEntry{}, Exclude: []SavedViewItemEntry{}}
 		seen := map[SavedViewItemRef]bool{}
 		for mode, entries := range [][]SavedViewItemEntry{items.Exclude, items.Include} {
 			for _, e := range entries {
-				if id, ok := remap.Messages[e.MessageID]; ok {
-					e.MessageID = id
-					e.SourceID = survivorSources[id]
-				}
-				if id, ok := remap.Conversations[e.ConversationID]; ok {
-					e.ConversationID = id
-				}
-				if id, ok := remap.Sources[e.SourceID]; ok {
-					e.SourceID = id
+				// Maps carry the original source as well as the target ID.
+				// A stale ref must never attach to a reused ID in another source.
+				if ref, ok := remap.Messages[e.SavedViewItemRef]; ok {
+					e.SavedViewItemRef = ref
+				} else if ref, ok := remap.Conversations[e.SavedViewItemRef]; ok {
+					e.SavedViewItemRef = ref
 				}
 				if seen[e.SavedViewItemRef] {
 					continue

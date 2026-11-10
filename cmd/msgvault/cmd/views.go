@@ -137,7 +137,11 @@ func newViewsCommand(open viewsOpen) *cobra.Command {
 					}
 				}
 				for _, file := range page.Files {
-					if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%s  %s\n", file.Filename, file.EntryKey); err != nil {
+					prefix := " "
+					if pinned[file.EntryKey] {
+						prefix = "+"
+					}
+					if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s  %s\n", prefix, file.Filename, file.EntryKey); err != nil {
 						return err
 					}
 				}

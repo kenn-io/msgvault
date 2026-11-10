@@ -634,10 +634,8 @@ export function parseExploreURLState(search: string): ExploreURLState {
 
 export class ExploreState {
   savedView = $state<SavedView>();
-  savedViewItems = $state<{ include: { entry_key: string }[]; exclude: { entry_key: string }[] }>({ include: [], exclude: [] });
-
-  setSavedViewItems(items: { include?: { entry_key: string }[]; exclude?: { entry_key: string }[] }): void {
-    this.savedViewItems = { include: items.include ?? [], exclude: items.exclude ?? [] };
+  get savedViewItems() {
+    return this.savedView?.items ?? { include: [], exclude: [] };
   }
 
   commitSavedView(view: SavedView, patch: Partial<ExploreURLState>): void {
@@ -646,19 +644,17 @@ export class ExploreState {
 
   updateSavedView(view: SavedView): void {
     this.savedView = view;
-    this.setSavedViewItems(view.items ?? {});
     if (!this.detached) this.browser.history.replaceState({ ...this.browser.history.state, ...this.savedViewHistoryState() }, '', this.browser.location.href);
   }
 
   private savedViewHistoryState(): Record<string, unknown> {
-    return { savedViewContext: JSON.parse(JSON.stringify({ view: this.savedView, items: this.savedViewItems })) };
+    return { savedViewContext: JSON.parse(JSON.stringify({ view: this.savedView })) };
   }
 
   private restoreSavedViewHistory(): void {
     const context = this.browser.history.state?.savedViewContext;
     this.savedView = isRecord(context) && isRecord(context.view) && Number.isSafeInteger(context.view.id)
       ? context.view as unknown as SavedView : undefined;
-    this.setSavedViewItems(isRecord(context) && isRecord(context.items) ? context.items : {});
   }
 
   current = $state<ExploreURLState>(freshDefaults());
@@ -1034,7 +1030,6 @@ export class ExploreState {
     }
     if (savedView !== undefined || (effectivePatch.workspace !== undefined && effectivePatch.workspace !== this.current.workspace)) {
       this.savedView = savedView ?? undefined;
-      this.setSavedViewItems(savedView?.items ?? {});
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not

@@ -715,7 +715,7 @@ func TestMeetingExploreItemsPopulation(t *testing.T) {
 	require.NoError(t, err)
 	var ids []int64
 	var values []string
-	for i, source := range []int64{f.Source.ID, second.ID} {
+	for i, source := range []int64{f.Source.ID, second.ID, f.Source.ID} {
 		conversation := f.ConvID
 		if i == 1 {
 			conversation = conv
@@ -725,13 +725,13 @@ func TestMeetingExploreItemsPopulation(t *testing.T) {
 		ids = append(ids, id)
 		values = append(values, fmt.Sprintf(`(%d::BIGINT,%d::BIGINT,'meeting-%d',%d::BIGINT,'Meeting','',TIMESTAMP '2026-07-18 10:00:00',0::BIGINT,false,0::INTEGER,NULL::TIMESTAMP,NULL::BIGINT,NULL::BIGINT,'meeting_transcript',NULL::VARCHAR,false,2026,7)`, id, source, i, 101+i))
 	}
-	engine, _ := newExploreDuckDBFixtureWithMessages(t, strings.Join(values, ","), ids[1])
-	scope, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{Explore: query.ExploreRequest{Context: query.Context{SourceIDs: []int64{f.Source.ID}}, Items: query.EntryItems{IncludeMessageIDs: ids[1:], ExcludeMessageIDs: ids[:1]}}}, 100)
+	engine, _ := newExploreDuckDBFixtureWithMessages(t, strings.Join(values, ","), ids[2])
+	scope, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{Explore: query.ExploreRequest{Context: query.Context{SourceIDs: []int64{f.Source.ID}}, Items: query.EntryItems{IncludeMessageIDs: ids[1:2], ExcludeMessageIDs: []int64{ids[0], ids[2]}}}}, 100)
 	require.NoError(t, err)
-	require.Equal(t, ids[1:], scope.MessageIDs)
+	require.Equal(t, ids[1:2], scope.MessageIDs)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: f.Store, SavedViewStore: f.Store, Engine: engine, Logger: testLogger()})
 	t.Cleanup(func() { assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	predicate := fmt.Sprintf(`{"filters":[{"dimension":"source_id","values":[%q]}],"include_keys":["source:%d:message:meeting-1"],"exclude_keys":["source:%d:message:meeting-0"]}`, fmt.Sprint(f.Source.ID), second.ID, f.Source.ID)
+	predicate := fmt.Sprintf(`{"filters":[{"dimension":"source_id","values":[%q]}],"include_keys":["source:%d:message:meeting-1"],"exclude_keys":["source:%d:message:meeting-0","source:%d:message:meeting-2"]}`, fmt.Sprint(f.Source.ID), second.ID, f.Source.ID, f.Source.ID)
 	metrics := postExploreJSON(t, srv, "/api/v1/meetings/metrics", fmt.Sprintf(`{"explore":{"predicate":%s,"cache_revision":%q,"search_provenance":{}}}`, predicate, scope.CacheRevision))
 	require.Equal(t, http.StatusOK, metrics.Code, metrics.Body.String())
 	var result meetingcontent.Metrics
@@ -743,5 +743,6 @@ func TestMeetingExploreItemsPopulation(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		assert.Contains(t, response.Body.String(), fmt.Sprintf(`"message_id":%d`, ids[1]))
 		assert.NotContains(t, response.Body.String(), fmt.Sprintf(`"message_id":%d`, ids[0]))
+		assert.NotContains(t, response.Body.String(), fmt.Sprintf(`"message_id":%d`, ids[2]))
 	}
 }

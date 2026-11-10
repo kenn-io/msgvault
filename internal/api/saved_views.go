@@ -21,8 +21,6 @@ import (
 const savedViewsPath = "/api/v1/saved-views"
 
 type SavedViewStore interface {
-	GetSavedViewItems(context.Context, int64) (store.SavedViewItems, error)
-	ChangeSavedViewItems(context.Context, int64, int64, store.SavedViewItemChange) (*store.SavedView, error)
 	ResolveEntryKeys(context.Context, []string) (map[string]store.ResolvedEntry, []store.EntryKeyRejection, error)
 	SavedViewItemsForView(context.Context, *store.SavedView) (store.SavedViewItemList, int, error)
 	CreateSavedView(ctx context.Context, input store.SavedViewInput) (*store.SavedView, error)
@@ -177,6 +175,7 @@ func (s *Server) handleListSavedViews(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			responseView.IncompatibilityReason = err.Error()
 		}
+		responseView.Items = nil
 		response.SavedViews = append(response.SavedViews, responseView)
 	}
 	w.Header().Set("Cache-Control", "no-store")

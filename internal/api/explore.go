@@ -481,7 +481,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreFilterError(w, err, "invalid_filter")
 		return
 	}
-	items, itemErr := s.resolveExploreItems(r.Context(), request.IncludeKeys, request.ExcludeKeys)
+	items, itemErr := s.resolveExploreItems(r, request.IncludeKeys, request.ExcludeKeys)
 	if itemErr != nil {
 		s.writeExploreFilterError(w, itemErr, "invalid_entry_key")
 		return
@@ -565,7 +565,7 @@ func (s *Server) handleExplorePreflight(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_selection", "selection mode must be explicit or all_matching")
 		return
 	}
-	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), selection.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r, selection.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
 		return
@@ -696,7 +696,7 @@ func (s *Server) handleExploreMatchCounts(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_row_keys", fmt.Sprintf("row_keys must contain between 1 and %d entries", exploreMaxLimit))
 		return
 	}
-	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), request.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r, request.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_match_predicate")
 		return
@@ -814,7 +814,7 @@ func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, s
 		s.writeExploreFilterError(w, err, "identity_filter_unavailable")
 		return explorePrepared{}, false
 	}
-	items, itemErr := s.resolveExploreItems(r.Context(), request.IncludeKeys, request.ExcludeKeys)
+	items, itemErr := s.resolveExploreItems(r, request.IncludeKeys, request.ExcludeKeys)
 	if itemErr != nil {
 		s.writeExploreFilterError(w, itemErr, "invalid_entry_key")
 		return explorePrepared{}, false
@@ -1374,17 +1374,18 @@ func prepareExplorePredicate(request ExploreHTTPRequest) (explorePrepared, error
 }
 
 func (s *Server) prepareResolvedExplorePredicate(
-	ctx context.Context,
+	r *http.Request,
 	request ExploreHTTPRequest,
 ) (explorePrepared, error) {
 	prepared, err := prepareExplorePredicate(request)
 	if err != nil {
 		return explorePrepared{}, err
 	}
+	ctx := r.Context()
 	if err := s.resolveExploreIdentityContext(ctx, prepared.request.Filters, &prepared.query.Context); err != nil {
 		return explorePrepared{}, err
 	}
-	items, err := s.resolveExploreItems(ctx, request.IncludeKeys, request.ExcludeKeys)
+	items, err := s.resolveExploreItems(r, request.IncludeKeys, request.ExcludeKeys)
 	if err != nil {
 		return explorePrepared{}, err
 	}

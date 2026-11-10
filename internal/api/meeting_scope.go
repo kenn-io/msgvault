@@ -191,13 +191,14 @@ func normalizedPublicMeetingIDs(values []int64) []int64 {
 }
 
 func (s *Server) resolveMeetingExploreScope(
-	ctx context.Context,
+	r *http.Request,
 	w http.ResponseWriter,
 	scope MeetingExploreScope,
 	selection *ExploreSelection,
 	limit int,
 	contextExport bool,
 ) (meetingScopeResolution, bool) {
+	ctx := r.Context()
 	predicate := scope.Predicate
 	expectedRevision := scope.CacheRevision
 	expectedProvenance := scope.SearchProvenance
@@ -225,7 +226,7 @@ func (s *Server) resolveMeetingExploreScope(
 		writeError(w, http.StatusBadRequest, "invalid_selection", "cache_revision is required")
 		return meetingScopeResolution{}, false
 	}
-	prepared, err := prepareExplorePredicate(predicate)
+	prepared, err := s.prepareResolvedExplorePredicate(r, predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
 		return meetingScopeResolution{}, false
@@ -237,10 +238,6 @@ func (s *Server) resolveMeetingExploreScope(
 			return meetingScopeResolution{}, false
 		}
 		prepared.request.CandidateSnapshotID = snapshotID
-	}
-	if err := s.resolveExploreIdentityContext(ctx, prepared.request.Filters, &prepared.query.Context); err != nil {
-		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
-		return meetingScopeResolution{}, false
 	}
 	searchSpec, resolvedSnapshotID, ok := s.resolveExploreSearch(ctx, w, prepared.request)
 	if !ok || !requireCompleteCandidatePool(w, searchSpec) {

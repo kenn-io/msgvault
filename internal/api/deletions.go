@@ -349,7 +349,7 @@ func (s *Server) resolveAuthorizedDeletionSelection(
 		writeError(w, http.StatusBadRequest, "invalid_selection", "selection mode must be explicit or all_matching")
 		return nil, nil, 0, false
 	}
-	predicate, err := s.prepareResolvedExplorePredicate(r.Context(), selection.Predicate)
+	predicate, err := s.prepareResolvedExplorePredicate(r, selection.Predicate)
 	if err != nil {
 		s.writeExploreFilterError(w, err, "invalid_selection_predicate")
 		return nil, nil, 0, false

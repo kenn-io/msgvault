@@ -573,9 +573,17 @@ func (s *Store) MergeDuplicates(
 				return err
 			}
 		}
-		remap := ItemRemap{Messages: map[int64]int64{}}
+		remap := ItemRemap{Messages: map[SavedViewItemRef]SavedViewItemRef{}}
+		var survivorSource int64
+		if err := tx.QueryRowContext(ctx, `SELECT source_id FROM messages WHERE id=?`, survivorID).Scan(&survivorSource); err != nil {
+			return err
+		}
 		for _, id := range duplicateIDs {
-			remap.Messages[id] = survivorID
+			var originalSource int64
+			if err := tx.QueryRowContext(ctx, `SELECT source_id FROM messages WHERE id=?`, id).Scan(&originalSource); err != nil {
+				return err
+			}
+			remap.Messages[SavedViewItemRef{MessageID: id, SourceID: originalSource}] = SavedViewItemRef{MessageID: survivorID, SourceID: survivorSource}
 		}
 		if err := s.remapSavedViewItemsTx(ctx, tx, remap); err != nil {
 			return err
