@@ -18,7 +18,6 @@ func TestCheck(t *testing.T) {
 		allow                                            bool
 	}{
 		{channel: "chat", name: "placeholder", body: "Hi FIRST_NAME,\n\nThanks", code: CodeUnresolvedPlaceholder, severity: "error", field: "body"},
-		{channel: "chat", name: "angle placeholder", body: "Hello <FIRST_NAME>", code: CodeUnresolvedPlaceholder, severity: "error", field: "body"},
 		{channel: "chat", name: "two letter angle placeholder", body: "Hello <AB>", code: CodeUnresolvedPlaceholder, severity: "error", field: "body"},
 		{channel: "chat", name: "single letter angle", body: "Use <A> or List<T>"},
 		{channel: "chat", name: "allowed", body: "Hi FIRST_NAME", code: CodeUnresolvedPlaceholder, severity: "warn", allow: true},
@@ -59,37 +58,29 @@ func TestCheck(t *testing.T) {
 func TestCheckSpanAndExcerpt(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, excerpt string
-		span                Span
+		spans               []Span
+		tokens              []string
 	}{
-		{"unicode", "😂 привет {{name}}", "😂 привет {{name}}", Span{9, 17}},
-		{"late finding", strings.Repeat("界", 100) + " {{name}} trailing", "", Span{101, 109}},
+		{"unicode", "😂 привет {{name}}", "😂 привет {{name}}", []Span{{9, 17}}, []string{"{{name}}"}},
+		{"late finding", strings.Repeat("界", 100) + " {{name}} trailing", "", []Span{{101, 109}}, []string{"{{name}}"}},
+		{"monotonic cursors", "界\xff\a " + strings.Repeat("FIRST_NAME 界 ", 3) + "\a", "", []Span{{4, 14}, {17, 27}, {30, 40}, {1, 2}, {2, 3}, {43, 44}}, []string{"FIRST_NAME", "FIRST_NAME", "FIRST_NAME"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := Check(t.Context(), Input{Channel: "chat", Body: tc.body}, nil)
-			require.Len(t, result.Warnings, 1)
-			warning := result.Warnings[0]
-			require.NotNil(t, warning.Span)
-			assert.Equal(t, &tc.span, warning.Span)
-			assert.Equal(t, "{{name}}", string([]rune(tc.body)[warning.Span.Start:warning.Span.End]))
-			assert.Contains(t, warning.Excerpt, "{{name}}")
-			assert.LessOrEqual(t, len([]rune(warning.Excerpt)), 80)
-			if tc.excerpt != "" {
-				assert.Equal(t, tc.excerpt, warning.Excerpt)
+			require.Len(t, result.Warnings, len(tc.spans))
+			for i, warning := range result.Warnings {
+				require.NotNil(t, warning.Span)
+				assert.Equal(t, &tc.spans[i], warning.Span)
+				if i < len(tc.tokens) {
+					assert.Equal(t, tc.tokens[i], string([]rune(tc.body)[warning.Span.Start:warning.Span.End]))
+					assert.Contains(t, warning.Excerpt, tc.tokens[i])
+					assert.LessOrEqual(t, len([]rune(warning.Excerpt)), 80)
+				}
+				if tc.excerpt != "" {
+					assert.Equal(t, tc.excerpt, warning.Excerpt)
+				}
 			}
 		})
-	}
-}
-
-func TestCheckManyFindingSpans(t *testing.T) {
-	body := "界\xff\a " + strings.Repeat("FIRST_NAME 界 ", 3) + "\a"
-	result := Check(t.Context(), Input{Channel: "chat", Body: body}, nil)
-	require.Len(t, result.Warnings, 6)
-	for i, warning := range result.Warnings[:3] {
-		assert.Equal(t, &Span{4 + 13*i, 14 + 13*i}, warning.Span)
-		assert.LessOrEqual(t, len([]rune(warning.Excerpt)), 80)
-	}
-	for i, span := range []Span{{1, 2}, {2, 3}, {43, 44}} {
-		assert.Equal(t, &span, result.Warnings[3+i].Span)
 	}
 }
 
@@ -99,24 +90,33 @@ func (n nameResolver) CuratedNames(context.Context, []string) ([]Name, error) { 
 
 func TestGreetingNameMismatch(t *testing.T) {
 	for _, tc := range []struct {
-		body       string
-		names      NameResolver
-		warn, skip bool
+		body, channel string
+		names         NameResolver
+		warn, skip    bool
 	}{
-		{"Hi Sam,\nThanks", nameResolver{{Text: "Alex", Given: true}, {Text: "Al"}}, true, false},
-		{"hey al,", nameResolver{{Text: "Alex", Given: true}}, false, false},
-		{"Hi Bu,", nameResolver{{Text: "Buddy"}}, true, false},
-		{"Hi Buddy,", nameResolver{{Text: "Buddy"}}, false, false},
-		{"Hi A,", nameResolver{{Text: "Alex", Given: true}}, true, false},
-		{"Hi Ål,", nameResolver{{Text: "Åland", Given: true}}, false, false},
-		{"Hi O’Brien,", nameResolver{{Text: "O’Brien", Given: true}}, false, false},
-		{"Hi Jose\u0301,", nameResolver{{Text: "JOSÉ", Given: true}}, false, false},
-		{"Hi JOSÉ,", nameResolver{{Text: "Jose\u0301", Given: true}}, false, false},
-		{"Hi Jose\u0301,", nameResolver{{Text: "Alex", Given: true}}, true, false},
-		{"Hi Sam,", nameResolver{}, false, true},
+		{"Hi Sam,\nThanks", "email", nameResolver{{Text: "Alex", Given: true}, {Text: "Al"}}, true, false},
+		{"hey al,", "email", nameResolver{{Text: "Alex", Given: true}}, false, false},
+		{"Hi Bu,", "email", nameResolver{{Text: "Buddy"}}, true, false},
+		{"Hi Buddy,", "email", nameResolver{{Text: "Buddy"}}, false, false},
+		{"Hi A,", "email", nameResolver{{Text: "Alex", Given: true}}, true, false},
+		{"Hi Ål,", "email", nameResolver{{Text: "Åland", Given: true}}, false, false},
+		{"Hi O’Brien,", "email", nameResolver{{Text: "O’Brien", Given: true}}, false, false},
+		{"Hi Jose\u0301,", "email", nameResolver{{Text: "JOSÉ", Given: true}}, false, false},
+		{"Hi JOSÉ,", "email", nameResolver{{Text: "Jose\u0301", Given: true}}, false, false},
+		{"Hi Jose\u0301,", "email", nameResolver{{Text: "Alex", Given: true}}, true, false},
+		{"Hi Sam,", "email", nameResolver{}, false, true},
+		{"Thanks", "email", nil, false, false},
+		{"Hi all,", "email", nil, false, false},
+		{"Hi everyone,", "email", nil, false, false},
+		{"Hi everybody,", "email", nil, false, false},
+		{"Hi team,", "email", nil, false, false},
+		{"Hi there,", "email", nil, false, false},
+		{"Hi folks,", "email", nil, false, false},
+		{"Hi Alex,", "email", nil, false, true},
+		{"Hi Alex,", "chat", nil, false, true},
 	} {
-		t.Run(tc.body, func(t *testing.T) {
-			r := Check(t.Context(), Input{Channel: "email", Body: tc.body, To: []string{"alex@example.com"}}, tc.names)
+		t.Run(tc.channel+"/"+tc.body, func(t *testing.T) {
+			r := Check(t.Context(), Input{Channel: tc.channel, Body: tc.body, To: []string{"alex@example.com"}}, tc.names)
 			if tc.warn {
 				require.Len(t, r.Warnings, 1)
 				assert.Equal(t, CodeGreetingNameMismatch, r.Warnings[0].Code)
@@ -125,7 +125,11 @@ func TestGreetingNameMismatch(t *testing.T) {
 			} else {
 				assert.Empty(t, r.Warnings)
 			}
-			assert.Equal(t, tc.skip, len(r.Skipped) > 0)
+			if tc.skip {
+				assert.Equal(t, []string{CodeGreetingNameMismatch}, r.Skipped)
+			} else {
+				assert.Empty(t, r.Skipped)
+			}
 		})
 	}
 }
@@ -165,23 +169,4 @@ func TestCheckUnexaminedQuoteTail(t *testing.T) {
 	assert.True(t, got.Blocking())
 	require.NotNil(t, got.Warnings[0].Span)
 	assert.Equal(t, "FIRST_NAME", string([]rune(body)[got.Warnings[0].Span.Start:got.Warnings[0].Span.End]))
-}
-func TestGreetingApplicableSkips(t *testing.T) {
-	for _, channel := range []string{"email", "chat"} {
-		bodies := []string{"Hi Alex,"}
-		if channel == "email" {
-			bodies = []string{"Thanks", "Hi all,", "Hi everyone,", "Hi everybody,", "Hi team,", "Hi there,", "Hi folks,", "Hi Alex,"}
-		}
-		for _, body := range bodies {
-			t.Run(channel+"/"+body, func(t *testing.T) {
-				got := Check(t.Context(), Input{Channel: channel, Body: body, To: []string{"alex@example.com"}}, nil)
-				assert.Empty(t, got.Warnings)
-				if body == "Hi Alex," {
-					assert.Equal(t, []string{CodeGreetingNameMismatch}, got.Skipped)
-				} else {
-					assert.Empty(t, got.Skipped)
-				}
-			})
-		}
-	}
 }

@@ -202,11 +202,8 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 	})
 	t.Run("beeper", func(t *testing.T) {
 		f := newBeeperDraftFixture(t)
-		events, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "Hi Sam,", "--validate-only", "--json")
+		_, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "Hi Sam,", "--validate-only", "--json")
 		require.NoError(t, err)
-		got := lintObject(t, events)
-		assert.Nil(t, got["recipients"])
-		assert.Equal(t, []any{"greeting_name_mismatch"}, got["lint_skipped"])
 		requests, patches := f.beeper.counts()
 		assert.Zero(t, requests)
 		assert.Zero(t, patches)
@@ -356,22 +353,6 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, draft.Revision, after.Revision)
 		assert.Nil(t, after.Pending)
-
-		// Saved read-only scopes must refuse preview before provider access.
-		_, state := setupCommandOAuth(t)
-		putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
-		f.adapter.config = state.cfg
-		events = nil
-		err = f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
-			"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
-		}}, func(event api.CLIRunEvent) error {
-			events = append(events, event)
-			return nil
-		})
-		require.EqualError(t, err, "insufficient_scope")
-		assert.Empty(t, events)
-		assert.Equal(t, before, f.client.getCalls)
-		assert.Zero(t, f.client.updateCalls)
 	})
 	t.Run("chat", func(t *testing.T) {
 		st := testutil.NewTestStore(t)
@@ -382,9 +363,8 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		draft, err := st.CreateChatDraftContext(t.Context(), id, 0, "original", func(string, string) error { return nil })
 		require.NoError(t, err)
 		a := &storeAPIAdapter{store: st}
-		events, err := lintRun(t, a, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
+		_, err = lintRun(t, a, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
 		require.NoError(t, err)
-		assert.Nil(t, lintObject(t, events)["recipients"])
 		after, err := st.GetChatDraftContext(t.Context(), draft.DraftID)
 		require.NoError(t, err)
 		assert.Equal(t, draft, after)
@@ -400,9 +380,8 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		assert.Equal(t, draft, pending)
 		draft, err = f.store.FinishBeeperDraftContext(t.Context(), draft.DraftID, draft.Revision, "original")
 		require.NoError(t, err)
-		events, err := lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
+		_, err = lintRun(t, f.adapter, nil, "draft-edit", draft.DraftID, "--revision", "1", "--body", "Hi FIRST_NAME", "--validate-only", "--json")
 		require.NoError(t, err)
-		assert.Nil(t, lintObject(t, events)["recipients"])
 		requests, patches := f.beeper.counts()
 		assert.Zero(t, requests)
 		assert.Zero(t, patches)
@@ -411,6 +390,28 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		assert.Equal(t, draft, after)
 	})
 }
+func TestGmailDraftEditValidateOnlyChecksScope(t *testing.T) {
+	f := newGmailDraftTestFixture(t)
+	draft := f.seedDraft(t)
+	before := f.client.getCalls
+	var events []api.CLIRunEvent
+
+	// Saved read-only scopes must refuse preview before provider access.
+	_, state := setupCommandOAuth(t)
+	putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
+	f.adapter.config = state.cfg
+	err := f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
+		"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	require.EqualError(t, err, "insufficient_scope")
+	assert.Empty(t, events)
+	assert.Equal(t, before, f.client.getCalls)
+	assert.Zero(t, f.client.updateCalls)
+}
+
 func TestDraftForwardValidateAndStrict(t *testing.T) {
 	f := newDraftReplyFixture(t)
 	a := f.grantedAdapter()

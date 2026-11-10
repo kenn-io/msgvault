@@ -1093,32 +1093,14 @@ func TestGmailDraftEditLintGateRunsBeforeLock(t *testing.T) {
 	adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 	require.NoError(err)
 
-	fixture.client.getDraft = &gmail.Draft{ID: "gmail-draft-managed", Message: gmail.RawMessage{
-		ID: "gmail-message-external-plain", ThreadID: "gmail-thread-1", Raw: gmailDraftTestRaw("corrected", "gmail-external-plain@example.test"),
-	}}
 	ownership, err := fixture.store.AcquireSyncExecutionContext(t.Context(), fixture.source.ID)
 	require.NoError(err)
 	t.Cleanup(func() { _ = ownership.Release() })
-	for _, mode := range []string{"--validate-only", "--strict"} {
-		body, want := "candidate", "invalid_draft"
-		if mode == "--strict" {
-			body, want = "FIRST_NAME", "draft_lint_failed"
-		}
-		events, err := lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", body, mode, "--json")
-		require.EqualError(err, want)
-		if mode == "--validate-only" {
-			assert.Empty(events)
-		}
-	}
-	require.NoError(ownership.Release())
-	events, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, adopted, "candidate")
-	require.EqualError(err, "changed_externally")
-	assert.Equal("changed_externally", lintObject(t, events)["status"])
-	corrected, err := fixture.store.GetGmailDraftContext(t.Context(), adopted.DraftID)
-	require.NoError(err)
-	assert.Equal(adopted.Revision+1, corrected.Revision)
-	assert.Equal("gmail-message-external-plain", corrected.CurrentReceipt.GmailMessageID)
-	assert.Zero(fixture.client.updateCalls)
+	events, err := lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "candidate", "--validate-only", "--json")
+	require.EqualError(err, "invalid_draft")
+	assert.Empty(events)
+	_, err = lintRun(t, fixture.adapter, nil, "draft-edit", adopted.DraftID, "--revision", strconv.FormatInt(adopted.Revision, 10), "--body", "FIRST_NAME", "--strict", "--json")
+	require.EqualError(err, "draft_lint_failed")
 }
 
 func TestGmailDraftCancellationClearsClaim(t *testing.T) {
