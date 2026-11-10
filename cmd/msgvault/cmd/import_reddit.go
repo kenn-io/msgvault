@@ -24,8 +24,8 @@ an extracted Reddit account-data export directory. Conflicting accounts are refu
 Reads top-level CSVs, including numbered splits. Links are preserved; media are not downloaded.
 Coverage depends on what Reddit supplied; complete lifetime history is not guaranteed.
 
-Errors stop the run; completed rows remain archived. Header-only CSVs are valid;
-zero-byte files fail. Fix the named file and re-run to add missing records while
+Errors stop the run; completed rows remain archived. Empty and header-only CSVs
+are valid. Fix the named file and re-run to add missing records while
 retaining originals. No records are deleted. Direct or group chat kinds, missing
 dates, and missing senders stay unknown. Undated records remain in live search and
 details; dated lists and totals omit them. Set [analytics].engine = "sql" for live browsing.

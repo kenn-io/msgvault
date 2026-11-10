@@ -321,7 +321,7 @@ func TestImportChatWithoutChannel(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url,thread_parent_message_id\none,hello,channel,\ntwo,reply,,one\nthree,later,channel,\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url\none,hello,channel\ntwo,reply,\nthree,later,channel\n"), 0600))
 	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\npost,later\n"), 0600))
 	st := testutil.NewTestStore(t)
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})

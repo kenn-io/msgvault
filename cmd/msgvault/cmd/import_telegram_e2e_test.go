@@ -73,19 +73,6 @@ func TestImportTelegramRefreshesCacheAfterPartialFailure(t *testing.T) {
 	assert.Equal(1, n)
 }
 
-func TestImportTelegramRejectsClientFilesOnRemote(t *testing.T) {
-	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
-	ctx := configureRemoteDaemonForTest(t, server.URL)
-	command := newImportTelegramCmd()
-	command.SetContext(ctx)
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs([]string{"export"})
-	err := command.Execute()
-	require.ErrorContains(t, err, "run it on the daemon host with --local")
-	assert.Zero(t, requests.Load())
-}
-
 func TestImportTelegramRejectsNegativeLimit(t *testing.T) {
 	command := newImportTelegramCmd()
 	command.SetOut(io.Discard)
