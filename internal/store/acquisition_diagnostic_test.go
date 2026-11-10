@@ -247,6 +247,50 @@ func TestAcquisitionDiagnosticEmptyAndValidation(t *testing.T) {
 	assert.Nil(report)
 }
 
+func TestAcquisitionDiagnosticHumanOutputPreservesJSON(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	run := f.StartSync()
+	require.NoError(f.Store.RecordSyncRunItemContext(t.Context(), store.SyncRunItem{
+		SyncRunID: run, SourceMessageID: "pending-image", Phase: "ingest", Status: "error",
+		ErrorKind: "remote_image_error", ErrorMessage: store.SyncRunItemFilesPendingMessage,
+	}))
+	require.NoError(f.Store.FailSync(run, "interrupted"))
+	target, err := f.Store.GetOrCreateSource("gmail", "merged-target@example.com")
+	require.NoError(err)
+	// Retained outcomes can outlive source retirement. Seed its metadata
+	// without moving the outcomes to the destination source.
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO source_settings
+		(source_id, history_only, merged_into_source_id) VALUES (?, TRUE, ?)`), f.Source.ID, target.ID)
+	require.NoError(err)
+	report, err := f.Store.DiagnoseAcquisitionContext(t.Context(), store.AcquisitionDiagnosticOptions{
+		SourceID: f.Source.ID, Limit: 10,
+	})
+	require.NoError(err)
+	require.Len(report.Items, 1)
+	before, err := json.Marshal(report, json.Deterministic(true))
+	require.NoError(err)
+	human := report.String()
+	assert.Contains(human, "Pending retries since the last completed incremental sync; resolution requires a later recorded confirmation.")
+	assert.Contains(human, "File-saving reminders are not errors. One detail per message in the selected state.")
+	for _, technical := range []string{"acquisition replay selection", "synthetic file-saving marker"} {
+		assert.NotContains(human, technical)
+		assert.Contains(string(before), technical)
+	}
+	for _, blocker := range []struct{ code, label string }{
+		{"source_history_only", "history-only source"},
+		{"source_merged", "merged source"},
+		{"remote_image_archiving_disabled", "remote image archiving disabled"},
+	} {
+		assert.Contains(human, blocker.label)
+		assert.NotContains(human, blocker.code)
+		assert.Contains(string(before), blocker.code)
+	}
+	after, err := json.Marshal(report, json.Deterministic(true))
+	require.NoError(err)
+	assert.Equal(before, after, "human rendering must preserve JSON codes and technical coverage")
+}
+
 func TestAcquisitionDiagnosticReplayContracts(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)

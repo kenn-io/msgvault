@@ -11,6 +11,12 @@ import (
 const acquisitionContractsCoverage = "Recognized contracts: fetch/fetch_error, fetch/batch_fetch_error, ingest/ingest_error, " +
 	"ingest/attachment_error, ingest/remote_image_error, ingest/attachment_remote_image_error."
 
+const acquisitionReplayCoverage = "Active obligations use the acquisition replay selection since the latest completed incremental; " +
+	"resolved requires a later explicit resolution."
+
+const acquisitionErrorsCoverage = "Errors exclude the shipped synthetic file-saving marker. " +
+	"Details contain at most one outcome per message in the selected state."
+
 // AcquisitionDiagnosticOptions bounds details after classification. Totals cover
 // the source's retained ledger in one read snapshot, independently of the page.
 type AcquisitionDiagnosticOptions struct {
@@ -166,9 +172,9 @@ func (s *Store) DiagnoseAcquisitionContext(ctx context.Context, opts Acquisition
 		Items: []AcquisitionDiagnosticItem{}, Blockers: []string{},
 		Coverage: []string{
 			"Retained sync ledger for this source in one read-only snapshot; counts are messages per state and may overlap.",
-			"Active obligations use the acquisition replay selection since the latest completed incremental; resolved requires a later explicit resolution.",
+			acquisitionReplayCoverage,
 			acquisitionContractsCoverage,
-			"Errors exclude the shipped synthetic file-saving marker. Details contain at most one outcome per message in the selected state.",
+			acquisitionErrorsCoverage,
 			"Historical includes withdrawn skipped items retaining a recognized error contract and acquisition failures followed by a compatible skip. Withdrawal does not prove acquisition or identify its cause.",
 			"Indeterminate includes failures hidden by the replay boundary without resolution and outcomes with no known acquisition contract.",
 			"Source blockers describe the normal replay path; provider availability and permanent impossibility are not tested. Resolution is a ledger acknowledgement, not a physical file integrity check.",
@@ -317,7 +323,20 @@ func (r AcquisitionDiagnostic) String() string {
 		fmt.Fprintf(&out, "  %q: %s/%s (run %d, item %d, synthetic=%t, error=%t)", item.SourceMessageID, item.Phase, item.ErrorKind, item.SyncRunID, item.OutcomeID, item.Synthetic, item.HasError)
 		fmt.Fprintf(&out, " latest=%s/%s (run %d, item %d)", item.LatestPhase, item.LatestStatus, item.LatestSyncRunID, item.LatestOutcomeID)
 		if len(item.BlockedBy) > 0 {
-			fmt.Fprintf(&out, " blocked by %s", strings.Join(item.BlockedBy, ", "))
+			labels := make([]string, len(item.BlockedBy))
+			for i, blocker := range item.BlockedBy {
+				switch blocker {
+				case "source_history_only":
+					labels[i] = "history-only source"
+				case "source_merged":
+					labels[i] = "merged source"
+				case "remote_image_archiving_disabled":
+					labels[i] = "remote image archiving disabled"
+				default:
+					labels[i] = blocker
+				}
+			}
+			fmt.Fprintf(&out, " blocked by %s", strings.Join(labels, ", "))
 		}
 		out.WriteByte('\n')
 	}
@@ -325,8 +344,13 @@ func (r AcquisitionDiagnostic) String() string {
 		fmt.Fprintf(&out, "More details: --state %s --after-id %d\n", r.State, r.NextAfterID)
 	}
 	for _, limit := range r.Coverage {
-		if limit == acquisitionContractsCoverage {
+		switch limit {
+		case acquisitionContractsCoverage:
 			continue
+		case acquisitionReplayCoverage:
+			limit = "Pending retries since the last completed incremental sync; resolution requires a later recorded confirmation."
+		case acquisitionErrorsCoverage:
+			limit = "File-saving reminders are not errors. One detail per message in the selected state."
 		}
 		fmt.Fprintf(&out, "Coverage: %s\n", limit)
 	}
