@@ -265,6 +265,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_calendar_events` | read | — | calendar.event.read |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |

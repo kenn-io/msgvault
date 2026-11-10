@@ -91,6 +91,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		KataDocbank:          true,
 		VisualSearcher:       struct{ VisualSearcher }{},
 		SavedViews:           struct{ savedview.Service }{},
+		CalEvents:            struct{ CalendarEventsBackend }{},
 		Meetings:             struct{ MeetingBackend }{},
 		Calendar:             struct{ CalendarBackend }{},
 		MessageTags:          struct{ MessageTagBackend }{},

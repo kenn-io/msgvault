@@ -176,7 +176,8 @@ type ServeOptions struct {
 	// when the embedder has no durable Saved View store; the Saved View tools
 	// are then omitted from the catalog.
 	SavedViews savedview.Service
-	CalEvents  CalendarEventsBackend
+	// CalEvents exposes archived calendar event reads.
+	CalEvents CalendarEventsBackend
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
 	Meetings MeetingBackend
