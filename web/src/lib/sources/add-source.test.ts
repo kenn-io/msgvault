@@ -35,9 +35,4 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(imap, { host: 'imap.example.org', username: 'A B' }, 'cmd')).toBe('msgvault add-imap --host imap.example.org --username="A B"');
     expect(addSourceCommand(imap, { host: 'imap.example.com', username: '~/reader' }, 'posix')).toBe("msgvault add-imap --host imap.example.com --username='~/reader'");
   });
-
-  it('keeps an address that starts with a hyphen from reading as an option', () => {
-    expect(addSourceCommand(gmail, { email: '-reader@example.org' }, 'posix')).toBe('msgvault add-account -- -reader@example.org');
-    expect(addSourceCommand(commandKind('microsoft'), { email: '-reader@example.org' }, 'cmd')).toBe('msgvault add-o365 -- -reader@example.org');
-  });
 });

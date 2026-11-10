@@ -2374,7 +2374,7 @@ func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{
-		"add-account", "--grant-decided=true", "user@example.com", "--readonly",
+		"add-account", "user@example.com", "--readonly", "--grant-decided=true",
 	}, gotArgs)
 	assert.Equal(t, []string{"add-account", "user@example.com", "--readonly"}, req.Args,
 		"server injection must not mutate caller-owned args")

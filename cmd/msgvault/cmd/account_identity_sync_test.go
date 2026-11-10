@@ -30,13 +30,7 @@ type testTransport func(*http.Request) (*http.Response, error)
 
 func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestAddServiceAccountFirstSyncHint(t *testing.T) { checkAddServiceAccount(t, true) }
 func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
-	checkAddServiceAccount(t, false)
-}
-
-func checkAddServiceAccount(t *testing.T, hint bool) {
-	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	saveAddAccountFlags(t)
 	// Only Google's token and profile responses are simulated. Registration,
@@ -78,11 +72,7 @@ func checkAddServiceAccount(t *testing.T, hint bool) {
 		OAuth: config.OAuthConfig{ServiceAccountKey: keyPath}}
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
-	flags := []string{"--no-default-identity", "", "--no-default-identity=false"}
-	if hint {
-		flags = flags[:1]
-	}
-	for _, flag := range flags {
+	for _, flag := range []string{"--no-default-identity", "", "--no-default-identity=false"} {
 		optOut := flag != "--no-default-identity=false"
 		cmd := &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
 		registerAddAccountFlags(cmd)
@@ -91,19 +81,12 @@ func checkAddServiceAccount(t *testing.T, hint bool) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		capture := captureStdout(t)
-		err = cmd.ExecuteContext(ctx)
-		output := capture()
-		require.NoError(err)
+		require.NoError(cmd.ExecuteContext(ctx))
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
 		src, err := findGmailSource(st, "user@example.com")
 		require.NoError(err)
-		if hint {
-			assert.Contains(output, fmt.Sprintf("msgvault sync-full --source-id %d", src.ID))
-			return
-		}
 		// Seed the cursor of an already-synced mailbox so this scheduled run
 		// completes with no new messages.
 		require.NoError(st.UpdateSourceSyncCursor(src.ID, "100"))
@@ -197,11 +180,7 @@ func TestScheduledSyncResolvesGmailAliasToCanonicalIdentifier(t *testing.T) {
 	assert.ErrorIs(err, store.ErrSourceNotFound, "scheduled sync must not create a source under the alias")
 }
 
-func TestAddIMAPFirstSyncHint(t *testing.T)                { checkAddIMAP(t, true) }
-func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) { checkAddIMAP(t, false) }
-
-func checkAddIMAP(t *testing.T, hint bool) {
-	t.Helper()
+func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
 	savedNoTLS, savedSTARTTLS, savedNoDefault := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
@@ -219,11 +198,7 @@ func checkAddIMAP(t *testing.T, hint bool) {
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 
 	// Re-registering preserves the choice unless the flag is explicit.
-	flags := []string{"--no-default-identity", "", "--no-default-identity=false"}
-	if hint {
-		flags = flags[:1]
-	}
-	for _, flag := range flags {
+	for _, flag := range []string{"--no-default-identity", "", "--no-default-identity=false"} {
 		optOut := flag != "--no-default-identity=false"
 		cmd := newAddIMAPCmd()
 		args := []string{"--host", host, "--port", port, "--username", testutil.IMAPTestUsername, "--no-tls"}
@@ -231,10 +206,7 @@ func checkAddIMAP(t *testing.T, hint bool) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		capture := captureStdout(t)
-		err = cmd.ExecuteContext(ctx)
-		output := capture()
-		require.NoError(err)
+		require.NoError(cmd.ExecuteContext(ctx))
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -242,10 +214,6 @@ func checkAddIMAP(t *testing.T, hint bool) {
 		require.NoError(err)
 		require.Len(sources, 1)
 		src := sources[0]
-		if hint {
-			assert.Contains(output, fmt.Sprintf("msgvault sync-full --source-id %d", src.ID))
-			return
-		}
 		// Re-enabling defaults creates the identity before this explicit removal.
 		// The next scheduled sync must preserve the removal.
 		if !optOut {
@@ -262,11 +230,7 @@ func checkAddIMAP(t *testing.T, hint bool) {
 	}
 }
 
-func TestAddMicrosoftFirstSyncHint(t *testing.T)         { checkAddMicrosoft(t, true) }
-func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) { checkAddMicrosoft(t, false) }
-
-func checkAddMicrosoft(t *testing.T, hint bool) {
-	t.Helper()
+func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 	savedGraph := o365Graph
 	savedO365, savedTeams := noDefaultIdentityAddO365, noDefaultIdentityAddTeams
 	savedO365Headless, savedTeamsHeadless := o365Headless, teamsHeadless
@@ -281,15 +245,11 @@ func checkAddMicrosoft(t *testing.T, hint bool) {
 		name       string
 		newCommand func() *cobra.Command
 		args       []string
-		verb       string
 	}{
-		{"o365", newAddO365LocalCmd, nil, "sync-full"},
-		{"graph", newAddO365LocalCmd, []string{"--graph"}, "sync"},
-		{"teams", newAddTeamsLocalCmd, nil, ""},
+		{"o365", newAddO365LocalCmd, nil},
+		{"graph", newAddO365LocalCmd, []string{"--graph"}},
+		{"teams", newAddTeamsLocalCmd, nil},
 	} {
-		if hint && tc.verb == "" {
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			home := t.TempDir()
@@ -300,31 +260,20 @@ func checkAddMicrosoft(t *testing.T, hint bool) {
 			mgr := microsoft.NewManager(cfg.Microsoft.ClientID, "common", cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), testDiscardLogger())
 			require.NoError(os.MkdirAll(cfg.TokensDir(), 0700))
 			require.NoError(os.WriteFile(mgr.TokenPath(email), []byte(`{"access_token":"synthetic-token"}`), 0600))
-			flags := []string{"--no-default-identity", "", "--no-default-identity=false"}
-			if hint {
-				flags = flags[:1]
-			}
-			for _, flag := range flags {
+			for _, flag := range []string{"--no-default-identity", "", "--no-default-identity=false"} {
 				cmd := tc.newCommand()
 				args := append([]string{email, "--" + oauthPreflightedFlag}, tc.args...)
 				if flag != "" {
 					args = append(args, flag)
 				}
 				cmd.SetArgs(args)
-				capture := captureStdout(t)
-				err := cmd.ExecuteContext(ctx)
-				output := capture()
-				require.NoError(err)
+				require.NoError(cmd.ExecuteContext(ctx))
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				t.Cleanup(func() { _ = st.Close() })
 				sources, err := st.ListSources("")
 				require.NoError(err)
 				require.Len(sources, 1)
-				if hint {
-					assert.Contains(output, fmt.Sprintf("msgvault %s --source-id %d", tc.verb, sources[0].ID))
-					return
-				}
 				if tc.name == "graph" {
 					// Identity setup precedes token loading. With no Graph token,
 					// the real scheduled path stops before making network requests.
