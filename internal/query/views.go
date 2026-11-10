@@ -837,7 +837,7 @@ var sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMi
 var sqlMessageSenderJoinsStart = `LEFT JOIN (
     SELECT
         mr.message_id,
-        FIRST(COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.envelope_address, '') END, p.email_address)) AS from_email,
+        FIRST(COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address)) AS from_email,
         FIRST(
             COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
         ) AS from_name,

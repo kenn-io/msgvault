@@ -2,6 +2,7 @@ package mime
 
 import (
 	"net/mail"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -28,7 +29,7 @@ func RelayedSender(raw []byte, from []Address, rules []RelayedSenderRule) (strin
 			return "", ""
 		}
 		value := strings.TrimSpace(values[0])
-		if value == "" || !utf8.ValidString(value) || strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
+		if value == "" || !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
 			return "", ""
 		}
 		if rule.IdentifierType == "github" {
@@ -48,22 +49,9 @@ func ValidateRelayedSenderRule(rule RelayedSenderRule) bool {
 	return rule.IdentifierType != "" && strings.TrimSpace(rule.IdentifierType) == rule.IdentifierType && strings.IndexFunc(rule.IdentifierType, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
+// RelayedSenderRules lists custom rules first so they replace a built-in rule for the same address.
 func RelayedSenderRules(custom []RelayedSenderRule) []RelayedSenderRule {
-	rules := []RelayedSenderRule{{Address: "notifications@github.com", Header: "X-GitHub-Sender", IdentifierType: "github"}}
-	for _, rule := range custom {
-		replaced := false
-		for i := range rules {
-			if strings.EqualFold(rules[i].Address, rule.Address) {
-				rules[i] = rule
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			rules = append(rules, rule)
-		}
-	}
-	return rules
+	return append(slices.Clone(custom), RelayedSenderRule{Address: "notifications@github.com", Header: "X-GitHub-Sender", IdentifierType: "github"})
 }
 
 // RelayedSenderName chooses the observed author name or their handle.

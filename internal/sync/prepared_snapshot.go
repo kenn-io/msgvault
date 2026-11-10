@@ -28,13 +28,13 @@ func preparedMessageParticipants(data *messageData) ([]store.ParticipantPersistD
 		emails = append(emails, email)
 	}
 	sort.Strings(emails)
-	participants := make([]store.ParticipantPersistData, len(emails))
+	participants := make([]store.ParticipantPersistData, 0, len(emails)+1)
 	index := make(map[string]int, len(emails))
 	for i, email := range emails {
 		address := byEmail[email]
-		participants[i] = store.ParticipantPersistData{
+		participants = append(participants, store.ParticipantPersistData{
 			EmailAddress: email, DisplayName: address.Name, Domain: address.Domain,
-		}
+		})
 		index[email] = i
 	}
 	if data.relayType != "" {

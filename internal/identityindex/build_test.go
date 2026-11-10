@@ -1070,5 +1070,4 @@ func TestCollectCacheStatsRelayedSenderEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, stats.UniqueSenders)
 	assert.EqualValues(t, 3, stats.UniqueDomains)
-
 }

@@ -20,16 +20,18 @@ func TestRelayedSenderConfig(t *testing.T) {
 		{"missing type", "address = \"relay@example.test\"\nheader = \"X-Author\"\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			path := filepath.Join(t.TempDir(), "config.toml")
-			require.NoError(t, os.WriteFile(path, []byte("[[relayed_senders]]\n"+tc.content), 0600))
+			requirements.NoError(os.WriteFile(path, []byte("[[relayed_senders]]\n"+tc.content), 0600))
 			cfg, err := Load(path, "")
 			if !tc.valid {
-				assert.ErrorContains(t, err, "relayed_senders")
+				assertions.ErrorContains(err, "relayed_senders")
 				return
 			}
-			require.NoError(t, err)
-			require.Len(t, cfg.RelayedSenders, 1)
-			assert.Equal(t, "relay@example.test", cfg.RelayedSenders[0].Address)
+			requirements.NoError(err)
+			requirements.Len(cfg.RelayedSenders, 1)
+			assertions.Equal("relay@example.test", cfg.RelayedSenders[0].Address)
 		})
 	}
 }

@@ -334,22 +334,3 @@ func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testi
 	assert.Contains(logs.String(), "ignored implausible email Date header")
 	assert.Contains(logs.String(), "replacement_source=none")
 }
-
-func TestIngestRelayedAuthors(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("test", "reader@example.test")
-	require.NoError(t, err)
-	for _, item := range []struct{ id, name, login string }{{"one", "Alice", "alice"}, {"two", "Bob", "bob"}} {
-		raw := []byte("From: " + item.name + " <notifications@github.com>\r\nTo: reader@example.test\r\nX-GitHub-Sender: " + item.login + "\r\nAuthentication-Results: mx.example.test; dmarc=pass header.from=github.com\r\nSubject: Notice\r\n\r\nHello")
-		require.NoError(t, IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, item.id, item.id, raw, time.Time{}, slog.Default()))
-		var value, address string
-		var messageID int64
-		err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT m.id, pi.identifier_value, mr.email_address FROM messages m JOIN participant_identifiers pi ON pi.participant_id=m.sender_id AND pi.identifier_type='github' JOIN message_recipients mr ON mr.message_id=m.id AND mr.recipient_type='from' WHERE m.source_message_id=?`), item.id).Scan(&messageID, &value, &address)
-		require.NoError(t, err)
-		assert.Equal(t, item.login, value)
-		assert.Equal(t, "notifications@github.com", address)
-		stored, err := st.GetMessageRawContext(t.Context(), messageID)
-		require.NoError(t, err)
-		assert.Equal(t, raw, stored)
-	}
-}

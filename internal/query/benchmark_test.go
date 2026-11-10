@@ -152,8 +152,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 			((m.id %% 500) + 1)::BIGINT AS participant_id,
 			'from' AS recipient_type,
 			'User ' || ((m.id %% 500) + 1) AS display_name,
-			'user' || ((m.id %% 500) + 1) || '@example.test' AS email_address,
-			NULL::VARCHAR AS envelope_address
+			'user' || ((m.id %% 500) + 1) || '@example.test' AS email_address
 		FROM bench_messages m
 		UNION ALL
 		-- primary recipient
@@ -162,8 +161,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 			(((m.id + 1) %% 500) + 1)::BIGINT AS participant_id,
 			'to' AS recipient_type,
 			'User ' || (((m.id + 1) %% 500) + 1) AS display_name,
-			'user' || (((m.id + 1) %% 500) + 1) || '@example.test' AS email_address,
-			NULL::VARCHAR AS envelope_address
+			'user' || (((m.id + 1) %% 500) + 1) || '@example.test' AS email_address
 		FROM bench_messages m
 		UNION ALL
 		-- cc on 33%% of messages
@@ -172,8 +170,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 			(((m.id + 2) %% 500) + 1)::BIGINT AS participant_id,
 			'cc' AS recipient_type,
 			'User ' || (((m.id + 2) %% 500) + 1) AS display_name,
-			'user' || (((m.id + 2) %% 500) + 1) || '@example.test' AS email_address,
-			NULL::VARCHAR AS envelope_address
+			'user' || (((m.id + 2) %% 500) + 1) || '@example.test' AS email_address
 		FROM bench_messages m
 		WHERE m.id %% 3 = 0;
 
@@ -230,7 +227,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 			"participants", "participants.parquet"},
 		{"SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM bench_participant_identifiers",
 			"participant_identifiers", "participant_identifiers.parquet"},
-		{"SELECT message_id, participant_id, recipient_type, display_name, email_address, envelope_address, FALSE AS is_relayed FROM bench_recipients",
+		{"SELECT message_id, participant_id, recipient_type, display_name, email_address, FALSE AS is_relayed FROM bench_recipients",
 			"message_recipients", "message_recipients.parquet"},
 		{"SELECT id, name FROM bench_labels",
 			"labels", "labels.parquet"},

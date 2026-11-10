@@ -144,7 +144,7 @@ func setupTestSQLite(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		);
 
 		CREATE TABLE labels (
@@ -2452,8 +2452,8 @@ func TestBuildCacheSQLiteScannerInvalidUTF8KeepsFastSearchWorking(t *testing.T) 
 	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
-	q := search.Parse("from:alice@example.com")
-	result, err := engine.SearchFastWithStats(t.Context(), q, "from:alice@example.com", query.MessageFilter{}, query.ViewSenders, 50, 0)
+	q := search.Parse("from:alice-envelope@example.com")
+	result, err := engine.SearchFastWithStats(t.Context(), q, "from:alice-envelope@example.com", query.MessageFilter{}, query.ViewSenders, 50, 0)
 	require.NoError(err)
 	var snippet string
 	for _, m := range result.Messages {
@@ -3061,7 +3061,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, source_id INTEGER, source_label_id TEXT, system_role TEXT, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
@@ -3261,7 +3261,7 @@ func BenchmarkBuildCache(b *testing.B) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (message_id INTEGER, size INTEGER, filename TEXT);
@@ -3377,7 +3377,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE labels (
 			id INTEGER PRIMARY KEY,
@@ -4662,7 +4662,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (message_id INTEGER, size INTEGER, filename TEXT);
