@@ -24,7 +24,7 @@ import type {
   OperationStatusAuthority,
   OperationState
 } from './models';
-import { DUE_WITHIN_MAX, DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
+import { validDueWithin, DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
 import { trimAttributeText } from '../directory/attribute-text';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
@@ -521,8 +521,8 @@ function normalize(value: unknown): ExploreURLState {
     relationshipFacet,
     relationshipTarget,
     relationshipShowAll: value.relationshipShowAll === true,
-    relationshipCadence: Object.values<string>(Cadence).includes(String(value.relationshipCadence)) ? value.relationshipCadence as ExploreURLState['relationshipCadence'] : '',
-    relationshipDueWithinDays: value.relationshipCadence === 'due' && typeof value.relationshipDueWithinDays === 'number' && Number.isInteger(value.relationshipDueWithinDays) && value.relationshipDueWithinDays >= 0 && value.relationshipDueWithinDays <= DUE_WITHIN_MAX ? value.relationshipDueWithinDays : null,
+    relationshipCadence: Object.values(Cadence).some(cadence => cadence === value.relationshipCadence) ? value.relationshipCadence as ExploreURLState['relationshipCadence'] : '',
+    relationshipDueWithinDays: value.relationshipCadence === 'due' && typeof value.relationshipDueWithinDays === 'number' && validDueWithin(value.relationshipDueWithinDays) ? value.relationshipDueWithinDays : null,
     relationshipFiles: value.relationshipFiles === true,
     relationshipSaved: value.relationshipSaved === true || value.workspace === 'directory',
     relationshipSort: value.workspace === 'directory' ? value.directorySort === 'last_contact_asc' ? 'last_contact_asc' : value.directorySort === 'last_contact_desc' ? 'recent' : 'name' : value.relationshipSort === 'name' || value.relationshipSort === 'recent' || value.relationshipSort === 'last_contact_asc' ? value.relationshipSort : 'closest',

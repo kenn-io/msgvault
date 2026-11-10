@@ -1,7 +1,7 @@
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE, Button, NumberInput, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
   import { RelationshipsHTTPRequestCadence as Cadence } from '../../api/generated/models/relationshipsHTTPRequestCadence';
-  import { DUE_WITHIN_MAX } from '../../explore/models';
+  import { DUE_WITHIN_MAX, validDueWithin } from '../../explore/models';
   import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
@@ -32,7 +32,7 @@
   const cadence = $derived(urlState.relationshipCadence);
   let dueDraft = $state<number | null>(null);
   $effect(() => { dueDraft = urlState.relationshipDueWithinDays; });
-  const validDue = (value: number | null): boolean => value === null || (Number.isInteger(value) && value >= 0 && value <= DUE_WITHIN_MAX);
+  const validDue = (value: number | null): boolean => value === null || validDueWithin(value);
   const invalidDue = $derived(cadence === 'due' && !validDue(dueDraft));
   function clearCadence(): void { onNavigate({ relationshipCadence: '', relationshipDueWithinDays: null }); }
   function changeDue(value: number | null): void {
@@ -163,7 +163,7 @@
     ...(['directoryContactState', 'directoryCategory', 'directoryOrganization', 'directoryPrimaryChannel', 'directoryLastContactAfter', 'directoryLastContactBefore'] as const)
       .filter((key) => urlState[key]).map((key) => ({ id: key, label: key === 'directoryContactState' ? contactStateLabel(urlState[key]) : key === 'directoryPrimaryChannel' ? channelLabel(urlState[key]) : key === 'directoryLastContactAfter' ? `Last contacted after ${formatDay(urlState[key])}` : key === 'directoryLastContactBefore' ? `Last contacted before ${formatDay(urlState[key])}` : urlState[key], onremove: () => onNavigate({ [key]: '' }) })),
   ] : [])]);
-  function loadMore(): void { if (cadenceBlocked || invalidDue) return; if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
+  function loadMore(): void { if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
   async function deleteSelected(): Promise<void> {
     if (bulkPending || selectedSaved.length === 0) return;
     bulkPending = true;

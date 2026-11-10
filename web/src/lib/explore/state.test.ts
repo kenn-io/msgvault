@@ -1848,7 +1848,7 @@ it.each([-1, 3661, 1.5, '7'])('rejects invalid horizon %s', horizon => {
   expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: 'due', relationshipDueWithinDays: horizon }))}`)).toMatchObject({ relationshipCadence: 'due', relationshipDueWithinDays: null });
 });
 it('normalizes unsupported cadence and drops horizons outside due', () => {
-  for (const cadence of ['overdue', 'no_list', 'unknown', 'invalid']) {
-    expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: cadence, relationshipDueWithinDays: 7 }))}`)).toMatchObject({ relationshipCadence: cadence === 'invalid' ? '' : cadence, relationshipDueWithinDays: null });
+  for (const [cadence, expected] of [['overdue', 'overdue'], ['no_list', 'no_list'], ['unknown', 'unknown'], ['invalid', ''], [['due'], '']] as const) {
+    expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: cadence, relationshipDueWithinDays: 7 }))}`)).toMatchObject({ relationshipCadence: expected, relationshipDueWithinDays: null });
   }
 });

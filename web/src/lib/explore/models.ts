@@ -124,6 +124,9 @@ export interface ExploreScrollAnchor {
 }
 
 export const DUE_WITHIN_MAX = 3660;
+export function validDueWithin(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= DUE_WITHIN_MAX;
+}
 
 /** Browser-restorable exploration context. Bulk selection is session-only. */
 export interface ExploreURLState {
