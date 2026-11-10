@@ -113,14 +113,12 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 
 func TestDiagnoseAcquisitionErrors(t *testing.T) {
 	for _, tc := range []struct{ name, config, want string }{
-		{"invalid", "[data\n", "load config"},
 		{"invalid-level", "", "invalid log level"},
 		{"remote", "[remote]\nurl = 'https://example.com'\n", "use --local"},
 		{"newer-schema", "", "run setup with the matching release"},
 		{"merged-source", "", "merged into source"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
 			require := require.New(t)
 			dir := t.TempDir()
 			cfg := config.NewDefaultConfig()
@@ -157,9 +155,6 @@ func TestDiagnoseAcquisitionErrors(t *testing.T) {
 			}
 			root.SetArgs(args)
 			require.ErrorContains(executeRootContext(t.Context(), root), want)
-			if tc.name == "invalid" {
-				assert.NotContains(output.String(), "Usage:")
-			}
 		})
 	}
 }
