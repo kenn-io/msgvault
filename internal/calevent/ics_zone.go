@@ -7,11 +7,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	ical "github.com/emersion/go-ical"
 	"github.com/teambition/rrule-go"
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 var customZonePattern = regexp.MustCompile(`^STD[+-]\d{2}:\d{2}(DST[+-]\d{2}:\d{2},M\d{1,2}\.[1-5]\.[0-6]/\d{2}:\d{2}:\d{2},M\d{1,2}\.[1-5]\.[0-6]/\d{2}:\d{2}:\d{2})?$`)
@@ -126,40 +126,34 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 	return zones, nil
 }
 
-var customZoneCache sync.Map
-
 func isCustomZone(name string) bool {
 	parts := strings.Split(name, ";")
 	if !customZonePattern.MatchString(parts[0]) {
 		return false
 	}
-	var previous time.Time
 	for _, part := range parts[1:] {
 		fields := strings.Split(part, "@")
 		if len(fields) != 2 || !customZonePattern.MatchString(fields[1]) {
 			return false
 		}
-		at, err := time.Parse("20060102T150405Z", fields[0])
-		if err != nil || (!previous.IsZero() && !at.After(previous)) {
+		_, err := time.Parse("20060102T150405Z", fields[0])
+		if err != nil {
 			return false
 		}
-		previous = at
 	}
 	return true
 }
 
+const emptyTZifBlock = "TZif2" + "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00"
+
 func footerZone(name string) (*time.Location, error) {
-	data := []byte("TZif2" + strings.Repeat("\x00", 46))
-	data[39], data[43] = 1, 1
+	data := []byte(emptyTZifBlock)
 	data = append(data, data...)
 	return time.LoadLocationFromTZData(name, append(data, []byte("\n"+name+"\n")...))
 }
 
 // LoadZone reloads named zones and the embedded rules retained from an ICS invite.
 func LoadZone(name string) (*time.Location, error) {
-	if loc, ok := customZoneCache.Load(name); ok {
-		return loc.(*time.Location), nil
-	}
 	loc, err := time.LoadLocation(name)
 	if err != nil && isCustomZone(name) {
 		parts := strings.Split(name, ";")
@@ -171,9 +165,6 @@ func LoadZone(name string) (*time.Location, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load time zone %q: %w", name, err)
-	}
-	if isCustomZone(name) {
-		customZoneCache.Store(name, loc)
 	}
 	return loc, nil
 }
@@ -199,9 +190,6 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 		typ := zoneType{offset, z.IsDST()}
 		idx := slices.Index(types, typ)
 		if idx < 0 {
-			if len(types) == 256 {
-				return fmt.Errorf("too many zone types")
-			}
 			types = append(types, typ)
 			idx = len(types) - 1
 		}
@@ -235,12 +223,7 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 		}
 		end := eras[i+1].start
 		for cursor := start; cursor.Before(end); {
-			_, next := cursor.In(loc).ZoneBounds()
-			if !next.IsZero() && !next.After(cursor) {
-				// POSIX rules can return a year boundary already reached in leap years.
-				cursor = time.Date(cursor.UTC().Year()+1, 1, 1, 0, 0, 0, 0, time.UTC)
-				continue
-			}
+			next := calrecur.ZoneEnd(cursor.In(loc))
 			if next.IsZero() || !next.Before(end) {
 				break
 			}
@@ -258,14 +241,7 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 			_ = binary.Write(&out, binary.BigEndian, v)
 		}
 	}
-	// The first block is empty apart from a single type, as required by TZif.
-	out.WriteString("TZif2")
-	out.Write(make([]byte, 15))
-	for _, v := range []uint32{0, 0, 0, 0, 1, 4} {
-		_ = binary.Write(&out, binary.BigEndian, v)
-	}
-	out.Write([]byte{0, 0, 0, 0, 0, 0})
-	out.WriteString("STD\x00")
+	out.WriteString(emptyTZifBlock)
 	header(len(times))
 	for _, v := range times {
 		_ = binary.Write(&out, binary.BigEndian, v)

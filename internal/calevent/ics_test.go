@@ -39,36 +39,6 @@ func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 	})
 }
 
-func TestICSOutlookTZID(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	raw, err := os.ReadFile("testdata/outlook.ics")
-	requirements.NoError(err)
-	components, err := ParseICS(raw, "", "")
-	requirements.NoError(err)
-	requirements.Len(components, 1)
-	e := components[0].Event
-	assertions.Equal("2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
-	assertions.Equal("America/New_York", e.EventTimeZone)
-	assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
-}
-
-func TestParseICSCustomizedTimeZone(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	raw, err := os.ReadFile("testdata/customized.ics")
-	requirements.NoError(err)
-	components, err := ParseICS(raw, "", "")
-	requirements.NoError(err)
-	requirements.Len(components, 1)
-	assertions.Equal("2026-07-15T14:00:00Z", components[0].Event.Start.Format(time.RFC3339))
-	assertions.Contains(components[0].Event.Recurrence, "EXDATE:20260722T140000Z")
-	raw, err = os.ReadFile("testdata/customized-no-dst.ics")
-	requirements.NoError(err)
-	components, err = ParseICS(raw, "", "")
-	requirements.NoError(err)
-	requirements.Len(components, 1)
-	assertions.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
-}
-
 func TestICSLibicalTZID(t *testing.T) {
 	for _, prefix := range []string{"/freeassociation.sourceforge.net/", "/freeassociation.sourceforge.net/Tzfile/"} {
 		t.Run(prefix, func(t *testing.T) {
@@ -82,6 +52,20 @@ func TestICSLibicalTZID(t *testing.T) {
 			assertions.Equal("America/New_York", components[0].Event.EventTimeZone)
 		})
 	}
+
+	t.Run("outlook", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		raw, err := os.ReadFile("testdata/outlook.ics")
+		requirements.NoError(err)
+		components, err := ParseICS(raw, "", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		e := components[0].Event
+		assertions.Equal("2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
+		assertions.Equal("America/New_York", e.EventTimeZone)
+		assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
+
+	})
 }
 
 const icsExample = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.com\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART;TZID=America/New_York:20270314T090000\r\nDTEND;TZID=America/New_York:20270314T100000\r\nSUMMARY:Example\\, meeting\r\nDESCRIPTION:First line\\nSecond\r\n line\r\nORGANIZER:mailto:ORGANIZER@EXAMPLE.COM\r\nATTENDEE;CN=Guest;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:room@example.com\r\nLOCATION:https://meet.google.com/abc-defg-hij\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
@@ -149,19 +133,6 @@ func TestICSNULFields(t *testing.T) {
 	}
 }
 
-func TestICSMethods(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	raw := strings.Replace(icsExample, "METHOD:REQUEST\r\n", "", 1)
-	components, err := ParseICS([]byte(raw), "REPLY", "")
-	requirements.NoError(err)
-	assertions.Empty(components)
-	components, err = ParseICS([]byte(raw), "CANCEL", "")
-	requirements.NoError(err)
-	requirements.Len(components, 1)
-	assertions.Equal("cancelled", components[0].Event.Status)
-}
-
 func TestICSStatus(t *testing.T) {
 	for _, tc := range []struct{ status, want string }{
 		{"TENTATIVE", "tentative"},
@@ -176,6 +147,20 @@ func TestICSStatus(t *testing.T) {
 			assertions.Equal(tc.want, components[0].Event.Status)
 		})
 	}
+
+	t.Run("method", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		raw := strings.Replace(icsExample, "METHOD:REQUEST\r\n", "", 1)
+		components, err := ParseICS([]byte(raw), "REPLY", "")
+		requirements.NoError(err)
+		assertions.Empty(components)
+		components, err = ParseICS([]byte(raw), "CANCEL", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal("cancelled", components[0].Event.Status)
+
+	})
 }
 
 func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {
@@ -230,6 +215,15 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("large elapsed duration", func(t *testing.T) {
+		raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT3000000000S", 1)
+		components, err := ParseICS([]byte(raw), "", "")
+		require.NoError(t, err)
+		require.Len(t, components, 1)
+		assert.Equal(t, 3000000000*time.Second, components[0].Event.End.Sub(*components[0].Event.Start))
+
+	})
 }
 
 func TestICSRejectMalformed(t *testing.T) {
@@ -259,14 +253,6 @@ func TestICSRejectMalformed(t *testing.T) {
 	}
 }
 
-func TestICSLargeElapsedDuration(t *testing.T) {
-	raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT3000000000S", 1)
-	components, err := ParseICS([]byte(raw), "", "")
-	require.NoError(t, err)
-	require.Len(t, components, 1)
-	assert.Equal(t, 3000000000*time.Second, components[0].Event.End.Sub(*components[0].Event.Start))
-}
-
 func TestParseICSCustomizedHistory(t *testing.T) {
 	raw, err := os.ReadFile("testdata/customized-history.ics")
 	require.NoError(t, err)
@@ -293,22 +279,41 @@ func TestParseICSCustomizedHistory(t *testing.T) {
 	}
 	_, err = LoadZone("STD+05:00;bad")
 	require.Error(t, err)
-}
 
-func TestParseICSOneShotZoneChange(t *testing.T) {
-	raw, err := os.ReadFile("testdata/customized-history.ics")
-	require.NoError(t, err)
-	change := "BEGIN:STANDARD\nDTSTART:20300101T020000\nTZOFFSETFROM:-0500\nTZOFFSETTO:-0600\nEND:STANDARD\n"
-	data := strings.Replace(string(raw), "END:VTIMEZONE", change+"END:VTIMEZONE", 1)
-	components, err := ParseICS([]byte(data), "", "")
-	require.NoError(t, err)
-	loc, err := LoadZone(components[0].Event.EventTimeZone)
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		year int
-		want int
-	}{{2006, -5 * 3600}, {2026, -4 * 3600}, {2031, -6 * 3600}} {
-		_, got := time.Date(tc.year, 3, 20, 10, 0, 0, 0, loc).Zone()
-		assert.Equal(t, tc.want, got)
-	}
+	t.Run("single era", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		raw, err := os.ReadFile("testdata/customized.ics")
+		requirements.NoError(err)
+		components, err := ParseICS(raw, "", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal("2026-07-15T14:00:00Z", components[0].Event.Start.Format(time.RFC3339))
+		assertions.Contains(components[0].Event.Recurrence, "EXDATE:20260722T140000Z")
+		raw, err = os.ReadFile("testdata/customized-no-dst.ics")
+		requirements.NoError(err)
+		components, err = ParseICS(raw, "", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
+
+	})
+
+	t.Run("one shot", func(t *testing.T) {
+		raw, err := os.ReadFile("testdata/customized-history.ics")
+		require.NoError(t, err)
+		change := "BEGIN:STANDARD\nDTSTART:20300101T020000\nTZOFFSETFROM:-0500\nTZOFFSETTO:-0600\nEND:STANDARD\n"
+		data := strings.Replace(string(raw), "END:VTIMEZONE", change+"END:VTIMEZONE", 1)
+		components, err := ParseICS([]byte(data), "", "")
+		require.NoError(t, err)
+		loc, err := LoadZone(components[0].Event.EventTimeZone)
+		require.NoError(t, err)
+		for _, tc := range []struct {
+			year int
+			want int
+		}{{2006, -5 * 3600}, {2026, -4 * 3600}, {2031, -6 * 3600}} {
+			_, got := time.Date(tc.year, 3, 20, 10, 0, 0, 0, loc).Zone()
+			assert.Equal(t, tc.want, got)
+		}
+
+	})
 }
