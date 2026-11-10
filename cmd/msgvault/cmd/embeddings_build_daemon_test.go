@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -144,6 +145,16 @@ func TestManagedEmbeddingsReconcilesMessageChangedDuringYield(t *testing.T) {
 	cfg.Vector.Embeddings.BatchSize = 1
 	cfg.Vector.Embeddings.APIKeyEnv = "TEST_EMBEDDING_KEY"
 	firstRequest, releaseFirst := make(chan struct{}), make(chan struct{})
+	signals := make(chan (<-chan struct{}), 1)
+	transport := http.DefaultTransport
+	http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
+		select {
+		case signals <- jobctx.PreemptionSignal(r.Context()):
+		default:
+		}
+		return transport.RoundTrip(r)
+	})
+	defer func() { http.DefaultTransport = transport }()
 	var requests atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer synthetic-key", r.Header.Get("Authorization"))
@@ -206,7 +217,13 @@ func TestManagedEmbeddingsReconcilesMessageChangedDuringYield(t *testing.T) {
 		changed <- st.UpsertMessageBodyContext(t.Context(), firstID, sql.NullString{String: "Updated first message", Valid: true}, sql.NullString{})
 	}()
 	require.Eventually(t, gate.HasRequestWaiters, 10*time.Second, 10*time.Millisecond)
-	time.Sleep(10 * time.Second) //nolint:kennlint // sleeptest: wait for scheduler preemption while the batch is in flight
+	signal := <-signals
+	require.NotNil(t, signal)
+	select {
+	case <-signal:
+	case <-time.After(20 * time.Second):
+		require.FailNow(t, "build was not asked to yield")
+	}
 	close(releaseFirst)
 	select {
 	case <-entered:
