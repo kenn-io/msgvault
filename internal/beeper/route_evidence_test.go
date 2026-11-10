@@ -1059,7 +1059,8 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 	mu.Unlock()
 	requirements.Len(confirmed, 1, "exactly one chat was confirmed gone before the budget expired")
 
-	state = imp.loadResumeState(t.Context(), source.ID)
+	state, err = imp.loadResumeState(t.Context(), source.ID)
+	requirements.NoError(err)
 	chats, second := enumerate(time.Minute)
 	assertions.False(second.Stopped)
 	requirements.Len(chats, 1)

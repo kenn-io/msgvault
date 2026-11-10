@@ -205,19 +205,28 @@ func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
 // loadResumeState rebuilds the sync state for a source: the last successful
 // run's cursor blob (baseline) merged with the latest interrupted checkpoint,
 // so a resumed run skips already-covered work.
-func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64) *SyncState {
+func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64) (*SyncState, error) {
+	prev, _ := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
+	cp, _ := imp.store.GetLatestCheckpointedSync(sourceID)
+	return resumeState(prev, cp)
+}
+
+func resumeState(prev, cp *store.SyncRun) (*SyncState, error) {
 	state := NewSyncState()
-	if prev, err := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID); err == nil && prev != nil && prev.CursorAfter.Valid {
-		if s, lerr := LoadSyncState(prev.CursorAfter.String); lerr == nil {
-			state = s
+	if prev != nil && prev.CursorAfter.Valid {
+		var err error
+		if state, err = LoadSyncState(prev.CursorAfter.String); err != nil {
+			return nil, err
 		}
 	}
-	if cp, err := imp.store.GetLatestCheckpointedSync(sourceID); err == nil && cp != nil && cp.CursorBefore.Valid {
-		if cpState, lerr := LoadSyncState(cp.CursorBefore.String); lerr == nil {
-			state.Merge(cpState)
+	if cp != nil && cp.CursorBefore.Valid {
+		cpState, err := LoadSyncState(cp.CursorBefore.String)
+		if err != nil {
+			return nil, err
 		}
+		state.Merge(cpState)
 	}
-	return state
+	return state, nil
 }
 
 // Import runs a backfill-then-incremental sync of opts.AccountID's chats.
@@ -230,12 +239,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, errors.New("beeper account ID required")
 	}
 	// The CLI and scheduler reuse one Importer across Beeper accounts. These
-	// caches only suppress repeated work inside one account import; carrying
-	// them into the next account can hide source-specific observations and
-	// matching work.
-	// The selected import account is authoritative for all Beeper user-ID
-	// fallback identifiers, including message senders, mentions, and
-	// reactions. Do not use the account field echoed in a remote chat payload.
+	// Caches cannot cross accounts without hiding source-specific work.
+	// The selected account is authoritative for Beeper fallback identifiers.
 	imp.res = newParticipantResolver(imp.store, opts.AccountID)
 	imp.obs = newObservationRecorder(imp.store)
 	imp.matcher = newIdentityMatcher(imp.store)
@@ -245,7 +250,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 
-	state := imp.loadResumeState(ctx, src.ID)
+	state, err := imp.loadResumeState(ctx, src.ID)
+	if err != nil {
+		return nil, err
+	}
 	if opts.Full {
 		// Repair path: drop all cursors so every message is re-fetched and
 		// upserted in place — but keep the anchors. Skipping their
@@ -833,7 +841,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = nil
 			}
 		}
-		if statsRefreshed && ctx.Err() == nil && cs.RosterWork != nil && cs.RosterWork.MembershipApplied {
+		if statsRefreshed && ctx.Err() == nil && membershipComplete {
 			pendingCtx := ctx
 			var cancelPending context.CancelFunc
 			if opts.stopRequested() {
@@ -1034,10 +1042,7 @@ func (imp *Importer) ensureConversation(
 		}
 	}
 	signature := rosterSignature(detail, opts.AccountID)
-	if work.Signature != signature {
-		work.Signature = signature
-		work.MembershipApplied = false
-	}
+	work.setSignature(signature)
 	membership := chatMembershipOf(detail, complete)
 	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title)
 	if err != nil {
@@ -1051,7 +1056,6 @@ func (imp *Importer) ensureConversation(
 	if detail.ID != ch.ID {
 		evidence.Failure = "chat_binding_mismatch"
 	}
-	// The pending marker keeps partial batches conservative until stats and proof finish.
 	if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
 		return convID, false, chatMembership{}, nil, err
 	}
@@ -1236,7 +1240,9 @@ func (imp *Importer) ensureConversation(
 	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence); err != nil {
 		return convID, false, chatMembership{}, nil, err
 	}
-	work.MembershipApplied = evidence.MembershipComplete
+	if err := imp.completeRoster(ctx, convID, evidence.MembershipComplete, resolved, work); err != nil {
+		return convID, false, membership, nil, err
+	}
 	return convID, evidence.MembershipComplete, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, state: cs, complete: complete}, nil
 }
 

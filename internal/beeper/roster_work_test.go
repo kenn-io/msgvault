@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -384,4 +385,73 @@ func TestRosterAndMessagesAlternateAfterBudgetStops(t *testing.T) {
 	require.NoError(err)
 	require.True(sum.Stopped)
 	assert.Greater(count("messages"), priorMessages)
+}
+
+func TestUnsupportedRosterVersionStopsImport(t *testing.T) {
+	for _, checkpoint := range []bool{false, true} {
+		t.Run(fmt.Sprintf("checkpoint=%t", checkpoint), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			sourceID := newBeeperTestSource(t, st, "signal")
+			const blob = `{"chats":{"room":{"newest":"saved","roster_work":{"version":2}}}}`
+			runID, err := st.StartSync(sourceID, sourceTypeBeeper)
+			require.NoError(err)
+			if checkpoint {
+				require.NoError(st.PauseSyncWithCheckpoint(t.Context(), runID, &store.Checkpoint{PageToken: blob}))
+			} else {
+				require.NoError(st.CompleteSync(runID, blob))
+			}
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.ErrorContains(err, "unsupported roster work version")
+			_, err = imp.BackfillMedia(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
+			require.ErrorContains(err, "unsupported roster work version")
+			var runs int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&runs))
+			assert.Equal(1, runs)
+		})
+	}
+}
+
+func TestRosterJoinRefreshesExistingMatchEvidence(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := observationChat("slack", "Slack", "@slack_alice:beeper.local",
+		map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"})
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	imp.res.accountID = "slack"
+	other, err := imp.res.resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
+	require.NoError(err)
+	otherSource := newBeeperTestSource(t, st, "slack2")
+	captureAndMatch(t, newObservationRecorder(st), newIdentityMatcher(st), other,
+		&User{ID: "@slack_other:beeper.local", Username: "alice"},
+		captureContext{SourceID: otherSource, AccountID: "slack2", Network: "Slack"})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "slack", NoMedia: true})
+	require.NoError(err)
+	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	existing := participantForBeeperUser(t, st, "@slack_alice:beeper.local")
+	captureAndMatch(t, imp.obs, imp.matcher, existing,
+		&User{ID: "@slack_alice:beeper.local", Username: "alice"},
+		captureContext{SourceID: sum.SourceID, AccountID: "slack", Network: "Slack"})
+	f.mu.Lock()
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@slack_other:beeper.local"})
+	f.mu.Unlock()
+	detail, err := imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	state, err := imp.loadResumeState(t.Context(), sum.SourceID)
+	require.NoError(err)
+	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "slack", NoMedia: true}, state, time.Now(), false, false, &ImportSummary{})
+	require.NoError(err)
+	candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+	require.NoError(err)
+	var found bool
+	for _, evidence := range candidate.Evidence {
+		found = found || evidence.EvidenceKind == evidenceMembership
+	}
+	assert.True(found, "the existing candidate gains shared conversation evidence")
 }

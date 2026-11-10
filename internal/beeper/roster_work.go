@@ -1,6 +1,7 @@
 package beeper
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
@@ -15,11 +16,46 @@ type rosterMemberWork struct {
 type rosterWork struct {
 	Version           int                         `json:"version"`
 	MatchingFirst     bool                        `json:"matching_first,omitzero"`
+	RefreshMatches    bool                        `json:"refresh_matches,omitzero"`
 	Signature         string                      `json:"signature"`
 	Members           map[string]rosterMemberWork `json:"members"`
 	MembershipApplied bool                        `json:"membership_applied,omitzero"`
 	MatchingPending   bool                        `json:"matching_pending,omitzero"`
 	DetailBacked      bool                        `json:"detail_backed,omitzero"`
+}
+
+func (w *rosterWork) setSignature(signature string) {
+	if w.Signature != signature {
+		w.Signature = signature
+		w.MembershipApplied = false
+		w.RefreshMatches = true
+	}
+}
+
+func (imp *Importer) completeRoster(ctx context.Context, convID int64, complete bool, members []resolvedMember, work *rosterWork) error {
+	work.MembershipApplied = complete
+	if !complete || !work.RefreshMatches {
+		return nil
+	}
+	ids, err := imp.store.ConversationCandidateParticipantsContext(ctx, convID)
+	if err != nil {
+		work.MembershipApplied = false
+		return err
+	}
+	for _, member := range members {
+		if ids[member.participantID] {
+			progress := work.Members[member.key]
+			progress.Enriched = false
+			work.Members[member.key] = progress
+			work.MatchingPending = true
+		}
+	}
+	if len(ids) > 0 {
+		imp.obs = newObservationRecorder(imp.store)
+		imp.matcher = newIdentityMatcher(imp.store)
+	}
+	work.RefreshMatches = false
+	return nil
 }
 
 func rosterSignature(ch *Chat, accountID string) string {

@@ -512,11 +512,11 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 		return nil, err
 	}
 	sum := &ImportSummary{SourceID: src.ID}
-	// This run's sync_runs row becomes the source's newest completed run, and
-	// Import loads its cursor_after as the resume baseline — so carry the
-	// existing sync state forward verbatim or the next sync would restart
-	// from scratch.
-	state := imp.loadResumeState(ctx, src.ID)
+	// Carry the existing sync state forward as the next import's baseline.
+	state, err := imp.loadResumeState(ctx, src.ID)
+	if err != nil {
+		return nil, err
+	}
 	syncID, err := imp.store.StartSync(src.ID, "beeper_media")
 	if err != nil {
 		return nil, err

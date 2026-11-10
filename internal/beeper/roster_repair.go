@@ -97,7 +97,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		}
 	}
 	// The probe timeout bounds only the provider request. Roster writes for a
-	// large room can outlast it; atomic replacement keeps the parent context.
+	// large room can outlast it; roster batches use the parent context.
 	requestCtx, cancelRequest := opts.requestContext(ctx)
 	probeCtx, cancelProbe := context.WithTimeout(requestCtx, routeProbeTimeout)
 	detail, fetchErr := imp.client.GetChat(probeCtx, chatID)
@@ -132,7 +132,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		statsCtx, cancelStats := opts.conversationStatsContext(ctx)
 		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID)
 		cancelStats()
-		if statsErr == nil && cs.RosterWork != nil && cs.RosterWork.MembershipApplied {
+		if statsErr == nil && complete {
 			pendingCtx := ctx
 			var cancelPending context.CancelFunc
 			if opts.stopRequested() {
