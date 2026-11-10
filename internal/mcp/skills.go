@@ -19,34 +19,32 @@ var bundledSkills = sync.OnceValue(func() *mcpskills.Catalog {
 	if err != nil {
 		panic(fmt.Errorf("render bundled MCP skills: %w", err))
 	}
-	sources := make(map[string]string, len(rendered))
-	for _, skill := range rendered {
-		sources[skill.Name] = skill.Content
-	}
 	guides := []mcpskills.Guide{
 		{
 			Name: "workflow", Title: "msgvault MCP workflow", Summary: "Connect, discover tools, read conversations and respect access and confirmation rules.",
 			Markdown: docs.MCPQuickstart(docs.AgentQuickstart),
 		},
-		{
-			Name: "msgvault-search", Title: "Search and read messages", Summary: "Find messages and conversations, page bodies and retrieve original email.",
-			Markdown: searchMCPGuide,
-		},
-		{
-			Name: "msgvault-attachments", Title: "Find and retrieve attachments", Summary: "Inspect message attachments, retrieve bytes and understand server-side exports.",
-			Markdown: attachmentsMCPGuide,
-		},
-		{
-			Name: "msgvault-analytics", Title: "Analyze archive metadata", Summary: "Inspect accounts, aggregate message statistics and query the analytics cache.",
-			Markdown: analyticsMCPGuide,
-		},
 	}
-	for i := 1; i < len(guides); i++ {
-		source, ok := sources[guides[i].Name]
-		if !ok {
-			panic("missing bundled skill: " + guides[i].Name)
+	for _, skill := range rendered {
+		guide := mcpskills.Guide{
+			Name: skill.Name, Title: skill.Name, Summary: "Read the bundled " + skill.Name + " CLI guide.",
+			Markdown: skill.Content,
 		}
-		guides[i].Markdown += "\n\n## Bundled CLI guide\n\n" + source
+		switch skill.Name {
+		case "msgvault-search":
+			guide.Title = "Search and read messages"
+			guide.Summary = "Find messages and conversations, page bodies and retrieve original email."
+			guide.Markdown = searchMCPGuide + "\n\n## Bundled CLI guide\n\n" + skill.Content
+		case "msgvault-attachments":
+			guide.Title = "Find and retrieve attachments"
+			guide.Summary = "Inspect message attachments, retrieve bytes and understand server-side exports."
+			guide.Markdown = attachmentsMCPGuide + "\n\n## Bundled CLI guide\n\n" + skill.Content
+		case "msgvault-analytics":
+			guide.Title = "Analyze archive metadata"
+			guide.Summary = "Inspect accounts, aggregate message statistics and query the analytics cache."
+			guide.Markdown = analyticsMCPGuide + "\n\n## Bundled CLI guide\n\n" + skill.Content
+		}
+		guides = append(guides, guide)
 	}
 	catalog, err := mcpskills.New(mcpskills.Config{ToolName: ToolSkills, Guides: guides})
 	if err != nil {

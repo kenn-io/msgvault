@@ -50,9 +50,36 @@ func TestSkillsCatalogWithoutArchiveAccess(t *testing.T) {
 				assertions.NotEmpty(guide.Title)
 				assertions.NotEmpty(guide.Summary)
 			}
-			assertions.Equal([]string{"workflow", "msgvault-search", "msgvault-attachments", "msgvault-analytics"}, guides)
+			rendered, err := skills.Render("dev")
+			requirements.NoError(err)
+			want := []string{"workflow"}
+			for _, skill := range rendered {
+				want = append(want, skill.Name)
+			}
+			assertions.ElementsMatch(want, guides)
 		})
 	}
+}
+
+func TestGuideCatalogIncludesEveryRenderedSkill(t *testing.T) {
+	session := task5ConnectClient(t, ServeOptions{DelegatedOnly: true}, false)
+	rendered, err := skills.Render("dev")
+	require.NoError(t, err)
+	want := []string{"workflow"}
+	for _, skill := range rendered {
+		want = append(want, skill.Name)
+	}
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSkills, Arguments: map[string]any{}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	catalog := task5StructuredAs[struct {
+		Skills []struct{ Name string } `json:"skills"`
+	}](t, result)
+	var got []string
+	for _, guide := range catalog.Skills {
+		got = append(got, guide.Name)
+	}
+	assert.ElementsMatch(t, want, got)
 }
 
 func TestSkillsRetrievesEveryShippedGuide(t *testing.T) {
@@ -64,7 +91,6 @@ func TestSkillsRetrievesEveryShippedGuide(t *testing.T) {
 	for _, source := range sources {
 		want[source.Name] = source.Content
 	}
-	requirements.Len(want, 4)
 	for name, source := range want {
 		t.Run(name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -74,11 +100,11 @@ func TestSkillsRetrievesEveryShippedGuide(t *testing.T) {
 			requirements.Len(result.Content, 1)
 			text, ok := result.Content[0].(*sdkmcp.TextContent)
 			requirements.True(ok)
-			if name == "workflow" {
-				assertions.Equal(source, text.Text)
-			} else {
+			if slices.Contains([]string{"msgvault-search", "msgvault-attachments", "msgvault-analytics"}, name) {
 				assertions.True(strings.HasSuffix(text.Text, source), "retain the entire bundled CLI skill")
 				assertions.Contains(strings.TrimSuffix(text.Text, source), "## MCP differences")
+			} else {
+				assertions.Equal(source, text.Text)
 			}
 			metadata := task5StructuredAs[struct {
 				Skills []struct{ Name, Title, Summary string } `json:"skills"`
@@ -104,9 +130,15 @@ func TestSkillsUnknownNamesCannotSelectGuidance(t *testing.T) {
 	// separate integration test below.
 	handler, closeHandler := newHTTPHandlerWithPolicy(ServeOptions{DelegatedOnly: true}, HTTPOptions{}, nil, true)
 	t.Cleanup(closeHandler)
+	rendered, err := skills.Render("dev")
+	require.NoError(t, err)
+	known := []string{"workflow"}
+	for _, skill := range rendered {
+		known = append(known, skill.Name)
+	}
 	hegel.Test(t, func(ht *hegel.T) {
 		name := hegel.Draw(ht, hegel.Text())
-		if slices.Contains([]string{"workflow", "msgvault-search", "msgvault-attachments", "msgvault-analytics"}, name) {
+		if slices.Contains(known, name) {
 			return // The finite accepted domain is exhaustively tested above.
 		}
 		args, err := json.Marshal(map[string]any{"name": name})
