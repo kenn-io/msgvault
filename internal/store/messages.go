@@ -4224,6 +4224,11 @@ func (s *Store) backfillFTSBatchContext(
 	}
 	var affected int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			var err error
+			affected, err = s.backfillPostgresFTS(ctx, tx, batchSQL, fromID, toID)
+			return err
+		}
 		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
 		if err != nil {
 			return err
@@ -6982,6 +6987,44 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 		return changed, err
 	}
 	return changed, setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
+}
+
+// backfillPostgresFTS reads stored fields one message at a time inside the batch transaction.
+func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64) (int64, error) {
+	query += ` ORDER BY id FOR UPDATE`
+	rows, err := tx.QueryContext(ctx, query, fromID, toID)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return 0, err
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	env := storedFTSEnvelopeSQL("STRING_AGG")
+	for _, id := range ids {
+		doc := FTSDoc{MessageID: id}
+		err := q.QueryRow(`SELECT LEFT(`+env.subject+`, 600000), LEFT(COALESCE(b.body_text, ''), 600000), LEFT(`+env.fromAddr+`, 600000), LEFT(`+env.toAddrs+`, 600000), LEFT(`+env.ccAddrs+`, 600000) FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, id).Scan(&doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs)
+		if err != nil {
+			return 0, err
+		}
+		if err := s.dialect.FTSUpsert(q, doc); err != nil {
+			return 0, err
+		}
+	}
+	return int64(len(ids)), nil
 }
 
 // derivedEmailText is a retained email's stored text and the search document

@@ -40,37 +40,65 @@ func RebindPostgreSQL(query string) string {
 	return b.String()
 }
 
-// EscapeTSQueryTerm tokenizes a single user-supplied search term into
-// PostgreSQL `to_tsquery`-safe lexemes. The input is split on every
-// rune that isn't a Unicode letter or digit, so inputs that previously
-// produced invalid tsquery fragments — `---` (parse error), `foo-bar`
-// (the `-` is the NOT operator), `user@example.com`, `a.b.c` — now
-// decompose into their component lexemes that to_tsquery accepts.
-//
-// Returns an empty slice when the input collapses to nothing usable
-// (whitespace-only, all punctuation, or all metacharacters). Each
-// returned lexeme is safe to suffix with `:*` for prefix matching and
-// join with ` & `.
-//
-// Both PG FTS code paths share this allowlist tokenizer:
-// query.PostgreSQLQueryDialect.BuildFTSTerm and SanitizeFTSQuery both
-// call it, so they produce the same lexeme set for the same input.
-func EscapeTSQueryTerm(s string) []string {
-	var lexemes []string
-	var cur strings.Builder
-	flush := func() {
-		if cur.Len() > 0 {
-			lexemes = append(lexemes, cur.String())
-			cur.Reset()
-		}
-	}
-	for _, r := range s {
+// TokenSpans returns byte offsets of Unicode letter and digit runs.
+func TokenSpans(s string) [][2]int {
+	var spans [][2]int
+	start := -1
+	for i, r := range s {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			cur.WriteRune(r)
-		} else {
-			flush()
+			if start < 0 {
+				start = i
+			}
+		} else if start >= 0 {
+			spans = append(spans, [2]int{start, i})
+			start = -1
 		}
 	}
-	flush()
+	if start >= 0 {
+		spans = append(spans, [2]int{start, len(s)})
+	}
+	return spans
+}
+
+// EscapeTSQueryTerm splits a search term into Unicode letter and digit runs.
+func EscapeTSQueryTerm(s string) []string {
+	spans := TokenSpans(s)
+	var lexemes []string
+	for _, span := range spans {
+		lexemes = append(lexemes, s[span[0]:span[1]])
+	}
 	return lexemes
+}
+
+// NormalizeFTSText replaces separators with spaces without changing byte offsets.
+func NormalizeFTSText(s string) string {
+	b := []byte(s)
+	for i := range b {
+		b[i] = ' '
+	}
+	for _, span := range TokenSpans(s) {
+		copy(b[span[0]:span[1]], s[span[0]:span[1]])
+	}
+	return string(b)
+}
+
+// TSQuery builds ordered phrases, with a prefix on each final token.
+func TSQuery(terms []string, weight string) string {
+	var groups []string
+	for _, term := range terms {
+		parts := EscapeTSQueryTerm(term)
+		for i := range parts {
+			if i == len(parts)-1 {
+				parts[i] += ":*" + weight
+			} else if weight != "" {
+				parts[i] += ":" + weight
+			}
+		}
+		if len(parts) == 1 {
+			groups = append(groups, parts[0])
+		} else if len(parts) > 1 {
+			groups = append(groups, "("+strings.Join(parts, " <-> ")+")")
+		}
+	}
+	return strings.Join(groups, " & ")
 }

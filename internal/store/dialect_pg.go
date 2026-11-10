@@ -329,24 +329,10 @@ func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }
 
-// BuildFTSArg formats search terms for to_tsquery: each term is split
-// into letter/digit-only lexemes via sqldialect.EscapeTSQueryTerm so
-// punctuation like `-`, `.`, `@` (which would otherwise produce
-// invalid tsquery strings such as `---:*` or `foo-bar:*`) becomes a
-// lexeme boundary. Each surviving lexeme is suffixed with ":*" for
-// prefix matching and joined with " & ". Matches the shape emitted by
-// the query package's PostgreSQLQueryDialect.BuildFTSTerm so the API
-// search and engine deep-search return the same hits. If no lexemes
-// survive, returns "" so the caller can substitute a FALSE predicate
-// rather than feed to_tsquery an empty argument.
+// BuildFTSArg builds ordered phrases from Unicode letter and digit runs.
+// The final piece of each term matches a prefix.
 func (d *PostgreSQLDialect) BuildFTSArg(terms []string) string {
-	out := make([]string, 0, len(terms))
-	for _, t := range terms {
-		for _, lex := range sqldialect.EscapeTSQueryTerm(t) {
-			out = append(out, lex+":*")
-		}
-	}
-	return strings.Join(out, " & ")
+	return sqldialect.TSQuery(terms, "")
 }
 
 // InsertOrIgnore rewrites INSERT OR IGNORE INTO to INSERT INTO and appends
@@ -389,36 +375,11 @@ func (d *PostgreSQLDialect) InsertOrIgnoreSuffix() string {
 // empirically). The 600000-char cap makes the error unlikely for typical
 // (mostly-ASCII, repetitive) bodies, but does not make it impossible.
 //
-// A residual SQLSTATE 54000 is handled GRACEFULLY rather than wedging FTS:
-//   - Sync path (FTSUpsert): ALL FIVE tsvector inputs (subject, body, from, to,
-//     cc) are additionally byte-truncated in Go to maxFTSBodyBytes BEFORE
-//     binding (see below) — the SQL LEFT char cap cannot bound multibyte input,
-//     so byte-truncating every field (not just the body) is what keeps a
-//     multibyte subject/recipient list from tripping the limit. Dense distinct
-//     tokens can still overflow inside both caps, so the message write goes
-//     through upsertFTSOrUnsearchable, which marks the message unsearchable
-//     instead of failing the write.
-//   - Backfill path (FTSBackfillBatchSQL): the body lives in the DB, so only
-//     the LEFT char cap applies; backfillFTSRowByRow skips the offending row
-//     (with a logged warning) and continues, so one pathological row never
-//     aborts BackfillFTS or wedges later batches.
-//
-// SQLite's FTS5 has no such limit, so this cap is PostgreSQL-only.
+// Dense tokens can still exceed the limit. The write and backfill paths
+// mark such messages unsearchable and continue.
 const maxFTSBodyChars = 600000
 
-// maxFTSBodyBytes is the BYTE bound applied to EACH tsvector input field
-// (subject, body, from, to, cc) on the sync path (FTSUpsert) as defense-in-
-// depth, in addition to the SQL LEFT char cap. It is
-// well under PostgreSQL's 1MB (1048575-byte) tsvector limit: for the worst-case
-// shape — a body of all-distinct multibyte tokens, where the packed tsvector
-// (lexeme bytes + per-position overhead) is roughly the same order as the input
-// byte length — bounding the input to 700000 bytes keeps the resulting tsvector
-// under the limit with comfortable margin. (The empirical overflow was ~600000
-// distinct 2-byte chars producing a 1.2MB tsvector; 700000 input bytes of that
-// same density stays below 1MB.) Truncation is rune-safe (never splits a
-// multibyte rune). A UTF-8-safe byte truncation is not cleanly available in SQL
-// (no convert_to/convert_from boundary hack is attempted), so the backfill SQL
-// path keeps the char cap and relies on the row-by-row skip for any residual.
+// maxFTSBodyBytes bounds each input before PostgreSQL builds the vector.
 const maxFTSBodyBytes = 700000
 
 // truncateBytesRuneSafe returns s truncated to at most maxFTSBodyBytes bytes
@@ -488,11 +449,11 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), ` + charCap + `)), 'D')`
 	return vector, []any{
 		doc.MessageID,
-		truncateBytesRuneSafe(doc.Subject),
-		truncateBytesRuneSafe(doc.Body),
-		truncateBytesRuneSafe(doc.FromAddr),
-		truncateBytesRuneSafe(doc.ToAddrs),
-		truncateBytesRuneSafe(doc.CcAddrs),
+		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject)),
+		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body)),
+		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr)),
+		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs)),
+		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs)),
 	}
 }
 
@@ -523,31 +484,14 @@ func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) 
 	return err
 }
 
-// FTSBackfillBatchSQL returns the SQL to populate tsvector for a range of message IDs.
-// Parameters: $1=fromID, $2=toID. Uses LEFT JOIN on message_bodies via a subquery
-// so messages without a body row are still indexed (subject + participants).
+// FTSBackfillBatchSQL selects the rows to normalize and index in Go.
 func (d *PostgreSQLDialect) FTSBackfillBatchSQL() string {
-	envelope := storedFTSEnvelopeSQL("STRING_AGG")
-	charCap := strconv.Itoa(maxFTSBodyChars)
-	return `UPDATE messages m SET search_fts =
-		setweight(to_tsvector('simple', LEFT(` + envelope.subject + `, ` + charCap + `)), 'A') ||
-		setweight(to_tsvector('simple', LEFT(` + envelope.fromAddr + `, ` + charCap + `)), 'B') ||
-		setweight(to_tsvector('simple', LEFT(` + envelope.toAddrs + `, ` + charCap + `)), 'C') ||
-		setweight(to_tsvector('simple', LEFT(` + envelope.ccAddrs + `, ` + charCap + `)), 'C') ||
-		setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, ''), ` + charCap + `)), 'D'),
-		indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + `
-	FROM (
-		SELECT m2.id, mb.body_text
-		FROM messages m2
-		LEFT JOIN message_bodies mb ON mb.message_id = m2.id
-		WHERE m2.id >= $1 AND m2.id < $2
-	) src
-	WHERE m.id = src.id`
+	return `SELECT id FROM messages WHERE id >= ? AND id < ?`
 }
 
 func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql.DB) (string, error) {
 	return d.FTSBackfillBatchSQL() + fmt.Sprintf(
-		" AND (m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM %d)",
+		" AND (search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
 		CurrentFTSIndexingVersion,
 	), nil
 }

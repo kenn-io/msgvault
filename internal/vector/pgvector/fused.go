@@ -40,10 +40,10 @@ func postgresFTSRankExpression(vectorExpr, queryArg string) string {
 // to_tsquery + ts_rank_cd on the inline messages.search_fts
 // column and pgvector's `<=>` cosine-distance operator. The FTS
 // argument is rendered from req.FTSTerms via
-// query.PostgreSQLQueryDialect.BuildFTSTerm (lexeme:* AND-joined) so
+// query.PostgreSQLQueryDialect.BuildFTSTerm (ordered phrases with a final prefix) so
 // the BM25 leg prefix-matches the same term set SQLite does. The
 // 'simple' text-search configuration matches what
-// FTSUpsert/FTSBackfillBatchSQL in internal/store/dialect_pg.go writes
+// FTSUpsert in internal/store/dialect_pg.go writes
 // into search_fts, so query-time tokens line up with stored tokens (no
 // English stemming on either side). The returned PoolSaturated flag is true
 // when either per-signal pool produced more than KPerSignal candidates —
@@ -140,7 +140,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 
 		if useFTS {
 			// Render the dialect-neutral terms into a PG tsquery arg
-			// (lexeme:* AND-joined) BEFORE binding. to_tsquery requires a
+			// (ordered phrases with a final prefix) BEFORE binding. to_tsquery requires a
 			// pre-formatted argument (operators &, prefix :*) and ERRORS on
 			// raw text — this is safe ONLY because we always feed it
 			// PostgreSQLQueryDialect.BuildFTSTerm's output, never raw text.

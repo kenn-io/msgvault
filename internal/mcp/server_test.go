@@ -812,12 +812,13 @@ func TestSearchTools_RealEngineScopeIsolation(t *testing.T) {
 
 func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 	tests := []struct {
-		name        string
-		query       string
-		body        string
-		wantContext string
-		reject      string
-		sqliteOnly  bool
+		name         string
+		query        string
+		body         string
+		wantContext  string
+		reject       string
+		sqliteOnly   bool
+		postgresOnly bool
 	}{
 		{
 			name:        "punctuation becomes token boundary",
@@ -838,6 +839,13 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 			body:        "cafe\u0301teria notes",
 			wantContext: "cafe\u0301teria",
 			sqliteOnly:  true,
+		},
+		{
+			name:         "combining mark separates tokens on PostgreSQL",
+			query:        "cafe teria",
+			body:         "cafe\u0301teria notes",
+			wantContext:  "cafe\u0301teria",
+			postgresOnly: true,
 		},
 		{
 			name:        "full case fold matches Greek final sigma",
@@ -873,6 +881,9 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			f := storetest.New(t)
+			if tc.postgresOnly && !f.Store.IsPostgreSQL() {
+				t.Skip("PostgreSQL token semantics")
+			}
 			if tc.sqliteOnly && f.Store.IsPostgreSQL() {
 				t.Skip("unicode61 remove_diacritics regression is SQLite-specific")
 			}
@@ -955,14 +966,14 @@ func TestSearchMessageBodies_PostgreSQLContextUsesParserTokens(t *testing.T) {
 		marker    string
 	}{
 		{
-			name:      "decomposed combining mark stays inside a word",
-			lookalike: "cafe\u0301teria",
+			name:      "combined word differs from separated tokens",
+			lookalike: "cafeteria",
 			query:     "cafe\u0301teria",
 			marker:    "cafe teria marker",
 		},
 		{
-			name:      "host stays one token",
-			lookalike: "foo.bar",
+			name:      "combined host differs from separated tokens",
+			lookalike: "foobar",
 			query:     `"foo bar"`,
 			marker:    "foo bar marker",
 		},

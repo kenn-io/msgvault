@@ -314,11 +314,18 @@ func (e *SQLiteEngine) attachMessageBodySearchContexts(
 		if !ok {
 			return fmt.Errorf("message %d body context references an unknown chunk", item.messageID)
 		}
+		searchChunk := chunk
+		if e.dialect.messageBodyContextBackend() == messageBodyContextPostgreSQL {
+			searchChunk.body = sqldialect.NormalizeFTSText(chunk.body)
+		}
 		fragmentStart := bodyContextFragmentStart(
-			chunk, plain, spans, states[item.messageID],
+			searchChunk, plain, spans, states[item.messageID],
 		)
 		if fragmentStart < 0 {
 			return fmt.Errorf("message %d backend-native body context does not align with its source chunk", item.messageID)
+		}
+		if e.dialect.messageBodyContextBackend() == messageBodyContextPostgreSQL {
+			plain = chunk.body[fragmentStart : fragmentStart+len(plain)]
 		}
 		parsed = append(parsed, parsedBodyContext{
 			messageID:     item.messageID,
@@ -620,7 +627,7 @@ func (e *SQLiteEngine) canonicalBodyContextMatches(
 	args := make([]any, 0, 2*len(ids)+len(terms))
 	for i, messageID := range ids {
 		sourceValues[i] = "(?::bigint, ?::text)"
-		args = append(args, messageID, bodies[messageID])
+		args = append(args, messageID, sqldialect.NormalizeFTSText(bodies[messageID]))
 	}
 	queryValues := make([]string, len(terms))
 	for group, term := range terms {
@@ -844,7 +851,7 @@ func (e *SQLiteEngine) postgresBodyContexts(
 	args := make([]any, 0, 3*len(chunks)+len(terms)+1)
 	for i, chunk := range chunks {
 		chunkValues[i] = "(?::integer, ?::bigint, ?::text)"
-		args = append(args, chunk.id, chunk.messageID, chunk.body)
+		args = append(args, chunk.id, chunk.messageID, sqldialect.NormalizeFTSText(chunk.body))
 	}
 	queryValues := make([]string, 0, len(terms))
 	for group, term := range terms {
@@ -977,7 +984,7 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 	args := make([]any, 0, 3*len(candidates))
 	for i, candidate := range candidates {
 		values[i] = "(?::integer, ?::text, ?::text)"
-		args = append(args, i, candidate.fragment, candidate.query)
+		args = append(args, i, sqldialect.NormalizeFTSText(candidate.fragment), candidate.query)
 	}
 	rows, err := e.queryContext(ctx, fmt.Sprintf(`
 		WITH candidates(candidate_id, fragment, query_text) AS (VALUES %s)

@@ -9,11 +9,10 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
-// CurrentFTSIndexingVersion identifies the PostgreSQL search_fts field-weight
-// layout. Version 2 assigns subject=A, sender=B, recipients=C, and body=D so
-// exact body-only queries can restrict tsquery matches to weight D.
+// CurrentFTSIndexingVersion identifies the PostgreSQL search format.
+// Version 3 normalizes punctuation before building the weighted vector.
 const (
-	CurrentFTSIndexingVersion = 2
+	CurrentFTSIndexingVersion = 3
 	postgresDriverName        = "pgx"
 )
 
@@ -216,8 +215,9 @@ type Dialect interface {
 	// best-effort reindex from leaving an old body searchable as an exact hit.
 	InvalidateFTSForMessage(q querier, messageID int64) error
 
-	// FTSBackfillBatchSQL returns the SQL to populate the search index for a range of message IDs.
-	// Uses two ? placeholders for the ID range: WHERE m.id >= ? AND m.id < ?
+	// FTSBackfillBatchSQL returns SQL for a batch of message IDs. SQLite
+	// updates the index; PostgreSQL selects IDs for Go-side indexing.
+	// Both use two placeholders for the half-open ID range.
 	FTSBackfillBatchSQL() string
 
 	// FTSBackfillMissingBatchSQL populates missing search entries on SQLite.

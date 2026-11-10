@@ -30,7 +30,7 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 
 // TestPostgreSQLSanitizeFTSQuery_AllowlistOnly asserts the output never contains
 // any character outside the allowed set: Unicode letters/digits plus the join
-// punctuation ":*" and " & " that SanitizeFTSQuery itself adds.
+// punctuation that SanitizeFTSQuery itself adds.
 func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 	t.Parallel()
 	d := PostgreSQLQueryDialect{}
@@ -38,7 +38,7 @@ func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 		got := d.SanitizeFTSQuery(in)
 		// Strip the join/suffix punctuation the sanitizer is allowed to emit,
 		// then confirm everything left is a letter or digit.
-		stripped := strings.NewReplacer(":", "", "*", "", "&", "", " ", "").Replace(got)
+		stripped := strings.NewReplacer(":", "", "*", "", "&", "", " ", "", "<", "", ">", "", "-", "", "(", "", ")", "").Replace(got)
 		for _, r := range stripped {
 			assert.True(t, isLetterOrDigit(r),
 				"input %q produced disallowed rune %q in output %q", in, string(r), got)

@@ -138,18 +138,13 @@ func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
 	assert.Contains(q.query, "), 'C')", "recipient weight")
 	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($3, '')", "body vector")
 	assert.Contains(q.query, "), 'D')", "body weight")
-	assert.Contains(q.query, "indexing_version = 2", "layout version stamp")
+	assert.Contains(q.query, "indexing_version = 3", "layout version stamp")
 
-	backfill := d.FTSBackfillBatchSQL()
-	assert.Contains(backfill, "setweight(to_tsvector('simple', LEFT(COALESCE(src.body_text, '')", "backfill body vector")
-	assert.Contains(backfill, "), 'D')", "backfill body weight")
-	assert.Contains(backfill, "), 'C')", "backfill recipient weight")
-	assert.Contains(backfill, "indexing_version = 2", "backfill layout version stamp")
 }
 
 func TestPostgreSQLDialect_FTSNeedsBackfillSQLUsesLiteralVersion(t *testing.T) {
 	sql := postgresFTSNeedsBackfillSQL()
-	assert.Contains(t, sql, "indexing_version IS DISTINCT FROM 2")
+	assert.Contains(t, sql, "indexing_version IS DISTINCT FROM 3")
 	assert.NotContains(t, sql, "$1", "partial-index predicate must remain plan-time provable")
 }
 
@@ -160,8 +155,8 @@ func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.
 	q := &recordingFTSQuerier{}
 	require.NoError(d.EnsureFTSIndex(q), "EnsureFTSIndex")
 	require.Len(q.all, 2, "GIN and stale-row indexes")
-	assert.Contains(q.all[1], "idx_messages_search_fts_stale_v2")
-	assert.Contains(q.all[1], "search_fts IS NULL OR indexing_version IS DISTINCT FROM 2")
+	assert.Contains(q.all[1], "idx_messages_search_fts_stale_v3")
+	assert.Contains(q.all[1], "search_fts IS NULL OR indexing_version IS DISTINCT FROM 3")
 }
 
 // TestPostgreSQLDialect_BuildFTSArg covers R3: the tsquery argument
@@ -181,15 +176,15 @@ func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
 		{"plain", []string{"invoice"}, "invoice:*"},
 		{"two_plain", []string{"invoice", "review"}, "invoice:* & review:*"},
 		{"dashes_only_drops", []string{"---"}, ""},
-		{"hyphenated_splits", []string{"foo-bar"}, "foo:* & bar:*"},
+		{"hyphenated_splits", []string{"foo-bar"}, "(foo <-> bar:*)"},
 		{"email_splits",
 			[]string{"user@example.com"},
-			"user:* & example:* & com:*"},
+			"(user <-> example <-> com:*)"},
 		{"dotted_acronym_splits",
-			[]string{"a.b.c"}, "a:* & b:* & c:*"},
+			[]string{"a.b.c"}, "(a <-> b <-> c:*)"},
 		{"mix_of_clean_and_punct",
 			[]string{"invoice", "foo-bar"},
-			"invoice:* & foo:* & bar:*"},
+			"invoice:* & (foo <-> bar:*)"},
 		{"only_punct_collapses_to_empty",
 			[]string{"---", "..."}, ""},
 	}

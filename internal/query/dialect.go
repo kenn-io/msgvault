@@ -301,49 +301,21 @@ func (PostgreSQLQueryDialect) FTSLivenessSQL() string { return "" }
 // FTSJoin: PostgreSQL's tsvector column lives on messages — no join needed.
 func (PostgreSQLQueryDialect) FTSJoin() string { return "" }
 
-// BuildFTSTerm for PostgreSQL to_tsquery: tokenize each user term into
-// letter/digit-only lexemes via sqldialect.EscapeTSQueryTerm (shared
-// with store.PostgreSQLDialect) so punctuation like `-`, `.`, `@`
-// becomes a lexeme boundary rather than ending up in an invalid
-// tsquery, append :* for prefix match, AND lexemes with " & ".
+// BuildFTSTerm matches each term's pieces in order, with a final prefix.
 func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg string) {
-	tsTerms := make([]string, 0, len(terms))
-	for _, term := range terms {
-		for _, lex := range sqldialect.EscapeTSQueryTerm(term) {
-			tsTerms = append(tsTerms, lex+":*")
-		}
-	}
-	if len(tsTerms) == 0 {
+	arg = sqldialect.TSQuery(terms, "")
+	if arg == "" {
 		return "FALSE", ""
 	}
-	return "m.search_fts @@ to_tsquery('simple', ?)", strings.Join(tsTerms, " & ")
+	return "m.search_fts @@ to_tsquery('simple', ?)", arg
 }
 
 func (PostgreSQLQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
-	termGroups := make([]string, 0, len(terms))
-	for _, term := range terms {
-		lexemes := sqldialect.EscapeTSQueryTerm(term)
-		parts := make([]string, len(lexemes))
-		for i, lexeme := range lexemes {
-			suffix := ":D"
-			if i == len(lexemes)-1 {
-				suffix = ":*D"
-			}
-			parts[i] = lexeme + suffix
-		}
-		switch len(parts) {
-		case 0:
-			continue
-		case 1:
-			termGroups = append(termGroups, parts[0])
-		default:
-			termGroups = append(termGroups, "("+strings.Join(parts, " <-> ")+")")
-		}
-	}
-	if len(termGroups) == 0 {
+	arg = sqldialect.TSQuery(terms, "D")
+	if arg == "" {
 		return "FALSE", ""
 	}
-	return "m.search_fts @@ to_tsquery('simple', ?)", strings.Join(termGroups, " & ")
+	return "m.search_fts @@ to_tsquery('simple', ?)", arg
 }
 
 func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
@@ -353,19 +325,9 @@ func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
 	)
 }
 
-// SanitizeFTSQuery builds a tsquery arg from a single user string using the
-// allowlist tokenizer sqldialect.EscapeTSQueryTerm: the input is split on every
-// rune that isn't a Unicode letter or digit, and each resulting lexeme is
-// suffixed with ":*" for prefix matching and joined with " & ". This mirrors
-// BuildFTSTerm exactly so both PG FTS paths emit the same lexeme set, and
-// guarantees no tsquery metacharacter (`<`, `=`, `&`, etc.) ever reaches
-// to_tsquery. Returns "" if the input collapses to nothing usable.
+// SanitizeFTSQuery builds a safe ordered tsquery for one term.
 func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
-	var parts []string
-	for _, lex := range sqldialect.EscapeTSQueryTerm(query) {
-		parts = append(parts, lex+":*")
-	}
-	return strings.Join(parts, " & ")
+	return sqldialect.TSQuery([]string{query}, "")
 }
 
 func (SQLiteQueryDialect) DateOrderExpression(column string) string {
