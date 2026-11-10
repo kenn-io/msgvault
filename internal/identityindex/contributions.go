@@ -97,8 +97,11 @@ func (b builder) canReuseTemperatureContributions(ctx context.Context, effective
 	query = `SELECT EXISTS (
 		SELECT 1 FROM read_parquet('` + quoteSQLString(b.committed("messages")) +
 		`', hive_partitioning=true, union_by_name=true)
-		WHERE sent_at > ? AND sent_at <= ?)`
-	if err := b.db.QueryRowContext(ctx, query, priorCutoff.Time, effectiveAt).Scan(&newlyEligible); err != nil {
+		WHERE sent_at > ? AND sent_at <= ?) OR EXISTS (
+		SELECT 1 FROM read_parquet('` + quoteSQLString(b.committed("meeting_keys")) + `')
+		WHERE coalesce(occurrence_date::TIMESTAMP, occurrence_at) > ?
+		  AND coalesce(occurrence_date::TIMESTAMP, occurrence_at) <= ?)`
+	if err := b.db.QueryRowContext(ctx, query, priorCutoff.Time, effectiveAt, priorCutoff.Time, effectiveAt).Scan(&newlyEligible); err != nil {
 		return false, fmt.Errorf("inspect newly eligible relationship messages: %w", err)
 	}
 	return !newlyEligible, nil

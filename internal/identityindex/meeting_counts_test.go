@@ -100,9 +100,10 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 	for _, tc := range []struct {
 		name, keys           string
 		reuse, appendMessage bool
-		moved                bool
+		moved, later         bool
 	}{
 		{name: "unchanged", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, reuse: true},
+		{name: "occurrence becomes eligible", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, later: true},
 		{name: "key removed"},
 		{name: "new unrelated meeting", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, reuse: true, appendMessage: true},
 		{name: "new copy of cached meeting", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, appendMessage: true},
@@ -114,6 +115,13 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 			keysSQL := `SELECT 0::BIGINT AS message_id, ''::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date WHERE false`
 			if tc.keys != "" {
 				keysSQL = `SELECT *, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
+			}
+			if tc.later {
+				keysSQL = `SELECT *, TIMESTAMP '2027-01-02' AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
+				replaceRelationshipParquet(t, db, committed, "meeting_keys", keysSQL)
+				t.Cleanup(func() {
+					replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date`)
+				})
 			}
 			if tc.moved {
 				keysSQL = `SELECT *, TIMESTAMP '2026-01-02 10:00:00' AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
@@ -128,7 +136,11 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 				replaceRelationshipParquet(t, db, staged, "message_recipients", `SELECT 101::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
 			}
 			b := builder{db: db, opts: BuildOptions{Mode: ModeIncremental, CommittedRoot: committed, StagedBaseRoot: staged}}
-			reuse, err := b.canReuseTemperatureContributions(t.Context(), at)
+			effectiveAt := at
+			if tc.later {
+				effectiveAt = at.Add(48 * time.Hour)
+			}
+			reuse, err := b.canReuseTemperatureContributions(t.Context(), effectiveAt)
 			requirements.NoError(err)
 			assert.Equal(t, tc.reuse, reuse)
 			if tc.appendMessage && !tc.reuse {
