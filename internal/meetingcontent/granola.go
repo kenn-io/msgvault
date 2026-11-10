@@ -14,7 +14,7 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	var calendar map[string]jsontext.Value
 	if json.Unmarshal(fields["calendar_event"], &calendar) == nil {
 		id, _ := optionalString(calendar["calendar_event_id"])
-		content.LinkEvidence = LinkEvidence{GoogleEventID: strings.TrimSpace(id), CalendarID: normalizeExplicitEmail(owner.Email)}
+		content.LinkEvidence = LinkEvidence{GoogleEventID: strings.TrimSpace(id)}
 		if at, ok := rawTime(calendar["scheduled_start_time"], true); ok {
 			content.LinkEvidence.ScheduledAt = &at
 		}

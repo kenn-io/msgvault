@@ -17,7 +17,7 @@ func TestMeetingJournalTriggers(t *testing.T) {
 		name, format, note, decision, query, raw, noteUpdate, syncConfig string
 		member, quiet                                                    bool
 	}{
-		{name: "calendar mailbox change", syncConfig: `{"calendar_id":"other@example.com","time_zone":"UTC"}`},
+		{name: "calendar mailbox change", syncConfig: `{"calendar_id":"other@example.com","time_zone":"UTC"}`, quiet: true},
 		{name: "decision insert", query: `INSERT INTO meeting_link_decisions(member_message_id,target_message_id,decision) VALUES ($note, $event, 'link')`, member: true},
 		{name: "decision update", decision: "link", query: `UPDATE meeting_link_decisions SET decision='split' WHERE member_message_id=$note`, member: true},
 		{name: "decision delete", decision: "link", query: `DELETE FROM meeting_link_decisions WHERE member_message_id=$note`, member: true},

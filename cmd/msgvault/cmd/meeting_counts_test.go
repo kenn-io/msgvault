@@ -125,6 +125,7 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 		series := f.persist(t, "calendar", "series", "gcal_json", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`)
 		manual := f.persist(t, "first", "manual", "plaud_json", `{}`)
 		automatic := f.persist(t, "second", "automatic", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-07T10:00:00Z"}}`)
+		granola := f.persist(t, "first", "granola", "granola_json", `{"owner":{"email":"other@example.org"},"calendar_event":{"calendar_event_id":"series_20270307T100000Z","scheduled_start_time":"2027-03-07T10:00:00Z"}}`)
 		require.NoError(f.st.LinkMeetingContext(t.Context(), manual, store.OccurrenceRef{MessageID: series, Key: "20270307T100000Z"}))
 		_, err := buildCache(f.path, f.cache, true)
 		require.NoError(err)
@@ -132,7 +133,7 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 		assert.False(cacheNeedsBuild(f.path, f.cache).FullRebuild)
 		_, err = buildCache(f.path, f.cache, false)
 		require.NoError(err)
-		assert.Equal(map[int64][]string{manual: {"uid:weekly@example.org/"}, automatic: {"uid:weekly@example.org/"}}, readCachedMeetingKeys(t, f.cache))
+		assert.Equal(map[int64][]string{manual: {"uid:weekly@example.org/"}, automatic: {"uid:weekly@example.org/"}, granola: {"uid:weekly@example.org/"}}, readCachedMeetingKeys(t, f.cache))
 	})
 }
 

@@ -295,3 +295,39 @@ func TestMeetingRecordNotesAndCopies(t *testing.T) {
 		t.Run(tc.name, tc.run)
 	}
 }
+
+func TestMeetingRecordAfterRemovingRecurrence(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "series", linkSeriesRaw)
+	_, first := projectionFixture(t, st, "first", "plaud_json", `{}`)
+	require.NoError(t, st.LinkMeetingContext(t.Context(), first, OccurrenceRef{MessageID: event, Key: "20270307T100000Z"}))
+	calendarFixture(t, st, "series", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"}}`)
+	_, second := projectionFixture(t, st, "second", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-07T10:00:00Z"}}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int64{first, second}, record.MessageIDs)
+	for _, note := range []int64{first, second} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+		require.NoError(t, err)
+		require.Len(t, record.Links, 1)
+		assert.Equal(t, fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+	}
+}
+
+func TestMeetingRecordMergedExceptionAlias(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	old := `{"id":"older","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	oldData, _ := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", old, "old@example.com")
+	newData, _ := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", `{"id":"replacement","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	_, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: oldData.Message.SourceID, IntoSourceID: newData.Message.SourceID})
+	require.NoError(t, err)
+	_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"old@example.com"},"calendar_event":{"calendar_event_id":"older","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(t, err)
+	require.Len(t, record.Links, 1)
+	assert.Equal(t, fmt.Sprintf("evt:%d@20270314T100000Z", master), record.Links[0].Ref)
+	inverse, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20270314T100000Z"})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{note}, inverse.MessageIDs)
+}

@@ -75,7 +75,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 // exact source evidence as a fallback when no occurrence or saved link matches.
 func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]string, error) {
 	r = r.withMeetingCache()
-	matches, err := s.memberAutomaticOccurrences(ctx, r, memberID, budget)
+	matches, stale, hasMatch, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -83,32 +83,10 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 	for _, o := range matches {
 		out = append(out, o.Identity.countKey())
 	}
-	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
-	if err != nil {
-		return nil, err
+	for _, identity := range stale {
+		out = append(out, identity.countKey())
 	}
-	splits := map[string]bool{}
-	hasLink := false
-	for _, d := range decisions {
-		hasLink = hasLink || d.Decision == "link"
-		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
-		identity := o.Identity
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-			identity, err = storedMeetingIdentity(ctx, r, d.Ref, budget)
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if d.Decision == "split" {
-			splits[identity.countKey()] = true
-		} else {
-			out = append(out, identity.countKey())
-		}
-	}
-	if len(matches) == 0 && !hasLink {
+	if !hasMatch {
 		key, err := memberLinkKey(ctx, r, memberID)
 		if err != nil {
 			return nil, err
@@ -117,11 +95,30 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 		if err != nil {
 			return nil, err
 		}
+		decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range decisions {
+			if d.Decision != "split" {
+				continue
+			}
+			o, _, err := savedOccurrence(ctx, r, d.Ref, budget)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if o.Identity.countKey() == fallback {
+				fallback = ""
+				break
+			}
+		}
 		if fallback != "" {
 			out = append(out, fallback)
 		}
 	}
-	out = slices.DeleteFunc(out, func(key string) bool { return splits[key] })
 	slices.Sort(out)
 	return slices.Compact(out), nil
 }
@@ -134,7 +131,7 @@ func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, k
 	var instance calrecur.Identity
 	switch key.Kind {
 	case "google_event_id":
-		if key.CalendarID == "" || key.Value == "" {
+		if key.Value == "" {
 			return "", nil
 		}
 		base, original, ok := calrecur.ParseInstanceID(key.Value)
@@ -145,7 +142,7 @@ func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, k
 			base, original = key.Value, calrecur.Identity{Instant: *key.ScheduledAt}
 		}
 		instance = original
-		fallback = fmt.Sprintf("gcal:%q/%q/%s", key.CalendarID, base, instance.Key())
+		fallback = fmt.Sprintf("gcal:%q/%s", base, instance.Key())
 		predicate, args = `e.provider_event_id = ?`, []any{base}
 	case "ical_uid":
 		if key.Value == "" || key.ScheduledAt == nil {
@@ -164,17 +161,7 @@ func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, k
 	var found []meetingIdentity
 	for _, row := range rows {
 		original := instance
-		if key.Kind == "google_event_id" {
-			var config sql.NullString
-			err := r.QueryRowContext(ctx, `SELECT sync_config FROM sources WHERE source_type = 'gcal'
- AND id = COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id = ?), ?)`, row.MessageID, row.SourceID).Scan(&config)
-			if errors.Is(err, sql.ErrNoRows) || err == nil && calendarMailbox(config) != key.CalendarID {
-				continue
-			}
-			if err != nil {
-				return "", err
-			}
-		} else if row.Event.AllDay {
+		if key.Kind == "ical_uid" && row.Event.AllDay {
 			zone, err := calendarEventZone(row.Event)
 			if err != nil {
 				return "", err

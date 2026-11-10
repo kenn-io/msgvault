@@ -153,8 +153,8 @@ func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
 	}{
 		{"UID and instant", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`, `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T06:00:00-04:00"}}`, []string{"uid:weekly@example.org/20270321T100000Z"}},
 		{"UID alone", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org"}}`, "", nil},
-		{"Google instance", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, "", []string{`gcal:"calendar@example.com"/"series"/20270321T100000Z`}},
-		{"Google series and instant", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-21T10:00:00Z"}}`, `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, []string{`gcal:"calendar@example.com"/"series"/20270321T100000Z`}},
+		{"Google instance", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, "", []string{`gcal:"series"/20270321T100000Z`}},
+		{"Google series and instant", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-21T10:00:00Z"}}`, `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, []string{`gcal:"series"/20270321T100000Z`}},
 		{"Google series alone", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series"}}`, "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,7 +173,7 @@ func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
 	}
 }
 
-func TestMeetingCountKeysGoogleMailboxScope(t *testing.T) {
+func TestMeetingCountKeysGoogleAcrossMailboxes(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "series", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
@@ -181,11 +181,7 @@ func TestMeetingCountKeysGoogleMailboxScope(t *testing.T) {
 		_, note := projectionFixture(t, st, mailbox, "granola_json", fmt.Sprintf(`{"owner":{"email":%q},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-21T10:00:00Z"}}`, mailbox))
 		keys, err := st.MeetingCountKeysContext(t.Context())
 		require.NoError(err)
-		want := "uid:weekly@example.org/20270321T100000Z"
-		if mailbox == "other@example.com" {
-			want = `gcal:"other@example.com"/"series"/20270321T100000Z`
-		}
-		assert.Equal([]string{want}, keys[note])
+		assert.Equal([]string{"uid:weekly@example.org/20270321T100000Z"}, keys[note])
 	}
 	calendarFixture(t, st, "single", singleLinkRaw("single", "single@example.org"))
 	_, note := projectionFixture(t, st, "single", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"single","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
