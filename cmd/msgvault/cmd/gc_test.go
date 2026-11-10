@@ -111,12 +111,6 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	sharedBlob := seedGCLooseBlob(t, cfg, deletedID, strings.Repeat("0b", 32))
 	seedGCAttachmentRow(t, cfg, activeID, strings.Repeat("0b", 32))
 
-	st, err := store.OpenReadOnlyContext(t.Context(), cfg.DatabaseDSN())
-	require.NoError(err, "open archive before GC")
-	defer func() { _ = st.Close() }()
-	var pagesBefore int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `PRAGMA page_count`).Scan(&pagesBefore))
-
 	require.NoError(runGCLocal(cmd, gcOptions{yes: true}))
 	assert.Contains(output.String(), "Source-deleted messages to purge: 1")
 	assert.Contains(output.String(), "Dedup-hidden messages retained: 1")
@@ -138,10 +132,13 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	assert.True(gcMessageExists(t, backups[0], deletedID),
 		"backup must capture the source-deleted row before purge")
 
-	// Close-time statistics maintenance may free pages after VACUUM.
-	var pagesAfter int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `PRAGMA page_count`).Scan(&pagesAfter))
-	assert.Less(pagesAfter, pagesBefore, "GC must reclaim the deleted payload's pages")
+	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err, "open compacted archive")
+	defer func() { _ = st.Close() }()
+	var freelist int64
+	require.NoError(st.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freelist),
+		"read compacted freelist")
+	assert.Zero(freelist)
 }
 
 func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {

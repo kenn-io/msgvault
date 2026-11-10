@@ -220,9 +220,6 @@ func (s *Store) VacuumContext(ctx context.Context) error {
 	if s.IsPostgreSQL() {
 		return ErrGCUnsupported
 	}
-	if err := s.optimizeSQLite(ctx); err != nil {
-		return fmt.Errorf("optimize SQLite before VACUUM: %w", err)
-	}
 	conn, err := s.DB().Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire SQLite connection for VACUUM: %w", err)
@@ -231,6 +228,5 @@ func (s *Store) VacuumContext(ctx context.Context) error {
 	if _, err := conn.ExecContext(ctx, "VACUUM"); err != nil {
 		return fmt.Errorf("vacuum SQLite archive: %w", err)
 	}
-	s.compacted.Store(true)
 	return nil
 }
