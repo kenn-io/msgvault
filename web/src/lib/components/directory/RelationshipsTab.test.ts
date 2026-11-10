@@ -488,6 +488,34 @@ describe('RelationshipsTab', () => {
     expect(bodies).toEqual([{ notes: 'Keep this note' }, { end_date: '2026-07', notes: 'Keep this note' }]);
   });
 
+  it('keeps the end date required after a failed conflict retry', async () => {
+    const opening = relationship(41, 1);
+    const ended = relationship(41, 2, { status: 'ended', end_date: { year: 2026, month: 7 } });
+    let reads = 0, patches = 0;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input), path = pathOf(request);
+      if (request.method === 'PATCH') {
+        if (++patches === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+        throw new TypeError('Network unavailable');
+      }
+      if (path === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : ended, { headers: { ETag: `"relationship-41-r${reads}"` } });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: ended })] });
+      throw new Error(`unexpected ${request.method} ${path}`);
+    });
+    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: opening })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await rowAction('Edit…');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Keep yours' });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-07' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+    await screen.findByText("Couldn't save this connection.");
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
+  });
+
   it('deletes an incoming connection using its underlying edge', async () => {
     const requests: Request[] = [];
     const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {

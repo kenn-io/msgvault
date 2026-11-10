@@ -81,7 +81,7 @@
   let committed = $state(false);
   const loading = $derived(!!initialView && !opened && !attempt.details);
   const locked = $derived(attempt.busy || committed || controller.createBlocked.relationships);
-  const cannotReopen = $derived(!!(attempt.conflict?.data.end_date ?? initialRelationship?.end_date) && !endDate.trim());
+  const cannotReopen = $derived(!!(attempt.prepared?.data.end_date ?? initialRelationship?.end_date) && !endDate.trim());
 
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;

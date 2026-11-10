@@ -3,6 +3,25 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organizationProfile, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 
+it('shows an ended job conflict outside folded past jobs without retry', async () => {
+  let reads = 0;
+  const ended = employment(11, 2, { is_primary: false, is_current: false, end_date: { year: 2026, month: 7 } });
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(++reads === 1 ? employment(11, 1, { is_primary: false }) : ended, { headers: { ETag: `"employment-11-r${reads}"` } });
+    if (path === '/api/v1/employments/11/primary') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [ended] });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment(11, 1, { is_primary: false })];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await fireEvent.click(screen.getByRole('button', { name: /^Actions for/ }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
+  await screen.findByText('1 past job');
+  expect((await screen.findByRole('region', { name: 'Saved job' })).closest('details.fold')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+});
+
 it('uses the saved job employer in the deletion title', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {

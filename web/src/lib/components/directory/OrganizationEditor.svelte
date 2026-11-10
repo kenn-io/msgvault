@@ -141,7 +141,7 @@
 
   async function remove(): Promise<void> {
     if (!initialOrganization || submitting || deleteBlocked) return;
-    if (await removal.run(current => controller.deleteOrganization(initialOrganization.id, current))) onDone();
+    if (await removal.run(current => controller.deleteOrganization(initialOrganization.id, current))) onDone(); else await check.prepare(() => controller.organizationEmploymentHolders(initialOrganization.id));
   }
 
   async function refreshAfterUnknown(): Promise<void> {
@@ -372,7 +372,7 @@
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}
     </div>
-    {#snippet notice()}{#if removal.conflict}{@render conflictNotice(removal, () => void remove(), 'Retry')}{:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
+    {#snippet notice()}{#if removal.conflict}{@render conflictNotice(removal, () => void remove(), 'Retry')}{:else if removal.failed && !deleteBlocked}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
   </Dialog>
 {:else}
 <Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save organization' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}

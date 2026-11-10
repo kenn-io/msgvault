@@ -250,6 +250,24 @@ it.each(['failed request', 'revision conflict'] as const)('handles a delete %s',
   }
 });
 
+it('shows the new holder when a job appears after the deletion check', async () => {
+  let checks = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: ++checks === 1 ? [] : [employment(11, 1, { person_id: 7 })] });
+    if (path === '/api/v1/people/7') return Response.json({ display_name: 'Synthetic Person' });
+    if (path === '/api/v1/organizations/21' && request.method === 'DELETE') return Response.json({ error: 'organization_has_employments', message: 'Organization still has employment records' }, { status: 409 });
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onOpenPerson: vi.fn() });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  expect(await screen.findByRole('button', { name: 'Synthetic Person' })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+});
+
 it('shows a failed holder profile read as a failed check and retries it', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
