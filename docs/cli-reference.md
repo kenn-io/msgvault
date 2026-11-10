@@ -5335,9 +5335,27 @@ internal message ID and provider-owned attachments.
 
 The audit parses stored raw MIME and compares it with the archived fields on
 every run. It does not contact Gmail, change the archive, or read saved mismatch
-flags. Coherent messages are omitted. After a successful repair, run the same
-audit again to confirm the message is omitted; no re-sync or cache rebuild is
-needed. When stored part keys are available, attachments are compared by
+flags. Messages are omitted only when every comparison is `match`. A demonstrated
+difference produces `status=mismatch`, even when other comparisons are
+`inconclusive`. With no mismatch, any inconclusive comparison produces
+`status=inconclusive`, even when other fields match. Inconclusive means the
+comparison could not establish consistency; it does not establish corruption.
+
+For optional headers and bodies, a stored SQL NULL matches an empty recalculated
+value. If the recalculated value is nonempty, NULL is `inconclusive`. A stored
+non-NULL value, including an empty string, is compared directly. Missing legacy
+recipient addresses or attachment part keys can also leave comparisons
+inconclusive. These results do not identify why evidence is missing.
+
+Both human output and `--json` use these rules. The JSON fields and status values
+are unchanged; consumers can now receive additional inconclusive rows. Count
+`mismatch` and `inconclusive` separately rather than treating every emitted row
+as corruption. Audit completion without an operational error is not a claim
+that all comparisons matched.
+
+After a successful repair, run the same audit again to inspect any remaining
+uncertainty; no re-sync or cache rebuild is needed. When stored part keys are
+available, attachments are compared by
 physical MIME occurrence, so separate parts with identical bytes still count
 separately. Older rows without part keys cannot prove how many times identical
 content occurred.

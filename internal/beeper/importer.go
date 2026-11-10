@@ -33,7 +33,7 @@ var checkpointMinInterval = 15 * time.Second
 
 const (
 	// stoppedImportFinalizeTimeout reserves a small bounded window for
-	// checkpoint and terminal sync writes after the scheduled request budget.
+	// checkpoint and terminal sync writes from detection of a stop.
 	stoppedImportFinalizeTimeout = 15 * time.Second
 	// checkpointPageInterval flushes the sync checkpoint every N pages inside a
 	// single chat backfill. Per-chat-only checkpointing is insufficient here:
@@ -109,11 +109,9 @@ func (o ImportOptions) requestContext(ctx context.Context) (context.Context, con
 }
 
 func (o ImportOptions) finalizeContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(stoppedImportFinalizeTimeout)
-	if !o.StopAt.IsZero() && o.StopAt.Add(stoppedImportFinalizeTimeout).Before(deadline) {
-		deadline = o.StopAt.Add(stoppedImportFinalizeTimeout)
-	}
-	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	// Checkpoint and terminal status writes must finish even after cancellation
+	// or a late stop; give them a fresh, bounded window from detection.
+	return context.WithTimeout(context.WithoutCancel(ctx), stoppedImportFinalizeTimeout)
 }
 
 func (o ImportOptions) conversationStatsContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -126,11 +124,7 @@ func (o ImportOptions) conversationStatsContext(ctx context.Context) (context.Co
 		}
 		return context.WithDeadline(ctx, o.StopAt)
 	}
-	deadline := time.Now().Add(stoppedImportFinalizeTimeout)
-	if !o.StopAt.IsZero() && o.StopAt.Add(stoppedImportFinalizeTimeout).Before(deadline) {
-		deadline = o.StopAt.Add(stoppedImportFinalizeTimeout)
-	}
-	return context.WithDeadline(ctx, deadline)
+	return context.WithTimeout(ctx, stoppedImportFinalizeTimeout)
 }
 
 func (o ImportOptions) budgetError(parent context.Context, err error) error {
