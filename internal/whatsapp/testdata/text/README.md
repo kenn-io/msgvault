@@ -37,11 +37,7 @@ Other dialects are not promised.
 
 Recognized English notices retain their entire payload without an asserted author.
 Other colon payloads keep their exact prefix as an unverified scoped label.
-Supported headers inside message text start new records. Other lines beginning
-with `[` or containing a spaced dash between nonempty text are rejected.
-Unicode spaces and dash punctuation count. Ordinary text such as `Meet at
-10:01` stays in the body; `[todo] buy seeds` and `Well - see you then` are
-rejected. Unknown headers without either shape can remain continuation text.
+Supported headers inside message text start new records. A continuation line that begins with a date (for example `2026-06-14` or `13 Jun 2026,`) fails; edit that line to import it. Other unfamiliar headers stay in the preceding message.
 The unit tests cover time interpretation, invalid input, bounded parsing,
 repeated and overlapping windows and media containment.
 

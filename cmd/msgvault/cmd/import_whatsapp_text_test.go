@@ -51,7 +51,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			payload := "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:00 - Mira: asters\n"
 			args := []string{"--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy", "--no-default-identity"}
 			if name == "multiline" {
-				payload = "13/6/26, 10:00 - Mira: asters\nMeet at 10:01\nThe price is £3.50\n"
+				payload = "13/6/26, 10:00 - Mira: asters\nMeet at 10:01\nThe price is £3.50\nPlan A - the cheap one\n"
 			}
 			if name == "incomplete" {
 				st, err := store.Open(cfg.DatabaseDSN())
@@ -87,7 +87,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 				defer func() { assert.NoError(st.Close()) }()
 				var body string
 				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT body_text FROM message_bodies").Scan(&body))
-				assert.Equal("asters\nMeet at 10:01\nThe price is £3.50", body)
+				assert.Equal("asters\nMeet at 10:01\nThe price is £3.50\nPlan A - the cheap one", body)
 			} else {
 				require.NoError(err)
 				assert.Contains(out.String(), "2 records")
@@ -99,7 +99,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 }
 
 func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
-	for _, boundary := range []string{"13 Jun 2026, noon - Ivo: two", "13/6/26 10:01 - Messages are encrypted"} {
+	for _, boundary := range []string{"13 Jun 2026, noon - Ivo: two", "13/6/26 10:01 - Messages are encrypted", "13/6/26, 10:01: Ivo: two"} {
 		for _, subprocess := range []bool{false, true} {
 			for _, existing := range []bool{false, true} {
 				t.Run(fmt.Sprintf("boundary=%s/subprocess=%t/existing=%t", boundary, subprocess, existing), func(t *testing.T) {

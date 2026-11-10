@@ -21,8 +21,8 @@ import (
 // and either Android's dash or iOS's brackets. Never guess date order.
 var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}), ([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:[ \x{00a0}\x{202f}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?)(\] | - )(.*)$`)
 
-// Record-shaped continuation lines cannot be distinguished from unfamiliar headers.
-var textDateStart = regexp.MustCompile(`^(?:\[|[^\r\n]*\S[\s\p{Z}]+[-\p{Pd}][\s\p{Z}]+\S)`)
+// A continuation that begins with a date may be an unfamiliar header.
+var textDateStart = regexp.MustCompile(`^[\s\p{Z}]*\[?[\s\p{Z}]*(?:\p{Nd}{1,4}[/.-]\p{Nd}{1,2}[/.-]\p{Nd}{1,4}|\p{Nd}{1,2}\.? \p{L}+\.? \p{Nd}{2,4}|\p{L}+\.? \p{Nd}{1,2},? \p{Nd}{4})`)
 var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {
