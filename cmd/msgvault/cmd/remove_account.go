@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/forge"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/inline"
 	matrixsource "go.kenn.io/msgvault/internal/matrix"
@@ -365,6 +366,11 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	}
 
 	// Remove credentials for the source type.
+	if fs, ok := forgeFor(source.SourceType); ok {
+		if err := forge.DeleteToken(cfg.TokensDir(), fs.name, source.Identifier); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove %s token: %v\n", fs.label, err)
+		}
+	}
 	switch source.SourceType {
 	case sourceTypeGmail:
 		remaining, listErr := s.ListSources(sourceTypeGmail)

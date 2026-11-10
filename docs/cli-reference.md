@@ -2027,6 +2027,107 @@ failure detail from the attachment row.
 
 ---
 
+## add-github
+
+Register a [GitHub account](/docs/usage/forges/#github) as a `github` source.
+Requires a classic personal access token with the `notifications` and
+`public_repo` scopes, or `repo` to archive private repositories too, plus
+`read:user` to join accounts to people by their public email; GitHub's
+notifications API doesn't accept fine-grained tokens. The token is checked with `GET /user` and stored in the
+tokens directory. The source's identifier is `github.com:user:<account-id>`.
+
+```bash
+msgvault add-github
+msgvault add-github --token-file ~/github-token.txt
+MSGVAULT_GITHUB_TOKEN="ghp_..." msgvault add-github
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token-file` | | Read the token from a file instead of prompting |
+| `--no-default-identity` | `false` | Do not auto-confirm the account as the source's "me" identity |
+
+After adding, sync with `msgvault sync-github`.
+
+---
+
+## sync-github
+
+Archive the GitHub threads that changed since the last sync, for every added
+account or the one named by its login. Threads are found through the account's
+notifications and a search for threads that involve it; the first sync
+searches the whole history. Each changed thread is fetched whole, newest first.
+The `[github]` `include_owners` and `exclude_owners` lists choose whose
+repositories are archived, before any content is fetched. A sync pauses once
+GitHub reports that a fifth or less of an hourly rate limit is left, with its
+place saved, and the next sync continues. One failing account does not stop
+the others; the command exits non-zero listing the failures. See
+[Code forges](/docs/usage/forges/).
+
+```bash
+msgvault sync-github
+msgvault sync-github octocat
+msgvault sync-github --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Find and fetch every thread again, not only those changed since the last sync; unchanged posts are not rewritten |
+
+---
+
+## add-gitlab
+
+Register a [GitLab account](/docs/usage/forges/#gitlab) as a `gitlab` source,
+on gitlab.com or the self-managed instance `--url` names. Requires a personal
+access token with the `read_api` and `read_user` scopes, or `api`. The token is
+checked with `GET /user` and its scopes with
+`GET /personal_access_tokens/self`, then stored in the tokens directory. The
+source's identifier is `<instance>:user:<account-id>`, such as
+`gitlab.com:user:1234`.
+
+```bash
+msgvault add-gitlab
+msgvault add-gitlab --url https://gitlab.example.com
+msgvault add-gitlab --token-file ~/gitlab-token.txt
+MSGVAULT_GITLAB_TOKEN="glpat-..." msgvault add-gitlab
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--url` | `https://gitlab.com` | The instance's web address, path included |
+| `--token-file` | | Read the token from a file instead of prompting |
+| `--no-default-identity` | `false` | Do not auto-confirm the account as the source's "me" identity |
+
+After adding, sync with `msgvault sync-gitlab`.
+
+---
+
+## sync-gitlab
+
+Archive the GitLab threads that changed since the last sync, for every added
+account or the one named by its login. Threads are found through the account's
+to-dos, its own events, the issues and merge requests it authored, is assigned
+or reviews, and a check of the threads already archived. Each changed thread
+is fetched whole, newest first. The `[gitlab]` `include_owners` and
+`exclude_owners` lists choose whose projects are archived, by top-level group
+or user. A sync waits out a rate-limit refusal that resets within a minute and
+pauses, with its place saved, at one that resets later. One failing account
+does not stop the others; the command exits non-zero listing the failures. See
+[Code forges](/docs/usage/forges/#gitlab).
+
+```bash
+msgvault sync-gitlab
+msgvault sync-gitlab octocat
+msgvault sync-gitlab --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Find and fetch every thread again, not only those changed since the last sync; unchanged posts are not rewritten |
+
+---
+
 ## add-calendar
 
 Authorize read-only Google Calendar access for an account and register its calendars for sync. If the account already has a Gmail token, re-consent bundles Gmail + Calendar so Gmail access is not dropped — keep both checked on the consent screen. The Calendar API must be enabled on the OAuth project. By default only owned/writable calendars are registered.

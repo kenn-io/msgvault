@@ -1767,6 +1767,56 @@ what it can access. See [Slack permissions](/docs/usage/slack/#prerequisites)
 for a token restricted to public channels. A restricted token lists all public
 channels, including unjoined ones; broader tokens list your memberships.
 
+### `[github]` {#github}
+
+Sync the [GitHub accounts](usage/forges.md#github) added with
+`msgvault add-github`. One block covers every added account; tokens are
+per-account files.
+
+```toml
+[github]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/15 * * * *"         # 5-field cron; empty = manual sync only
+include_owners = []               # only these owners' repositories (empty = all)
+exclude_owners = ["my-employer"]  # never fetch these owners' repositories
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules GitHub sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `include_owners` | all | Organizations and users whose repositories are archived |
+| `exclude_owners` | — | Organizations and users whose repositories are never fetched (wins over `include_owners`) |
+
+Owners compare without case. Each sync looks up a repository's current owner
+before fetching any of its threads. After either list changes, the next sync searches your
+history again so a newly allowed owner's older threads are archived. See
+[Code forges](usage/forges.md#choose-whose-repositories-are-archived).
+
+### `[gitlab]` {#gitlab}
+
+Sync the [GitLab accounts](usage/forges.md#gitlab) added with
+`msgvault add-gitlab`, on any instance. One block covers every added account;
+tokens are per-account files.
+
+```toml
+[gitlab]
+enabled = true                    # gate for the daemon schedule
+schedule = "*/15 * * * *"         # 5-field cron; empty = manual sync only
+include_owners = []               # only these groups' and users' projects (empty = all)
+exclude_owners = ["my-employer"]  # never fetch these groups' and users' projects
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether the daemon schedules GitLab sync |
+| `schedule` | — | Cron expression used by `msgvault serve` |
+| `include_owners` | all | Top-level groups and users whose projects are archived |
+| `exclude_owners` | — | Top-level groups and users whose projects are never fetched (wins over `include_owners`) |
+
+A project's owner is its top-level group or user, so a group's subgroups go
+with it. Owners compare without case.
+
 ### `[teams]`
 
 Media policy for [Microsoft Teams](/docs/usage/teams/) chats and channels. Teams

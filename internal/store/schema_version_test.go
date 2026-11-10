@@ -275,6 +275,34 @@ func TestSchemaVersionInlineServiceUpgrade(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionForgeServicesUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	ctx := t.Context()
+
+	// An archive set up by version 39 has no forge services.
+	_, err := s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_forges_v1'`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug IN ('github', 'gitlab', 'gitea')`)
+	require.NoError(err)
+	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "39")
+	require.NoError(err)
+	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
+
+	// A writer opens the archive through InitSchemaUnlessCurrentContext. Its
+	// PostgreSQL fast path for current archives applies no new seed, so the
+	// older version must send this archive through the full initializer.
+	require.NoError(s.InitSchemaUnlessCurrentContext(ctx))
+	require.NoError(s.ValidateSchemaContext(ctx))
+	for _, slug := range []string{"github", "gitlab", "gitea"} {
+		service, err := s.ResolveCommunicationServiceContext(ctx, slug)
+		require.NoError(err, slug)
+		assert.True(service.IsSystem, slug)
+		assert.Equal(store.ScopePolicyRequired, service.ScopePolicy, slug)
+	}
+}
+
 func TestSchemaVersionMalformedAndFuture(t *testing.T) {
 	req := require.New(t)
 	check := assert.New(t)
@@ -337,6 +365,7 @@ var (
 		37: "f6d6ae3d753476a4261d54df5d413994ec987dc34137fccf421f215bf0a11b7e",
 		38: "ac18227f57322ed8e822c5406000375e7e3aa2b47c73246ba36e9b0628c9bb66",
 		39: "3b4a4d69ac0ae321fddcd1836b788118f5a7f25cda49d89ef8c327bd7338288d",
+		40: "41b6c04efd34a7badd9fc1ce9489c438fedbec435aacbfadbbc537436d865373",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -373,6 +402,7 @@ var (
 		37: "7620e8c5b65db28a3b5bd6a0f709e53df28c5d7ee2fae42454e372508d9bc10e",
 		38: "5244b660c5b79ef46144ba5a9fa9470f84a15fe6b2cb1a3ffd11d2a39157ec32",
 		39: "77f763ebf58ff6f1df95dac4e187489afb6cc3521177cac60e7eef0894a8306a",
+		40: "8d68eb3dcdc4afb7c230763e6a4a98f91564fab183b83a7a4b1daf1141754eb3",
 	}
 )
 

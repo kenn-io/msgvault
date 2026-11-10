@@ -180,4 +180,7 @@ var KnownMessageTypes = []string{
 	"inline",
 	"matrix",
 	"telegram",
+	"github",
+	"gitlab",
+	"gitea",
 }
