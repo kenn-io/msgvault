@@ -3,7 +3,7 @@
   import { Button, Disclosure, Spinner } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
 
-  import { addressText, absorbedCardTitle, mergeAddresses, mergeSentence, type MergedInAddress } from '../../directory/merge-labels';
+  import { addressText, absorbedCardTitle, mergeAddresses, mergeSentence, mergeSummaryRow, mergeWorkspaceLabels, workspaceLabels, type MergedInAddress } from '../../directory/merge-labels';
   import type { APIClient } from '../../api/client';
   import {
     PersonMergeHistoryController,
@@ -23,6 +23,7 @@
   interface Props {
     client: APIClient;
     personID: number;
+    scopeLabels?: Map<string, string>;
     /** Field history, under the merges, with what this page's merges brought in. */
     fields?: Snippet<[(mergeID: number) => void, MergedInAddress[]]>;
     onClose?: () => void;
@@ -32,7 +33,7 @@
   }
 
   let {
-    client, personID, fields, onClose = () => undefined,
+    client, personID, fields, scopeLabels = new Map(), onClose = () => undefined,
     definitions = [],
     onOpenPerson = () => undefined,
     onSplitCommitted = () => undefined
@@ -69,11 +70,13 @@
   }
 
   const labels = $derived(controller.labels?.for === controller.detail ? controller.labels : null);
-  const absorbedAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'absorbed') : []);
+  const scopes = $derived(workspaceLabels(controller.mergedIn, scopeLabels));
+  const absorbedAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'absorbed', mergeWorkspaceLabels(controller.detail, scopes)) : []);
   const absorbedAddress = $derived(addressText(absorbedAddresses[0]));
   function mergeTitle(merge: { id: number; absorbed_person_id: number; survivor_person_id: number }): string {
     if (!controller.historyRows.has(merge.id)) return 'Loading merge…';
-    const address = controller.detail?.merge.id === merge.id && labels ? absorbedAddress : controller.historyRows.get(merge.id)?.absorbedAddress;
+    const item = controller.history.find(item => item.merge.id === merge.id);
+    const address = controller.detail?.merge.id === merge.id && labels ? absorbedAddress : item ? mergeSummaryRow(item, scopes).absorbedAddress : undefined;
     const names = controller.historyRows.get(merge.id)?.names;
     return mergeSentence(names?.get(merge.absorbed_person_id), names?.get(merge.survivor_person_id), address);
   }

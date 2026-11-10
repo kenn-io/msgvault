@@ -135,7 +135,7 @@
   }
 </script>
 
-<PersonMergeHistory {client} {personID} {onClose} definitions={controller?.definitions}
+<PersonMergeHistory {client} {personID} {onClose} scopeLabels={workspaces} definitions={controller?.definitions}
   onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined}
   onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }}>
   {#snippet fields(openMerge, mergedIn)}

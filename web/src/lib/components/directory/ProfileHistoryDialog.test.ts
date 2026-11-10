@@ -238,6 +238,7 @@ it('uses one account numbering for saved and merged-in addresses', async () => {
     if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
     return Response.json({ ...emptyProfile(person()), observations: [observed], contact_points: [saved] });
   }) });
+  expect(await screen.findByRole('button', { name: /WhatsApp · Neri · account 2 merged into/ })).toBeDefined();
   expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
   const row = (await screen.findByRole('button', { name: /Open the merge that brought in WhatsApp/ })).closest('.detail-row')!;
   expect(row.textContent).toContain('WhatsApp · Neri · account 2');

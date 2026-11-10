@@ -89,10 +89,10 @@ export function savedAddresses(points: (PersonMergeRecordedContactPoint | Person
 }
 
 /** The server supplies recorded names and canonical identities for a page or selected merge. */
-export function mergeSummaryRow(item: { merge: PersonMergeDetail['merge']; labels: PersonMergeLabels; participants?: PersonMergeDetail['participants'] }): MergeRow {
+export function mergeSummaryRow(item: { merge: PersonMergeDetail['merge']; labels: PersonMergeLabels; participants?: PersonMergeDetail['participants'] }, known = new Map<string, string>()): MergeRow {
   const labels = item.labels;
   const participants = item.participants ?? labels.participants ?? [];
-  const workspaces = mergeWorkspaceLabels({ ...item, participants });
+  const workspaces = mergeWorkspaceLabels({ ...item, participants }, known);
   const names = new Map(labels.profiles.flatMap(profile => profile.display_name ? [[profile.id, profile.display_name] as const] : []));
   const addresses = participantAddressMap(labels, workspaces);
   const rows = mergeAddresses({ participants, merge: item.merge, labels }, 'absorbed', workspaces);
@@ -127,11 +127,11 @@ export function workspaceLabels(addresses: Omit<AddressIdentity, 'identity_key'>
   return labels;
 }
 
-function mergeWorkspaceLabels(detail: MergeSides): Map<string, string> {
+export function mergeWorkspaceLabels(detail: MergeSides, known = new Map<string, string>()): Map<string, string> {
   return workspaceLabels([
     ...(detail.labels?.addresses ?? []),
     ...(detail.labels?.profiles ?? []).flatMap(profile => profile.contact_points ?? []),
-  ]);
+  ], known);
 }
 
 export function scopeText(identity: Omit<AddressIdentity, 'identity_key'>, workspaces: Map<string, string>): string {
