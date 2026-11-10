@@ -114,6 +114,7 @@ Add and sync sources:
 Import local exports:
   import-eml          Import a tree of RFC 5322 .eml files
   import-emlx         Import Apple Mail .emlx files into msgvault
+  import-google-chat  Import extracted Google Chat Takeout parts
   import-gvoice       Import Google Voice history from Takeout export
   import-imazing-csv  Import Messages CSV exports created by iMazing
   import-imessage     Import iMessages from local database

@@ -1,0 +1,25 @@
+{
+  "name": "Synthetic Space",
+  "members": [
+    {
+      "name": "Person 1",
+      "email": "person1@example.com",
+      "user_type": "Human"
+    },
+    {
+      "name": "Person 3",
+      "email": "person3@example.com",
+      "user_type": "Human"
+    },
+    {
+      "name": "Person 2",
+      "email": "person2@example.com",
+      "user_type": "Human"
+    },
+    {
+      "name": "Person 4",
+      "email": "person4@example.com",
+      "user_type": "Human"
+    }
+  ]
+}

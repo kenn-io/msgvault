@@ -1,0 +1,13 @@
+{
+  "user": {
+    "name": "Person 1",
+    "email": "person1@example.com",
+    "user_type": "Human"
+  },
+  "membership_info": [
+    {
+      "group_id": "DM 7soV-5FKECQ",
+      "membership_state": "MEMBER_JOINED"
+    }
+  ]
+}
