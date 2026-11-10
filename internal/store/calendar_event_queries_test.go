@@ -375,27 +375,13 @@ func TestMeetingRelatedQueryPlan(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, statements, 2)
 	for _, statement := range statements {
-		prefix := "EXPLAIN QUERY PLAN "
-		if st.IsPostgreSQL() {
-			prefix = "EXPLAIN "
+		var plan string
+		if !st.IsPostgreSQL() {
+			plan = explainPlan(t, base, statement.query, statement.args...)
+		} else {
+			require.NoError(t, base.db.QueryRowContext(t.Context(), "EXPLAIN (FORMAT JSON) "+statement.query, statement.args...).Scan(&plan))
 		}
-		rows, err := base.db.QueryContext(t.Context(), prefix+statement.query, statement.args...)
-		require.NoError(t, err)
-		columns, err := rows.Columns()
-		require.NoError(t, err)
-		var plan strings.Builder
-		for rows.Next() {
-			vals := make([]any, len(columns))
-			ptrs := make([]any, len(columns))
-			for i := range vals {
-				ptrs[i] = &vals[i]
-			}
-			require.NoError(t, rows.Scan(ptrs...))
-			fmt.Fprintln(&plan, vals[len(vals)-1])
-		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		require.Contains(t, plan.String(), "idx_calendar_events_series_provider_id")
-		require.Contains(t, plan.String(), "idx_calendar_events_provider_id")
+		require.Contains(t, plan, "idx_calendar_events_series_provider_id")
+		require.Contains(t, plan, "idx_calendar_events_provider_id")
 	}
 }
