@@ -399,50 +399,31 @@ func TestImportSubredditTitleCanonical(t *testing.T) {
 	}
 }
 
-func TestImportOptionalContentHeaders(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := t.TempDir()
-	for name, data := range map[string]string{"messages.csv": "id,subject\none,hello\n", "posts.csv": "id,url\nthree,https://example.com/post\n", "comments.csv": "id,media\nfour,https://example.com/picture.png\n"} {
-		require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
-	}
-	st := testutil.NewTestStore(t)
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(err)
-	assert.Equal(3, summary.Added)
-	var id int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='post:three'").Scan(&id))
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(err)
-	assert.Equal("https://example.com/post", body)
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='comment:four'").Scan(&id))
-	body, err = st.GetMessageBodyText(t.Context(), id)
-	require.NoError(err)
-	assert.Equal("https://example.com/picture.png", body)
-	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
-	require.NoError(err)
-	assert.Len(results, 2)
-}
-
 func TestImportPermalinks(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
 	for name, data := range map[string]string{
-		"messages.csv": "id,body,permalink\npm,private text,https://example.com/message\n",
-		"posts.csv":    "id,body,url,permalink\npost,post text,https://example.com/link,https://example.com/post\nsame,,https://example.com/same,https://example.com/same\n",
-		"comments.csv": "id,body,media,permalink\ncomment,comment text,https://example.com/media,https://example.com/comment\n",
+		"messages.csv":   "id,body,permalink\npm,private text,https://example.com/message\n",
+		"posts.csv":      "id,body,url,permalink\npost,post text,https://example.com/link,https://example.com/post\nsame,,https://example.com/same,https://example.com/same\n",
+		"comments.csv":   "id,body,media,permalink\ncomment,comment text,https://example.com/media,https://example.com/comment\n",
+		"messages_1.csv": "id,subject\none,hello\n",
+		"posts_1.csv":    "id,url\nthree,https://example.com/post\n",
+		"comments_1.csv": "id,media\nfour,https://example.com/picture.png\n",
 	} {
 		require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
 	}
 	st := testutil.NewTestStore(t)
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
+	assert.Equal(7, summary.Added)
 	for id, want := range map[string]string{
 		"pm:pm":           "private text\nhttps://example.com/message",
 		"post:post":       "post text\nhttps://example.com/link\nhttps://example.com/post",
 		"post:same":       "https://example.com/same",
 		"comment:comment": "comment text\nhttps://example.com/media\nhttps://example.com/comment",
+		"post:three":      "https://example.com/post",
+		"comment:four":    "https://example.com/picture.png",
 	} {
 		var messageID int64
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM messages WHERE source_message_id=?"), id).Scan(&messageID))
@@ -452,5 +433,5 @@ func TestImportPermalinks(t *testing.T) {
 	}
 	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
 	require.NoError(err)
-	assert.Len(results, 4)
+	assert.Len(results, 6)
 }
