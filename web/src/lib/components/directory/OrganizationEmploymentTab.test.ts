@@ -145,14 +145,13 @@ describe('OrganizationEmploymentTab', () => {
   it('folds past jobs and keeps row actions beside linked employers', async () => {
     const { controller } = controllerWith(vi.fn<typeof fetch>());
     controller.organizations = [organization()];
-    controller.employments = [employment(11, 1, { title: 'Engineer', role: 'Design lead', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true }), employment(12, 1, { is_current: false, title: 'Historical role' }), employment(13, 1, { title: 'Designer', role: 'Designer' })];
+    controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true }), employment(12, 1, { is_current: false, title: 'Historical role' })];
     render(OrganizationEmploymentTab, { controller, personID: 7 });
     const row = screen.getByText(/Engineer at/).closest('.detail-row')!;
-    expect(row.textContent).toContain('Mar 2024 – present · Design lead · Platform');
+    expect(row.textContent).toContain('Mar 2024 – present · Platform');
     expect(within(row as HTMLElement).getByRole('button', { name: 'Synthetic Org' })).toBeDefined();
     await fireEvent.click(screen.getByText('1 past job'));
     expect(screen.getByText(/Historical role/)).toBeDefined();
-    expect(screen.getByText(/^Designer at/).closest('.detail-row')?.textContent?.match(/Designer/g)).toHaveLength(1);
   });
 
   it('locks Make primary while its preparation read is pending', async () => {

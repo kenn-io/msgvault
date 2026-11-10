@@ -93,7 +93,7 @@
 {#snippet pastRows()}<div class="records">{#each pastJobs as employment (employment.id)}{@render jobRow(employment)}{/each}</div>{/snippet}
 {#snippet jobRow(employment: Employment)}
   <!-- The organization is a link in the row's text, so the row itself takes no tap: Edit… is in ⋯, and a tap on a phone never lands on the wrong target. -->
-  <DetailRow actionLabel={`${employmentLabel(employment)} at ${controller.organizationName(employment.organization_id)}`} description={[dateSpan(employment.start_date, employment.end_date, employment.is_current), employment.title && employment.role?.trim() !== employment.title.trim() ? employment.role : '', employment.department, employment.is_current && employment.is_primary && currentJobs.length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')} menu={[
+  <DetailRow actionLabel={`${employmentLabel(employment)} at ${controller.organizationName(employment.organization_id)}`} description={[dateSpan(employment.start_date, employment.end_date, employment.is_current), employment.department, employment.is_current && employment.is_primary && currentJobs.length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')} menu={[
     { label: 'Edit…', onselect: () => employmentEditor = employment },
     ...(employment.is_current ? [{ label: 'End…', onselect: () => endingEmployment = employment }] : []),
     ...(employment.is_current && !employment.is_primary ? [{ label: 'Make primary', disabled: acting, onselect: () => void makePrimary(employment) }] : []),

@@ -317,6 +317,27 @@ describe('DirectoryEntityController', () => {
     expect(postCount).toBe(2);
   });
 
+  it('keeps a lost connection create blocked until the Network refresh ends too', async () => {
+    const networkRead = deferredResponse();
+    let networkReads = 0;
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/relationships' && request.method === 'POST') throw new TypeError('response lost');
+      if (pathOf(request) === '/api/v1/people/7/network' && ++networkReads > 1) return networkRead.promise;
+      return defaultResponse(request);
+    }));
+    const controller = new DirectoryEntityController(client, 7);
+    await controller.loadNetwork();
+    await controller.createRelationship({ source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' });
+    const refresh = controller.refreshRelationships();
+    await vi.waitFor(() => expect(controller.relationships).toHaveLength(1));
+    expect(controller.createBlocked.relationships).toBe(true);
+    networkRead.resolve(Response.json(network(7, 1)));
+    await refresh;
+    expect(controller.createBlocked.relationships).toBe(false);
+    controller.destroy();
+  });
+
   it('keeps an unknown create blocked when a refresh that began before it resolves later', async () => {
     const staleRefresh = deferredResponse();
     let collectionReads = 0;
