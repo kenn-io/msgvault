@@ -72,7 +72,13 @@ it.each([
  ['granola', 'person@example.com', 'Granola'],
  ['gmail', 'person@example.com', 'person@example.com'],
  ['imap', 'imap://person%40example.com@imap.example.com/INBOX', 'person@example.com'],
- [undefined, 'fixture-source', 'fixture-source']
-])('formats a %s source', (type, identifier, name) => {
- expect(sourceDisplayName(type, identifier!)).toBe(name);
+ [undefined, 'fixture-source', 'fixture-source'],
+ ['mbox', 'workspace-a', 'Mbox import · workspace-a', true],
+ ['mbox', 'workspace-b', 'Mbox import · workspace-b', true],
+ ['chatwoot', 'https://one.example', 'Chatwoot · https://one.example', true],
+ ['chatwoot', 'https://two.example', 'Chatwoot · https://two.example', true],
+ ['imap', 'imaps://alice@one.example', 'alice · imaps://alice@one.example', true],
+ ['imap', 'imaps://alice@two.example', 'alice · imaps://alice@two.example', true],
+])('formats a %s source', (type, identifier, name, repeated = false) => {
+ expect(sourceDisplayName(type, identifier!, repeated)).toBe(name);
 });

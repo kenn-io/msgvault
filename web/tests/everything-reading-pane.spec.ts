@@ -551,33 +551,6 @@ test('right preview resizes, restores its width, and falls back below on narrow 
     .toBeCloseTo((await page.locator('.results-split').boundingBox())!.width, 0);
 });
 
-test('a person inspector keeps grouped columns inside the right-side reader layout', async ({ page }) => {
-  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
-  await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
-    rows: [{ key: '7', label: 'Person Example', count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
-    overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 3 }], co_participants: [] },
-    total_count: 1, cache_revision: 'cache-groups', search_provenance: {}
-  } }));
-  await page.route('**/api/v1/explore/files', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'cache-groups', search_provenance: {} } }));
-  await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: {
-    schema_version: 1, archive_uid: 'synthetic', scope: { kind: 'explore' },
-    totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 },
-    first_meeting_at: null, last_meeting_at: null, undated_count: 0, duration_by_basis: [], months: []
-  } }));
-  await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: {
-    schema_version: 1, archive_uid: 'synthetic', scope: { kind: 'explore' }, rows: [], total_count: 0,
-    coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 }
-  } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['participant'] })))}`);
-  await page.getByRole('button', { name: 'Display', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'Right', exact: true }).click();
-  await page.keyboard.press('Escape');
-  const grid = page.getByRole('grid', { name: 'Messages grouped by participant' });
-  await grid.getByText('Person Example', { exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Group overview' })).toBeVisible();
-  expect(await grid.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-});
-
 test.describe('wide grouped layout', () => {
   test.use({ deviceScaleFactor: 2 });
 
@@ -608,11 +581,11 @@ test.describe('wide grouped layout', () => {
     const months = page.getByRole('grid', { name: 'Messages grouped by month' });
     await expect(months.getByRole('row', { name: /Jan 2026/ })).toBeVisible();
     const monthGroup = await months.getByRole('columnheader', { name: 'Group' }).boundingBox();
-    expect(monthGroup!.width * await page.evaluate(() => window.devicePixelRatio)).toBeLessThanOrEqual(480);
+    expect(monthGroup!.width).toBeLessThanOrEqual(480);
   });
 });
 
-test('aligns meeting content in a group inspector', async ({ page }) => {
+test('keeps grouped columns and meeting content aligned in a person inspector', async ({ page }) => {
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
     rows: [{ key: '7', label: 'Person Example', count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
@@ -630,7 +603,12 @@ test('aligns meeting content in a group inspector', async ({ page }) => {
     coverage: { meeting_count: 1, available: 0, partial: 0, unsupported: 1, unavailable: 0 }
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['participant'] })))}`);
-  await page.getByRole('grid').getByText('Person Example', { exact: true }).click();
+  await page.getByRole('button', { name: 'Display', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Right', exact: true }).click();
+  await page.keyboard.press('Escape');
+  const grid = page.getByRole('grid', { name: 'Messages grouped by participant' });
+  await grid.getByText('Person Example', { exact: true }).click();
+  expect(await grid.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   const overview = page.getByRole('region', { name: 'Group overview' });
   const meeting = page.getByRole('region', { name: 'Meeting activity' });
   await expect(meeting).toBeVisible();

@@ -335,26 +335,17 @@ it('updates a source name when its type arrives after the rows', async () => {
  await view.rerender({ ...props, sourceTypes: new Map([['7', 'granola']]) });
  expect(screen.getByText('Granola')).toBeDefined();
  expect(screen.getByTitle('fixture-granola')).toBeDefined();
-});
-
-it('does not consult source types for person rows', () => {
  const sourceTypes = new Map([['7', 'granola']]);
  const lookup = vi.spyOn(sourceTypes, 'get');
- render(GroupTable, { rows: [{ key: '7', label: 'A person', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }], dimension: 'participant', sourceTypes, onDrill: vi.fn() });
+ await view.rerender({ rows: [{ key: '7', label: 'A person', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }], dimension: 'participant', sourceTypes, onDrill: vi.fn() });
  expect(screen.getByText('A person')).toBeDefined();
  expect(lookup).not.toHaveBeenCalled();
 });
 
-it.each([
- ['mbox', 'workspace-a', 'workspace-b', 'Mbox import · workspace-a', 'Mbox import · workspace-b'],
- ['chatwoot', 'https://one.example', 'https://two.example', 'Chatwoot · https://one.example', 'Chatwoot · https://two.example'],
- ['imap', 'imaps://alice@one.example', 'imaps://alice@two.example', 'alice · imaps://alice@one.example', 'alice · imaps://alice@two.example'],
-])('distinguishes repeated %s sources', async (type, first, second, firstName, secondName) => {
+it('drills a repeated source by its distinct name', async () => {
  const onDrill = vi.fn();
- const rows = [first, second].map((label, index) => ({ key: String(index + 1), label, count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }));
- render(GroupTable, { rows, dimension: 'source', sourceTypes: new Map([['1', type], ['2', type]]), onDrill });
- expect(screen.getByText(firstName)).toBeDefined();
- expect(screen.getByText(secondName)).toBeDefined();
- await fireEvent.click(screen.getByRole('button', { name: `Show items in ${secondName}` }));
+ const rows = ['workspace-a', 'workspace-b'].map((label, index) => ({ key: String(index + 1), label, count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }));
+ render(GroupTable, { rows, dimension: 'source', sourceTypes: new Map([['1', 'mbox'], ['2', 'mbox']]), onDrill });
+ await fireEvent.click(screen.getByRole('button', { name: 'Show items in Mbox import · workspace-b' }));
  expect(onDrill).toHaveBeenCalledWith(rows[1]);
 });

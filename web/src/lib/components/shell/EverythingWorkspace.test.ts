@@ -223,9 +223,7 @@ describe('EverythingWorkspace', () => {
   });
 
   it.each([
-    ['year', '2026', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z'],
     ['month', '2026-07', '2026-07-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'],
-    ['month', '2026-12', '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z']
   ] as const)('drills Files %s groups using UTC boundaries', async (dimension, key, after, before) => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -276,11 +274,9 @@ describe('EverythingWorkspace', () => {
 
   it('opens an Entry kind overview from its row', async () => {
     window.history.replaceState(null, '', '/');
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      rows: [{ key: 'meeting', label: 'meeting', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
-      overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 12 }], co_participants: [] },
-      total_count: 1, cache_revision: 'cache-1', search_provenance: {}
-    }));
+    const fetchFn = vi.fn<typeof fetch>(async (input) => new URL((input as Request).url).pathname.endsWith('/groups')
+      ? Response.json({ rows: [{ key: 'meeting', label: 'meeting', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }], overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 12 }], co_participants: [] }, total_count: 1, cache_revision: 'cache-1', search_provenance: {} })
+      : Response.json(exploreResponse()));
     const state = new ExploreState(window);
     state.replaceTransient({ groupingChain: ['kind'] });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
@@ -1650,7 +1646,10 @@ describe('EverythingWorkspace', () => {
     let statusRequests = 0;
     const client = { fetch: (async (input, init) => {
       const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
-      if (new URL(url).pathname === '/api/v1/sources/status') statusRequests += 1;
+      if (new URL(url).pathname === '/api/v1/sources/status') {
+        statusRequests += 1;
+        return Response.json({ sources: [{ id: 7, source_type: 'mbox', identifier: 'archive', display_name: null, can_sync: false, scheduled: false, active_sync: null, latest_sync: null, last_successful_sync: null, last_sync_at: null, next_sync_at: null, updated_at: '2026-07-18T12:00:00Z' }] });
+      }
       return baseClient.fetch(input, init);
     }) satisfies typeof fetch };
     const state = new ExploreState(window);

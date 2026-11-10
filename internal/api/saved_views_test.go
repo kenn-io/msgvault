@@ -95,9 +95,7 @@ func TestSavedViewsAPIRetainsLocalDateCalendar(t *testing.T) {
 		[]byte(`{"name":"Dates","canonical_state":`+state+`,"schema_version":2}`), session.mutationHeaders())
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
 	view := decodeSavedView(t, created)
-	response := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath+"/"+strconv.FormatInt(view.ID, 10), nil, session.headers())
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.JSONEq(t, state, string(decodeSavedView(t, response).CanonicalState))
+	assert.JSONEq(t, state, string(view.CanonicalState))
 }
 
 func TestSavedViewsAPIRejectsInvalidStateAndRevisionHeaders(t *testing.T) {

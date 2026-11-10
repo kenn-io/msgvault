@@ -113,8 +113,15 @@ func TestSavedViewsPreserveInspectorPreference(t *testing.T) {
 	}
 }
 
-func TestSavedViewsRejectInvalidCalendar(t *testing.T) {
+func TestSavedViewsValidateCalendar(t *testing.T) {
 	st := testutil.NewTestStore(t)
+	valid := savedViewInput("Local calendar")
+	valid.CanonicalState = json.RawMessage(`{"filters":[{"field":"after","operator":"in","values":["2026-01-01T00:00:00Z"],"calendar":"local"}]}`)
+	created, err := st.CreateSavedView(t.Context(), valid)
+	require.NoError(t, err)
+	loaded, err := st.GetSavedView(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(valid.CanonicalState), string(loaded.CanonicalState))
 	for _, state := range []string{
 		`{"filters":[{"field":"after","operator":"in","values":["2026-01-01T00:00:00Z"],"calendar":"utc"}]}`,
 		`{"filters":[{"field":"source","operator":"in","values":["1"],"calendar":"local"}]}`,

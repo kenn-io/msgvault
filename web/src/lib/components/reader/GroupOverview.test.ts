@@ -14,18 +14,18 @@ it('shows the complete range, daily strip, and people from a month overview', as
 });
 
 it.each([
-  ['2024-05-03', 'day', 'May 3, 2024', 1],
-  ['2024-05', 'month', 'May 2024', 1],
-])('shows one date and a concise summary for a single %s bucket', (bucket, unit, label, visibleLabels) => {
+  ['2024-05-03', 'day', 'May 3, 2024'],
+  ['2024-05', 'month', 'May 2024'],
+])('shows one date and a concise summary for a single %s bucket', (bucket, unit, label) => {
   render(GroupOverview, { selection: {
     kind: 'group', dimension: 'month', key: '2024-05', label: 'May 2024', count: 3,
-    latestAt: '2024-05-03T12:00:00',
-    overview: { first_at: '2024-05-03T08:00:00', activity: [{ bucket, count: 3 }], co_participants: [] },
+    latestAt: '2024-05-03T12:00:00Z',
+    overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket, count: 3 }], co_participants: [] },
   } });
 
   expect(screen.getByRole('img', { name: `Activity by ${unit}: ${label}, 3 items` })).toBeDefined();
   expect(screen.getAllByText('May 3, 2024')).toHaveLength(1);
-  if (unit === 'month') expect(screen.getAllByText(label)).toHaveLength(visibleLabels);
+  expect(screen.getAllByText(label)).toHaveLength(1);
 });
 
 it('keeps both endpoints and the busiest date for multiple buckets', () => {

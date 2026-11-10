@@ -75,6 +75,14 @@ describe('group context', () => {
         { dimension: 'after', values: ['2026-12-01T05:00:00.000Z'], calendar: 'local' },
         { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'], calendar: 'local' }
       ]);
+      expect(filtersForGroup([], 'year', '2026', true)).toEqual([
+        { dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] },
+        { dimension: 'before', values: ['2027-01-01T00:00:00.000Z'] },
+      ]);
+      expect(filtersForGroup([], 'month', '2026-12', true)).toEqual([
+        { dimension: 'after', values: ['2026-12-01T00:00:00.000Z'] },
+        { dimension: 'before', values: ['2027-01-01T00:00:00.000Z'] },
+      ]);
     } finally { vi.unstubAllEnvs(); }
   });
 
