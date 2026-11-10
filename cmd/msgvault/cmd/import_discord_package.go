@@ -17,7 +17,7 @@ func newImportDiscordPackageCmd() *cobra.Command {
 		Long: `Import sent messages from an extracted official Discord data package.
 
 Reads the account ID, channel metadata, and JSON or legacy CSV transcripts.
-Coverage is sent-only, including DMs; incoming messages are not in the package.
+Sent messages only, including DMs.
 Attachment URLs remain links. No media is downloaded. Re-importing replaces
 messages with the last imported snapshot and safely repeats interrupted runs.
 Run on the daemon host with a local extracted directory; ZIP input is unsupported.`,
@@ -54,7 +54,18 @@ func runImportDiscordPackage(cmd *cobra.Command, directory string, noDefaultIden
 	}
 	sort.Strings(reasons)
 	for _, reason := range reasons {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Skipped %s: %d\n", reason, summary.SkipReasons[reason])
+		label := reason
+		switch reason {
+		case "malformed_record":
+			label = "invalid message"
+		case "missing_id":
+			label = "missing ID"
+		case "empty_record":
+			label = "empty message"
+		case "unsupported_attachment_only":
+			label = "unsupported attachment"
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Skipped %s: %d\n", label, summary.SkipReasons[reason])
 	}
 	migrationErr := runExportPostImportMigrations(ctx, cmd.OutOrStdout(), st, summary.SourceID, noDefaultIdentity, state)
 	var cacheErr error
