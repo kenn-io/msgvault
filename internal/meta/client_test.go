@@ -135,6 +135,32 @@ func TestGraphErrorKeepsOnlyCodes(t *testing.T) {
 	}
 }
 
+func TestGraphRefusalWithHTTP200(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		code       int
+	}{
+		{"coded refusal", `{"error":{"message":"synthetic-page-secret","code":10,"error_subcode":2018}}`, 10},
+		{"unreadable error", `{"error":"synthetic-page-secret"}`, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = fmt.Fprint(w, tt.body)
+			})
+			_, err := c.VerifyPage(t.Context(), "100")
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "synthetic-page-secret")
+			apiErr, ok := errors.AsType[*APIError](err)
+			if tt.code == 0 {
+				assert.False(t, ok, "an error envelope without a code is not a provider refusal")
+				return
+			}
+			require.True(t, ok)
+			assert.Equal(t, APIError{Status: http.StatusOK, Code: 10, Subcode: 2018}, *apiErr)
+		})
+	}
+}
+
 func TestGraphRejectsRedirect(t *testing.T) {
 	reached := false
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }))

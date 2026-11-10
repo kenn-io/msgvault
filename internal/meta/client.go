@@ -126,7 +126,15 @@ func (c *Client) do(ctx context.Context, method, path string, values url.Values,
 	var envelope struct {
 		Error jsontext.Value `json:"error"`
 	}
-	if json.Unmarshal(data, &envelope) != nil || len(envelope.Error) > 0 {
+	if json.Unmarshal(data, &envelope) != nil {
+		return errors.New("invalid Graph response")
+	}
+	if len(envelope.Error) > 0 {
+		// Meta can refuse a request with HTTP 200. A readable code makes it a
+		// provider refusal; anything else stays an unreadable response.
+		if apiErr := apiErrorFromBody(resp.StatusCode, data); apiErr.Code != 0 {
+			return apiErr
+		}
 		return errors.New("invalid Graph response")
 	}
 	if json.Unmarshal(data, out) != nil {
@@ -137,12 +145,16 @@ func (c *Client) do(ctx context.Context, method, path string, values url.Values,
 
 // readAPIError keeps only the numeric codes from a bounded error body.
 func readAPIError(resp *http.Response) *APIError {
-	apiErr := &APIError{Status: resp.StatusCode}
 	const limit = 64 << 10
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil || len(data) > limit {
-		return apiErr
+		return &APIError{Status: resp.StatusCode}
 	}
+	return apiErrorFromBody(resp.StatusCode, data)
+}
+
+func apiErrorFromBody(status int, data []byte) *APIError {
+	apiErr := &APIError{Status: status}
 	var wire struct {
 		Error struct {
 			Code    int `json:"code"`
