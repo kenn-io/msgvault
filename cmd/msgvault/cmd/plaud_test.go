@@ -173,15 +173,14 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
 	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
+		requestNumber := requests.Add(1)
 		var req daemonCLIRunTestRequest
 		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
 			return
 		}
-		assert.Contains([][]string{
-			{"add-plaud", "--check-owner-only", "--", "work"},
-			{"add-plaud", "--check-owner-only", "work"},
-		}, req.Args)
+		if requestNumber == 1 {
+			assert.Equal([]string{"add-plaud", "--check-owner-only", "--", "work"}, req.Args)
+		}
 		rawSource, err := json.Marshal(cfg.Plaud[0])
 		if !assert.NoError(err) {
 			return
