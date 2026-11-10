@@ -330,7 +330,10 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		}
 		record.Unexpandable = append(record.Unexpandable, page.Unexpandable...)
 		for _, o := range page.Occurrences {
-			if o.Ref == formatMeetingOccurrence(ref.OccurrenceRef) || ref.Identity == (calrecur.Identity{}) && o.MessageID == ref.MessageID {
+			// A retained edit keeps its own ref but proves its original series occurrence.
+			if o.Ref == formatMeetingOccurrence(ref.OccurrenceRef) || ref.Identity == (calrecur.Identity{}) && o.MessageID == ref.MessageID ||
+				ref.Identity != (calrecur.Identity{}) && o.SeriesMessageID == ref.MessageID && o.original.AllDay == ref.Identity.AllDay &&
+					(ref.Identity.AllDay && o.original.Date == ref.Identity.Date || !ref.Identity.AllDay && o.original.Instant.Equal(ref.Identity.Instant)) {
 				seed = o
 				break
 			}
