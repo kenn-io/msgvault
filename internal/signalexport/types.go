@@ -62,6 +62,7 @@ type chatItem struct {
 	Incoming      *struct{}        `json:"incoming"`
 	Outgoing      *struct{}        `json:"outgoing"`
 	Directionless *struct{}        `json:"directionless"`
+	Pin           any              `json:"pinDetails"`
 	Revisions     []chatItem       `json:"revisions"`
 	Standard      *standardMessage `json:"standardMessage"`
 }

@@ -70,6 +70,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		return st.EnsureParticipantByIdentifierContext(ctx, SourceType, scopedKey(scope, p.key), p.name)
 	}
 	selfConfirmed := false
+	var ownerID int64
 	err = r.frames(ctx, func(m *chatItem, raw []byte, line int) error {
 		skip := func(reason string) error { s.Skipped[reason]++; return nil }
 		if m.Standard == nil {
@@ -115,19 +116,15 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		at, _ := sentTime(date)
 		owner := r.peers[r.self]
-		ownerID, err := resolve(owner)
-		if err != nil {
-			return err
-		}
 		if !selfConfirmed {
+			ownerID, err = resolve(owner)
+			if err != nil {
+				return err
+			}
 			if err := st.AddAccountIdentityContext(ctx, source.ID, scopedKey(scope, owner.key), "signal_export_self"); err != nil {
 				return err
 			}
 			selfConfirmed = true
-		}
-		authorID, err := resolve(author)
-		if err != nil {
-			return err
 		}
 		convKey := scopedKey(scope, conversation.key)
 		authorKey := scopedKey(scope, author.key)
@@ -145,6 +142,9 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		s.Omitted["link_preview"] += int64(len(standard.LinkPreview))
 		if standard.Text != nil {
 			s.Omitted["formatting"] += int64(len(standard.Text.Ranges))
+		}
+		if m.Pin != nil {
+			s.Omitted["pin"]++
 		}
 		s.Omitted["revision_history"] += int64(len(m.Revisions))
 		body, writes, knownChanged, err := mediaWrites(ctx, st, r, id, standard, opts, s)
@@ -169,6 +169,10 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			}
 			return nil
 		}
+		authorID, err := resolve(author)
+		if err != nil {
+			return err
+		}
 		members := []store.ConversationParticipantRef{{ParticipantID: ownerID, Role: "member"}, {ParticipantID: authorID, Role: "member"}}
 		recipients := []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{authorID}, DisplayNames: []string{author.name}}}
 		if conversation.kind == "direct_chat" {
@@ -185,7 +189,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		meta, err := json.Marshal(struct {
 			AdapterVersion  int        `json:"adapter_version"`
-			KeyVersion      int        `json:"key_version"`
 			MetadataVersion int        `json:"metadata_version"`
 			Header          backupInfo `json:"header"`
 			Line            int        `json:"source_line"`
@@ -195,7 +198,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 			ConversationKey string     `json:"conversation_key"`
 			AuthorKey       string     `json:"author_key"`
 			Roster          string     `json:"roster_coverage"`
-		}{1, 1, 1, r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
+		}{1, 1, r.header, line, m.ChatID, m.AuthorID, ref, convKey, authorKey, "partial_observed"})
 		if err != nil {
 			return err
 		}

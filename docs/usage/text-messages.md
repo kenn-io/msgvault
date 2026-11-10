@@ -617,8 +617,10 @@ Media is read only from `files/<first-two-hash-digits>/<plaintext-hash>` with
 an optional extension. The adapter checks the plaintext SHA-256, uses contained
 regular files, and never fetches URLs or decrypts files. Display filenames do
 not select paths. Equal bytes in separate attachment slots stay separate
-occurrences. Available long-text files supply searchable text; missing or
-invalid long text leaves inline text and an incomplete-text count.
+occurrences. In the researched sources, Signal inlines long text it has
+downloaded and otherwise exports a long-text pointer without its file. An
+available long-text file supplies searchable text only on first import;
+otherwise the inline text is kept with an incomplete-text count.
 
 Limits are 16 MiB per JSONL record, 64 KiB for metadata, 100,000 combined
 recipient/chat lookup entries, 64 MiB of retained lookup strings, 256 MiB per
@@ -631,7 +633,7 @@ stop the import.
 Coverage is reported by reason. Unsupported items include updates/calls,
 contacts, stickers, stories, polls, payments, view-once items and deletion
 tombstones. Unknown direction or missing stable identity/time causes a skip.
-Quotes, reactions, formatting, link previews and revision history are not
+Quotes, reactions, formatting, link previews, pins and revision history are not
 rendered; supported text and exact raw ChatItem JSON are retained. Empty and
 unknown frames are counted separately. Signal omits disappearing messages
 from readable exports and strips view-once media, so these files do not

@@ -54,7 +54,7 @@ func openReader(ctx context.Context, path string) (r *reader, retErr error) {
 			retErr = errors.Join(retErr, resource.Close())
 		}
 	}()
-	f, err := root.Open("metadata.json")
+	f, err := openRegular(root, "metadata.json")
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func openReader(ctx context.Context, path string) (r *reader, retErr error) {
 	if metadata.Version != 1 {
 		return nil, fmt.Errorf("metadata.json: unsupported version %d; expected 1", metadata.Version)
 	}
-	r.file, err = root.Open("main.jsonl")
+	r.file, err = openRegular(root, "main.jsonl")
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +103,19 @@ func openReader(ctx context.Context, path string) (r *reader, retErr error) {
 	}
 	return r, nil
 }
+
+// openRegular rejects nonregular inputs before an open can block on a FIFO.
+func openRegular(root *os.Root, name string) (*os.File, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("signal %s: expected regular file", name)
+	}
+	return root.Open(name)
+}
+
 func (r *reader) Close() error {
 	var err error
 	if r.file != nil {
@@ -300,7 +313,7 @@ func (r *reader) mediaName(ctx context.Context, hash string) (string, string, er
 			if stem[:2] != prefix || strings.Trim(stem, "0123456789abcdef") != "" {
 				continue
 			}
-			if _, found := m[stem]; found {
+			if _, dup := m[stem]; dup {
 				m[stem] = ambiguousMedia
 			} else if r.mediaNames+len(m) >= r.maxMedia {
 				m = nil

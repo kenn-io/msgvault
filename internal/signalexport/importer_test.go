@@ -89,7 +89,7 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 		`{"recipient":{"id":"3","group":{"masterKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","snapshot":{"title":{"title":"Example group"}}}}}`,
 		`{"chat":{"id":"8","recipientId":"3"}}`,
 		`{"chat":{"id":"9","recipientId":"1"}}`,
-		`{"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"standardMessage":{"text":{"body":"Group"},"quote":{},"reactions":[{}],"linkPreview":[{}]}}}`,
+		`{"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"pinDetails":{"pinnedAtTimestamp":"1700000000500","pinNeverExpires":true},"standardMessage":{"text":{"body":"Group"},"quote":{},"reactions":[{}],"linkPreview":[{}]}}}`,
 		`{"chatItem":{"chatId":"9","authorId":"1","dateSent":"1700000000002","outgoing":{},"standardMessage":{"text":{"body":"Note"}}}}`,
 		`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000003","outgoing":{},"standardMessage":{}}}`,
 		`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000004","incoming":{},"remoteDeletedMessage":{}}}`,
@@ -102,6 +102,7 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 	assert.EqualValues(t, 1, summary.Skipped["remoteDeletedMessage"])
 	assert.EqualValues(t, 1, summary.Skipped["sent_time"])
 	assert.EqualValues(t, 1, summary.Omitted["quote"])
+	assert.EqualValues(t, 1, summary.Omitted["pin"])
 	assert.EqualValues(t, 1, summary.Omitted["reactions"])
 	assert.EqualValues(t, 1, summary.UnknownFrames)
 	assert.EqualValues(t, 1, summary.EmptyFrames)
@@ -589,8 +590,8 @@ func TestImportRepairKeepsArchivedAttachmentOrder(t *testing.T) {
 }
 
 func TestMediaPrefixCacheBoundedLookup(t *testing.T) {
-	for _, cap := range []int{2, 3} {
-		t.Run(fmt.Sprint(cap), func(t *testing.T) {
+	for _, cacheLimit := range []int{2, 3} {
+		t.Run(fmt.Sprint(cacheLimit), func(t *testing.T) {
 			a, b := []byte("fictional cached media 0"), []byte("fictional cached media 1")
 			root := fixture(t)
 			pathA, pathB := putMedia(t, root, a), putMedia(t, root, b)
@@ -601,7 +602,7 @@ func TestMediaPrefixCacheBoundedLookup(t *testing.T) {
 			r, err := openReader(t.Context(), root)
 			require.NoError(t, err)
 			defer r.Close()
-			r.maxMedia = cap
+			r.maxMedia = cacheLimit
 			warmHash := sha256.Sum256(warm)
 			_, reason, err := r.mediaName(t.Context(), hex.EncodeToString(warmHash[:]))
 			require.NoError(t, err)
@@ -617,12 +618,12 @@ func TestMediaPrefixCacheBoundedLookup(t *testing.T) {
 				hash := sha256.Sum256(data)
 				assert.Equal(t, hex.EncodeToString(hash[:]), writes[i].ContentHash)
 			}
-			assert.LessOrEqual(t, r.mediaNames, cap)
+			assert.LessOrEqual(t, r.mediaNames, cacheLimit)
 			hashA := sha256.Sum256(a)
 			hash := hex.EncodeToString(hashA[:])
 			_, cached := r.media[hash[:2]]
-			assert.Equal(t, cap == 3, cached)
-			if cap == 2 {
+			assert.Equal(t, cacheLimit == 3, cached)
+			if cacheLimit == 2 {
 				require.NoError(t, os.WriteFile(strings.TrimSuffix(pathA, ".txt")+".bin", a, 0600))
 				_, reason, err := r.mediaName(t.Context(), hash)
 				require.NoError(t, err)
@@ -631,4 +632,70 @@ func TestMediaPrefixCacheBoundedLookup(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImportRepairRemovedAlbumSlot(t *testing.T) {
+	a, b := []byte("fictional removed image"), []byte("fictional retained image")
+	frame := func(attachments string) string {
+		return fmt.Sprintf(`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"text":{"body":"album"},"attachments":[%s]}}}`, attachments)
+	}
+	st := testutil.NewTestStore(t)
+	root := fixture(t, frame(fmt.Sprintf(`{"pointer":%s},{"pointer":%s}`, pointer(a), pointer(b))))
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
+	putMedia(t, root, b)
+	writeFrames(t, root, frame(fmt.Sprintf(`{"pointer":%s}`, pointer(b))))
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.AttachmentsStored)
+	assert.EqualValues(t, 1, summary.MediaMissing["missing"])
+	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, refs, 2)
+	hash := sha256.Sum256(b)
+	for _, ref := range refs {
+		switch ref.SourcePartKey {
+		case "attachment:0":
+			assert.Empty(t, ref.ContentHash)
+		case "attachment:1":
+			assert.Equal(t, hex.EncodeToString(hash[:]), ref.ContentHash)
+		default:
+			assert.Fail(t, "unexpected media slot", ref.SourcePartKey)
+		}
+	}
+	retained, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, raw, retained)
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "album", body)
+}
+
+func TestImportLongTextTurnsInline(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := fixture(t, strings.Replace(mediaMessage([]byte("short and the rest"), true), `"inline"`, `"short"`, 1))
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	writeFrames(t, root, strings.Replace(incoming, "Hello 星", "short and the rest", 1))
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, summary.MediaMissing["missing"])
+	assert.EqualValues(t, 1, summary.Omitted["incomplete_long_text"])
+	assert.EqualValues(t, 1, summary.MessagesChanged)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "short", body)
+	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	assert.Equal(t, "long_text", refs[0].SourcePartKey)
+	assert.Empty(t, refs[0].ContentHash)
 }

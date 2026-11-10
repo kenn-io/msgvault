@@ -106,10 +106,17 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 		}
 		if old.Standard != nil {
 			for i, a := range old.Standard.Attachments {
-				archived[fmt.Sprintf("attachment:%d", i)] = a.Pointer
+				key := fmt.Sprintf("attachment:%d", i)
+				archived[key] = a.Pointer
+				if ref, ok := existing[key]; ok && ref.ContentHash == "" && i >= len(m.Attachments) {
+					slots = append(slots, slot{key: key})
+				}
 			}
 			if old.Standard.LongText != nil {
 				archived["long_text"] = old.Standard.LongText
+				if ref, ok := existing["long_text"]; ok && ref.ContentHash == "" && m.LongText == nil {
+					slots = append(slots, slot{key: "long_text", long: true})
+				}
 			}
 		}
 	}
