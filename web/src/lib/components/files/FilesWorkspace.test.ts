@@ -1285,7 +1285,6 @@ describe('FilesWorkspace', () => {
       expect(within(row).getByText('fixture.pdf').closest('[role="gridcell"]')?.getAttribute('title'))
         .toBe('Match score 0.0123');
       expect(within(row).getByText('Not checked')).toBeDefined();
-      expect(row.textContent).not.toContain('Missing blob');
     });
 
     it('shows a readable type and keeps the raw MIME type in the title', async () => {

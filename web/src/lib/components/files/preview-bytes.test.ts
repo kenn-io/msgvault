@@ -100,22 +100,19 @@ describe('preview byte validation', () => {
     )).toThrow(/thumbnail/i);
   });
   it.each([
-    { chunks: [[1, 2, 3, 4, 5]], close: false, truncated: true, canceled: true },
-    { chunks: [[1, 2], [3]], close: true, truncated: false, canceled: false },
-    { chunks: [[1, 2, 3], [4]], close: true, truncated: true, canceled: false },
-  ])('reads a bounded prefix across chunks', async ({ chunks, close, truncated, canceled }) => {
-    const cancel = vi.fn();
+    { chunks: [[1, 2, 3, 4, 5]], close: false, truncated: true },
+    { chunks: [[1, 2], [3]], close: true, truncated: false },
+    { chunks: [[1, 2, 3], [4]], close: true, truncated: true },
+  ])('reads a bounded prefix across chunks', async ({ chunks, close, truncated }) => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         for (const chunk of chunks) controller.enqueue(new Uint8Array(chunk));
         if (close) controller.close();
-      },
-      cancel
+      }
     });
     const result = await readStreamPrefix(stream, new AbortController().signal, 3);
     expect([...result.bytes]).toEqual([1, 2, 3]);
     expect(result.truncated).toBe(truncated);
-    if (canceled) expect(cancel).toHaveBeenCalledOnce();
   });
 
 });

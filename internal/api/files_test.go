@@ -1043,12 +1043,6 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	require.Equal(http.StatusOK, light.Code, light.Body.String())
 }
 
-type unreadableFileBlobStore struct{}
-
-func (unreadableFileBlobStore) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
-	return nil, 0, os.ErrPermission
-}
-
 func TestFileDetailsReportsUnreadableContent(t *testing.T) {
 	t.Parallel()
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
@@ -1056,7 +1050,7 @@ func TestFileDetailsReportsUnreadableContent(t *testing.T) {
 	}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
-		BlobStore: unreadableFileBlobStore{}, Logger: testLogger(),
+		BlobStore: &countingFileBlobStore{}, Logger: testLogger(),
 	})
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))

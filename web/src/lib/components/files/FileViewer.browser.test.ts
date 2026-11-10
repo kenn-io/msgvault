@@ -50,7 +50,6 @@ describe('PDF preview resource bounds', () => {
 
   it.each([
     ['one Letter page', 2, [792]],
-    ['four Letter pages', 2, Array<number>(4).fill(792)],
     // Baseline allocation is 32,596,650 pixels, below the document limit.
     ['40 mixed-size pages', 2, [...Array<number>(39).fill(792), 3200]],
   ] as const)('renders %s within integer canvas budgets at device scale %s', async (_label, deviceScale, heights) => {

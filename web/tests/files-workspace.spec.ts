@@ -16,8 +16,8 @@ function row(id: number) {
     mime_type: 'application/pdf',
     mime_family: 'pdf',
     size_bytes: id,
-    content_state: 'missing_blob',
-    content_available: false
+    content_state: 'unverified',
+    content_available: null
   };
 }
 
