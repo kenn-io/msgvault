@@ -52,12 +52,15 @@ secret and refuses deliveries that fail. It saves each accepted delivery under
 delivery survives a daemon restart. Deliveries are applied in the order they
 arrived and deleted once applied.
 
-A comment whose post or parent comment is not archived yet causes the daemon
-to read them from Meta with the Page token first. When a delivery cannot be
+A new or edited comment is read from Meta with the Page token rather than
+taken from the delivery, so a late or repeated delivery cannot bring back older
+text. A post or parent comment that is not archived yet is read too. When a delivery cannot be
 applied, for example while a polling sync of the same Page is running, the
 daemon retries it with increasing waits and holds later deliveries until it
 succeeds. After an hour of failures it logs the delivery and drops it; the
-next polling sync still archives the comment text.
+next polling sync still archives the comment text. A change that can never be
+applied, such as a comment deleted before it was read, is logged and skipped
+without holding back the other changes in its delivery.
 
 ## Limits
 

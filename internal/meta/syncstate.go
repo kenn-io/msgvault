@@ -29,6 +29,9 @@ type phaseState struct {
 	Rescan     bool           `json:"rescan,omitempty"`
 	Posts      []Object       `json:"posts,omitempty"`
 	Stack      []commentFrame `json:"stack,omitempty"`
+	// postsRead is set once this run has read the Posts page. Posts saved
+	// by an earlier run are read again before use.
+	postsRead bool
 }
 
 type commentFrame struct {
@@ -38,6 +41,8 @@ type commentFrame struct {
 	Loaded  bool     `json:"loaded,omitempty"`
 	Next    string   `json:"next,omitempty"`
 	Pending []Object `json:"pending,omitempty"`
+	// read is set once this run has read the Pending page.
+	read bool
 }
 
 func freshState(source string) *syncState {

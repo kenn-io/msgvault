@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -24,34 +23,20 @@ const maxAncestorReads = 8
 // one that does not decode or names an invalid object.
 var ErrInvalidChange = errors.New("invalid webhook change")
 
-// ObjectReader reads the post and parent comments of a webhook comment when
-// they are not archived yet.
+// ObjectReader reads the comment a webhook names, and its post and parent
+// comments when they are not archived yet.
 type ObjectReader interface {
 	Post(ctx context.Context, id string) (Object, error)
 	Comment(ctx context.Context, id string) (Object, error)
 }
 
-// feedChange is one Page feed webhook change value.
+// feedChange is one Page feed webhook change value. Comment text, author and
+// parent are read from Graph, not taken from the change.
 type feedChange struct {
-	Item        string         `json:"item"`
-	Verb        string         `json:"verb"`
-	PostID      string         `json:"post_id"`
-	CommentID   string         `json:"comment_id"`
-	ParentID    string         `json:"parent_id"`
-	Message     string         `json:"message"`
-	From        *Actor         `json:"from,omitempty"`
-	CreatedTime jsontext.Value `json:"created_time"`
-}
-
-// createdTime converts Meta's Unix seconds to the form polling stores.
-func (c feedChange) createdTime() string {
-	var seconds int64
-	if json.Unmarshal(c.CreatedTime, &seconds) == nil && seconds > 0 {
-		return time.Unix(seconds, 0).UTC().Format(time.RFC3339)
-	}
-	var text string
-	_ = json.Unmarshal(c.CreatedTime, &text)
-	return text
+	Item      string `json:"item"`
+	Verb      string `json:"verb"`
+	PostID    string `json:"post_id"`
+	CommentID string `json:"comment_id"`
 }
 
 func (c feedChange) isPost() bool {
@@ -113,13 +98,11 @@ func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier s
 }
 
 func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, change feedChange) error {
-	id, root, parent := change.CommentID, change.PostID, change.ParentID
+	id, root := change.CommentID, change.PostID
 	if change.isPost() {
-		id, parent = change.PostID, ""
-	} else if parent == "" {
-		parent = root
+		id = change.PostID
 	}
-	if !safeObjectID(id) || !safeObjectID(root) || (parent != "" && !safeObjectID(parent)) {
+	if !safeObjectID(id) || !safeObjectID(root) {
 		return fmt.Errorf("%w: invalid object identity", ErrInvalidChange)
 	}
 	archived, err := r.archived(ctx, id)
@@ -141,17 +124,25 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 		}
 		return r.setHidden(ctx, id, change.Verb == "hide")
 	}
+	// Reading the comment instead of using the change's text means a late or
+	// repeated delivery cannot replace newer text with older text.
+	obj, err := reader.Comment(ctx, id)
+	if err != nil {
+		return fmt.Errorf("read comment %q: %w", id, err)
+	}
+	parent := root
+	if obj.Parent != nil && obj.Parent.ID != "" {
+		parent = obj.Parent.ID
+	}
 	if err := r.archiveAncestors(ctx, reader, root, parent); err != nil {
 		return err
 	}
-	obj := Object{ID: id, Message: change.Message, CreatedTime: change.createdTime(), From: change.From, Parent: &Actor{ID: parent}}
 	return r.persist(ctx, obj, root, parent, "")
 }
 
 func (r *importRun) archived(ctx context.Context, id string) (bool, error) {
-	rows, err := r.imp.store.StoredMessagesContext(ctx, r.source.ID, r.objectFormat(), []string{id})
-	_, ok := rows[id]
-	return ok, err
+	rows, err := r.imp.store.MessageExistsBatchContext(ctx, r.source.ID, []string{id})
+	return rows[id] != 0, err
 }
 
 // archiveAncestors reads and archives the post and parent comments that are

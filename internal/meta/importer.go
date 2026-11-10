@@ -185,11 +185,6 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	// Collection attempts update continuation for the next run, not this order.
 	edges := state.edges()
 	start := slices.Index(edges, state.NextSurface)
-	if err = run.refresh(ctx); errors.Is(err, errRequestBudget) {
-		return sum, nil
-	} else if err != nil {
-		return sum, err
-	}
 	for offset := range edges {
 		edge := edges[(start+offset)%len(edges)]
 		if err = run.phase(ctx, edge); err != nil {
@@ -283,6 +278,14 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err := r.comments(ctx, p, edge); err != nil {
 				return err
 			}
+		} else if len(p.Posts) > 0 && !p.postsRead {
+			// Posts saved by an earlier run may be older than a webhook
+			// change since; read their page again before archiving them.
+			page, err := r.request(ctx, edge, p.PostsAfter, func() (ObjectPage, error) { return r.readPosts(ctx, edge, p.PostsAfter) })
+			if err != nil {
+				return err
+			}
+			p.Posts, p.postsRead = keepSaved(p.Posts, page.Data), true
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
@@ -297,7 +300,7 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err != nil {
 				return err
 			}
-			p.Posts = page.Data
+			p.Posts, p.postsRead = page.Data, true
 			p.PostsAfter, p.After = p.After, page.After
 			p.Exhausted = page.After == ""
 		}
@@ -311,12 +314,18 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) error {
 	index := len(p.Stack) - 1
 	f := &p.Stack[index]
-	if !f.Loaded {
+	if !f.Loaded || (len(f.Pending) > 0 && !f.read) {
 		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.readComments(ctx, *f) })
 		if err != nil {
 			return fmt.Errorf("%s comments for %q: %w", r.providerName(), f.Parent, err)
 		}
-		f.Pending, f.Next, f.Loaded = page.Data, page.After, true
+		if f.Loaded {
+			// Comments saved by an earlier run may be older than a webhook
+			// change since; keep only the ones not archived yet, as read now.
+			f.Pending, f.read = keepSaved(f.Pending, page.Data), true
+			return nil
+		}
+		f.Pending, f.Next, f.Loaded, f.read = page.Data, page.After, true, true
 		return nil
 	}
 	if len(f.Pending) > 0 {
@@ -342,40 +351,8 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 	return nil
 }
 
-// refresh reads again every page whose objects an earlier run saved in the
-// checkpoint but did not archive yet. A webhook may have archived a newer
-// version of those objects since, and archiving the saved copy would undo
-// it. Only the objects the earlier run had not archived are kept; one that
-// is no longer on the page is dropped until the next complete scan.
-func (r *importRun) refresh(ctx context.Context) error {
-	for _, edge := range r.state.edges() {
-		p := r.state.Phases[edge]
-		if len(p.Posts) > 0 {
-			page, err := r.request(ctx, edge, p.PostsAfter, func() (ObjectPage, error) { return r.readPosts(ctx, edge, p.PostsAfter) })
-			if err != nil {
-				return fmt.Errorf("%s %s: %w", r.providerName(), edge, err)
-			}
-			p.Posts = keepSaved(p.Posts, page.Data)
-		}
-		for i := range p.Stack {
-			f := &p.Stack[i]
-			if len(f.Pending) == 0 {
-				continue
-			}
-			page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.readComments(ctx, *f) })
-			if err != nil {
-				return fmt.Errorf("%s comments for %q: %w", r.providerName(), f.Parent, err)
-			}
-			f.Pending = keepSaved(f.Pending, page.Data)
-		}
-		if err := r.save(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // keepSaved returns the fresh objects whose IDs are in saved, in fresh order.
+// An object no longer on the page is left for the next complete scan.
 func keepSaved(saved, fresh []Object) []Object {
 	ids := make(map[string]bool, len(saved))
 	for _, object := range saved {

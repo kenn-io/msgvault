@@ -28,9 +28,12 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	var reads []string
+	replyText := "graph reply"
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		reads = append(reads, r.URL.Path)
 		switch r.URL.Path {
+		case "/v26.0/100_202":
+			_, _ = fmt.Fprintf(w, `{"id":"100_202","message":%q,"created_time":"2026-10-01T12:30:00+0000","from":{"id":"301","name":"Example Visitor"},"parent":{"id":"100_201"}}`, replyText)
 		case "/v26.0/me":
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
 		case "/v26.0/100_200":
@@ -47,27 +50,32 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 	require.NoError(err)
 	reads = nil
 
-	reply := `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_202","parent_id":"100_201","message":"webhook reply","created_time":1790000000,"from":{"id":"301","name":"Example Visitor"}}`
+	reply := `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_202","parent_id":"100_201","message":"delivery text","created_time":1790000000,"from":{"id":"301","name":"Example Visitor"}}`
 	reaction := `{"item":"reaction","verb":"add","post_id":"100_200","reaction_type":"like"}`
 	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(reaction, reply)))
-	assert.Equal([]string{"/v26.0/100_201", "/v26.0/100_200"}, reads)
+	assert.Equal([]string{"/v26.0/100_202", "/v26.0/100_201", "/v26.0/100_200"}, reads)
 	post, parent, got := message(t, st, src.ID, "100_200"), message(t, st, src.ID, "100_201"), message(t, st, src.ID, "100_202")
 	assert.Equal(post.ID, parent.ReplyToMessageID.Int64)
 	assert.Equal(parent.ID, got.ReplyToMessageID.Int64)
 	assert.Equal(post.ConversationID, got.ConversationID)
 	body, err := st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
-	assert.Equal("webhook reply", body)
+	assert.Equal("graph reply", body, "the comment is read from Graph, not taken from the delivery")
 
 	reads = nil
-	edit := strings.Replace(strings.Replace(reply, `"add"`, `"edited"`, 1), "webhook reply", "edited reply", 1)
+	replyText = "edited reply"
+	edit := strings.Replace(reply, `"add"`, `"edited"`, 1)
 	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(edit,
 		`{"item":"comment","verb":"hide","post_id":"100_200","comment_id":"100_202","parent_id":"100_201"}`,
 		`{"item":"comment","verb":"remove","post_id":"100_200","comment_id":"100_201","parent_id":"100_200"}`)))
-	assert.Empty(reads, "archived ancestors are not read again")
+	assert.Equal([]string{"/v26.0/100_202"}, reads, "archived ancestors are not read again")
 	body, err = st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Equal("edited reply", body)
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(reply)))
+	body, err = st.GetMessageBodyText(t.Context(), got.ID)
+	require.NoError(err)
+	assert.Equal("edited reply", body, "a repeated older delivery keeps the current text")
 	metadata, err := st.GetMessageMetadataContext(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Contains(metadata.String, `"hidden":true`)
@@ -77,7 +85,7 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 
 	var webhookRuns int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sync_runs WHERE source_id=? AND sync_type=? AND status='completed'`, src.ID, WebhookSyncType).Scan(&webhookRuns))
-	assert.Equal(2, webhookRuns)
+	assert.Equal(3, webhookRuns)
 }
 
 func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
@@ -102,7 +110,9 @@ func TestPollingResumeKeepsPlaceAndRereadsSavedPage(t *testing.T) {
 
 	f.comments["100_200"][1].Message = "newer text"
 	edit := `{"item":"comment","verb":"edited","post_id":"100_200","comment_id":"402","parent_id":"100_200","message":"newer text","from":{"id":"300","name":"Example Customer"}}`
-	require.NoError(ApplyFeed(t.Context(), st, nil, "9", "100", feedValues(edit)))
+	client, ok := imp.api.(*Client)
+	require.True(ok)
+	require.NoError(ApplyFeed(t.Context(), st, client, "9", "100", feedValues(edit)))
 
 	f.paths = nil
 	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
@@ -113,4 +123,26 @@ func TestPollingResumeKeepsPlaceAndRereadsSavedPage(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("newer text", body)
 	message(t, st, src.ID, "403")
+}
+
+// Reading a saved page again costs a request, but only when traversal is about
+// to use it, so a run with one request after verification still advances.
+func TestPollingResumeAdvancesWithSmallBudget(t *testing.T) {
+	st, f, imp, src := setupImport(t)
+	for i := 1; i <= 3; i++ {
+		f.comments["100_200"] = append(f.comments["100_200"], *comment(strconv.Itoa(400+i), "100_200", "small budget"))
+	}
+	completed := false
+	for range 40 {
+		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+		require.NoError(t, err)
+		if !sum.Partial {
+			completed = true
+			break
+		}
+	}
+	require.True(t, completed)
+	for i := 1; i <= 3; i++ {
+		message(t, st, src.ID, strconv.Itoa(400+i))
+	}
 }
