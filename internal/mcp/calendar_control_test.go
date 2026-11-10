@@ -505,6 +505,27 @@ func TestCalendarToolsDelegatedBridgeExcludesArchiveAccess(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	assertions.ElementsMatch([]string{"calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "calendar_freebusy", "calendar_conflicts"}, names)
+	wantHints := map[string]struct{ readOnly, destructive bool }{
+		"calendar_create":    {false, false},
+		"calendar_update":    {false, true},
+		"calendar_delete":    {false, true},
+		"calendar_move":      {false, true},
+		"calendar_respond":   {false, true},
+		"calendar_freebusy":  {true, false},
+		"calendar_conflicts": {true, false},
+	}
+	for _, tool := range listed.Tools {
+		want, ok := wantHints[tool.Name]
+		if !assertions.True(ok, "unexpected tool %s", tool.Name) {
+			continue
+		}
+		requirements.NotNil(tool.Annotations, tool.Name)
+		requirements.NotNil(tool.Annotations.OpenWorldHint, tool.Name)
+		requirements.NotNil(tool.Annotations.DestructiveHint, tool.Name)
+		assertions.True(*tool.Annotations.OpenWorldHint, tool.Name)
+		assertions.Equal(want.readOnly, tool.Annotations.ReadOnlyHint, tool.Name)
+		assertions.Equal(want.destructive, *tool.Annotations.DestructiveHint, tool.Name)
+	}
 }
 
 func TestCalendarMutationToolsRequireExplicitOptIn(t *testing.T) {
