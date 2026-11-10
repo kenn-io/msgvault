@@ -293,6 +293,18 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) error {
 	index := len(p.Stack) - 1
 	f := &p.Stack[index]
+	if !f.Loaded && f.Parent != f.Root {
+		// A comment deleted through msgvault after this frame was saved has no
+		// replies left to read, and asking Meta for them would fail every run.
+		deleted, err := r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, f.Parent)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			p.Stack = p.Stack[:index]
+			return nil
+		}
+	}
 	if !f.Loaded {
 		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.readComments(ctx, *f) })
 		if err != nil {

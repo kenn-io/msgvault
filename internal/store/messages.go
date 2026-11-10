@@ -3620,6 +3620,20 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
+// MessageDeletedFromSourceContext reports whether a source message is archived
+// and marked deleted from its source.
+func (s *Store) MessageDeletedFromSourceContext(ctx context.Context, sourceID int64, sourceMessageID string) (bool, error) {
+	var deleted bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM messages
+			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NOT NULL)`,
+		sourceID, sourceMessageID).Scan(&deleted)
+	if err != nil {
+		return false, fmt.Errorf("read source deletion: %w", err)
+	}
+	return deleted, nil
+}
+
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message
 // reappears during a provider repair scan.
 func (s *Store) ClearMessageDeletedFromSource(sourceID int64, sourceMessageID string) error {

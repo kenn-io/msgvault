@@ -155,3 +155,24 @@ func TestModerateCommentRefusals(t *testing.T) {
 		assert.Empty(t, *writes, "Meta is not called while a sync owns the source")
 	})
 }
+
+func TestImportResumesPastDeletedComment(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	// Page check, post page and comment page; the reply page of 100_201 is
+	// left for the next run.
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 3})
+	require.NoError(err)
+	require.True(sum.Partial)
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+
+	f.denied["100_201/comments"] = true
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err, "the saved reply frame of a deleted comment is skipped")
+	assert.False(sum.Partial)
+	assert.NotContains(f.paths, "/v26.0/100_201/comments")
+}
