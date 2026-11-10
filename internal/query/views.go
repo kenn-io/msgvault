@@ -576,7 +576,7 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
-	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only", "mr.envelope_address", "split_part(mr.envelope_address, '@', 2)")
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only", "mr.envelope_address", senderEnvelopeDomainExpr("mr.envelope_address"))
 }
 
 func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly, envelopeAddress, envelopeDomain string) string {
@@ -674,7 +674,7 @@ SELECT
     m.sender_id,
     COALESCE((SELECT NULLIF(mr.envelope_address, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
     COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-    COALESCE((SELECT NULLIF(split_part(mr.envelope_address, '@', 2), '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
+    COALESCE((SELECT NULLIF(` + senderEnvelopeDomainExpr("mr.envelope_address") + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
     m.sent_at AS occurred_at,
     COALESCE(m.subject, '') AS subject,
     COALESCE(m.snippet, '') AS snippet,
@@ -708,7 +708,7 @@ LEFT JOIN (
 // sqlVMessages: messages with sender resolved via dual-path
 // (message_recipients for email, messages.sender_id for chat)
 // and labels as sorted JSON array.
-const sqlVMessages = `
+var sqlVMessages = `
 CREATE OR REPLACE VIEW v_messages AS
 SELECT
     m.id,
@@ -745,7 +745,7 @@ LEFT JOIN (
 `
 
 // sqlVSenders: per-sender aggregates.
-const sqlVSenders = `
+var sqlVSenders = `
 CREATE OR REPLACE VIEW v_senders AS
 SELECT
     COALESCE(NULLIF(mr.envelope_address, ''), p.email_address) AS from_email,
@@ -754,7 +754,7 @@ SELECT
         NULLIF(TRIM(FIRST(p.display_name)), ''),
         FIRST(p.email_address)
     ) AS from_name,
-    COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain) AS from_domain,
+    COALESCE(NULLIF(` + senderEnvelopeDomainExpr("mr.envelope_address") + `, ''), p.domain) AS from_domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
     COALESCE(SUM(att.attachment_size), 0) AS attachment_size,
@@ -773,14 +773,14 @@ LEFT JOIN (
     GROUP BY message_id
 ) att ON att.message_id = m.id
 WHERE mr.recipient_type = 'from'
-GROUP BY COALESCE(NULLIF(mr.envelope_address, ''), p.email_address), COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain)
+GROUP BY COALESCE(NULLIF(mr.envelope_address, ''), p.email_address), COALESCE(NULLIF(` + senderEnvelopeDomainExpr("mr.envelope_address") + `, ''), p.domain)
 `
 
 // sqlVDomains: per-domain aggregates.
-const sqlVDomains = `
+var sqlVDomains = `
 CREATE OR REPLACE VIEW v_domains AS
 SELECT
-    COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain) AS domain,
+    COALESCE(NULLIF(` + senderEnvelopeDomainExpr("mr.envelope_address") + `, ''), p.domain) AS domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
     COUNT(DISTINCT COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) AS sender_count
@@ -788,7 +788,7 @@ FROM message_recipients mr
 JOIN participants p ON p.id = mr.participant_id
 JOIN messages m ON m.id = mr.message_id
 WHERE mr.recipient_type = 'from'
-GROUP BY COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain)
+GROUP BY COALESCE(NULLIF(` + senderEnvelopeDomainExpr("mr.envelope_address") + `, ''), p.domain)
 `
 
 // sqlVLabels: label name with message count and total size.
@@ -831,16 +831,16 @@ GROUP BY c.id, c.source_conversation_id, c.title, c.conversation_type
 
 // sqlMessageSenderJoins resolves a message's From recipient before its direct
 // sender. Separate fragments let page queries bound each input before aggregation.
-const sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMiddle + sqlMessageSenderJoinsEnd
+var sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMiddle + sqlMessageSenderJoinsEnd
 
-const sqlMessageSenderJoinsStart = `LEFT JOIN (
+var sqlMessageSenderJoinsStart = `LEFT JOIN (
     SELECT
         mr.message_id,
         FIRST(COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) AS from_email,
         FIRST(
             COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
         ) AS from_name,
-        FIRST(COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain)) AS from_domain,
+        FIRST(COALESCE(NULLIF(` + senderEnvelopeDomainExpr("mr.envelope_address") + `, ''), p.domain)) AS from_domain,
         FIRST(COALESCE(p.phone_number, '')) AS from_phone
     FROM message_recipients mr
     JOIN participants p ON p.id = mr.participant_id

@@ -1367,9 +1367,9 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 		}, nil
 	case ViewDomains:
 		return aggViewDef{
-			keyExpr:    "COALESCE(NULLIF(split_part(" + mrAlias + ".envelope_address, '@', 2), ''), " + pAlias + ".domain)",
+			keyExpr:    "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(mrAlias+".envelope_address") + ", ''), " + pAlias + ".domain)",
 			joinClause: fmt.Sprintf("JOIN mr %s ON %s.message_id = msg.id AND %s.recipient_type = 'from'\n\t\t\t\tJOIN p %s ON %s.id = %s.participant_id", mrAlias, mrAlias, mrAlias, pAlias, pAlias, mrAlias),
-			nullGuard:  "COALESCE(NULLIF(split_part(" + mrAlias + ".envelope_address, '@', 2), ''), " + pAlias + ".domain, '') != ''",
+			nullGuard:  "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(mrAlias+".envelope_address") + ", ''), " + pAlias + ".domain, '') != ''",
 		}, nil
 	case ViewLabels:
 		return aggViewDef{
@@ -1663,7 +1663,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND LOWER(COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain)) = ?
+			  AND LOWER(COALESCE(NULLIF(`+senderEnvelopeDomainExpr("mr.envelope_address")+`, ''), p.domain)) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -1672,7 +1672,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain, '') != ''
+			  AND COALESCE(NULLIF(`+senderEnvelopeDomainExpr("mr.envelope_address")+`, ''), p.domain, '') != ''
 		)`)
 	}
 

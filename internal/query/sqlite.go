@@ -133,12 +133,13 @@ func escapeSQLiteLike(s string) string {
 	return r.Replace(s)
 }
 
-func senderDomainExpr(d Dialect, recipient, participant string) string {
-	address := "NULLIF(" + recipient + ".email_address, '')"
-	if _, ok := d.(PostgreSQLQueryDialect); ok {
-		return "COALESCE(NULLIF(SPLIT_PART(" + address + ", '@', 2), ''), " + participant + ".domain, '')"
-	}
-	return "COALESCE(NULLIF(SUBSTR(" + address + ", INSTR(" + address + ", '@') + 1), ''), " + participant + ".domain, '')"
+// senderEnvelopeDomainExpr uses the final @, as MIME address parsing does.
+func senderEnvelopeDomainExpr(address string) string {
+	return "CASE WHEN " + address + " LIKE '%@%' THEN LOWER(SUBSTR(" + address + ", LENGTH(RTRIM(" + address + ", REPLACE(" + address + ", '@', ''))) + 1)) END"
+}
+
+func senderDomainExpr(recipient, participant string) string {
+	return "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(recipient+".email_address") + ", ''), " + participant + ".domain, '')"
 }
 
 // aggDimension describes the variable parts of an aggregate query for a given ViewType.
@@ -184,10 +185,10 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 		}, nil
 	case ViewDomains:
 		return aggDimension{
-			keyExpr: senderDomainExpr(d, "mr", "p"),
+			keyExpr: senderDomainExpr("mr", "p"),
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: senderDomainExpr(d, "mr", "p") + " != ''",
+			whereExpr: senderDomainExpr("mr", "p") + " != ''",
 		}, nil
 	case ViewLabels:
 		return aggDimension{
@@ -529,7 +530,7 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn 
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
 			  AND mr_filter_from.recipient_type = 'from'
-			  AND LOWER(`+senderDomainExpr(e.dialect, "mr_filter_from", "p_filter_from")+`) = ?
+			  AND LOWER(`+senderDomainExpr("mr_filter_from", "p_filter_from")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -540,7 +541,7 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn 
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
 			  AND mr_filter_from.recipient_type = 'from'
-			  AND `+senderDomainExpr(e.dialect, "mr_filter_from", "p_filter_from")+` != ''
+			  AND `+senderDomainExpr("mr_filter_from", "p_filter_from")+` != ''
 		)`)
 	}
 
@@ -1710,7 +1711,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 			SELECT 1 FROM message_recipients mr_from
 			JOIN participants p_from ON p_from.id = mr_from.participant_id
 			WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-			  AND LOWER(`+senderDomainExpr(e.dialect, "mr_from", "p_from")+`) = ?
+			  AND LOWER(`+senderDomainExpr("mr_from", "p_from")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	}
@@ -2000,7 +2001,7 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 		SELECT 1 FROM message_recipients mr_dom
 		JOIN participants p_dom ON p_dom.id = mr_dom.participant_id
 		WHERE mr_dom.message_id = m.id
-		  AND LOWER(CASE WHEN mr_dom.recipient_type = 'from' THEN `+senderDomainExpr(e.dialect, "mr_dom", "p_dom")+` ELSE p_dom.domain END) IN (%s)
+		  AND LOWER(CASE WHEN mr_dom.recipient_type = 'from' THEN `+senderDomainExpr("mr_dom", "p_dom")+` ELSE p_dom.domain END) IN (%s)
 	)`, strings.Join(placeholders, ", ")))
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)

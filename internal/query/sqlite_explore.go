@@ -142,7 +142,7 @@ func (e *LiveExploreEngine) Explore(ctx context.Context, request ExploreRequest)
 		},
 	})
 	conditions = "NOT internally_deleted AND occurred_at IS NOT NULL AND (" + conditions + ")"
-	core := "WITH " + buildScalarAnalyticalEntriesCTEWithSource("entry_core", false, "s.identifier", "NOT ("+archiveOnlyDeletionTargetGuard+")", "mr.email_address", "SUBSTR(mr.email_address, INSTR(mr.email_address, '@') + 1)")
+	core := "WITH " + buildScalarAnalyticalEntriesCTEWithSource("entry_core", false, "s.identifier", "NOT ("+archiveOnlyDeletionTargetGuard+")", "mr.email_address", senderEnvelopeDomainExpr("mr.email_address"))
 	chat := sqlIsChatPredicate("message_type", "conversation_type")
 	response := &ExploreResponse{Rows: make([]EntryRow, 0), CacheRevision: snapshot.revision, SearchProvenance: provenance}
 	countSQL := core + ` SELECT COUNT(*) FILTER (WHERE NOT (` + chat + `)) +
@@ -207,7 +207,7 @@ func (e *LiveExploreEngine) Explore(ctx context.Context, request ExploreRequest)
 func buildSQLiteExplorePageSQL(core, conditions, chat string, values []string) string {
 	// SQLite's bare grouped columns select one sender row, like DuckDB FIRST.
 	senders := strings.ReplaceAll(sqlPageSenderLabels("SELECT anchor_id FROM page WHERE entry_kind <> 'conversation'"), "FIRST(", "(")
-	senders = strings.ReplaceAll(senders, "split_part(mr.envelope_address, '@', 2)", "SUBSTR(mr.email_address, INSTR(mr.email_address, '@') + 1)")
+	senders = strings.ReplaceAll(senders, senderEnvelopeDomainExpr("mr.envelope_address"), senderEnvelopeDomainExpr("mr.email_address"))
 	senders = strings.ReplaceAll(senders, "mr.envelope_address", "mr.email_address")
 	return core + `, page_keys(entry_key, entry_kind, anchor_id, page_conversation_id, position) AS MATERIALIZED (
  VALUES ` + strings.Join(values, ",") + `
