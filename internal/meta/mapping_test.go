@@ -75,11 +75,17 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 	baseline = clock()
 	replay()
 	assert.Zero(factsSince(baseline), "repaired data must settle back to a quiet replay")
+	f.comments["100_200"][0].From = &Actor{ID: "300"}
+	replay()
+	require.NoError(st.DB().QueryRowContext(t.Context(), fromSnapshotSQL, child.ID).Scan(&fromName))
+	assert.Equal(updatedActor, fromName, "an unchanged author ID without a projected name must retain its known snapshot")
+	var indexedName string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
+	assert.Equal(updatedActor, indexedName)
 	f.comments["100_200"][0].From = nil
 	replay()
 	require.NoError(st.DB().QueryRowContext(t.Context(), fromSnapshotSQL, child.ID).Scan(&fromName))
 	assert.Equal(updatedActor, fromName, "an omitted provider author must retain its known snapshot without requiring email")
-	var indexedName string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
 	assert.Equal(updatedActor, indexedName)
 	baseline = clock()

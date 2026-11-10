@@ -1015,8 +1015,19 @@ var preemptAfter = time.Minute
 // jobctx.ErrRunBudgetExceeded. Other jobs keep their own runtime budgets. The
 // returned stop function must be called when the job finishes.
 func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxRuntime time.Duration) (context.Context, func()) {
+	return s.cooperativeJobContext(s.ctx, label, preemptible, cooperative, maxRuntime)
+}
+
+// CooperativeJobContext gives daemon-owned work the same yield policy as scheduled jobs.
+func (s *Scheduler) CooperativeJobContext(ctx context.Context, label string) (context.Context, func()) {
+	return s.cooperativeJobContext(ctx, label, true, true, 0)
+}
+
+func (s *Scheduler) cooperativeJobContext(parent context.Context, label string, preemptible, cooperative bool, maxRuntime time.Duration) (context.Context, func()) {
 	started := time.Now()
-	baseCtx := jobctx.WithProgress(s.ctx)
+	baseCtx, cancelShutdown := context.WithCancel(parent)
+	stopShutdown := context.AfterFunc(s.ctx, cancelShutdown)
+	baseCtx = jobctx.WithProgress(baseCtx)
 	stopBudget := func() {}
 	if maxRuntime > 0 {
 		baseCtx, stopBudget = context.WithTimeoutCause(baseCtx, maxRuntime, jobctx.ErrRunBudgetExceeded)
@@ -1024,7 +1035,7 @@ func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxR
 	preemptCtx, requestPreemption := jobctx.WithPreemption(baseCtx)
 	yc, canYield := s.work.(YieldChecker)
 	if s.work == nil {
-		return preemptCtx, stopBudget
+		return preemptCtx, func() { stopBudget(); stopShutdown(); cancelShutdown() }
 	}
 	ctx, cancel := context.WithCancelCause(preemptCtx)
 	go func() {
@@ -1054,7 +1065,7 @@ func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxR
 			}
 		}
 	}()
-	return ctx, func() { cancel(nil); stopBudget() }
+	return ctx, func() { cancel(nil); stopBudget(); stopShutdown(); cancelShutdown() }
 }
 
 func (s *Scheduler) hasQueuedRuns() bool {

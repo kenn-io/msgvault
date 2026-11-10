@@ -28,11 +28,13 @@ type Page struct {
 // Object preserves native IDs verbatim, including composite post/comment IDs.
 // Parent and From are optional provider evidence, never inferred from a name.
 type Object struct {
-	ID          string `json:"id"`
-	Message     string `json:"message"`
-	CreatedTime string `json:"created_time"`
-	From        *Actor `json:"from,omitempty"`
-	Parent      *Actor `json:"parent,omitempty"`
+	ID               string     `json:"id"`
+	Message          string     `json:"message"`
+	CreatedTime      string     `json:"created_time"`
+	From             *Actor     `json:"from,omitempty"`
+	Parent           *Actor     `json:"parent,omitempty"`
+	InstagramMedia   *IGMedia   `json:"instagram_media,omitempty"`
+	InstagramComment *IGComment `json:"instagram_comment,omitempty"`
 }
 
 type Actor struct {
@@ -42,6 +44,46 @@ type Actor struct {
 
 type ObjectPage struct {
 	Data  []Object
+	After string
+}
+
+// IGUser identifies the linked account or a media owner, not a comment author.
+type IGUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username,omitempty"`
+}
+
+// IGCommentFromUser preserves the distinct author identifier family. Neither
+// ID nor SelfIGScopedID is established as comparable with IGUser.ID.
+type IGCommentFromUser struct {
+	ID             string `json:"id"`
+	Username       string `json:"username,omitempty"`
+	SelfIGScopedID string `json:"self_ig_scoped_id,omitempty"`
+}
+
+type IGMedia struct {
+	ID        string  `json:"id"`
+	Caption   string  `json:"caption"`
+	Timestamp string  `json:"timestamp"`
+	Permalink string  `json:"permalink"`
+	Owner     *IGUser `json:"owner,omitempty"`
+}
+
+type IGComment struct {
+	ID        string             `json:"id"`
+	Text      string             `json:"text"`
+	Timestamp string             `json:"timestamp"`
+	From      *IGCommentFromUser `json:"from,omitempty"`
+	ParentID  string             `json:"parent_id,omitempty"`
+}
+
+type IGMediaPage struct {
+	Data  []IGMedia
+	After string
+}
+
+type IGCommentPage struct {
+	Data  []IGComment
 	After string
 }
 

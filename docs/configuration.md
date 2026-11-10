@@ -637,7 +637,7 @@ Removing a config table retains the account's archive data; see
 |-----|---------|-------------|
 | `provider` | `""` | Empty for a password-based server, `google` for Google Contacts, or `microsoft` for Microsoft 365 and Outlook.com contacts |
 | `oauth_app` | `""` | Named Google OAuth app; empty selects `[oauth]` |
-| `base_url` | `""` | CardDAV discovery URL; Google and Microsoft setup supply their canonical URL |
+| `base_url` | `""` | CardDAV discovery URL; Google and Microsoft setup supply their canonical URL, and iCloud setup saves its discovered contacts partition |
 | `username` | `""` | Server username, or Google or Microsoft account email |
 | `schedule` | `""` | Cron schedule; empty disables scheduled sync |
 | `enabled` | `false` | Enable the configured connection |
@@ -1659,6 +1659,23 @@ Duplicate app/Page pairs, invalid environment variable names, unknown profile
 keys, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
+
+### `[[instagram_comments]]` {#instagram-comments}
+
+Select a professional Instagram account linked to an explicitly selected Page
+(unreleased). See [Instagram comments](usage/instagram-comments.md) for setup
+and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
+`instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
+an empty `schedule` means manual sync only.
+
+The label is trimmed, nonempty, and unique ignoring case. All three IDs must
+be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
+tuples, unknown keys, invalid environment variable names, and invalid five-field
+cron expressions are rejected. Tokens come only from the named daemon
+environment variable. Renaming the label preserves archive identity.
+The canonical source identifier is
+`app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
+scheduler job is `instagram_comments:<source-identifier>`.
 
 ### `[[chatwoot]]` {#chatwoot}
 

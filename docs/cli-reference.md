@@ -1616,6 +1616,30 @@ for independent surface progress, request costs, and expired-cursor recovery.
 
 ---
 
+## source instagram-comments add
+
+Register the professional account linked to the selected Page, using a
+configured `[[instagram_comments]]` profile (unreleased). No identifier selects
+all configured profiles. Tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-comments add [identifier]
+```
+
+## source instagram-comments sync
+
+Archive returned media captions, comments, and replies from registered linked
+professional accounts (unreleased). A positive request budget includes Page
+and account verification. Partial writes remain searchable, and `--full`
+restarts cursors without deleting rows. No identifier selects all profiles.
+
+```bash
+msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+resuming, and coverage limits. These commands do not send replies.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
@@ -3512,6 +3536,7 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 |---|---|
 | `add-carddav <base-url> <username> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
 | `add-carddav --google <email> [--connection <name>] [--oauth-app <name>] [--schedule <cron>] [--disabled]` | Connect Google Contacts using an authorized account token |
+| `add-carddav --icloud <apple-id> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover the iCloud contacts partition using an app-specific password |
 | `add-carddav --microsoft <email> [--headless] [--connection <name>] [--schedule <cron>] [--disabled]` | Sign in to Microsoft and connect Microsoft 365 or Outlook.com contacts through Microsoft Graph |
 | `carddav authorize-google <email> [--oauth-app <name>] [--no-browser]` | Authorize Google Contacts in the browser, preserving existing Google permissions |
 | `carddav authorize-microsoft <email> [--headless]` | Sign in to Microsoft for contacts without saving a connection |
@@ -4210,6 +4235,8 @@ msgvault embeddings build [flags]
 | `--account <identifier>` | Limit embedding to this account, by identifier or display name — numeric source IDs are rejected (repeatable). Overrides `[vector.embed.scope] accounts` for this run; configured `message_types` still apply. After activating this one-off scope, add the equivalent accounts to config and restart the daemon before searching. |
 | `--collection <name>` | Limit embedding to this collection's accounts (repeatable). Can be combined with `--account`; the scope is the union. This is a one-run override; persist the resolved accounts in config before restarting the daemon. |
 
+Scheduled syncs can run during indexing. For daemon-wide SQL logging, set `[log].sql_trace` or `[log].sql_slow_ms` in the daemon configuration.
+
 Without `--full-rebuild`, the command is incremental: it resumes any in-flight rebuild that matches the configured embedding settings, otherwise scans for live messages still missing coverage in the active generation, then exits. Safe to schedule via cron (or let `msgvault serve` do it via `[vector.embed.schedule]`).
 
 The account scope is part of the generation fingerprint, so building with a
@@ -4224,6 +4251,8 @@ msgvault embeddings resume [flags]
 ```
 
 Continue embedding work and finish the current generation. If a generation matching the configured embedding settings is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild. Accepts the same `--account`/`--collection` scope flags as `embeddings build`.
+
+Scheduled syncs can run during indexing. For daemon-wide SQL logging, set `[log].sql_trace` or `[log].sql_slow_ms` in the daemon configuration.
 
 Pass `--backstop` to scan for missing coverage below the per-generation watermark
 as well. This fills gaps in the selected generation without starting a full

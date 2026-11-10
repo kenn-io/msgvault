@@ -693,6 +693,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.InstagramComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Instagram comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledInstagramCommentsSources() {
+		if err := registerScheduledInstagramCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
 	for _, source := range cfg.Chatwoot {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,
@@ -967,6 +980,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		operationGate:          operationGate,
+		embeddingsScheduler:    sched,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -1887,6 +1901,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 type storeAPIAdapter struct {
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
+	embeddingsBuildMu         stdsync.Mutex
+	embeddingsScheduler       *scheduler.Scheduler
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -2630,6 +2646,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunEmbeddingsBuild(req.Args) {
+		return a.runCLIEmbeddingsBuild(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}

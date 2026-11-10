@@ -596,53 +596,54 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
-	SenderAuth         SenderAuthConfig         `toml:"sender_auth"`
-	ConversationPolicy ConversationPolicyConfig `toml:"conversation_policy"`
-	Data               DataConfig               `toml:"data"`
-	Log                LogConfig                `toml:"log"`
-	OAuth              OAuthConfig              `toml:"oauth"`
-	Microsoft          MicrosoftConfig          `toml:"microsoft"`
-	Sync               SyncConfig               `toml:"sync"`
-	Chat               ChatConfig               `toml:"chat"`
-	Server             ServerConfig             `toml:"server"`
-	Analytics          AnalyticsConfig          `toml:"analytics"`
-	Web                WebConfig                `toml:"web"`
-	Integrations       IntegrationsConfig       `toml:"integrations"`
-	Remote             RemoteConfig             `toml:"remote"`
-	Vector             vector.Config            `toml:"vector"`
-	Identity           IdentityConfig           `toml:"identity"`
-	Fastmail           []FastmailSource         `toml:"fastmail"`
-	CardDAV            CardDAVConfig            `toml:"carddav"`
-	CardDAVConnections map[string]CardDAVConfig `toml:"carddav_connections,omitempty"`
-	Accounts           []AccountSchedule        `toml:"accounts"`
-	WhatsAppApple      []WhatsAppAppleSource    `toml:"whatsapp_apple"`
-	SynctechSMS        SynctechSMSConfig        `toml:"synctech_sms"`
-	GCal               []GCalSource             `toml:"gcal"`
-	Beeper             BeeperConfig             `toml:"beeper"`
-	Chatwoot           []ChatwootSource         `toml:"chatwoot"`
-	FacebookComments   []FacebookCommentsSource `toml:"facebook_comments"`
-	Matrix             MatrixConfig             `toml:"matrix"`
-	Slack              SlackConfig              `toml:"slack"`
-	Inline             InlineConfig             `toml:"inline"`
-	Omi                []OmiSource              `toml:"omi"`
-	Granola            []GranolaSource          `toml:"granola"`
-	Plaud              []PlaudSource            `toml:"plaud"`
-	Circleback         []CirclebackSource       `toml:"circleback"`
-	Pocket             []PocketSource           `toml:"pocket"`
-	NotionMeetings     []NotionMeetingsSource   `toml:"notion_meetings"`
-	Twilio             []TwilioSource           `toml:"twilio"`
-	Muesli             []MuesliSource           `toml:"muesli"`
-	Twenty             []TwentySource           `toml:"twenty"`
-	Backup             BackupConfig             `toml:"backup"`
-	Discord            DiscordConfig            `toml:"discord"`
-	Activity           ActivityConfig           `toml:"activity"`
-	People             PeopleConfig             `toml:"people"`
-	Teams              TeamsConfig              `toml:"teams"`
-	IMessage           IMessageConfig           `toml:"imessage"`
-	Deletion           DeletionConfig           `toml:"deletion"`
-	IMAP               IMAPConfig               `toml:"imap"`
-	Gmail              GmailConfig              `toml:"gmail"`
-	Telemetry          TelemetryConfig          `toml:"telemetry"`
+	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
+	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`
+	Data               DataConfig                `toml:"data"`
+	Log                LogConfig                 `toml:"log"`
+	OAuth              OAuthConfig               `toml:"oauth"`
+	Microsoft          MicrosoftConfig           `toml:"microsoft"`
+	Sync               SyncConfig                `toml:"sync"`
+	Chat               ChatConfig                `toml:"chat"`
+	Server             ServerConfig              `toml:"server"`
+	Analytics          AnalyticsConfig           `toml:"analytics"`
+	Web                WebConfig                 `toml:"web"`
+	Integrations       IntegrationsConfig        `toml:"integrations"`
+	Remote             RemoteConfig              `toml:"remote"`
+	Vector             vector.Config             `toml:"vector"`
+	Identity           IdentityConfig            `toml:"identity"`
+	Fastmail           []FastmailSource          `toml:"fastmail"`
+	CardDAV            CardDAVConfig             `toml:"carddav"`
+	CardDAVConnections map[string]CardDAVConfig  `toml:"carddav_connections,omitempty"`
+	Accounts           []AccountSchedule         `toml:"accounts"`
+	WhatsAppApple      []WhatsAppAppleSource     `toml:"whatsapp_apple"`
+	SynctechSMS        SynctechSMSConfig         `toml:"synctech_sms"`
+	GCal               []GCalSource              `toml:"gcal"`
+	Beeper             BeeperConfig              `toml:"beeper"`
+	Chatwoot           []ChatwootSource          `toml:"chatwoot"`
+	FacebookComments   []FacebookCommentsSource  `toml:"facebook_comments"`
+	InstagramComments  []InstagramCommentsSource `toml:"instagram_comments"`
+	Matrix             MatrixConfig              `toml:"matrix"`
+	Slack              SlackConfig               `toml:"slack"`
+	Inline             InlineConfig              `toml:"inline"`
+	Omi                []OmiSource               `toml:"omi"`
+	Granola            []GranolaSource           `toml:"granola"`
+	Plaud              []PlaudSource             `toml:"plaud"`
+	Circleback         []CirclebackSource        `toml:"circleback"`
+	Pocket             []PocketSource            `toml:"pocket"`
+	NotionMeetings     []NotionMeetingsSource    `toml:"notion_meetings"`
+	Twilio             []TwilioSource            `toml:"twilio"`
+	Muesli             []MuesliSource            `toml:"muesli"`
+	Twenty             []TwentySource            `toml:"twenty"`
+	Backup             BackupConfig              `toml:"backup"`
+	Discord            DiscordConfig             `toml:"discord"`
+	Activity           ActivityConfig            `toml:"activity"`
+	People             PeopleConfig              `toml:"people"`
+	Teams              TeamsConfig               `toml:"teams"`
+	IMessage           IMessageConfig            `toml:"imessage"`
+	Deletion           DeletionConfig            `toml:"deletion"`
+	IMAP               IMAPConfig                `toml:"imap"`
+	Gmail              GmailConfig               `toml:"gmail"`
+	Telemetry          TelemetryConfig           `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir            string `toml:"-"`
@@ -1167,6 +1168,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
 	}
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "instagram_comments" {
+			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "facebook_comments" {
 			return nil, fmt.Errorf("unknown Facebook comments config key %q", key.String())
 		}
@@ -1330,6 +1334,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateFacebookCommentsSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateInstagramCommentsSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()
