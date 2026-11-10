@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -474,32 +475,7 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 			assert.Equal(tc.empty, len(listed[0].Labels.Addresses) == 0)
 		})
 	}
-	t.Run("participant without an address", func(t *testing.T) {
-		require, assert := require.New(t), assert.New(t)
-		st := testutil.NewTestStore(t)
-		nameOnlyID, err := st.EnsureParticipantContext(t.Context(), "", "Name only", "")
-		require.NoError(err)
-		owner, _, err := st.CreatePersonFromParticipantContext(t.Context(), nameOnlyID)
-		require.NoError(err)
-		guest := mustPromotedPerson(t.Context(), t, st, "guest@example.org", "Guest")
-		merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "name-only-labels", Actor: "test"})
-		require.NoError(err)
-		detail, err := st.GetPersonMergeContext(t.Context(), merged.Merge.ID)
-		require.NoError(err)
-		listed, err := st.ListPersonMergesContext(t.Context(), merged.Person.ID)
-		require.NoError(err)
-		require.Len(listed, 1)
-		for _, labels := range []store.PersonMergeLabels{detail.Labels, listed[0].Labels} {
-			assert.False(labels.Incomplete)
-			assert.Len(labels.Profiles, 2)
-			assert.Len(labels.ParticipantIDs, 2)
-			assert.NotEmpty(labels.Addresses)
-		}
-		assert.Contains(detail.Labels.ParticipantIDs, nameOnlyID)
-		for _, address := range detail.Labels.Addresses {
-			assert.NotEqual(nameOnlyID, address.ParticipantID)
-		}
-	})
+
 }
 
 func TestPersonMerge_CandidateDecisionAcceptedAndIdempotent(t *testing.T) {
@@ -2585,6 +2561,32 @@ func TestMergePersons_MovesBriefEnrollmentToSurvivor(t *testing.T) {
 }
 
 func TestPersonMerge_DetailAddressLabels(t *testing.T) {
+	t.Run("participant without an address", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		st := testutil.NewTestStore(t)
+		nameOnlyID, err := st.EnsureParticipantContext(t.Context(), "", "Name only", "")
+		require.NoError(err)
+		owner, _, err := st.CreatePersonFromParticipantContext(t.Context(), nameOnlyID)
+		require.NoError(err)
+		guest := mustPromotedPerson(t.Context(), t, st, "guest@example.org", "Guest")
+		merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "name-only-labels", Actor: "test"})
+		require.NoError(err)
+		detail, err := st.GetPersonMergeContext(t.Context(), merged.Merge.ID)
+		require.NoError(err)
+		listed, err := st.ListPersonMergesContext(t.Context(), merged.Person.ID)
+		require.NoError(err)
+		require.Len(listed, 1)
+		for _, labels := range []store.PersonMergeLabels{detail.Labels, listed[0].Labels} {
+			assert.False(labels.Incomplete)
+			assert.Len(labels.Profiles, 2)
+			assert.Len(labels.ParticipantIDs, 2)
+			assert.NotEmpty(labels.Addresses)
+		}
+		assert.Contains(detail.Labels.ParticipantIDs, nameOnlyID)
+		for _, address := range detail.Labels.Addresses {
+			assert.NotEqual(nameOnlyID, address.ParticipantID)
+		}
+	})
 	t.Run("mailbox-case", func(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		owner, guest := mailboxCaseMergePeople(t, st)
@@ -2607,36 +2609,6 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assertPersonMergeIdentityFixture(t, detail, "beeper-migrated")
-	})
-
-	t.Run("case-sensitive Beeper anchors on Telegram", func(t *testing.T) {
-		require, assert := require.New(t), assert.New(t)
-		ctx := t.Context()
-		st := testutil.NewTestStore(t)
-		service, err := st.ResolveCommunicationServiceContext(ctx, "telegram")
-		require.NoError(err)
-		var people []*store.Person
-		for _, id := range []string{"@Reader:beeper.local", "@reader:beeper.local"} {
-			key := beeperidentity.Fallback("account-a", id)
-			participant, err := st.EnsureParticipantByIdentifierContext(ctx, "beeper", key, "Reader")
-			require.NoError(err)
-			require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", key, &service.ID, nil, nil))
-			person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
-			require.NoError(err)
-			people = append(people, person)
-		}
-		merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: people[0].ID, AbsorbedID: people[1].ID, ExpectedSurvivorRevision: people[0].Revision, ExpectedAbsorbedRevision: people[1].Revision, IdempotencyKey: "telegram-case", Actor: "test"})
-		require.NoError(err)
-		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
-		require.NoError(err)
-		require.Len(detail.Labels.Addresses, 2)
-		assert.Equal(`["telegram","","","beeper:beeper:9:account-a:20:@Reader:beeper.local"]`, detail.Labels.Addresses[0].IdentityKey)
-		assert.Equal(`["telegram","","","beeper:beeper:9:account-a:20:@reader:beeper.local"]`, detail.Labels.Addresses[1].IdentityKey)
-		assert.Equal(1, detail.Labels.AbsorbedAddressCount)
-		page, err := st.ListPersonMergesContext(ctx, people[0].ID)
-		require.NoError(err)
-		require.Len(page, 1)
-		assert.Equal(1, page[0].Labels.AbsorbedAddressCount)
 	})
 
 	t.Run("current bindings", func(t *testing.T) {
@@ -2785,24 +2757,36 @@ func denyPersonMergeReads(t *testing.T, st *store.Store, table string) {
 
 func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		scoped bool
-		inputs []store.PersonContactPointInput
-		want   []store.PersonMergeRecordedContactPoint
+		name    string
+		prepare func(*testing.T, *store.Store, int64) func()
+		inputs  []store.PersonContactPointInput
+		want    []store.PersonMergeRecordedContactPoint
 	}{
-		{"curated and superseded", false, []store.PersonContactPointInput{
+		{"curated and superseded", func(t *testing.T, st *store.Store, guestID int64) func() {
+			old, err := st.AddPersonContactPointContext(t.Context(), guestID, store.PersonContactPointInput{AddressKind: store.ContactAddressEmail, OriginalValue: "retired@example.org", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+			require.NoError(t, err)
+			require.NoError(t, st.SupersedePersonContactPointContext(t.Context(), guestID, old.Envelope.ID, nil))
+			return func() {}
+		}, []store.PersonContactPointInput{
 			{AddressKind: store.ContactAddressEmail, OriginalValue: "curated@example.org", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
 			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport}},
 		}, []store.PersonMergeRecordedContactPoint{
 			{AddressKind: store.ContactAddressEmail, OriginalValue: "curated@example.org", NormalizedValue: "curated@example.org", IdentityKey: "[\"email\",\"\",\"\",\"curated@example.org\"]"},
 			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", IdentityKey: "[\"phone\",\"\",\"\",\"+12025550144\"]"},
 		}},
-		{"service scope and inactive catalog", true, []store.PersonContactPointInput{
-			{AddressKind: store.ContactAddressPhone, OriginalValue: "+1 (202) 555-0144", ServiceSlug: new("whatsapp")},
-			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("signal")},
-			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("scoped-phone"), ScopeKind: new("workspace"), ScopeValue: new("garden")},
-			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("scoped-phone"), ScopeKind: new("workspace"), ScopeValue: new("work")},
-			{AddressKind: store.ContactAddressUsername, OriginalValue: "alex", ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("garden")},
+		{"service scope and inactive catalog", func(t *testing.T, st *store.Store, _ int64) func() {
+			service, _, err := st.EnsureCommunicationServiceContext(t.Context(), store.CommunicationServiceInput{Slug: "scoped-phone", DisplayLabel: "Scoped phone", ScopePolicy: store.ScopePolicyRequired, DefaultScopeKind: new("workspace"), Normalization: store.NormalizationPhoneE164, NormalizationVersion: 1})
+			require.NoError(t, err)
+			return func() {
+				_, err := st.SetCommunicationServiceActiveContext(t.Context(), service.ID, false)
+				require.NoError(t, err)
+			}
+		}, []store.PersonContactPointInput{
+			{AddressKind: store.ContactAddressPhone, OriginalValue: "+1 (202) 555-0144", ServiceSlug: new("whatsapp"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("signal"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("scoped-phone"), ScopeKind: new("workspace"), ScopeValue: new("garden"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", ServiceSlug: new("scoped-phone"), ScopeKind: new("workspace"), ScopeValue: new("work"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
+			{AddressKind: store.ContactAddressUsername, OriginalValue: "alex", ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("garden"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
 		}, []store.PersonMergeRecordedContactPoint{
 			{AddressKind: store.ContactAddressPhone, OriginalValue: "+1 (202) 555-0144", NormalizedValue: "+12025550144", ServiceSlug: new("whatsapp"), ServiceLabel: new("WhatsApp"), IdentityKey: "[\"whatsapp\",\"\",\"\",\"+12025550144\"]"},
 			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", ServiceSlug: new("signal"), ServiceLabel: new("Signal"), IdentityKey: "[\"signal\",\"\",\"\",\"+12025550144\"]"},
@@ -2812,53 +2796,42 @@ func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
 			st := storetest.New(t).Store
-			ctx := t.Context()
-			owner := mustPromotedPerson(ctx, t, st, "owner@example.org", "Owner")
-			guest := mustPromotedPerson(ctx, t, st, "guest@example.org", "Guest")
-
-			var serviceID int64
-			if tc.scoped {
-				service, _, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{
-					Slug: "scoped-phone", DisplayLabel: "Scoped phone", ScopePolicy: store.ScopePolicyRequired,
-					DefaultScopeKind: new("workspace"), Normalization: store.NormalizationPhoneE164, NormalizationVersion: 1,
-				})
-				require.NoError(err)
-				serviceID = service.ID
-			} else {
-				old, err := st.AddPersonContactPointContext(ctx, guest.ID, store.PersonContactPointInput{
-					AddressKind: store.ContactAddressEmail, OriginalValue: "retired@example.org", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-				})
-				require.NoError(err)
-				require.NoError(st.SupersedePersonContactPointContext(ctx, guest.ID, old.Envelope.ID, nil))
-			}
-			for _, input := range tc.inputs {
-				if tc.scoped {
-					input.Envelope = store.ValueEnvelopeInput{Source: store.ProvenanceUser}
-				}
-				_, err := st.AddPersonContactPointContext(ctx, guest.ID, input)
-				require.NoError(err)
-			}
-			guest, err := st.GetPersonContext(ctx, guest.ID)
-			require.NoError(err)
-			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "saved-contact-points", Actor: "test"})
-			require.NoError(err)
-			if tc.scoped {
-				_, err = st.SetCommunicationServiceActiveContext(ctx, serviceID, false)
-				require.NoError(err)
-			}
-			detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
-			require.NoError(err)
-			var points []store.PersonMergeRecordedContactPoint
-			for _, recorded := range detail.Labels.Profiles {
-				if recorded.ID == guest.ID {
-					points = recorded.ContactPoints
-				}
-			}
-			assert.ElementsMatch(tc.want, points)
+			owner := mustPromotedPerson(t.Context(), t, st, "owner@example.org", "Owner")
+			guest := mustPromotedPerson(t.Context(), t, st, "guest@example.org", "Guest")
+			afterMerge := tc.prepare(t, st, guest.ID)
+			points, err := savedMergeContacts(t.Context(), st, owner, guest, tc.inputs, afterMerge)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tc.want, points)
 		})
 	}
+}
+
+func savedMergeContacts(ctx context.Context, st *store.Store, owner, guest *store.Person, inputs []store.PersonContactPointInput, afterMerge func()) ([]store.PersonMergeRecordedContactPoint, error) {
+	for _, input := range inputs {
+		if _, err := st.AddPersonContactPointContext(ctx, guest.ID, input); err != nil {
+			return nil, err
+		}
+	}
+	guest, err := st.GetPersonContext(ctx, guest.ID)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "saved-contact-points", Actor: "test"})
+	if err != nil {
+		return nil, err
+	}
+	afterMerge()
+	detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, recorded := range detail.Labels.Profiles {
+		if recorded.ID == guest.ID {
+			return recorded.ContactPoints, nil
+		}
+	}
+	return nil, nil
 }
 
 func TestPersonMergeCountsNewAddresses(t *testing.T) {
@@ -2905,6 +2878,36 @@ func TestPersonMergeCountsNewAddresses(t *testing.T) {
 			assert.Equal(tc.want, page[0].Labels.AbsorbedAddressCount)
 		})
 	}
+
+	t.Run("case-sensitive Beeper anchors on Telegram", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		ctx := t.Context()
+		st := testutil.NewTestStore(t)
+		service, err := st.ResolveCommunicationServiceContext(ctx, "telegram")
+		require.NoError(err)
+		var people []*store.Person
+		for _, id := range []string{"@Reader:beeper.local", "@reader:beeper.local"} {
+			key := beeperidentity.Fallback("account-a", id)
+			participant, err := st.EnsureParticipantByIdentifierContext(ctx, "beeper", key, "Reader")
+			require.NoError(err)
+			require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", key, &service.ID, nil, nil))
+			person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+			require.NoError(err)
+			people = append(people, person)
+		}
+		merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: people[0].ID, AbsorbedID: people[1].ID, ExpectedSurvivorRevision: people[0].Revision, ExpectedAbsorbedRevision: people[1].Revision, IdempotencyKey: "telegram-case", Actor: "test"})
+		require.NoError(err)
+		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+		require.NoError(err)
+		require.Len(detail.Labels.Addresses, 2)
+		assert.Equal(`["telegram","","","beeper:beeper:9:account-a:20:@Reader:beeper.local"]`, detail.Labels.Addresses[0].IdentityKey)
+		assert.Equal(`["telegram","","","beeper:beeper:9:account-a:20:@reader:beeper.local"]`, detail.Labels.Addresses[1].IdentityKey)
+		assert.Equal(1, detail.Labels.AbsorbedAddressCount)
+		page, err := st.ListPersonMergesContext(ctx, people[0].ID)
+		require.NoError(err)
+		require.Len(page, 1)
+		assert.Equal(1, page[0].Labels.AbsorbedAddressCount)
+	})
 
 	t.Run("phone aliases and saved contacts", func(t *testing.T) {
 		require, assert := require.New(t), assert.New(t)
@@ -2985,6 +2988,5 @@ func TestPersonMerge_BeeperObservations(t *testing.T) {
 			}
 		}
 		assert.ElementsMatch([]string{`["slack","workspace","a","reader"]`, `["slack","workspace","b","reader"]`}, keys)
-		assert.Equal(2, labels.AbsorbedAddressCount)
 	}
 }

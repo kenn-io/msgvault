@@ -16,10 +16,8 @@ it('renders the store’s email and formatted phone through History and merged-i
   const labels = labelsOf(phoneAddresses);
   const participants = [absorbed(2)];
   const row = mergeSummaryRow({ merge, participants, labels }, workspaceLabels(labels.addresses));
-  expect(row.count).toBe(2);
-  for (const addresses of [mergeAddresses({ participants, labels }, 'absorbed', workspaceLabels(labels.addresses)), row.addresses.get(2)!]) {
-    expect(addresses.map(addressText)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
-  }
+  expect(mergeAddresses({ participants, labels }, 'absorbed', workspaceLabels(labels.addresses)).map(addressText)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
+  expect(row.absorbedAddress).toBe('+1 (202) 555-0123');
   expect(mergedInAddresses([{ ...absorbed(2), merged_at: '2026-01-03T12:00:00Z', addresses: phoneAddresses }], workspaceLabels(phoneAddresses)).map(a => a.value)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
 });
 
@@ -29,8 +27,6 @@ it('keeps the legacy Beeper phone readable when its saved copy matches', () => {
     identity_key: '["whatsapp","","","+12025550123"]', address_kind: 'phone', original_value: '+1 (202) 555-0123', service_slug: 'whatsapp', service_label: 'WhatsApp',
   }] }];
   const participants = [absorbed(1)];
-  const row = mergeSummaryRow({ merge, participants, labels }, workspaceLabels(labels.addresses));
-  expect(row.addresses.get(1)?.map(addressText)).toEqual(['WhatsApp · Reader · +12025550123', '+12025550123']);
   expect(mergeAddresses({ merge, participants, labels }, 'absorbed', workspaceLabels(labels.addresses)).map(addressText)).toEqual(['WhatsApp · Reader · +12025550123', '+12025550123']);
 });
 
@@ -114,5 +110,4 @@ it('keeps the service and account on observed phone and email addresses', () => 
   const scopes = workspaceLabels(addresses);
   const expected = ['+12025550123 · WhatsApp · account 1', '+12025550123 · WhatsApp · account 2', 'reader@example.org · Slack · workspace 1'];
   expect(mergeAddresses({ merge, participants, labels }, 'absorbed', scopes).map(addressText)).toEqual(expected);
-  expect([...mergeSummaryRow({ merge, participants, labels }, scopes).addresses.values()].flat().map(addressText)).toEqual(expected);
 });

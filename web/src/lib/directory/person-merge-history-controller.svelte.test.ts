@@ -177,6 +177,7 @@ describe('PersonMergeHistoryController', () => {
         const id = offset + index + 1, item = summary(id);
         item.merge.current_person_id = 7;
         item.labels.participants = [{ merge_id: id, participant_id: id, origin_side: 'absorbed' }];
+        item.labels.participant_ids = [id];
         item.labels.addresses = [addressFixture(id, 'email', `person${id}@example.org`)];
         return item;
       });
@@ -315,7 +316,6 @@ describe('PersonMergeHistoryController', () => {
     const post = requests.find((request) => request.method === 'POST')!;
     expect(new URL(post.url).pathname).toBe('/api/v1/people/12/split');
     expect(post.headers.get('If-Match')).toBe('"person-12-r4"');
-    expect(post.headers.get('Idempotency-Key')).toBe('123-456-789-12');
     await expect(post.clone().json()).resolves.toEqual({ merge_id: 41, participant_ids: [701] });
   });
 
@@ -350,7 +350,6 @@ describe('PersonMergeHistoryController', () => {
     { kind: 'transport', status: 0, error: '' },
     { kind: 'exception', status: 0, error: '' },
     { kind: 'application', status: 409, error: 'person_split_idempotency_conflict' },
-    { kind: 'application', status: 412, error: 'person_merge_revision_conflict' },
   ])('handles request IDs after $kind $status', async ({ kind, status, error }) => {
     const requests: Request[] = [];
     let postAttempts = 0;

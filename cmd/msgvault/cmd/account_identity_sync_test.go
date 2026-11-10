@@ -257,7 +257,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 	}{
 		{"o365", newAddO365LocalCmd, nil, "msgvault sync-full -- user@example.com"},
 		{"graph", newAddO365LocalCmd, []string{"--graph"}, "msgvault sync -- user@example.com"},
-		{"teams", newAddTeamsLocalCmd, nil, ""},
+		{"teams", newAddTeamsLocalCmd, nil, "msgvault sync-teams user@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -280,9 +280,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				err := cmd.ExecuteContext(ctx)
 				output := stop()
 				require.NoError(err)
-				if tc.output != "" {
-					assert.Contains(output, tc.output)
-				}
+				assert.Contains(output, tc.output)
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				t.Cleanup(func() { _ = st.Close() })
