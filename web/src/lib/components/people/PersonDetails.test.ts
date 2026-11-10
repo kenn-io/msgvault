@@ -88,6 +88,10 @@ it('scopes Meetings to the saved person, waits for both empty reads, and refresh
   person.revision = 2;
   await directory.profile!.reload();
   expect(await screen.findByText('Revision 2 follow-up')).toBeDefined();
+  const meetings = within(screen.getByRole('region', { name: 'Meetings', exact: true }));
+  expect(meetings.getByRole('heading', { name: 'Meetings', level: 3 })).toBeDefined();
+  expect(meetings.getByRole('region', { name: 'Meeting activity', exact: true })).toBeDefined();
+  expect(meetings.queryByRole('heading', { name: 'Meeting activity and follow-ups' })).toBeNull();
 });
 
 it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation', async operation => {

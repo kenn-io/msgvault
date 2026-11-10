@@ -30,5 +30,7 @@
 {:else if empty}
   <DetailSection title="Meetings"><EmptyLine message="No meetings yet" /></DetailSection>
 {:else}
-  <MeetingPanel {client} {controller} scope={{ kind: 'direct', scope: { person_id: personID } }} {refreshKey} {onOpenMeeting} />
+  <DetailSection title="Meetings">
+    <MeetingPanel {client} {controller} scope={{ kind: 'direct', scope: { person_id: personID } }} {refreshKey} {onOpenMeeting} showHeading={false} />
+  </DetailSection>
 {/if}
