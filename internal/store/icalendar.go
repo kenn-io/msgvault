@@ -19,7 +19,6 @@ const rawFormatICS = "ics"
 // ICalendarImportSummary counts revision decisions, not generated occurrences.
 type ICalendarImportSummary struct {
 	Changed, Unchanged int
-	Diagnostics        []string
 }
 
 // icsInterpretationError distinguishes unreadable calendars from archive failures.
@@ -65,7 +64,7 @@ func (s *Store) prepareICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 	}
 	out := make([]preparedICS, 0, len(components))
 	for _, c := range components {
-		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, InviteOrganizer: c.OrganizerEmail}})
+		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay}})
 	}
 	return out, nil
 }
@@ -92,19 +91,12 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		item, accepted, err := acceptedICSSnapshot(q, sourceID, item, summary)
-		if err != nil {
-			return err
-		}
-		if !accepted {
-			continue
-		}
 		e := item.component.Event
 		sourceMessageID := e.ProviderEventID
 		var id int64
 		var metadata sql.NullString
 		var format string
-		err = q.QueryRow(`SELECT m.id,m.metadata,r.raw_format,m.source_message_id FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_messages WHERE original_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format, &sourceMessageID)
+		err := q.QueryRow(`SELECT m.id,m.metadata,r.raw_format,m.source_message_id FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_messages WHERE original_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format, &sourceMessageID)
 		exists := err == nil
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read prior ICS identity: %w", err)
@@ -122,7 +114,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
-			old.InviteOrganizer = item.meta.InviteOrganizer
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}

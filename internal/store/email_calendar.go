@@ -111,7 +111,6 @@ func (s *Store) persistEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 	if err := s.persistICalendarWith(ctx, tx, sourceID, prepared, &summary); err != nil {
 		return summary, err
 	}
-	diagnostics = append(diagnostics, summary.Diagnostics...)
 	for _, diagnostic := range diagnostics {
 		slog.Warn("calendar invite ignored", "message_id", id, "error", diagnostic)
 	}
