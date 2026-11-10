@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"testing"
 	"testing/synctest"
@@ -85,14 +86,18 @@ func TestListScanResumesAfterEveryPageAtTheSameUpdateTime(t *testing.T) {
 				if i <= earlier {
 					at = at.Add(-time.Hour)
 				}
-				f.issue(widgets, int64(i), i, "An issue", ann, at.Format(time.RFC3339), "assigned_to_me")
+				issue := f.issue(widgets, int64(i), i, "An issue", ann, at.Format(time.RFC3339), "assigned_to_me")
+				issue.object["created_at"] = updated.Add(-time.Duration(1000-i) * time.Hour).Format(time.RFC3339)
 				want = append(want, issueGID+strconv.Itoa(i))
 			}
 			list := listStream{resource: resourceIssues, scope: "assigned_to_me"}
 			state := cursor{Lists: map[string]listCursor{}}
 			stop := errors.New("interrupted after a list page")
 			var got []string
-			for range 4 {
+			for range 20 {
+				if state.Lists[list.key()].Through.After(updated) {
+					break
+				}
 				err := f.forge().scanList(t.Context(), &state, list, forge.NewOwnerFilter(nil, nil),
 					func(refs []forge.ThreadRef, next []byte) error {
 						for _, ref := range refs {
@@ -105,19 +110,15 @@ func TestListScanResumesAfterEveryPageAtTheSameUpdateTime(t *testing.T) {
 				require.ErrorIs(err, stop)
 			}
 			assert.Equal(want, got, "repeated interruptions reach every thread without duplicates")
-			assert.Zero(state.Lists[list.key()].NextPage, "the completed scan clears its page position")
-			assert.Equal(updated, state.Lists[list.key()].Through)
+			assert.Equal(listCursor{Through: updated.Add(time.Millisecond)}, state.Lists[list.key()],
+				"the completed instant moves the list past it")
 			requests := requestsFor(f.requestLog(), "/api/v4/issues?")
-			require.Len(requests, 4)
-			for i, page := range []string{"1", "1", "2", "3"} {
-				assert.Equal(page, queryOf(t, requests[i]).Get("page"))
-				if i > 0 {
-					assert.Equal(updatedAfter(updated), queryOf(t, requests[i]).Get("updated_after"),
-						"the saved page is relative to the current update watermark")
-				}
+			for _, request := range requests {
+				assert.Empty(queryOf(t, request).Get("page"), "every request asks for a first page")
 			}
+			assert.NotEmpty(queryOf(t, requests[len(requests)-1]).Get("created_before"), "the instant is read by creation time")
 
-			// A later scan starts at page 1 and discovers a newer update.
+			// A later scan starts past the instant and discovers a newer update.
 			id := earlier + 202
 			f.issue(widgets, int64(id), id, "A later issue", ann,
 				updated.Add(time.Hour).Format(time.RFC3339), "assigned_to_me")
@@ -130,10 +131,48 @@ func TestListScanResumesAfterEveryPageAtTheSameUpdateTime(t *testing.T) {
 				}))
 			require.Len(later, 1)
 			assert.Equal(issueGID+strconv.Itoa(id), later[0].Key)
-			assert.Equal("1", queryOf(t, requestsFor(f.requestLog(), "/api/v4/issues?")[0]).Get("page"))
-			assert.Zero(state.Lists[list.key()].NextPage)
+			query := queryOf(t, requestsFor(f.requestLog(), "/api/v4/issues?")[0])
+			assert.Equal(updatedAfter(updated.Add(time.Millisecond)), query.Get("updated_after"))
+			assert.Empty(query.Get("created_after"))
 		})
 	}
+}
+
+func TestAThreadLeavingARunUpdatedAtOneInstantShiftsNoneOutOfTheScan(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFakeGitLab(t)
+	f.project(widgets, "acme/widgets")
+	ann := person(t, 2, "ann", "Ann Example")
+	updated := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC)
+	var first *fakeThread
+	for i := 1; i <= 250; i++ {
+		issue := f.issue(widgets, int64(i), i, "An issue", ann, updated.Format(time.RFC3339), "assigned_to_me")
+		issue.object["created_at"] = updated.Add(-time.Duration(1000-i) * time.Hour).Format(time.RFC3339)
+		if i == 1 {
+			first = issue
+		}
+	}
+	list := listStream{resource: resourceIssues, scope: "assigned_to_me"}
+	state := cursor{Lists: map[string]listCursor{}}
+	var got []string
+	reports := 0
+	require.NoError(f.forge().scanList(t.Context(), &state, list, forge.NewOwnerFilter(nil, nil),
+		func(refs []forge.ThreadRef, _ []byte) error {
+			for _, ref := range refs {
+				got = append(got, ref.Key)
+			}
+			reports++
+			if reports == 2 {
+				// Once the scan has read the instant's first page, a thread
+				// on it is updated, so every later thread of the instant
+				// moves one place forward.
+				first.object["updated_at"] = updated.Add(time.Hour).Format(time.RFC3339)
+			}
+			return nil
+		}))
+	slices.Sort(got)
+	assert.Len(slices.Compact(got), 250, "every thread of the instant is read")
 }
 
 type knownThreads []forge.KnownThread
