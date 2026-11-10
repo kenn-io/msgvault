@@ -372,7 +372,6 @@ func TestMeetingRelatedQueryPlan(t *testing.T) {
 			fmt.Fprintln(&plan, vals[len(vals)-1])
 		}
 		require.NoError(t, rows.Close())
-		t.Log(plan.String())
 		require.Contains(t, plan.String(), "idx_calendar_events_series_provider_id")
 		require.Contains(t, plan.String(), "idx_calendar_events_provider_id")
 	}

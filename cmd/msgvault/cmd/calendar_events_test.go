@@ -108,7 +108,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Contains(out.String(), "REF")
 				assertions.Regexp(`\s378\s+evt:377@20270302T170000Z\s+Standup`, out.String())
 				assertions.Contains(out.String(), "evt:412")
-				assertions.Contains(out.String(), "evt:413@20270304")
+				assertions.Regexp(`cancelled\s+413\s+evt:413@20270304\s+Cancelled`, out.String())
 			}
 			if tc.name == "json" {
 				var page store.CalendarOccurrencePage
