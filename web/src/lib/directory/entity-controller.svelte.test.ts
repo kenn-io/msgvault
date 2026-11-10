@@ -920,7 +920,7 @@ describe('DirectoryEntityController', () => {
   });
 });
 
-it('retries deletion with the attempted version when the conflict refresh fails', async () => {
+it('reports no saved version when the delete conflict refresh fails', async () => {
   let reads = 0;
   const deletedWith: (string | null)[] = [];
   const client = createAPIClient(async input => {
@@ -935,10 +935,9 @@ it('retries deletion with the attempted version when the conflict refresh fails'
   const controller = new DirectoryEntityController(client, 7);
   try {
     const result = await controller.deleteOrganization(21);
-    expect(result).toMatchObject({ ok: false, kind: 'conflict', current: { etag: '"original"' } });
-    if (result.ok || result.kind !== 'conflict' || !result.current) throw new Error('Expected conflict with original version');
-    await controller.deleteOrganization(21, result.current);
-    expect(deletedWith).toEqual(['"original"', '"original"']);
+    expect(result).toMatchObject({ ok: false, kind: 'conflict' });
+    expect(result).not.toHaveProperty('current');
+    expect(deletedWith).toEqual(['"original"']);
   } finally { controller.destroy(); }
 });
 

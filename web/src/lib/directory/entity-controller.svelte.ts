@@ -805,7 +805,7 @@ export class DirectoryEntityController {
       }
       const status = response.response.status;
       if (status === 412 || (status === 409 && revisionConflictCodes.has(response.error?.error ?? ''))) {
-        let current = snapshot;
+        let current: Prepared<C> | undefined;
         try {
           current = await prepare();
         } catch {
@@ -816,7 +816,7 @@ export class DirectoryEntityController {
           kind: 'conflict',
           status,
           message: failureMessage(response.error, status),
-          current,
+          ...(current === undefined ? {} : { current }),
         };
       }
       return { ok: false, kind: 'error', status, message: failureMessage(response.error, status) };
