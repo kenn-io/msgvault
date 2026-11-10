@@ -2481,7 +2481,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		args = emitFolderArgs(args, "--folder", req.Folders)
 		args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 		if req.Email != "" {
-			args = append(args, req.Email)
+			args = append(args, "--", req.Email)
 		}
 		return args
 	}
@@ -2498,7 +2498,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	args = emitFolderArgs(args, "--folder", req.Folders)
 	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {
-		args = append(args, req.Email)
+		args = append(args, "--", req.Email)
 	}
 	return args
 }
@@ -2663,7 +2663,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args
 		if req.GrantDecided {
-			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
+			args = append([]string{args[0], "--" + addAccountGrantDecidedFlag + "=true"}, args[1:]...)
 		}
 		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
 	}

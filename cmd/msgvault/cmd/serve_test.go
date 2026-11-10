@@ -2018,7 +2018,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 				},
 				func(_ context.Context, args []string, _ func(string, string) error) error {
 					runnerCalls++
-					assert.Equal([]string{"sync", "alice@example.com"}, args)
+					assert.Equal([]string{"sync", "--", "alice@example.com"}, args)
 					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
 					return tt.predecessorErr
 				},
@@ -2040,7 +2040,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 
 func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 	assert.Equal(t,
-		[]string{"sync", "--folder", "INBOX", "--folder", "Archive", "--skip-folder", "Trash", "alice@example.com"},
+		[]string{"sync", "--folder", "INBOX", "--folder", "Archive", "--skip-folder", "Trash", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:       "alice@example.com",
 			Folders:     []string{"INBOX", "Archive"},
@@ -2048,20 +2048,33 @@ func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 		}),
 	)
 	assert.Equal(t,
-		[]string{"sync", "--folder", "Folder,With,Comma", "alice@example.com"},
+		[]string{"sync", "--folder", "Folder,With,Comma", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:   "alice@example.com",
 			Folders: []string{"Folder,With,Comma"},
 		}),
 	)
 	assert.Equal(t,
-		[]string{"sync", "--folder", "Path\\To\\File", "--skip-folder", "Fold,er", "alice@example.com"},
+		[]string{"sync", "--folder", "Path\\To\\File", "--skip-folder", "Fold,er", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:       "alice@example.com",
 			Folders:     []string{"Path\\To\\File"},
 			SkipFolders: []string{"Fold,er"},
 		}),
 	)
+}
+
+func TestCLISyncSubprocessArgsAcceptHyphenLeadingMailbox(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		t.Run(strconv.FormatBool(full), func(t *testing.T) {
+			args := cliSyncSubprocessArgs(api.CLISyncRequest{Full: full, Email: "-reader@example.org"})
+			var got []string
+			command := &cobra.Command{Use: args[0] + " <email>", Args: cobra.ExactArgs(1), Run: func(_ *cobra.Command, args []string) { got = args }}
+			command.SetArgs(args[1:])
+			require.NoError(t, command.Execute())
+			assert.Equal(t, []string{"-reader@example.org"}, got)
+		})
+	}
 }
 
 func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
@@ -2353,10 +2366,11 @@ func TestStoreAPIAdapterRunCLIRepairMessagePropagatesCancellation(t *testing.T) 
 func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
 	adapter := &storeAPIAdapter{}
 	req := api.CLIRunRequest{
-		Args:         []string{"add-account", "user@example.com", "--readonly"},
+		Args:         []string{"add-account", "--readonly", "--", "-reader@example.org"},
 		GrantDecided: true,
 	}
-	var gotArgs []string
+	var gotArgs, mailbox []string
+	var granted bool
 
 	err := adapter.runCLICommandWithRunner(
 		t.Context(), req, nil,
@@ -2368,15 +2382,21 @@ func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
 			_ func(string, string) error,
 		) error {
 			gotArgs = args
-			return nil
+			command := &cobra.Command{Use: "add-account <email>", Args: cobra.ExactArgs(1), Run: func(_ *cobra.Command, args []string) { mailbox = args }}
+			command.Flags().BoolVar(&granted, addAccountGrantDecidedFlag, false, "")
+			command.Flags().Bool("readonly", false, "")
+			command.SetArgs(args[1:])
+			return command.Execute()
 		},
 	)
 
 	require.NoError(t, err)
+	assert.True(t, granted)
+	assert.Equal(t, []string{"-reader@example.org"}, mailbox)
 	assert.Equal(t, []string{
-		"add-account", "user@example.com", "--readonly", "--grant-decided=true",
+		"add-account", "--grant-decided=true", "--readonly", "--", "-reader@example.org",
 	}, gotArgs)
-	assert.Equal(t, []string{"add-account", "user@example.com", "--readonly"}, req.Args,
+	assert.Equal(t, []string{"add-account", "--readonly", "--", "-reader@example.org"}, req.Args,
 		"server injection must not mutate caller-owned args")
 }
 

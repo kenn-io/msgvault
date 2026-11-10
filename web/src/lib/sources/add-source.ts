@@ -19,13 +19,13 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
     id: 'gmail', name: 'Gmail', description: 'Includes Google Workspace',
     docs: 'https://msgvault.io/docs/setup/#configure-oauth',
     fields: [{ id: 'email', label: 'Email address', placeholder: 'you@gmail.com' }],
-    template: 'msgvault add-account {email}',
+    template: 'msgvault add-account -- {email}',
   },
   {
     id: 'microsoft', name: 'Microsoft 365 or Outlook.com', description: 'Includes Hotmail',
     docs: 'https://msgvault.io/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail',
     fields: [{ id: 'email', label: 'Email address', placeholder: 'you@example.com' }],
-    template: 'msgvault add-o365 {email}',
+    template: 'msgvault add-o365 -- {email}',
   },
   {
     id: 'imap', name: 'IMAP mailbox', description: 'Any other mail provider',
