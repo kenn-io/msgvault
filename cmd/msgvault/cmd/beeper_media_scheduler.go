@@ -105,7 +105,7 @@ func configureDocbankAttachmentJob(
 		if destination == "" {
 			return nil
 		}
-		client, err := docbankmedia.NewClient(strings.TrimRight(strings.TrimSpace(cfg.URL), "/"), cfg.ResolveAPIKey)
+		client, err := docbankmedia.NewClient(strings.TrimRight(strings.TrimSpace(cfg.URL), "/"), cfg.ResolveAPIKey, docbankmedia.WithTrustPrivateNetwork(cfg.TrustPrivateNetwork))
 		if err != nil {
 			return err
 		}
@@ -198,7 +198,7 @@ func addBeeperMediaRoute(
 func docbankMediaClient(
 	ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig,
 ) (*docbankmedia.Client, string, error) {
-	client, err := docbankmedia.NewClient(cfg.URL, cfg.ResolveAPIKey)
+	client, err := docbankmedia.NewClient(cfg.URL, cfg.ResolveAPIKey, docbankmedia.WithTrustPrivateNetwork(cfg.TrustPrivateNetwork))
 	if err != nil {
 		return nil, "", err
 	}
@@ -240,7 +240,7 @@ func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config
 	if err != nil {
 		return nil, err
 	}
-	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder()}, nil
+	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder(), SearchProfile: cfg.AttachmentSearchProfile}, nil
 }
 
 func docbankAttachmentDestination(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (string, error) {

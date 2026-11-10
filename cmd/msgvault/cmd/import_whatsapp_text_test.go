@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,7 +47,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			home := t.TempDir()
 			cfg.HomeDir = home
 			cfg.Data.DataDir = home
-			payload := "13/6/26, 10:00 - Mira: asters\n"
+			payload := "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:00 - Mira: asters\n"
 			args := []string{"--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy", "--no-default-identity"}
 			if name == "incomplete" {
 				st, err := store.Open(cfg.DatabaseDSN())
@@ -84,10 +85,61 @@ func TestWhatsAppTextCommand(t *testing.T) {
 				assert.Contains(out.String(), "Media: 0 stored")
 			} else {
 				require.NoError(err)
-				assert.Contains(out.String(), "1 records")
-				assert.Contains(out.String(), "1 added")
+				assert.Contains(out.String(), "2 records")
+				assert.Contains(out.String(), "2 added")
+				assert.Contains(out.String(), "Indistinguishable duplicates: 1\n")
 			}
 		})
+	}
+}
+
+func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
+	for _, subprocess := range []bool{false, true} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("subprocess=%t/existing=%t", subprocess, existing), func(t *testing.T) {
+				if subprocess {
+					markDaemonCLISubprocessForTest(t)
+				} else {
+					t.Setenv(daemonCLISubprocessEnv, "")
+				}
+				cfg := config.NewDefaultConfig()
+				cfg.HomeDir = t.TempDir()
+				cfg.Data.DataDir = cfg.HomeDir
+				if existing {
+					st, err := store.Open(cfg.DatabaseDSN())
+					require.NoError(t, err)
+					require.NoError(t, st.InitSchemaContext(t.Context()))
+					_, err = st.GetOrCreateSource("whatsapp", "+12025550123")
+					require.NoError(t, err)
+					require.NoError(t, st.Close())
+				}
+				path := filepath.Join(t.TempDir(), "chat.txt")
+				require.NoError(t, os.WriteFile(path, []byte("13/6/26, 10:00 - Mira: one\n13/6/26 10:01 - Mira: two\n"), 0600))
+				command := &cobra.Command{Use: "test"}
+				command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+				command.AddCommand(newImportWhatsAppCmd())
+				var out bytes.Buffer
+				command.SetOut(&out)
+				command.SetErr(&out)
+				command.SetArgs([]string{"import-whatsapp", path, "--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy"})
+				require.ErrorContains(t, command.Execute(), "line 2: unsupported or malformed TXT header")
+				assert.NotContains(t, out.String(), "Import complete:")
+				assert.NotContains(t, out.String(), "Import incomplete:")
+				if !existing {
+					_, err := os.Stat(cfg.DatabaseDSN())
+					assert.True(t, os.IsNotExist(err))
+					return
+				}
+				st, err := store.Open(cfg.DatabaseDSN())
+				require.NoError(t, err)
+				defer func() { assert.NoError(t, st.Close()) }()
+				var sources, messages int
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sources").Scan(&sources))
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&messages))
+				assert.Equal(t, 1, sources)
+				assert.Zero(t, messages)
+			})
+		}
 	}
 }
 

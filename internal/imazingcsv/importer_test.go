@@ -1093,16 +1093,19 @@ func TestImporterRejectsTimezoneChangeAndRecordsFailedSync(t *testing.T) {
 // concrete IANA zones and the stable UTC alias stay accepted.
 func TestImporterRejectsHostDependentLocalTimezone(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	assert.NoError(ValidateTimezone("UTC"))
-	assert.NoError(ValidateTimezone("Europe/Berlin"))
-	require.ErrorContains(ValidateTimezone("Local"), "host-dependent Local")
+	_, err := ValidateTimezone("UTC")
+	assert.NoError(err)
+	_, err = ValidateTimezone("Europe/Berlin")
+	assert.NoError(err)
+	_, err = ValidateTimezone("Local")
+	require.ErrorContains(err, "host-dependent Local")
 
 	st := testutil.NewTestStore(t)
 	exportDir := newTestExport(t, [][]string{
 		{"Alice", "2024-06-01 12:00:00", "", "", "iMessage", "Outgoing", "", "", "", "", "", "hello", "", ""},
 	})
 
-	_, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "Local"}).
+	_, err = NewImporter(st, Options{Owner: "+15550000001", Timezone: "Local"}).
 		ImportPath(t.Context(), exportDir)
 	require.ErrorContains(err, "host-dependent Local")
 

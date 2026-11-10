@@ -61,7 +61,7 @@ export function overviewRows(
     if (idle) return idle;
     return found?.history_availability === 'available' ? { tone: 'success', text: 'On' } : { tone: 'muted', text: 'History unavailable' };
   };
-  const rows: OverviewRow[] = [];
+  const rows: OverviewRow[] = [{ id: 'source_sync', name: 'Source sync', chip: chip('source_sync'), action: { kind: 'sources' } }];
   const setup = (kind: Kind): OverviewAction | undefined => kind === 'carddav_sync'
     ? { kind: 'settings', target: { settingsCategory: 'carddav', settingsAuthority: '' } }
     : OPERATION_SETUP[kind];
@@ -122,7 +122,6 @@ export function overviewRows(
         : undefined,
   });
 
-  rows.unshift({ id: 'source_sync', name: 'Source sync', chip: chip('source_sync'), action: { kind: 'sources' } });
   return rows.map(row => {
     const status = lanes.find(lane => lane.kind === row.id && lane.configured)?.related_status;
     return { ...row, relatedStatus: status && status !== 'listSourceStatus' && status !== 'getCardDAVStatus' ? status : undefined };

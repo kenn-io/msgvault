@@ -9,6 +9,13 @@ type TextOptions struct {
 	MediaDir, AttachmentsDir           string
 }
 
+// TextInput holds a validated file ready for persistence.
+type TextInput struct {
+	opts   TextOptions
+	rows   []textRecord
+	digest string
+}
+
 // TextSummary counts evidence in this file, not the chat's lifetime history.
 type TextSummary struct {
 	SourceID                                                              int64

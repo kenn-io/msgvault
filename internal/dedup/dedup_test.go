@@ -99,7 +99,7 @@ func ingestRawMessage(
 		t.Context(), st, source.ID, source.Identifier, "",
 		nil, sourceMessageID, hex.EncodeToString(hash[:]), raw, fallbackDate,
 		slog.New(slog.DiscardHandler),
-	)
+		nil)
 	require.NoError(t, err, "IngestRawMessage")
 
 	var messageID int64

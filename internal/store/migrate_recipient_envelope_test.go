@@ -68,6 +68,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
 			email_address TEXT,
+			is_relayed BOOLEAN NOT NULL DEFAULT FALSE,
 			UNIQUE(message_id, participant_id, recipient_type)
 		)`,
 		`INSERT INTO message_recipients (id, message_id, participant_id, recipient_type, display_name, email_address)

@@ -14,7 +14,7 @@ import (
 func TestTextPersistedKeys(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
-	_, err := NewImporter(st, nil).ImportText(t.Context(), textFile(t, "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:01 - You: fictional garden note\n13/6/26, 10:02 - You changed the group description: garden\n"), textOptions())
+	_, err := importTextForTest(NewImporter(st, nil), t.Context(), textFile(t, "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:01 - You: fictional garden note\n13/6/26, 10:02 - You changed the group description: garden\n"), textOptions())
 	require.NoError(err)
 	// Fixed SHA-256 values independently calculated from byte-length-framed fields.
 	var chat, message, senderKey string
@@ -64,7 +64,7 @@ func TestTextPayloadKeyIgnoresClassification(t *testing.T) {
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - "+tc.payload), "dmy", "UTC", textLimitsDefault)
+			rows, _, err := parseTextForTest(t.Context(), strings.NewReader("13/6/26, 10:00 - "+tc.payload), "dmy", "UTC", textLimitsDefault)
 			require.NoError(err)
 			require.Len(rows, 1)
 			require.Equal(tc.kind, rows[0].Kind)

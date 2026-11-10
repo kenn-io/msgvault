@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -18,17 +19,21 @@ var textOwnerPhone = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
 
 // ValidateTextOptions checks caller assumptions without opening the archive.
 func ValidateTextOptions(opts TextOptions) error {
+	_, err := validateTextOptions(opts)
+	return err
+}
+
+func validateTextOptions(opts TextOptions) (*time.Location, error) {
 	if !textOwnerPhone.MatchString(opts.Phone) {
-		return errors.New("--phone must be an E.164 number")
+		return nil, errors.New("--phone must be an E.164 number")
 	}
 	if strings.TrimSpace(opts.ChatID) == "" {
-		return errors.New("--chat-id is required and must stay stable across exports")
+		return nil, errors.New("--chat-id is required and must stay stable across exports")
 	}
 	if opts.ChatType != "direct" && opts.ChatType != "group" {
-		return errors.New("--chat-type must be direct or group")
+		return nil, errors.New("--chat-type must be direct or group")
 	}
-	_, err := textLocation(opts.DateOrder, opts.Timezone)
-	return err
+	return textLocation(opts.DateOrder, opts.Timezone)
 }
 
 type textAssumptions struct {
@@ -52,36 +57,43 @@ type textProvenance struct {
 	Occurrence int    `json:"occurrence"`
 }
 
-// ImportText imports one unpacked file. Parsing and timestamp validation finish
-// before any archive writes. Committed records make interruption repeatable.
-func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptions) (summary TextSummary, retErr error) {
-	if err := ValidateTextOptions(opts); err != nil {
-		return summary, err
+// LoadText checks and parses a complete TXT before opening an archive.
+func LoadText(ctx context.Context, path string, opts TextOptions) (*TextInput, error) {
+	loc, err := validateTextOptions(opts)
+	if err != nil {
+		return nil, err
 	}
 	if opts.MediaDir != "" && opts.AttachmentsDir == "" {
-		return summary, errors.New("attachment storage directory is required with media")
+		return nil, errors.New("attachment storage directory is required with media")
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return summary, fmt.Errorf("open TXT: %w", err)
+		return nil, fmt.Errorf("open TXT: %w", err)
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return summary, err
+		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		_ = f.Close()
-		return summary, errors.New("TXT input must be a regular file")
+		return nil, errors.New("TXT input must be a regular file")
 	}
-	rows, digest, err := parseText(ctx, f, opts.DateOrder, opts.Timezone, textLimitsDefault)
+	rows, digest, err := parseText(ctx, f, opts.DateOrder, loc, textLimitsDefault)
 	closeErr := f.Close()
 	if err != nil {
-		return summary, err
+		return nil, err
 	}
 	if closeErr != nil {
-		return summary, closeErr
+		return nil, closeErr
 	}
+	return &TextInput{opts: opts, rows: rows, digest: digest}, nil
+}
+
+// ImportText persists a checked TXT. Committed records make interruption repeatable.
+func (imp *Importer) ImportText(ctx context.Context, input *TextInput) (summary TextSummary, retErr error) {
+	opts, rows, digest := input.opts, input.rows, input.digest
+	var err error
 	var root *os.Root
 	if opts.MediaDir != "" {
 		root, err = os.OpenRoot(opts.MediaDir)
@@ -100,10 +112,13 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 		return summary, err
 	}
 	st := imp.store.ScopedToSync(source.ID, syncID)
+	var convID int64
 	defer func() {
 		// Partial messages remain committed after cancellation and need current counts.
 		post := context.WithoutCancel(ctx)
-		retErr = errors.Join(retErr, st.RecomputeConversationStatsContext(post, source.ID))
+		if convID != 0 {
+			retErr = errors.Join(retErr, st.RecomputeConversationStatsForConversationContext(post, convID))
+		}
 		if retErr == nil {
 			retErr = imp.store.CompleteSyncContext(ctx, syncID, "")
 		}
@@ -111,7 +126,7 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 			retErr = errors.Join(retErr, imp.store.FailSyncWithCheckpointContext(post, syncID, retErr.Error(), &store.Checkpoint{MessagesProcessed: int64(summary.Records), MessagesAdded: int64(summary.Added)}))
 		}
 	}()
-	convID, err := prepareTextChat(ctx, st, source.ID, opts)
+	convID, err = prepareTextChat(ctx, st, source.ID, opts)
 	if err != nil {
 		return summary, err
 	}

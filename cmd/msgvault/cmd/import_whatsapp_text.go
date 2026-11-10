@@ -9,18 +9,32 @@ import (
 	"go.kenn.io/msgvault/internal/whatsapp"
 )
 
-func runWhatsAppTextImport(cmd *cobra.Command, path string, opts whatsapp.TextOptions) error {
+func runWhatsAppTextImport(cmd *cobra.Command, args []string, opts whatsapp.TextOptions) error {
 	state := invocationFromCommand(cmd)
+	if !isDaemonCLISubprocess() && (isRemoteModeFor(state) || isAgentMode(state)) {
+		_, err := daemonCLIRunCwd(HTTPStoreInfo{Kind: HTTPStoreConfiguredRemote}, true)
+		return err
+	}
 	if state == nil || state.cfg == nil {
+		if err := whatsapp.ValidateTextOptions(opts); err != nil {
+			return usageErr(cmd, err)
+		}
 		return errors.New("configuration is unavailable")
+	}
+	opts.AttachmentsDir = state.cfg.AttachmentsDir()
+	input, err := whatsapp.LoadText(cmd.Context(), args[0], opts)
+	if err != nil {
+		return fmt.Errorf("import WhatsApp TXT: %w", err)
+	}
+	if !isDaemonCLISubprocess() {
+		return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 	}
 	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	opts.AttachmentsDir = state.cfg.AttachmentsDir()
-	summary, importErr := whatsapp.NewImporter(st, nil).ImportText(cmd.Context(), path, opts)
+	summary, importErr := whatsapp.NewImporter(st, nil).ImportText(cmd.Context(), input)
 	if summary.SourceID == 0 {
 		return fmt.Errorf("import WhatsApp TXT: %w", importErr)
 	}
@@ -37,7 +51,7 @@ func runWhatsAppTextImport(cmd *cobra.Command, path string, opts whatsapp.TextOp
 		status = "incomplete"
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Import %s: %d records, %d notices, %d added, %d unchanged\n", status, summary.Records, summary.Notices, summary.Added, summary.Unchanged)
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Identical-record ambiguity: %d additional occurrences\n", summary.DuplicateAmbiguity)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Indistinguishable duplicates: %d\n", summary.DuplicateAmbiguity)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Media: %d stored, %d missing, %d omitted, %d unsafe/unsupported, %d oversized\n", summary.MediaStored, summary.MediaMissing, summary.MediaOmitted, summary.MediaSkipped, summary.MediaOversized)
 	if resultErr != nil {
 		return fmt.Errorf("import WhatsApp TXT: %w", resultErr)

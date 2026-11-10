@@ -23,28 +23,17 @@ var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{
 
 // A malformed header still needs its date and payload delimiters. Numeric
 // prose alone is continuation text.
-var textDateStart = regexp.MustCompile(`^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}, [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] )`)
+var textDateStart = regexp.MustCompile(`^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}, [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] |\[?[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},?\s+[0-9]{1,2}:[0-9]{2}[^\r\n]*(?:\s*-|\]))`)
 var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {
 	if order != "dmy" && order != "mdy" && order != "ymd" {
 		return nil, errors.New("--date-order must be dmy, mdy or ymd")
 	}
-	if err := imazingcsv.ValidateTimezone(zone); err != nil {
-		return nil, err
-	}
-	loc, err := time.LoadLocation(zone)
-	if err != nil {
-		return nil, fmt.Errorf("load timezone %q: %w", zone, err)
-	}
-	return loc, nil
+	return imazingcsv.ValidateTimezone(zone)
 }
 
-func parseText(ctx context.Context, reader io.Reader, order, zone string, limits textLimits) ([]textRecord, string, error) {
-	loc, err := textLocation(order, zone)
-	if err != nil {
-		return nil, "", err
-	}
+func parseText(ctx context.Context, reader io.Reader, order string, loc *time.Location, limits textLimits) ([]textRecord, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}

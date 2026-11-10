@@ -66,13 +66,7 @@ imports the rest. Android msgstore.db imports reject both flags.`,
 				}
 				textOpts.Phone = importPhone
 				textOpts.MediaDir = importMediaDir
-				if err := whatsapp.ValidateTextOptions(textOpts); err != nil {
-					return usageErr(cmd, err)
-				}
-				if !isDaemonCLISubprocess() {
-					return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
-				}
-				return runWhatsAppTextImport(cmd, args[0], textOpts)
+				return runWhatsAppTextImport(cmd, args, textOpts)
 			}
 			for _, name := range []string{"chat-id", "chat-type", "chat-title", "date-order", "timezone"} {
 				if cmd.Flags().Changed(name) {

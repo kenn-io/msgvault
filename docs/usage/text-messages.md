@@ -20,6 +20,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
+| [X DMs](#import-x) | Extracted X account archive (unreleased on `main`) |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -63,7 +64,7 @@ msgvault import-whatsapp msgstore.db --phone +14155551234 \
 
 ### Per-chat TXT exports
 
-On newer `main` builds, import one unpacked WhatsApp TXT export with explicit
+Import one unpacked WhatsApp TXT export with explicit
 parsing assumptions:
 
 ```bash
@@ -91,7 +92,8 @@ or a.m./p.m. Normal, no-break and narrow no-break spaces before AM/PM are
 supported. UTF-8 BOM, CRLF and leading directional marks are accepted.
 Multiline bodies and blank lines are retained. A line that looks like a full
 supported header starts another record even if it was originally message text.
-Unsupported or malformed timestamp headers, invalid UTF-8, a preamble, or input
+A line shaped like a timestamp header with unsupported punctuation or spacing
+fails even when it was message text. Unsupported or malformed timestamp headers, invalid UTF-8, a preamble, or input
 over 128 MiB, 250,000 records or 1 MiB per record fail before archive writes.
 
 `--timezone` must name a concrete IANA zone or UTC. It and `--date-order` are
@@ -585,3 +587,58 @@ A later or overlapping export adds new messages and fills media slots that still
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
+
+## import-x
+
+Available on `main`, unreleased. Import supplied direct and group DMs from an
+extracted [X account archive](https://help.x.com/en/managing-your-account/how-to-download-your-x-archive):
+
+```bash
+msgvault import-x /path/to/x-archive
+msgvault import-x --me 100001 /path/to/x-archive/data
+```
+
+Pass the archive root or its `data` directory. `account.js` supplies the numeric
+owner ID. Without it, `--me <numeric-id>` is required; an override conflicting
+with `account.js` is rejected. Numeric X IDs remain distinct from public
+usernames. Missing names, timestamps and recipients stay unknown. Malformed
+timestamps also stay unknown while their original strings remain in message
+evidence.
+
+The importer reads `direct-messages.js`, `direct-messages-group.js` and their
+`-partN.js` files, with matching `window.YTD.direct_messages.partN` or
+`window.YTD.direct_messages_group.partN` assignments. It reads each
+`dmConversation`'s `conversationId` followed by its `messages` array and imports
+`messageCreate` records. Redacted real records cover direct and group messages,
+a group `joinConversation.participantsSnapshot`, and a direct-media URL.
+Numbered parts, account metadata and media bytes have synthetic test coverage.
+HTML-only exports, ZIP files and newer encrypted-chat formats are unsupported.
+The archive's contents determine coverage; deleted or lifetime history is not promised.
+
+Imported messages appear in Texts and search. Each message keeps its original
+JSON, timestamp string and source filename as evidence. This preserves imported
+message evidence, not a complete backup of the original export. Messages without
+usable dates remain in the archive and live full-text search; date-based cache
+views may omit them. Group membership
+snapshots add observed participants without removing earlier observations or
+inferring per-message recipients. One encountered snapshot and its provenance
+are retained as conversation metadata; it does not establish the final roster.
+Service and membership events are skipped as messages and counted in the summary.
+Invalid records and unknown events are counted separately.
+
+Local media comes from `direct_messages_media` or
+`direct_messages_group_media`. The archive viewer names each file
+`<messageCreate.id>-<URL filename>` in the corresponding directory, including
+video URLs. Video naming has synthetic test coverage against the viewer code;
+no real video record is included in the fixtures. URLs are never fetched.
+Nonregular, missing, unsafe or oversized files remain missing attachments. The existing
+250 MiB chat attachment limit applies. Each JSON event is limited to 1 MiB;
+whole conversations are streamed without a conversation-size limit.
+
+Re-running skips archived messages and retries attachment slots that still lack
+bytes. It preserves first-imported text, raw evidence and stored media. An
+interrupted import can be replayed safely; absence never deletes archived data.
+The summary reports direct/group conversation entries, added and duplicate
+messages, skipped events, invalid records and media outcomes. Conversation
+entries can repeat across numbered parts. Use `--no-default-identity` to skip
+recording the source account as a default identity.

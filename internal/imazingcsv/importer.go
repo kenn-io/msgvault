@@ -65,21 +65,21 @@ func NewImporter(st *store.Store, opts Options) *Importer {
 // LoadLocation returns time.Local itself for that spelling, so pointer
 // identity rejects every host-dependent name without denying concrete IANA
 // zones or the stable UTC alias.
-func ValidateTimezone(name string) error {
+func ValidateTimezone(name string) (*time.Location, error) {
 	if strings.TrimSpace(name) == "" {
-		return errors.New("timezone is required")
+		return nil, errors.New("timezone is required")
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
-		return fmt.Errorf("load timezone %q: %w", name, err)
+		return nil, fmt.Errorf("load timezone %q: %w", name, err)
 	}
 	if loc == time.Local {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"timezone %q is the host-dependent Local zone; pass a concrete IANA timezone name such as Europe/Berlin or UTC",
 			name,
 		)
 	}
-	return nil
+	return loc, nil
 }
 
 type chatPlan struct {
@@ -113,7 +113,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	if err != nil {
 		return Summary{}, fmt.Errorf("normalize owner: %w", err)
 	}
-	if err := ValidateTimezone(importer.opts.Timezone); err != nil {
+	if _, err := ValidateTimezone(importer.opts.Timezone); err != nil {
 		return Summary{}, err
 	}
 	layout, err := Discover(path)

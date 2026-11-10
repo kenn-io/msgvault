@@ -1,8 +1,10 @@
 package whatsapp
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func parseTextForTest(ctx context.Context, reader io.Reader, order, zone string, limits textLimits) ([]textRecord, string, error) {
+	loc, err := textLocation(order, zone)
+	if err != nil {
+		return nil, "", err
+	}
+	return parseText(ctx, reader, order, loc, limits)
+}
 
 func TestTextParserHeaders(t *testing.T) {
 	for _, tc := range []struct{ name, text, order, wall, precision string }{
@@ -21,7 +31,7 @@ func TestTextParserHeaders(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			rows, _, err := parseText(t.Context(), strings.NewReader(tc.text), tc.order, "UTC", textLimitsDefault)
+			rows, _, err := parseTextForTest(t.Context(), strings.NewReader(tc.text), tc.order, "UTC", textLimitsDefault)
 			require.NoError(err)
 			require.Len(rows, 1)
 			assert.Equal("Mira", rows[0].Sender)
@@ -49,7 +59,7 @@ func TestTextParserNotices(t *testing.T) {
 	} {
 		t.Run(tc.payload, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - "+tc.payload), "dmy", "UTC", textLimitsDefault)
+			rows, _, err := parseTextForTest(t.Context(), strings.NewReader("13/6/26, 10:00 - "+tc.payload), "dmy", "UTC", textLimitsDefault)
 			require.NoError(err)
 			require.Len(rows, 1)
 			kind := "message"
@@ -66,12 +76,16 @@ func TestTextParserNotices(t *testing.T) {
 func TestTextParserRejects(t *testing.T) {
 	for _, tc := range []struct {
 		name, text, order, zone, want string
-		limits                      textLimits
+		limits                        textLimits
 	}{
 		{"preamble", "notes\n13/6/26, 10:00 - Mira: ok", "dmy", "UTC", "line 1: unsupported or malformed TXT header", textLimitsDefault},
 		{"invalid-date", "31/2/26, 10:00 - Mira: no", "dmy", "UTC", "day out of range", textLimitsDefault},
 		{"bad-clock", "13/6/26, 27:00 - Mira: no", "dmy", "UTC", "hour out of range", textLimitsDefault},
 		{"malformed-continuation-header", "13/6/26, 10:00 - Mira: yes\n13/6/26, noon - Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"android-missing-comma", "13/6/26, 10:00 - Mira: yes\n13/6/26 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"android-spacing", "13/6/26, 10:00 - Mira: yes\n13/6/26,  10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"ios-spacing", "13/6/26, 10:00 - Mira: yes\n[13/6/26,  10:00] Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"android-dash-spacing", "13/6/26, 10:00 - Mira: yes\n13/6/26, 10:01- Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"unsupported-continuation-header", "13/6/26, 10:00 - Mira: yes\n[13/6/26 10:00] Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"utf8-continuation", "13/6/26, 10:00 - Mira: asters\n\xff", "dmy", "UTC", "line 2: TXT is not valid UTF-8", textLimitsDefault},
 		{"empty", "", "dmy", "UTC", "TXT contains no records", textLimitsDefault},
@@ -80,14 +94,14 @@ func TestTextParserRejects(t *testing.T) {
 		{"count-limit", "13/6/26, 10:00 - Mira: one\n13/6/26, 10:01 - Mira: two", "dmy", "UTC", "TXT exceeds 1 records", textLimits{Bytes: 100, Records: 1, RecordBytes: 100}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := parseText(t.Context(), strings.NewReader(tc.text), tc.order, tc.zone, tc.limits)
+			_, _, err := parseTextForTest(t.Context(), strings.NewReader(tc.text), tc.order, tc.zone, tc.limits)
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
 }
 
 func TestTextParserEarlierFold(t *testing.T) {
-	rows, _, err := parseText(t.Context(), strings.NewReader("25/10/26, 02:30 - Mira: autumn"), "dmy", "Europe/Berlin", textLimitsDefault)
+	rows, _, err := parseTextForTest(t.Context(), strings.NewReader("25/10/26, 02:30 - Mira: autumn"), "dmy", "Europe/Berlin", textLimitsDefault)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC), rows[0].SentAt)
@@ -99,14 +113,14 @@ func TestTextParserOriginalByteDigest(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			limits := textLimitsDefault
 			limits.Bytes = int64(len(input))
-			rows, digest, err := parseText(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
+			rows, digest, err := parseTextForTest(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
 			require.NoError(err)
 			require.Len(rows, 1)
 			assert.Equal(fmt.Sprintf("%x", sha256.Sum256([]byte(input))), digest)
 			assert.Equal("asters\nseedlings", rows[0].Body)
 			assert.Equal("13/6/26, 10:00 - Mira: asters\nseedlings", rows[0].Raw)
 			limits.Bytes--
-			_, _, err = parseText(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
+			_, _, err = parseTextForTest(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
 			require.ErrorContains(err, "byte limit")
 		})
 	}
@@ -116,7 +130,7 @@ func TestTextParserNumericContinuation(t *testing.T) {
 	for _, line := range []string{"1/2 cup", "2026-06-14 deadline", "2026-06-14 deadline - water"} {
 		t.Run(line, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - Mira: shopping\n"+line), "dmy", "UTC", textLimitsDefault)
+			rows, _, err := parseTextForTest(t.Context(), strings.NewReader("13/6/26, 10:00 - Mira: shopping\n"+line), "dmy", "UTC", textLimitsDefault)
 			require.NoError(err)
 			require.Len(rows, 1)
 			assert.Equal("shopping\n"+line, rows[0].Body)
@@ -133,14 +147,14 @@ func TestTextParserRecordLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			limits := textLimits{Bytes: 100, Records: 10, RecordBytes: len(tc.raw)}
-			rows, _, err := parseText(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
+			rows, _, err := parseTextForTest(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
 			require.NoError(err)
 			require.Len(rows, 1)
 			assert.Equal(tc.body, rows[0].Body)
 			assert.Equal(tc.raw, rows[0].Raw)
 			assert.Equal(strings.Count(tc.raw, "\n")+1, rows[0].EndLine)
 			limits.RecordBytes--
-			_, _, err = parseText(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
+			_, _, err = parseTextForTest(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
 			require.ErrorContains(err, "record exceeds")
 		})
 	}
