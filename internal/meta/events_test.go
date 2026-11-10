@@ -328,7 +328,7 @@ func TestApplyFeedLockBusyRetryUncounted(t *testing.T) {
 	assert.False(out.CountAttempt)
 	assert.Equal(calls, f.calls)
 }
-func TestApplyFeedRetiredSourceUnrouted(t *testing.T) {
+func TestApplyFeedUnroutedSources(t *testing.T) {
 	st, f, imp, src := eventImporter(t)
 	f.paths = nil
 	out, err := imp.ApplyFeedEvents(t.Context(), "99", "100", []FeedEvent{feedEvent("add", 10)}, EventOptions{})

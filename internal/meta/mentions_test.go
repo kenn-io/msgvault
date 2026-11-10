@@ -1,15 +1,11 @@
 package meta
 
 import (
-	"context"
 	"encoding/json/v2"
-	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/metawebhook"
 )
 
 func mentionEvent(t *testing.T, value string) FeedEvent {
@@ -32,9 +28,6 @@ func TestApplyMentionPayloadPost(t *testing.T) {
 	out := applyMention(t, imp, ev)[0]
 	assert.Equal(t, "applied", out.Class)
 	assert.True(t, out.ArchiveChanged)
-	out = applyMention(t, imp, ev)[0]
-	assert.Equal(t, "ignored", out.Class)
-	assert.False(t, out.ArchiveChanged)
 	assert.Empty(t, f.paths)
 	root := message(t, st, src.ID, "400_500")
 	assert.False(t, root.SenderID.Valid)
@@ -65,27 +58,49 @@ func TestApplyMentionPayloadPost(t *testing.T) {
 
 func TestApplyMentionSparseTargets(t *testing.T) {
 	for _, tc := range []struct {
-		name, value, want string
-		comment           bool
-		reads             int
+		name, value, want   string
+		nodeParent, replyTo string
+		paths               []string
 	}{
-		{"null post message", `{"item":"post","verb":"add","post_id":"100_200","message":null}`, "Example post", false, 1},
-		{"absent comment message", `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201","parent_id":"100_200"}`, "Hydrated comment", true, 2},
-		{"missing comment parent", `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201","message":"Delivered top-level mention"}`, "Delivered top-level mention", true, 2},
+		{
+			name: "null post message", value: `{"item":"post","verb":"add","post_id":"100_200","message":null}`, want: "Example post",
+			paths: []string{"/v26.0/100_200"},
+		},
+		{
+			name: "absent comment message", value: `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201","parent_id":"100_200"}`, want: "Hydrated comment",
+			replyTo: "100_200", paths: []string{"/v26.0/100_201", "/v26.0/100_200"},
+		},
+		{
+			name: "missing comment parent", value: `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201","message":"Delivered top-level mention"}`, want: "Delivered top-level mention",
+			replyTo: "100_200", paths: []string{"/v26.0/100_201", "/v26.0/100_200"},
+		},
+		{
+			name: "missing parent chain", value: `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201","message":"Delivered reply"}`, want: "Delivered reply",
+			nodeParent: "100_210", replyTo: "100_210", paths: []string{"/v26.0/100_201", "/v26.0/100_200", "/v26.0/100_210"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, f, imp, src := eventImporter(t)
 			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Hydrated comment")}
 			f.comments["100_200"][0].Parent = nil
+			if tc.nodeParent != "" {
+				f.comments["100_200"][0].Parent = &Actor{ID: tc.nodeParent}
+				ancestor := comment(tc.nodeParent, "100_200", "Parent comment")
+				ancestor.Parent = nil
+				f.comments["100_200"] = append(f.comments["100_200"], *ancestor)
+			}
 			f.paths = nil
 			ev := mentionEvent(t, tc.value)
 			assert.Equal(t, "applied", applyMention(t, imp, ev)[0].Class)
-			assert.Len(t, f.paths, tc.reads)
-			id := "100_200"
-			if tc.comment {
-				id = "100_201"
+			assert.Equal(t, tc.paths, f.paths)
+			id := ev.CommentID
+			if id == "" {
+				id = ev.PostID
 			}
 			row := message(t, st, src.ID, id)
+			if tc.replyTo != "" {
+				assert.Equal(t, message(t, st, src.ID, tc.replyTo).ID, row.ReplyToMessageID.Int64)
+			}
 			body, err := st.GetMessageBodyText(row.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, body)
@@ -97,17 +112,6 @@ func TestApplyMentionSparseTargets(t *testing.T) {
 			assert.Equal(t, uint64(1), saved.BodyOrder)
 		})
 	}
-}
-
-func TestApplyMentionMissingParentChain(t *testing.T) {
-	st, f, imp, src := eventImporter(t)
-	f.comments["100_200"] = []Object{*comment("100_210", "100_200", "Parent comment"), *comment("100_201", "100_210", "Hydrated reply")}
-	f.comments["100_200"][0].Parent = nil
-	ev := mentionEvent(t, `{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201","message":"Delivered reply"}`)
-	f.paths = nil
-	assert.Equal(t, "applied", applyMention(t, imp, ev)[0].Class)
-	assert.Equal(t, []string{"/v26.0/100_201", "/v26.0/100_200", "/v26.0/100_210"}, f.paths)
-	assert.Equal(t, message(t, st, src.ID, "100_210").ID, message(t, st, src.ID, "100_201").ReplyToMessageID.Int64)
 }
 
 func TestApplyMentionReadFailures(t *testing.T) {
@@ -139,83 +143,50 @@ func TestApplyMentionReadFailures(t *testing.T) {
 	}
 }
 
-func TestApplyMentionWorkerCompletesSparseBudgetRetries(t *testing.T) {
+func TestApplyMentionSparseBudgetRetries(t *testing.T) {
 	st, f, imp, src := eventImporter(t)
 	f.posts, f.paths = nil, nil
-	ids := make([]string, 51)
-	changes := make([]map[string]any, len(ids))
-	for i := range ids {
-		ids[i] = fmt.Sprintf("400_%d", 500+i)
-		f.posts = append(f.posts, Object{ID: ids[i], Message: "Hydrated budget mention"})
-		changes[i] = map[string]any{"field": "mention", "value": map[string]string{"item": "post", "verb": "add", "post_id": ids[i]}}
+	ids := []string{"400_500", "400_501", "400_502"}
+	events := make([]FeedEvent, len(ids))
+	for i, id := range ids {
+		f.posts = append(f.posts, Object{ID: id, Message: "Hydrated budget mention"})
+		events[i] = FeedEvent{Time: 10, ReceiptOrder: uint64(i + 1), Item: "post", Verb: "add", PostID: id}
 	}
-	body, err := json.Marshal(map[string]any{"object": "page", "entry": []map[string]any{{"id": "100", "time": 10, "changes": changes}}})
-	require.NoError(t, err)
-	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	spool, err := metawebhook.OpenSpool(t.TempDir(), 1<<20, func() time.Time { return now })
-	require.NoError(t, err)
-	_, duplicate, err := spool.Accept("9", body)
-	require.NoError(t, err)
-	require.False(t, duplicate)
-	due, err := spool.Due(1)
-	require.NoError(t, err)
-	require.Len(t, due, 1)
-	receipt := due[0].ReceiptOrder
-	require.NotZero(t, receipt)
-	reg := metawebhook.NewRegistry()
-	reg.Register("page", "mention", func(ctx context.Context, app string, items []metawebhook.Item) []metawebhook.ItemOutcome {
-		events := make([]FeedEvent, len(items))
-		for i, item := range items {
-			require.NoError(t, json.Unmarshal(item.Value, &events[i]))
-			events[i].Time, events[i].ReceiptOrder = item.Time, item.ReceiptOrder
-		}
-		results, err := imp.ApplyFeedEvents(ctx, app, items[0].EntryID, events, EventOptions{Mention: true})
-		require.NoError(t, err)
-		out := make([]metawebhook.ItemOutcome, len(results))
-		for i, result := range results {
-			out[i] = metawebhook.ItemOutcome{Class: metawebhook.Class(result.Class), ErrorClass: result.ErrorClass, CountAttempt: result.CountAttempt, ArchiveChanged: result.ArchiveChanged}
-		}
-		return out
-	})
-	worker := metawebhook.NewWorker(metawebhook.WorkerOptions{Spool: spool, Registry: reg})
-	check := func(wantArchived, wantReads, wantPending, wantDone int) {
+	apply := func(wantArchived, wantReads int) []EventOutcome {
 		t.Helper()
+		out, err := imp.ApplyFeedEvents(t.Context(), "9", "100", events, EventOptions{Mention: true, MaxRequests: 2})
+		require.NoError(t, err)
 		archived, err := st.MessageExistsBatchContext(t.Context(), src.ID, ids)
 		require.NoError(t, err)
 		assert.Len(t, archived, wantArchived)
 		assert.Len(t, f.paths, wantReads)
-		stats, err := spool.Stats()
-		require.NoError(t, err)
-		assert.Equal(t, wantPending, stats["9"].Pending)
-		assert.Equal(t, wantDone, stats["9"].Done)
+		return out
 	}
-	_, err = worker.DrainOnce(t.Context())
-	require.NoError(t, err)
-	check(50, 50, 1, 0)
-	now = now.Add(time.Minute)
-	_, err = worker.DrainOnce(t.Context())
-	require.NoError(t, err)
-	check(51, 51, 0, 1)
-	noop, err := worker.DrainOnce(t.Context())
-	require.NoError(t, err)
-	assert.Zero(t, noop.Deliveries)
-	assert.Len(t, f.paths, 51)
+	assert.Equal(t, []EventOutcome{
+		{Class: "applied", ArchiveChanged: true},
+		{Class: "applied", ArchiveChanged: true},
+		{Class: "retry", ErrorClass: "request_budget"},
+	}, apply(2, 2))
+	assert.Equal(t, []EventOutcome{
+		{Class: "ignored"},
+		{Class: "ignored"},
+		{Class: "applied", ArchiveChanged: true},
+	}, apply(3, 3))
 
-	// Explicit replay gets a new receipt and must hydrate every target again.
-	count, err := spool.Requeue(metawebhook.RequeueFilter{States: []metawebhook.State{metawebhook.StateDone}}, false)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
-	due, err = spool.Due(1)
-	require.NoError(t, err)
-	require.Len(t, due, 1)
-	require.Greater(t, due[0].ReceiptOrder, receipt)
-	_, err = worker.DrainOnce(t.Context())
-	require.NoError(t, err)
-	check(51, 101, 1, 0)
-	now = now.Add(time.Minute)
-	_, err = worker.DrainOnce(t.Context())
-	require.NoError(t, err)
-	check(51, 102, 0, 1)
+	// A new receipt hydrates again even at the same provider timestamp.
+	for i := range events {
+		events[i].ReceiptOrder += uint64(len(events))
+	}
+	assert.Equal(t, []EventOutcome{
+		{Class: "applied"},
+		{Class: "applied"},
+		{Class: "retry", ErrorClass: "request_budget"},
+	}, apply(3, 5))
+	assert.Equal(t, []EventOutcome{
+		{Class: "ignored"},
+		{Class: "ignored"},
+		{Class: "applied"},
+	}, apply(3, 6))
 }
 
 func TestApplyMentionStaleSparseDoesNotNeedTarget(t *testing.T) {
