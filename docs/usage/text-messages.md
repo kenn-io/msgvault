@@ -547,9 +547,10 @@ without profile JSON or host directory paths.
 All supplied parts are indexed before importing. Limits are 128 roots, 100,000
 indexed entries, 64 MiB per JSON file, and 250 MiB per attachment. Media matches
 exact conversation-relative `export_name` paths across parts. Traversal and
-escaped symlinks are rejected. Empty files are retained. Missing files, invalid
-paths and oversized files are counted; ambiguous files and storage errors stop
-the run. A truncated or stale export filename is reported missing, never guessed.
+escaped symlinks are rejected. Empty files are retained. Missing media, invalid
+media paths, and oversized attachments are counted. Oversized JSON files,
+ambiguous media, and storage errors stop the run. A truncated or stale export
+filename is reported missing, never guessed.
 After independently verifying which local file belongs to that reference, restore
 its referenced `export_name` within the conversation directory and replay to
 repair the missing media slot.
