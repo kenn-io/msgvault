@@ -4152,6 +4152,8 @@ msgvault embeddings build [flags]
 | `--account <identifier>` | Limit embedding to this account, by identifier or display name — numeric source IDs are rejected (repeatable). Overrides `[vector.embed.scope] accounts` for this run; configured `message_types` still apply. After activating this one-off scope, add the equivalent accounts to config and restart the daemon before searching. |
 | `--collection <name>` | Limit embedding to this collection's accounts (repeatable). Can be combined with `--account`; the scope is the union. This is a one-run override; persist the resolved accounts in config before restarting the daemon. |
 
+Scheduled syncs can run during indexing. For daemon-wide SQL logging, set `[log].sql_trace` or `[log].sql_slow_ms` in the daemon configuration.
+
 Without `--full-rebuild`, the command is incremental: it resumes any in-flight rebuild that matches the configured embedding settings, otherwise scans for live messages still missing coverage in the active generation, then exits. Safe to schedule via cron (or let `msgvault serve` do it via `[vector.embed.schedule]`).
 
 The account scope is part of the generation fingerprint, so building with a
@@ -4166,6 +4168,8 @@ msgvault embeddings resume [flags]
 ```
 
 Continue embedding work and finish the current generation. If a generation matching the configured embedding settings is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild. Accepts the same `--account`/`--collection` scope flags as `embeddings build`.
+
+Scheduled syncs can run during indexing. For daemon-wide SQL logging, set `[log].sql_trace` or `[log].sql_slow_ms` in the daemon configuration.
 
 Pass `--backstop` to scan for missing coverage below the per-generation watermark
 as well. This fills gaps in the selected generation without starting a full

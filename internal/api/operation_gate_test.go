@@ -257,7 +257,6 @@ func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 		{"create-subset", `{"args":["create-subset","subset"]}`},
 		{"policy set", `{"args":["policy","set","1","room","cold"]}`},
 		{"import", `{"args":["import-mbox","archive.mbox"]}`},
-		{"flag value matches status", `{"args":["embeddings","--config","status","build"]}`},
 		{"unknown flag", `{"args":["embeddings","--account","status","build"]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -367,9 +366,10 @@ func waitForParkedContext(t *testing.T, parked <-chan struct{}, work string) {
 	}
 }
 
-func TestServerEmbeddingsOptimizeLeavesOperationGateToRunner(t *testing.T) {
+func TestServerEmbeddingsCommandsLeaveOperationGateToRunner(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
+		{"embeddings", "--config", "status", "build"},
 		{"embeddings", "optimize"},
 		{"embeddings", "--verbose", "optimize", "--drop", "2"},
 		{"embeddings", "-vv", "optimize"},

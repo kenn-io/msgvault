@@ -980,6 +980,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		operationGate:          operationGate,
+		embeddingsScheduler:    sched,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -1900,6 +1901,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 type storeAPIAdapter struct {
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
+	embeddingsBuildMu         stdsync.Mutex
+	embeddingsScheduler       *scheduler.Scheduler
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -2643,6 +2646,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunEmbeddingsBuild(req.Args) {
+		return a.runCLIEmbeddingsBuild(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
