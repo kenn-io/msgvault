@@ -122,6 +122,10 @@ func xUserIDExpr(alias, prefix string) string {
 	return "(SELECT pi.identifier_value FROM " + prefix + "participant_identifiers pi WHERE pi.participant_id = " + alias + ".id AND pi.identifier_type = 'x_user' ORDER BY pi.identifier_value LIMIT 1)"
 }
 
+func directSenderNameExpr(alias, prefix string) string {
+	return "COALESCE(NULLIF(" + alias + ".display_name, ''), " + xUserIDExpr(alias, prefix) + ", '')"
+}
+
 // participantNameExpr returns the SQL expression for a participant's display
 // label, falling back through display_name → phone_number → email_address → numeric X ID.
 // Used by name-based aggregates and filters so phone-only participants
