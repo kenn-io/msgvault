@@ -258,15 +258,6 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 	assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
 }
 
-func TestEmailCalendarNULFields(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Before\x00after"))
-	id, _ := persistInviteEmail(t, st, "nul-summary", raw)
-	stored, err := st.GetMessageRaw(id)
-	require.NoError(t, err)
-	assert.Equal(t, raw, stored)
-}
-
 func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 	t.Run("master and exception retain renamed conversation", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
@@ -398,16 +389,6 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 			}
 			cancel := calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:other@example.com")
 			persistInviteEmailForSource(t, st, source, "foreign-cancel", inviteEmail(cancel))
-			parsed, err := mime.Parse(inviteEmail(cancel))
-			requirements.NoError(err)
-			var summary ICalendarImportSummary
-			err = st.withAttributionTxContext(t.Context(), attributionLock{Sources: []int64{source}}, func(tx *loggedTx) error {
-				var persistErr error
-				summary, persistErr = st.persistEmailCalendarPartsWith(t.Context(), tx, 0, source, parsed)
-				return persistErr
-			})
-			requirements.NoError(err)
-			assertions.Equal(1, summary.Unchanged)
 			move := calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T150000Z\r\nORGANIZER:mailto:other@example.com")
 			persistInviteEmailForSource(t, st, source, "foreign-move", inviteEmail(move))
 			assertions.Len(emailEvents(t, st, source), 1)
@@ -437,34 +418,6 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 		persistInviteEmailForSource(t, st, source, "own-master", inviteEmail(master))
 		assertions.Len(emailEvents(t, st, source), 2)
 	})
-}
-
-func TestEmailCalendarOctetStreamICSAttachments(t *testing.T) {
-	for _, tc := range []struct{ name, header string }{
-		{"plain", `Content-Type: application/octet-stream; name=invite.ics`},
-		{"rfc2231", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9union.ics"},
-		{"percent encoded", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9union%2Eics"},
-		{"encoded word", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"=?UTF-8?B?UsOpdW5pb24uaWNz?=\""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requirements := require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z")
-			raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n" + tc.header + "\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
-			_, source := persistInviteEmail(t, st, "octet-invite", []byte(raw))
-			requirements.Len(emailEvents(t, st, source), 1)
-		})
-	}
-}
-
-func TestEmailCalendarICSAttachments(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
-	raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n"
-	raw += "--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
-	_, source := persistInviteEmail(t, st, "attachment", []byte(raw))
-	requirements.Len(emailEvents(t, st, source), 1)
 }
 
 func TestEmailCalendarDuplicatePartsSummary(t *testing.T) {

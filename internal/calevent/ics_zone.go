@@ -43,10 +43,7 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 			offset, from, start, rule := part.Props.Get("TZOFFSETTO"), part.Props.Get("TZOFFSETFROM"), part.Props.Get("DTSTART"), part.Props.Get("RRULE")
 			rdates := part.Props.Values("RDATE")
 			hasRule, hasRDate = hasRule || rule != nil, hasRDate || len(rdates) > 0
-			if part.Props.Get("EXDATE") != nil || hasRule && hasRDate {
-				return nil, fmt.Errorf("unsupported VTIMEZONE %q observance", id)
-			}
-			if (part.Name != "STANDARD" && part.Name != "DAYLIGHT") || offset == nil || from == nil || start == nil {
+			if (part.Name != "STANDARD" && part.Name != "DAYLIGHT") || offset == nil || from == nil || start == nil || part.Props.Get("EXDATE") != nil || hasRule && hasRDate {
 				return nil, fmt.Errorf("unsupported VTIMEZONE %q observance", id)
 			}
 			_, offsetErr := time.Parse("-0700", offset.Value)
@@ -205,7 +202,6 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 	var times []int64
 	var indexes []byte
 	var types []zoneType
-	tooManyTypes := false
 	add := func(at time.Time, loc *time.Location) {
 		z := at.In(loc)
 		_, offset := z.Zone()
@@ -215,15 +211,11 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 			types = append(types, typ)
 			idx = len(types) - 1
 		}
-		if idx > math.MaxUint8 {
-			tooManyTypes = true
-			return
-		}
 		if len(times) > 0 && times[len(times)-1] == at.Unix() {
-			indexes[len(indexes)-1] = byte(idx)
+			indexes[len(indexes)-1] = byte(idx) //nolint:gosec // The type count is checked before use.
 		} else {
 			times = append(times, at.Unix())
-			indexes = append(indexes, byte(idx))
+			indexes = append(indexes, byte(idx)) //nolint:gosec // The type count is checked before use.
 		}
 	}
 	first := 0
@@ -254,17 +246,14 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 			cursor = next
 		}
 	}
-	if tooManyTypes {
+	if len(types) > math.MaxUint8+1 {
 		return nil, fmt.Errorf("too many time zone types: %d", len(types))
-	}
-	if uint64(len(times)) > math.MaxUint32 {
-		return nil, fmt.Errorf("too many time zone transitions: %d", len(times))
 	}
 	var out bytes.Buffer
 	header := func(n int) {
 		out.WriteString("TZif2")
 		out.Write(make([]byte, 15))
-		for _, v := range []uint32{0, 0, 0, uint32(n), uint32(len(types)), 8} { //nolint:gosec // Counts are bounded above.
+		for _, v := range []uint32{0, 0, 0, uint32(n), uint32(len(types)), 8} { //nolint:gosec // The type count is bounded and transitions fit in memory.
 			_ = binary.Write(&out, binary.BigEndian, v)
 		}
 	}

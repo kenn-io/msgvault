@@ -12,7 +12,6 @@ import (
 	"math"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -81,11 +80,10 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	return e, true, nil
 }
 
-func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Component, positions map[*ical.Component]int) ([]byte, error) {
+func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Component) ([]byte, error) {
 	retained := ical.NewCalendar()
 	retained.Props = cal.Props
-	index := sort.Search(len(zones), func(i int) bool { return positions[zones[i]] > positions[event] })
-	retained.Children = slices.Insert(slices.Clone(zones), index, event)
+	retained.Children = append(slices.Clone(zones), event)
 	var buf bytes.Buffer
 	err := ical.NewEncoder(&buf).Encode(retained)
 	return buf.Bytes(), err
@@ -110,6 +108,9 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 			err = errors.New("malformed iCalendar parameters")
 		}
 	}()
+	// RFC 5545 requires UTF-8, but some producers write another charset
+	// without declaring it. Convert it as email text is; the caller still
+	// retains the original bytes.
 	text := raw
 	if !utf8.Valid(raw) {
 		text = []byte(textutil.EnsureUTF8(string(raw)))
@@ -139,17 +140,13 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 	if err != nil {
 		return nil, err
 	}
-	positions := make(map[*ical.Component]int, len(cal.Children))
-	for i, comp := range cal.Children {
-		positions[comp] = i
-	}
 	zoneComponents := slices.DeleteFunc(slices.Clone(cal.Children), func(comp *ical.Component) bool { return comp.Name != ical.CompTimezone })
 	events := cal.Events()
 	for index, event := range events {
 		comp := event.Component
 		retained := raw
 		if len(events) > 1 {
-			retained, err = encodeICSEvent(cal, zoneComponents, comp, positions)
+			retained, err = encodeICSEvent(cal, zoneComponents, comp)
 			if err != nil {
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}
