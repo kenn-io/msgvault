@@ -189,7 +189,7 @@
 <style>
   .header-status { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .person-page { display: flex; min-width: 0; min-height: 0; width: 100%; height: 100%; flex-direction: column; overflow: auto; }
-  /* On Details the header and tabs stay put and the Details pane scrolls under them. */
+  /* Desktop Details scrolls below its header and tabs; phones scroll the whole person page. */
   .person-page.details-open { overflow: hidden; }
   .calendar { width: 100%; max-width: 960px; margin-inline: auto; padding: var(--pane-pad-y) var(--page-gutter); box-sizing: border-box; }
   /* Messages | Files | Details: a 28 segmented control 8 below the header, at the pane's 16 inset. */
@@ -203,7 +203,8 @@
   .details > :global(p) { margin: 0; color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .summary-error { display: flex; align-items: center; gap: var(--space-group); padding: var(--space-group) var(--space-pane); }
   @media (max-width: 640px) {
+    .person-page.details-open { overflow: auto; }
     .tabs { padding-inline: var(--page-gutter); }
-    .details:not([hidden]) { padding-left: var(--page-gutter); padding-right: calc(var(--page-gutter) - var(--scrollbar-gutter-size)); }
+    .details:not([hidden]) { flex: none; overflow: visible; scrollbar-gutter: auto; will-change: auto; padding-inline: var(--page-gutter); }
   }
 </style>

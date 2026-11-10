@@ -40,16 +40,22 @@ test('Person Details aligns desktop and phone content and uses shared phone edit
     const person = document.querySelector('section.person-page')!;
     const row = person.querySelector('.fields .detail-row:has(.actions)')!;
     const label = row.querySelector('.label')!.getBoundingClientRect(), value = row.querySelector('.value')!.getBoundingClientRect();
-    return { label: label.width, sameLine: Math.abs(label.top - value.top) };
+    return { label: label.width, sameLine: Math.abs(label.top - value.top), right: person.getBoundingClientRect().right - row.getBoundingClientRect().right };
   });
   expect(phone.label, 'the label column is 120 on a phone').toBe(120);
   expect(phone.sameLine, 'the value stays beside its label').toBeLessThanOrEqual(2);
+  expect(phone.right, 'the phone keeps its 8px right gutter while the whole person pane scrolls').toBe(8);
 
   await page.getByRole('button', { name: 'Add phone', exact: true }).click();
   const form = page.getByRole('form', { name: 'Edit contact points' });
   for (const field of [form.locator('.kit-text-input').first(), form.locator('select')]) {
     expect(await field.evaluate(element => ({ height: element.getBoundingClientRect().height, font: getComputedStyle(element).fontSize }))).toEqual({ height: 32, font: '16px' });
   }
+  await form.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const personPage = page.getByRole('group', { name: 'Person page', exact: true });
+  await page.mouse.move(200, 700);
+  await page.mouse.wheel(0, 500);
+  await expect.poll(() => personPage.evaluate(element => element.querySelector('header')!.getBoundingClientRect().bottom - element.getBoundingClientRect().top), { message: 'the person header scrolls out of the phone Details viewport' }).toBeLessThanOrEqual(0);
 });
 
 test('People Filter restores History on reload and To review on Back', async ({ page }) => {

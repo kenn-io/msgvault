@@ -17,6 +17,18 @@ test.beforeEach(async ({ page }) => {
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 });
 
+test('Settings People search finds Work and aligns its metadata', async ({ page }) => {
+  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await selectWorkspace(page, 'Settings');
+  await page.getByRole('main', { name: 'Settings' }).getByRole('navigation').getByRole('button', { name: 'People', exact: true }).click();
+  await page.getByRole('searchbox', { name: 'Search fields' }).fill('Work');
+  const row = page.getByRole('region', { name: 'Fields', exact: true }).getByRole('listitem').filter({ hasText: /^Work/ });
+  await expect(row).toContainText('Current and historical jobs');
+  const inset = await row.evaluate(element => element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight) - element.querySelector(':scope > small')!.getBoundingClientRect().right);
+  expect(inset, 'built-in metadata reaches the row padding when there is no Edit column').toBeLessThanOrEqual(1);
+});
+
 test('a long delete title wraps on a phone instead of cutting off', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/v1/people/42/employments', route => route.fulfill({ json: { employments: [{ ...employment, title: 'Senior landscape garden designer' }] } }));

@@ -114,9 +114,9 @@
   header { justify-content: space-between; }
   h3, p { margin: 0; }
   h3 { font-size: var(--font-size-md); }
-  /* Rows share one set of columns, so the kind column ends at the same place whether or not the row has Edit.
-   * The last column keeps room for Edit (its side padding and a short label) and the row's inset even when no visible row has one. */
-  .list { display: grid; grid-template-columns: minmax(0, 1fr) fit-content(50%) minmax(calc(2 * var(--control-pad-x) + var(--space-8) + var(--pane-pad-x)), auto); column-gap: var(--control-gap); margin: 0; padding: 0; border: 1px solid var(--border-muted); border-radius: var(--radius-md); list-style: none; }
+  /* Share the metadata column, reserving an Edit column only when a visible row needs it. */
+  .list { display: grid; grid-template-columns: minmax(0, 1fr) fit-content(50%); column-gap: var(--control-gap); margin: 0; padding: 0; border: 1px solid var(--border-muted); border-radius: var(--radius-md); list-style: none; }
+  .list:has(:global(button)) { grid-template-columns: minmax(0, 1fr) fit-content(50%) auto; }
   .list li { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; min-height: var(--person-list-item-h); box-sizing: border-box; padding: var(--space-1) var(--pane-pad-x); }
   .list li + li { border-top: 1px solid var(--border-muted); }
   /* Each field's name (Body) over its description (Meta); its kind and value type (Meta) at the right. */

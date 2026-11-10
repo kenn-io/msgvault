@@ -45,6 +45,7 @@ test('Directory Network keeps desktop and phone section geometry and opens organ
   await page.getByRole('radio', { name: '2 steps', exact: true }).click();
   const further = network.getByRole('region', { name: 'Network at 2 steps' });
   await expect(further).toHaveAttribute('aria-busy', 'false');
+  await expect(further.locator('.detail-row').last()).toHaveCSS('box-shadow', 'none');
   await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Shared Organization', exact: true });
   await expect(organizationEditor).toBeVisible();

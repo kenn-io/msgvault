@@ -116,6 +116,7 @@
    * A notice sits 16 from what follows it. */
   p { margin: 0; }
   .further { display: grid; min-width: 0; }
+  .further > :global(.detail-row:last-child) { box-shadow: none; }
   .further[aria-busy='true'] { opacity: 0.6; }
   :global(.inline-notice) + .summary, :global(.inline-notice) + .further { margin-top: var(--space-pane); }
   .truncated { margin-top: var(--space-group); }
