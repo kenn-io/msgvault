@@ -307,9 +307,15 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	if start.IsZero() && e.Status != "cancelled" {
 		return ICSComponent{}, errors.New("active event requires DTSTART")
 	}
-	end, _, err := icsTime(p.Get("DTEND"), loc)
+	end, endAllDay, err := icsTime(p.Get("DTEND"), loc)
 	if err != nil {
 		return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
+	}
+	if p.Get("DTEND") != nil && p.Get("DURATION") != nil {
+		return ICSComponent{}, errors.New("event has both DTEND and DURATION")
+	}
+	if !start.IsZero() && p.Get("DTEND") != nil && endAllDay != allDay {
+		return ICSComponent{}, errors.New("DTEND value type differs from DTSTART")
 	}
 	days, elapsed := 0, time.Duration(0)
 	if dur := p.Get("DURATION"); dur != nil && end.IsZero() {
