@@ -377,7 +377,7 @@ confirm a contact identity or authenticate a handle. Within one account,
 identical display names merge, including
 across direct and group chats; distinct names remain distinct.
 
-Each run starts from the beginning. Messages use content fingerprints and occurrence counts within a thread. Reordered copies keep their IDs when their records and reactions match, and a single changed copy keeps its ID when it is the only unmatched copy. When several changed copies cannot be distinguished, the import retains the originals and adds the changed copies. Missing media and interrupted ancillary writes retry on replay. Later exports never delete archived messages or stored media. Edited content, changed sender display names, or renamed thread keys cannot be reconciled without native message IDs.
+Each run starts from the beginning. Messages use content fingerprints and occurrence counts within a thread. Reordered copies keep their IDs when their rendered content and reactions match, and a single changed copy keeps its ID when it is the only unmatched copy. When several changed copies cannot be distinguished, the import retains the originals and adds the changed copies. Missing media and interrupted ancillary writes retry on replay. Later exports never delete archived messages or stored media. Edited content, changed sender display names, or renamed thread keys cannot be reconciled without native message IDs.
 Original records and shard provenance are retained, with the title and members stored once per shard; timestamps preserve integer
 milliseconds, and missing sender evidence remains unknown. Records with missing
 or unsupported timestamps are skipped. Reaction times remain unknown.

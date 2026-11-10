@@ -36,9 +36,6 @@ Example:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.Limit < 0 {
-				return errors.New("--limit must be non-negative")
-			}
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}

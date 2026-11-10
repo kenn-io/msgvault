@@ -1,11 +1,9 @@
 package fbmessenger
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	jsonv1 "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -40,48 +38,25 @@ type instagramPending struct {
 	headerPending bool
 }
 
-// instagramEvidence ignores JSON field order and reaction order.
-func instagramEvidence(raw []byte) string {
-	decoder := jsonv1.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if decoder.Decode(&value) != nil {
-		return ""
-	}
-	var normalize func(any) any
-	normalize = func(v any) any {
-		switch v := v.(type) {
-		case string:
-			return DecodeMojibake(v)
-		case []any:
-			for i := range v {
-				v[i] = normalize(v[i])
-			}
-			return v
-		case map[string]any:
-			for k, item := range v {
-				v[k] = normalize(item)
-			}
-			if reactions, ok := v["reactions"].([]any); ok {
-				sort.Slice(reactions, func(i, j int) bool {
-					a, _ := jsonv1.Marshal(reactions[i])
-					b, _ := jsonv1.Marshal(reactions[j])
-					return string(a) < string(b)
-				})
-			}
-			return v
-		default:
-			return v
+type instagramOccurrence struct{ content, reactions string }
+
+func instagramEvidence(record rawJSONMessage) instagramOccurrence {
+	message := instagramJSONMessage(record)
+	sort.Slice(message.Reactions, func(i, j int) bool {
+		if message.Reactions[i].Actor != message.Reactions[j].Actor {
+			return message.Reactions[i].Actor < message.Reactions[j].Actor
 		}
-	}
-	encoded, _ := jsonv1.Marshal(normalize(value))
-	return string(encoded)
+		return message.Reactions[i].Reaction < message.Reactions[j].Reaction
+	})
+	reactions, _ := json.Marshal(message.Reactions)
+	record.Reactions = nil
+	return instagramOccurrence{instagramJSONMessage(record).Body, string(reactions)}
 }
 
-func parseInstagramThread(ctx context.Context, td ThreadDir, opts ImportOptions, summary *ImportSummary, keys map[string]string, archived map[string]store.StoredMessage) (*Thread, error) {
+func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups map[string][]string) (*Thread, map[string]store.StoredMessage, error) {
 	files, bad, err := numberedJSONFiles(td.Path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	summary.FilesSkipped += int64(len(bad))
 	if len(bad) > 0 {
@@ -93,7 +68,7 @@ func parseInstagramThread(ctx context.Context, td ThreadDir, opts ImportOptions,
 	for _, name := range files {
 		filename := filepath.Join(td.Path, name)
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		data, err := os.ReadFile(filename)
 		shard := &instagramShard{}
@@ -102,7 +77,7 @@ func parseInstagramThread(ctx context.Context, td ThreadDir, opts ImportOptions,
 		}
 		if err != nil || shard.Messages == nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			}
 			summary.FilesSkipped++
 			summary.Incomplete = true
@@ -113,17 +88,17 @@ func parseInstagramThread(ctx context.Context, td ThreadDir, opts ImportOptions,
 			shardKey = strings.TrimPrefix(threadDir, path.Dir(instagramInbox)+"/")
 		}
 		if key != "" && key != shardKey {
-			return nil, errors.New("conflicting thread_path across shards")
+			return nil, nil, errors.New("conflicting thread_path across shards")
 		}
 		key = shardKey
 		if previous, ok := keys[key]; ok && previous != threadDir {
-			return nil, errors.New("conflicting thread_path across directories")
+			return nil, nil, errors.New("conflicting thread_path across directories")
 		}
 		keys[key] = threadDir
 		headerPending := true
 		for _, raw := range shard.Messages {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			summary.MessagesProcessed++
 			var record rawJSONMessage
@@ -150,12 +125,7 @@ func parseInstagramThread(ctx context.Context, td ThreadDir, opts ImportOptions,
 			}
 			message := instagramJSONMessage(record)
 			message.SentAt = time.UnixMilli(*stamp.Timestamp).UTC()
-			if record.Share != nil {
-				message.Body = renderShareBody(record, DecodeMojibake(record.Content))
-				if len(message.Reactions) > 0 {
-					message.Body = appendReactionSummary(message.Body, message.Reactions)
-				}
-			}
+
 			if message.Body == "" && len(message.Attachments) == 0 {
 				summary.MessagesSkipped++
 				summary.RecordsUnsupported++
@@ -171,58 +141,75 @@ func parseInstagramThread(ctx context.Context, td ThreadDir, opts ImportOptions,
 		prefix := fmt.Sprintf("ig:v1:%s:%s:", instagramHash(key), instagramFingerprint(p.record))
 		groups[prefix] = append(groups[prefix], p)
 	}
+	var ids []string
+	for prefix := range groups {
+		ids = append(ids, archivedGroups[prefix]...)
+	}
+	archived, err := st.StoredMessagesContext(ctx, sourceID, "instagram_json", ids)
+	if err != nil {
+		return nil, nil, err
+	}
 	for prefix, group := range groups {
-		old := opts.instagramGroups[prefix]
-		maxOrdinal := -1
-		for _, id := range old {
-			n, err := strconv.Atoi(strings.TrimPrefix(id, prefix))
-			if err == nil && n > maxOrdinal {
-				maxOrdinal = n
-			}
-		}
+		old := archivedGroups[prefix]
 		sort.Slice(old, func(i, j int) bool {
 			a, _ := strconv.Atoi(strings.TrimPrefix(old[i], prefix))
 			b, _ := strconv.Atoi(strings.TrimPrefix(old[j], prefix))
 			return a < b
 		})
+		maxOrdinal := -1
+		exact := map[instagramOccurrence][]string{}
+		evidence := map[string]instagramOccurrence{}
+		for _, id := range old {
+			n, err := strconv.Atoi(strings.TrimPrefix(id, prefix))
+			if err == nil && n > maxOrdinal {
+				maxOrdinal = n
+			}
+			var wrapper struct {
+				Record jsontext.Value `json:"record"`
+			}
+			var record rawJSONMessage
+			if json.Unmarshal(archived[id].Raw, &wrapper) != nil || json.Unmarshal(wrapper.Record, &record) != nil {
+				continue
+			}
+			key := instagramEvidence(record)
+			evidence[id] = key
+			exact[key] = append(exact[key], id)
+		}
 		used := map[string]bool{}
 		for _, p := range group {
-			for _, id := range old {
-				if used[id] {
-					continue
-				}
-				var wrapper struct {
-					Record jsontext.Value `json:"record"`
-				}
-				if json.Unmarshal(archived[id].Raw, &wrapper) == nil && instagramEvidence(wrapper.Record) != "" && instagramEvidence(wrapper.Record) == instagramEvidence(p.raw) {
-					p.id = id
-					used[id] = true
-					break
-				}
+			key := instagramEvidence(p.record)
+			if candidates := exact[key]; len(candidates) > 0 {
+				p.id = candidates[0]
+				used[p.id] = true
+				exact[key] = candidates[1:]
 			}
 		}
-		var remaining []*instagramPending
-		var unused []string
+		remaining := map[string][]*instagramPending{}
+		unused := map[string][]string{}
 		for _, p := range group {
 			if p.id == "" {
-				remaining = append(remaining, p)
+				key := instagramEvidence(p.record).content
+				remaining[key] = append(remaining[key], p)
 			}
 		}
 		for _, id := range old {
-			if !used[id] {
-				unused = append(unused, id)
+			if key, ok := evidence[id]; ok && !used[id] {
+				unused[key.content] = append(unused[key.content], id)
 			}
 		}
-		if len(remaining) == 1 && len(unused) == 1 {
-			remaining[0].id = unused[0]
+		for content, items := range remaining {
+			if len(items) == 1 && len(unused[content]) == 1 {
+				items[0].id = unused[content][0]
+			}
 		}
-		for _, p := range remaining {
+		for _, p := range group {
 			if p.id == "" {
 				maxOrdinal++
 				p.id = prefix + strconv.Itoa(maxOrdinal)
 			}
 		}
 	}
+
 	parsed := &Thread{instagramKey: key, Format: formatJSON}
 	for _, p := range pending {
 		message := p.message
@@ -231,7 +218,7 @@ func parseInstagramThread(ctx context.Context, td ThreadDir, opts ImportOptions,
 		message.instagramHeader = p.headerPending
 		parsed.Messages = append(parsed.Messages, message)
 	}
-	return parsed, nil
+	return parsed, archived, nil
 }
 
 func instagramHash(value string) string {
@@ -273,6 +260,12 @@ func instagramAddress(account, name string) mime.Address {
 // Instagram media references use the same escaped UTF-8 encoding as names.
 func instagramJSONMessage(record rawJSONMessage) Message {
 	message := metaJSONMessage(record, 0, "")
+	if record.Share != nil {
+		message.Body = renderShareBody(record, DecodeMojibake(record.Content))
+		if len(message.Reactions) > 0 {
+			message.Body = appendReactionSummary(message.Body, message.Reactions)
+		}
+	}
 	for i := range message.Attachments {
 		message.Attachments[i].URI = DecodeMojibake(message.Attachments[i].URI)
 	}

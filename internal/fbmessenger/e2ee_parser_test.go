@@ -145,7 +145,7 @@ func TestParseE2EEJSONFile_PathEscapeRejected(t *testing.T) {
 func TestDiscover_E2EEFlat(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dirs, err := Discover("testdata/e2ee_simple")
+	dirs, _, err := Discover("testdata/e2ee_simple")
 	require.NoError(err, "Discover")
 	// e2ee_simple has two JSON files at the messages root: alice_1.json
 	// and group_2.json. Both should be discovered as e2ee_json threads.
@@ -174,7 +174,7 @@ func TestDiscover_E2EEFlatRejectsNonThreadJSON(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(tmp, "metadata.json"), []byte(`{"setting":true,"version":3}`), 0o644))
 	require.NoError(os.WriteFile(filepath.Join(tmp, "list.json"), []byte(`[1,2,3]`), 0o644))
 
-	dirs, err := Discover(tmp)
+	dirs, _, err := Discover(tmp)
 	require.NoError(err, "Discover")
 	require.Len(dirs, 1, "discovered: %+v", dirs)
 	assert.Equal(t, "real_1", dirs[0].Name)

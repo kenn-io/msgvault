@@ -42,8 +42,11 @@ func TestInstagramBuiltCLI(t *testing.T) {
 	}
 	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/instagram")
 	require.NoError(err)
-	args := []string{"import-instagram", "--account", "orbit.example", "--self-name", "Nova Example", "--limit", "2", fixture}
-	assert.Contains(string(run(args...)), "2 new messages")
+	args := []string{"import-instagram", "--account", "orbit.example", "--self-name", "unmatched", "--limit", "2", fixture}
+	first := string(run(args...))
+	assert.Contains(first, "2 new messages")
+	assert.Contains(first, "No sender exactly matched --self-name")
+	args[4] = "Nova Example"
 	args[len(args)-2] = "0"
 	assert.Contains(string(run(args...)), "4 new messages")
 	assert.Contains(string(run(args...)), "0 new messages")
