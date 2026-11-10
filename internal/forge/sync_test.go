@@ -889,10 +889,10 @@ func TestAPIAcceptsTheLinksOfItsInstanceOnly(t *testing.T) {
 		api := &API{Base: base}
 		got, err := api.URL(tc.link, nil)
 		if tc.accepted {
-			assert.NoError(err, tc.base+" "+tc.link)
+			require.NoError(err, tc.base+" "+tc.link)
 			assert.Equal(tc.link, got)
 		} else {
-			assert.ErrorContains(err, "outside its API", tc.base+" "+tc.link)
+			require.ErrorContains(err, "outside its API", tc.base+" "+tc.link)
 		}
 	}
 }
