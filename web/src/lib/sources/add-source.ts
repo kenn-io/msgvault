@@ -48,8 +48,7 @@ function arg(value: string, shell: 'posix' | 'cmd'): string {
 
 export function validImapServer(value: string): boolean {
   const host = value.trim();
-  const ipv6 = host.replace(/%[\w.~-]+(?=\]?$)/, '');
-  return !!host && !/^[-\s]|\s/.test(host) && (!host.includes(':') || (!host.startsWith('[') || host.endsWith(']')) && URL.canParse(`http://${host.startsWith('[') ? ipv6 : `[${ipv6}]`}`));
+  return !/^-|\s/.test(host) && (!host.includes(':') || URL.canParse(`http://[${host.replace(/^\[(.*)\]$/, '$1')}]`));
 }
 
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
