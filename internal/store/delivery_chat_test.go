@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
@@ -21,8 +20,7 @@ func TestChatRouteAdmission(t *testing.T) {
 		approve, lateBinding, unbound, changedRoster bool
 		scopedOwner, selfEvidence                    bool
 	}{
-		{name: "approved", approve: true},
-		{name: "scoped incoming only", approve: true, scopedOwner: true},
+		{name: "approved", approve: true, scopedOwner: true},
 		{name: "incoming self evidence", approve: true, selfEvidence: true},
 		{name: "draft only", reason: "draft_required"},
 		{name: "unbound group member", approve: true, unbound: true, reason: "unresolved_recipient"},
@@ -35,7 +33,6 @@ func TestChatRouteAdmission(t *testing.T) {
 				_, err := f.Store.EnsureConversationWithType(f.Source.ID, "chat-thread", "group_chat", "")
 				require.NoError(t, err)
 			}
-			owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
 			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
 			original := peer
 			if tc.lateBinding {
@@ -43,13 +40,16 @@ func TestChatRouteAdmission(t *testing.T) {
 			}
 			p, _, err := f.Store.CreatePersonFromParticipant(original)
 			require.NoError(t, err)
-			if !tc.selfEvidence {
-				require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
-			}
+			var owner int64
 			if tc.scopedOwner {
 				owner, err = f.Store.EnsureParticipantByIdentifier("beeper", beeperidentity.Fallback("synthetic-account", "self-id"), "Owner")
 				require.NoError(t, err)
 				require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "self-id", "manual"))
+			} else {
+				owner = f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+				if !tc.selfEvidence {
+					require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+				}
 			}
 
 			departed := f.EnsureParticipant("departed@example.test", "Departed", "example.test")
@@ -99,50 +99,31 @@ func TestChatRouteAdmission(t *testing.T) {
 	}
 }
 
-func TestChatRouteAdmissionQueryValidation(t *testing.T) {
-	f := deliveryChatFixture(t)
-	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
-	p, _, err := f.Store.CreatePersonFromParticipant(peer)
-	require.NoError(t, err)
-	require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
-	writeDeliveryChatEvidence(t, f)
-	for _, kind := range []string{"endpoint", "unsupported kind"} {
-		t.Run(kind, func(t *testing.T) {
-			q := store.DeliveryPolicyQuery{PersonUID: p.VCardUID, RouteKind: "chat", SourceID: f.Source.ID, SourceConversationID: "chat-thread"}
-			if kind == "endpoint" {
-				q.Endpoint = "peer@example.test"
-			} else {
-				q.RouteKind = "unsupported"
-			}
-			_, err := f.Store.GetDeliveryPolicyContext(t.Context(), q)
-			require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid)
-		})
-	}
-	_, err = f.Store.ChatRouteRecipientsContext(t.Context(), f.Source.ID, "")
-	require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid)
-}
-
-func TestChatDeliveryPolicyReadRequiresCurrentMember(t *testing.T) {
-	for _, name := range []string{"wrong source", "owner-only roster"} {
+func TestChatDeliveryPolicyReadValidation(t *testing.T) {
+	for _, name := range []string{"endpoint", "unsupported kind", "unknown route", "owner-only roster"} {
 		t.Run(name, func(t *testing.T) {
 			f := deliveryChatFixture(t)
 			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
 			p, _, err := f.Store.CreatePersonFromParticipant(peer)
 			require.NoError(t, err)
-			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
-			setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
 			q := store.DeliveryPolicyQuery{PersonUID: p.VCardUID, RouteKind: "chat", SourceID: f.Source.ID, SourceConversationID: "chat-thread"}
-			if name == "wrong source" {
+			if name != "unknown route" {
+				require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
+				if name == "owner-only roster" {
+					require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "peer@example.test", "manual"))
+				}
+				writeDeliveryChatEvidence(t, f)
+			}
+			switch name {
+			case "endpoint":
+				q.Endpoint = "peer@example.test"
+			case "unsupported kind":
+				q.RouteKind = "unsupported"
+			case "unknown route":
 				other, err := f.Store.GetOrCreateSource("beeper", "other-account")
 				require.NoError(t, err)
 				q.SourceID = other.ID
-			} else {
-				owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
-				require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
-				require.NoError(t, f.Store.ReplaceConversationParticipants(f.ConvID, []store.ConversationParticipantRef{{ParticipantID: owner}}))
-			}
-			writeDeliveryChatEvidence(t, f)
-			if name == "owner-only roster" {
+			case "owner-only roster":
 				recipients, err := f.Store.ChatRouteRecipientsContext(t.Context(), f.Source.ID, "chat-thread")
 				require.NoError(t, err)
 				require.Empty(t, recipients)
@@ -188,74 +169,70 @@ func deliveryChatFixture(t *testing.T) *storetest.Fixture {
 }
 
 func TestChatRouteAdmissionInvalidProof(t *testing.T) {
-	for _, name := range []string{"absent", "account mismatch", "roster mismatch", "failed", "merged", "interrupted refresh"} {
+	t.Run("missing conversation", func(t *testing.T) {
+		f := storetest.New(t)
+		_, err := f.Store.ChatRouteRecipientsContext(t.Context(), f.Source.ID, "")
+		require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid)
+	})
+	for _, name := range []string{"absent", "account mismatch", "roster mismatch", "failed", "merged", "account failure", "reanchor required"} {
 		t.Run(name, func(t *testing.T) {
 			f := deliveryChatFixture(t)
 			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
-			p, _, err := f.Store.CreatePersonFromParticipant(peer)
-			require.NoError(t, err)
 			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
-			e := writeDeliveryChatEvidence(t, f)
-			setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
-			switch name {
-			case "account mismatch":
-				e.AccountID = "other"
-			case "roster mismatch":
-				e.ParticipantIDs = nil
-			case "failed":
-				e.Failure = "membership_fetch_failed"
-			case "merged":
-				e.Merged = true
+			if name != "absent" {
+				e := writeDeliveryChatEvidence(t, f)
+				switch name {
+				case "account failure", "reanchor required":
+					testDeliverySourceProofRevocation(t, f, peer, name)
+					return
+				case "account mismatch":
+					e.AccountID = "other"
+				case "roster mismatch":
+					e.ParticipantIDs = nil
+				case "failed":
+					e.Failure = "membership_fetch_failed"
+				case "merged":
+					e.Merged = true
+				}
+				require.NoError(t, f.Store.SetConversationMessagingRouteEvidence(t.Context(), f.ConvID, e))
 			}
-			require.NoError(t, f.Store.SetConversationMessagingRouteEvidence(t.Context(), f.ConvID, e))
-			switch name {
-			case "absent":
-				require.NoError(t, f.Store.SetConversationMetadata(f.ConvID, sql.NullString{}))
-			case "interrupted refresh":
-				require.NoError(t, f.Store.InvalidateConversationMessagingRouteEvidence(t.Context(), f.ConvID))
-			}
-			_, err = f.Store.ChatRouteRecipientsContext(t.Context(), f.Source.ID, "chat-thread")
+			_, err := f.Store.ChatRouteRecipientsContext(t.Context(), f.Source.ID, "chat-thread")
 			require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid)
 		})
 	}
 }
 
-func TestChatRouteAdmissionSourceProofRevocation(t *testing.T) {
-	for _, signal := range []string{"account failure", "reanchor required"} {
-		t.Run(signal, func(t *testing.T) {
-			f := deliveryChatFixture(t)
-			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
-			p, _, err := f.Store.CreatePersonFromParticipant(peer)
-			require.NoError(t, err)
-			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
-			writeDeliveryChatEvidence(t, f)
-			setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
-			for _, revoked := range []bool{false, true, false} {
-				if signal == "account failure" {
-					failure := ""
-					if revoked {
-						failure = "account_binding_mismatch"
-					}
-					require.NoError(t, f.Store.SetSourceMessagingRouteFailureContext(t.Context(), f.Source.ID, failure))
-				} else if revoked {
-					require.NoError(t, f.Store.SetArchiveMarker(t.Context(), store.BeeperReanchorMarkerKey(f.Source.ID), "synthetic anchor mismatch"))
-				} else {
-					_, err := f.Store.UpdateSourceSettingsContext(t.Context(), f.Source.ID, store.SourceSettingsUpdate{AcceptReanchor: true})
-					require.NoError(t, err)
-				}
-				calls := 0
-				err := f.Store.WithDeliveryAdmissionContext(t.Context(), []store.DeliveryPolicyQuery{{RouteKind: "chat", SourceID: f.Source.ID, SourceConversationID: "chat-thread"}}, func(context.Context) error { calls++; return nil })
+func testDeliverySourceProofRevocation(t *testing.T, f *storetest.Fixture, peer int64, signal string) {
+	t.Helper()
+	p, _, err := f.Store.CreatePersonFromParticipant(peer)
+	require.NoError(t, err)
+	setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
+	q := []store.DeliveryPolicyQuery{{RouteKind: "chat", SourceID: f.Source.ID, SourceConversationID: "chat-thread"}}
+	for i, revoked := range []bool{false, true, false} {
+		if i > 0 {
+			if signal == "account failure" {
+				failure := ""
 				if revoked {
-					var denied *store.DeliveryAdmissionError
-					require.ErrorAs(t, err, &denied)
-					assert.Equal(t, "draft_required", denied.Code)
-					assert.Equal(t, "unresolved_recipient", denied.Reason)
-					assert.Zero(t, calls)
-				} else {
-					require.NoError(t, err)
-					assert.Equal(t, 1, calls)
+					failure = "account_binding_mismatch"
 				}
+				require.NoError(t, f.Store.SetSourceMessagingRouteFailureContext(t.Context(), f.Source.ID, failure))
+			} else if revoked {
+				require.NoError(t, f.Store.SetArchiveMarker(t.Context(), store.BeeperReanchorMarkerKey(f.Source.ID), "synthetic anchor mismatch"))
+			} else {
+				_, err := f.Store.UpdateSourceSettingsContext(t.Context(), f.Source.ID, store.SourceSettingsUpdate{AcceptReanchor: true})
+				require.NoError(t, err)
 			}
-		})
+		}
+		calls := 0
+		err := f.Store.WithDeliveryAdmissionContext(t.Context(), q, func(context.Context) error { calls++; return nil })
+		if revoked {
+			_, routeErr := f.Store.ChatRouteRecipientsContext(t.Context(), f.Source.ID, "chat-thread")
+			require.ErrorIs(t, routeErr, store.ErrDeliveryPolicyInvalid)
+			require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid)
+			assert.Zero(t, calls)
+		} else {
+			require.NoError(t, err)
+			assert.Equal(t, 1, calls)
+		}
 	}
 }

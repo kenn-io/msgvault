@@ -59,9 +59,9 @@ func (s *Store) chatRouteRecipientsTx(ctx context.Context, tx *loggedTx, sourceI
  FROM conversations c JOIN conversation_participants cp ON cp.conversation_id=c.id
  LEFT JOIN person_participants pp ON pp.participant_id=cp.participant_id
  LEFT JOIN persons p ON p.id=pp.person_id
- WHERE c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL+` AND cp.left_at IS NULL
+ WHERE c.id=? AND cp.left_at IS NULL
  AND NOT (`+s.chatOwnerSQL("cp.participant_id", "c.source_id")+`)
- ORDER BY cp.participant_id`, sourceID, sourceConversationID)
+ ORDER BY cp.participant_id`, r.ConversationID)
 	if err != nil {
 		return nil, err
 	}

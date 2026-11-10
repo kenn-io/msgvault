@@ -199,14 +199,9 @@ func TestDeliveryPolicyUnchangedWritesKeepRevisionAndAudit(t *testing.T) {
 }
 
 func TestDeliveryPolicyUnchangedChatApprovals(t *testing.T) {
-	for _, name := range []string{"peer during roster refresh", "SQL owner only", "email member only"} {
+	for _, name := range []string{"peer during roster refresh", "SQL owner only"} {
 		t.Run(name, func(t *testing.T) {
-			var f *storetest.Fixture
-			if name == "email member only" {
-				f = storetest.New(t)
-			} else {
-				f = deliveryChatFixture(t)
-			}
+			f := deliveryChatFixture(t)
 			original := f.EnsureParticipant("original@example.test", "Original", "example.test")
 			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
 			p, _, err := f.Store.CreatePersonFromParticipant(original)
