@@ -905,10 +905,13 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 			return draftReplyError("draft_read_failed", readErr)
 		}
 		replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
-		if buildErr != nil {
+		in := draftlint.Input{Kind: "edit", Channel: "email", Body: intent.Body}
+		if buildErr == nil {
+			in = emailDraftLintInput("edit", intent.Body, replacement)
+		} else if intent.ValidateOnly {
 			return draftReplyError("invalid_draft", buildErr)
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput("edit", intent.Body, replacement), source.ID, grant, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(ctx, in, source.ID, grant, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}

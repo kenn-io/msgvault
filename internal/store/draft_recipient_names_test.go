@@ -11,7 +11,7 @@ import (
 )
 
 func TestCuratedNamesForAddresses(t *testing.T) {
-	for _, scenario := range []string{"curated names and source scope", "ambiguous alias", "unbound competing alias", "quoted mailbox"} {
+	for _, scenario := range []string{"curated names and source scope", "ambiguous alias", "unbound competing alias", "quoted mailbox", "independent history"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := storetest.New(t)
 			seed := func(address, given, nick, formatted string) int64 {
@@ -32,11 +32,8 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				}
 				return id
 			}
-			history := func(id int64, key string) int64 {
-				msg := f.CreateMessage(key)
-				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), id, msg)
-				require.NoError(t, err)
-				return msg
+			history := func(address, key string) int64 {
+				return f.PersistEmail(storetest.EmailSpec{Thread: key, From: address, To: []string{storetest.OwnerAddress}, Body: "Historical message"})
 			}
 			switch scenario {
 			case "curated names and source scope":
@@ -57,16 +54,16 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 					require.NoError(t, err)
 					assert.Empty(t, got)
 				}
-				history(id, "history")
+				history("alex@example.com", "history")
 				got, err = f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
 				require.NoError(t, err)
 				assert.ElementsMatch(t, []draftlint.Name{{Text: "Alex", Given: true}, {Text: "Al"}, {Text: "Jordan"}}, got)
 			case "ambiguous alias":
-				alex := seed("alex@example.com", "Alex", "", "")
+				seed("alex@example.com", "Alex", "", "")
 				pat := seed("pat@example.com", "Pat", "", "")
 				require.NoError(t, f.Store.SetParticipantIdentifierContext(t.Context(), pat, "email", "alex@example.com"))
-				history(alex, "history-Alex")
-				otherMessage := history(pat, "history-Pat")
+				history("alex@example.com", "history-Alex")
+				otherMessage := history("pat@example.com", "history-Pat")
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, nil)
 				require.NoError(t, err)
 				assert.Empty(t, got)
@@ -84,6 +81,27 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, nil)
 				require.NoError(t, err)
 				assert.Empty(t, got)
+			case "independent history":
+				alex := seed("alex@example.com", "Alex", "", "")
+				other := f.EnsureParticipant("other@example.com", "Other", "example.com")
+				history("other@example.com", "merged history")
+				require.NoError(t, f.Store.MergeParticipantsContext(t.Context(), other, alex))
+				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
+				require.NoError(t, err)
+				assert.Empty(t, got, "participant merges cannot transfer envelope visibility")
+				message := history("alex@example.com", "exact history")
+				for _, state := range []string{"is_sent=FALSE", "is_sent=TRUE, deleted_at=CURRENT_TIMESTAMP", "deleted_at=NULL, deleted_from_source_at=CURRENT_TIMESTAMP"} {
+					_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET "+state+" WHERE id=?"), message)
+					require.NoError(t, err)
+					got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
+					require.NoError(t, err)
+					assert.Empty(t, got, state)
+				}
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET deleted_from_source_at=NULL WHERE id=?"), message)
+				require.NoError(t, err)
+				got, err = f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
+				require.NoError(t, err)
+				assert.Equal(t, []draftlint.Name{{Text: "Alex", Given: true}}, got)
 			case "quoted mailbox":
 				seed("alex smith@example.com", "Alex", "", "")
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{`"alex smith"@example.com`}, nil)

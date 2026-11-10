@@ -77,6 +77,19 @@ func TestCheckSpanAndExcerpt(t *testing.T) {
 	}
 }
 
+func TestCheckManyFindingSpans(t *testing.T) {
+	body := "界\xff\a " + strings.Repeat("FIRST_NAME 界 ", 50000) + "\a"
+	result := Check(t.Context(), Input{Channel: "chat", Body: body}, nil)
+	require.Len(t, result.Warnings, 50003)
+	for i, warning := range result.Warnings[:50000] {
+		assert.Equal(t, &Span{4 + 13*i, 14 + 13*i}, warning.Span)
+		assert.LessOrEqual(t, len([]rune(warning.Excerpt)), 80)
+	}
+	for i, span := range []Span{{1, 2}, {2, 3}, {650004, 650005}} {
+		assert.Equal(t, &span, result.Warnings[50000+i].Span)
+	}
+}
+
 type nameResolver []Name
 
 func (n nameResolver) CuratedNames(context.Context, []string) ([]Name, error) { return n, nil }

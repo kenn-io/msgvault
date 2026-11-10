@@ -59,18 +59,36 @@ func maskFences(body string) string {
 	}
 	return string(b)
 }
-func textWarning(code, severity, field, message, original string, start, end int) Warning {
+
+// runeCursor counts only the new bytes in an ordered scan of the original field.
+type runeCursor struct{ byteOffset, runes int }
+
+func (c *runeCursor) position(original string, offset int) int {
+	c.runes += utf8.RuneCountInString(original[c.byteOffset:offset])
+	c.byteOffset = offset
+	return c.runes
+}
+
+func textWarning(code, severity, field, message, original string, start, end int, cursor *runeCursor) Warning {
 	w := Warning{Code: code, Severity: severity, Field: field, Message: message}
-	w.Span = &Span{utf8.RuneCountInString(original[:start]), utf8.RuneCountInString(original[:end])}
-	lineStart := strings.LastIndexByte(original[:start], '\n') + 1
-	lineEnd := len(original)
-	if i := strings.IndexByte(original[end:], '\n'); i >= 0 {
-		lineEnd = end + i
+	w.Span = &Span{cursor.position(original, start), cursor.position(original, end)}
+	windowStart := start
+	for range 20 {
+		if windowStart == 0 || original[windowStart-1] == '\n' {
+			break
+		}
+		_, size := utf8.DecodeLastRuneInString(original[:windowStart])
+		windowStart -= size
 	}
-	line := []rune(original[lineStart:lineEnd])
-	offset := utf8.RuneCountInString(original[lineStart:start])
-	windowStart := max(0, offset-20)
-	w.Excerpt = string(line[windowStart:min(windowStart+80, len(line))])
+	windowEnd := windowStart
+	for range 80 {
+		if windowEnd == len(original) || original[windowEnd] == '\n' {
+			break
+		}
+		_, size := utf8.DecodeRuneInString(original[windowEnd:])
+		windowEnd += size
+	}
+	w.Excerpt = string([]rune(original[windowStart:windowEnd]))
 	return w
 }
 func Check(ctx context.Context, in Input, names NameResolver) Result {
@@ -97,15 +115,16 @@ func Check(ctx context.Context, in Input, names NameResolver) Result {
 		if in.AllowPlaceholders {
 			severity = "warn"
 		}
+		var placeholderCursor, controlCursor runeCursor
 		for _, loc := range placeholder.FindAllStringIndex(field.scan, -1) {
-			w := textWarning(CodeUnresolvedPlaceholder, severity, field.name, "The text contains a template placeholder.", field.text, loc[0], loc[1])
+			w := textWarning(CodeUnresolvedPlaceholder, severity, field.name, "The text contains a template placeholder.", field.text, loc[0], loc[1], &placeholderCursor)
 			w.Hint = "Replace the placeholder, or pass --allow-placeholders."
 			r.Warnings = append(r.Warnings, w)
 		}
 		for i, c := range field.text {
 			if c < 32 && c != '\t' && c != '\n' && c != '\r' || c == unicode.ReplacementChar {
 				_, size := utf8.DecodeRuneInString(field.text[i:])
-				r.Warnings = append(r.Warnings, textWarning(CodeControlCharacters, "error", field.name, "The text contains a control or replacement character.", field.text, i, i+size))
+				r.Warnings = append(r.Warnings, textWarning(CodeControlCharacters, "error", field.name, "The text contains a control or replacement character.", field.text, i, i+size, &controlCursor))
 			}
 		}
 		for _, f := range sensitive.Scan(field.text) {
@@ -166,7 +185,7 @@ func checkGreeting(ctx context.Context, in Input, names NameResolver, own string
 				return
 			}
 		}
-		r.Warnings = append(r.Warnings, textWarning(CodeGreetingNameMismatch, "warn", "body", "The greeting does not match a curated recipient name.", in.Body, start+loc[2], start+loc[3]))
+		r.Warnings = append(r.Warnings, textWarning(CodeGreetingNameMismatch, "warn", "body", "The greeting does not match a curated recipient name.", in.Body, start+loc[2], start+loc[3], &runeCursor{}))
 		return
 	}
 }

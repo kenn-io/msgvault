@@ -391,7 +391,12 @@ func TestDraftLintAllowPlaceholdersAndHumanRefusal(t *testing.T) {
 	events, err := f.run(t, a, "--body", "Hi FIRST_NAME", "--strict")
 	require.EqualError(t, err, "draft_lint_failed")
 	require.NotEmpty(t, events)
-	assert.Contains(t, events[0].Data, "refused: draft_lint_failed")
+	assert.Contains(t, events[0].Data, "Refused.")
+	assert.Contains(t, events[0].Data, "error: The text contains a template placeholder.")
+	assert.Contains(t, events[0].Data, "Greeting check skipped.")
+	for _, code := range []string{"draft_lint_failed", "unresolved_placeholder", "greeting_name_mismatch"} {
+		assert.NotContains(t, events[0].Data, code)
+	}
 	assert.NotContains(t, events[0].Data, `{"`)
 	events, err = f.run(t, a, "--body", "Hi FIRST_NAME", "--strict", "--allow-placeholders", "--json")
 	require.NoError(t, err)

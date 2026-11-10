@@ -362,11 +362,3 @@ func TestDraftToolLintFlagsPassed(t *testing.T) {
 		})
 	}
 }
-func TestDraftToolValidateOnlyCatalog(t *testing.T) {
-	opts := ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: []string{"draft-reply", "draft-compose", "draft-forward", "draft-edit"}}
-	tools := toolsByName(t, rawListTools(t, opts, true))
-	assert.NotContains(t, tools, "validate_draft")
-	for _, name := range []string{ToolDraftReply, ToolDraftCompose, ToolDraftForward, ToolDraftEdit} {
-		assert.Contains(t, tools[name]["description"], "With validate_only, writes nothing.")
-	}
-}

@@ -113,17 +113,17 @@ func emitDraftLintRefusal(emit func(api.CLIRunEvent) error, result draftlint.Res
 		}
 		data = string(encoded) + "\n"
 	} else {
-		data = "refused: draft_lint_failed\n" + draftLintText(result)
+		data = "Refused.\n" + draftLintText(result)
 	}
 	return emit(api.CLIRunEvent{Type: cliStreamStderr, Data: data})
 }
 func draftLintText(result draftlint.Result) string {
 	var b strings.Builder
 	for _, w := range result.Warnings {
-		fmt.Fprintf(&b, "%s: %s: %s\n", w.Severity, w.Code, textutil.SanitizeTerminal(w.Message))
+		fmt.Fprintf(&b, "%s: %s\n", w.Severity, textutil.SanitizeTerminal(w.Message))
 	}
 	if len(result.Skipped) > 0 {
-		fmt.Fprintf(&b, "lint skipped: %s\n", strings.Join(result.Skipped, ", "))
+		b.WriteString("Greeting check skipped.\n")
 	}
 	return b.String()
 }
@@ -137,6 +137,9 @@ func appendDraftLint(advisory *draftRecipientAdvisory, result draftlint.Result) 
 func (a *storeAPIAdapter) gateDraftLint(ctx context.Context, in draftlint.Input, sourceID int64, grant *agentgrant.Grant, options draftLintOptions, asJSON bool, emit func(api.CLIRunEvent) error) (draftlint.Result, bool, error) {
 	in.AllowPlaceholders = options.AllowPlaceholders
 	result := a.lintDraft(ctx, in, sourceID, grant)
+	if err := ctx.Err(); err != nil {
+		return result, true, draftReplyError("cancelled", err)
+	}
 	if options.ValidateOnly {
 		return result, true, emitValidatedDraft(emit, result, in, asJSON)
 	}

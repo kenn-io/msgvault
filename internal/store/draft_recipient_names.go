@@ -30,24 +30,11 @@ func (s *Store) CuratedNamesForAddressesContext(ctx context.Context, addresses [
 			continue
 		}
 		if sourceIDs != nil {
-			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sourceIDs)), ",")
-			query := `SELECT EXISTS (SELECT 1 FROM participants p WHERE p.id = ? AND (
- EXISTS (SELECT 1 FROM messages m WHERE m.sender_id = p.id AND m.source_id IN (` + placeholders + `)) OR EXISTS (
- SELECT 1 FROM message_recipients mr WHERE mr.participant_id = p.id AND EXISTS (
- SELECT 1 FROM messages m WHERE m.id = mr.message_id AND m.source_id IN (` + placeholders + `))) OR EXISTS (
- SELECT 1 FROM conversation_participants cp WHERE cp.participant_id = p.id AND EXISTS (
- SELECT 1 FROM conversations c WHERE c.id = cp.conversation_id AND c.source_id IN (` + placeholders + `)))))`
-			args := []any{participantID}
-			for range 3 {
-				for _, id := range sourceIDs {
-					args = append(args, id)
-				}
-			}
-			var visible bool
-			if err := s.db.QueryRowContext(ctx, query, args...).Scan(&visible); err != nil {
+			evidence, err := s.SenderRelationships(ctx, []string{parsed.Address}, sourceIDs)
+			if err != nil {
 				return nil, err
 			}
-			if !visible {
+			if !evidence[strings.ToLower(strings.TrimSpace(parsed.Address))].SeenInArchive {
 				continue
 			}
 		}
