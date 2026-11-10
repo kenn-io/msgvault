@@ -268,7 +268,7 @@ it('keeps account numbers when profile history arrives after the merge list', as
   const delayed = new Promise<Response>(resolve => { release = resolve; });
   const merge = mergeResult(person()).merge;
   const address = addressFixture(1, 'beeper', 'opaque', { participant_display_name: 'Neri', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-z' });
-  const labels = { profiles: [{ id: 7, display_name: 'Mira', participant_ids: [] }, { id: 9, display_name: 'Neri', participant_ids: [1] }], participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], participant_ids: [1], addresses: [address], absorbed_address_count: 1, incomplete: false };
+  const labels = { profiles: [{ id: 7, display_name: 'Mira', participant_ids: [] }, { id: 9, participant_ids: [1] }], participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], participant_ids: [1], addresses: [address], absorbed_address_count: 1, incomplete: false };
   const saved = { person_id: 7, address_kind: 'username', original_value: 'reader', normalized_value: 'reader', identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 10 } };
   const view = render(ProfileHistoryDialog, { personID: 7, onClose: vi.fn(), client: createAPIClient(async input => {
     const path = new URL((input as Request).url).pathname;
@@ -277,10 +277,10 @@ it('keeps account numbers when profile history arrives after the merge list', as
     throw new Error(`unexpected ${path}`);
   }) });
   try {
-    const summary = await screen.findByRole('button', { name: /^Open Neri merged into Mira/ });
-    expect(summary.closest('.detail-row')?.textContent).toContain('Neri merged into Mira');
+    await screen.findByRole('button', { name: /^Open WhatsApp · Neri · account 1 merged into Mira/ });
     await act(async () => { release(Response.json({ ...emptyProfile(person()), observations: [], contact_points: [saved] })); });
     expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('account 2');
+    expect(screen.getByRole('button', { name: /^Open WhatsApp · Neri · account 1 merged into Mira/ })).toBeDefined();
     expect((await screen.findByRole('button', { name: /Open the merge that brought in WhatsApp/ })).closest('.detail-row')?.textContent).toContain('account 1');
     expect(document.body.textContent).not.toMatch(/account-a|account-z/);
   } finally { release(Response.json(emptyProfile(person()))); view.unmount(); }
