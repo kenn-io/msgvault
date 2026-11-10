@@ -1,9 +1,8 @@
 # Original fictional WhatsApp TXT fixtures
 
-All names, chat text, timestamps and media bytes here were written for msgvault.
+All names, chat text, timestamps and media bytes in the tests were written for msgvault.
 No third-party fixture, real conversation, identifier or attachment was copied.
-`seed-note.txt` is original synthetic media. These files use the repository's
-license; the references below supply structural evidence, not fixture content.
+The references below supply structural evidence, not fixture content.
 
 Official guidance describes per-chat TXT exports with optional media:
 
@@ -22,10 +21,7 @@ at commit `57484d5a53cacff39083237825f8cf2df7501129`:
 - [MIT license](https://github.com/Pustur/whatsapp-chat-parser/blob/57484d5a53cacff39083237825f8cf2df7501129/LICENSE)
 
 msgvault implements a smaller subset, with explicit date order instead of the
-reference parser's guessing. `android-dmy.txt` uses LF, minute precision and a
-file-attached suffix. `ios-mdy.txt` uses UTF-8 BOM, CRLF, a leading LRM, seconds,
-English AM, a narrow no-break space and the LRM-prefixed `image omitted` marker.
-Both include multiline text with a blank line, a notice with a colon, supplied media and an omitted-media marker.
+reference parser's guessing.
 
 Supported headers are `date, time - payload` and `[date, time] payload`.
 Numeric dates use `/`, `.` or `-` consistently, explicit dmy/mdy/ymd ordering,

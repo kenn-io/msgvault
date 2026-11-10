@@ -61,18 +61,16 @@ func LoadText(ctx context.Context, path string, opts TextOptions) (*TextInput, e
 	if opts.MediaDir != "" && opts.AttachmentsDir == "" {
 		return nil, errors.New("attachment storage directory is required with media")
 	}
-	f, err := os.Open(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("open TXT: %w", err)
 	}
-	info, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return nil, err
-	}
 	if !info.Mode().IsRegular() {
-		_ = f.Close()
 		return nil, errors.New("TXT input must be a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open TXT: %w", err)
 	}
 	rows, digest, err := parseText(ctx, f, opts.DateOrder, loc, textLimitsDefault)
 	closeErr := f.Close()
