@@ -553,12 +553,12 @@ func createConvenienceViews(ctx context.Context, db *sql.DB) error {
 
 // sqlAnalyticalEntriesParticipantLabel renders the canonical participant
 // label used by every analytical participant list: display name, then phone
-// number, then email address, then empty string. alias is the participants
+// number, then email address, then numeric X ID, then empty string. alias is the participants
 // table alias. Any query that rebuilds participant labels outside the
 // analytical_entries view (the explore/files page-enrichment fast paths)
 // must use this so labels cannot drift from the view's.
 func sqlAnalyticalEntriesParticipantLabel(alias string) string {
-	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), " + alias + ".email_address, '')"
+	return "COALESCE(NULLIF(" + alias + ".display_name, ''), NULLIF(" + alias + ".phone_number, ''), NULLIF(" + alias + ".email_address, ''), " + xUserIDExpr(alias, "") + ", '')"
 }
 
 // buildNarrowAnalyticalEntriesCTE renders the scalar part of
@@ -609,8 +609,8 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
 		m.sender_id,
-		COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
-		COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
+		COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + xUserIDExpr("sender", "") + `, '') AS sender_identifier,
+		` + sqlAnalyticalEntriesParticipantLabel("sender") + ` AS sender_display,
 		COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
 		m.sent_at AS occurred_at,
 		COALESCE(m.subject, '') AS subject,
@@ -672,8 +672,8 @@ SELECT
     COALESCE(m.message_type, '') AS message_type,
     m.list_id,
     m.sender_id,
-    COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
-    COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
+    COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ` + xUserIDExpr("sender", "") + `, '') AS sender_identifier,
+    ` + sqlAnalyticalEntriesParticipantLabel("sender") + ` AS sender_display,
     COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
     m.sent_at AS occurred_at,
     COALESCE(m.subject, '') AS subject,
@@ -838,7 +838,7 @@ var sqlMessageSenderJoinsStart = `LEFT JOIN (
         mr.message_id,
         FIRST(` + identityindex.SenderAddressExpr("mr", "p") + `) AS from_email,
         FIRST(
-            COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
+            ` + recipientNameExpr("mr", "p") + `
         ) AS from_name,
         FIRST(` + identityindex.SenderDomainExpr("mr", "p") + `) AS from_domain,
         FIRST(COALESCE(p.phone_number, '')) AS from_phone
@@ -846,14 +846,14 @@ var sqlMessageSenderJoinsStart = `LEFT JOIN (
     JOIN participants p ON p.id = mr.participant_id
     WHERE mr.recipient_type = 'from'`
 
-const sqlMessageSenderJoinsMiddle = `
+var sqlMessageSenderJoinsMiddle = `
     GROUP BY mr.message_id
 ) ms ON ms.message_id = m.id
 LEFT JOIN (
     SELECT
         msg.id AS message_id,
         COALESCE(p.email_address, '') AS from_email,
-        COALESCE(p.display_name, '') AS from_name,
+        ` + directSenderNameExpr("p", "") + ` AS from_name,
         COALESCE(p.domain, '') AS from_domain,
         COALESCE(p.phone_number, '') AS from_phone
     FROM messages msg

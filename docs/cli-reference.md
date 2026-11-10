@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -5241,9 +5241,27 @@ internal message ID and provider-owned attachments.
 
 The audit parses stored raw MIME and compares it with the archived fields on
 every run. It does not contact Gmail, change the archive, or read saved mismatch
-flags. Coherent messages are omitted. After a successful repair, run the same
-audit again to confirm the message is omitted; no re-sync or cache rebuild is
-needed. When stored part keys are available, attachments are compared by
+flags. Messages are omitted only when every comparison is `match`. A demonstrated
+difference produces `status=mismatch`, even when other comparisons are
+`inconclusive`. With no mismatch, any inconclusive comparison produces
+`status=inconclusive`, even when other fields match. Inconclusive means the
+comparison could not establish consistency; it does not establish corruption.
+
+For optional headers and bodies, a stored SQL NULL matches an empty recalculated
+value. If the recalculated value is nonempty, NULL is `inconclusive`. A stored
+non-NULL value, including an empty string, is compared directly. Missing legacy
+recipient addresses or attachment part keys can also leave comparisons
+inconclusive. These results do not identify why evidence is missing.
+
+Both human output and `--json` use these rules. The JSON fields and status values
+are unchanged; consumers can now receive additional inconclusive rows. Count
+`mismatch` and `inconclusive` separately rather than treating every emitted row
+as corruption. Audit completion without an operational error is not a claim
+that all comparisons matched.
+
+After a successful repair, run the same audit again to inspect any remaining
+uncertainty; no re-sync or cache rebuild is needed. When stored part keys are
+available, attachments are compared by
 physical MIME occurrence, so separate parts with identical bytes still count
 separately. Older rows without part keys cannot prove how many times identical
 content occurred.
@@ -5698,3 +5716,21 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
 config or automatic selection. Effective tiers remain `full` in this release;
 `stub` and `skip` are rejected. No messages are removed.
+
+## import-x
+
+Available on `main`, unreleased. Import direct/group DMs and supplied local media
+from an extracted X account archive.
+
+```bash
+msgvault import-x <archive-dir>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--me` | From `account.js` | Numeric X account ID; required without account metadata; conflicting overrides fail |
+| `--no-default-identity` | `false` | Skip recording the source account as a default identity |
+
+Re-imports skip stored messages and retry missing media. See [X DM imports](usage/text-messages.md#import-x)
+for supported layouts, evidence, limits and replay behavior. The source files must
+be on the daemon host; run with `--local` there when using a remote daemon.

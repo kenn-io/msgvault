@@ -2028,7 +2028,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   COALESCE(p.display_name, '') as from_name,
+				   `+directSenderNameExpr("p", "")+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN filtered_msgs fm ON fm.id = msg.id
@@ -2114,6 +2114,9 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	if len(results) > 0 {
 		if err := e.fetchParticipantsForMessages(ctx, results); err != nil {
 			return nil, fmt.Errorf("fetch participants: %w", err)
+		}
+		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
+			return nil, fmt.Errorf("fetch labels: %w", err)
 		}
 	}
 
@@ -2434,7 +2437,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
 			COALESCE(`+identityindex.SenderAddressExpr("mr_sender", "p_sender")+`, ''),
-			COALESCE(p_sender.display_name, ''),
+			`+directSenderNameExpr("p_sender", "sqlite_db.")+`,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
@@ -2750,7 +2753,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   COALESCE(p.display_name, '') as from_name,
+				   `+directSenderNameExpr("p", "")+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN p ON p.id = msg.sender_id
@@ -2870,7 +2873,7 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   COALESCE(p.display_name, '') as from_name,
+				   `+directSenderNameExpr("p", "")+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN p ON p.id = msg.sender_id
@@ -3173,7 +3176,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   COALESCE(p.display_name, '') as from_name,
+				   `+directSenderNameExpr("p", "")+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN p ON p.id = msg.sender_id

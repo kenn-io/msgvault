@@ -39,6 +39,7 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 			phone_number TEXT,
 			domain TEXT
 		);
+		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT);
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
