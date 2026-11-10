@@ -4783,7 +4783,6 @@ CREATE TABLE IF NOT EXISTS meeting_link_key (
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     kind TEXT NOT NULL,
     value TEXT NOT NULL,
-    calendar_id TEXT NOT NULL DEFAULT '',
     scheduled_at DATETIME,
     PRIMARY KEY (message_id)
 );

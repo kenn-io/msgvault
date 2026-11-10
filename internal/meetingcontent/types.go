@@ -87,8 +87,8 @@ type Action struct {
 }
 
 type LinkEvidence struct {
-	GoogleEventID, CalendarID, ICalUID string
-	ScheduledAt                        *time.Time
+	GoogleEventID, ICalUID string
+	ScheduledAt            *time.Time
 }
 
 type Content struct {

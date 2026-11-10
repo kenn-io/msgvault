@@ -305,7 +305,7 @@ func exceptionBoundsFor(set *calrecur.Set, duration time.Duration, days int, row
 func memberLinkKey(ctx context.Context, r loggedReader, id int64) (meetingLinkKey, error) {
 	var key meetingLinkKey
 	var at sql.NullTime
-	err := r.QueryRowContext(ctx, `SELECT kind,value,calendar_id,scheduled_at FROM meeting_link_key WHERE message_id = ?`, id).Scan(&key.Kind, &key.Value, &key.CalendarID, &at)
+	err := r.QueryRowContext(ctx, `SELECT kind,value,scheduled_at FROM meeting_link_key WHERE message_id = ?`, id).Scan(&key.Kind, &key.Value, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, nil
 	}

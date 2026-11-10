@@ -54,6 +54,28 @@ func TestMeetingRecordRepeatedSeriesWork(t *testing.T) {
 	assert.Equal(append(notes, note), record.MessageIDs)
 }
 
+func TestMeetingRecordSkipsOtherDateDecisions(t *testing.T) {
+	st, event, notes := repeatedMeetingSeriesFixture(t, 1)
+	measure := func() (int, []int64) {
+		r := st.meetingReader().withMeetingCache()
+		budget := calrecur.RequestReadBudget
+		target, err := resolveMeetingOccurrence(t.Context(), r, OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}, &budget)
+		require.NoError(t, err)
+		members, err := st.meetingOccurrenceMembers(t.Context(), r, target, &budget)
+		require.NoError(t, err)
+		return calrecur.RequestReadBudget - budget, members
+	}
+	before, members := measure()
+	assert.Equal(t, notes, members)
+	for i, key := range []string{"20270315T100000Z", "20270316T100000Z", "20270317T100000Z"} {
+		_, note := projectionFixture(t, st, fmt.Sprintf("manual-%d", i), "plaud_json", `{}`)
+		require.NoError(t, st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event, Key: key}))
+	}
+	after, members := measure()
+	assert.Equal(t, before, after)
+	assert.Equal(t, notes, members)
+}
+
 func TestMeetingSuggestionsReuseSeriesWork(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st, event, notes := repeatedMeetingSeriesFixture(t, 10)
