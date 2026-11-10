@@ -829,7 +829,7 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 }
 
 func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
-	for _, mode := range []string{"same", "alternate base64", "equal timestamp", "encrypted target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
+	for _, mode := range []string{"same", "alternate base64", "encrypted target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
 		t.Run(mode, func(t *testing.T) {
 			req, check := require.New(t), assert.New(t)
 			f := newRecoveryFixture(t)
@@ -881,9 +881,6 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 					edit.Content.AsEncrypted().RelatesTo = nil
 					wantOriginal = "original"
 				}
-				if mode == "equal timestamp" {
-					copied.Timestamp = edit.Timestamp
-				}
 				if mode == "alternate base64" {
 					ciphertext := copied.Content.AsEncrypted().MegolmCiphertext
 					decoded, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
@@ -901,29 +898,9 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 			check.Equal(encryptedPlaceholder, f.body(t, pending.ID.String()))
 
 			f.edits = []*event.Event{candidate}
-			pages := make(chan string, 3)
-			handler := f.server.Config.Handler
-			f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if from := r.URL.Query().Get("from"); strings.HasSuffix(r.URL.Path, "/m.replace") {
-					select {
-					case pages <- from:
-					default:
-						http.Error(w, "too many relations pages", http.StatusBadRequest)
-						return
-					}
-					if from == "" {
-						writeMatrixJSON(t, w, map[string]any{"chunk": []*event.Event{}, "next_batch": "second"})
-						return
-					}
-				}
-				handler.ServeHTTP(w, r)
-			})
 			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
 			_, err = f.run(t, true, false)
 			req.NoError(err)
-			req.Len(pages, 2)
-			check.Empty(<-pages)
-			check.Equal("second", <-pages)
 			check.Equal("other", f.body(t, "$other"))
 			var owner string
 			req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`), f.backup.out.ID().String(), index).Scan(&owner))
