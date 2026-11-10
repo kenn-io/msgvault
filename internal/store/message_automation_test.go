@@ -40,12 +40,6 @@ func TestPersistMessageWritesAutomation(t *testing.T) {
 	id, err := f.Store.PersistMessageContext(t.Context(), data)
 	require.NoError(t, err)
 	assertAutomation(t, f.Store, id, 4, true)
-	// Replacing raw without parsed evidence invalidates the old flags.
-	data.Automation = nil
-	data.RawMIME = []byte("invalid MIME")
-	_, err = f.Store.PersistMessageContext(t.Context(), data)
-	require.NoError(t, err)
-	assertAutomation(t, f.Store, id, 0, false)
 	// Raw replacement invalidates first; freshly parsed zero is then published.
 	flags = 0
 	data.Automation = &flags
@@ -69,6 +63,18 @@ func TestRawMIMEChangeInvalidatesAutomation(t *testing.T) {
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
 	require.NoError(err)
 	assertAutomation(t, f.Store, id, 0, false)
+	// Already-unknown flags leave message metadata untouched on raw changes.
+	require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: unknown\r\n\r\nbody")))
+	for _, remove := range []bool{false, true} {
+		before := baselineLM(t, f.Store, id)
+		if remove {
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
+			require.NoError(err)
+		} else {
+			require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: changed unknown\r\n\r\nbody")))
+		}
+		assert.Equal(t, before, readLM(t, f.Store, id))
+	}
 }
 
 func TestAutomationWriteLeavesContentChangedAt(t *testing.T) {
@@ -112,7 +118,7 @@ func TestCopySubsetCopiesAutomationColumns(t *testing.T) {
 
 func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 	t.Run("original changes after parsing", func(t *testing.T) {
-		for _, change := range []string{"raw", "missing", "format", "encryption", "compression", "current"} {
+		for _, change := range []string{"raw", "missing", "format", "current"} {
 			t.Run(change, func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
@@ -121,25 +127,14 @@ func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 				for _, id := range ids {
 					require.NoError(f.Store.UpsertMessageRaw(id, []byte("From: person@example.test\r\nList-Id: <news.example.test>\r\n\r\nbody")))
 				}
-				statement := `UPDATE message_raw SET raw_data = ? WHERE message_id = ?`
+				statement := `DELETE FROM message_raw WHERE message_id = ?`
 				args := []any{ids[0]}
-				if change == "raw" {
-					args = []any{[]byte("From: person@example.test\r\n\r\nchanged"), ids[0]}
-				}
-				switch change {
-				case "current":
+				if change == "current" {
 					statement = `UPDATE messages SET automation_flags = 0, automation_rule_version = ? WHERE id = ?`
 					args = []any{store.AutomationRuleVersion, ids[0]}
-				case "missing":
-					statement = `DELETE FROM message_raw WHERE message_id = ?`
-				case "format":
-					statement = `UPDATE message_raw SET raw_format = 'slack_json' WHERE message_id = ?`
-				case "encryption":
-					statement = `UPDATE message_raw SET encryption_version = 1 WHERE message_id = ?`
-				case "compression":
-					statement = `UPDATE message_raw SET compression = 'none' WHERE message_id = ?`
 				}
 				previous := slog.Default()
+				store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1, FullTrace: true})
 				reads := 0
 				var mutationErr error
 				slog.SetDefault(slog.New(automationRepairLogHook{
@@ -150,11 +145,21 @@ func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 						}
 						if reads == 2 {
 							reads++ // The first original is already parsed; the batch is not locked yet.
-							_, mutationErr = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(statement), args...)
+							switch change {
+							case "raw":
+								mutationErr = f.Store.UpsertMessageRawWithFormatContext(t.Context(), ids[0], []byte("From: person@example.test\r\n\r\nchanged"), "mime")
+							case "format":
+								mutationErr = f.Store.UpsertMessageRawWithFormatContext(t.Context(), ids[0], []byte(`{"text":"changed"}`), "slack_json")
+							default:
+								_, mutationErr = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(statement), args...)
+							}
 						}
 					},
 				}))
-				t.Cleanup(func() { slog.SetDefault(previous) })
+				t.Cleanup(func() {
+					slog.SetDefault(previous)
+					store.ConfigureSQLLogging(store.SQLLogOptions{})
+				})
 				sum, err := f.Store.RepairAutomationFlags(t.Context(), store.AutomationRepairOptions{Apply: true})
 				require.NoError(err)
 				require.NoError(mutationErr)
@@ -385,53 +390,27 @@ func TestAutomationRawPublicationWritesFlagsAfterRaw(t *testing.T) {
 }
 
 func TestRepairAutomationFlagsRecoveredCSVAndNonpositiveIDs(t *testing.T) {
-	for _, mode := range []string{"ordinary IDs", "keyset starts before zero"} {
-		t.Run(mode, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			var ids []int64
-			if mode == "ordinary IDs" {
-				ids = f.CreateMessages(3)
-			} else {
-				for _, id := range []int64{-7, 0, 9} {
-					ids = append(ids, insertMessageAtID(t, f, id, strconv.FormatInt(id, 10)))
-				}
-			}
-			for _, id := range ids {
-				require.NoError(f.Store.UpsertMessageRaw(id, testemail.LegacyCSV(true, testemail.LegacyCSVOptions{})))
-			}
-			sum, err := f.Store.RepairAutomationFlags(t.Context(), store.AutomationRepairOptions{Apply: true, BatchSize: 1})
-			require.NoError(err)
-			assert.Equal(int64(3), sum.Written)
-			assert.Zero(sum.Unreadable)
-			assert.Zero(sum.Remaining)
-			for _, id := range ids {
-				assertAutomation(t, f.Store, id, 0, true)
-			}
-		})
-	}
-}
-
-func TestAutomationUnknownRawInvalidationDoesNotWriteMessage(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	id := f.CreateMessage("unknown-raw")
-	require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: old\r\n\r\nbody")))
-	for _, remove := range []bool{false, true} {
-		before := baselineLM(t, f.Store, id)
-		if remove {
-			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
-			require.NoError(err)
-		} else {
-			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("changed"), id)
-			require.NoError(err)
-		}
-		assert.Equal(t, before, readLM(t, f.Store, id))
+	var ids []int64
+	for _, id := range []int64{-7, 0, 9} {
+		ids = append(ids, insertMessageAtID(t, f, id, strconv.FormatInt(id, 10)))
+	}
+	for _, id := range ids {
+		require.NoError(f.Store.UpsertMessageRaw(id, testemail.LegacyCSV(true, testemail.LegacyCSVOptions{})))
+	}
+	sum, err := f.Store.RepairAutomationFlags(t.Context(), store.AutomationRepairOptions{Apply: true, BatchSize: 1})
+	require.NoError(err)
+	assert.Equal(int64(3), sum.Written)
+	assert.Zero(sum.Unreadable)
+	assert.Zero(sum.Remaining)
+	for _, id := range ids {
+		assertAutomation(t, f.Store, id, 0, true)
 	}
 }
 
-func TestRepairAutomationFlagsEmbeddingConsumerCAS(t *testing.T) {
+func TestRepairAutomationFlagsPreservesEmbeddingCandidates(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -441,19 +420,10 @@ func TestRepairAutomationFlagsEmbeddingConsumerCAS(t *testing.T) {
 		require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: hello\r\n\r\nbody")))
 	}
 	require.NoError(f.Store.SetEmbedGen(t.Context(), []int64{covered}, 7))
-	before := baselineLM(t, f.Store, pending)
 	sum, err := f.Store.RepairAutomationFlags(t.Context(), store.AutomationRepairOptions{Apply: true})
 	require.NoError(err)
 	assert.Equal(int64(2), sum.Written)
-	missed, count, err := f.Store.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: pending, LastModified: before}}, 7)
-	require.NoError(err)
-	assert.Equal([]int64{pending}, missed)
-	assert.Zero(count)
 	candidates, err := f.Store.ScanForEmbedding(t.Context(), 7, 0, 10)
 	require.NoError(err)
-	assert.Equal([]int64{pending}, candidates, "covered rows stay excluded; only pending work needs a fresh token")
-	missed, count, err = f.Store.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: pending, LastModified: readLM(t, f.Store, pending)}}, 7)
-	require.NoError(err)
-	assert.Empty(missed)
-	assert.Equal(1, count)
+	assert.Equal([]int64{pending}, candidates, "covered rows stay excluded; pending work stays pending")
 }

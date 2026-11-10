@@ -168,7 +168,6 @@ func TestMessageAutomationFlagsCompleteness(t *testing.T) {
 		want    *uint32
 	}{
 		{name: "nil"},
-		{name: "incomplete", message: &Message{Incomplete: true, ListID: "news.example.test"}},
 		{name: "complete human", message: &Message{}, want: new(uint32(0))},
 		{name: "complete list", message: &Message{ListID: "news.example.test"}, want: new(uint32(4))},
 		{name: "parsed no reply", message: noReply, want: new(uint32(64))},

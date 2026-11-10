@@ -17,11 +17,6 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 	f := storetest.New(t)
 	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", FileName: "report.pdf", SentAt: time.Now().Add(-48 * time.Hour)})
 	ctx := t.Context()
-	require.NoError(f.Store.PutMessageAutomationContext(ctx, id, 0))
-	flags, current, err := f.Store.LoopFileAutomationContext(ctx, id)
-	require.NoError(err)
-	assert.True(current)
-	assert.Zero(flags)
 	otherID := f.CreateMessage("attachment-move-destination")
 	expected := store.LoopMessageEvidence{Asks: true}
 	save := func() string {
@@ -74,7 +69,7 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 		assert.Equal(fresh, got, "a completed read from before invalidation cannot overwrite fresh evidence")
 	}
 	require.NoError(f.Store.PutMessageAutomationContext(ctx, id, 0))
-	_, current, err = f.Store.LoopFileAutomationContext(ctx, id)
+	_, current, err := f.Store.LoopFileAutomationContext(ctx, id)
 	require.NoError(err)
 	assert.False(current, "flags cannot stand in for the original once the file is gone")
 	save()

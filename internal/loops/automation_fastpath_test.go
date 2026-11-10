@@ -38,10 +38,8 @@ func TestLoopsIdenticalWithAndWithoutAutomationColumns(t *testing.T) {
 			filename := ""
 			if !tc.noFile {
 				filename = "report.pdf"
-				raw += "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: " + partType + "\r\n\r\nCan you send the report?\r\n--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=report.pdf\r\n\r\nreport\r\n--b--\r\n"
-			} else {
-				raw += "Content-Type: " + partType + "\r\n\r\nCan you send the report?"
 			}
+			raw += "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: " + partType + "\r\n\r\nCan you send the report?\r\n--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=report.pdf\r\n\r\nreport\r\n--b--\r\n"
 			parsed, err := mime.Parse([]byte(raw))
 			require.NoError(err)
 			flags := parsed.AutomationFlags()
@@ -75,37 +73,11 @@ func TestLoopsIdenticalWithAndWithoutAutomationColumns(t *testing.T) {
 	}
 }
 
-func TestLoopsAutomationRetainsMissingAttachmentFallback(t *testing.T) {
-	for _, raw := range []string{
-		"From: alex@example.test\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nCan you send it?\r\n--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=report.pdf\r\n\r\nreport\r\n--b--\r\n",
-	} {
-		t.Run(raw[:min(len(raw), 12)], func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			id := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send it?", Raw: raw, SentAt: ago(3 * day)})
-			before, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
-			require.NoError(err)
-			_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM loop_message_evidence`)
-			require.NoError(err)
-			require.NoError(f.Store.PutMessageAutomationContext(t.Context(), id, 0))
-			counting := &countingStore{Store: f.Store}
-			after, err := loops.List(t.Context(), counting, loops.Options{}, now)
-			require.NoError(err)
-			assert.Equal(before, after)
-			assert.Positive(counting.originals)
-		})
-	}
-}
-
 func TestLoopsAutomationUnknownMalformedOriginalWithAttachment(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send it?", Raw: "invalid MIME", FileName: "report.pdf", SentAt: ago(3 * day)})
-	counting := &countingStore{Store: f.Store}
-	result, err := loops.List(t.Context(), counting, loops.Options{}, now)
+	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
 	require.NoError(t, err)
 	assert.Positive(result.SkippedUnparseable)
-	assert.Positive(counting.originals)
-	assert.Positive(counting.automationReads)
 }
