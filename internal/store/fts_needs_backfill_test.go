@@ -117,6 +117,8 @@ func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 	slack, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123457", "Current name", "slack")
 	require.NoError(err)
 	teams := f.EnsureParticipant("alpha@example.org", "Current name", "example.org")
+	beeper, err := f.Store.EnsureParticipantByIdentifierContext(t.Context(), "beeper", "sender-c", "Lantern Sender")
+	require.NoError(err)
 	phone, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123456", "", "whatsapp")
 	require.NoError(err)
 	email := f.EnsureParticipant("sender@example.test", "Email Sender", "example.test")
@@ -126,6 +128,7 @@ func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 	}{
 		{"slack", "Horizon Sender", "Horizon Sender +15550123457", "horizon", "+15550123457", slack},
 		{"teams", "Monarch Sender", "Monarch Sender alpha@example.org", "monarch", "alpha@example.org", teams},
+		{"beeper", "", "Lantern Sender", "lantern", "", beeper},
 		{"whatsapp", "", "+15550123456", "+15550123456", "", phone},
 		{"email", "Email Sender", "sender@example.test", "sender@example.test", "", email},
 	}
